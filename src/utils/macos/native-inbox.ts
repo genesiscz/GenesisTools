@@ -80,7 +80,8 @@ export function isLiveWidgetLock(path: string): boolean {
     return state.status === "live" && isWidgetWatchCommand(state.record.command);
 }
 
-function readStagingMarker(): boolean {
+/** Whether the owner turned the staging faces (widget, Clicky) on in the normal app (`bun scripts/native/staging.ts on`). */
+export function readStagingMarker(): boolean {
     const result = Bun.spawnSync(["defaults", "read", GENESIS_APP_BUNDLE_ID, STAGING_FACES_DEFAULTS_KEY], {
         stdout: "pipe",
         stderr: "pipe",

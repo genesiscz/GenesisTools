@@ -11,6 +11,7 @@ import {
     writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { isInteractive } from "@genesiscz/utils/cli";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
 import { applyFolderRetention, planFolderRetention } from "@genesiscz/utils/compress/retention";
 import { env } from "@genesiscz/utils/env";
@@ -25,11 +26,13 @@ import {
     genesisAppInstallMarkerPath,
     genesisAppLauncherPath,
 } from "@genesiscz/utils/macos/genesis-app";
+import { readStagingMarker } from "@genesiscz/utils/macos/native-inbox";
 import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "@genesiscz/utils/macos/xcode";
 import { clearPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { executableInode } from "@genesiscz/utils/process/process-files";
 import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import * as p from "@genesiscz/utils/prompts/p";
 import { withFileLock } from "@genesiscz/utils/storage";
 import {
     type ClickyLibraryPin,
@@ -110,9 +113,31 @@ export interface AppStatus {
     identityStable: boolean;
 }
 
+/**
+ * `hashes` holds the SHA-1 of every keychain identity with that name, in `find-identity` order. Two certificates with
+ * one name (a renewed Apple Development certificate next to the old one) make `codesign --sign <name>` fail with
+ * "ambiguous", after the whole build; signing by hash never is.
+ */
 export type CodesignIdentity =
-    | { kind: "developer-id" | "apple-development" | "custom"; name: string }
+    | { kind: "developer-id" | "apple-development" | "custom"; name: string; hashes?: string[] }
     | { kind: "adhoc" };
+
+/** Every `N) <SHA-1> "<name>"` row of `security find-identity -v -p codesigning`, in its order. */
+export function listCodesignIdentities(findIdentityOutput: string): { hash: string; name: string }[] {
+    return [...findIdentityOutput.matchAll(/^\s*\d+\)\s+([0-9A-F]{40})\s+"([^"]+)"/gm)].map((match) => ({
+        hash: match[1],
+        name: match[2],
+    }));
+}
+
+function withHashes(
+    kind: "developer-id" | "apple-development" | "custom",
+    name: string,
+    identities: { hash: string; name: string }[]
+): CodesignIdentity {
+    const hashes = identities.filter((identity) => identity.name === name).map((identity) => identity.hash);
+    return hashes.length > 1 ? { kind, name, hashes } : { kind, name };
+}
 
 /** Reads a stream to its end, handing each finished line (`\n` or `\r`) to `onLine` while it arrives. */
 async function readLines(stream: ReadableStream<Uint8Array>, onLine?: (line: string) => void): Promise<string> {
@@ -264,21 +289,23 @@ export function sourceHash(sourceDir = APP_SOURCE_DIR): string {
 
 /** Pick the most durable signing identity present: Developer ID, then Apple Development, else ad-hoc. */
 export function pickCodesignIdentity(findIdentityOutput: string, override?: string): CodesignIdentity {
+    const identities = listCodesignIdentities(findIdentityOutput);
+
     if (override) {
-        return override === "-" ? { kind: "adhoc" } : { kind: "custom", name: override };
+        return override === "-" ? { kind: "adhoc" } : withHashes("custom", override, identities);
     }
 
-    const names = [...findIdentityOutput.matchAll(/^\s*\d+\)\s+[0-9A-F]+\s+"([^"]+)"/gm)].map((m) => m[1]);
+    const names = identities.map((identity) => identity.name);
     const developerId = names.find((n) => n.startsWith("Developer ID Application:"));
 
     if (developerId) {
-        return { kind: "developer-id", name: developerId };
+        return withHashes("developer-id", developerId, identities);
     }
 
     const appleDev = names.find((n) => n.startsWith("Apple Development:"));
 
     if (appleDev) {
-        return { kind: "apple-development", name: appleDev };
+        return withHashes("apple-development", appleDev, identities);
     }
 
     return { kind: "adhoc" };
@@ -640,13 +667,23 @@ export async function bundleClickyLibrary({
     pinPath = join(APP_SOURCE_DIR, CLICKY_LIBRARY_PIN),
     ensure = ensureClickyLibrary,
     unpack = unpackClickyLibrary,
+    wanted = readStagingMarker,
 }: {
     contents: string;
     step: (message: string) => void;
+    /** Clicky runs only where its staging switch is on; elsewhere its 10 MB library is never downloaded. */
+    wanted?: () => boolean;
     pinPath?: string;
     ensure?: typeof ensureClickyLibrary;
     unpack?: typeof unpackClickyLibrary;
 }): Promise<void> {
+    if (!wanted()) {
+        step(
+            "Clicky sound library skipped: Clicky is a staging face that is off on this Mac (bun scripts/native/staging.ts on, then rebuild)"
+        );
+        return;
+    }
+
     step("bundle Clicky sound library");
     const out = join(contents, "Resources", "ClickyLibrary");
     const pin = SafeJSON.parse(readFileSync(pinPath, "utf8"), { strict: true }) as ClickyLibraryPin;
@@ -673,6 +710,105 @@ export async function bundleClickyLibrary({
                 `Remove the cached library at ${source} and rebuild to download it again.`
         );
     }
+}
+
+/** Past this, a failed certificate is not followed by the next one on its own: in a terminal the user picks. */
+const SIGN_ATTEMPTS_BUDGET_MS = 10_000;
+
+/**
+ * Signs the staged bundle. A name two keychain certificates share is signed by hash, first one first; when it fails
+ * the next one is tried, on the bundle already built, so nothing is compiled again. Once the attempts took more than
+ * 10 s, a terminal asks which certificate to use instead of going on alone.
+ */
+async function signStagedBundle(
+    stagedBundle: string,
+    identity: CodesignIdentity,
+    step: (message: string) => void
+): Promise<void> {
+    const sign = (arg: string) =>
+        run([
+            "codesign",
+            "--force",
+            "--sign",
+            arg,
+            "--identifier",
+            GENESIS_APP_BUNDLE_ID,
+            "--timestamp=none",
+            stagedBundle,
+        ]);
+
+    if (identity.kind === "adhoc" || !identity.hashes) {
+        const result = sign(identity.kind === "adhoc" ? "-" : identity.name);
+
+        if (result.code !== 0) {
+            throw new Error(`codesign failed (exit ${result.code}):\n${result.stderr}`);
+        }
+
+        return;
+    }
+
+    await signByHashes({
+        name: identity.name,
+        hashes: identity.hashes,
+        sign,
+        step,
+        choose: isInteractive()
+            ? async (name, hashes) =>
+                  String(
+                      await p.select({
+                          message: `Signing is slow. Which "${name}" certificate should sign GenesisTools.app?`,
+                          options: hashes.map((value) => ({ value, label: value })),
+                      })
+                  )
+            : undefined,
+    });
+}
+
+/**
+ * Tries each certificate hash in order until one signs. After a failure, once the attempts took more than 10 s,
+ * `choose` (a terminal prompt; absent outside one) picks the next certificate instead of the list order.
+ */
+export async function signByHashes(options: {
+    name: string;
+    hashes: string[];
+    sign: (hash: string) => { code: number; stderr: string };
+    step: (message: string) => void;
+    choose?: (name: string, hashes: string[]) => Promise<string>;
+    now?: () => number;
+}): Promise<string> {
+    const now = options.now ?? (() => performance.now());
+    const started = now();
+    const left = [...options.hashes];
+    const failures: string[] = [];
+
+    while (left.length > 0) {
+        const slow = failures.length > 0 && now() - started > SIGN_ATTEMPTS_BUDGET_MS;
+        const picked = slow && options.choose ? await options.choose(options.name, [...left]) : left[0];
+        const index = left.indexOf(picked);
+        const hash = index >= 0 ? left.splice(index, 1)[0] : left.shift();
+
+        if (hash === undefined) {
+            break;
+        }
+
+        options.step(
+            `codesign: ${options.hashes.length} certificates are named "${options.name}"; signing with ${hash.slice(0, 10)}`
+        );
+        const result = options.sign(hash);
+
+        if (result.code === 0) {
+            logger.info({ name: options.name, hash, tried: failures.length + 1 }, "permissions app: signed by hash");
+            return hash;
+        }
+
+        failures.push(`${hash}: ${result.stderr.trim()}`);
+        logger.warn({ hash, stderr: result.stderr }, "permissions app: codesign by hash failed; trying the next one");
+    }
+
+    throw new Error(
+        `codesign failed with every certificate named "${options.name}":\n${failures.join("\n")}\n` +
+            "Remove the expired one in Keychain Access, or set GENESIS_TOOLS_CODESIGN_IDENTITY to the SHA-1 to use."
+    );
 }
 
 interface StageAndInstallOptions {
@@ -724,22 +860,8 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         );
     }
 
-    const identityArg = identity.kind === "adhoc" ? "-" : identity.name;
     step(`codesign (${identity.kind === "adhoc" ? "ad-hoc" : identity.name})`);
-    const sign = run([
-        "codesign",
-        "--force",
-        "--sign",
-        identityArg,
-        "--identifier",
-        GENESIS_APP_BUNDLE_ID,
-        "--timestamp=none",
-        stagedBundle,
-    ]);
-
-    if (sign.code !== 0) {
-        throw new Error(`codesign failed (exit ${sign.code}):\n${sign.stderr}`);
-    }
+    await signStagedBundle(stagedBundle, identity, step);
 
     const verify = run(["codesign", "--verify", "--strict", stagedBundle]);
 

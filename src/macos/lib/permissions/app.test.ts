@@ -63,6 +63,24 @@ describe("readAppFaceProcesses", () => {
 });
 
 describe("bundleClickyLibrary", () => {
+    // Clicky is a staging face: a normal install downloaded its 10 MB library on every first build for nothing.
+    it("downloads nothing while Clicky's staging switch is off", async () => {
+        const steps: string[] = [];
+        let ensured = false;
+        await bundleClickyLibrary({
+            contents: join(tmpdir(), "gt-clicky-off-never-written"),
+            pinPath: "/never/read.json",
+            step: (message) => steps.push(message),
+            wanted: () => false,
+            ensure: async () => {
+                ensured = true;
+                throw new Error("must not download");
+            },
+        });
+        expect(ensured).toBe(false);
+        expect(steps).toEqual([expect.stringContaining("Clicky sound library skipped")]);
+    });
+
     it.each([
         { sets: 1, samples: 0 },
         { sets: 0, samples: 1 },
@@ -89,6 +107,7 @@ describe("bundleClickyLibrary", () => {
                     pinPath,
                     step: (message) => steps.push(message),
                     ensure: (value) => ensureClickyLibrary(value, { cacheRoot }),
+                    wanted: () => true,
                 })
             ).rejects.toThrow(`Remove the cached library at ${source} and rebuild`);
             expect(existsSync(join(contents, "Resources", "ClickyLibrary"))).toBe(false);
@@ -117,6 +136,7 @@ describe("bundleClickyLibrary", () => {
                 const result = bundleClickyLibrary({
                     contents,
                     pinPath,
+                    wanted: () => true,
                     step: (message) => steps.push(message),
                     ensure: async () => {
                         ensured = true;

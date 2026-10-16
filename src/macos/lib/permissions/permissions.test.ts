@@ -9,6 +9,7 @@ import {
     parseCodesignInfo,
     pickCodesignIdentity,
     readSourceInfo,
+    signByHashes,
     staleAppFacePids,
     staleRegistrations,
     stampInfoPlist,
@@ -44,6 +45,72 @@ describe("pickCodesignIdentity", () => {
         expect(pickCodesignIdentity("0 valid identities found")).toEqual({ kind: "adhoc" });
         expect(pickCodesignIdentity(FIND_IDENTITY, "-")).toEqual({ kind: "adhoc" });
         expect(pickCodesignIdentity(FIND_IDENTITY, "My Cert")).toEqual({ kind: "custom", name: "My Cert" });
+    });
+
+    // Two certificates with one name made `codesign --sign <name>` fail "ambiguous" after a 7-minute build.
+    it("keeps the hash of every certificate that shares the picked name", () => {
+        const twice = `  1) ${"A".repeat(40)} "Apple Development: dev@example.com (TEAM1)"
+  2) ${"B".repeat(40)} "Apple Development: dev@example.com (TEAM1)"
+     2 valid identities found`;
+        expect(pickCodesignIdentity(twice)).toEqual({
+            kind: "apple-development",
+            name: "Apple Development: dev@example.com (TEAM1)",
+            hashes: ["A".repeat(40), "B".repeat(40)],
+        });
+    });
+});
+
+describe("signByHashes", () => {
+    const quiet = () => {};
+
+    it("signs with the first certificate that works, in keychain order", async () => {
+        const tried: string[] = [];
+        const signed = await signByHashes({
+            name: "Dev",
+            hashes: ["AAA", "BBB", "CCC"],
+            sign: (hash) => {
+                tried.push(hash);
+                return hash === "BBB" ? { code: 0, stderr: "" } : { code: 1, stderr: "expired" };
+            },
+            step: quiet,
+        });
+        expect(signed).toBe("BBB");
+        expect(tried).toEqual(["AAA", "BBB"]);
+    });
+
+    it("asks which certificate once the failed attempts took more than 10 s", async () => {
+        let clock = 0;
+        const asked: string[][] = [];
+        const tried: string[] = [];
+        const signed = await signByHashes({
+            name: "Dev",
+            hashes: ["AAA", "BBB", "CCC"],
+            sign: (hash) => {
+                tried.push(hash);
+                clock += 11_000;
+                return hash === "CCC" ? { code: 0, stderr: "" } : { code: 1, stderr: "slow failure" };
+            },
+            step: quiet,
+            choose: async (_name, left) => {
+                asked.push(left);
+                return "CCC";
+            },
+            now: () => clock,
+        });
+        expect(signed).toBe("CCC");
+        expect(tried).toEqual(["AAA", "CCC"]);
+        expect(asked).toEqual([["BBB", "CCC"]]);
+    });
+
+    it("names every failure when no certificate signs", async () => {
+        await expect(
+            signByHashes({
+                name: "Dev",
+                hashes: ["AAA", "BBB"],
+                sign: () => ({ code: 1, stderr: "nope" }),
+                step: quiet,
+            })
+        ).rejects.toThrow("AAA: nope\nBBB: nope");
     });
 });
 
