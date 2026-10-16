@@ -19,302 +19,324 @@ import { probeAddedLines } from "./probe";
 import { flag, has, loadRun, worktreeFor } from "./run";
 import { ensureConfigHooks, HOOKS_OFF, newExecutablesStall } from "./versions";
 
-const run = loadRun();
-// This repository's gates (tsgo, lint-rules, check-tool-commands, check-commits) exist only in GenesisTools. Another
-// repository's run card skips them by itself: GenesisPlayground #94 round 1 ran `bunx tsgo` in a Swift app, printed the
-// compiler's help and stopped the push (2026-10-15).
-const skipGates = has("--skip-gates") || run.repo !== "genesiscz/GenesisTools";
-const pr = flag("--pr") ?? "";
-const round = flag("--round") ?? "1";
-const wt = flag("--wt") ?? worktreeFor(run, pr);
-const session = flag("--session") ?? `bs-${pr}-r${round}`;
-const repliesIn = flag("--replies") ?? join(wt, ".claude/work/babysit", `${pr}-r${round}-replies.json`);
-const shaMap = Object.fromEntries(
-    (flag("--sha-map") ?? "")
-        .split(",")
-        .filter(Boolean)
-        .map((pair): [string, string] => {
-            const [from = "", to = ""] = pair.split("=");
-            return [from, to];
-        })
-);
-const dry = has("--dry");
-
-function exec(cmd: string[], opts: { cwd?: string; quiet?: boolean } = {}): { code: number; out: string } {
-    const p = Bun.spawnSync(cmd, { cwd: opts.cwd ?? wt, stdout: "pipe", stderr: "pipe", env: process.env });
-    const out = `${p.stdout.toString()}${p.stderr.toString()}`;
-
-    if (!opts.quiet) {
-        console.log(`$ ${cmd.join(" ").slice(0, 140)} → exit ${p.exitCode}`);
-    }
-
-    return { code: p.exitCode ?? 1, out };
+export function postingExitCode(posted: number, followups: Array<{ code: number }>): number {
+    return posted === 0 && followups.every((reply) => reply.code === 0) ? 0 : 1;
 }
 
-function must(cmd: string[], label: string, cwd?: string): string {
-    const r = exec(cmd, { cwd });
-
-    if (r.code !== 0) {
-        console.log(`✖ ${label} failed:\n${r.out.split("\n").slice(-25).join("\n")}`);
-        process.exit(1);
-    }
-
-    return r.out;
-}
-
-const view = must(["gh", "pr", "view", pr, "--repo", run.repo, "--json", "headRefName,baseRefName"], "pr view");
-const { headRefName: branch, baseRefName } = SafeJSON.parse(view, { strict: true }) as {
-    headRefName: string;
-    baseRefName: string;
-};
-must(["git", "fetch", "-q", "origin", branch, baseRefName], "fetch");
-const oldHead = must(["git", "rev-parse", `origin/${branch}`], "rev-parse").trim();
-const newHead = must(["git", "rev-parse", "HEAD"], "rev-parse HEAD").trim();
-const restackedFrom = flag("--restacked-from");
-
-if (restackedFrom) {
-    // 2026-10-14: #500, #517 and #510 were restacked for landing and integrate refused them as "someone pushed", so the
-    // lead pushed by hand. The lease is the old head the lead rebased from: anything newer on the remote is refused.
-    const from = must(
-        ["git", "rev-parse", "--verify", `${restackedFrom}^{commit}`],
-        "rev-parse --restacked-from"
-    ).trim();
-
-    if (from !== oldHead) {
-        console.log(
-            `✖ origin/${branch} is ${oldHead.slice(0, 9)}, not the restacked-from ${from.slice(0, 9)}: someone pushed`
-        );
-        process.exit(1);
-    }
-} else if (exec(["git", "merge-base", "--is-ancestor", oldHead, newHead], { quiet: true }).code !== 0) {
-    console.log(
-        `✖ HEAD ${newHead.slice(0, 9)} does not contain origin/${branch} ${oldHead.slice(0, 9)}: someone pushed; rebase first`
+async function main(): Promise<void> {
+    const run = loadRun();
+    // This repository's gates (tsgo, lint-rules, check-tool-commands, check-commits) exist only in GenesisTools. Another
+    // repository's run card skips them by itself: GenesisPlayground #94 round 1 ran `bunx tsgo` in a Swift app, printed the
+    // compiler's help and stopped the push (2026-10-15).
+    const skipGates = has("--skip-gates") || run.repo !== "genesiscz/GenesisTools";
+    const pr = flag("--pr") ?? "";
+    const round = flag("--round") ?? "1";
+    const wt = flag("--wt") ?? worktreeFor(run, pr);
+    const session = flag("--session") ?? `bs-${pr}-r${round}`;
+    const repliesIn = flag("--replies") ?? join(wt, ".claude/work/babysit", `${pr}-r${round}-replies.json`);
+    const shaMap = Object.fromEntries(
+        (flag("--sha-map") ?? "")
+            .split(",")
+            .filter(Boolean)
+            .map((pair): [string, string] => {
+                const [from = "", to = ""] = pair.split("=");
+                return [from, to];
+            })
     );
-    process.exit(1);
-}
+    const dry = has("--dry");
 
-// A restack replays the base's commits too: gate only the PR's own commits on top of its base.
-const gateFrom = restackedFrom
-    ? must(["git", "merge-base", `origin/${baseRefName}`, newHead], "merge-base").trim()
-    : oldHead;
+    function exec(cmd: string[], opts: { cwd?: string; quiet?: boolean } = {}): { code: number; out: string } {
+        const p = Bun.spawnSync(cmd, { cwd: opts.cwd ?? wt, stdout: "pipe", stderr: "pipe", env: process.env });
+        const out = `${p.stdout.toString()}${p.stderr.toString()}`;
 
-const dirty = must(["git", "status", "--short", "--untracked-files=no"], "status").trim();
+        if (!opts.quiet) {
+            console.log(`$ ${cmd.join(" ").slice(0, 140)} → exit ${p.exitCode}`);
+        }
 
-if (dirty) {
-    console.log(`✖ worktree has uncommitted changes:\n${dirty}`);
-    process.exit(1);
-}
-
-if (!skipGates && oldHead !== newHead) {
-    const tsgo = join(wt, "node_modules/@typescript/native-preview-darwin-arm64/lib/tsgo");
-    must(existsSync(tsgo) ? [tsgo, "--noEmit"] : ["bunx", "tsgo", "--noEmit"], "tsgo");
-    // Biome by its exit code over the round's changed files: judging it by the tail of its output let a formatting
-    // error through to the pre-push hook (2026-10-14, #502 round 6). The main checkout's binary is already assessed.
-    const changed = must(["git", "diff", "--name-only", "--diff-filter=d", `${gateFrom}..${newHead}`], "changed files")
-        .split("\n")
-        .filter((file) => /\.(ts|tsx|js|jsx|json)$/.test(file));
-
-    if (changed.length > 0) {
-        const biome = join(run.main, "node_modules/.bin/biome");
-        must(
-            [existsSync(biome) ? biome : "bunx", ...(existsSync(biome) ? [] : ["biome"]), "check", ...changed],
-            "biome"
-        );
+        return { code: p.exitCode ?? 1, out };
     }
 
-    must(["bun", "run", "lint:rules"], "lint-rules");
-    must(["bun", "scripts/ci/check-tool-commands.ts"], "check-tool-commands");
-    must(["bash", "scripts/ci/placeholder-check.sh"], "placeholder-check");
-    const commits = must(["bun", "scripts/git/check-commits.ts", `${gateFrom}..${newHead}`], "check-commits");
+    function must(cmd: string[], label: string, cwd?: string): string {
+        const r = exec(cmd, { cwd });
 
-    if (!/0 with a subject to fix/.test(commits)) {
-        console.log(`✖ check-commits:\n${commits}`);
+        if (r.code !== 0) {
+            console.log(`✖ ${label} failed:\n${r.out.split("\n").slice(-25).join("\n")}`);
+            process.exit(1);
+        }
+
+        return r.out;
+    }
+
+    const view = must(["gh", "pr", "view", pr, "--repo", run.repo, "--json", "headRefName,baseRefName"], "pr view");
+    const { headRefName: branch, baseRefName } = SafeJSON.parse(view, { strict: true }) as {
+        headRefName: string;
+        baseRefName: string;
+    };
+    must(["git", "fetch", "-q", "origin", branch, baseRefName], "fetch");
+    const oldHead = must(["git", "rev-parse", `origin/${branch}`], "rev-parse").trim();
+    const newHead = must(["git", "rev-parse", "HEAD"], "rev-parse HEAD").trim();
+    const restackedFrom = flag("--restacked-from");
+
+    if (restackedFrom) {
+        // 2026-10-14: #500, #517 and #510 were restacked for landing and integrate refused them as "someone pushed", so the
+        // lead pushed by hand. The lease is the old head the lead rebased from: anything newer on the remote is refused.
+        const from = must(
+            ["git", "rev-parse", "--verify", `${restackedFrom}^{commit}`],
+            "rev-parse --restacked-from"
+        ).trim();
+
+        if (from !== oldHead) {
+            console.log(
+                `✖ origin/${branch} is ${oldHead.slice(0, 9)}, not the restacked-from ${from.slice(0, 9)}: someone pushed`
+            );
+            process.exit(1);
+        }
+    } else if (exec(["git", "merge-base", "--is-ancestor", oldHead, newHead], { quiet: true }).code !== 0) {
+        console.log(
+            `✖ HEAD ${newHead.slice(0, 9)} does not contain origin/${branch} ${oldHead.slice(0, 9)}: someone pushed; rebase first`
+        );
         process.exit(1);
     }
-}
 
-// --skip-gates (another repository's PR) skips the repository rules above, but never the personal-data probe: it runs
-// on the target worktree and blocks only a hit in a line this push adds (probe.ts).
-if (skipGates && oldHead !== newHead && !probeAddedLines({ wt, from: gateFrom, to: newHead })) {
-    process.exit(1);
-}
+    // A restack replays the base's commits too: gate only the PR's own commits on top of its base.
+    const gateFrom = restackedFrom
+        ? must(["git", "merge-base", `origin/${baseRefName}`, newHead], "merge-base").trim()
+        : oldHead;
 
-if (oldHead !== newHead && !dry) {
-    // Push the SHA that was judged and gated, never HEAD at push time: a worker steered into its next round in the
-    // same worktree can commit while the gates run (2026-10-14, #502 round 3 → 4).
-    // --no-push-hooks counts only while new executables really stall (versions.ts): the gates above ran the hook's
-    // probe, typecheck and repo rules, but its Biome check is then the lead's job.
-    console.log(`hooks: ${ensureConfigHooks(run.main)}`);
-    const stalled = has("--no-push-hooks") && !skipGates && (await newExecutablesStall());
+    const dirty = must(["git", "status", "--short", "--untracked-files=no"], "status").trim();
 
-    if (has("--no-push-hooks") && !stalled) {
-        console.log("= --no-push-hooks ignored: new executables start normally, so the push hooks run");
+    if (dirty) {
+        console.log(`✖ worktree has uncommitted changes:\n${dirty}`);
+        process.exit(1);
     }
 
-    const hooks = stalled ? HOOKS_OFF : [];
-    const lease = restackedFrom ? [`--force-with-lease=refs/heads/${branch}:${oldHead}`] : [];
-    must(["git", ...hooks, "push", ...lease, "origin", `${newHead}:refs/heads/${branch}`], "push");
-    const pushed = `${oldHead.slice(0, 9)}${restackedFrom ? "..." : ".."}${newHead.slice(0, 9)}`;
-    console.log(`✔ pushed ${branch} ${pushed}${restackedFrom ? " (forced, restack)" : ""}`);
-    appendEvent(run.dir, {
-        kind: "push",
-        pr: Number(pr),
-        round: Number(round),
-        meta: { branch, range: pushed, ...(restackedFrom ? { forced: `lease on ${oldHead.slice(0, 9)}` } : {}) },
-    });
-} else {
-    console.log(oldHead === newHead ? "no new commits: nothing to push" : "dry: push skipped");
-}
+    if (!skipGates && oldHead !== newHead) {
+        const tsgo = join(wt, "node_modules/@typescript/native-preview-darwin-arm64/lib/tsgo");
+        must(existsSync(tsgo) ? [tsgo, "--noEmit"] : ["bunx", "tsgo", "--noEmit"], "tsgo");
+        // Biome by its exit code over the round's changed files: judging it by the tail of its output let a formatting
+        // error through to the pre-push hook (2026-10-14, #502 round 6). The main checkout's binary is already assessed.
+        const changed = must(
+            ["git", "diff", "--name-only", "--diff-filter=d", `${gateFrom}..${newHead}`],
+            "changed files"
+        )
+            .split("\n")
+            .filter((file) => /\.(ts|tsx|js|jsx|json)$/.test(file));
 
-if (!existsSync(repliesIn)) {
-    console.log(`no reply file at ${repliesIn}: nothing to post`);
-    process.exit(0);
-}
+        if (changed.length > 0) {
+            const biome = join(run.main, "node_modules/.bin/biome");
+            must(
+                [existsSync(biome) ? biome : "bunx", ...(existsSync(biome) ? [] : ["biome"]), "check", ...changed],
+                "biome"
+            );
+        }
 
-mkdirSync(run.vault, { recursive: true });
-let text = readFileSync(repliesIn, "utf8");
+        must(["bun", "run", "lint:rules"], "lint-rules");
+        must(["bun", "scripts/ci/check-tool-commands.ts"], "check-tool-commands");
+        must(["bash", "scripts/ci/placeholder-check.sh"], "placeholder-check");
+        const commits = must(["bun", "scripts/git/check-commits.ts", `${gateFrom}..${newHead}`], "check-commits");
 
-for (const [from, to] of Object.entries(shaMap)) {
-    text = text.replaceAll(from, to);
-}
-
-const data = SafeJSON.parse(text, { strict: true }) as {
-    judge?: string;
-    items?: Array<{ model?: unknown; ref?: unknown; threadId?: unknown; reviewer?: unknown }>;
-};
-data.judge = run.judge;
-
-for (const item of data.items ?? []) {
-    if (typeof item.model === "string" && item.model.startsWith(run.judge)) {
-        delete item.model;
-    }
-
-    // A finding from the lead's own or an independent review has no GitHub thread. A `ref` on it made post-replies
-    // answer `t1` of a review session that has no such thread (2026-10-14, #519 round 2); the summary still names it.
-    if (item.reviewer === "lead" && !item.threadId && item.ref !== undefined) {
-        delete item.ref;
-    }
-}
-
-// Named from the PR and round, never from the worker's file name: a reply file called `524-r2.json` made the summary
-// overwrite it, the posted marker point at the summary itself, and the round's summary and replies go unposted
-// (2026-10-15, #524 round 2).
-const replies = join(run.vault, `${pr}-r${round}-replies.json`);
-writeFileSync(replies, `${SafeJSON.stringify(data, null, 2)}\n`);
-const summary = join(run.vault, `${pr}-r${round}-summary.md`);
-const range = flag("--range") ?? (oldHead !== newHead ? `${gateFrom}..${newHead}` : undefined);
-must(
-    [
-        "bun",
-        join(run.reviewLoopScripts, "round-summary.ts"),
-        replies,
-        "--repo",
-        run.repo,
-        ...(range ? ["--range", range, "--cwd", wt] : []),
-        "--out",
-        summary,
-    ],
-    "round-summary",
-    run.vault
-);
-
-if (has("--no-post") || dry) {
-    console.log(`not posted (flag): ${summary}`);
-    process.exit(0);
-}
-
-// A rerun (a killed push, a retry) must not post the round's summary twice (2026-10-14: #503 got two).
-const postedMarker = summary.replace(/\.md$/, ".posted");
-
-if (existsSync(postedMarker)) {
-    console.log(`summary already posted (${postedMarker}): skipped`);
-} else {
-    must(["gh", "pr", "comment", pr, "--repo", run.repo, "--body-file", summary], "summary comment", run.vault);
-    writeFileSync(postedMarker, `${new Date().toISOString()}\n`);
-}
-
-const posted = exec(
-    [
-        "bun",
-        join(run.reviewLoopScripts, "post-replies.ts"),
-        session,
-        replies,
-        "--phase",
-        "final",
-        "--resolve-after-s",
-        "20",
-        "--delay-ms",
-        "3000",
-        "--cwd",
-        wt,
-    ],
-    { cwd: run.vault }
-);
-console.log(posted.out.split("\n").slice(-12).join("\n"));
-
-// post-replies counts a thread this run already answered as done, so a later round that FIXES a thread an earlier
-// round deferred or refused never reaches the thread (2026-10-14, #502 t4-t7). Reply to those threads directly.
-interface ReplyItem {
-    ref?: string;
-    threadId?: string;
-    verdict?: string;
-    reply?: string;
-}
-const earlier = new Map<string, string>();
-
-for (const name of readdirSync(run.vault)) {
-    const match = new RegExp(`^${pr}-r(\\d+)[a-z]?-replies\\.json$`).exec(name);
-
-    if (!match || Number(match[1]) >= Number(round)) {
-        continue;
-    }
-
-    const previous = SafeJSON.parse(readFileSync(join(run.vault, name), "utf8"), { strict: true }) as {
-        items?: ReplyItem[];
-    };
-
-    for (const item of previous.items ?? []) {
-        if (item.threadId && item.verdict) {
-            earlier.set(item.threadId, item.verdict);
+        if (!/0 with a subject to fix/.test(commits)) {
+            console.log(`✖ check-commits:\n${commits}`);
+            process.exit(1);
         }
     }
-}
 
-for (const item of (data.items ?? []) as ReplyItem[]) {
-    const before = item.threadId ? earlier.get(item.threadId) : undefined;
-
-    if (!item.threadId || item.verdict !== "fixed" || !before || before === "fixed" || !item.reply) {
-        continue;
+    // --skip-gates (another repository's PR) skips the repository rules above, but never the personal-data probe: it runs
+    // on the target worktree and blocks only a hit in a line this push adds (probe.ts).
+    if (skipGates && oldHead !== newHead && !probeAddedLines({ wt, from: gateFrom, to: newHead })) {
+        process.exit(1);
     }
 
-    const mutation = `mutation($id:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}){comment{id}}}`;
-    const reply = exec(
+    if (oldHead !== newHead && !dry) {
+        // Push the SHA that was judged and gated, never HEAD at push time: a worker steered into its next round in the
+        // same worktree can commit while the gates run (2026-10-14, #502 round 3 → 4).
+        // --no-push-hooks counts only while new executables really stall (versions.ts): the gates above ran the hook's
+        // probe, typecheck and repo rules, but its Biome check is then the lead's job.
+        console.log(`hooks: ${ensureConfigHooks(run.main)}`);
+        const stalled = has("--no-push-hooks") && !skipGates && (await newExecutablesStall());
+
+        if (has("--no-push-hooks") && !stalled) {
+            console.log("= --no-push-hooks ignored: new executables start normally, so the push hooks run");
+        }
+
+        const hooks = stalled ? HOOKS_OFF : [];
+        const lease = restackedFrom ? [`--force-with-lease=refs/heads/${branch}:${oldHead}`] : [];
+        must(["git", ...hooks, "push", ...lease, "origin", `${newHead}:refs/heads/${branch}`], "push");
+        const pushed = `${oldHead.slice(0, 9)}${restackedFrom ? "..." : ".."}${newHead.slice(0, 9)}`;
+        console.log(`✔ pushed ${branch} ${pushed}${restackedFrom ? " (forced, restack)" : ""}`);
+        appendEvent(run.dir, {
+            kind: "push",
+            pr: Number(pr),
+            round: Number(round),
+            meta: { branch, range: pushed, ...(restackedFrom ? { forced: `lease on ${oldHead.slice(0, 9)}` } : {}) },
+        });
+    } else {
+        console.log(oldHead === newHead ? "no new commits: nothing to push" : "dry: push skipped");
+    }
+
+    if (!existsSync(repliesIn)) {
+        console.log(`no reply file at ${repliesIn}: nothing to post`);
+        process.exit(0);
+    }
+
+    mkdirSync(run.vault, { recursive: true });
+    let text = readFileSync(repliesIn, "utf8");
+
+    for (const [from, to] of Object.entries(shaMap)) {
+        text = text.replaceAll(from, to);
+    }
+
+    const data = SafeJSON.parse(text, { strict: true }) as {
+        judge?: string;
+        items?: Array<{ model?: unknown; ref?: unknown; threadId?: unknown; reviewer?: unknown }>;
+    };
+    data.judge = run.judge;
+
+    for (const item of data.items ?? []) {
+        if (typeof item.model === "string" && item.model.startsWith(run.judge)) {
+            delete item.model;
+        }
+
+        // A finding from the lead's own or an independent review has no GitHub thread. A `ref` on it made post-replies
+        // answer `t1` of a review session that has no such thread (2026-10-14, #519 round 2); the summary still names it.
+        if (item.reviewer === "lead" && !item.threadId && item.ref !== undefined) {
+            delete item.ref;
+        }
+    }
+
+    // Named from the PR and round, never from the worker's file name: a reply file called `524-r2.json` made the summary
+    // overwrite it, the posted marker point at the summary itself, and the round's summary and replies go unposted
+    // (2026-10-15, #524 round 2).
+    const replies = join(run.vault, `${pr}-r${round}-replies.json`);
+    writeFileSync(replies, `${SafeJSON.stringify(data, null, 2)}\n`);
+    const summary = join(run.vault, `${pr}-r${round}-summary.md`);
+    const range = flag("--range") ?? (oldHead !== newHead ? `${gateFrom}..${newHead}` : undefined);
+    must(
         [
-            "gh",
-            "api",
-            "graphql",
-            "-f",
-            `query=${mutation}`,
-            "-F",
-            `id=${item.threadId}`,
-            "-F",
-            `body=Round ${round} update: ${item.reply}`,
+            "bun",
+            join(run.reviewLoopScripts, "round-summary.ts"),
+            replies,
+            "--repo",
+            run.repo,
+            ...(range ? ["--range", range, "--cwd", wt] : []),
+            "--out",
+            summary,
         ],
-        { quiet: true }
+        "round-summary",
+        run.vault
     );
-    console.log(`${reply.code === 0 ? "✔" : "⚠"} follow-up on ${item.ref ?? item.threadId} (was ${before}, now fixed)`);
+
+    if (has("--no-post") || dry) {
+        console.log(`not posted (flag): ${summary}`);
+        process.exit(0);
+    }
+
+    // A rerun (a killed push, a retry) must not post the round's summary twice (2026-10-14: #503 got two).
+    const postedMarker = summary.replace(/\.md$/, ".posted");
+
+    if (existsSync(postedMarker)) {
+        console.log(`summary already posted (${postedMarker}): skipped`);
+    } else {
+        must(["gh", "pr", "comment", pr, "--repo", run.repo, "--body-file", summary], "summary comment", run.vault);
+        writeFileSync(postedMarker, `${new Date().toISOString()}\n`);
+    }
+
+    const posted = exec(
+        [
+            "bun",
+            join(run.reviewLoopScripts, "post-replies.ts"),
+            session,
+            replies,
+            "--phase",
+            "final",
+            "--resolve-after-s",
+            "20",
+            "--delay-ms",
+            "3000",
+            "--cwd",
+            wt,
+        ],
+        { cwd: run.vault }
+    );
+    console.log(posted.out.split("\n").slice(-12).join("\n"));
+
+    // post-replies counts a thread this run already answered as done, so a later round that FIXES a thread an earlier
+    // round deferred or refused never reaches the thread (2026-10-14, #502 t4-t7). Reply to those threads directly.
+    interface ReplyItem {
+        ref?: string;
+        threadId?: string;
+        verdict?: string;
+        reply?: string;
+    }
+    const earlier = new Map<string, string>();
+    const followups: Array<{ threadId: string; code: number; out: string }> = [];
+
+    for (const name of readdirSync(run.vault)) {
+        const match = new RegExp(`^${pr}-r(\\d+)[a-z]?-replies\\.json$`).exec(name);
+
+        if (!match || Number(match[1]) >= Number(round)) {
+            continue;
+        }
+
+        const previous = SafeJSON.parse(readFileSync(join(run.vault, name), "utf8"), { strict: true }) as {
+            items?: ReplyItem[];
+        };
+
+        for (const item of previous.items ?? []) {
+            if (item.threadId && item.verdict) {
+                earlier.set(item.threadId, item.verdict);
+            }
+        }
+    }
+
+    for (const item of (data.items ?? []) as ReplyItem[]) {
+        const before = item.threadId ? earlier.get(item.threadId) : undefined;
+
+        if (!item.threadId || item.verdict !== "fixed" || !before || before === "fixed" || !item.reply) {
+            continue;
+        }
+
+        const mutation = `mutation($id:ID!,$body:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$id,body:$body}){comment{id}}}`;
+        const reply = exec(
+            [
+                "gh",
+                "api",
+                "graphql",
+                "-f",
+                `query=${mutation}`,
+                "-F",
+                `id=${item.threadId}`,
+                "-F",
+                `body=Round ${round} update: ${item.reply}`,
+            ],
+            { quiet: true }
+        );
+        followups.push({ threadId: item.threadId, ...reply });
+        console.log(
+            `${reply.code === 0 ? "✔" : "⚠"} follow-up on ${item.ref ?? item.threadId} (was ${before}, now fixed)`
+        );
+    }
+    console.log(posted.code === 0 ? `✔ #${pr} round ${round} posted` : `⚠ #${pr} post-replies exit ${posted.code}`);
+    appendEvent(run.dir, {
+        kind: "post",
+        pr: Number(pr),
+        round: Number(round),
+        text: readFileSync(summary, "utf8"),
+        meta: {
+            replies,
+            exitCode: postingExitCode(posted.code, followups),
+            postRepliesExitCode: posted.code,
+            followups,
+            postReplies: posted.out
+                .split("\n")
+                .filter((l) => l.startsWith("final:"))
+                .join(" "),
+        },
+    });
+
+    process.exitCode = postingExitCode(posted.code, followups);
 }
-console.log(posted.code === 0 ? `✔ #${pr} round ${round} posted` : `⚠ #${pr} post-replies exit ${posted.code}`);
-appendEvent(run.dir, {
-    kind: "post",
-    pr: Number(pr),
-    round: Number(round),
-    text: readFileSync(summary, "utf8"),
-    meta: {
-        replies,
-        postReplies: posted.out
-            .split("\n")
-            .filter((l) => l.startsWith("final:"))
-            .join(" "),
-    },
-});
+
+if (import.meta.main) {
+    await main();
+}

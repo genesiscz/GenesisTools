@@ -41,6 +41,30 @@ export function summarize(out: string): string {
     return out.match(/Executed \d+ tests?, with \d+ failures?[^\n]*/g)?.at(-1) ?? "no test count";
 }
 
+export function testEvidence(result: { code: number; out: string }, failing: boolean): boolean {
+    const { code, out } = result;
+    if (failing ? code === 0 : code !== 0) {
+        return false;
+    }
+    if (
+        /error:.*(?:Cannot find|Could not resolve|No matching export|SyntaxError)|Build failed|compilation failed/i.test(
+            out
+        )
+    ) {
+        return false;
+    }
+    if (out.includes("[test] suite complete")) {
+        const pass = [...out.matchAll(/^\s*(\d+) pass$/gm)].reduce((n, m) => n + Number(m[1]), 0);
+        const fail = [...out.matchAll(/^\s*(\d+) fail$/gm)].reduce((n, m) => n + Number(m[1]), 0);
+        return (
+            out.includes(`[test] suite complete (exit ${code})`) &&
+            (failing ? fail > 0 && /^\(fail\)/m.test(out) : pass > 0 && fail === 0)
+        );
+    }
+    const total = [...out.matchAll(/Executed (\d+) tests?, with (\d+) failures?/g)].at(-1);
+    return !!total && Number(total[1]) > 0 && (failing ? Number(total[2]) > 0 : Number(total[2]) === 0);
+}
+
 if (import.meta.main) {
     const wt = flags("--wt")[0];
     const files = flags("--file");
@@ -115,13 +139,13 @@ if (import.meta.main) {
     console.log(`fixed: exit ${fixed.code} · ${summarize(fixed.out)}`);
     console.log(`worktree restored as it was · logs in ${backup}`);
 
-    if (planted.code === 0) {
-        console.log("✖ the planted run PASSED: the tests do not catch the fault");
+    if (!testEvidence(planted, true)) {
+        console.log("✖ the planted run has no completed failing-test evidence");
         process.exit(1);
     }
 
-    if (fixed.code !== 0) {
-        console.log("✖ the fixed run FAILED");
+    if (!testEvidence(fixed, false)) {
+        console.log("✖ the fixed run has no completed passing-test evidence");
         process.exit(1);
     }
 

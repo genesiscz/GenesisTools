@@ -15,11 +15,20 @@ import {
     watchApprovals,
 } from "./approve-codex";
 import { type ConflictPick, resolutionProblems, resolveConflictText } from "./conflicts";
-import { summarize } from "./plant";
-import { hitsInAddedLines } from "./probe";
+import { postingExitCode } from "./integrate";
+import { summarize, testEvidence } from "./plant";
+import { hitsInAddedLines, probeAddedLines } from "./probe";
 import { reviewBrief } from "./review-brief";
 import { loadRun, runPaths } from "./run";
-import { conflictedFiles, higherVersionSide, prepGit, resolveVersionConflicts } from "./versions";
+import { openPaths } from "./tmp-reclaim";
+import {
+    conflictedFiles,
+    higherVersionSide,
+    newExecutablesStall,
+    prepGit,
+    resolveVersionConflicts,
+    resolveVersionText,
+} from "./versions";
 import { pump } from "./watch-workers";
 
 const entry: RunEntry = {
@@ -476,19 +485,26 @@ describe("merge-prep version conflicts", () => {
         };
 
         git(["init", "-q", "-b", "main"]);
-        write(file, manifest("1.0.80"));
+        const mergedManifest = (version: string, skills: string) =>
+            SafeJSON.stringify(
+                { version, name: "fixture", description: "fixture", commands: [], hooks: {}, skills },
+                null,
+                4
+            ) + "\n";
+        write(file, mergedManifest("1.0.80", "./old-skills/"));
         write("src/a.ts", "export const a = 1;\n");
         commit("base");
         git(["checkout", "-qb", "child"]);
-        write(file, manifest("1.0.81"));
+        write(file, mergedManifest("1.0.81", "./new-skills/"));
         commit("child bump");
         git(["checkout", "-q", "main"]);
-        write(file, manifest("1.0.96"));
+        write(file, mergedManifest("1.0.96", "./old-skills/"));
         commit("main bump");
 
         expect(git(["cherry-pick", "child"]).code).not.toBe(0);
         expect(resolveVersionConflicts(git, conflictedFiles(git))).toBe(true);
         expect(fs.readFileSync(join(dir, file), "utf8")).toContain('"1.0.96"');
+        expect(fs.readFileSync(join(dir, file), "utf8")).toContain('"./new-skills/"');
         git(["cherry-pick", "--skip"]);
 
         git(["checkout", "-qb", "code", "child"]);
@@ -716,4 +732,140 @@ test("--run takes the run folder or its run.json, and refuses anything that woul
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+describe("round 1 regression guards", () => {
+    test("version resolution preserves merged fields and rejects mixed conflicts", () => {
+        const text =
+            '{\n<<<<<<< HEAD\n    "version": "1.0.96",\n=======\n    "version": "1.0.81",\n>>>>>>> child\n    "skills": "./new-skills/"\n}\n';
+        expect(resolveVersionText(text)).toBe('{\n    "version": "1.0.96",\n    "skills": "./new-skills/"\n}\n');
+        expect(
+            resolveVersionText(text.replace('    "version": "1.0.81",', '    "version": "1.0.81",\n    "hooks": {}'))
+        ).toBeNull();
+        expect(
+            resolveVersionText(text.replace("=======", '||||||| base\n    "version": "1.0.80",\n======='))
+        ).toContain('"1.0.96"');
+        expect(resolveVersionText(text.replace(">>>>>>> child", ">>>>>>> child\n<<<<<<< unclosed"))).toBeNull();
+    });
+
+    test("an older hit never hides an added hit in a space path or an unparseable hit", () => {
+        const original = Bun.spawnSync;
+        const diff = "+++ b/docs/New Guide.md\n@@ -0,0 +1 @@\n+fixture\n";
+        let output = "    docs/old.md:4:fixture\n    docs/New Guide.md:1:fixture\n";
+        const spawn = spyOn(Bun, "spawnSync").mockImplementation((command, options) =>
+            original(
+                [
+                    process.execPath,
+                    "-e",
+                    command[0] === "bash"
+                        ? "console.log(" + SafeJSON.stringify(output) + "); process.exit(1)"
+                        : "console.log(" + SafeJSON.stringify(diff) + ")",
+                ],
+                options
+            )
+        );
+        try {
+            expect(hitsInAddedLines(output, diff)).toEqual(["docs/New Guide.md:1"]);
+            expect(hitsInAddedLines('    "docs/New\\tGuide.md":1:fixture', diff)).toEqual(["unparseable probe hit"]);
+            expect(probeAddedLines({ wt: ".", from: "a", to: "b" })).toBe(false);
+            output = "    docs/old.md:4:fixture\n    malformed hit\n";
+            expect(probeAddedLines({ wt: ".", from: "a", to: "b" })).toBe(false);
+            output = "    docs/old.md:4:fixture\n";
+            expect(probeAddedLines({ wt: ".", from: "a", to: "b" })).toBe(true);
+            expect(
+                hitsInAddedLines("    docs/New Guide.md:1:fixture", '+++ "b/docs/New Guide.md"\n@@ -0,0 +1 @@')
+            ).toEqual(["docs/New Guide.md:1"]);
+        } finally {
+            spawn.mockRestore();
+        }
+    });
+
+    test("lsof must return a complete successful listing before reclamation", () => {
+        const original = Bun.spawnSync;
+        let code = 1;
+        let listing = "p123\nn/fixture/open\n";
+        const spawn = spyOn(Bun, "spawnSync").mockImplementation((_command, options) =>
+            original(
+                [
+                    process.execPath,
+                    "-e",
+                    "console.log(" + SafeJSON.stringify(listing) + "); process.exit(" + code + ")",
+                ],
+                options
+            )
+        );
+        try {
+            expect(() => openPaths()).toThrow("listing incomplete");
+            code = 0;
+            expect(openPaths()).toEqual(["/fixture/open"]);
+            listing = "";
+            expect(() => openPaths()).toThrow("listing incomplete");
+        } finally {
+            spawn.mockRestore();
+        }
+    });
+
+    test("executable probes remain on disk after success and timeout", async () => {
+        const original = Bun.spawn;
+        const files: string[] = [];
+        let slow = false;
+        // Run the existing interpreter, avoiding a new executable's OS approval during the test.
+        const spawn = spyOn(Bun, "spawn").mockImplementation((command, options) => {
+            files.push(String(command[0]));
+            return original(
+                slow ? [process.execPath, "-e", "await Bun.sleep(10000)"] : ["/bin/sh", String(command[0])],
+                options
+            );
+        });
+        try {
+            expect(await newExecutablesStall(1000)).toBe(false);
+            slow = true;
+            expect(await newExecutablesStall(5)).toBe(true);
+            for (const file of files) {
+                expect(fs.readFileSync(file, "utf8")).toBe("#!/bin/sh\nexit 0\n");
+            }
+            expect(files).toHaveLength(2);
+        } finally {
+            spawn.mockRestore();
+        }
+    });
+
+    test("posting failure remains a failure even when other replies succeed", () => {
+        expect(postingExitCode(1, [{ code: 0 }])).toBe(1);
+        expect(postingExitCode(0, [{ code: 1 }, { code: 0 }])).toBe(1);
+        expect(postingExitCode(0, [{ code: 0 }])).toBe(0);
+    });
+
+    test("plants require executed failures and completed passing runs", () => {
+        const failed = "(fail) regression\n 0 pass\n 1 fail\n[test] suite complete (exit 1)";
+        const passed = " 1 pass\n 0 fail\n[test] suite complete (exit 0)";
+        expect(testEvidence({ code: 1, out: failed }, true)).toBe(true);
+        expect(testEvidence({ code: 0, out: passed }, false)).toBe(true);
+        for (const out of [
+            "error: No matching export",
+            "0 pass\n0 fail\n[test] suite complete (exit 1)",
+            failed.replace("[test] suite complete (exit 1)", ""),
+            "1 fail\n[test] suite complete (exit 1)",
+        ]) {
+            expect(testEvidence({ code: 1, out }, true)).toBe(false);
+        }
+        expect(testEvidence({ code: 0, out: passed.replace("[test] suite complete (exit 0)", "") }, false)).toBe(false);
+        expect(testEvidence({ code: 0, out: "0 pass\n0 fail\n[test] suite complete (exit 0)" }, false)).toBe(false);
+        expect(testEvidence({ code: 1, out: "Executed 2 tests, with 1 failure" }, true)).toBe(true);
+        expect(testEvidence({ code: 0, out: "Executed 2 tests, with 0 failures" }, false)).toBe(true);
+    });
+
+    test("judge pack includes the worker report next to the claims and diff", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-judge-"));
+        const report = join(dir, "report.txt");
+        fs.writeFileSync(report, "VERIFY: fixture check passed\nOPEN: fixture concern\n");
+        const result = Bun.spawnSync(
+            [process.execPath, join(import.meta.dir, "judge-pack.ts"), "--range", "HEAD..HEAD", "--report", report],
+            { stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        expect(result.exitCode).toBe(0);
+        expect(result.stdout.toString()).toContain("VERIFY: fixture check passed");
+        expect(result.stdout.toString()).toContain("OPEN: fixture concern");
+        expect(result.stdout.toString()).toContain("# Diff HEAD..HEAD");
+    });
 });

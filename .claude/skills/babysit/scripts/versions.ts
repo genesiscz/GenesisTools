@@ -4,7 +4,7 @@
  * replayed side" can be a downgrade). Every other conflict belongs to a worker or the lead.
  */
 
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolutionProblems } from "./conflicts";
@@ -60,7 +60,7 @@ export async function newExecutablesStall(timeoutMs = 5_000): Promise<boolean> {
         proc.kill();
     }
 
-    rmSync(dir, { recursive: true, force: true });
+    // syspolicyd may still be checking this executable after the child exits or is signalled. Keep it.
     return !started;
 }
 
@@ -125,30 +125,56 @@ export function higherVersionSide(ours: string, theirs: string): "--ours" | "--t
     return i >= 0 && (a[i] ?? 0) > (b[i] ?? 0) ? "--ours" : "--theirs";
 }
 
-/** Stages the higher version of each conflicted version file. False, touching nothing, when another file conflicts;
- * false too when a staged result does not parse (a side can already carry a broken manifest, as d9687720a did), and
- * the caller aborts the pick or rebase. */
+/** Resolve only version lines in the already-merged working text. Validate every file before writing any. */
 export function resolveVersionConflicts(git: GitRun, conflicted: string[]): boolean {
     if (conflicted.length === 0 || conflicted.some((file) => !VERSION_FILES.has(file))) {
         return false;
     }
-
+    const root = git(["rev-parse", "--show-toplevel"]);
+    if (root.code !== 0) {
+        return false;
+    }
+    const resolved = new Map<string, string>();
     for (const file of conflicted) {
-        // Stage 2 is "ours" (the branch being built), stage 3 "theirs" (the commit being replayed or picked).
-        git([
-            "checkout",
-            higherVersionSide(git(["show", `:2:${file}`]).out, git(["show", `:3:${file}`]).out),
-            "--",
-            file,
-        ]);
-        git(["add", "--", file]);
+        const text = resolveVersionText(readFileSync(join(root.out.trim(), file), "utf8"));
+        if (text === null) {
+            return false;
+        }
+        resolved.set(file, text);
     }
-
-    const problems = resolutionProblems(conflicted, (file) => git(["show", `:${file}`]).out);
-
-    for (const problem of problems) {
-        console.error(`✖ ${problem}`);
+    const problems = resolutionProblems(conflicted, (file) => resolved.get(file) ?? "");
+    if (problems.length > 0) {
+        for (const problem of problems) {
+            console.error(`✖ ${problem}`);
+        }
+        return false;
     }
+    for (const [file, text] of resolved) {
+        writeFileSync(join(root.out.trim(), file), text);
+        if (git(["add", "--", file]).code !== 0) {
+            return false;
+        }
+    }
+    return true;
+}
 
-    return problems.length === 0;
+export function resolveVersionText(text: string): string | null {
+    let count = 0;
+    let valid = true;
+    const versionLine = /^([ \t]*"version"[ \t]*:[ \t]*")(\d+\.\d+\.\d+)(",?[ \t]*\r?\n?)$/;
+    const resolved = text.replace(
+        /^<<<<<<<[^\n]*\n([\s\S]*?)^=======[ \t]*\r?\n([\s\S]*?)^>>>>>>>[^\n]*(?:\n|$)/gm,
+        (_block, left: string, right: string) => {
+            count++;
+            const [ours, base] = left.split(/^\|{7}[^\n]*\n/m);
+            const a = versionLine.exec(ours);
+            const b = versionLine.exec(right);
+            if (!a || !b || a[1] !== b[1] || a[3] !== b[3] || (base !== undefined && !versionLine.test(base))) {
+                valid = false;
+                return _block;
+            }
+            return higherVersionSide(ours, right) === "--ours" ? ours : right;
+        }
+    );
+    return valid && count > 0 && !/^(?:<{7}|={7}|>{7}|\|{7})(?:\s|$)/m.test(resolved) ? resolved : null;
 }

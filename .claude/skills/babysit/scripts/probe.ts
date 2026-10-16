@@ -5,25 +5,49 @@
  * worktree and fails only on a hit in a line the pushed range adds. It prints file and line, never the matched text.
  */
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
+
+function probeHits(output: string): Array<{ file: string; line: number } | null> {
+    return output
+        .split("\n")
+        .filter((line) => /^ {4}.+/.test(line))
+        .map((line) => {
+            const hit = /^ {4}(.+?):(\d+):/.exec(line);
+            return hit && !hit[1].startsWith('"') ? { file: hit[1], line: Number(hit[2]) } : null;
+        });
+}
 
 /** `path:line` for every probe hit that falls on a line `diffU0` (`git diff -U0 a..b`) adds. */
 export function hitsInAddedLines(probeOutput: string, diffU0: string): string[] {
     const hits = new Map<string, Set<number>>();
 
-    for (const match of probeOutput.matchAll(/^\s+([^:\s]+):(\d+):/gm)) {
-        const lines = hits.get(match[1]) ?? new Set<number>();
-        lines.add(Number(match[2]));
-        hits.set(match[1], lines);
+    const parsed = probeHits(probeOutput);
+    for (const hit of parsed) {
+        if (!hit) {
+            continue;
+        }
+        const lines = hits.get(hit.file) ?? new Set<number>();
+        lines.add(hit.line);
+        hits.set(hit.file, lines);
     }
 
-    const found: string[] = [];
+    const found: string[] = parsed.includes(null) ? ["unparseable probe hit"] : [];
     let file = "";
 
     for (const line of diffU0.split("\n")) {
-        const header = /^\+\+\+ b\/(.+)$/.exec(line);
+        const header = /^\+\+\+ (.+)$/.exec(line);
 
         if (header) {
-            file = header[1];
+            let name = header[1].replace(/\t$/, "");
+            if (name.startsWith('"')) {
+                try {
+                    name = SafeJSON.parse(name, { strict: true });
+                } catch {
+                    found.push("unparseable diff path");
+                    continue;
+                }
+            }
+            file = name.startsWith("b/") ? name.slice(2) : "";
             continue;
         }
 
@@ -57,14 +81,14 @@ export function probeAddedLines({ wt, from, to }: { wt: string; from: string; to
         return true;
     }
 
-    const older = out.match(/^\s+[^:\s]+:\d+:/gm)?.length ?? 0;
+    const older = probeHits(out).length;
 
     if (probe.exitCode !== 1 || older === 0) {
         console.log(`✖ personal-data probe exit ${probe.exitCode} with no hit list: it checked nothing`);
         return false;
     }
 
-    const diff = Bun.spawnSync(["git", "diff", "-U0", `${from}..${to}`], {
+    const diff = Bun.spawnSync(["git", "-c", "core.quotePath=false", "diff", "-U0", `${from}..${to}`], {
         cwd: wt,
         stdout: "pipe",
         stderr: "pipe",

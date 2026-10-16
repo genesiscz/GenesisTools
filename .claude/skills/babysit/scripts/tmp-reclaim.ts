@@ -122,16 +122,13 @@ function protectedIds(): string[] {
     return [...new Set(ids)];
 }
 
-function openPaths(): string[] {
+export function openPaths(): string[] {
     // lint-rules-ignore: a deletion guard needs every open AND mapped file (lsof's mem rows), which the process layer does not read
     const p = Bun.spawnSync(["lsof", "-n", "-Fn", "-w"], { stdout: "pipe", stderr: "pipe" });
     const out = p.stdout.toString();
 
-    // lsof exits 1 when some processes could not be read, but then still lists the rest. An empty listing is a
-    // failure: deleting under a blind check is exactly what this script must never do.
-    if (!out.includes("\nn/")) {
-        console.error(`✖ lsof gave no listing (exit ${p.exitCode}): refusing to judge what is open`);
-        process.exit(1);
+    if (p.exitCode !== 0 || p.stderr.length > 0 || !out.includes("\nn/")) {
+        throw new Error(`lsof listing incomplete (exit ${p.exitCode}): refusing to judge what is open`);
     }
 
     return out
@@ -269,104 +266,110 @@ function entries(): string[] {
 
 const gb = (bytes: number) => `${(bytes / 1e9).toFixed(2)} GB`;
 
-if (!has("--apply")) {
+function main(): void {
+    if (!has("--apply")) {
+        const ids = protectedIds();
+        const open = openPaths();
+        const candidates: Candidate[] = [];
+        const skipped: Record<string, number> = {};
+
+        for (const path of entries()) {
+            const verdict = judge(path, ids, open);
+
+            if (typeof verdict === "string") {
+                skipped[verdict] = (skipped[verdict] ?? 0) + 1;
+            } else {
+                candidates.push(verdict);
+            }
+        }
+
+        candidates.sort((a, b) => b.bytes - a.bytes);
+
+        for (const c of candidates.slice(0, 40)) {
+            const age = ((Date.now() - c.newest) / 3_600_000).toFixed(1);
+            console.log(`${(c.bytes / 1e6).toFixed(0).padStart(7)} MB  ${age.padStart(6)} h  ${c.path}`);
+        }
+
+        const total = candidates.reduce((sum, c) => sum + c.bytes, 0);
+        const planDir = runDir ? join(runDir, "logs") : join(roots[0] ?? "/tmp", "cc");
+        mkdirSync(planDir, { recursive: true });
+        const planPath = join(planDir, `tmp-reclaim-plan-${Date.now()}.json`);
+        const plan: Plan = { createdAt: Date.now(), minAgeHours, candidates };
+        writeFileSync(planPath, SafeJSON.stringify(plan, null, 2));
+        console.log(
+            `${candidates.length} candidates, ${gb(total)}; protected ids ${ids.length}; skipped ${SafeJSON.stringify(skipped)}`
+        );
+        console.log(`plan: ${planPath}\napply it within 30 minutes: bun tmp-reclaim.ts --apply --plan ${planPath}`);
+        process.exit(0);
+    }
+
+    const planPath = flag("--plan");
+
+    if (!planPath || !existsSync(planPath)) {
+        console.error("✖ --apply needs --plan <file> from a dry run");
+        process.exit(2);
+    }
+
+    const plan = SafeJSON.parse(readFileSync(planPath, "utf8"), { strict: true }) as Plan;
+
+    if (Date.now() - plan.createdAt > PLAN_MAX_AGE_MS) {
+        console.error("✖ the plan is older than 30 minutes: run the dry run again");
+        process.exit(2);
+    }
+
+    // The dry run decided with its own threshold; the re-check uses the same one.
+    minAgeHours = plan.minAgeHours;
+
     const ids = protectedIds();
     const open = openPaths();
-    const candidates: Candidate[] = [];
-    const skipped: Record<string, number> = {};
+    let freed = 0;
+    let removed = 0;
+    const refused: Record<string, number> = {};
 
-    for (const path of entries()) {
-        const verdict = judge(path, ids, open);
+    for (const planned of plan.candidates) {
+        const now = judge(planned.path, ids, open);
 
-        if (typeof verdict === "string") {
-            skipped[verdict] = (skipped[verdict] ?? 0) + 1;
-        } else {
-            candidates.push(verdict);
+        if (typeof now === "string" || now.ino !== planned.ino) {
+            const why = typeof now === "string" ? now : "replaced";
+            refused[why] = (refused[why] ?? 0) + 1;
+            continue;
+        }
+
+        const root = roots.find((r) => planned.path.startsWith(`${r}/`));
+
+        if (!root) {
+            refused["outside-roots"] = (refused["outside-roots"] ?? 0) + 1;
+            continue;
+        }
+
+        const trash = join(root, `.tmp-reclaim-${process.pid}`);
+        mkdirSync(trash, { recursive: true });
+
+        try {
+            renameSync(planned.path, join(trash, `${removed}-${basename(planned.path)}`));
+            removed++;
+            freed += now.bytes;
+        } catch (error) {
+            console.error(`could not move ${planned.path}: ${String(error)}`);
         }
     }
 
-    candidates.sort((a, b) => b.bytes - a.bytes);
+    for (const root of roots) {
+        const trash = join(root, `.tmp-reclaim-${process.pid}`);
 
-    for (const c of candidates.slice(0, 40)) {
-        const age = ((Date.now() - c.newest) / 3_600_000).toFixed(1);
-        console.log(`${(c.bytes / 1e6).toFixed(0).padStart(7)} MB  ${age.padStart(6)} h  ${c.path}`);
+        if (existsSync(trash)) {
+            rmSync(trash, { recursive: true, force: true });
+        }
     }
 
-    const total = candidates.reduce((sum, c) => sum + c.bytes, 0);
-    const planDir = runDir ? join(runDir, "logs") : join(roots[0] ?? "/tmp", "cc");
-    mkdirSync(planDir, { recursive: true });
-    const planPath = join(planDir, `tmp-reclaim-plan-${Date.now()}.json`);
-    const plan: Plan = { createdAt: Date.now(), minAgeHours, candidates };
-    writeFileSync(planPath, SafeJSON.stringify(plan, null, 2));
-    console.log(
-        `${candidates.length} candidates, ${gb(total)}; protected ids ${ids.length}; skipped ${SafeJSON.stringify(skipped)}`
-    );
-    console.log(`plan: ${planPath}\napply it within 30 minutes: bun tmp-reclaim.ts --apply --plan ${planPath}`);
-    process.exit(0);
-}
+    const summary = `removed ${removed} of ${plan.candidates.length} planned entries, about ${gb(freed)}; refused at apply ${SafeJSON.stringify(refused)}`;
+    console.log(summary);
 
-const planPath = flag("--plan");
-
-if (!planPath || !existsSync(planPath)) {
-    console.error("✖ --apply needs --plan <file> from a dry run");
-    process.exit(2);
-}
-
-const plan = SafeJSON.parse(readFileSync(planPath, "utf8"), { strict: true }) as Plan;
-
-if (Date.now() - plan.createdAt > PLAN_MAX_AGE_MS) {
-    console.error("✖ the plan is older than 30 minutes: run the dry run again");
-    process.exit(2);
-}
-
-// The dry run decided with its own threshold; the re-check uses the same one.
-minAgeHours = plan.minAgeHours;
-
-const ids = protectedIds();
-const open = openPaths();
-let freed = 0;
-let removed = 0;
-const refused: Record<string, number> = {};
-
-for (const planned of plan.candidates) {
-    const now = judge(planned.path, ids, open);
-
-    if (typeof now === "string" || now.ino !== planned.ino) {
-        const why = typeof now === "string" ? now : "replaced";
-        refused[why] = (refused[why] ?? 0) + 1;
-        continue;
-    }
-
-    const root = roots.find((r) => planned.path.startsWith(`${r}/`));
-
-    if (!root) {
-        refused["outside-roots"] = (refused["outside-roots"] ?? 0) + 1;
-        continue;
-    }
-
-    const trash = join(root, `.tmp-reclaim-${process.pid}`);
-    mkdirSync(trash, { recursive: true });
-
-    try {
-        renameSync(planned.path, join(trash, `${removed}-${basename(planned.path)}`));
-        removed++;
-        freed += now.bytes;
-    } catch (error) {
-        console.error(`could not move ${planned.path}: ${String(error)}`);
+    if (runDir) {
+        appendEvent(runDir, { kind: "note", text: `tmp-reclaim: ${summary} (plan ${planPath})` });
     }
 }
 
-for (const root of roots) {
-    const trash = join(root, `.tmp-reclaim-${process.pid}`);
-
-    if (existsSync(trash)) {
-        rmSync(trash, { recursive: true, force: true });
-    }
-}
-
-const summary = `removed ${removed} of ${plan.candidates.length} planned entries, about ${gb(freed)}; refused at apply ${SafeJSON.stringify(refused)}`;
-console.log(summary);
-
-if (runDir) {
-    appendEvent(runDir, { kind: "note", text: `tmp-reclaim: ${summary} (plan ${planPath})` });
+if (import.meta.main) {
+    main();
 }
