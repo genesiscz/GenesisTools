@@ -90,7 +90,31 @@ describe("read-only chains", () => {
     });
 });
 
+describe("sed stays a reader", () => {
+    test("a second script after the range is refused", () => {
+        expect(readOnlyChain(entry, "sed -n 1,9p src/a.ts")).toBe(true);
+        for (const command of ["sed -n 1p -e 'w /tmp/x' src/a.ts", "sed -n 1p -i src/a.ts", "sed -n 1p -f s.sed a"]) {
+            expect({ command, ok: readOnlyChain(entry, command) }).toEqual({ command, ok: false });
+        }
+    });
+});
+
 describe("brief approval boundary", () => {
+    test("the briefs' test command runs test files inside the worktree only", () => {
+        expect(allowedCommand(entry, "timeout 600 bun scripts/test.ts src/a.test.ts src/ui/b.test.tsx")).toBe(true);
+        expect(allowedCommand(entry, "bun scripts/test.ts src/a.test.ts")).toBe(true);
+        for (const command of [
+            "timeout 600 bun scripts/test.ts",
+            "timeout 600 bun scripts/test.ts src/a.ts",
+            "timeout 600 bun scripts/test.ts ../other/a.test.ts",
+            "timeout 600 bun scripts/test.ts /etc/a.test.ts",
+            "timeout 600 bun scripts/test.ts src/a.test.ts --preload evil.ts",
+            "timeout 600 bun other.ts src/a.test.ts",
+        ]) {
+            expect({ command, ok: allowedCommand(entry, command) }).toEqual({ command, ok: false });
+        }
+    });
+
     test("verification requires the entire configured command", () => {
         expect(allowedCommand(entry, "bunx biome check src/a.ts")).toBe(true);
         for (const command of [
