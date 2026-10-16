@@ -51,6 +51,23 @@ export function idleCompactSettings(hooksFile: string | undefined): IdleCompactS
     };
 }
 
+/**
+ * Whether a compaction leaves nothing for the timer to save: a main-loop one that ran. A `precompute`
+ * installs nothing (the engine keeps its summary for a later threshold compaction), and it resolves after
+ * the turn that started it, so cancelling on it would drop the timer of exactly the largest sessions.
+ */
+export function compactionEndsIdleWait({
+    agentId,
+    trigger,
+    skipped,
+}: {
+    agentId: string | undefined;
+    trigger: string;
+    skipped: boolean;
+}): boolean {
+    return agentId === undefined && trigger !== "precompute" && !skipped;
+}
+
 /** Why the timer did not compact, or `undefined` to compact. */
 export function idleCompactSkip({
     settings,

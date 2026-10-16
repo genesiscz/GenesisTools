@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { IDLE_COMPACT_DEFAULTS, IDLE_NOTICE, idleCompactSettings, idleCompactSkip, idleNotice } from "./idle";
+import {
+    compactionEndsIdleWait,
+    IDLE_COMPACT_DEFAULTS,
+    IDLE_NOTICE,
+    idleCompactSettings,
+    idleCompactSkip,
+    idleNotice,
+} from "./idle";
 import { fullDiffEnabled, sectionsOf, sectionsOfCalls } from "./sections";
 
 const NOTE = [
@@ -103,6 +110,14 @@ describe("idle compaction", () => {
         expect(idleCompactSkip({ settings, surfaces: 0, tokens: 300_000 })).toContain("no surface");
         expect(idleCompactSkip({ settings, surfaces: 1, tokens: 199_999 })).toContain("under the floor");
         expect(idleCompactSkip({ settings, surfaces: 1, tokens: undefined })).toContain("unknown");
+    });
+
+    it("a precompute, a skipped and a subagent compaction leave the armed timer alone", () => {
+        expect(compactionEndsIdleWait({ agentId: undefined, trigger: "auto", skipped: false })).toBe(true);
+        expect(compactionEndsIdleWait({ agentId: undefined, trigger: "manual", skipped: false })).toBe(true);
+        expect(compactionEndsIdleWait({ agentId: undefined, trigger: "precompute", skipped: false })).toBe(false);
+        expect(compactionEndsIdleWait({ agentId: undefined, trigger: "auto", skipped: true })).toBe(false);
+        expect(compactionEndsIdleWait({ agentId: "a1", trigger: "auto", skipped: false })).toBe(false);
     });
 
     it("writes a notice that starts with the text the session scan counts", () => {

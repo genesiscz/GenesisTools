@@ -1,5 +1,5 @@
 import type { EngineInterface, Register, Timer } from "claude-code";
-import { idleCompactSettings, idleCompactSkip, idleNotice } from "./idle";
+import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice } from "./idle";
 import { type CallSection, fullDiffEnabled, sectionsOfCalls } from "./sections";
 
 // The full-diff mod. When the diff hook (`tools agents hooks`) cut a Bash call's message, it wrote the
@@ -68,6 +68,8 @@ async function compactIfIdle($: EngineInterface): Promise<void> {
     }
 
     try {
+        // A full compaction: only the engine's threshold path uses a ready precomputed summary, so this one
+        // makes its own summary request (over the still-warm cache) and a ready precompute is dropped.
         const compacted = await $.session.compact({});
 
         if (compacted.skip !== undefined) {
@@ -115,7 +117,7 @@ export const register: Register = (on) => {
         const result = await next(e);
 
         // The person's /compact, the engine's own auto or idle compaction: nothing is left to save.
-        if (e.agentId === undefined && result.skip === undefined) {
+        if (compactionEndsIdleWait({ agentId: e.agentId, trigger: e.trigger, skipped: result.skip !== undefined })) {
             stopIdleTimer();
         }
 
