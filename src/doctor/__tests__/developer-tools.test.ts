@@ -1,7 +1,66 @@
 import { describe, expect, it } from "bun:test";
-import { hostAppBundle, isDeveloperToolAllowed } from "@app/doctor/analyzers/security";
+import { rm } from "node:fs/promises";
+import { hostAppBundle, isDeveloperToolAllowed, SecurityAnalyzer } from "@app/doctor/analyzers/security";
+import { writeCache } from "@app/doctor/lib/cache";
+import { analysisDirFor, cacheFilePath } from "@app/doctor/lib/paths";
+import type { AnalyzerContext, Finding } from "@app/doctor/lib/types";
 
 describe("Developer Tools check", () => {
+    it("ignores cached host findings and scans again when the host changes", async () => {
+        let host = "Editor";
+        let scans = 0;
+        class HostSecurityAnalyzer extends SecurityAnalyzer {
+            protected async *run(): AsyncIterable<Finding> {
+                scans++;
+                yield {
+                    id: "sec-developer-tools",
+                    analyzerId: this.id,
+                    title: `Developer Tools for ${host}`,
+                    severity: host === "Terminal" ? "safe" : "cautious",
+                    actions: [],
+                };
+            }
+        }
+        const analyzer = new HostSecurityAnalyzer();
+        const runId = `doctor-security-test-${crypto.randomUUID()}`;
+        const ctx: AnalyzerContext = {
+            runId,
+            opts: { thorough: false, fresh: false, dryRun: true },
+            emit: () => {},
+        };
+        await writeCache(analyzer.id, {
+            analyzerId: analyzer.id,
+            findings: [
+                {
+                    id: "sec-developer-tools",
+                    analyzerId: analyzer.id,
+                    title: "stale Terminal",
+                    severity: "safe",
+                    actions: [],
+                },
+            ],
+            durationMs: 0,
+            error: null,
+            fromCache: false,
+            timestamp: new Date().toISOString(),
+        });
+        try {
+            const editor = await analyzer.analyze(ctx);
+            expect(editor.fromCache).toBe(false);
+            expect(editor.findings[0].title).toBe("Developer Tools for Editor");
+            expect(editor.findings[0].severity).toBe("cautious");
+            host = "Terminal";
+            const terminal = await analyzer.analyze(ctx);
+            expect(terminal.fromCache).toBe(false);
+            expect(terminal.findings[0].title).toBe("Developer Tools for Terminal");
+            expect(terminal.findings[0].severity).toBe("safe");
+            expect(scans).toBe(2);
+        } finally {
+            await rm(cacheFilePath(analyzer.id), { force: true });
+            await rm(analysisDirFor(runId), { recursive: true, force: true });
+        }
+    });
+
     it("takes the outermost app up the process tree, not an app executable run as a CLI inside it", () => {
         const tree = [
             "/Users/example/Applications/GenesisTools.app/Contents/MacOS/GenesisTools",

@@ -18,7 +18,8 @@ export class SecurityAnalyzer extends Analyzer {
     readonly name = "Security";
     readonly icon = "Q";
     readonly category: AnalyzerCategory = "security";
-    readonly cacheTtlMs = 24 * 60 * 60 * 1000;
+    // Developer Tools depends on this process's host, so machine-wide cached results are unsafe.
+    readonly cacheTtlMs = 0;
 
     protected async *run(_ctx: AnalyzerContext): AsyncIterable<Finding> {
         for (const check of securityChecks()) {
