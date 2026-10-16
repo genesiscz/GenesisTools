@@ -65,19 +65,18 @@ Always record what was missing and what substitution was used in `Confidence & G
 
 ### Offer install (at most once per run)
 
-If a missing MCP would materially improve the run AND the user didn't say "quick"/"temporary"/"just tell me", ask ONCE before dispatch (`AskUserQuestion`, `request_user_input_async` or `ask_user_question`, whichever your harness has):
+If a missing MCP would materially improve the run AND the user didn't say "quick"/"temporary"/"just tell me", offer it ONCE, and dispatch with the degraded toolset without waiting: an install cannot help THIS run anyway (step 3 below). Write the offer in your reply, not in a native question tool (`AskUserQuestion` stops the run until the user answers, and this is not a blocker):
 
-- **Question:** "I'd dispatch this with `<MCP-name>` for `<one-line value-add>`, but it's not installed. Want install instructions, or proceed without?"
-- **Options:** `Install now`, `Skip and proceed`, `Don't ask again this run`.
+- **Offer:** "I dispatched this without `<MCP-name>`, which would add `<one-line value-add>`. Say "install" for the install steps."
 
-If the user picks **Install now**, read `references/mcps.md` from this skill directory and output:
+If the user answers **install**, read `references/mcps.md` from this skill directory and output:
 1. The `bun add --global <package>` command (if local) or "no install — hosted HTTP MCP" (if remote).
 2. The exact `mcpServers` JSON snippet for the user to paste into their Claude config (or the equivalent `claude mcp add` one-liner).
 3. Note that the user must restart their agent for the new server to become callable (Claude Code and Codex reload MCP config on restart; Grok re-reads `~/.grok/config.toml` on start too), and the skill will proceed without it for THIS run.
 
 The skill does **not** execute install commands itself. The user runs the install. The skill then proceeds with whatever is currently available.
 
-If the user picks **Skip** or **Don't ask again**, dispatch immediately with the degraded toolset.
+Do not repeat the offer for another missing MCP in the same run.
 
 ## Categories (6)
 
@@ -314,10 +313,10 @@ Resolve the vault path in this order; **stop at the first hit:**
 
 ### Persist the resolved path (offer once)
 
-If the path came from steps 2–5 (i.e. it was **not** already in `$OBSIDIAN_VAULT_PATH`) — and this isn't a "temporary"/"quick" run — offer once to persist it so future runs skip detection. **Exception:** if the path came from step 2 (a user-named path), only offer to persist it when it's actually a vault root (contains a `.obsidian/` subdir); a one-off subfolder like `~/Notes/scratch` should be used for this run but never saved as the global `OBSIDIAN_VAULT_PATH`. `AskUserQuestion`:
+If the path came from steps 2–5 (i.e. it was **not** already in `$OBSIDIAN_VAULT_PATH`) — and this isn't a "temporary"/"quick" run — offer once to persist it so future runs skip detection. **Exception:** if the path came from step 2 (a user-named path), only offer to persist it when it's actually a vault root (contains a `.obsidian/` subdir); a one-off subfolder like `~/Notes/scratch` should be used for this run but never saved as the global `OBSIDIAN_VAULT_PATH`. Write the offer in your reply and keep working with the resolved path; persist only when the user answers. It is not a blocker, so not a native question tool:
 
-- **Question:** "Save `OBSIDIAN_VAULT_PATH=<path>` so I can skip detection next time?"
-- **Options:**
+- **Offer:** "Save `OBSIDIAN_VAULT_PATH=<path>` so I can skip detection next time?"
+- **Choices:**
   - **`~/.claude/settings.json`** — Claude-only; the harness injects the `env` block into Claude Code's environment at session start. Add/replace `OBSIDIAN_VAULT_PATH` inside the top-level `env` object (create `env` if absent). **Use the Read + Edit tools to splice the one key in place** — do NOT parse-and-rewrite the whole file (settings.json is JSONC; a strict `JSON.parse`/stringify round-trip would strip comments and reformat unrelated keys).
   - **Shell rc** — all tools, all shells. Detect from `$SHELL`: zsh → `~/.zshrc`, bash → `~/.bashrc`, fish → `~/.config/fish/config.fish`. Append `export OBSIDIAN_VAULT_PATH="<path>"` (fish: `set -Ux OBSIDIAN_VAULT_PATH "<path>"`). If a line already sets it, replace that line instead of duplicating.
   - **`Just this run`** — don't persist.
@@ -482,9 +481,9 @@ SAVE RAW REPORT TO: <exact absolute path, provided by main Claude>
 - **Source minimums are hard** (see table above). No invention, no padding.
 - **Always run `scripts/resolve.ts` when saving, and surface its `warnings`.** Never hardcode `.claude/work/research/`, never read the config file yourself, and never fall back to `defaultPath` when a project declares a resolver that failed.
 - **Ask the default path at most once until remembered.** If `config.json` is missing or unusable and this run will save, ask then write the file. Do not re-ask on later runs while the config is valid. "Change research path" is the explicit re-ask trigger.
-- **`AskUserQuestion` budget.** Up to **three** for the core run: once for the optional install offer, once for ambiguity/depth, once for the default research path when config is unset. **Plus up to two more** — *only* when an Obsidian path is required and `$OBSIDIAN_VAULT_PATH` isn't already set: one for vault resolution (pick-from-list **or** free-text, never both) and one for the vault persist offer. Never prompt about the vault when no Obsidian path is needed.
+- **`AskUserQuestion` budget.** Up to **two** for the core run: once for ambiguity/depth, once for the default research path when config is unset. **Plus one more**, *only* when an Obsidian path is required and `$OBSIDIAN_VAULT_PATH` isn't already set: vault resolution (pick-from-list **or** free-text, never both). The optional install offer and the vault persist offer are written in the reply and never wait for an answer. Never prompt about the vault when no Obsidian path is needed.
 - **Tool-availability fallback.** Missing MCP → drop from allowlist, substitute per the table, note in "Confidence & Gaps".
-- **Install offer is opt-in**, never automatic. Default to Skip when in doubt. Never run install commands on behalf of the user — show the command and config snippet only.
+- **Install offer is opt-in**, never automatic, and the run never waits for it. Leave it out when in doubt. Never run install commands on behalf of the user — show the command and config snippet only.
 - **Vault detection is gated on an Obsidian path being needed**, and persists only with explicit consent. Never auto-edit `settings.json` or a shell rc without the user picking that option in the persist offer.
 - **"Temporary" override.** Query contains "temporary", "just tell me", "don't save", "quick", "no need to save" → skip file write, skip install offer, skip default-path ask, skip the vault persist offer, inline only. Source minimums still enforced.
 - **Concurrency cap = 4 parallel agents** per research run. If a preset would spawn more, drop the lowest-priority angle.
@@ -499,7 +498,7 @@ User: "what's the current stable version of Bun?"
 
 **Example 2 — comparison, first save (no research config yet), reddit MCP missing**
 User: "research state management options for React in 2026"
-→ category=`comparison`, `needsSave=true`, `scripts/resolve.ts` answers `found: false` → ask once where research for this project belongs. User picks Project `.claude/work/research/`. Write the `research` key of the shared config (`pathKind: project-relative`, `defaultPath: .claude/work/research`). Detect `reddit-mcp-server` missing, ask once: install / skip / don't ask. User picks Install. Skill outputs `bun add --global reddit-mcp-server` and the config snippet from `references/mcps.md`. User restarts later. Skill proceeds with Sonnet docs + Haiku GitHub (Reddit angle dropped this run, gap recorded). 8 sources combined, save to `<repo>/.claude/work/research/2026-04-27-ReactStateManagement2026.md`.
+→ category=`comparison`, `needsSave=true`, `scripts/resolve.ts` answers `found: false` → ask once where research for this project belongs. User picks Project `.claude/work/research/`. Write the `research` key of the shared config (`pathKind: project-relative`, `defaultPath: .claude/work/research`). Detect `reddit-mcp-server` missing and dispatch at once with Sonnet docs + Haiku GitHub (Reddit angle dropped this run, gap recorded). The reply offers the install once, in text. The user answers "install" later, and the skill outputs `bun add --global reddit-mcp-server` and the config snippet from `references/mcps.md`; it takes effect after a restart. 8 sources combined, save to `<repo>/.claude/work/research/2026-04-27-ReactStateManagement2026.md`.
 
 **Example 3 — sentiment, user declined install**
 User: "what do people complain about with tRPC, quick"

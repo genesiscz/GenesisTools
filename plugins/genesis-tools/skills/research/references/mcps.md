@@ -11,11 +11,8 @@ Check whether an MCP is available in the current session by looking at the syste
 When the skill decides an MCP would materially improve a research run and it's missing, it MUST:
 
 1. Tell the user **what the MCP adds** to this run, in one sentence ("brave-search would let me cross-check facts against a second search index").
-2. Offer install via `AskUserQuestion` with three choices:
-   - **Install now** (recommended) — show the install command and config snippet, then continue once they confirm install.
-   - **Skip** — proceed without it, note the gap in `Confidence & Gaps`.
-   - **Don't ask again this run** — proceed and don't re-prompt for any other missing MCP this run.
-3. If the user picks Install now, output the **install command** AND the **config snippet** the user pastes into their Claude Code MCP config (the user runs the install themselves; the skill does not auto-run install commands).
+2. Offer the install in the reply, once per run, and dispatch without it: an install takes effect only in a new session, so the run never waits for the answer. Not a native question tool such as `AskUserQuestion`: it stops the run, and an optional install is not a blocker. Note the gap in `Confidence & Gaps`.
+3. If the user answers "install", output the **install command** AND the **config snippet** the user pastes into their Claude Code MCP config (the user runs the install themselves; the skill does not auto-run install commands).
 
 Default to **Skip** if the run is small, low-stakes, or the user typed "quick"/"just tell me"/"temporary".
 
