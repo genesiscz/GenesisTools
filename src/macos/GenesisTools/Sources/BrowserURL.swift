@@ -43,6 +43,9 @@ final class BrowserURLForwarder: NSObject {
     /// only in the handler ran first, and the hub then came to the front anyway ("the rohlik link
     /// opens the hub", 2026-10-02).
     private var focusReturn: (app: NSRunningApplication, until: Date)?
+    /// The last sign-in link sent back to a web app. The same link again within 10 s means the web app did not take
+    /// it and handed it out again, so it goes to the browser instead of bouncing between the two forever.
+    private var lastWebAppReturn: (raw: String, at: Date)?
     /// When this face last became active: an activation just before a link arrives is the delivery's.
     private var activatedAt = Date.distantPast
     /// On-screen normal windows, front to back, as they stood when another app last became active: the
@@ -144,6 +147,9 @@ final class BrowserURLForwarder: NSObject {
     /// One link into a fresh router instance; also the path for links AppKit hands to a delegate's
     /// `application(_:open:)` (LocalFileHandoff.deliver).
     func forward(_ raw: String) {
+        if returnToWebApp(raw) {
+            return
+        }
         // A new instance started by LaunchServices, not a child Process: a child inherits this face's
         // session, and a route's `open message://…` then failed inside LaunchServices
         // (`_LSOpenURLsWithCompletionHandler() failed`, 2026-09-24).
@@ -173,6 +179,27 @@ final class BrowserURLForwarder: NSObject {
             )
         }
         yieldActivation()
+    }
+
+    /// A sign-in step from a Safari web app goes back into that web app (WebAppSignIn).
+    private func returnToWebApp(_ raw: String) -> Bool {
+        guard let app = lastOtherApp, !app.isTerminated, let appURL = app.bundleURL, let url = URL(string: raw),
+            WebAppSignIn.returnsToWebApp(raw, sourceBundleID: app.bundleIdentifier)
+        else { return false }
+        if let last = lastWebAppReturn, last.raw == raw, Date().timeIntervalSince(last.at) < 10 {
+            RelayJournal.write("link \(RelayJournal.describe(raw)) came back from \(app.localizedName ?? "the web app"); forwarding it")
+            return false
+        }
+        lastWebAppReturn = (raw, Date())
+        NSWorkspace.shared.open([url], withApplicationAt: appURL, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+            if let error {
+                RelayJournal.write("link back to the web app FAILED: \(error)")
+            }
+        }
+        HubPerf.log("link: sign-in step back to the web app \(app.localizedName ?? "")")
+        RelayJournal.write("link \(RelayJournal.describe(raw)) sent back to the web app \(app.localizedName ?? "") (a sign-in step)")
+        yieldActivation()
+        return true
     }
 
     /// macOS activates this window face to deliver a link or a banner click; give the focus back to

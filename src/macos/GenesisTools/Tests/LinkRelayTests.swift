@@ -3,6 +3,23 @@ import XCTest
 
 /// Which faces keep the link relay in front of them (LinkRelay.swift).
 final class LinkRelayTests: XCTestCase {
+    /// The Grok web app's X login left it for Brave and the app stayed signed out (2026-10-16).
+    func testASignInStepFromASafariWebAppGoesBackIntoItAndOtherLinksDoNot() {
+        let webApp = "com.apple.Safari.WebApp.5A6B70DC-0000-4A8A-994F-97CB051AA8D8"
+        for link in [
+            "https://accounts.example.test/check-login?redirect=app",
+            "https://auth.example.test/set-cookie?token=abc",
+            "https://x.example.test/i/oauth2/authorize?client_id=1",
+            "https://example.test/login",
+        ] {
+            XCTAssertTrue(WebAppSignIn.returnsToWebApp(link, sourceBundleID: webApp), link)
+        }
+        XCTAssertFalse(WebAppSignIn.returnsToWebApp("https://github.com/genesiscz/GenesisTools", sourceBundleID: webApp))
+        XCTAssertFalse(WebAppSignIn.returnsToWebApp("https://accounts.example.test/check-login", sourceBundleID: "com.brave.Browser"))
+        XCTAssertFalse(WebAppSignIn.returnsToWebApp("https://accounts.example.test/check-login", sourceBundleID: nil))
+        XCTAssertFalse(WebAppSignIn.returnsToWebApp("mailto:someone@example.test", sourceBundleID: webApp))
+    }
+
     func testEveryWindowFaceEnsuresTheRelayAndScriptedRunsDoNot() {
         XCTAssertTrue(LinkRelay.shouldEnsure([]))
         XCTAssertTrue(LinkRelay.shouldEnsure(["--hub"]))
