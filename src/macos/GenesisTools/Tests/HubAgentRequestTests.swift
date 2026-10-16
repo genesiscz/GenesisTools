@@ -35,6 +35,20 @@ final class HubAgentRequestTests: XCTestCase {
         XCTAssertEqual(HubAgentsModel.requested(child: "a1", parent: nil, in: index)?.key, "p|a1")
     }
 
+    /// A session waiting for its user writes nothing, so `live` is false for it; the CLI says `open` when a
+    /// live agent process holds the session, and the Live group counts that.
+    func testASessionAnAgentProcessHoldsIsInTheLiveGroupWhileItsTranscriptIsOld() throws {
+        let json = #"{"sessionId":"s1","provider":"claude","lastAt":"2026-10-16T14:20:02.762Z","live":false,"open":true,"children":[]}"#
+        let parent = try JSONDecoder().decode(AgentParent.self, from: Data(json.utf8))
+
+        XCTAssertFalse(parent.isLive)
+        XCTAssertTrue(parent.hasProcess)
+        XCTAssertTrue(HubAgentsModel().isPresent(parent))
+
+        let quiet = try JSONDecoder().decode(AgentParent.self, from: Data(#"{"sessionId":"s2","provider":"claude","lastAt":"2026-10-16T14:20:02.762Z","live":false,"children":[]}"#.utf8))
+        XCTAssertFalse(HubAgentsModel().isPresent(quiet))
+    }
+
     func testALooseMatchStillAnswersWhenNothingMatchesExactly() {
         let index: [String: (parent: AgentParent?, node: AgentNode)] = [
             "p|worker-1234": (nil, AgentNode(id: "worker-1234", harness: "codex", kind: "worker", status: "done", lastAt: "")),

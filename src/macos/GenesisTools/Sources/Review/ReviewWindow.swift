@@ -266,6 +266,13 @@ final class ReviewModel: ObservableObject {
     @Published var commits: [RepoCommit] = []
     /// The checkouts of this repository, for the Worktree choice (filled by each load of the primary root).
     @Published var worktrees: [RepoWorktree] = []
+    /// Files this session's recent turns changed in each checkout (keyed by checkout path), for the Worktree choice.
+    @Published var worktreeActivity: [String: Int] = [:]
+    /// The checkout the session worked in most; the window opens on it unless somebody picked one.
+    @Published var recommendedWorktree: String?
+    /// True once somebody picked a checkout, or a saved pick came back: the window never moves on its own after that.
+    var worktreeChosen = false
+    var activityRequested = false
     /// Branches the Base choice offers, newest first.
     @Published var baseCandidates: [String] = []
     /// The base picked in the menu; nil follows the PR's target, else the repository's default branch.
@@ -728,6 +735,7 @@ final class ReviewModel: ObservableObject {
                 }
                 if let checkouts, primary.path == self.repo.path {
                     self.worktrees = checkouts
+                    self.refreshWorktreeActivity()
                 }
                 if let candidates {
                     self.baseCandidates = candidates
@@ -1083,7 +1091,10 @@ final class ReviewModel: ObservableObject {
 
     /// Read another checkout of the same repository: an agent's worktree instead of the main one. The
     /// scope stays; a commit is found in every checkout, since they share one object store.
-    func switchWorktree(to path: String) {
+    /// `chosen` is false only for the window's own move to the checkout the session worked in: that one is neither
+    /// remembered as a pick nor does it stop the window from following the session later.
+    func switchWorktree(to path: String, chosen: Bool = true) {
+        if chosen { worktreeChosen = true }
         let url = URL(fileURLWithPath: path).standardizedFileURL
         guard url.path != repo.path else { return }
         HubPerf.log("review.worktree \(repo.path) -> \(url.path)")
@@ -1101,7 +1112,7 @@ final class ReviewModel: ObservableObject {
         base = nil
         branch = ""
         commits = []
-        onWorktreeChange?(url)
+        if chosen { onWorktreeChange?(url) }
         guard started else { return }
         watchRoots()
         restartLoad()
@@ -2547,10 +2558,16 @@ struct ScopeMenu: View {
     @MainActor
     private static func worktreeMenu(model: ReviewModel) -> MenuButtonItem {
         let current = model.worktrees.first { $0.path == model.repo.path }
+        // The checkouts this session changed files in come first, with their file counts; with more than one, the
+        // one it worked in most carries a star.
+        let activity = model.worktreeActivity
+        let several = activity.values.filter { $0 > 0 }.count > 1
         let items: [MenuButtonItem] = model.worktrees.count < 2
             ? [.note("This repository has one checkout")]
-            : model.worktrees.map { tree in
-                .action(tree.title, checked: tree.path == model.repo.path, enabled: model.remoteHead == nil || tree.path == model.repo.path) {
+            : WorktreeActivity.ordered(model.worktrees, counts: activity).map { tree in
+                let title = WorktreeActivity.title(of: tree, files: activity[tree.path] ?? 0,
+                                                   recommended: several && tree.path == model.recommendedWorktree)
+                return .action(title, checked: tree.path == model.repo.path, enabled: model.remoteHead == nil || tree.path == model.repo.path) {
                     model.switchWorktree(to: tree.path)
                 }
             }

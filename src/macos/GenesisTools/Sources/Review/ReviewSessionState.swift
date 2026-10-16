@@ -32,6 +32,8 @@ struct ReviewSessionState: Codable, Equatable {
     var dismissedNewsHead: String?
     /// The checkout picked in the Worktree choice, when it is not the one the window opened on.
     var worktree: String?
+    /// True when `worktree` was picked in the menu; a checkout the window moved to by itself is found again next time.
+    var worktreePicked: Bool?
     /// The base picked in the Base choice; nil is automatic.
     var chosenBase: String?
     var page: PageState?
@@ -229,7 +231,11 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
         if let collapsed = state.collapsed { model.collapsed = Set(collapsed) }
         if let dismissed = state.dismissedNewsHead { model.dismissedNewsHead = dismissed }
         if let base = state.chosenBase { model.chosenBase = base }
-        if let tree = state.worktree, FileManager.default.fileExists(atPath: tree) { model.switchWorktree(to: tree) }
+        if let tree = state.worktree, FileManager.default.fileExists(atPath: tree) {
+            // A state saved before `worktreePicked` existed holds a pick whenever it names another checkout than the
+            // one the window opened on.
+            model.switchWorktree(to: tree, chosen: state.worktreePicked ?? (URL(fileURLWithPath: tree).standardizedFileURL.path != model.home.path))
+        }
         if let tab = state.contextTab { defaults.set(tab, forKey: DefaultsKey.contextTab) }
         if let folded = state.contextCollapsed { defaults.set(folded, forKey: ReviewContextPanel.collapsedKey) }
         if let open = state.threadsOpen { defaults.set(open, forKey: DefaultsKey.threadsOpen) }
@@ -247,6 +253,7 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
         state.collapsed = model.collapsed.sorted()
         state.dismissedNewsHead = model.dismissedNewsHead
         state.worktree = model.repo.path
+        state.worktreePicked = model.worktreeChosen
         state.chosenBase = model.chosenBase
         state.contextTab = defaults.string(forKey: DefaultsKey.contextTab)
         state.contextCollapsed = defaults.object(forKey: ReviewContextPanel.collapsedKey) as? Bool

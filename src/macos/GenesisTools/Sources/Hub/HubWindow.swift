@@ -1522,8 +1522,10 @@ final class HubModel: ObservableObject {
                 if let picked = HubDefaults.store.string(forKey: worktreeKey), FileManager.default.fileExists(atPath: picked) {
                     next.switchWorktree(to: picked)
                 }
+                // The path is kept even when it is the session's own folder: that pick is a choice too, and the
+                // window must not move off it to the checkout the session worked in.
                 next.onWorktreeChange = { url in
-                    HubDefaults.store.set(url.path == cwd ? nil : url.path, forKey: worktreeKey)
+                    HubDefaults.store.set(url.path, forKey: worktreeKey)
                 }
                 if moved != nil {
                     let from = (session.cwd as NSString).abbreviatingWithTildeInPath

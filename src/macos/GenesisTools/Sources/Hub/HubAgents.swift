@@ -75,6 +75,9 @@ struct AgentParent: Codable, Equatable, Identifiable, Sendable {
     var startedAt: String?
     let lastAt: String
     var live: Bool?
+    /// A live agent process holds this session (an open tab or window), however long ago its transcript was
+    /// written: a session waiting for its user writes nothing, so `live` alone called it gone (2026-10-16).
+    var open: Bool?
     var children: [AgentNode]
 
     var id: String { sessionId }
@@ -85,6 +88,7 @@ struct AgentParent: Codable, Equatable, Identifiable, Sendable {
 
     var last: Date? { HubFormat.date(lastAt) }
     var isLive: Bool { (live ?? false) || children.contains(where: \.anyRunning) }
+    var hasProcess: Bool { open ?? false }
     var runningCount: Int { AgentTree.flatten(children).filter(\.isRunning).count }
     var totalCount: Int { AgentTree.flatten(children).count }
 
@@ -395,6 +399,12 @@ final class HubAgentsModel: ObservableObject {
     /// In the Live group: active now, or within two minutes of it, so a turn boundary does not move it.
     func isLive(_ parent: AgentParent) -> Bool {
         parent.isLive || parentOrder.isActive(parent.sessionId)
+    }
+
+    /// In the Live group: active as above, or held by an open agent process. An open session that waits for its
+    /// user is not active (the Active chip leaves it out) but it is not gone either.
+    func isPresent(_ parent: AgentParent) -> Bool {
+        isLive(parent) || parent.hasProcess
     }
 
     /// A child in its parent's sticky active bucket.
@@ -1125,9 +1135,9 @@ struct AgentsListView: View {
     private var sections: [(title: String, rows: [AgentListItem])] {
         let needle = model.filter.trimmed.lowercased()
         // Live is the sticky active bucket: a parent leaves it two minutes after its last activity.
-        let live = agents.parents.filter { agents.isLive($0) }
-        let today = agents.parents.filter { !agents.isLive($0) && Calendar.current.isDateInToday($0.last ?? .distantPast) }
-        let earlier = agents.parents.filter { !agents.isLive($0) && !Calendar.current.isDateInToday($0.last ?? .distantPast) }
+        let live = agents.parents.filter { agents.isPresent($0) }
+        let today = agents.parents.filter { !agents.isPresent($0) && Calendar.current.isDateInToday($0.last ?? .distantPast) }
+        let earlier = agents.parents.filter { !agents.isPresent($0) && !Calendar.current.isDateInToday($0.last ?? .distantPast) }
         var orphanRows: [AgentListItem] = []
         for node in matching(agents.orphans, parent: nil, needle: needle) {
             append(node, parent: nil, depth: 0, into: &orphanRows)
@@ -1262,7 +1272,7 @@ struct AgentsListView: View {
                 }
                 .buttonStyle(.genHoverPlain())
                 .instantTooltip(open ? "Fold its agents (Left)" : "Unfold its agents (Right)")
-                AgentParentRow(parent: parent, running: running, total: total, live: agents.isLive(parent))
+                AgentParentRow(parent: parent, running: running, total: total, live: agents.isPresent(parent))
                     .rowButton {
                         listFocused = true
                         agents.openMain(parent)
@@ -1274,7 +1284,7 @@ struct AgentsListView: View {
                 Button("Show in Widget") { WidgetLaunch.pin(session: parent.sessionId, provider: parent.provider) }
             }
         case .main(let parent):
-            AgentMainRow(parent: parent, live: agents.isLive(parent), selected: agents.selectedID == AgentTree.mainKey(parent.sessionId))
+            AgentMainRow(parent: parent, live: agents.isPresent(parent), selected: agents.selectedID == AgentTree.mainKey(parent.sessionId))
                 .rowButton {
                     listFocused = true
                     agents.openMain(parent)
@@ -1384,7 +1394,7 @@ struct AgentsMain: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else {
                 // One click to the session that is most likely wanted, instead of a page of dim text (H14).
-                let newest = agents.parents.first(where: agents.isLive) ?? agents.parents.first
+                let newest = agents.parents.first(where: agents.isPresent) ?? agents.parents.first
                 EmptyState(
                     symbol: "person.2",
                     text: "No agent open",
