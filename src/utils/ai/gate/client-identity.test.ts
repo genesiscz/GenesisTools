@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PsRow } from "@genesiscz/utils/process/ps";
@@ -11,9 +11,59 @@ import {
     fileStamps,
     isAncestorPid,
     isInterpreter,
+    OWN_PRELOADS,
     type ProcessLookup,
     scriptOf,
 } from "./client-identity";
+
+const REPO = join(import.meta.dirname, "../../../..");
+
+// Every tool the app started carried the launcher's orphan-watchdog preload, which neither list named, so the vault
+// window said "Extra code may be loaded" and could never remember an approval (2026-10-16).
+describe("the checkout's own preloads", () => {
+    test("name every preload the launcher passes, and the Swift vault window keeps the same list", () => {
+        const launcher = `${readFileSync(join(REPO, "tools"), "utf8")}\n${readFileSync(join(REPO, "src/utils/cli/tool-exec.ts"), "utf8")}`;
+        const passed = [...launcher.matchAll(/"(src\/[^"]*preload[^"]*\.ts)"/g)].map((match) => match[1]);
+        const swift = readFileSync(join(REPO, "src/macos/GenesisTools/Sources/VaultUnlock.swift"), "utf8");
+        const swiftList = swift.match(/static let ownPreloads = \[([^\]]*)\]/)?.[1] ?? "";
+
+        expect(passed.length).toBeGreaterThan(0);
+        expect(OWN_PRELOADS).toEqual(expect.arrayContaining(passed));
+        expect([...swiftList.matchAll(/"([^"]+)"/g)].map((match) => match[1]).sort()).toEqual([...OWN_PRELOADS].sort());
+    });
+
+    test("a gt-<tool> link of bun reads --preload <file> like bun does", () => {
+        const root = "/work/GenesisTools";
+        const preloads = OWN_PRELOADS.map((relative) => `--preload ${root}/${relative}`).join(" ");
+        const gt = "/Users/x/.genesis-tools/bin/gt-mcp-manager";
+        expect(
+            codeInjectionSignals(`${gt} ${preloads} ${root}/src/mcp-manager/index.ts gateway start`, null, gt)
+        ).toEqual([]);
+        expect(isInterpreter(gt)).toBe(true);
+        expect(scriptOf(`${gt} ${preloads} ${root}/src/mcp-manager/index.ts gateway start`, "/", gt)).toBe(
+            `${root}/src/mcp-manager/index.ts`
+        );
+    });
+
+    test("a tool the launcher starts with all its preloads shows no loaded-code signal", () => {
+        const root = "/work/GenesisTools";
+        const preloads = OWN_PRELOADS.map((relative) => `--preload ${root}/${relative}`).join(" ");
+        expect(
+            codeInjectionSignals(
+                `/usr/bin/bun ${preloads} ${root}/src/mcp-manager/index.ts gateway start`,
+                null,
+                "/usr/bin/bun"
+            )
+        ).toEqual([]);
+        expect(
+            codeInjectionSignals(
+                `/usr/bin/bun --preload /tmp/other.ts ${root}/src/mcp-manager/index.ts`,
+                null,
+                "/usr/bin/bun"
+            )
+        ).toEqual(["flag --preload"]);
+    });
+});
 
 function row(pid: number, ppid: number, command: string): PsRow {
     return { pid, ppid, user: "martin", stat: "S", cpu: 0, rss: 0, startTime: null, command };

@@ -60,7 +60,10 @@ struct VaultCaller {
     /// The preloads the `tools` wrapper passes to every tool, relative to the checkout the script is in. They are
     /// GenesisTools' own code, so they load no extra code (2026-10-15: every `tools claude login` could only be
     /// allowed once, and the window named the preload as the program).
-    static let ownPreloads = ["src/utils/bun/preload-solid-scoped.ts", "src/utils/search/stores/sqlite-vec-preload.ts"]
+    static let ownPreloads = [
+        "src/utils/bun/preload-solid-scoped.ts", "src/utils/search/stores/sqlite-vec-preload.ts",
+        "src/utils/bun/preload-orphan-watchdog.ts",
+    ]
 
     /// The interpreter's flags before the script, each with its value (`--preload=x` or `--preload x`).
     private var leadingFlags: [(flag: String, value: String?)] {
@@ -622,7 +625,11 @@ enum VaultKeychain {
     }
 }
 
-private func vaultAudit(_ event: String, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo, detail: String = "") {
+/// Every request's line in `audit.jsonl` carries what decides it (the command, its parents, the folder, any loaded-code
+/// signal, why it is once-only) and, for `prompted`, everything the window showed, warnings included: an approval can
+/// be audited later from the file alone (Martin, 2026-10-16).
+private func vaultAudit(_ event: String, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo, detail: String = "",
+                        shown: VaultWindowContent? = nil) {
     var parts = ["purpose: \(params.purpose)"]
     if let secret = params.secret { parts.append("secret: \(secret)") }
     if let summary = session.summary { parts.append("session: \(summary)") }
@@ -633,14 +640,27 @@ private func vaultAudit(_ event: String, params: VaultUnlockParams, caller: Vaul
     client["executable"] = caller.executable
     client["script"] = caller.script
     client["cwd"] = caller.cwd
+    client["argv"] = caller.args?.arguments
+    client["parents"] = caller.ancestors.map { ["pid": Int($0.pid), "command": $0.command] }
+    client["injected"] = caller.injected
 
-    let entry: [String: Any] = [
+    var entry: [String: Any] = [
         "at": ISO8601DateFormatter().string(from: Date()),
         "event": event,
         "client": client,
         "account": "vault",
         "detail": parts.joined(separator: "; "),
     ]
+    entry["onceOnly"] = caller.onceOnlyReason
+    if let shown {
+        entry["shown"] = [
+            "title": shown.title,
+            "purpose": shown.purpose,
+            "facts": (shown.facts + shown.details).map { ["label": $0.label, "value": $0.help ?? $0.value] },
+            "warning": shown.warning as Any,
+            "onceOnly": shown.onceOnlyReason as Any,
+        ]
+    }
     guard let data = try? JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]) else { return }
     let path = (VaultGrants.directory as NSString).appendingPathComponent("audit.jsonl")
     try? FileManager.default.createDirectory(atPath: VaultGrants.directory, withIntermediateDirectories: true)
@@ -751,7 +771,7 @@ func unlockVault(_ params: VaultUnlockParams) {
             }
         }
 
-        vaultAudit("prompted", params: params, caller: caller, session: session)
+        vaultAudit("prompted", params: params, caller: caller, session: session, shown: content)
         vaultPresenter.present(model)
     }
 }

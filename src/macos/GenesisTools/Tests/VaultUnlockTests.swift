@@ -78,6 +78,16 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertEqual(login.injected, [])
         XCTAssertNil(login.onceOnlyReason)
 
+        // The gateway as the app's launcher starts it: the orphan watchdog comes first (2026-10-16: "Extra code may be
+        // loaded" on every gateway start, so its approval could never be remembered).
+        let gateway = caller(arguments: ["gt-mcp-manager", "--preload", "/repo/src/utils/bun/preload-orphan-watchdog.ts",
+                                         "--preload", "/repo/src/utils/bun/preload-solid-scoped.ts",
+                                         "--preload", "/repo/src/utils/search/stores/sqlite-vec-preload.ts",
+                                         "/repo/src/mcp-manager/index.ts", "gateway", "start", "--supervised"])
+        XCTAssertEqual(gateway.script, "/repo/src/mcp-manager/index.ts")
+        XCTAssertEqual(gateway.injected, [])
+        XCTAssertNil(gateway.onceOnlyReason)
+
         // The same file from another checkout, or another file in this one, is still extra code.
         let foreign = caller(arguments: ["gt-claude", "--preload", "/other/src/utils/bun/preload-solid-scoped.ts",
                                          "/repo/src/claude/index.ts"])

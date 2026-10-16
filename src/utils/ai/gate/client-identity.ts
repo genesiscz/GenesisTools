@@ -42,18 +42,34 @@ const VALUE_FLAGS = new Set([
 const VALUE_FLAG_RUNNERS = /^(node|nodejs|bun)$/i;
 
 /**
+ * The runner an executable is: a `gt-<tool>` file in `~/.genesis-tools/bin` is a hard link of bun under the tool's
+ * name (its own keychain identity), so it parses and runs exactly like `bun`. Read by its own name, `--preload <file>`
+ * was a bare flag and the gateway's own preloads read as foreign code (2026-10-16).
+ */
+function runnerName(executable: string): string {
+    const name = basename(executable);
+    return /^gt-[a-z0-9][a-z0-9-]*$/i.test(name) ? "bun" : name;
+}
+
+/**
  * The preloads the `tools` wrapper passes to every tool, relative to the checkout the script is in. They are
  * GenesisTools' own code, so they load no extra code (2026-10-15: every `tools claude login` could be allowed only
  * once, and the preload was taken for the script). The Swift vault window keeps the same list (`ownPreloads`).
  */
-export const OWN_PRELOADS = ["src/utils/bun/preload-solid-scoped.ts", "src/utils/search/stores/sqlite-vec-preload.ts"];
+export const OWN_PRELOADS = [
+    "src/utils/bun/preload-solid-scoped.ts",
+    "src/utils/search/stores/sqlite-vec-preload.ts",
+    // The launcher's orphan watchdog (`tools`, src/utils/cli/tool-exec.ts). Missing here, every tool the app started
+    // was "extra code may be loaded" and its vault approval could never be remembered (2026-10-16).
+    "src/utils/bun/preload-orphan-watchdog.ts",
+];
 
 /** The interpreter's flags before the script, each with its value, and the arguments from the script on. */
 function splitLeadingFlags(
     args: string[],
     executable: string
 ): { flags: Array<{ flag: string; value: string | null }>; rest: string[] } {
-    const takesValues = VALUE_FLAG_RUNNERS.test(basename(executable));
+    const takesValues = VALUE_FLAG_RUNNERS.test(runnerName(executable));
     const flags: Array<{ flag: string; value: string | null }> = [];
     let index = 0;
 
@@ -204,7 +220,7 @@ export function executableOf(command: string): string {
 }
 
 export function isInterpreter(executable: string): boolean {
-    return INTERPRETERS.test(basename(executable));
+    return INTERPRETERS.test(runnerName(executable));
 }
 
 /**
@@ -216,7 +232,7 @@ export function isInterpreter(executable: string): boolean {
 function scriptArgs(command: string, executable: string): string[] | null {
     const [, ...args] = command.trim().split(/\s+/);
 
-    if (!SUBCOMMAND_RUNNERS.test(basename(executable))) {
+    if (!SUBCOMMAND_RUNNERS.test(runnerName(executable))) {
         return args;
     }
 
