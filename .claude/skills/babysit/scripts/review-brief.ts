@@ -4,7 +4,9 @@
  * needs rounds, or a PR merged with fewer than three. Its findings become the next fix round (`fill-brief --judge`)
  * or, after a merge, a follow-up PR. Writes `<run>/steer-review-<pr>.md` and prints the path for steer.ts.
  *
- *   bun review-brief.ts --run <dir> --pr 517 --wt <worktree> [--base master] [--post-merge] [--swift]
+ *   bun review-brief.ts --run <dir> --pr 517 --wt <worktree> [--base master] [--post-merge] [--swift] [--fresh]
+ *
+ * `--fresh`: a PR opened minutes ago, reviewed next to the bots (the first round of a newly cut PR).
  *
  * Hand-edited copies of this text sent a reviewer to another PR's description (2026-10-14: a sed pass left
  * `gh pr view 504` in the #498 and #500 briefs), so every PR reference comes from one value here.
@@ -21,12 +23,16 @@ export interface ReviewBriefInput {
     scratch: string;
     postMerge: boolean;
     swift: boolean;
+    /** A PR opened minutes ago: the bots review it at the same time, so there are no earlier threads yet. */
+    fresh?: boolean;
 }
 
-export function reviewBrief({ pr, title, wt, base, scratch, postMerge, swift }: ReviewBriefInput): string {
+export function reviewBrief({ pr, title, wt, base, scratch, postMerge, swift, fresh }: ReviewBriefInput): string {
     const why = postMerge
         ? `PR #${pr} ("${title}") merged into master with fewer than three review rounds. This is an independent review of the MERGED code; your findings become a follow-up PR.`
-        : `The reviewer bot found nothing more to fix on PR #${pr} ("${title}"), so the lead wants an independent review. Your findings become the next fix round.`;
+        : fresh
+          ? `PR #${pr} ("${title}") was just opened, and the reviewer bots read it at the same time as you. The lead wants an independent review next to theirs; your findings join the bots' threads in the first fix round.`
+          : `The reviewer bot found nothing more to fix on PR #${pr} ("${title}"), so the lead wants an independent review. Your findings become the next fix round.`;
     const read = postMerge
         ? `It is detached at current master, which contains the PR. Read what the PR changed with \`gh pr diff ${pr}\`, then read the CURRENT version of each touched file in this folder (later PRs may have changed them).`
         : `Base: \`origin/${base}\`. Read the diff with \`git diff origin/${base}...HEAD\`, then read the touched files in full where needed.`;
@@ -36,7 +42,9 @@ export function reviewBrief({ pr, title, wt, base, scratch, postMerge, swift }: 
         `${why} Quality over count: only REAL defects (wrong behaviour, a missed case, a broken contract, a data-loss or security risk, a test that does not test what it claims, a broken repository rule). No style, naming or "consider" notes. "No findings" is a good and acceptable result: do not invent one.`,
         "",
         `- Working folder: \`${wt}\` (cd there first). ${read} Read the area rule files (\`.claude/rules/*.md\`) for those files, and the PR description: \`gh pr view ${pr} --json body --jq .body\`.`,
-        `- Earlier review threads were already answered; read them with \`tools github review ${pr} --llm\` so you do not report a finding that was fixed or deliberately declined (a declined one is fair game only with new evidence).`,
+        fresh
+            ? `- The PR has no answered threads yet. Do not wait for the bots and do not read their threads: review the code on your own.`
+            : `- Earlier review threads were already answered; read them with \`tools github review ${pr} --llm\` so you do not report a finding that was fixed or deliberately declined (a declined one is fair game only with new evidence).`,
         `- Check every claim: run the relevant tests (\`timeout 600 bun scripts/test.ts <test files>\`) or a small read-only probe under \`${scratch}\`, and paste the real output. A finding without evidence is a guess; say so.`,
         ...(swift
             ? [
@@ -58,7 +66,7 @@ if (import.meta.main) {
 
     if (!Number.isInteger(pr) || pr <= 0 || !wt) {
         console.error(
-            "usage: review-brief.ts --run <dir> --pr <N> --wt <worktree> [--base master] [--post-merge] [--swift]"
+            "usage: review-brief.ts --run <dir> --pr <N> --wt <worktree> [--base master] [--post-merge] [--swift] [--fresh]"
         );
         process.exit(2);
     }
@@ -85,6 +93,7 @@ if (import.meta.main) {
             scratch: join(run.dir, "..", `review-${pr}`),
             postMerge: has("--post-merge"),
             swift: has("--swift"),
+            fresh: has("--fresh"),
         })
     );
     console.log(out);
