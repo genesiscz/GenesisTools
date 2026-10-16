@@ -41,6 +41,12 @@ const inScope = (entry: RunEntry, path: string) => {
     return entry.scope.some((allowed) => target === resolve(root, allowed)) || target.startsWith(scratch + sep);
 };
 
+/** A path inside the worktree's babysit scratch folder (where the briefs put reply files and verify logs). */
+const inScratch = (entry: RunEntry, path: string) => {
+    const scratch = resolve(entry.cwd, ".claude/work/babysit");
+    return resolve(entry.cwd, path).startsWith(scratch + sep);
+};
+
 const SHELLS = ["/bin/sh", "/bin/bash", "/bin/zsh", "/usr/bin/sh", "/usr/bin/bash", "/usr/bin/zsh"];
 
 /**
@@ -317,6 +323,20 @@ export function allowedCommand(entry: RunEntry, command: string): boolean {
         return true;
     }
 
+    // A check whose output goes to the scratch folder (`<check> > .claude/work/babysit/x.log 2>&1`), or that runs
+    // under `timeout <s>`, is the same check: the fixers write every verify log there (2026-10-16, #537 round 1).
+    const logged = /^(.*\S)\s+>\s*(\S+)\s+2>&1$/.exec(command);
+
+    if (logged && inScratch(entry, logged[2]) && !/[<>]/.test(logged[1])) {
+        return allowedCommand(entry, logged[1]);
+    }
+
+    const timed = /^timeout \d+ (.+)$/s.exec(command);
+
+    if (timed && !timed[1].startsWith("timeout ") && allowedCommand(entry, timed[1])) {
+        return true;
+    }
+
     const words = strictShellWords(command);
 
     if (!words || words.length === 0) {
@@ -348,6 +368,12 @@ export function allowedCommand(entry: RunEntry, command: string): boolean {
 
     if (testRunCommand(entry, words)) {
         return true;
+    }
+
+    // Biome on files of the scope, with or without --write (the brief's format step).
+    if (words[0] === "bunx" && words[1] === "biome" && words[2] === "check") {
+        const rest = words.slice(3).filter((word) => word !== "--write");
+        return rest.length > 0 && rest.every((path) => !path.startsWith("-") && inScope(entry, path));
     }
 
     return entry.verify.some((verify) => {

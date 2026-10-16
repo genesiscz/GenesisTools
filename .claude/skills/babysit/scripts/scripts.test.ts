@@ -90,6 +90,27 @@ describe("read-only chains", () => {
     });
 });
 
+describe("fixer checks", () => {
+    test("a verify command under timeout or logged to the scratch folder is the same command", () => {
+        const configured = entry.verify[0];
+        expect(allowedCommand(entry, `timeout 600 ${configured}`)).toBe(true);
+        expect(allowedCommand(entry, `timeout 600 ${configured} > .claude/work/babysit/r1.log 2>&1`)).toBe(true);
+        expect(
+            allowedCommand(entry, "timeout 600 bun scripts/test.ts src/a.test.ts > .claude/work/babysit/t.log 2>&1")
+        ).toBe(true);
+        expect(allowedCommand(entry, "bunx biome check --write src/a.ts")).toBe(true);
+        for (const command of [
+            `${configured} > src/a.ts 2>&1`,
+            `${configured} > /tmp/x.log 2>&1`,
+            `timeout 600 timeout 600 ${configured}`,
+            "bunx biome check --write src/outside.ts",
+            "bunx biome check --config-path x src/a.ts",
+        ]) {
+            expect({ command, ok: allowedCommand(entry, command) }).toEqual({ command, ok: false });
+        }
+    });
+});
+
 describe("fixer edits through fable-replace", () => {
     const cli = "/Users/x/.codex/plugins/cache/genesis-tools/genesis-tools/1.0.107/skills/fable-replace/scripts/cli.ts";
     const spec = (target: string) => `@@ ${target}\n<<<\nold\n===\nnew\n>>>`;
@@ -154,9 +175,10 @@ describe("brief approval boundary", () => {
 
     test("verification requires the entire configured command", () => {
         expect(allowedCommand(entry, "bunx biome check src/a.ts")).toBe(true);
+        // Biome with --write on a file of the scope is the brief's format step, allowed since 2026-10-16.
+        expect(allowedCommand(entry, "bunx biome check src/a.ts --write")).toBe(true);
         for (const command of [
             "bunx biome check --write src/outside.ts",
-            "bunx biome check src/a.ts --write",
             "bunx biome check src/a.tsx",
             "bunx biome check src/a.ts src/outside.ts",
             'bunx biome check "$(touch owned)"',
@@ -354,13 +376,13 @@ test("monitor drains large stderr, preserves its label, and returns failures", a
             [
                 process.execPath,
                 "-e",
-                'await Bun.write(Bun.stderr, "diagnostic ".repeat(100000)); console.log("✔ done"); process.exit(7)',
+                'await Bun.write(Bun.stderr, "diagnostic ".repeat(100000)); console.log("√ done"); process.exit(7)',
             ],
             2000
         );
         expect(code).toBe(7);
         expect(output.some((line) => line.startsWith("[codex:fixture] stderr: diagnostic"))).toBe(true);
-        expect(output.some((line) => line.includes("✔ done"))).toBe(true);
+        expect(output.some((line) => line.includes("√ done"))).toBe(true);
         const expired = await pump(worker, [process.execPath, "-e", "setInterval(() => {}, 1000)"], 50);
         expect(expired).toBe(124);
     } finally {
