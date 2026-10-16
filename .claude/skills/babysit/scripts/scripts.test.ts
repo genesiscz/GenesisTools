@@ -103,7 +103,13 @@ describe("reviewer reads", () => {
 describe("sed stays a reader", () => {
     test("a second script after the range is refused", () => {
         expect(readOnlyChain(entry, "sed -n 1,9p src/a.ts")).toBe(true);
-        for (const command of ["sed -n 1p -e 'w /tmp/x' src/a.ts", "sed -n 1p -i src/a.ts", "sed -n 1p -f s.sed a"]) {
+        for (const command of [
+            "sed -n 1p -e 'w /tmp/x' src/a.ts",
+            "sed -n 1p -i src/a.ts",
+            "sed -n 1p -f s.sed a",
+            "git grep -O'touch /tmp/x; cat' name -- a.md",
+            "git grep -Otouch name",
+        ]) {
             expect({ command, ok: readOnlyChain(entry, command) }).toEqual({ command, ok: false });
         }
     });
