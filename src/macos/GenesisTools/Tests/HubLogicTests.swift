@@ -170,6 +170,66 @@ final class HubLogicTests: XCTestCase {
         XCTAssertTrue(message.contains("is not in"), message)
     }
 
+    @MainActor
+    func testCommitLookupIgnoresOlderLinksAndBothKindsOfStaleAnswer() {
+        let model = HubModel(wantedSession: nil, tab: .transcript)
+        model.openCommitLink("invalid-first", repo: nil)
+        let older = model.commitLinkRequest
+        model.openCommitLink("invalid-second", repo: nil)
+        let latest = model.commitLinkRequest
+        let notice = model.notice
+        XCTAssertNotEqual(older, latest)
+        model.applyCommitLink(.found(.init(root: "/fixture/app", sha: "abcdef0", title: "old")), request: older)
+        model.applyCommitLink(.failed("old error"), request: older)
+        XCTAssertNil(model.review)
+        XCTAssertEqual(model.notice, notice)
+        model.applyCommitLink(.failed("current error"), request: latest)
+        XCTAssertEqual(model.notice, "current error")
+    }
+
+    @MainActor
+    func testEveryNavigationSelectionInvalidatesAPendingCommitLookup() {
+        let model = HubModel(wantedSession: nil, tab: .transcript)
+        let changes: [() -> Void] = [
+            { model.selectedID = "session" },
+            { model.prs.selectedID = "pr" },
+            { model.selectedWorktree = "/fixture/app" },
+            { model.mode = .timeline },
+            { model.inbox.selectedID = "item" },
+            { model.agents.selectedID = "agent" },
+        ]
+        for change in changes {
+            let request = model.commitLinkRequest
+            change()
+            XCTAssertNotEqual(model.commitLinkRequest, request)
+            model.notice = "later navigation"
+            model.applyCommitLink(.found(.init(root: "/fixture/app", sha: "abcdef0", title: "old")), request: request)
+            model.applyCommitLink(.failed("old error"), request: request)
+            XCTAssertNil(model.review)
+            XCTAssertEqual(model.notice, "later navigation")
+        }
+    }
+
+    @MainActor
+    func testAMissingPRCommitReplacesThePreviousCommitScopeWithTheWholePR() throws {
+        let json = """
+        {"repo":"app","repoRoot":"/fixture/app","origin":{"kind":"github","host":"github.com","web":"https://github.com/acme/app"},
+         "number":7,"title":"t","state":"OPEN","draft":false,"author":"alice","headBranch":"feature","baseBranch":"develop",
+         "url":"https://github.com/acme/app/pull/7","labels":[],"reviewers":[],"headSha":"abcdef0123","crossRepository":false,"headRepo":null}
+        """
+        let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        let model = PRsModel()
+        let review = ReviewModel(repo: URL(fileURLWithPath: "/fixture/app"), options: DiffViewOptions(), renderer: NullRenderer())
+        review.scope = .commit(sha: "1111111", title: "previous")
+        let missing = PRCommitPick(ref: HubPRRef(project: "acme/app", number: 7), sha: "0000000", asked: Date())
+
+        model.showMissingCommit(missing, in: pr, review: review)
+
+        XCTAssertEqual(review.scope, PRsModel.scope(pr, detail: nil))
+        XCTAssertTrue(model.notice?.text.contains("so the whole PR shows") == true)
+        XCTAssertEqual(model.notice?.ref, missing.ref)
+    }
+
     func testALiveLaunchIsNotScripted() {
         let request = HubRequest(["--session", "abc", "--no-activate"])
         XCTAssertFalse(request.isScripted)

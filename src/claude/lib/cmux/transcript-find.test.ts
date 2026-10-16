@@ -1,4 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { chmod, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     findInTranscript,
     pressesToOldest,
@@ -80,8 +85,87 @@ describe("transcript find", () => {
         expect(claude.typed).toEqual(["key:ctrl+o"]);
     });
 
+    test("waits through an intermediate transcript banner for the result", async () => {
+        const claude = fakeClaude({ hit: "ctrl+o to toggle · n/N to navigate   2/2" });
+        const read = claude.io.screen;
+        let afterEnter = false;
+        const key = claude.io.key;
+        claude.io.key = async (name) => {
+            await key(name);
+            afterEnter = name === "enter";
+        };
+        claude.io.screen = async () => {
+            if (afterEnter) {
+                afterEnter = false;
+                return BANNER;
+            }
+
+            return read();
+        };
+        const outcome = await findInTranscript(claude.io, { query: "needle", oldest: false });
+
+        expect(outcome).toEqual({ found: true, current: 2, total: 2 });
+        expect(claude.typed).toEqual(["key:ctrl+o", "/", "needle", "key:enter"]);
+    });
+
+    test("a banner without a result reaches the deadline", async () => {
+        const claude = fakeClaude({ hit: TRANSCRIPT_BANNER });
+        const outcome = await findInTranscript(claude.io, { query: "needle", oldest: false, timeoutMs: 0 });
+
+        expect(outcome).toEqual({ found: false, reason: "no-result" });
+        expect(claude.typed.at(-1)).toBe("key:ctrl+o");
+    });
+
+    test("the command sends literal backslashes through RPC and keeps Enter a named key", async () => {
+        const dir = await mkdtemp(join(tmpdir(), "cmux-find-transport-"));
+        const executable = join(dir, "cmux");
+        const capture = join(dir, "args");
+        await Bun.write(executable, `#!/bin/sh\nprintf '%s\\n' "$@" >> '${capture}'\n`);
+        await chmod(executable, 0o755);
+        const query = String.raw`literal\nq\t`;
+        const source = `
+            import { mock } from "bun:test";
+            mock.module("@app/claude/commands/cmux/read", () => ({
+                locatePane: async () => ({ surfaceId: "surface:42", target: { workspaceId: "workspace:1" } }),
+            }));
+            mock.module("@app/claude/commands/cmux/focus", () => ({
+                focusTarget: async () => {}, activateApp: async () => { throw new Error("must not activate"); },
+            }));
+            mock.module("@app/claude/lib/cmux/transcript-find", () => ({
+                findInTranscript: async (io, { query }) => {
+                    await io.text(query);
+                    await io.key("enter");
+                    return { found: true, current: 1, total: 1 };
+                },
+            }));
+            const { findCommand } = await import("@app/claude/commands/cmux/find");
+            await findCommand("fixture", ${SafeJSON.stringify(query)}, { activate: false });
+            await findCommand("fixture", "line\\n\\ttext", { activate: false });
+        `;
+        const proc = Bun.spawn([process.execPath, "-e", source], {
+            cwd: join(import.meta.dir, "../../../.."),
+            env: { ...env.getProcessEnv(), PATH: `${dir}:${env.getProcessEnv().PATH ?? ""}` },
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const [stdout, stderr, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        expect({ code, stdout, stderr }).toMatchObject({ code: 0 });
+        const args = (await Bun.file(capture).text()).trimEnd().split("\n");
+        expect(args.slice(0, 2)).toEqual(["rpc", "surface.send_text"]);
+        expect(SafeJSON.parse(args[2])).toEqual({ surface_id: "surface:42", text: query });
+        expect(args[3]).toBe("send-key");
+        expect(args).not.toContain("send");
+        expect(args).toContain("enter");
+        const second = args.indexOf("rpc", 3);
+        expect(SafeJSON.parse(args[second + 2])).toEqual({ surface_id: "surface:42", text: "line  text" });
+    });
+
     test("a miss closes the transcript view it opened", async () => {
-        const claude = fakeClaude({ hit: `${TRANSCRIPT_BANNER} · ctrl+o to toggle      verbose` });
+        const claude = fakeClaude({ hit: "ctrl+o to toggle · n/N to navigate      no matches" });
         const outcome = await findInTranscript(claude.io, { query: "nothing", oldest: true, timeoutMs: 0 });
 
         expect(outcome).toEqual({ found: false, reason: "no-match" });

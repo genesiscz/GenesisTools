@@ -635,9 +635,7 @@ final class PRsModel: ObservableObject {
         let settled = (detailFetched[id].map { $0 >= pending.asked } ?? false) && reviewHeadSha == shown.headSha
         guard let commit = HubCommitSha.find(pending.sha, in: commits) else {
             if settled {
-                pendingCommit = nil
-                HubPerf.log("prs.commit \(shown.label) \(pending.sha) not among \(commits.count) commits")
-                notice = PRNotice(ref: pending.ref, text: "\(pending.sha) is not a commit of \(shown.label), so the whole \(shown.isGitLab ? "MR" : "PR") shows")
+                showMissingCommit(pending, in: shown, review: review)
             }
             return
         }
@@ -651,6 +649,14 @@ final class PRsModel: ObservableObject {
         HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
         HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
         commitScroll = PRCommitScroll(prID: id, sha: commit.sha)
+    }
+
+    /// A settled miss replaces any previously selected commit with the whole PR before saying so.
+    func showMissingCommit(_ pending: PRCommitPick, in shown: HubPR, review: ReviewModel) {
+        pendingCommit = nil
+        review.setScope(Self.scope(shown, detail: details[shown.id], fetch: fetchedHead(shown)))
+        HubPerf.log("prs.commit \(shown.label) \(pending.sha) not among its commits")
+        notice = PRNotice(ref: pending.ref, text: "\(pending.sha) is not a commit of \(shown.label), so the whole \(shown.isGitLab ? "MR" : "PR") shows")
     }
 
     /// The overview scrolled to `scroll`; a later appearance of the PR does not scroll again.

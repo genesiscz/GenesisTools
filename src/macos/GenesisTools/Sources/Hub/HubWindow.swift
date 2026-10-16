@@ -614,6 +614,8 @@ final class HubModel: ObservableObject {
     @Published var loadingWorktrees = false
     @Published var selectedWorktree: String?
     @Published var notice: String?
+    /// Only the latest commit lookup may navigate, and any later selection invalidates it.
+    var commitLinkRequest = UUID()
     /// ⌘⇧F / palette "grep": the find-in-files panel is open with this query ("" = empty field).
     @Published var findQuery: String? {
         didSet {
@@ -702,7 +704,10 @@ final class HubModel: ObservableObject {
             inbox.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             agents.$selectedID.map { _ in () }.eraseToAnyPublisher(),
         ]
-        navRecorder = Publishers.MergeMany(changes).sink { [weak self] in self?.scheduleNavRecord() }
+        navRecorder = Publishers.MergeMany(changes).sink { [weak self] in
+            self?.commitLinkRequest = UUID()
+            self?.scheduleNavRecord()
+        }
     }
 
     /// `@Published` announces a change before it lands, and one click often changes two values
@@ -959,6 +964,7 @@ final class HubModel: ObservableObject {
     /// the worktrees includes it; a launch that has not settled yet opens the mode when it settles.
     @MainActor
     func showCommit(repo: String, sha: String, title: String) {
+        commitLinkRequest = UUID()
         selectedWorktree = repo
         notice = nil
         if didSettleLaunch || initialMode != .worktrees {
@@ -1482,6 +1488,10 @@ final class HubModel: ObservableObject {
 
     /// A later `GenesisTools --hub …` handed to this hub: the same flags as a first launch.
     func apply(_ request: HubRequest) {
+        if request.session != nil || request.mode != nil || request.agent != nil || request.worktree != nil
+            || request.pr != nil || request.commit != nil {
+            commitLinkRequest = UUID()
+        }
         applyOverlays(request)
         // A request that navigates owns the navigation from here on. An older-session lookup still waiting for
         // its list must not select its session over it, whether the request resolves from the list, waits for a

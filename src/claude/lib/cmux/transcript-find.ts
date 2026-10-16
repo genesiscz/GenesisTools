@@ -105,7 +105,7 @@ export async function findInTranscript(
 
     await io.text(query);
     await io.key("enter");
-    const result = await waitFor(io, (screen) => !searchBarOpen(screen) && inTranscript(screen), timeoutMs);
+    const result = await waitFor(io, (screen) => !searchBarOpen(screen) && searchCount(screen) !== null, timeoutMs);
     const count = result ? searchCount(result) : null;
 
     if (count === null || count === "none") {

@@ -2,7 +2,7 @@ import { type FindOutcome, findInTranscript, type TranscriptIO } from "@app/clau
 import { mintLink } from "@genesiscz/utils/browser-router/links";
 import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
-import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmuxOk, sendSurfaceText } from "@genesiscz/utils/cmux/lib/cli";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import { logger, out } from "@genesiscz/utils/logger";
 import pc from "picocolors";
@@ -144,7 +144,7 @@ export async function findCommand(session: string, text: string | undefined, opt
                 await runCmuxOk(["send-key", ...where, name]);
             },
             text: async (value) => {
-                await runCmuxOk(["send", ...where, "--", value]);
+                await sendSurfaceText({ surfaceRef: located.surfaceId, text: value });
             },
             sleep: (ms) => Bun.sleep(ms),
         };

@@ -94,10 +94,24 @@ enum HubCommitLookup {
 }
 
 extension HubModel {
+    @MainActor
+    func applyCommitLink(_ outcome: HubCommitLookup.Outcome, request: UUID) {
+        guard commitLinkRequest == request else { return }
+        switch outcome {
+        case .found(let found):
+            showCommit(repo: found.root, sha: found.sha, title: found.title)
+        case .failed(let message):
+            HubPerf.log("hub.commitLink \(message)")
+            notice = message
+        }
+    }
+
     /// `--commit` without `--pr` (a link's `repo=…&commit=…`): the commit in its project's Worktrees diff. The
     /// checkout and the subject are read off the main thread; a miss is said in the notice, never dropped.
     @MainActor
     func openCommitLink(_ raw: String, repo: String?) {
+        let request = UUID()
+        commitLinkRequest = request
         guard let sha = HubCommitSha.normalized(raw) else {
             notice = HubCommitSha.invalid(raw)
             return
@@ -112,15 +126,8 @@ extension HubModel {
             let outcome = await Task.detached(priority: .userInitiated) {
                 HubCommitLookup.resolve(repo: repo, sha: sha, known: known)
             }.value
-            switch outcome {
-            case .found(let found):
-                span.end(found.root)
-                showCommit(repo: found.root, sha: found.sha, title: found.title)
-            case .failed(let message):
-                span.end("failed")
-                HubPerf.log("hub.commitLink \(message)")
-                notice = message
-            }
+            span.end("resolved")
+            applyCommitLink(outcome, request: request)
         }
     }
 }
