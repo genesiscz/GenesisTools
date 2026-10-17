@@ -1,10 +1,22 @@
 import { describe, expect, it, spyOn } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readdirSync,
+    readFileSync,
+    rmSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
-import { ClickyLibraryUnavailableError, ensureClickyLibrary } from "../clicky-library";
+import { withFileLock } from "@genesiscz/utils/storage";
+import { ClickyLibraryUnavailableError, ensureClickyLibrary, unpackClickyLibrary } from "../clicky-library";
 import {
     assertFullXcodeToolchain,
     bundleClickyLibrary,
@@ -64,6 +76,166 @@ describe("readAppFaceProcesses", () => {
 });
 
 describe("downloadClickyLibrary", () => {
+    function writePack(out: string) {
+        mkdirSync(join(out, "fixture"), { recursive: true });
+        writeFileSync(join(out, "fixture", "LICENCE.txt"), "Fixture licence.\n");
+        writeFileSync(join(out, "registry.json"), SafeJSON.stringify({ sets: [{ id: "fixture" }] }));
+        const bytes = Buffer.from("fixture sample");
+        const sha256 = createHash("sha256").update(bytes).digest("hex");
+        writeFileSync(
+            join(out, "fixture", "manifest.json"),
+            SafeJSON.stringify({
+                files: ["a.wav", "b.wav"].map((filename) => ({ filename, sha256 })),
+            })
+        );
+        for (const name of ["a.wav", "b.wav"]) {
+            writeFileSync(join(out, "fixture", name), bytes);
+        }
+    }
+
+    it("rebuilds an interrupted cache and a cache missing a sample", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-clicky-incomplete-"));
+        try {
+            const pinPath = join(root, "pin.json");
+            writeFileSync(
+                pinPath,
+                SafeJSON.stringify({ release: "fixture", sha256: "c".repeat(64), sets: 1, samples: 2 })
+            );
+            const out = join(root, "c".repeat(16), "GenesisTools sounds");
+            mkdirSync(out, { recursive: true });
+            writeFileSync(join(out, "registry.json"), "{}");
+            let unpacks = 0;
+            const options = {
+                pinPath,
+                root,
+                ensure: async () => "packed",
+                unpack: async (_source: string, staging: string) => {
+                    expect(staging).not.toBe(out);
+                    unpacks++;
+                    writePack(staging);
+                    return { sets: 1, samples: 2 };
+                },
+            };
+            expect((await downloadClickyLibrary(options)).reused).toBe(false);
+            rmSync(join(out, "fixture", "b.wav"));
+            expect((await downloadClickyLibrary(options)).reused).toBe(false);
+            expect(unpacks).toBe(2);
+            const licence = join(out, "fixture", "LICENCE.txt");
+            const damage = [
+                undefined,
+                Buffer.alloc(0),
+                Buffer.from(" \n\t"),
+                Buffer.from([0xff]),
+                Buffer.from("licence\0"),
+                Buffer.alloc(256 * 1024 + 1, 65),
+            ];
+            for (const [index, bytes] of damage.entries()) {
+                if (bytes === undefined) {
+                    rmSync(licence);
+                } else {
+                    writeFileSync(licence, bytes);
+                }
+
+                expect((await downloadClickyLibrary(options)).reused).toBe(false);
+                expect(unpacks).toBe(3 + index);
+                expect(readFileSync(licence, "utf8")).toBe("Fixture licence.\n");
+            }
+
+            expect((await downloadClickyLibrary(options)).reused).toBe(true);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("a stalled decoder releases the download lock and removes unpack staging", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-clicky-decoder-timeout-"));
+        const pinPath = join(root, "pin.json");
+        const sha256 = "e".repeat(64);
+        writeFileSync(pinPath, SafeJSON.stringify({ release: "fixture", sha256, sets: 1, samples: 2 }));
+        const source = join(root, "packed");
+        writePack(source);
+        let decoded: string | undefined;
+        const bounded = commands.boundedCommand;
+        const runner = spyOn(commands, "boundedCommand").mockImplementation(async (options) => {
+            expect(options.command[0]).toBe("afconvert");
+            decoded = options.command.at(-1);
+            expect(options.timeoutMs).toBe(120_000);
+            const result = await bounded({
+                command: [process.execPath, "-e", 'process.on("SIGTERM", () => {}); setTimeout(() => {}, 1000);'],
+                timeoutMs: 30,
+            });
+            expect(result.error?.code).toBe("ETIMEDOUT");
+            return result;
+        });
+        try {
+            await expect(
+                downloadClickyLibrary({
+                    pinPath,
+                    root,
+                    ensure: async () => source,
+                    unpack: unpackClickyLibrary,
+                })
+            ).rejects.toThrow("afconvert timed out after 120000 ms");
+            expect(runner).toHaveBeenCalledTimes(1);
+            expect(readdirSync(root).filter((name) => name.startsWith(".unpack-"))).toEqual([]);
+            expect(existsSync(join(root, sha256.slice(0, 16), "GenesisTools sounds"))).toBe(false);
+            expect(decoded).toBeDefined();
+            if (decoded) {
+                expect(existsSync(dirname(decoded))).toBe(false);
+            }
+            expect(await withFileLock(join(root, `${sha256}.lock`), async () => "released", 100)).toBe("released");
+        } finally {
+            runner.mockRestore();
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    it("cleans failed unpacking and serializes concurrent downloads before publishing", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-clicky-publish-"));
+        try {
+            const pinPath = join(root, "pin.json");
+            writeFileSync(
+                pinPath,
+                SafeJSON.stringify({ release: "fixture", sha256: "d".repeat(64), sets: 1, samples: 2 })
+            );
+            const out = join(root, "d".repeat(16), "GenesisTools sounds");
+            const ensure = async () => "packed";
+            await expect(
+                downloadClickyLibrary({
+                    pinPath,
+                    root,
+                    ensure,
+                    unpack: async (_source, staging) => {
+                        writePack(staging);
+                        throw new Error("decode failed");
+                    },
+                })
+            ).rejects.toThrow("decode failed");
+            expect(existsSync(out)).toBe(false);
+            expect(readdirSync(root).filter((name) => name.startsWith(".unpack-"))).toEqual([]);
+            let unpacks = 0;
+            const options = {
+                pinPath,
+                root,
+                ensure,
+                unpack: async (_source: string, staging: string) => {
+                    unpacks++;
+                    writePack(staging);
+                    expect(existsSync(out)).toBe(false);
+                    await Bun.sleep(10);
+                    return { sets: 1, samples: 2 };
+                },
+            };
+            const results = await Promise.all([downloadClickyLibrary(options), downloadClickyLibrary(options)]);
+            expect(results.map((result) => result.reused).sort()).toEqual([false, true]);
+            expect(unpacks).toBe(1);
+            expect(existsSync(join(out, "fixture", "b.wav"))).toBe(true);
+            expect(readdirSync(root).filter((name) => name.startsWith(".unpack-"))).toEqual([]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("unpacks the pinned pack outside the bundle once, then reuses the folder", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-clicky-download-"));
         try {
@@ -74,8 +246,7 @@ describe("downloadClickyLibrary", () => {
             );
             let downloads = 0;
             const unpack = async (_source: string, out: string) => {
-                mkdirSync(out, { recursive: true });
-                writeFileSync(join(out, "registry.json"), "{}");
+                writePack(out);
                 return { sets: 1, samples: 2 };
             };
             const ensure = async () => {
@@ -451,6 +622,24 @@ describe("createRealBuildOfferDeps", () => {
         }
     });
 
+    it("uses stderr terminal status for build progress", () => {
+        const descriptor = Object.getOwnPropertyDescriptor(process.stderr, "isTTY");
+        try {
+            for (const interactive of [false, true]) {
+                Object.defineProperty(process.stderr, "isTTY", { value: interactive, configurable: true });
+                expect(createRealBuildOfferDeps().progress?.interactive).toBe(interactive);
+                // A terminal build redraws one spinner line; the real deps must hand the display a spinner.
+                expect(typeof createRealBuildOfferDeps().progress?.spinner).toBe("function");
+            }
+        } finally {
+            if (descriptor) {
+                Object.defineProperty(process.stderr, "isTTY", descriptor);
+            } else {
+                Reflect.deleteProperty(process.stderr, "isTTY");
+            }
+        }
+    });
+
     it("writes its messages to stderr", () => {
         const stderr = spyOn(process.stderr, "write").mockImplementation(() => true);
 
@@ -567,6 +756,81 @@ function fakeDeps(overrides: FakeDepsOverrides = {}) {
 }
 
 describe("maybeOfferGenesisAppBuild", () => {
+    it.each([false, true])("uses terminal progress and stops the spinner when build failure is %s", async (fails) => {
+        const { deps } = fakeDeps();
+        const events: string[] = [];
+        const configured: BuildOfferDeps = {
+            ...deps,
+            progress: {
+                interactive: true,
+                spinner: () => ({
+                    start: (message) => {
+                        events.push(`start:${message}`);
+                    },
+                    message: (message) => {
+                        events.push(`message:${message}`);
+                    },
+                    stop: (message) => {
+                        events.push(`stop:${message}`);
+                    },
+                }),
+            },
+            build: async (onStep, onProgress) => {
+                onStep("compiling");
+                onProgress("1/2 files");
+                onProgress("2/2 files");
+                if (fails) {
+                    throw new Error("fixture build failure");
+                }
+            },
+            log: (message) => {
+                events.push(`log:${message}`);
+            },
+        };
+        await maybeOfferGenesisAppBuild(configured);
+        expect(events).toContain("start:1/2 files");
+        expect(events).toContain("message:2/2 files");
+        expect(events).toContain("stop:2/2 files");
+        if (fails) {
+            expect(events.at(-2)).toBe("stop:2/2 files");
+            expect(events.at(-1)).toContain("fixture build failure");
+        } else {
+            expect(events.at(-1)).toBe("stop:2/2 files");
+        }
+    });
+
+    it("keeps plain progress throttled when stderr is redirected", async () => {
+        const { deps } = fakeDeps();
+        const logs: string[] = [];
+        let clock = 0;
+        let spinners = 0;
+        await maybeOfferGenesisAppBuild({
+            ...deps,
+            progress: {
+                interactive: false,
+                now: () => clock,
+                spinner: () => {
+                    spinners++;
+                    throw new Error("redirected output must not use a spinner");
+                },
+            },
+            log: (message) => {
+                logs.push(message);
+            },
+            build: async (_onStep, onProgress) => {
+                onProgress("first progress");
+                clock = 1000;
+                onProgress("suppressed progress");
+                clock = 15_000;
+                onProgress("later progress");
+            },
+        });
+        expect(logs).toContain("first progress");
+        expect(logs).not.toContain("suppressed progress");
+        expect(logs).toContain("later progress");
+        expect(spinners).toBe(0);
+    });
+
     it("asks nothing when GENESIS_TOOLS_NO_APP is set", async () => {
         const { deps, calls } = fakeDeps({ noAppEnv: true });
         await maybeOfferGenesisAppBuild(deps);
@@ -721,6 +985,105 @@ describe("swift build progress", () => {
         ]);
     });
 
+    it.each([
+        [true, false],
+        [false, true],
+    ])("defaults progress to stderr independently of stdin (%s, %s)", (stdinTty, stderrTty) => {
+        const descriptors = [process.stdin, process.stderr].map((stream) =>
+            Object.getOwnPropertyDescriptor(stream, "isTTY")
+        );
+        const events: string[] = [];
+        let clock = 0;
+        try {
+            Object.defineProperty(process.stdin, "isTTY", { value: stdinTty, configurable: true });
+            Object.defineProperty(process.stderr, "isTTY", { value: stderrTty, configurable: true });
+            const display = createBuildProgressDisplay({
+                step: (message) => {
+                    events.push(`plain:${message}`);
+                },
+                spinner: () => ({
+                    start: (message) => {
+                        events.push(`start:${message}`);
+                    },
+                    message: (message) => {
+                        events.push(`message:${message}`);
+                    },
+                    stop: (message) => {
+                        events.push(`stop:${message}`);
+                    },
+                }),
+                now: () => clock,
+            });
+            display.onProgress("first");
+            clock = 1000;
+            display.onProgress("suppressed");
+            clock = PLAIN_PROGRESS_EVERY_MS;
+            display.onProgress("last");
+            display.finish();
+            expect(events).toEqual(
+                stderrTty
+                    ? ["start:first", "message:suppressed", "message:last", "stop:last"]
+                    : ["plain:first", "plain:last"]
+            );
+        } finally {
+            for (const [index, stream] of [process.stdin, process.stderr].entries()) {
+                const descriptor = descriptors[index];
+                if (descriptor) {
+                    Object.defineProperty(stream, "isTTY", descriptor);
+                } else {
+                    Reflect.deleteProperty(stream, "isTTY");
+                }
+            }
+        }
+    });
+
+    it("terminates a stalled streaming command and releases its lock before another request", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-stream-deadline-"));
+        try {
+            const lock = join(root, "build.lock");
+            const lines: string[] = [];
+            const hung = withFileLock(
+                lock,
+                () =>
+                    runStreaming({
+                        cmd: [
+                            process.execPath,
+                            "-e",
+                            'console.log("build started"); process.on("SIGTERM", () => {}); setTimeout(() => {}, 2000);',
+                        ],
+                        onLine: (line) => {
+                            lines.push(line);
+                        },
+                        timeoutMs: 500,
+                    }),
+                2000
+            );
+            await expect(hung).rejects.toThrow("timed out after 500 ms and was terminated");
+            expect(lines).toContain("build started");
+            const next = await withFileLock(
+                lock,
+                () =>
+                    runStreaming({
+                        cmd: [
+                            process.execPath,
+                            "-e",
+                            'process.stdout.write("recovered"); process.stderr.write("warning");',
+                        ],
+                        onLine: (line) => {
+                            lines.push(line);
+                        },
+                        timeoutMs: 2000,
+                    }),
+                2000
+            );
+            expect(next).toEqual({ code: 0, stdout: "recovered", stderr: "warning" });
+            expect(lines).toContain("recovered");
+            expect(lines).toContain("warning");
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
     it("outside a terminal: a plain line, then the next only after the plain interval", () => {
         let clock = 0;
         const lines: string[] = [];
@@ -744,9 +1107,12 @@ describe("swift build progress", () => {
         const seen: { line: string; at: number }[] = [];
         const script =
             'console.log("[1/2] Compiling A a.swift"); setTimeout(() => console.error("[2/2] Linking App"), 400);';
-        const result = await runStreaming([process.execPath, "-e", script], undefined, (line) =>
-            seen.push({ line, at: performance.now() })
-        );
+        const result = await runStreaming({
+            cmd: [process.execPath, "-e", script],
+            onLine: (line) => {
+                seen.push({ line, at: performance.now() });
+            },
+        });
         const exitedAt = performance.now();
 
         expect(result.code).toBe(0);

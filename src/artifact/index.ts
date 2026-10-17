@@ -1,7 +1,6 @@
 #!/usr/bin/env bun
 
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { runTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -13,7 +12,7 @@ import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import { DASHBOARDS } from "@genesiscz/utils/ui/dashboards";
 import { Command } from "commander";
 import pc from "picocolors";
-import { DETACH_WAIT_MS, waitForServedUrl } from "./lib/detach";
+import { DETACH_WAIT_MS, detachedLogPath, waitForServedUrl } from "./lib/detach";
 import { openArtifact } from "./lib/open";
 import { RUNTIME_DIR } from "./lib/paths";
 import { addEntry, entryUrlPath, loadRegistry, removeEntry, resolveTarget } from "./lib/registry";
@@ -134,10 +133,8 @@ program
             }
         ) => {
             if (opts.detach) {
-                const logPath = join(tmpdir(), `artifact-serve-${opts.port}.log`);
+                const logPath = detachedLogPath();
                 const argvRest = process.argv.slice(1).filter((a) => a !== "--detach");
-                // Emptied first: an older run's URL line in the same log would read as this server's.
-                writeFileSync(logPath, "");
                 // Its own session (setsid): a Codex or agent shell kills the command's whole process group when the
                 // command returns, and a plain child died with it (2026-10-16: empty log, no server, a 404).
                 const child = spawnDetached({ cmd: [process.execPath, ...argvRest, "--no-open"], logFile: logPath });
@@ -160,11 +157,17 @@ program
                 }
 
                 const tail = readLog().trim().split("\n").slice(-8).join("\n");
-                out.log.error(
-                    outcome.kind === "exited"
-                        ? `The detached server exited (code ${outcome.code}) before it served anything:\n${tail}`
-                        : `The detached server (pid ${child.pid}) printed no URL within ${DETACH_WAIT_MS / 1000} s. Log: ${logPath}\n${tail}`
-                );
+                if (outcome.kind === "pending") {
+                    out.log.warn(
+                        `Startup is still pending for pid ${child.pid} after ${DETACH_WAIT_MS / 1000} s. Log: ${logPath}\n${tail}`
+                    );
+                    out.log.info(
+                        `Check ${toolCommand("artifact ps")} before retrying, or stop this launch with: kill ${child.pid}`
+                    );
+                    return;
+                }
+
+                out.log.error(`The detached server exited (code ${outcome.code}) before it served anything:\n${tail}`);
                 process.exitCode = 1;
                 return;
             }

@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import * as commands from "@genesiscz/utils/process/bounded-command";
 import {
     archiveClickyLibrary,
     CLICKY_PACKED_SAMPLES,
@@ -96,6 +97,40 @@ describe("Clicky library packing", () => {
         expect(existsSync(join(library, "registry.json"))).toBe(true);
         await ensureClickyLibrary(pin, { cacheRoot, fetchImpl });
         expect(calls).toBe(1);
+    });
+
+    it("bounds a stalled extractor and removes its staging folder", async () => {
+        const cacheRoot = mkdtempSync(join(tmpdir(), "gt-clicky-extract-timeout-"));
+        dirs.push(cacheRoot);
+        const bytes = Buffer.from("fixture archive");
+        const pin = {
+            release: "fixture",
+            url: "https://invalid/fixture.tar.gz",
+            sha256: createHash("sha256").update(bytes).digest("hex"),
+            bytes: bytes.length,
+            sets: 0,
+            samples: 0,
+        };
+        const bounded = commands.boundedCommand;
+        const runner = spyOn(commands, "boundedCommand").mockImplementation(async (options) => {
+            expect(options.command[0]).toBe("tar");
+            expect(options.timeoutMs).toBe(120_000);
+            const result = await bounded({
+                command: [process.execPath, "-e", 'process.on("SIGTERM", () => {}); setTimeout(() => {}, 1000);'],
+                timeoutMs: 30,
+            });
+            expect(result.error?.code).toBe("ETIMEDOUT");
+            return result;
+        });
+        try {
+            await expect(
+                ensureClickyLibrary(pin, { cacheRoot, fetchImpl: async () => new Response(bytes) })
+            ).rejects.toThrow("tar timed out after 120000 ms");
+            expect(runner).toHaveBeenCalledTimes(1);
+            expect(readdirSync(cacheRoot)).toEqual([]);
+        } finally {
+            runner.mockRestore();
+        }
     });
 
     it("refuses an archive that does not match its pin", async () => {

@@ -38,6 +38,8 @@ export async function boundedCommand(options: {
     maxBufferBytes?: number;
     cwd?: string;
     environment?: Record<string, string | undefined>;
+    onStdout?: (chunk: Uint8Array) => void;
+    onStderr?: (chunk: Uint8Array) => void;
 }): Promise<BoundedCommandResult> {
     options.signal?.throwIfAborted();
     const timeoutMs = Math.floor(options.timeoutMs);
@@ -155,6 +157,11 @@ export async function boundedCommand(options: {
                 return;
             }
             stdout.push(value);
+            try {
+                options.onStdout?.(value);
+            } catch (error) {
+                stop(error instanceof Error ? error : new Error("Command stdout callback failed."));
+            }
         });
         child.stderr?.on("data", (value: Buffer) => {
             if (failure || settled) {
@@ -166,6 +173,11 @@ export async function boundedCommand(options: {
                 return;
             }
             stderr.push(value);
+            try {
+                options.onStderr?.(value);
+            } catch (error) {
+                stop(error instanceof Error ? error : new Error("Command stderr callback failed."));
+            }
         });
         child.stdout?.once("error", stop);
         child.stderr?.once("error", stop);

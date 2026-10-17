@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CODEX_CACHE_TTL_MS, computeCacheStatus, GROK_CACHE_TTL_MS } from "@app/claude/lib/usage/session-rows";
+import * as historyCatalog from "@genesiscz/utils/agent-sessions/open-service";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
 import { type AgentSessionRow, cmuxLocationForRow, listAgentSessionRows } from "./agent-session-rows";
@@ -155,6 +156,26 @@ test("a codex row takes an untagged journal line with a codex id", () => {
 
     expect(cmuxLocationForRow(codexId, "codex", refs)?.surfaceId).toBe("surface-9");
     expect(cmuxLocationForRow(codexId, "grok", refs)).toBeNull();
+});
+
+test("exact transcript paths reach both provider catalogs before row hydration", async () => {
+    const filePaths = ["/fixture/claude.jsonl", "/fixture/codex.jsonl"];
+    const catalog = spyOn(historyCatalog, "catalogHistory").mockResolvedValue({
+        metadata: [],
+        reindexed: false,
+        report: { sessions: 0, messages: null, sources: 0, issues: [], parsed: 0, unchanged: 0, removed: 0 },
+    });
+    try {
+        expect(await listAgentSessionRows({ providers: ["claude", "codex"], filePaths, refresh: false })).toEqual([]);
+        expect(catalog).toHaveBeenCalledTimes(2);
+        expect(catalog.mock.calls.map(([options]) => options.provider).sort()).toEqual(["claude", "openai-sub"]);
+        for (const [options] of catalog.mock.calls) {
+            expect(options.filters?.filePaths).toEqual(filePaths);
+            expect(options.refresh).toBe(false);
+        }
+    } finally {
+        catalog.mockRestore();
+    }
 });
 
 test("a provider that cannot be listed adds no rows, or with failClosed fails the listing", async () => {

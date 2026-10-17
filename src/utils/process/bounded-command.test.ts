@@ -94,6 +94,43 @@ test("a deadline kills a TERM-ignoring descendant that let go of our pipes", asy
     expect(await stopsRunningWithin(pid, 2000)).toBe(true);
 }, 10_000);
 
+test("streams both output channels while preserving the captured result", async () => {
+    const stdout: string[] = [];
+    const stderr: string[] = [];
+    const result = await boundedCommand({
+        command: [
+            process.execPath,
+            "-e",
+            'process.stdout.write("one"); process.stderr.write("warning"); setTimeout(() => { process.stdout.write("two"); }, 100);',
+        ],
+        timeoutMs: 2000,
+        onStdout: (chunk) => {
+            stdout.push(Buffer.from(chunk).toString());
+        },
+        onStderr: (chunk) => {
+            stderr.push(Buffer.from(chunk).toString());
+        },
+    });
+    expect(result.status).toBe(0);
+    expect(result.error).toBeUndefined();
+    expect(stdout.join("")).toBe("onetwo");
+    expect(stderr.join("")).toBe("warning");
+    expect(result.stdout).toBe(stdout.join(""));
+    expect(result.stderr).toBe(stderr.join(""));
+});
+
+test("a streaming callback failure terminates the command instead of escaping its event handler", async () => {
+    const result = await boundedCommand({
+        command: [process.execPath, "-e", 'console.log("ready"); setTimeout(() => {}, 5000);'],
+        timeoutMs: 2000,
+        onStdout: () => {
+            throw new Error("fixture output failure");
+        },
+    });
+    expect(result.error?.message).toBe("fixture output failure");
+    expect(result.stdout).toContain("ready");
+});
+
 test("the child-deadline watchdog's kill statuses read as cut short; an ordinary exit does not", async () => {
     const killed = await boundedCommand({ command: ["/bin/sh", "-c", "kill -9 $$"], timeoutMs: 10_000 });
     const finished = await boundedCommand({ command: ["/bin/sh", "-c", "exit 3"], timeoutMs: 10_000 });

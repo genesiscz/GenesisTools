@@ -271,7 +271,7 @@ final class ReviewModel: ObservableObject {
     /// The checkout the session worked in most; the window opens on it unless somebody picked one.
     @Published var recommendedWorktree: String?
     /// True once somebody picked a checkout, or a saved pick came back: the window never moves on its own after that.
-    var worktreeChosen = false
+    @Published var worktreeChosen = false
     var activityRequested = false
     /// Branches the Base choice offers, newest first.
     @Published var baseCandidates: [String] = []
@@ -1096,7 +1096,10 @@ final class ReviewModel: ObservableObject {
     func switchWorktree(to path: String, chosen: Bool = true) {
         if chosen { worktreeChosen = true }
         let url = URL(fileURLWithPath: path).standardizedFileURL
-        guard url.path != repo.path else { return }
+        guard url.path != repo.path else {
+            if chosen { onWorktreeChange?(url) }
+            return
+        }
         HubPerf.log("review.worktree \(repo.path) -> \(url.path)")
         let shown = roots.first?.shown ?? true
         repo = url

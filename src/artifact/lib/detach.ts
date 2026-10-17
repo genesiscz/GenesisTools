@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { stripAnsi } from "@genesiscz/utils/string";
 
 /**
@@ -14,10 +17,15 @@ export function servedUrlFromLog(text: string): string | null {
     return match?.[1] ?? null;
 }
 
+/** Every launch owns its log, even when several children request the same port. */
+export function detachedLogPath(): string {
+    return join(mkdtempSync(join(tmpdir(), "artifact-serve-")), "server.log");
+}
+
 export type DetachOutcome =
     | { kind: "serving"; url: string; port: number }
     | { kind: "exited"; code: number }
-    | { kind: "timeout" };
+    | { kind: "pending" };
 
 /** Polls the child's log (a cheap read, 250 ms apart) until it names its URL, the child exits, or the deadline passes. */
 export async function waitForServedUrl(options: {
@@ -33,21 +41,20 @@ export async function waitForServedUrl(options: {
 
     while (true) {
         const url = servedUrlFromLog(options.readLog());
-
-        if (url) {
-            return { kind: "serving", url, port: Number.parseInt(new URL(url).port, 10) };
-        }
-
         const code = options.exitCode();
 
         if (code !== null) {
             return { kind: "exited", code };
         }
 
+        if (url) {
+            return { kind: "serving", url, port: Number.parseInt(new URL(url).port, 10) };
+        }
+
         const left = deadline - now();
 
         if (left <= 0) {
-            return { kind: "timeout" };
+            return { kind: "pending" };
         }
 
         await sleep(Math.min(250, left));

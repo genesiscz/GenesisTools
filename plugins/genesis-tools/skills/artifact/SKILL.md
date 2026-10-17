@@ -97,8 +97,10 @@ code retints completely. A custom template dir may override just `theme.css`.
 ## Verify with curl, not a browser
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3076/dashboard
-curl -s http://127.0.0.1:3076/__catalog | rg dashboard
+# Set this to the origin in the URL printed by serve --detach, including its actual port.
+artifact_origin='<origin printed by serve --detach, including the port>'
+curl -s -o /dev/null -w '%{http_code}\n' "$artifact_origin/dashboard"
+curl -s "$artifact_origin/__catalog" | rg dashboard
 ```
 
 A browser/screenshot pass is only for visual sign-off when the user asks to see it.

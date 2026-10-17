@@ -20,6 +20,34 @@ final class LinkRelayTests: XCTestCase {
         XCTAssertFalse(WebAppSignIn.returnsToWebApp("mailto:someone@example.test", sourceBundleID: webApp))
     }
 
+    func testContentPathsContainingLoginWordsKeepNormalRouting() {
+        for path in ["/blog/oauth-security", "/docs/callbacks", "/login-guide", "/authorize-your-team"] {
+            XCTAssertFalse(WebAppSignIn.isSignInStep(URL(string: "https://example.test" + path)!))
+        }
+        for path in ["/oauth/callback", "/i/oauth2/authorize", "/signin", "/sign-in", "/set-cookie"] {
+            XCTAssertTrue(WebAppSignIn.isSignInStep(URL(string: "https://example.test" + path)!))
+        }
+    }
+
+    func testRepeatsAreScopedToTheSourceWebApp() {
+        let at = Date(timeIntervalSince1970: 100)
+        let raw = "https://example.test/login"
+        let last = WebAppSignIn.ReturnAttempt(raw: raw, sourceBundleID: "app-a", at: at)
+        XCTAssertTrue(last.isRepeat(raw, sourceBundleID: "app-a", now: at.addingTimeInterval(5)))
+        XCTAssertFalse(last.isRepeat(raw, sourceBundleID: "app-b", now: at.addingTimeInterval(5)))
+        XCTAssertFalse(last.isRepeat(raw, sourceBundleID: "app-a", now: at.addingTimeInterval(11)))
+        XCTAssertFalse(last.isRepeat(raw + "?next=1", sourceBundleID: "app-a", now: at.addingTimeInterval(5)))
+    }
+
+    func testAFailedWebAppOpenFallsBackWithTheOriginalLink() {
+        let raw = "https://auth.example.test/set-cookie?token=fixture"
+        var forwarded: [String] = []
+        WebAppSignIn.completeReturn(raw, error: nil) { forwarded.append($0) }
+        XCTAssertTrue(forwarded.isEmpty)
+        WebAppSignIn.completeReturn(raw, error: NSError(domain: "fixture", code: 1)) { forwarded.append($0) }
+        XCTAssertEqual(forwarded, [raw])
+    }
+
     func testEveryWindowFaceEnsuresTheRelayAndScriptedRunsDoNot() {
         XCTAssertTrue(LinkRelay.shouldEnsure([]))
         XCTAssertTrue(LinkRelay.shouldEnsure(["--hub"]))

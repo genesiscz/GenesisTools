@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { spinner as clackSpinner } from "@clack/prompts";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -104,6 +105,7 @@ export interface BuildOfferDeps {
     confirmBuild: () => Promise<boolean>;
     build: (onStep: (message: string) => void, onProgress: (message: string) => void) => Promise<void>;
     log: (message: string) => void;
+    progress?: Omit<Parameters<typeof createBuildProgressDisplay>[0], "step">;
     now: () => number;
 }
 
@@ -146,9 +148,12 @@ export async function maybeOfferGenesisAppBuild(deps: BuildOfferDeps): Promise<v
     }
 
     try {
-        // stderr, under a tool that is about to run: plain progress lines, never a spinner on stdout.
-        const progress = createBuildProgressDisplay({ step: deps.log, interactive: false });
-        await deps.build(progress.onStep, progress.onProgress);
+        const progress = createBuildProgressDisplay({ ...(deps.progress ?? { interactive: false }), step: deps.log });
+        try {
+            await deps.build(progress.onStep, progress.onProgress);
+        } finally {
+            progress.finish();
+        }
     } catch (error) {
         logger.warn({ error }, "build-offer: GenesisTools.app build failed");
         deps.log(
@@ -249,6 +254,10 @@ export function createRealBuildOfferDeps(): BuildOfferDeps {
     return {
         // Both ends: `tools control see … | jq` keeps a terminal on stdin while stdout is data.
         isTty: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
+        progress: {
+            interactive: process.stderr.isTTY === true,
+            spinner: () => clackSpinner({ output: process.stderr }),
+        },
         noAppEnv: () => env.tools.isAppLauncherDisabled(),
         isAppBuilt: () => existsSync(genesisAppLauncherPath()),
         detectToolchain: () => detectXcodeToolchain(),

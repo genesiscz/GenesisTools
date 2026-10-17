@@ -8,7 +8,7 @@ import {
 import { getSessionListing } from "@app/claude/lib/history/search";
 import { teamsRoot } from "@app/claude/lib/teams/discover";
 import type { SessionMetadataRecord } from "@genesiscz/utils/agent-sessions/cache-types";
-import { resolveTranscript } from "@genesiscz/utils/ai/transcripts/resolve";
+import { resolveTranscripts } from "@genesiscz/utils/ai/transcripts/resolve";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { openAgentSessionIds } from "../procs/sources";
@@ -102,76 +102,84 @@ function parentRow(row: AgentSessionRow): ParentRow {
     };
 }
 
-/** A parent the listing did not return (older than the window): only what its file says. */
-async function parentById({
-    id,
+/** Missing parents share folder reads and one metadata listing, bounded to their transcript paths. */
+async function parentsByIds({
+    ids,
     rows,
-    now,
     refresh,
 }: {
+    ids: Iterable<string>;
+    rows: AgentSessionRow[];
+    refresh?: boolean;
+}): Promise<Map<string, ParentRow>> {
+    const parents = new Map<string, ParentRow>();
+    const missing = new Set<string>();
+    for (const id of ids) {
+        const listed = rows.find((row) => row.sessionId === id || row.sessionId.startsWith(id));
+        if (listed) {
+            parents.set(id, parentRow(listed));
+        } else {
+            missing.add(id);
+        }
+    }
+
+    const resolved = new Map<string, ParentRow>();
+    for (const provider of ["claude", "codex"] as const) {
+        if (missing.size === 0) {
+            break;
+        }
+
+        const transcripts = await resolveTranscripts([...missing], {}, provider);
+        for (const [id, transcript] of transcripts) {
+            if (transcript instanceof Error) {
+                logger.debug({ error: transcript, id, provider }, "[hub agents] parent session not found");
+                continue;
+            }
+
+            resolved.set(id, {
+                provider,
+                sessionId: transcript.sessionId,
+                filePath: transcript.filePath,
+                title: null,
+                project: null,
+                cwd: "",
+                model: null,
+                account: null,
+                mtime: Bun.file(transcript.filePath).lastModified,
+            });
+            missing.delete(id);
+        }
+    }
+
+    if (resolved.size > 0) {
+        const candidates = [...resolved.values()];
+        const metadata = await listAgentSessionRows({
+            providers: [...new Set(candidates.map((row) => row.provider ?? "claude"))],
+            filePaths: [...new Set(candidates.map((row) => row.filePath))],
+            refresh,
+            maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
+        });
+        for (const [id, fallback] of resolved) {
+            const row = metadata.find(
+                (row) => row.sessionId === fallback.sessionId && row.provider === fallback.provider
+            );
+            parents.set(id, row ? parentRow(row) : fallback);
+        }
+    }
+
+    return parents;
+}
+
+async function parentById(options: {
     id: string;
     rows: AgentSessionRow[];
     now: number;
     refresh?: boolean;
 }): Promise<ParentRow | null> {
-    const listed = rows.find((row) => row.sessionId === id || row.sessionId.startsWith(id));
-    if (listed) {
-        return parentRow(listed);
-    }
-
-    for (const provider of ["claude", "codex"] as const) {
-        const found = await resolveParentRow({ id, provider, now, refresh });
-        if (found) {
-            return found;
-        }
-    }
-
-    return null;
-}
-
-async function resolveParentRow({
-    id,
-    provider,
-    now,
-    refresh,
-}: {
-    id: string;
-    provider: "claude" | "codex";
-    now: number;
-    refresh?: boolean;
-}): Promise<ParentRow | null> {
-    try {
-        const resolved = await resolveTranscript(id, {}, provider);
-        const mtime = Bun.file(resolved.filePath).lastModified;
-        // The window reaching back to that session, so the index row (title, project, account)
-        // is read rather than guessed. A live session's index row lags its file (a reused listing
-        // is up to 30 s old), so the window reaches an hour further: ending at the file's mtime, it
-        // missed 7 of 40 lookups taken just after a write, and the hub showed the bare id.
-        const hours = (now - mtime) / 3_600_000 + 1;
-        const rows = await listAgentSessionRows({
-            providers: [provider],
-            refresh,
-            hours,
-            maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
-        });
-        const row = rows.find((candidate) => candidate.sessionId === resolved.sessionId);
-        return row
-            ? parentRow(row)
-            : {
-                  provider,
-                  sessionId: resolved.sessionId,
-                  title: null,
-                  project: null,
-                  cwd: "",
-                  filePath: resolved.filePath,
-                  model: null,
-                  account: null,
-                  mtime,
-              };
-    } catch (error) {
-        logger.debug({ error, id, provider }, "[hub agents] parent session not found");
-        return null;
-    }
+    return (
+        (await parentsByIds({ ids: [options.id], rows: options.rows, refresh: options.refresh })).get(options.id) ??
+        null
+    );
 }
 
 /** Sub-agent transcripts the session index saw written at or after `since` (the window is in the SQL). */
@@ -295,6 +303,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
     const codexTops = prof.measure("codex-tree", () =>
         attachCodexAgents(codexRecords, { now, model: null, readOnly: options.refresh === false })
     );
+    const open = await openSessions;
 
     let parentRows: ParentRow[];
     if (options.session) {
@@ -303,6 +312,27 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
     } else {
         parentRows = rows.map(parentRow);
         const listed = new Set(parentRows.map((row) => row.sessionId));
+        const missingIds = new Set(
+            [
+                ...open,
+                ...codexTops.keys(),
+                ...workers.flatMap((worker) =>
+                    worker.node.status === "running" && worker.rendezvousSession ? [worker.rendezvousSession] : []
+                ),
+            ].filter((id) => !listed.has(id))
+        );
+        const missingParents = await parentsByIds({ ids: missingIds, rows, refresh: options.refresh });
+        for (const id of open) {
+            if (listed.has(id)) {
+                continue;
+            }
+
+            const held = missingParents.get(id);
+            if (held) {
+                parentRows.push(held);
+                listed.add(held.sessionId);
+            }
+        }
         // A parent is in the window when any of its agents is, like a worker's rendezvous session.
         const byChild = await prof.measureAsync("agent-parents", () =>
             parentsOfRecentAgents(since, listed, (since) => recentAgentRecords({ since, refresh: options.refresh }))
@@ -318,7 +348,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
                 continue;
             }
 
-            const lead = await parentById({ id, rows, now, refresh: options.refresh });
+            const lead = missingParents.get(id);
             if (lead) {
                 parentRows.push(lead);
                 listed.add(lead.sessionId);
@@ -332,7 +362,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
                 .filter((id) => !listed.has(id))
         );
         for (const id of waiting) {
-            const extra = await parentById({ id, rows, now, refresh: options.refresh });
+            const extra = missingParents.get(id);
             if (extra) {
                 parentRows.push(extra);
             }
@@ -346,7 +376,6 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         }
     }
 
-    const open = await openSessions;
     const parents = sortParents(
         prof.measure("tree", () =>
             parentRows.map((row) =>
@@ -360,6 +389,7 @@ async function buildTree(options: HubAgentsOptions): Promise<AgentsTree> {
         )
     )
         .map((parent) => ({ ...parent, open: open.has(parent.sessionId) }))
+        .sort((left, right) => Number(right.open) - Number(left.open))
         .slice(0, limit);
     // From the parents returned, after the limit: a worker whose parent was cut is an orphan, never dropped.
     const attached = new Set(parents.map((parent) => parent.sessionId));

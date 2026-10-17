@@ -274,6 +274,7 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
             model.$collapsed.map { _ in () }.eraseToAnyPublisher(),
             model.$dismissedNewsHead.map { _ in () }.eraseToAnyPublisher(),
             model.$chosenBase.map { _ in () }.eraseToAnyPublisher(),
+            model.$worktreeChosen.map { _ in () }.eraseToAnyPublisher(),
             model.$worktrees.map { _ in () }.eraseToAnyPublisher(),
         ]
         Publishers.MergeMany(changes).dropFirst(changes.count).sink { [weak self] in self?.scheduleSave() }.store(in: &subscriptions)

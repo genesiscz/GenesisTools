@@ -87,6 +87,8 @@ export interface SessionListingOptions {
     limit?: number;
     /** Only sessions whose file mtime is at or after this epoch ms: refreshes and reads the window alone. */
     mtimeFrom?: number;
+    /** Exact transcript paths; bounds the refresh and metadata query before hydration. */
+    filePaths?: string[];
     /** With `mtimeFrom`: also the N newest sessions by mtime, whatever their age. */
     newest?: number;
     /** Read the index as it is when this scope was refreshed that recently (see `HistoryService.catalog`). */
@@ -139,6 +141,7 @@ export async function getSessionListing(options: SessionListingOptions = {}): Pr
                     agentsOnly: subagentsOnly,
                     limit,
                     mtimeFrom: options.mtimeFrom,
+                    filePaths: options.filePaths,
                     newest: options.newest,
                 },
                 maxDiscoveryAgeMs: options.maxDiscoveryAgeMs,

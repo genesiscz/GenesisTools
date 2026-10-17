@@ -41,7 +41,7 @@ import {
     safeResolve,
     scanArtifacts,
 } from "./catalog";
-import { servedUrlFromLog, waitForServedUrl } from "./detach";
+import { detachedLogPath, servedUrlFromLog, waitForServedUrl } from "./detach";
 import { renderMarkdown } from "./markdown";
 import {
     defaultPageForTarget,
@@ -1347,6 +1347,39 @@ describe("runningOutsideRegistry", () => {
 
 // `serve --detach` printed the requested port while the child had moved to a free one: the link 404'd (2026-10-16).
 describe("serve --detach reports the port the child serves on", () => {
+    test("concurrent launches keep their readiness URLs in separate logs", async () => {
+        const logs = [detachedLogPath(), detachedLogPath()];
+        try {
+            expect(logs[0]).not.toBe(logs[1]);
+            const urls = ["http://127.0.0.1:3076/first", "http://127.0.0.1:3077/second"];
+            await Promise.all(
+                logs.map((file, index) => Bun.write(file, `${urls[index]} (catalog at / or /__catalog)`))
+            );
+            const outcomes = await Promise.all(
+                logs.map((file) =>
+                    waitForServedUrl({
+                        readLog: () => readFileSync(file, "utf8"),
+                        exitCode: () => null,
+                    })
+                )
+            );
+            expect(outcomes).toEqual(urls.map((url, index) => ({ kind: "serving", url, port: 3076 + index })));
+        } finally {
+            for (const file of logs) {
+                rmSync(dirname(file), { recursive: true, force: true });
+            }
+        }
+    });
+
+    test("an exited child cannot serve a URL left in its log", async () => {
+        expect(
+            await waitForServedUrl({
+                readLog: () => "http://127.0.0.1:3076/old (catalog at / or /__catalog)",
+                exitCode: () => 0,
+            })
+        ).toEqual({ kind: "exited", code: 0 });
+    });
+
     test("reads the URL line, colours and all, and only once it is there", () => {
         expect(servedUrlFromLog("◇  Serving /x/signal-drive.html\n")).toBeNull();
         expect(
@@ -1385,6 +1418,6 @@ describe("serve --detach reports the port the child serves on", () => {
                     late += ms;
                 },
             })
-        ).toEqual({ kind: "timeout" });
+        ).toEqual({ kind: "pending" });
     });
 });

@@ -92,13 +92,12 @@ final class ClickySoundLibrary: ObservableObject {
         }
     }
 
-    /// The folder `tools macos clicky-library download` unpacks into (CLICKY_DOWNLOADED_FOLDER in permissions/app.ts);
-    /// its name is the library's name in the list.
-    static let downloadedFolderName = "GenesisTools sounds"
+    /// Assigned only when the download command's result is registered; display names can belong to any folder.
+    static let downloadedID = "genesistools-downloaded"
 
     /// The GenesisTools pack is on the list: shipped in the bundle, or downloaded with the button.
     var hasGenesisToolsPack: Bool {
-        records.contains { $0.id == Self.bundledID || $0.displayName == Self.downloadedFolderName }
+        records.contains { $0.id == Self.bundledID || $0.id == Self.downloadedID }
     }
 
     /// A build no longer downloads the pack while Clicky is off on the Mac (2026-10-16), so the settings offer it here:
@@ -116,7 +115,7 @@ final class ClickySoundLibrary: ObservableObject {
             }
             struct Downloaded: Decodable { let path: String }
             let downloaded = try JSONDecoder().decode(Downloaded.self, from: Data(result.stdout.utf8))
-            await register(URL(fileURLWithPath: downloaded.path, isDirectory: true))
+            await registerDownloaded(URL(fileURLWithPath: downloaded.path, isDirectory: true))
         } catch {
             self.error = "Could not download the sound pack: \(error.localizedDescription)"
         }
@@ -163,6 +162,15 @@ final class ClickySoundLibrary: ObservableObject {
     }
 
     func register(_ url: URL) async {
+        await register(url, id: UUID().uuidString)
+    }
+
+    func registerDownloaded(_ url: URL) async {
+        guard !hasGenesisToolsPack else { return }
+        await register(url, id: Self.downloadedID)
+    }
+
+    private func register(_ url: URL, id: String) async {
         guard !stopped else { return }
         let token = lifetime
         guard addedCount < 32 else {
@@ -179,7 +187,8 @@ final class ClickySoundLibrary: ObservableObject {
                 throw ClickyPackError.invalid("You can add up to 32 libraries. Remove one before adding another.")
             }
             let bookmark = try url.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
-            let record = ClickyLibraryRecord(id: UUID().uuidString, displayName: url.lastPathComponent, bookmark: bookmark)
+            guard !records.contains(where: { $0.id == id }) else { return }
+            let record = ClickyLibraryRecord(id: id, displayName: url.lastPathComponent, bookmark: bookmark)
             let updated = records + [record]
             let data = try encodedRecords(updated)
             defaults.set(data, forKey: storageKey)

@@ -10,6 +10,43 @@ import XCTest
 
 final class ClickyTests: XCTestCase {
     @MainActor
+    func testAUserLibraryNamedLikeTheSoundPackDoesNotCountAsThePack() async throws {
+        let parent = FileManager.default.temporaryDirectory.appendingPathComponent("clicky-library-name-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let folder = parent.appendingPathComponent("GenesisTools sounds", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data(#"{"formatVersion":1,"sets":[]}"#.utf8).write(to: folder.appendingPathComponent("registry.json"))
+        let suite = "dev.genesis.clicky.registration.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let library = ClickySoundLibrary(defaults: defaults, bundled: nil)
+        defer { library.stop() }
+
+        await library.register(folder)
+        XCTAssertNil(library.error)
+        XCTAssertEqual(library.records.count, 1)
+        let ordinary = try XCTUnwrap(library.records.first)
+        XCTAssertEqual(ordinary.displayName, "GenesisTools sounds")
+        XCTAssertNotNil(UUID(uuidString: ordinary.id))
+        XCTAssertNotEqual(ordinary.id, ClickySoundLibrary.downloadedID)
+        XCTAssertFalse(library.hasGenesisToolsPack, "a user import's display name must not identify the downloaded pack")
+
+        await library.registerDownloaded(folder)
+        XCTAssertNil(library.error)
+        XCTAssertTrue(library.hasGenesisToolsPack)
+        XCTAssertEqual(library.records.map(\.id), [ordinary.id, ClickySoundLibrary.downloadedID])
+        let registeredIDs = library.records.map(\.id)
+        await library.registerDownloaded(folder)
+        XCTAssertNil(library.error)
+        XCTAssertEqual(library.records.map(\.id), registeredIDs, "a second downloaded registration must not add another record")
+
+        let reopened = ClickySoundLibrary(defaults: defaults, bundled: nil)
+        defer { reopened.stop() }
+        XCTAssertTrue(reopened.hasGenesisToolsPack)
+        XCTAssertEqual(reopened.records.map(\.id), registeredIDs)
+    }
+
+    @MainActor
     private final class InputMonitorStub: ClickyInputMonitoring {
         var granted = false
         var result: ClickyInputStartResult = .started
@@ -1553,6 +1590,27 @@ extension ClickyPackTests {
         }
         defaults.set(try JSONEncoder().encode(records), forKey: "clicky.libraries.v1")
         return records
+    }
+
+    @MainActor
+    func testTheDownloadedPackUsesItsSourceIDInsteadOfAFoldersDisplayName() async throws {
+        let fixture = try Fixture()
+        defer { fixture.dispose() }
+        let (defaults, suite) = integrationDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let bookmark = try fixture.root.bookmarkData(options: [.withSecurityScope], includingResourceValuesForKeys: nil, relativeTo: nil)
+        let ordinary = ClickyLibraryRecord(id: "ordinary", displayName: "GenesisTools sounds", bookmark: bookmark)
+        defaults.set(try JSONEncoder().encode([ordinary]), forKey: "clicky.libraries.v1")
+        let library = ClickySoundLibrary(defaults: defaults, bundled: nil)
+        defer { library.stop() }
+        XCTAssertFalse(library.hasGenesisToolsPack)
+        await library.registerDownloaded(fixture.root)
+        XCTAssertTrue(library.hasGenesisToolsPack)
+        XCTAssertEqual(library.records.last?.id, ClickySoundLibrary.downloadedID)
+        let restored = ClickySoundLibrary(defaults: defaults, bundled: nil)
+        defer { restored.stop() }
+        XCTAssertTrue(restored.hasGenesisToolsPack)
+        XCTAssertEqual(restored.records.count, 2)
     }
 
     /// The shipped library is listed first, loads like a folder, is never stored and cannot be removed.

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { skip } from "@genesiscz/utils/test/skip";
 import {
     describeSource,
@@ -10,6 +11,7 @@ import {
     pickCodesignIdentity,
     readSourceInfo,
     signByHashes,
+    signStagedBundle,
     staleAppFacePids,
     staleRegistrations,
     stampInfoPlist,
@@ -60,6 +62,98 @@ describe("pickCodesignIdentity", () => {
     });
 });
 
+describe("signStagedBundle", () => {
+    it("times out a stalled certificate and retries without blocking progress", async () => {
+        const hashes: string[] = [];
+        const deadlines: number[] = [];
+        let progressed = false;
+        const timer = setTimeout(() => {
+            progressed = true;
+        }, 10);
+        try {
+            await signStagedBundle({
+                stagedBundle: "/fixture/App.app",
+                identity: { kind: "custom", name: "Dev", hashes: ["AAA", "BBB"] },
+                step: () => {},
+                timeoutMs: 100,
+                runCommand: async (options) => {
+                    expect(options.command[0]).toBe("codesign");
+                    expect(options.command.at(-1)).toBe("/fixture/App.app");
+                    const hash = options.command[options.command.indexOf("--sign") + 1];
+                    hashes.push(hash);
+                    deadlines.push(options.timeoutMs);
+                    if (hash === "AAA") {
+                        return boundedCommand({
+                            command: [
+                                process.execPath,
+                                "-e",
+                                'process.on("SIGTERM", () => {}); setTimeout(() => {}, 1000);',
+                            ],
+                            timeoutMs: options.timeoutMs,
+                        });
+                    }
+
+                    return { status: 0, signal: null, stdout: "", stderr: "" };
+                },
+            });
+            expect(hashes).toEqual(["AAA", "BBB"]);
+            expect(deadlines).toEqual([100, 100]);
+            expect(progressed).toBe(true);
+        } finally {
+            clearTimeout(timer);
+        }
+    });
+
+    it.each([{ kind: "adhoc" as const }, { kind: "custom" as const, name: "Dev" }])(
+        "reports an actionable bounded failure for a single identity %j",
+        async (identity) => {
+            const attempts: string[][] = [];
+            await expect(
+                signStagedBundle({
+                    stagedBundle: "/fixture/App.app",
+                    identity,
+                    step: () => {},
+                    runCommand: async (options) => {
+                        attempts.push(options.command);
+                        expect(options.timeoutMs).toBe(10_000);
+                        return {
+                            status: null,
+                            signal: null,
+                            stdout: "",
+                            stderr: "partial signing output",
+                            error: Object.assign(new Error("deadline"), { code: "ETIMEDOUT" }),
+                        };
+                    },
+                })
+            ).rejects.toThrow("codesign attempt timed out after 10000 ms and was terminated");
+            expect(attempts).toHaveLength(1);
+            expect(attempts[0][attempts[0].indexOf("--sign") + 1]).toBe(identity.kind === "adhoc" ? "-" : "Dev");
+        }
+    );
+
+    it("reports every timed-out certificate when no retry can sign", async () => {
+        const hashes: string[] = [];
+        await expect(
+            signStagedBundle({
+                stagedBundle: "/fixture/App.app",
+                identity: { kind: "custom", name: "Dev", hashes: ["AAA", "BBB"] },
+                step: () => {},
+                runCommand: async (options) => {
+                    hashes.push(options.command[options.command.indexOf("--sign") + 1]);
+                    return {
+                        status: null,
+                        signal: null,
+                        stdout: "",
+                        stderr: "",
+                        error: Object.assign(new Error("deadline"), { code: "ETIMEDOUT" }),
+                    };
+                },
+            })
+        ).rejects.toThrow("codesign failed with every certificate named");
+        expect(hashes).toEqual(["AAA", "BBB"]);
+    });
+});
+
 describe("signByHashes", () => {
     const quiet = () => {};
 
@@ -68,7 +162,7 @@ describe("signByHashes", () => {
         const signed = await signByHashes({
             name: "Dev",
             hashes: ["AAA", "BBB", "CCC"],
-            sign: (hash) => {
+            sign: async (hash) => {
                 tried.push(hash);
                 return hash === "BBB" ? { code: 0, stderr: "" } : { code: 1, stderr: "expired" };
             },
@@ -85,7 +179,7 @@ describe("signByHashes", () => {
         const signed = await signByHashes({
             name: "Dev",
             hashes: ["AAA", "BBB", "CCC"],
-            sign: (hash) => {
+            sign: async (hash) => {
                 tried.push(hash);
                 clock += 11_000;
                 return hash === "CCC" ? { code: 0, stderr: "" } : { code: 1, stderr: "slow failure" };

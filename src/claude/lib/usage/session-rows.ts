@@ -111,6 +111,8 @@ export interface ListSessionRowsOptions {
     /** If the hours window has fewer rows, append older sessions by mtime. */
     minRows?: number;
     excludeSubagents?: boolean;
+    /** Exact transcript paths; forwarded to the catalog before any tail reads. */
+    filePaths?: string[];
     now?: number;
     /**
      * `false` skips the transcript tail reads, and every token, model and cache field then
@@ -455,6 +457,7 @@ export async function listSessionRowsWithTimings(
     const result = await prof.measureAsync("listing", () =>
         getSessionListing({
             excludeSubagents: opts.excludeSubagents ?? true,
+            ...(opts.filePaths === undefined ? {} : { filePaths: opts.filePaths }),
             // The window and the top-up go down to the refresh and the SQL read; the filters
             // below then keep exactly what they kept before.
             ...(opts.hours === undefined ? {} : { mtimeFrom: now - opts.hours * 60 * 60 * 1000, newest: opts.minRows }),

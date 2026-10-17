@@ -364,7 +364,6 @@ async function refreshGenesisApp(): Promise<void> {
         const progress = createBuildProgressDisplay({
             step: (message) => out.println(pc.dim(`    ${message}`)),
             spinner: () => out.spinner(),
-            interactive: isInteractive(),
         });
         const result = await buildApp({ onStep: progress.onStep, onProgress: progress.onProgress }).finally(
             progress.finish

@@ -45,6 +45,7 @@ export const realProcsSources: ProcsSources = {
         try {
             return await listAgentSessionRows({
                 hours: SESSION_HOURS,
+                refresh: false,
                 withUsage: false,
                 maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS,
             });
@@ -91,7 +92,11 @@ export const realProcsSources: ProcsSources = {
  */
 export async function openAgentSessionIds(sources?: ProcsSources): Promise<Set<string>> {
     const report = await readProcsReport(sources ? { sources } : {});
-    return new Set(report.groups.flatMap((group) => (group.session ? [group.session.sessionId] : [])));
+    return new Set(
+        report.groups.flatMap((group) =>
+            group.kind === "agent" && group.session && group.session.match !== "cwd" ? [group.session.sessionId] : []
+        )
+    );
 }
 
 export async function readProcsReport({

@@ -381,7 +381,9 @@ export class HistoryService {
         // reserved a generation in between.
         const discoveryGeneration = this.options.repository.generation(this.options.providerId);
         const discovery = await this.options.reader.discover(this.options.roots, scope);
-        const candidates = await historyCandidates({ sources: discovery.sources, filters: { signal: filters.signal } });
+        const paths = filters.filePaths === undefined ? undefined : new Set(filters.filePaths);
+        const sources = paths ? discovery.sources.filter((source) => paths.has(source.filePath)) : discovery.sources;
+        const candidates = await historyCandidates({ sources, filters: { signal: filters.signal } });
         // A windowed listing refreshes the window and its top-up only; everything older is read
         // as indexed. Old sessions do not change, and refreshing all of them was the cost.
         const sorted = listingIndexSlice(candidates);
@@ -413,6 +415,10 @@ export class HistoryService {
      * for a diagnostic, which must not write the index.
      */
     async catalog(filters: AgentSearchFilters = {}, options: { maxDiscoveryAgeMs?: number; refresh?: boolean } = {}) {
+        if (filters.filePaths !== undefined) {
+            filters = { ...filters, filePaths: filters.filePaths.map(canonicalRoot) };
+        }
+
         const { freshness } = this.options;
         const freshnessKey = SafeJSON.stringify([
             this.options.providerId,
@@ -420,6 +426,7 @@ export class HistoryService {
             Boolean(filters.agentsOnly),
             filters.project ?? null,
             this.options.roots,
+            ...(filters.filePaths === undefined ? [] : [[...filters.filePaths].sort()]),
         ]);
         const age = options.maxDiscoveryAgeMs === undefined ? null : (freshness?.age(freshnessKey) ?? null);
         const recent = age !== null && options.maxDiscoveryAgeMs !== undefined && age < options.maxDiscoveryAgeMs;
@@ -453,7 +460,13 @@ export class HistoryService {
         const { repository, providerId } = this.options;
         const inScope = (entry: CachedHistoryMetadata) => metadataInScope(entry, scoped);
         const metadata = repository.metadata
-            .listMetadata({ providerId, orderBy: "firstTimestamp", mtimeFrom: filters.mtimeFrom, withUserText: false })
+            .listMetadata({
+                providerId,
+                orderBy: "firstTimestamp",
+                mtimeFrom: filters.mtimeFrom,
+                filePaths: filters.filePaths,
+                withUserText: false,
+            })
             .filter(inScope);
 
         if (filters.mtimeFrom !== undefined && filters.newest) {
@@ -465,6 +478,7 @@ export class HistoryService {
                     providerId,
                     orderBy: "mtime",
                     limit: topUpReadLimit(filters.newest),
+                    filePaths: filters.filePaths,
                     withUserText: false,
                 })
                 .filter((entry) => inScope(entry) && !seen.has(entry.sourceKey))

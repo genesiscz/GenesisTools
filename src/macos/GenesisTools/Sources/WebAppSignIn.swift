@@ -13,14 +13,28 @@ enum WebAppSignIn {
         "callback",
     ]
 
-    /// A link that belongs to a login: an account host, or a path with an OAuth or login word.
+    /// A link that belongs to a login: an account host, or an OAuth or login path component.
     static func isSignInStep(_ url: URL) -> Bool {
         guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http",
             let host = url.host?.lowercased()
         else { return false }
         if hostPrefixes.contains(where: { host.hasPrefix($0) }) { return true }
-        let path = url.path.lowercased()
-        return pathWords.contains { path.contains($0) }
+        let components = url.path.lowercased().split(separator: "/").map(String.init)
+        return components.contains { pathWords.contains($0) || $0 == "oauth2" }
+    }
+
+    struct ReturnAttempt {
+        let raw: String
+        let sourceBundleID: String
+        let at: Date
+
+        func isRepeat(_ raw: String, sourceBundleID: String, now: Date) -> Bool {
+            self.raw == raw && self.sourceBundleID == sourceBundleID && now.timeIntervalSince(at) < 10
+        }
+    }
+
+    static func completeReturn(_ raw: String, error: Error?, fallback: (String) -> Void) {
+        if error != nil { fallback(raw) }
     }
 
     /// Whether a link that arrived while `sourceBundleID` was in front goes back into that web app.

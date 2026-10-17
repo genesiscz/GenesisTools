@@ -214,7 +214,6 @@ export function registerPermissionsCommand(program: Command): void {
             const progress = createBuildProgressDisplay({
                 step: (message) => ui.info(message),
                 spinner: () => out.spinner(),
-                interactive: isInteractive(),
             });
             const result = await buildApp({
                 onStep: progress.onStep,

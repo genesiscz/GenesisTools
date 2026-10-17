@@ -204,7 +204,6 @@ program
             const progress = createBuildProgressDisplay({
                 step: (message) => out.log.step(message),
                 spinner: () => out.spinner(),
-                interactive: isInteractive(),
             });
 
             try {

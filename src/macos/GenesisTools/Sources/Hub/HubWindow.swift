@@ -930,6 +930,7 @@ final class HubModel: ObservableObject {
             let next = ReviewModel(repo: URL(fileURLWithPath: worktree.path), options: DiffViewOptions.remembered(), session: sessions(for: worktree).first?.sessionId)
             next.embedded = true
             next.scope = worktree.isMain ? .uncommitted : .branch
+            next.worktreeChosen = true
             review = next
         }
     }

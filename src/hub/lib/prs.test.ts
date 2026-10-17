@@ -101,6 +101,21 @@ describe("hubPrs / hubPr", () => {
         expect(detail).toMatchObject({ number: 7, body: "why", repoRoot: repo.dir, localWorktree: worktree });
     });
 
+    it("skips a checkout without an origin but keeps explicit path errors clear", async () => {
+        const repo = await TestRepo.create({ prefix: "gt-review-prs-no-origin-" });
+        repos.push(repo);
+        const calls: string[][] = [];
+        const result = await hubPrs({ paths: [repo.dir], runner: fakeGh(calls) });
+
+        expect(result.repos).toEqual([]);
+        expect(result.prs).toEqual([]);
+        expect(result.skipped).toEqual([{ path: repo.dir, reason: "no origin remote" }]);
+        expect(calls).toEqual([]);
+        await expect(hubPr({ ref: `${repo.dir}#7`, runner: fakeGh(calls) })).rejects.toBeInstanceOf(PrRefError);
+        await expect(hubPr({ ref: `${repo.dir}#7`, runner: fakeGh(calls) })).rejects.toThrow("no origin remote");
+        expect(calls).toEqual([]);
+    });
+
     it("skips a clone whose origin is a local folder instead of reporting it as an error", async () => {
         const source = await TestRepo.create({ prefix: "gt-review-prs-src-" });
         repos.push(source);

@@ -17,6 +17,7 @@ import { concurrentMap, withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 /**
@@ -136,15 +137,32 @@ function readJSON<T>(path: string): T {
     return SafeJSON.parse(readFileSync(path, "utf8"), { strict: true }) as T;
 }
 
-async function run(cmd: string[], environment?: Record<string, string>): Promise<void> {
-    const proc = Bun.spawn(cmd, {
-        stdout: "ignore",
-        stderr: "pipe",
-        env: environment ? { ...env.getProcessEnv(), ...environment } : undefined,
+/** A decoder or extractor cannot keep a download lock forever; expiry kills its owned process group. */
+const COMMAND_TIMEOUT_MS = 120_000;
+
+async function run({
+    command,
+    environment,
+}: {
+    command: string[];
+    environment?: Record<string, string>;
+}): Promise<void> {
+    const result = await boundedCommand({
+        command,
+        timeoutMs: COMMAND_TIMEOUT_MS,
+        environment: environment ? { ...env.getProcessEnv(), ...environment } : undefined,
     });
-    const [code, stderr] = await Promise.all([proc.exited, new Response(proc.stderr).text()]);
-    if (code !== 0) {
-        throw new Error(`${cmd[0]} exited ${code}: ${stderr.trim()}`);
+    const stderr = result.stderr.trim();
+    if (result.error) {
+        const message =
+            result.error.code === "ETIMEDOUT"
+                ? `${command[0]} timed out after ${COMMAND_TIMEOUT_MS} ms and was terminated`
+                : `${command[0]} failed: ${result.error.message}`;
+        throw new Error(`${message}${stderr ? `: ${stderr}` : ""}`, { cause: result.error });
+    }
+
+    if (result.status !== 0) {
+        throw new Error(`${command[0]} exited ${result.status ?? result.signal ?? "unknown"}: ${stderr}`);
     }
 }
 
@@ -202,7 +220,7 @@ export async function packClickyLibrary(source: string, out: string): Promise<{ 
             const pcm = Buffer.concat(parts);
             const joined = join(scratch, `${id}.wav`);
             writeFileSync(joined, Buffer.concat([wavHeader(pcm.length), pcm]));
-            await run(["flac", ...FLAC_ARGS, "-o", join(to, CLICKY_PACKED_SAMPLES), joined]);
+            await run({ command: ["flac", ...FLAC_ARGS, "-o", join(to, CLICKY_PACKED_SAMPLES), joined] });
             bytes += statSync(join(to, CLICKY_PACKED_SAMPLES)).size;
         });
         log.info({ source, out, sets: ids.length, bytes }, "packed Clicky library");
@@ -217,7 +235,10 @@ export async function packClickyLibrary(source: string, out: string): Promise<{ 
  * No AppleDouble `._` files go in (`COPYFILE_DISABLE`).
  */
 export async function archiveClickyLibrary(packed: string, out: string, release: string): Promise<ClickyLibraryPin> {
-    await run(["tar", "--no-xattrs", "-czf", out, "-C", dirname(packed), basename(packed)], { COPYFILE_DISABLE: "1" });
+    await run({
+        command: ["tar", "--no-xattrs", "-czf", out, "-C", dirname(packed), basename(packed)],
+        environment: { COPYFILE_DISABLE: "1" },
+    });
     const bytes = readFileSync(out);
     const ids = setIDs(packed);
     const samples = ids.reduce(
@@ -310,7 +331,7 @@ export async function ensureClickyLibrary(
     try {
         const archive = join(staging, "library.tar.gz");
         writeFileSync(archive, bytes);
-        await run(["tar", "-xzf", archive, "-C", staging]);
+        await run({ command: ["tar", "-xzf", archive, "-C", staging] });
         rmSync(archive);
         if (!existsSync(join(staging, "ClickyLibrary", "registry.json"))) {
             throw new Error(`${pin.url} holds no ClickyLibrary/registry.json`);
@@ -345,7 +366,9 @@ export async function unpackClickyLibrary(source: string, out: string): Promise<
         await eachSet(ids, async (id) => {
             const manifest = readJSON<Manifest>(join(source, id, "manifest.json"));
             const decoded = join(scratch, `${id}.wav`);
-            await run(["afconvert", "-f", "WAVE", "-d", "LEI16", join(source, id, CLICKY_PACKED_SAMPLES), decoded]);
+            await run({
+                command: ["afconvert", "-f", "WAVE", "-d", "LEI16", join(source, id, CLICKY_PACKED_SAMPLES), decoded],
+            });
             const pcm = wavPCM(readFileSync(decoded), `${id}/${CLICKY_PACKED_SAMPLES}`);
             const expected = manifest.files.reduce((sum, file) => sum + file.frames * 2, 0);
             if (pcm.length !== expected) {

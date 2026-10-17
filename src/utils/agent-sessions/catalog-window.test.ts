@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import {
     existsSync,
     mkdirSync,
@@ -64,6 +64,59 @@ test("a windowed catalog refreshes and returns the window plus the newest top-up
         const everything = await service.catalog({});
         expect(everything.metadata.map((entry) => entry.nativeId).sort()).toEqual([fresh, recent, old].sort());
     } finally {
+        database.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("an exact-path catalog refreshes and queries only the requested transcripts", async () => {
+    const root = mkdtempSync(join(tmpdir(), "history-catalog-paths-"));
+    const ids = [
+        "11111111-2222-4333-8444-000000000021",
+        "11111111-2222-4333-8444-000000000022",
+        "11111111-2222-4333-8444-000000000023",
+    ];
+    ids.forEach((id, index) => {
+        session(root, id, (100 + index) * HOUR);
+    });
+    const filePaths = ids.slice(0, 2).map((id) => join(root, `${id}.jsonl`));
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const repository = new HistorySyncRepository(database);
+    const metadata = spyOn(repository.metadata, "listMetadata");
+    const stamps = new Set<string>();
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository,
+        reader: claudeHistoryReader,
+        now: () => new Date(NOW),
+        freshness: {
+            age: (key) => (stamps.has(key) ? 0 : null),
+            touch: (key) => {
+                stamps.add(key);
+            },
+        },
+    });
+    try {
+        const limited = await service.catalog({ excludeAgents: true, filePaths }, { maxDiscoveryAgeMs: 30_000 });
+        expect(limited.report.parsed).toBe(2);
+        expect(limited.metadata.map((row) => row.sessionId).sort()).toEqual(ids.slice(0, 2));
+        expect(metadata.mock.calls.every(([options]) => options.filePaths?.length === 2)).toBe(true);
+        metadata.mockClear();
+        const empty = await service.catalog({ excludeAgents: true, filePaths: [] });
+        expect(empty.metadata).toEqual([]);
+        expect(empty.report.parsed).toBe(0);
+        // A narrow refresh cannot mark the whole provider fresh and hide the third session.
+        const all = await service.catalog({ excludeAgents: true }, { maxDiscoveryAgeMs: 30_000 });
+        expect(all.metadata.map((row) => row.sessionId).sort()).toEqual(ids);
+        expect(all.report.parsed).toBe(1);
+        metadata.mockClear();
+        const cached = await service.catalog({ excludeAgents: true, filePaths }, { refresh: false });
+        expect(cached.metadata.map((row) => row.sessionId).sort()).toEqual(ids.slice(0, 2));
+        expect(metadata.mock.calls.every(([options]) => options.filePaths?.length === 2)).toBe(true);
+    } finally {
+        metadata.mockRestore();
         database.close();
         rmSync(root, { recursive: true, force: true });
     }

@@ -28,6 +28,22 @@ final class ReviewSessionStateTests: XCTestCase {
         XCTAssertEqual(internalRequest.widgetContext, "/fixture/handoff.md")
     }
 
+    @MainActor
+    func testAnExplicitPickIsSavedWithoutWaitingForCheckoutLoading() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("review-pick-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cache = DiskCache(directory: directory, namespace: "window")
+        for picked in ["/work/main", "/work/other"] {
+            let model = ReviewModel(repo: URL(fileURLWithPath: "/work/main"), options: DiffViewOptions(), renderer: NullRenderer())
+            ReviewSessionPersistence.attach(model: model, key: picked, launchScope: .uncommitted, cache: cache)
+            model.switchWorktree(to: picked)
+            ReviewSessionPersistence.flushBeforeExit()
+            let state = try XCTUnwrap(cache.read(ReviewSessionState.self, key: picked))
+            XCTAssertEqual(state.worktree, picked)
+            XCTAssertEqual(state.worktreePicked, true)
+        }
+    }
+
     // MARK: Scope
 
     func testEveryScopeSurvivesTheDiskForm() throws {

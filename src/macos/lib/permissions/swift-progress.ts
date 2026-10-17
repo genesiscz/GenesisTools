@@ -83,10 +83,11 @@ export function createBuildProgressDisplay(options: {
     step: (message: string) => void;
     /** Needed only with `interactive`; without one the progress is printed as plain lines. */
     spinner?: () => ProgressSpinner;
-    interactive: boolean;
+    interactive?: boolean;
     now?: () => number;
 }): { onStep: (message: string) => void; onProgress: (message: string) => void; finish: () => void } {
     const now = options.now ?? (() => performance.now());
+    const interactive = options.interactive ?? process.stderr.isTTY === true;
     let spinner: ProgressSpinner | null = null;
     let last = "";
     let lastPlain = Number.NEGATIVE_INFINITY;
@@ -106,7 +107,7 @@ export function createBuildProgressDisplay(options: {
         onProgress: (message) => {
             last = message;
 
-            if (!options.interactive || !options.spinner) {
+            if (!interactive || !options.spinner) {
                 const at = now();
 
                 if (at - lastPlain >= PLAIN_PROGRESS_EVERY_MS) {

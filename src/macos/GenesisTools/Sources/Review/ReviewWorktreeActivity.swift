@@ -34,17 +34,12 @@ enum WorktreeActivity {
         return counts
     }
 
-    /// The checkout the session worked in most (`files` in log order, oldest first): the most files, a tie to the
-    /// one its latest file lies in. nil when none of its files lies in a checkout.
+    /// The checkout with the most changed files; ties keep git's worktree order. The provider merges files by
+    /// path, so their array order carries no recency. nil when none lies in a checkout.
     static func recommended(files: [String], worktrees: [RepoWorktree]) -> String? {
         let counts = counts(files: files, worktrees: worktrees)
         guard let most = counts.values.max() else { return nil }
-        let leaders = Set(counts.filter { $0.value == most }.keys)
-        let trees = worktrees.map { (path: $0.path, root: normalized($0.path)) }
-        for file in files.reversed() {
-            if let tree = checkout(of: file, in: trees), leaders.contains(tree) { return tree }
-        }
-        return leaders.sorted().first
+        return worktrees.first { counts[$0.path] == most }?.path
     }
 
     /// The Worktree menu's order: the checkouts the session changed files in first (most files first), the rest as
@@ -66,15 +61,21 @@ enum WorktreeActivity {
         return recommended ? "★ " + title : title
     }
 
+    private struct CacheKey: Hashable {
+        let session: String
+        let roots: [String]
+    }
+
     private static let cacheLock = NSLock()
-    nonisolated(unsafe) private static var cache: [String: (at: Date, files: [String])] = [:]
+    nonisolated(unsafe) private static var cache: [CacheKey: (at: Date, files: [String])] = [:]
     private static let cacheSeconds: TimeInterval = 120
 
-    /// The files the session's recent turns changed, in log order. The last 5 turns first: where it works now is
+    /// The files the session's recent turns changed. The last 5 turns first: where it works now is
     /// what matters. When none of those lies in a checkout of this repository, the last 50.
     static func changedFiles(session: String, worktrees: [RepoWorktree]) -> [String] {
+        let key = CacheKey(session: session, roots: Array(Set(worktrees.map { normalized($0.path) })).sorted())
         cacheLock.lock()
-        let cached = cache[session]
+        let cached = cache[key]
         cacheLock.unlock()
         if let cached, Date().timeIntervalSince(cached.at) < cacheSeconds { return cached.files }
 
@@ -89,7 +90,7 @@ enum WorktreeActivity {
             if !counts(files: found, worktrees: worktrees).isEmpty { break }
         }
         cacheLock.lock()
-        cache[session] = (Date(), found)
+        cache[key] = (Date(), found)
         cacheLock.unlock()
         return found
     }
@@ -98,16 +99,17 @@ enum WorktreeActivity {
 extension ReviewModel {
     /// Reads where the session worked. The window opens on the checkout it worked in most, unless somebody picked
     /// one: a repository with a single checkout, or a window without a session, never asks.
-    func refreshWorktreeActivity() {
+    func refreshWorktreeActivity(load: @escaping @Sendable (String, [RepoWorktree]) -> [String] = { WorktreeActivity.changedFiles(session: $0, worktrees: $1) }) {
         guard let session, worktrees.count > 1, !activityRequested else { return }
         activityRequested = true
         let trees = worktrees
         Task.detached(priority: .utility) { [weak self] in
-            let files = WorktreeActivity.changedFiles(session: session, worktrees: trees)
+            let files = load(session, trees)
             let counts = WorktreeActivity.counts(files: files, worktrees: trees)
             let best = WorktreeActivity.recommended(files: files, worktrees: trees)
             await MainActor.run {
                 guard let self else { return }
+                self.activityRequested = false
                 self.worktreeActivity = counts
                 self.recommendedWorktree = best
                 if !self.worktreeChosen, let best, best != self.repo.path {

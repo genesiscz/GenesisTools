@@ -84,6 +84,8 @@ export interface AgentSessionRowsOptions {
      * The CLI help says so; a programmatic caller reads this instead.
      */
     minRows?: number;
+    /** Exact transcript paths; bounds each provider's catalog and hydration. */
+    filePaths?: string[];
     limit?: number;
     now?: number;
     /** `false` leaves Claude rows without token, model and cache data (see `ListSessionRowsOptions`). */
@@ -218,6 +220,7 @@ async function nativeRows(
         provider: PROVIDER_ALIASES[alias],
         filters: {
             excludeAgents: true,
+            ...(options.filePaths === undefined ? {} : { filePaths: options.filePaths }),
             ...(options.limit === undefined ? {} : { limit: options.limit }),
             ...(cutoff === undefined ? {} : { mtimeFrom: cutoff }),
         },
@@ -293,6 +296,7 @@ export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}
                 if (alias === "claude") {
                     const claude = await listSessionRows({
                         ...(options.hours === undefined ? {} : { hours: options.hours }),
+                        ...(options.filePaths === undefined ? {} : { filePaths: options.filePaths }),
                         ...(options.minRows === undefined ? {} : { minRows: options.minRows }),
                         ...(options.now === undefined ? {} : { now: options.now }),
                         ...(options.withUsage === undefined ? {} : { withUsage: options.withUsage }),

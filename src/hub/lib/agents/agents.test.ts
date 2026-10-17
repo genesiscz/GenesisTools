@@ -6,6 +6,7 @@ import * as sessionRows from "@app/ai/lib/sessions/agent-session-rows";
 import * as history from "@app/claude/lib/history/search";
 import type { CodexSessionMeta } from "@app/codex/lib/store";
 import type { GrokSessionMeta } from "@app/grok/lib/store";
+import * as transcriptResolver from "@genesiscz/utils/ai/transcripts/resolve";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Command } from "commander";
 import { registerAgentsCommand } from "../../commands/agents";
@@ -699,6 +700,158 @@ describe("a session an open agent process holds", () => {
 
         expect(byId.get(OPEN_SESSION)).toMatchObject({ live: false, open: true });
         expect(byId.get(QUIET_SESSION)).toMatchObject({ live: false, open: false });
+    });
+
+    test("an open session outside the activity window survives a newer row and the limit", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-open-older-"));
+        const now = Date.now();
+        const filePath = join(dir, `${OPEN_SESSION}.jsonl`);
+        write(filePath, lines(prompt("2026-03-10T09:00:00.000Z", "still open")), now - 100 * HOUR);
+        const old = {
+            provider: "claude" as const,
+            sessionId: OPEN_SESSION,
+            title: "older open",
+            cwd: dir,
+            cwdShort: dir,
+            project: "fixture",
+            mtime: now - 100 * HOUR,
+            model: null,
+            account: null,
+            filePath,
+        };
+        const recent = {
+            ...old,
+            sessionId: QUIET_SESSION,
+            title: "newer ended",
+            mtime: now - HOUR,
+            filePath: join(dir, "ended.jsonl"),
+        };
+        write(recent.filePath, lines(prompt("2026-03-10T10:00:00.000Z", "ended")), recent.mtime);
+        const listing = spyOn(sessionRows, "listAgentSessionRows").mockImplementation(async (options) =>
+            options?.filePaths?.includes(filePath) ? [old] : [recent]
+        );
+        const resolver = spyOn(transcriptResolver, "resolveTranscripts").mockResolvedValue(
+            new Map([
+                [
+                    OPEN_SESSION,
+                    {
+                        provider: "claude",
+                        source: "native",
+                        sessionId: OPEN_SESSION,
+                        filePath,
+                    },
+                ],
+            ])
+        );
+        const claude = spyOn(history, "getSessionListing").mockResolvedValue({
+            sessions: [],
+            total: 0,
+            subagents: 0,
+            indexed: 0,
+            staleRemoved: 0,
+            reindexed: false,
+            projectCount: 0,
+            scope: "fixture",
+        });
+        const codex = spyOn(codexAgents, "recentCodexAgentRecords").mockResolvedValue([]);
+        const workers = spyOn(workerListing, "listWorkers").mockResolvedValue([]);
+        try {
+            const tree = await hubAgents({
+                now,
+                hours: 24,
+                limit: 1,
+                refresh: false,
+                teamsRoot: dir,
+                openSessions: async () => new Set([OPEN_SESSION]),
+            });
+            expect(tree.parents).toHaveLength(1);
+            expect(tree.parents[0]).toMatchObject({ sessionId: OPEN_SESSION, open: true, title: "older open" });
+            expect(resolver).toHaveBeenCalled();
+            expect(
+                listing.mock.calls.some(
+                    ([options]) => options?.filePaths?.includes(filePath) && options?.refresh === false
+                )
+            ).toBe(true);
+        } finally {
+            listing.mockRestore();
+            resolver.mockRestore();
+            claude.mockRestore();
+            codex.mockRestore();
+            workers.mockRestore();
+        }
+    });
+
+    test("batches held sessions missing from the limited listing into one bounded history listing", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "hub-held-batch-"));
+        const now = Date.now();
+        const held = [OPEN_SESSION, QUIET_SESSION].map((sessionId, index) => {
+            const filePath = join(dir, `${sessionId}.jsonl`);
+            const mtime = now - (100 + index) * HOUR;
+            write(filePath, lines(prompt("2026-03-10T09:00:00.000Z", "still open")), mtime);
+            return {
+                provider: "claude" as const,
+                sessionId,
+                title: `held ${index}`,
+                cwd: dir,
+                cwdShort: dir,
+                project: "fixture",
+                mtime,
+                model: null,
+                account: "work",
+                filePath,
+            };
+        });
+        const listing = spyOn(sessionRows, "listAgentSessionRows").mockImplementation(async (options) =>
+            options?.limit === undefined ? held : []
+        );
+        const resolved = (id: string) => ({
+            provider: "claude" as const,
+            source: "native" as const,
+            sessionId: id,
+            filePath: held.find((row) => row.sessionId === id)!.filePath,
+        });
+        const resolver = spyOn(transcriptResolver, "resolveTranscript").mockImplementation(async (id) => resolved(id));
+        const batchResolver = spyOn(transcriptResolver, "resolveTranscripts").mockImplementation(
+            async (ids) => new Map(ids.map((id) => [id, resolved(id)]))
+        );
+        const claude = spyOn(history, "getSessionListing").mockResolvedValue({
+            sessions: [],
+            total: 0,
+            subagents: 0,
+            indexed: 0,
+            staleRemoved: 0,
+            reindexed: false,
+            projectCount: 0,
+            scope: "fixture",
+        });
+        const codex = spyOn(codexAgents, "recentCodexAgentRecords").mockResolvedValue([]);
+        const workers = spyOn(workerListing, "listWorkers").mockResolvedValue([]);
+        try {
+            const tree = await hubAgents({
+                now,
+                hours: 24,
+                limit: 2,
+                refresh: false,
+                teamsRoot: dir,
+                openSessions: async () => new Set([OPEN_SESSION, QUIET_SESSION]),
+            });
+            expect(listing).toHaveBeenCalledTimes(2);
+            expect(listing.mock.calls[1][0]).toMatchObject({
+                filePaths: held.map((row) => row.filePath),
+                refresh: false,
+            });
+            expect(batchResolver).toHaveBeenCalledTimes(1);
+            expect(
+                tree.parents.map(({ sessionId, title, account, open }) => ({ sessionId, title, account, open }))
+            ).toEqual(held.map(({ sessionId, title, account }) => ({ sessionId, title, account, open: true })));
+        } finally {
+            listing.mockRestore();
+            resolver.mockRestore();
+            batchResolver.mockRestore();
+            claude.mockRestore();
+            codex.mockRestore();
+            workers.mockRestore();
+        }
     });
 
     test("a process list that fails marks nothing open and still answers", async () => {

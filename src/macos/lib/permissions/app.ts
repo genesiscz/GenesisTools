@@ -3,6 +3,7 @@ import {
     cpSync,
     existsSync,
     mkdirSync,
+    mkdtempSync,
     readdirSync,
     readFileSync,
     renameSync,
@@ -28,6 +29,7 @@ import {
 } from "@genesiscz/utils/macos/genesis-app";
 import { readStagingMarker } from "@genesiscz/utils/macos/native-inbox";
 import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "@genesiscz/utils/macos/xcode";
+import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { clearPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { executableInode } from "@genesiscz/utils/process/process-files";
 import { listProcesses, type ProcessEntry } from "@genesiscz/utils/process/processes";
@@ -140,49 +142,65 @@ function withHashes(
     return hashes.length > 1 ? { kind, name, hashes } : { kind, name };
 }
 
-/** Reads a stream to its end, handing each finished line (`\n` or `\r`) to `onLine` while it arrives. */
-async function readLines(stream: ReadableStream<Uint8Array>, onLine?: (line: string) => void): Promise<string> {
+/** Emits complete lines from streamed chunks, including a final unterminated line. */
+function buildLineReader(onLine: (line: string) => void) {
     const decoder = new TextDecoder();
-    let text = "";
     let pending = "";
-
-    for await (const chunk of stream) {
-        const piece = decoder.decode(chunk, { stream: true });
-        text += piece;
-        pending += piece;
-        const lines = pending.split(/\r\n|\n|\r/);
-        pending = lines.pop() ?? "";
-
-        for (const line of lines) {
-            onLine?.(line);
-        }
-    }
-
-    const rest = decoder.decode();
-    text += rest;
-    pending += rest;
-
-    if (pending) {
-        onLine?.(pending);
-    }
-
-    return text;
+    return {
+        write(chunk: Uint8Array) {
+            pending += decoder.decode(chunk, { stream: true });
+            const lines = pending.split(/\r\n|\n|\r/);
+            pending = lines.pop() ?? "";
+            for (const line of lines) {
+                onLine(line);
+            }
+        },
+        finish() {
+            pending += decoder.decode();
+            if (pending) {
+                onLine(pending);
+            }
+        },
+    };
 }
 
-/** Like `run`, but the event loop stays free and `onLine` sees every stdout and stderr line while the process runs. */
-export async function runStreaming(
-    cmd: string[],
-    cwd: string | undefined,
-    onLine: (line: string) => void
-): Promise<{ code: number; stdout: string; stderr: string }> {
-    logger.debug({ cmd, cwd }, "permissions app: spawn (streaming)");
-    const proc = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, code] = await Promise.all([
-        readLines(proc.stdout, onLine),
-        readLines(proc.stderr, onLine),
-        proc.exited,
-    ]);
-    return { code, stdout, stderr };
+const STREAMING_BUILD_TIMEOUT_MS = 15 * 60_000;
+
+/** Streams build output under a deadline; timeout terminates its process group and releases the caller's lock. */
+export async function runStreaming({
+    cmd,
+    cwd,
+    onLine,
+    timeoutMs = STREAMING_BUILD_TIMEOUT_MS,
+}: {
+    cmd: string[];
+    cwd?: string;
+    onLine: (line: string) => void;
+    timeoutMs?: number;
+}): Promise<{ code: number; stdout: string; stderr: string }> {
+    logger.debug({ cmd, cwd, timeoutMs }, "permissions app: spawn (streaming)");
+    const stdout = buildLineReader(onLine);
+    const stderr = buildLineReader(onLine);
+    const result = await boundedCommand({
+        command: cmd,
+        cwd,
+        timeoutMs,
+        maxBufferBytes: 64 * 1024 * 1024,
+        onStdout: stdout.write,
+        onStderr: stderr.write,
+    });
+    stdout.finish();
+    stderr.finish();
+    if (result.error) {
+        throw new Error(
+            result.error.code === "ETIMEDOUT"
+                ? `App build command timed out after ${timeoutMs} ms and was terminated. Check the build log and Swift toolchain, then retry.`
+                : `App build command failed: ${result.error.message}`,
+            { cause: result.error }
+        );
+    }
+
+    return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
 }
 
 function run(cmd: string[], cwd?: string): { code: number; stdout: string; stderr: string } {
@@ -555,8 +573,8 @@ async function buildAppSteps(
             : "swift build (optimized, incremental)"
     );
     const reportProgress = options?.onProgress ? createSwiftProgressReporter(options.onProgress, 1000) : () => {};
-    const build = await runStreaming(
-        [
+    const build = await runStreaming({
+        cmd: [
             "swift",
             "build",
             "-c",
@@ -567,9 +585,9 @@ async function buildAppSteps(
             APP_SCRATCH_PATH,
             ...(fileListChanged ? ["--disable-build-manifest-caching"] : []),
         ],
-        APP_SOURCE_DIR,
-        reportProgress
-    );
+        cwd: APP_SOURCE_DIR,
+        onLine: reportProgress,
+    });
 
     if (build.code !== 0) {
         throw new Error(`swift build failed (exit ${build.code}):\n${build.stderr || build.stdout}`);
@@ -716,30 +734,59 @@ export async function bundleClickyLibrary({
 /** Past this, a failed certificate is not followed by the next one on its own: in a terminal the user picks. */
 const SIGN_ATTEMPTS_BUDGET_MS = 10_000;
 
+interface CodesignAttemptResult {
+    code: number;
+    stderr: string;
+}
+
+async function runCodesign({
+    args,
+    timeoutMs = SIGN_ATTEMPTS_BUDGET_MS,
+    runCommand = boundedCommand,
+}: {
+    args: string[];
+    timeoutMs?: number;
+    runCommand?: typeof boundedCommand;
+}): Promise<CodesignAttemptResult> {
+    const result = await runCommand({ command: ["codesign", ...args], timeoutMs });
+    const failure = result.error
+        ? result.error.code === "ETIMEDOUT"
+            ? `codesign attempt timed out after ${timeoutMs} ms and was terminated; retry or choose another certificate.`
+            : `codesign attempt could not complete: ${result.error.message}`
+        : "";
+    return {
+        code: result.error ? 1 : (result.status ?? 1),
+        stderr: [result.stderr.trim(), failure].filter(Boolean).join("\n"),
+    };
+}
+
 /**
  * Signs the staged bundle. A name two keychain certificates share is signed by hash, first one first; when it fails
  * the next one is tried, on the bundle already built, so nothing is compiled again. Once the attempts took more than
  * 10 s, a terminal asks which certificate to use instead of going on alone.
  */
-async function signStagedBundle(
-    stagedBundle: string,
-    identity: CodesignIdentity,
-    step: (message: string) => void
-): Promise<void> {
+export async function signStagedBundle({
+    stagedBundle,
+    identity,
+    step,
+    timeoutMs = SIGN_ATTEMPTS_BUDGET_MS,
+    runCommand = boundedCommand,
+}: {
+    stagedBundle: string;
+    identity: CodesignIdentity;
+    step: (message: string) => void;
+    timeoutMs?: number;
+    runCommand?: typeof boundedCommand;
+}): Promise<void> {
     const sign = (arg: string) =>
-        run([
-            "codesign",
-            "--force",
-            "--sign",
-            arg,
-            "--identifier",
-            GENESIS_APP_BUNDLE_ID,
-            "--timestamp=none",
-            stagedBundle,
-        ]);
+        runCodesign({
+            args: ["--force", "--sign", arg, "--identifier", GENESIS_APP_BUNDLE_ID, "--timestamp=none", stagedBundle],
+            timeoutMs,
+            runCommand,
+        });
 
     if (identity.kind === "adhoc" || !identity.hashes) {
-        const result = sign(identity.kind === "adhoc" ? "-" : identity.name);
+        const result = await sign(identity.kind === "adhoc" ? "-" : identity.name);
 
         if (result.code !== 0) {
             throw new Error(`codesign failed (exit ${result.code}):\n${result.stderr}`);
@@ -772,7 +819,7 @@ async function signStagedBundle(
 export async function signByHashes(options: {
     name: string;
     hashes: string[];
-    sign: (hash: string) => { code: number; stderr: string };
+    sign: (hash: string) => CodesignAttemptResult | Promise<CodesignAttemptResult>;
     step: (message: string) => void;
     choose?: (name: string, hashes: string[]) => Promise<string>;
     now?: () => number;
@@ -795,7 +842,7 @@ export async function signByHashes(options: {
         options.step(
             `codesign: ${options.hashes.length} certificates are named "${options.name}"; signing with ${hash.slice(0, 10)}`
         );
-        const result = options.sign(hash);
+        const result = await options.sign(hash);
 
         if (result.code === 0) {
             logger.info({ name: options.name, hash, tried: failures.length + 1 }, "permissions app: signed by hash");
@@ -814,6 +861,52 @@ export async function signByHashes(options: {
 
 /** The folder name doubles as the library's name in Clicky's Sound libraries list. */
 export const CLICKY_DOWNLOADED_FOLDER = "GenesisTools sounds";
+
+interface DownloadedClickyRegistry {
+    sets: { id: string }[];
+}
+
+interface DownloadedClickyManifest {
+    files: { filename: string; sha256: string }[];
+}
+
+function downloadedClickyLibraryIsComplete(out: string, pin: ClickyLibraryPin): boolean {
+    try {
+        const registry = SafeJSON.parse(readFileSync(join(out, "registry.json"), "utf8")) as DownloadedClickyRegistry;
+        if (registry.sets.length !== pin.sets) {
+            return false;
+        }
+
+        let samples = 0;
+        for (const set of registry.sets) {
+            const licenceBytes = readFileSync(join(out, set.id, "LICENCE.txt"));
+            if (licenceBytes.length > 256 * 1024) {
+                return false;
+            }
+
+            const licence = new TextDecoder("utf-8", { fatal: true }).decode(licenceBytes);
+            if (!licence.trim() || licence.includes("\0")) {
+                return false;
+            }
+
+            const manifest = SafeJSON.parse(
+                readFileSync(join(out, set.id, "manifest.json"), "utf8")
+            ) as DownloadedClickyManifest;
+            for (const file of manifest.files) {
+                const bytes = readFileSync(join(out, set.id, file.filename));
+                if (createHash("sha256").update(bytes).digest("hex") !== file.sha256.toLowerCase()) {
+                    return false;
+                }
+
+                samples++;
+            }
+        }
+
+        return samples === pin.samples;
+    } catch {
+        return false;
+    }
+}
 
 /**
  * The "Download sound pack" button in Clicky's settings (`tools macos clicky-library download`): the same pinned
@@ -834,22 +927,42 @@ export async function downloadClickyLibrary({
     const pin = SafeJSON.parse(readFileSync(pinPath, "utf8"), { strict: true }) as ClickyLibraryPin;
     const out = join(root, pin.sha256.slice(0, 16), CLICKY_DOWNLOADED_FOLDER);
 
-    if (existsSync(join(out, "registry.json"))) {
-        return { path: out, reused: true };
-    }
+    mkdirSync(root, { recursive: true });
+    return withFileLock(
+        join(root, `${pin.sha256}.lock`),
+        async () => {
+            if (downloadedClickyLibraryIsComplete(out, pin)) {
+                return { path: out, reused: true };
+            }
 
-    const source = await ensure(pin);
-    const actual = await unpack(source, out);
+            const staging = mkdtempSync(join(root, `.unpack-${pin.sha256.slice(0, 16)}-`));
+            try {
+                const source = await ensure(pin);
+                const actual = await unpack(source, staging);
+                if (actual.sets !== pin.sets || actual.samples !== pin.samples) {
+                    throw new Error(
+                        `Clicky library count mismatch: unpacked ${actual.sets} sets and ${actual.samples} samples; the pin says ${pin.sets} and ${pin.samples}.`
+                    );
+                }
 
-    if (actual.sets !== pin.sets || actual.samples !== pin.samples) {
-        rmSync(out, { recursive: true, force: true });
-        throw new Error(
-            `Clicky library count mismatch: unpacked ${actual.sets} sets and ${actual.samples} samples; the pin says ${pin.sets} and ${pin.samples}.`
-        );
-    }
+                if (!downloadedClickyLibraryIsComplete(staging, pin)) {
+                    throw new Error("Clicky library is incomplete after unpacking.");
+                }
 
-    logger.info({ out, sets: actual.sets, samples: actual.samples }, "permissions app: Clicky library downloaded");
-    return { path: out, reused: false };
+                mkdirSync(dirname(out), { recursive: true });
+                rmSync(out, { recursive: true, force: true });
+                renameSync(staging, out);
+                logger.info(
+                    { out, sets: actual.sets, samples: actual.samples },
+                    "permissions app: Clicky library downloaded"
+                );
+                return { path: out, reused: false };
+            } finally {
+                rmSync(staging, { recursive: true, force: true });
+            }
+        },
+        300_000
+    );
 }
 
 interface StageAndInstallOptions {
@@ -902,9 +1015,9 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     }
 
     step(`codesign (${identity.kind === "adhoc" ? "ad-hoc" : identity.name})`);
-    await signStagedBundle(stagedBundle, identity, step);
+    await signStagedBundle({ stagedBundle, identity, step });
 
-    const verify = run(["codesign", "--verify", "--strict", stagedBundle]);
+    const verify = await runCodesign({ args: ["--verify", "--strict", stagedBundle] });
 
     if (verify.code !== 0) {
         throw new Error(`codesign --verify failed:\n${verify.stderr}`);

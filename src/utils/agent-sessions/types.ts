@@ -75,6 +75,8 @@ export interface AgentSearchFilters {
      * and keep 50 of them; the window belongs in the refresh and in the SQL, not in a filter after.
      */
     mtimeFrom?: number;
+    /** Catalog only: exact transcript paths, applied before refresh, SQL decoding and row hydration. */
+    filePaths?: string[];
     /** With `mtimeFrom`: also the N newest sessions by mtime whatever their age (the `--min` top-up). */
     newest?: number;
     signal?: AbortSignal;

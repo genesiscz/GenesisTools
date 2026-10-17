@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { HistoryDatabase } from "@genesiscz/utils/agent-sessions/database";
+import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import type { PsRow } from "@genesiscz/utils/process/ps";
-import { type ProcsSources, readProcsReport } from "./sources";
+import { openAgentSessionIds, type ProcsSources, readProcsReport, realProcsSources } from "./sources";
 import { refusal, type SignalOps, stopOrphans, stopTree } from "./stop";
 import { type BuildInput, buildProcsReport, LAUNCHD_UNKNOWN_REASON, type SessionLike } from "./tree";
 
@@ -373,6 +375,42 @@ function fakeSources(rows: PsRow[], own = new Set<number>([9999])): ProcsSources
         now: () => NOW,
     };
 }
+
+test("open-session discovery never opens the writable history database", async () => {
+    const writable = spyOn(HistoryDatabase, "getInstance").mockImplementation(() => {
+        throw new Error("writable history forbidden");
+    });
+    try {
+        await realProcsSources.sessions();
+        expect(writable).not.toHaveBeenCalled();
+        await expect(catalogHistory({ provider: "claude", refresh: true })).rejects.toThrow(
+            "writable history forbidden"
+        );
+        expect(writable).toHaveBeenCalledTimes(1);
+    } finally {
+        writable.mockRestore();
+    }
+});
+
+test("only a live agent with an explicit session identity counts as open", async () => {
+    const rows = [
+        row(10, 1, "/bin/zsh -l"),
+        row(20, 10, `${HOME}/.bun/bin/claude`, { age: 5 * HOUR }),
+        row(30, 10, `${HOME}/.bun/bin/claude --resume ${S1}`, { age: 8 * HOUR }),
+        row(40, 10, `/bin/zsh -c export CODEX_COMPANION_SESSION_ID='${S3}'`),
+    ];
+    const sources: ProcsSources = {
+        ...fakeSources(rows),
+        cwdOf: () => GT,
+        sessions: async () => [
+            { provider: "claude", sessionId: S1, title: "actually open", cwd: GT, mtime: NOW - 7 * HOUR },
+            { provider: "claude", sessionId: S2, title: "newer ended transcript", cwd: GT, mtime: NOW - MIN },
+        ],
+    };
+    const report = await readProcsReport({ sources });
+    expect(report.groups.find((group) => group.rootPid === 20)?.session).toMatchObject({ sessionId: S2, match: "cwd" });
+    expect(await openAgentSessionIds(sources)).toEqual(new Set([S1]));
+});
 
 /** A process table in memory: signals are recorded, and each pid dies on the signals listed for it. */
 function fakeOps(
