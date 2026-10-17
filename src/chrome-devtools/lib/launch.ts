@@ -378,7 +378,7 @@ export async function launchCdpBrowser(opts: LaunchCdpOpts): Promise<LaunchedCdp
             kill();
             throw new CdpLaunchError(
                 `${def.app} launched on port ${opts.port}, but its first window did not open: ${err instanceof Error ? err.message : String(err)}`,
-                { stage: "window", logTail, childQuit: pid !== null }
+                { stage: "window", logTail }
             );
         }
     }
