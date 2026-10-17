@@ -12,6 +12,7 @@ import XCTest
 ///   Counts: MARKDOWN_TREE_BENCH_SECTIONS (20), MARKDOWN_TREE_BENCH_SELECTS (10). MARKDOWN_TREE_BENCH_MARK=<file> appears
 ///   when the first measured loop starts, so `sample <pid>` from the shell can attach to it.
 final class MarkdownTreeLagBenchTests: XCTestCase {
+    /// The opt-in benchmark measures publishes, scrolling, tab switching and resizing.
     @MainActor
     func testTreeCostForUnrelatedChangesAndScrolling() throws {
         let env = ProcessInfo.processInfo.environment
@@ -206,6 +207,7 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
         return (0..<selections).map { distinct[$0 % 2] }
     }
 
+    /// Selection benchmarking requires two distinct documents and a positive switch count.
     func testAlternatingSelectionNeedsTwoDocuments() {
         XCTAssertNil(Self.alternatingSelection(ids: ["only"], selections: 10))
         XCTAssertNil(Self.alternatingSelection(ids: ["same", "same"], selections: 4))
@@ -234,6 +236,7 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
         return found
     }
 
+    /// Benchmark note discovery fills its requested limit when no final note is specified.
     func testNotesCollectsTheLimitWhenNoLastNoteIsNamed() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("tree-bench-notes-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

@@ -11,6 +11,7 @@ import XCTest
 ///   [MARKDOWN_REVEAL_EXPAND=<note>:<note>…] (notes whose folders open first, so a big subtree sits above the target)
 ///   swift test --filter MarkdownSidebarRevealBench
 final class MarkdownSidebarRevealBenchTests: XCTestCase {
+    /// The opt-in benchmark measures a reveal against the row actually drawn on screen.
     @MainActor
     func testShowInSidebarBringsTheRowOnScreen() throws {
         let env = ProcessInfo.processInfo.environment

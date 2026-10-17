@@ -6,6 +6,7 @@ import Vision
 /// are on screen (the sidebar reveal tests).
 @MainActor
 enum TreeDrawnText {
+    /// Reads the text actually drawn in a view, optionally saving the captured pixels.
     static func lines(of view: NSView, savingTo png: String? = nil) -> [String] {
         placed(in: view, savingTo: png).map(\.text)
     }

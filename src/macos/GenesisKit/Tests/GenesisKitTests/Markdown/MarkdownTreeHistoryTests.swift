@@ -8,6 +8,7 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         MarkdownTreePlace(root: root, expanded: open, scrollY: y)
     }
 
+    /// Back and Forward preserve places, and a new navigation discards the forward branch.
     func testBackAndForwardWalkThePlacesAndANewPlaceClearsForward() {
         let history = MarkdownTreeHistory()
         history.record(place("/v/a", ["/v/a/x"], 120))
@@ -24,6 +25,7 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertFalse(history.canGoForward, "a new place clears forward")
     }
 
+    /// Sidebar history retains only its newest fifty places.
     func testTheHistoryKeepsItsNewestFiftyPlaces() {
         let history = MarkdownTreeHistory()
         for i in 0..<60 { history.record(place("/v/\(i)")) }
@@ -31,6 +33,7 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertEqual(history.back.first, place("/v/10"))
     }
 
+    /// Changing the root records its place and Back restores its expanded folders and offset.
     @MainActor
     func testARootChangeRecordsThePlaceAndBackRestoresIt() {
         let model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-history-\(UUID().uuidString)")!)
@@ -47,6 +50,7 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertEqual(model.treeHistory.forward.last?.root, "/v/b", "going back is not itself recorded")
     }
 
+    /// Restoring a place reads its saved folders and closes folders outside that snapshot.
     @MainActor
     func testRestoringOpenFoldersOpensExactlyThoseAndClosesTheRest() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("md-restore-\(UUID().uuidString)")
@@ -71,6 +75,7 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertTrue(tree.rows.contains { $0.name == "n.md" }, "rows: \(tree.rows.map(\.name))")
     }
 
+    /// An existing picture is marked binary, while a nonexistent file is marked missing.
     @MainActor
     func testAPictureIsNotGoneItIsBinary() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("md-binary-\(UUID().uuidString).png")
@@ -84,6 +89,7 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertFalse(gone.binary)
     }
 
+    /// A clean picture skips web readiness while a text preview still waits for its page.
     @MainActor
     func testABinaryPaneDoesNotWaitForAWebPage() throws {
         let model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-binary-wait-\(UUID().uuidString)")!)
@@ -100,6 +106,7 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertFalse(MarkdownPaneContent.waitsForPage(text, model: model))
     }
 
+    /// Drafts and revisions remain readable when the disk file becomes binary.
     @MainActor
     func testADirtyDraftAndARevisionStayAheadOfTheBinaryFallback() throws {
         let model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-binary-draft-\(UUID().uuidString)")!)
@@ -133,6 +140,7 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertFalse(MarkdownPaneContent.showsBinary(picture, model: model), "a past revision stays reachable")
     }
 
+    /// Slash and folders directly under it omit the muted parent-name prefix.
     @MainActor
     func testARootUnderSlashShowsNoParentPrefix() {
         XCTAssertNil(MarkdownFileTreeView.parentFolderName(URL(fileURLWithPath: "/")))
@@ -140,6 +148,7 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertEqual(MarkdownFileTreeView.parentFolderName(URL(fileURLWithPath: "/Users/Martin")), "Users")
     }
 
+    /// Picture requests decode through the cache and invalidate only for changed file or size buckets.
     @MainActor
     func testABinaryPictureLoadsAndItsRequestFollowsTheFileAndSize() async throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("md-picture-load-\(UUID().uuidString).png")
@@ -163,32 +172,49 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertNotEqual(request, MarkdownPaneContent.PictureRequest(url: file.appendingPathExtension("other"), modifiedAt: date, pixels: 400))
     }
 
+    /// Folder labels use slash for the filesystem root and names for ordinary folders.
     @MainActor
     func testTheRootFolderHasANameInMenusAndTooltips() {
         XCTAssertEqual(MarkdownFileTreeView.folderName(URL(fileURLWithPath: "/")), "/")
         XCTAssertEqual(MarkdownFileTreeView.folderName(URL(fileURLWithPath: "/notes")), "notes")
     }
 
+    /// The view uses this scheduler for every delayed scroll phase; an obsolete callback must write and acknowledge nothing.
     func testANewerRestoreAndNavigationInvalidateQueuedScrollCallbacks() {
         let restore = MarkdownTreeRestore()
+        var queued: [(delay: TimeInterval, action: () -> Void)] = []
+        let scheduler: MarkdownTreeRestore.Scheduler = { delay, action in
+            queued.append((delay, action))
+        }
         var scroll = 0
+        var forced = 0
         var completions = 0
         let first = restore.begin()
-        let oldWrite = {
-            if restore.isCurrent(first) { scroll = 100; completions += 1 }
-        }
+        restore.schedule(first, after: 1, using: scheduler) { forced += 1 }
+        restore.schedule(first, using: scheduler) { scroll = 100 }
+        restore.schedule(first, after: 0.25, using: scheduler) { completions += 1 }
         let second = restore.begin()
-        oldWrite()
-        XCTAssertEqual(scroll, 0, "the first restore cannot force the second before its rows arrive")
-        if restore.isCurrent(second) { scroll = 200; completions += 1 }
-        oldWrite()
-        XCTAssertEqual(scroll, 200, "the first restore cannot overwrite the second offset")
+        restore.schedule(second, using: scheduler) { scroll = 200 }
+        XCTAssertEqual(queued.map(\.delay), [1, 0, 0.25, 0])
+
+        // Drain exactly the callbacks the view queued before the newer restore, including its forced fallback.
+        for callback in queued.prefix(3) { callback.action() }
+        XCTAssertEqual(forced, 0, "the obsolete forced retry cannot consume the newer pending offset")
+        XCTAssertEqual(scroll, 0, "the obsolete next-turn placement cannot scroll")
+        XCTAssertEqual(completions, 0, "the obsolete correction cannot acknowledge the newer place")
+        queued[3].action()
+        XCTAssertEqual(scroll, 200, "the current placement still runs")
+
+        restore.schedule(second, after: 0.25, using: scheduler) { completions += 1 }
+        queued[4].action()
+        XCTAssertEqual(completions, 1, "the current correction still acknowledges its place")
+        restore.schedule(second, after: 1, using: scheduler) { scroll = 300 }
         restore.cancel()
-        if restore.isCurrent(second) { scroll = 300; completions += 1 }
-        XCTAssertEqual(scroll, 200, "a reveal or leaving the sidebar cancels delayed writes")
-        XCTAssertEqual(completions, 1, "an obsolete callback cannot acknowledge the newer place")
+        queued[5].action()
+        XCTAssertEqual(scroll, 200, "navigation or sidebar removal cancels an already queued write")
     }
 
+    /// Dismantling the hosted sidebar releases its place callback and window model.
     @MainActor
     func testTheSidebarDropsItsPlaceProviderWhenItLeaves() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("md-place-\(UUID().uuidString)")

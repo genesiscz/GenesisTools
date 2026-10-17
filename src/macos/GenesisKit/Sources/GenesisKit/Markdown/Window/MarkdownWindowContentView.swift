@@ -16,6 +16,7 @@
 import AppKit
 import SwiftUI
 
+/// Hosts the SwiftUI root beside AppKit overlays whose scrolling must not relayout that root.
 final class MarkdownWindowContentView: NSView {
     /// The SwiftUI root; it states no sizes of its own (`MarkdownDocumentWindowController.contentView`).
     let root: NSView
@@ -28,6 +29,7 @@ final class MarkdownWindowContentView: NSView {
         init(_ view: NSView) { self.view = view }
     }
 
+    /// Installs the sizing-free SwiftUI root beneath the overlay layer.
     init<Root: View>(root: MarkdownRootHostingView<Root>) {
         self.root = root
         rootSizingOptions = { [unowned root] in root.sizingOptions }
@@ -36,6 +38,7 @@ final class MarkdownWindowContentView: NSView {
         addSubview(root)
     }
 
+    /// Rejects archive construction because the window supplies its root programmatically.
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
@@ -50,11 +53,13 @@ final class MarkdownWindowContentView: NSView {
         placeOverlays()
     }
 
+    /// Removes an overlay and forgets its associated sidebar slot.
     func detach(_ view: NSView) {
         overlays.removeAll { $0.view === view }
         if view.superview === self { view.removeFromSuperview() }
     }
 
+    /// Sizes the root to the window content and places overlays above their slots.
     override func layout() {
         super.layout()
         if root.frame != bounds { root.frame = bounds }
@@ -89,6 +94,7 @@ final class MarkdownWindowContentView: NSView {
     }
 }
 
+/// Measurements of overlay placement used by the divider drag diagnostics.
 extension MarkdownWindowContentView {
     /// The largest distance, in points, between an overlay's frame and its slot's (0 when every overlay sits on its
     /// slot). For the divider's drag log.
@@ -105,6 +111,7 @@ extension MarkdownWindowContentView {
 
 /// The root's hosting view: after it lays out, the overlays follow their slots.
 final class MarkdownRootHostingView<Content: View>: NSHostingView<Content> {
+    /// Repositions sibling overlays after SwiftUI finishes laying out the root.
     override func layout() {
         super.layout()
         (superview as? MarkdownWindowContentView)?.placeOverlays()
@@ -114,44 +121,53 @@ final class MarkdownRootHostingView<Content: View>: NSHostingView<Content> {
 /// A place in the SwiftUI root for an AppKit view that lives outside it: inside a `MarkdownWindowContentView` the
 /// view is laid over this slot; anywhere else (a test that hosts the root alone) it is the slot's own subview.
 final class MarkdownOverlaySlot: NSView {
+    /// The AppKit content drawn over this placeholder slot.
     let overlay: NSView
     /// The overlay's content height (the table's rows); the overlay covers no more of the slot than that.
     var contentHeight: (() -> CGFloat)?
     private weak var content: MarkdownWindowContentView?
 
+    /// Creates a placeholder for AppKit content that may be reparented outside SwiftUI.
     init(overlay: NSView) {
         self.overlay = overlay
         super.init(frame: .zero)
     }
 
+    /// Rejects archive construction because slots are created by the representable.
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    /// Attaches or detaches the overlay when the slot changes windows.
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         settle()
     }
 
+    /// Finds the overlay host after the placeholder is reparented.
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
         settle()
     }
 
+    /// Repositions the overlay after the placeholder is resized.
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
         place()
     }
 
+    /// Repositions the overlay after the placeholder moves.
     override func setFrameOrigin(_ newOrigin: NSPoint) {
         super.setFrameOrigin(newOrigin)
         place()
     }
 
+    /// Hides or repositions the overlay when the placeholder is hidden.
     override func viewDidHide() {
         super.viewDidHide()
         place()
     }
 
+    /// Restores overlay placement when the placeholder becomes visible again.
     override func viewDidUnhide() {
         super.viewDidUnhide()
         place()
@@ -166,6 +182,7 @@ final class MarkdownOverlaySlot: NSView {
         overlay.superview === self ? super.hitTest(point) : (frame.contains(point) ? self : nil)
     }
 
+    /// Lets the containing sidebar supply the context menu for empty placeholder space.
     override func menu(for event: NSEvent) -> NSMenu? { nil }
 
     /// The content height changed (rows came or went): the overlay is laid again.

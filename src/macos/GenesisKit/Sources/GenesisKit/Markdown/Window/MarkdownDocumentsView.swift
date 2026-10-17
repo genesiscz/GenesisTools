@@ -414,21 +414,27 @@ final class MarkdownLivePreview: ObservableObject {
 enum MarkdownPaneContent {
     /// An image request changes with the file's contents and the pane's pixel size.
     struct PictureRequest: Hashable {
+        /// The image file to decode for this pane.
         let url: URL
+        /// The document's observed modification date, which invalidates the picture task.
         let modifiedAt: Date?
+        /// The bucketed pixel limit used by the shared thumbnail decoder.
         let pixels: CGFloat
 
+        /// Builds a request whose identity changes only with the file, timestamp or decode bucket.
         init(url: URL, modifiedAt: Date?, pixels: CGFloat) {
             self.url = url
             self.modifiedAt = modifiedAt
             self.pixels = CGFloat(MediaThumbnailCache.bucket(forPixels: pixels))
         }
 
+        /// Loads the picture through the shared off-main decoder and thumbnail cache.
         func load() async -> MarkdownHoverImage.Picture {
             await MarkdownHoverImage.picture(url: url, pixels: pixels, draft: nil)
         }
     }
 
+    /// Whether the current pane renders a web page whose completion must precede the tab swap.
     static func waitsForPage(_ doc: MarkdownDocument, model: MarkdownDocumentsModel) -> Bool {
         guard model.renderer == .web, !(doc.missing && !doc.isDirty), !showsBinary(doc, model: model),
               model.revisionView?.docID != doc.id else { return false }

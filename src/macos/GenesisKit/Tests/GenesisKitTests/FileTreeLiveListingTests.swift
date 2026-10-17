@@ -9,12 +9,14 @@ import XCTest
 final class FileTreeLiveListingTests: XCTestCase {
     private var root: URL!
 
+    /// Creates a scratch folder and initial note for live-listing tests.
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("filetree-live-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root.appendingPathComponent("Návrhy"), withIntermediateDirectories: true)
         try Data("x".utf8).write(to: root.appendingPathComponent("Návrhy/old.md"))
     }
 
+    /// Removes the scratch filesystem fixture after each test.
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: root)
     }
@@ -36,6 +38,7 @@ final class FileTreeLiveListingTests: XCTestCase {
         return model
     }
 
+    /// A reveal refreshes an already cached folder when its target note arrived later.
     func testShowInSidebarFindsANoteWrittenAfterItsFolderWasRead() async throws {
         let model = await openTree()
         let note = root.appendingPathComponent("Návrhy/2026-10-15-Proposals.sol3.md")
@@ -47,6 +50,7 @@ final class FileTreeLiveListingTests: XCTestCase {
         XCTAssertFalse(model.rows.contains { $0.loading }, "a quiet read shows no spinner")
     }
 
+    /// Filesystem events add and remove notes from an already open folder.
     func testAFolderAnotherAppWritesIntoListsTheNewNoteByItself() async throws {
         let model = await openTree()
         // FSEvents reports from the moment the stream starts; give it that moment.
@@ -188,6 +192,7 @@ final class FileTreeLiveListingTests: XCTestCase {
         XCTAssertEqual(calls.withLock { $0 }, 3)
     }
 
+    /// Editing a note without changing its directory entries publishes no new tree rows.
     func testANoteSavedInPlaceChangesNoRows() async throws {
         let model = await openTree()
         try? await Task.sleep(for: .milliseconds(300))

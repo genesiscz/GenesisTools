@@ -481,6 +481,7 @@ struct MarkdownFileTreeView: View {
         place.root.isEmpty ? "the open document's folder" : (place.root as NSString).lastPathComponent
     }
 
+    /// The folder label used by create menus and tooltips, including the filesystem root.
     static func folderName(_ folder: URL) -> String {
         folder.lastPathComponent.isEmpty ? "/" : folder.lastPathComponent
     }
@@ -503,8 +504,7 @@ struct MarkdownFileTreeView: View {
         pendingPlaceScroll = place.scrollY
         applyPendingPlaceScroll(force: false)
         // Folders read off the main thread may never make the list tall enough (one was deleted): place it anyway.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            guard placeRestore.isCurrent(token) else { return }
+        placeRestore.schedule(token, after: 1) {
             applyPendingPlaceScroll(force: true)
         }
     }
@@ -518,12 +518,10 @@ struct MarkdownFileTreeView: View {
         pendingPlaceScroll = nil
         let rows = tree.rows.count
         let token = placeRestore.current
-        DispatchQueue.main.async {
-            guard placeRestore.isCurrent(token) else { return }
+        placeRestore.schedule(token) {
             Self.place(scroll, at: y)
             GenesisKit.log("markdown: sidebar place scroll \(Int(y)) (max \(Int(Self.maxScroll(scroll))), forced \(force), rows \(rows))")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                guard placeRestore.isCurrent(token) else { return }
+            placeRestore.schedule(token, after: 0.25) {
                 let now = scroll.contentView.bounds.origin.y
                 if abs(now - y) > 2, Self.maxScroll(scroll) >= y - 1 {
                     GenesisKit.log("markdown: sidebar place scroll moved to \(Int(now)) after restore, set \(Int(y)) again")
@@ -828,6 +826,7 @@ private struct MarkdownFileTreeResultRow: View {
 /// The tree's scroll view, set by `MarkdownTreeTable`. A class, so setting it does not re-render the tree. It owns the
 /// one glide that may write that scroll view's origin.
 final class MarkdownTreeScrollBox {
+    /// The table scroll view whose clip origin a reveal may change.
     weak var scrollView: NSScrollView?
     /// The glide writing this scroll view, when one is running.
     private(set) var glide: MarkdownTreeGlide?
@@ -856,14 +855,17 @@ final class MarkdownTreeScrollBox {
 /// One running glide: its timer and the scroll-wheel monitor. Cancelling stops both, so an older reveal cannot
 /// keep writing the clip origin.
 final class MarkdownTreeGlide {
+    /// Whether this flight has stopped writing the scroll origin.
     private(set) var cancelled = false
     /// Timer callbacks that ran. A cancelled glide stays at however many ran before `cancel`.
     private(set) var frames = 0
     private var timer: Timer?
     private var monitor: Any?
 
+    /// Records a timer frame for cancellation and progress tests.
     func noteFrame() { frames += 1 }
 
+    /// Attaches this flight's timer and wheel monitor, or disposes of them if already cancelled.
     func arm(timer: Timer, monitor: Any?) {
         if cancelled {
             timer.invalidate()
@@ -874,6 +876,7 @@ final class MarkdownTreeGlide {
         self.monitor = monitor
     }
 
+    /// Stops the timer and removes the wheel monitor exactly once.
     func cancel() {
         guard !cancelled else { return }
         cancelled = true
@@ -892,6 +895,7 @@ final class MarkdownTreeGlide {
 enum MarkdownTreeScroll {
     /// The rows' vertical padding inside the scroll content (`MarkdownFileTreeView`).
     static let padding: CGFloat = 4
+    /// Seconds spent gliding through the final screen toward a revealed row.
     static let duration: TimeInterval = 0.32
 
     /// The clip origin that centres row `index` of `count`, clamped to the document.

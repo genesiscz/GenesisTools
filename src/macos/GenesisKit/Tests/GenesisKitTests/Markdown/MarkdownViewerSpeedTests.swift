@@ -25,6 +25,7 @@ final class MarkdownViewerSpeedTests: XCTestCase {
         XCTAssertEqual(doc.title, "Návrh")
     }
 
+    /// Folder listings return native UTF-8 names and paths for non-ASCII entries.
     func testAFolderListingHandsOutNativePaths() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Složka-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("Účty"), withIntermediateDirectories: true)
@@ -35,6 +36,7 @@ final class MarkdownViewerSpeedTests: XCTestCase {
         XCTAssertTrue(entries.allSatisfy { isNative($0.path) && isNative($0.name) })
     }
 
+    /// Row centering clamps near the document edges and centers interior rows.
     func testTheGlideCentresARowByItsIndexAndStaysInsideTheDocument() {
         // 1,000 rows of 20 pt plus 4 pt padding above and below, a 600 pt sidebar.
         let height: CGFloat = 1000 * 20 + 8
@@ -46,6 +48,7 @@ final class MarkdownViewerSpeedTests: XCTestCase {
                        height - 600, "nor one near the end below it")
     }
 
+    /// A distant reveal skips to the last screen and eases through its final approach.
     func testAFarGlideCoversOnlyTheLastScreenAndEasesInAndOut() {
         XCTAssertEqual(MarkdownTreeScroll.glideStart(from: 0, to: 10_000, visibleHeight: 600), 9_400)
         XCTAssertEqual(MarkdownTreeScroll.glideStart(from: 10_000, to: 0, visibleHeight: 600), 600)
@@ -92,6 +95,7 @@ final class MarkdownViewerSpeedTests: XCTestCase {
         XCTAssertNil(box.glide)
     }
 
+    /// Repeated outline reads reuse parsed headings until the text changes.
     func testTheOutlineParsesANoteOnlyWhenItsTextChanged() {
         let cache = MarkdownOutlineCache()
         let text = "# One\n\ntext\n\n## Two\n"
@@ -125,6 +129,7 @@ final class MarkdownViewerSpeedTests: XCTestCase {
         XCTAssertEqual(spare.recycled, 2)
     }
 
+    /// A page reset owns the spare slot until completion and blocks premature reuse.
     func testAResettingPageCannotBeTakenOrReplaced() throws {
         var finish: ((Error?) -> Void)?
         let spare = MarkdownWebSpare(resetPage: { _, completion in finish = completion })
@@ -146,6 +151,7 @@ final class MarkdownViewerSpeedTests: XCTestCase {
         XCTAssertEqual(spare.recycled, 1)
     }
 
+    /// A failed page reset releases the slot without publishing an unsafe spare.
     func testAFailedResetNeverBecomesASpare() throws {
         var finish: ((Error?) -> Void)?
         let spare = MarkdownWebSpare(resetPage: { _, completion in finish = completion })
@@ -164,6 +170,7 @@ final class MarkdownViewerSpeedTests: XCTestCase {
         finish?(NSError(domain: "reset-fixture", code: 2))
     }
 
+    /// Dismantling a web view clears the prior render-ready callback.
     func testDismantlingClearsTheOldReadinessSignal() {
         let view = MarkdownWebView(
             markdown: "# Doc", scrollTarget: nil, highlightQuery: nil, highlightToken: 0,

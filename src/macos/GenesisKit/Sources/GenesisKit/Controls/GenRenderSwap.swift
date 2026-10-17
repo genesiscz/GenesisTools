@@ -207,6 +207,7 @@ public extension GenRenderSwap where Value == ID {
 /// Where a `.layer` fade finds its hosting view: a view of no size and no hit area behind the swap's contents.
 @MainActor
 final class GenRenderSwapAnchor {
+    /// The mounted marker used to locate the hosting view without retaining it.
     weak var view: NSView?
 
     /// The nearest hosting view around the swap: its layer holds both contents. The window's content view when none

@@ -6,6 +6,7 @@ import XCTest
 /// visible part of a long tree (Martin, 2026-10-15: "tab -> show in sidebar does nothing"). The folder's listing
 /// predated the note, so the reveal found no row; it now reads the folder again and scrolls to the row.
 final class MarkdownSidebarFarRevealTests: XCTestCase {
+    /// A far reveal opens its ancestors and ends with the target row visible.
     @MainActor
     func testShowInSidebarBringsAFarRowOnScreen() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("Čtení-\(UUID().uuidString)")

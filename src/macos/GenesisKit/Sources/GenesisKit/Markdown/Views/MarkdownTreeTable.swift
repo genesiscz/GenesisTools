@@ -16,11 +16,16 @@ import SwiftUI
 /// that changes when something the cells draw changes besides the rows themselves (the selection, a pulse, the git
 /// marks, the style), so the visible cells are built again.
 struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
+    /// The visible tree rows in depth-first display order.
     let rows: [FileTreeRow]
+    /// The selection, style and decoration revision used to invalidate visible cells.
     let revision: Revision
+    /// The shared scroll handle used by reveals and history restoration.
     let box: MarkdownTreeScrollBox
+    /// Builds the hosted SwiftUI content for a row when the table needs it.
     let cell: (FileTreeRow) -> AnyView
 
+    /// Creates the persistent table data source and cell coordinator.
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     /// The table's scroll view lives outside SwiftUI: laid over this slot by the window's content view
@@ -61,6 +66,7 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
         return slot
     }
 
+    /// Updates row content and repositions the AppKit overlay after a SwiftUI change.
     func updateNSView(_ slot: MarkdownOverlaySlot, context: Context) {
         box.scrollView = slot.overlay as? NSScrollView
         guard let table = context.coordinator.table else { return }
@@ -68,6 +74,7 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
         slot.contentChanged()
     }
 
+    /// Detaches the overlay when SwiftUI dismantles its placeholder.
     static func dismantleNSView(_ slot: MarkdownOverlaySlot, coordinator: Coordinator) {
         slot.leave()
     }
@@ -124,16 +131,24 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
         return true
     }
 
+    /// Keeps row values and builds reusable cells for the AppKit table.
     @MainActor
     final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+        /// The table supplied by the representable, held without extending its lifetime.
         weak var table: NSTableView?
+        /// The row snapshot currently exposed to the table data source.
         var rows: [FileTreeRow] = []
+        /// The last applied cell revision, compared with the next representable update.
         var revision: Any?
+        /// The measured height shared by all visible table rows.
         var rowHeight: CGFloat?
+        /// The current builder installed by the representable for reusable cells.
         var cell: (FileTreeRow) -> AnyView = { _ in AnyView(EmptyView()) }
 
+        /// Reports exactly the number of rows in the current snapshot.
         func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
+        /// Reuses or creates a hosting cell and supplies the requested row content.
         func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
             let identifier = NSUserInterfaceItemIdentifier("markdown-tree-cell")
             let view = tableView.makeView(withIdentifier: identifier, owner: nil) as? MarkdownTreeTableCell
@@ -142,6 +157,7 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
             return view
         }
 
+        /// Leaves selection to row controls rather than the AppKit table.
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 
         /// The cells on screen take their views again (the selection, a pulse or the git marks changed).
@@ -158,6 +174,7 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
 
 /// The table under the rows: it never takes the keyboard or a selection, so a click reaches the row's button.
 final class MarkdownTreeTableView: NSTableView {
+    /// Keeps keyboard focus in the row controls rather than the table itself.
     override var acceptsFirstResponder: Bool { false }
 
     /// A table hands a click to a subview only when this says yes, and it says yes for controls alone: without it the
@@ -185,6 +202,7 @@ final class MarkdownTreeTableView: NSTableView {
 final class MarkdownTreeTableCell: NSView {
     private let host = NSHostingView(rootView: AnyView(EmptyView()))
 
+    /// Creates a reusable cell whose hosting view fills the cell without sizing the window.
     init(identifier: NSUserInterfaceItemIdentifier) {
         super.init(frame: .zero)
         self.identifier = identifier
@@ -203,9 +221,11 @@ final class MarkdownTreeTableCell: NSView {
         ])
     }
 
+    /// Rejects archive construction because cells are created programmatically.
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
+    /// Replaces the hosted row content when a cell is reused or invalidated.
     func show(_ view: AnyView) {
         host.rootView = view
     }

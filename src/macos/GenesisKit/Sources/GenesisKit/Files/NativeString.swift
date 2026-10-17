@@ -7,6 +7,7 @@
 
 import Foundation
 
+/// Native string storage for paths shared between filesystem listings and the viewer.
 extension String {
     /// The same text in Swift's own contiguous UTF-8 storage. A path from `URL.path` or a Foundation listing is a
     /// bridged `NSString` when it holds a non-ASCII letter (a vault folder named "ČEZ"); comparing, hashing or

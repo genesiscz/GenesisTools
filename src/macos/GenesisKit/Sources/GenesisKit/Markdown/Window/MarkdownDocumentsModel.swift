@@ -188,15 +188,19 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// The file sidebar's back and forward (`MarkdownTreeHistory`). The tree view supplies its place (`treePlace`)
     /// and applies the one asked for (`pendingTreePlace`): the open folders and the scroll offset live there.
     let treeHistory = MarkdownTreeHistory()
+    /// Supplies the sidebar's current root, expanded folders and scroll offset to history.
     var treePlace: (() -> MarkdownTreePlace)?
+    /// The saved place the sidebar must restore before acknowledging completion.
     @Published private(set) var pendingTreePlace: MarkdownTreePlace?
     private var restoringTreePlace = false
 
+    /// Navigates to the previous sidebar place while saving the current place for Forward.
     func treeBack() {
         guard let current = treePlace?(), let place = treeHistory.goBack(from: current) else { return }
         restoreTreePlace(place)
     }
 
+    /// Navigates to the next sidebar place while saving the current place for Back.
     func treeForward() {
         guard let current = treePlace?(), let place = treeHistory.goForward(from: current) else { return }
         restoreTreePlace(place)

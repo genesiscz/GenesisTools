@@ -11,21 +11,30 @@ import Foundation
 
 /// Where the file tree was: its root (empty: it follows the open document), its open folders and its scroll offset.
 struct MarkdownTreePlace: Equatable {
+    /// The sidebar root path, or empty when it follows the selected document.
     var root: String
+    /// The folders that were expanded at this history entry.
     var expanded: Set<String>
+    /// The saved vertical clip origin in points.
     var scrollY: Double
 }
 
 /// Two stacks of places. Recording a new place clears the forward stack, as in a browser.
 final class MarkdownTreeHistory: ObservableObject {
+    /// The maximum number of previous sidebar places retained.
     static let limit = 50
 
+    /// Previous places, ordered from oldest to most recently visited.
     @Published private(set) var back: [MarkdownTreePlace] = []
+    /// Forward places, with the next destination at the end.
     @Published private(set) var forward: [MarkdownTreePlace] = []
 
+    /// Whether a previous sidebar place can be restored.
     var canGoBack: Bool { !back.isEmpty }
+    /// Whether a forward sidebar place can be restored.
     var canGoForward: Bool { !forward.isEmpty }
 
+    /// Records a newly left place, bounds history and discards the forward branch.
     func record(_ place: MarkdownTreePlace) {
         if back.last != place { back.append(place) }
         if back.count > Self.limit { back.removeFirst(back.count - Self.limit) }
@@ -49,14 +58,32 @@ final class MarkdownTreeHistory: ObservableObject {
 
 /// Every delayed write belongs to one restore. A newer navigation invalidates even callbacks already enqueued.
 final class MarkdownTreeRestore {
+    /// The restore whose delayed writes may still run.
     private(set) var current = UUID()
 
+    /// Starts a restore and invalidates all callbacks queued by its predecessor.
     func begin() -> UUID {
         current = UUID()
         return current
     }
 
+    /// Invalidates queued writes when navigation or sidebar removal supersedes a restore.
     func cancel() { current = UUID() }
 
+    /// Whether a callback still belongs to the active restore.
     func isCurrent(_ token: UUID) -> Bool { token == current }
+
+    /// Enqueues work on the main queue, or a controlled queue supplied by a test.
+    typealias Scheduler = (TimeInterval, @escaping () -> Void) -> Void
+
+    /// Schedules one of the view's forced, placement or correction writes and drops it if its restore is obsolete.
+    func schedule(_ token: UUID, after delay: TimeInterval = 0,
+                  using scheduler: Scheduler = { delay, action in
+                      DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: action)
+                  }, action: @escaping () -> Void) {
+        scheduler(delay) { [weak self] in
+            guard let self, self.isCurrent(token) else { return }
+            action()
+        }
+    }
 }

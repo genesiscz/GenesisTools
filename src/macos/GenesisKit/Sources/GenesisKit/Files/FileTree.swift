@@ -30,6 +30,7 @@ public struct FileTreeRow: Identifiable, Equatable, Sendable {
     /// The row's identity in the lists: the path with its hash taken once.
     public let key: FileTreeRowKey
 
+    /// Creates a visible row and caches its path key for list comparisons.
     public init(id: String, name: String, isFolder: Bool, depth: Int, expanded: Bool = false, loading: Bool = false) {
         self.id = id
         self.name = name
@@ -55,9 +56,11 @@ public struct FileTreeRow: Identifiable, Equatable, Sendable {
 /// equal bytes. A listing path is already one form (`standardizedFileURL.path`, then `nativeUTF8`). A selected
 /// document path can be the other Unicode form of that file, so `init(selection:)` applies the listing's form first.
 public struct FileTreeRowKey: Hashable, Sendable {
+    /// The native UTF-8 path whose bytes define this key.
     public let path: String
     private let hash: Int
 
+    /// Caches the hash of an already canonical listing path.
     public init(_ path: String) {
         var path = path
         path.makeContiguousUTF8()
@@ -72,6 +75,7 @@ public struct FileTreeRowKey: Hashable, Sendable {
         self.init(URL(fileURLWithPath: path).standardizedFileURL.path.nativeUTF8)
     }
 
+    /// Compares cached hashes and exact UTF-8 bytes without Unicode normalization.
     public static func == (left: FileTreeRowKey, right: FileTreeRowKey) -> Bool {
         guard left.hash == right.hash else { return false }
         return left.path.utf8.withContiguousStorageIfAvailable { l in
@@ -79,6 +83,7 @@ public struct FileTreeRowKey: Hashable, Sendable {
         }.flatMap { $0 } ?? left.path.utf8.elementsEqual(right.path.utf8)
     }
 
+    /// Feeds the cached path hash to collection hashing.
     public func hash(into hasher: inout Hasher) {
         hasher.combine(hash)
     }

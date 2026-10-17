@@ -37,6 +37,7 @@ struct MarkdownOutline {
 /// outline and nothing else.
 @MainActor
 final class MarkdownSectionSpy: ObservableObject {
+    /// The heading currently visible in the reading pane.
     @Published var slug: String?
 }
 
@@ -45,8 +46,10 @@ final class MarkdownSectionSpy: ObservableObject {
 final class MarkdownOutlineCache {
     private var text: String?
     private var cached: [MarkdownOutline.Item] = []
+    /// Number of distinct text versions parsed, exposed to the cache regression test.
     private(set) var parses = 0
 
+    /// Returns cached headings, reparsing only when the note text changes.
     func items(for text: String) -> [MarkdownOutline.Item] {
         if text != self.text {
             cached = MarkdownOutline.items(of: text)

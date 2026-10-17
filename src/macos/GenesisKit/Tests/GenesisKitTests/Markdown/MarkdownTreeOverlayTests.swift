@@ -5,6 +5,7 @@ import XCTest
 /// The file tree's table lies over the window's SwiftUI root (`MarkdownWindowContentView`): it sits on its slot, and a
 /// right-click under its rows lands in the root, where the sidebar's menu is.
 final class MarkdownTreeOverlayTests: XCTestCase {
+    /// The overlay follows its slot and leaves empty sidebar space available to the context menu.
     @MainActor
     func testTheTableSitsOnItsSlotAndTheSpaceUnderTheRowsHasTheSidebarMenu() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("md-overlay-\(UUID().uuidString)")

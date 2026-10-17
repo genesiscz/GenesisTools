@@ -56,6 +56,7 @@ final class MarkdownSidebarRevealTests: XCTestCase {
         XCTAssertNil(MarkdownSidebarReveal.depth(of: URL(fileURLWithPath: "/Users/alice/vaultx/a.md"), under: root))
     }
 
+    /// Revealing a descendant retains the current root at every nesting depth.
     func testARowAtAnyDepthUnderTheRootStaysInTheTree() {
         XCTAssertEqual(MarkdownSidebarReveal.plan(url("a.md"), isFolder: false, root: root), .row(depth: 0))
         XCTAssertEqual(MarkdownSidebarReveal.plan(url("a/b/c/d/x.md"), isFolder: false, root: root), .row(depth: 4))
@@ -63,6 +64,7 @@ final class MarkdownSidebarRevealTests: XCTestCase {
         XCTAssertEqual(MarkdownSidebarReveal.plan(url("a/b/c/d/e/f"), isFolder: true, root: root), .row(depth: 5))
     }
 
+    /// An outside reveal chooses the shared root, while revealing the root pulses its header.
     func testOutsideTheRootReRootsAtTheSharedFolderAndTheRootItselfOnlyPulses() {
         let home = URL(fileURLWithPath: "/Users/alice")
         let vault = URL(fileURLWithPath: "/Users/alice/Projects/Brain/Work")
@@ -119,6 +121,7 @@ final class MarkdownPathVerbsTests: XCTestCase {
 
     private func url(_ path: String) -> URL { root.appendingPathComponent(path).standardizedFileURL }
 
+    /// Show in Sidebar retains its root and targets the requested nested row.
     func testShowInSidebarKeepsTheRootAndPulsesTheRowAtAnyDepth() {
         let token = model.revealToken
         model.revealInSidebar(url("a/plan.md"))

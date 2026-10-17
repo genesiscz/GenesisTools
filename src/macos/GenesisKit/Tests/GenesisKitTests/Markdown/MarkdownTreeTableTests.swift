@@ -10,6 +10,7 @@ final class MarkdownTreeTableTests: XCTestCase {
         FileTreeRow(id: path, name: (path as NSString).lastPathComponent, isFolder: folder, depth: depth, expanded: expanded)
     }
 
+    /// Opening and closing a folder inserts and removes the corresponding table rows.
     @MainActor
     func testOpeningAFolderInsertsItsRowsAndClosingRemovesThem() throws {
         try XCTSkipIf(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, "Reduce Motion reloads instead")
@@ -34,6 +35,7 @@ final class MarkdownTreeTableTests: XCTestCase {
         XCTAssertEqual(table.numberOfRows, 2)
     }
 
+    /// Cached path keys agree for identical UTF-8 paths and distinguish neighboring names.
     func testAnEqualPathIsAnEqualKeyAndANearOneIsNot() {
         XCTAssertEqual(FileTreeRowKey("/v/ČEZ/a.md"), FileTreeRowKey(String(decoding: Array("/v/ČEZ/a.md".utf8), as: UTF8.self)))
         XCTAssertNotEqual(FileTreeRowKey("/v/ČEZ/a.md"), FileTreeRowKey("/v/ČEZ/b.md"))

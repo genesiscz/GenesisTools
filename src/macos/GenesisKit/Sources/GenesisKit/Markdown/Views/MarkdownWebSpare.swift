@@ -28,6 +28,7 @@ final class MarkdownWebSpare: NSObject, WKScriptMessageHandler, WKNavigationDele
     private var ready = false
     private var scheduled = false
     private var resetting: MarkdownDropWebView?
+    /// Resets a page and reports when its JavaScript state is safe to reuse.
     typealias ResetPage = (MarkdownDropWebView, @escaping (Error?) -> Void) -> Void
     private let resetPage: ResetPage
 

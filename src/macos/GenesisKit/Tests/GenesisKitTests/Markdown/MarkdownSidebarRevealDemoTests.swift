@@ -12,6 +12,7 @@ import XCTest
 ///   2. The tree scrolls to its top; "Show in Sidebar" on that tab.
 ///   3. The tree scrolls to its top again; "Show in Sidebar" on a note that was there from the start.
 final class MarkdownSidebarRevealDemoTests: XCTestCase {
+    /// The opt-in recording scenario reveals two scratch notes without taking focus.
     @MainActor
     func testPlayTheRevealForARecording() throws {
         let env = ProcessInfo.processInfo.environment

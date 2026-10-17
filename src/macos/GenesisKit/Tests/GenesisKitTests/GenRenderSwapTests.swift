@@ -29,6 +29,7 @@ final class GenRenderSwapTests: XCTestCase {
     struct Host: View {
         @ObservedObject var rig: Rig
         let timeout: TimeInterval
+        /// The fade mode exercised by the hosted render-swap test.
         var fade: GenRenderSwapFade = .swiftUI
         var body: some View {
             GenRenderSwap(id: rig.id, timeout: timeout, fade: fade) { id, ready in
