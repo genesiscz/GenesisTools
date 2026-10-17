@@ -15,6 +15,7 @@ function snap(state: ActivityState, lastEventAt: number | null, turnStartedAt: n
         asksQuestion: false,
         question: null,
         interrupted: false,
+        turnError: null,
         lastEventAt,
         turnStartedAt,
         lastActivityAt: 0,
@@ -144,6 +145,27 @@ describe("waitForTurn", () => {
 
         expect(result.outcome).toBe("done");
         expect(result.snapshot?.lastEventAt).toBe(180);
+    });
+
+    it("with turnStartedAfter, a silent turn that began before the send is not a stall of the answer", async () => {
+        // An idle session whose last turn never wrote its end reads STALLED; the message starts a new turn seconds later.
+        const reader = script(
+            snap("STALLED", 40, 30),
+            snap("STALLED", 40, 30),
+            snap("RUNNING", 130, 120),
+            snap("AWAITING-INPUT", 180, 120)
+        );
+        const result = await waitForTurn({ read: reader.read, turnStartedAfter: 110, pollMs: 1000, ...clock() });
+
+        expect(result.outcome).toBe("done");
+        expect(result.snapshot?.lastEventAt).toBe(180);
+    });
+
+    it("with turnStartedAfter, the answering turn that goes silent is still a stall", async () => {
+        const reader = script(snap("RUNNING", 130, 120), snap("STALLED", 130, 120));
+        const result = await waitForTurn({ read: reader.read, turnStartedAfter: 110, pollMs: 1000, ...clock() });
+
+        expect(result.outcome).toBe("stalled");
     });
 
     it("with turnNewerThan, the turn that was current before the send is not the answer even inside the tolerance", async () => {

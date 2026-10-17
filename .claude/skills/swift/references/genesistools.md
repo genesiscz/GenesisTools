@@ -70,6 +70,13 @@ GenesisTools checkout.
   `WKWebView.takeSnapshot`. Two apps run the viewer: GenesisTools (`--markdown`, relaunch with `open -g -n
   ~/Applications/GenesisTools.app --args --markdown <file> --no-focus` after `bun run app`) and Genesis Markdown.app
   (`GENESIS_KIT_PATH=<GenesisTools>/src/macos/GenesisKit bun scripts/install.ts` in GenesisPlayground; it relaunches
-  the viewer only if it was open).
+  the viewer only if it was open). ⚠️ It stops the viewer with `pkill` (SIGTERM, no save prompt), and Genesis.app
+  with it: unsaved drafts in the viewer are lost. Ask before installing while the user has the viewer open.
+- File tree bench (2026-10-14): `MARKDOWN_TREE_BENCH=<folder> [MARKDOWN_TREE_BENCH_NOTE=<note>]
+  [MARKDOWN_TREE_BENCH_SECTIONS=<n>] [MARKDOWN_TREE_BENCH_MARK=<file>] swift test --filter MarkdownTreeLagBench`:
+  24 tabs, the tree rooted at the folder, then unrelated publishes (the preview's section), tree scroll steps and tab
+  selections, each with busy time, longest pass and the bodies that ran. `MARK` appears when the publish loop starts,
+  so `sample <pid>` from the shell can attach to it.
 - Open (2026-10-13): warm spare web view and keep-until-rendered tab swap; the documents model's redundant publishes
-  on select; the repository panel's derived lists into a model.
+  on select; the repository panel's derived lists into a model. Still open 2026-10-14: every documents-model publish
+  re-runs the window, pane, toolbar, status bar, path bar and tree bodies (about 11 ms per publish with 24 tabs).

@@ -332,3 +332,88 @@ events, ms of CPU per event, two interleaved rounds each:
   avoid height changes after appear); a Stack Overflow answer (72070486) explains that a table asking each row for its
   height re-runs row bodies, so give rows a fixed height. Public case studies (kean.blog, troz.net) moved big lists to
   AppKit tables but published no per-row numbers.
+## Third pass on the markdown viewer: the file tree "laggy" (2026-10-14 16:35)
+
+Bench: `MarkdownTreeLagBenchTests` (genesistools.md), 24 tabs, the vault folder of the report, a hosted 1900×1150
+window, load average 15 to 25. Stall reports from the real app showed 509 to 1268 ms on the main thread, all layout.
+
+### A window root's hosting view must not size itself
+- An `NSHostingView` with the default `sizingOptions` derives the window's min, max and intrinsic size from SwiftUI.
+  On every update it sizes the WHOLE tree again (`NSHostingView.invalidateSizeConstraintsIfNecessary` →
+  `minSize()` → `ViewGraph.sizeThatFits`): 1258 of 2133 layout samples for an update that changed one string. Set
+  `sizingOptions = []` on a window's content and give the window an explicit `minSize` (the hub found the same in
+  2026-09, `HubGlass`). **Measured:** 20 unrelated publishes 1104 to 1187 ms busy → 232 ms; the longest pass of a tab
+  switch 621 to 827 ms → 112 to 156 ms.
+- A frame-owned panel already did this; a plain `window.contentView = NSHostingView(rootView:)` is the trap. Build the
+  content through one factory so tests host the same view the window does (`contentView(model:)`).
+- The sizing it drops is real: the content held the window at 603 pt, 743 with three sidebars open. Measure that
+  minimum per state with the standard sizing once, state it as a formula (`MarkdownWindowMinimum`), set
+  `contentMinSize` when its inputs change and grow a narrower window, and test the formula against the measurement.
+
+### A row list inside a view that observes a big model
+- A tree view that observes a 30-property model walks its `ForEach` on every publish. `.equatable()` on each row skips
+  the row's body, but the list still builds every visible row value. Move the list into an `Equatable` child that
+  takes values (rows, selection, style, pulse, git marks) and compare those. **Measured (60 publishes):** 1214 ms →
+  654 to 816 ms busy.
+- Tabs the same: each tab observed the model, so one publish ran all 24 tab bodies (480 for 20 publishes). A tab now
+  gets `active`, `preview` and its fill as values and observes only its document: 0 tab bodies for an unrelated
+  publish, and only the changed tabs on a selection.
+
+### Derived git marks off the main thread
+- The file tree's marks (`GitTreeDecorationsModel.update`) were built from the whole repository status on the main
+  thread, twice per refresh, plus two dictionary comparisons: 24% of the main thread in the tab-switch bench on a vault
+  with 1,825 status entries, at every start, git change and move of the tree's root. Build and compare them on a
+  utility queue and publish the result with a ticket. The folder walks also asked `String.count` per level of every
+  entry; cutting at the last "/" in UTF-8 made one call 2.6 to 8.5 times faster (117 → 31 ms, debug), parity equal
+  on three roots of the real vault.
+
+### Count row construction, not only bodies
+- A body probe (`tree.row`) cannot see a list that rebuilds its rows and then skips every body. A probe in the row's
+  `init` (`tree.rowItem`) counts it, and it exists in the old code too, so a regression test can fail on the old
+  version (`MarkdownWindowPublishCostTests`: 9 rows built and 9 tab bodies for 3 publishes before, 0 after).
+
+## Fourth pass on the markdown viewer: bridged paths, N² tabs, web views on the click (2026-10-15 06:32)
+
+Evidence: 38 stalls over 500 ms in one night (`~/.genesis/logs/hangs/stack-md-*.txt`). Each holds ONE sample taken as
+the stall ended, so it names the pass (layout, a web view init, `setFrame`) and not its cause. The causes came from
+the bench (`MarkdownTreeLagBenchTests`, now with `MARKDOWN_TREE_BENCH_TABS`, `MARKDOWN_TREE_BENCH_WRAP` and a
+select-phase mark file for `sample`).
+
+### Bridged strings in a model
+- `URL.path`, `lastPathComponent` and Foundation listings return NSString-backed Strings when the path holds a
+  non-ASCII letter ("Č"). `==`, hashing and searching walk them through CoreFoundation a character at a time
+  (`_CFStringCheckAndGetCharacterAtIndex`, `_foreignIndex` in the stalls). Make a path native once where it enters a
+  model (`String.nativeUTF8`, `makeContiguousUTF8()`). 636 vault paths: find one 0.42 → 0.02 ms, Set 1.42 → 0.36 ms.
+- A computed `id { url.path }` builds that bridged string on every read; store it in `init`.
+- `model.selected` (a search by id) asked once per tab made a tab bar pass N². Read it once per body.
+- **Measured** (100 tabs, Wrap Tabs, debug, two interleaved rounds): 20 unrelated publishes 869 / 859 → 350 / 285 ms
+  busy; 10 tab switches 1788 / 2420 → 1500 / 1259 ms.
+
+### A web view per click
+- The spare page is consumed by the first new pane and refilled 1.5 s later, so a burst of opened tabs built one
+  `WKWebView` per pane on the main thread (580 to 1799 ms each). A page leaving the window now becomes the spare
+  (`MarkdownWebSpare.recycle` from `dismantleNSView`). Reset what a pane sets only when it has one (marks, line
+  highlight, column width); the render-tag check compares equality, so the old tag cannot confirm a new render.
+
+### A value the reader changes while scrolling
+- The page reports the heading on screen as the reader scrolls. As a `@Published` of the window-wide model, each
+  report re-ran every body that observes the model (nine views). Give such a value its own `ObservableObject`, observed
+  only by the view that shows it, and keep a forwarding property so the writers do not change (`MarkdownSectionSpy`).
+- A body that parses the whole document (the outline) runs on every publish of a model it observes. Cache the result
+  per text (`MarkdownOutlineCache`); comparing a string with the one it came from is cheap.
+- **Measured** (100 tabs, outline open, a 164 KB note, debug, two rounds): 20 heading changes 1685 / 928 → 293 / 301
+  ms busy, the longest pass 490 / 47 → 10 / 12 ms; tab switches 2372 / 1917 → 1176 / 1160 ms.
+
+### A SwiftUI animation costs the whole graph it lives in
+- Each frame of a SwiftUI animation re-renders the hosting view's graph, not just the view that moves. The viewer's
+  0.14 s opacity fade of the old page (`GenRenderSwap`) re-rendered the whole window each frame: about 130 ms of main
+  thread per tab switch, more than the switch itself.
+- For a fade over a big window, let Core Animation draw it: change the content at once and add a `CATransition`
+  (`.fade`) to the hosting view's layer in the same transaction (`GenRenderSwap(fade: .layer)`). Core Animation files
+  a transition under `kCATransition` whatever key it is given.
+- Measure at the user's pace: switches 0.1 s apart overlap their fades and hide the cost. **Measured** (100 tabs,
+  10 switches 0.5 s apart, debug, busy ms): SwiftUI fade 2238 / 2208, no fade 938 / 901, Core Animation fade 925 / 925.
+
+### Check the build configuration first
+- The installed app at 04:01 was a DEBUG build (`start:debug`; same size as the worktree's debug product, no release
+  product there). Before profiling a user's lag, compare the installed binary with the build products.

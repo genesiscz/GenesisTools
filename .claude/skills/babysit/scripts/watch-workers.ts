@@ -7,25 +7,123 @@
  * path ignores `--tail` and stops at the end of a turn, so a restart replayed the whole history (2026-10-14).
  * Grok has one stream per turn: the script polls `tools grok status` and tails each running turn.
  *
- * Usage: bun .claude/skills/babysit/scripts/watch-workers.ts grok:bs-512-grok codex:bs-511-sol [--stall-s 180]
+ * Usage: bun .claude/skills/babysit/scripts/watch-workers.ts grok:bs-512-grok codex:bs-511-sol [--stall-s 180] [--run <dir>]…
+ *        [--tools all|commands|none]
+ *
+ * --tools sets which tool calls print: `commands` (the default) prints shell commands only, where a commit, a push or an
+ * install shows, and counts the rest at the end of the turn; `all` prints every call. One Grok round printed 40 file
+ * reads and greps in its first five minutes, and eight workers at once buried the turn ends and stalls (2026-10-15).
+ *
+ * With --run, each line also names the PR and round the worker was last steered to (from the run's ledger): a worker
+ * keeps its first PR's name across later PRs, so "bs-compress turn 13" read as the compress PR taking 13 turns when
+ * it was #516 round 3 (2026-10-14).
  */
+import { existsSync, statSync } from "node:fs";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
+import { turnLogPath } from "@genesiscz/utils/grok/worker-paths";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { type LedgerEvent, ledgerPath, readEvents } from "./ledger";
 
 const args = process.argv.slice(2);
 const stallIndex = args.indexOf("--stall-s");
 const STALL_MS = (stallIndex >= 0 ? Number(args[stallIndex + 1]) : 180) * 1000;
+const toolsIndex = args.indexOf("--tools");
+const TOOLS = toolsIndex >= 0 ? args[toolsIndex + 1] : "commands";
+
+if (!["all", "commands", "none"].includes(TOOLS)) {
+    console.error(`--tools takes all, commands or none, got ${TOOLS}`);
+    process.exit(2);
+}
+
+/** Shell tool names across backends: Grok `run_terminal_command`, Codex `exec_command` / `shell` / `exec`. */
+const SHELL_TOOL = /^(run_terminal_command|exec_command|shell|exec|bash)\b/i;
 const workers = args
     .filter((arg) => /^(grok|codex):/.test(arg))
     .map((spec) => {
         const [backend, name] = spec.split(":") as ["grok" | "codex", string];
-        return { backend, name, label: `${backend}:${name}`, lastAt: Date.now(), running: false, stallSaid: false };
+        return {
+            backend,
+            name,
+            label: `${backend}:${name}`,
+            lastAt: Date.now(),
+            running: false,
+            stallSaid: false,
+            hiddenTools: 0,
+            seen: new Set<string>(),
+            seenTurn: -1,
+        };
     });
 type Worker = (typeof workers)[number];
 
-const say = (w: Worker, text: string) => console.log(`[${w.label}] ${text.replace(/\s+/g, " ").slice(0, 220)}`);
+// --run may repeat: a worker steered from another repository's run (GenesisPlayground) logs into that run's ledger,
+// and a watcher reading one ledger kept naming its first PR and round (2026-10-14, bs-gp "#94 r1" on round 2).
+const runDirs = args.filter((_, i) => args[i - 1] === "--run");
+
+/** Parse each ledger only when its metadata changes, and keep only its latest task per worker. */
+export function createTaskLookup({
+    dirs,
+    read = readEvents,
+}: {
+    dirs: string[];
+    read?: typeof readEvents;
+}): (name: string) => string {
+    const cache = new Map<string, { stamp: string; tasks: Map<string, LedgerEvent> }>();
+    return (name) => {
+        let latest: LedgerEvent | undefined;
+
+        for (const dir of dirs) {
+            let stamp = "";
+
+            try {
+                const stat = statSync(ledgerPath(dir));
+                stamp = [stat.ino, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
+            } catch (error) {
+                if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") {
+                    throw error;
+                }
+            }
+
+            let cached = cache.get(dir);
+            if (!cached || cached.stamp !== stamp) {
+                const tasks = new Map<string, LedgerEvent>();
+
+                for (const event of stamp ? read(dir) : []) {
+                    if (event.worker && (event.kind === "steer" || event.kind === "spawn")) {
+                        const previous = tasks.get(event.worker);
+                        if (!previous || previous.at <= event.at) {
+                            tasks.set(event.worker, event);
+                        }
+                    }
+                }
+
+                cached = { stamp, tasks };
+                cache.set(dir, cached);
+            }
+
+            const task = cached.tasks.get(name);
+            if (task && (!latest || latest.at <= task.at)) {
+                latest = task;
+            }
+        }
+
+        return latest?.pr ? " #" + latest.pr + (latest.round ? " r" + latest.round : "") : "";
+    };
+}
+
+const currentTask = createTaskLookup({ dirs: runDirs });
+const say = (w: Worker, text: string) =>
+    console.log(`[${w.label}${currentTask(w.name)}] ${text.replace(/\s+/g, " ").slice(0, 220)}`);
+
 const MARKERS = /^(▶|✔|✖|⏸|■|⚠|🛑|❓)/u;
+
+/** The count of the tool calls `--tools` kept quiet, once per turn end. */
+function flushHidden(w: Worker): void {
+    if (w.hiddenTools > 0) {
+        say(w, `${w.hiddenTools} more tool call(s) not printed (--tools ${TOOLS})`);
+        w.hiddenTools = 0;
+    }
+}
 
 export async function pump(w: Worker, cmd: string[], timeoutMs = 1_800_000): Promise<number> {
     const child = Bun.spawn(cmd, { cwd: process.cwd(), stdout: "pipe", stderr: "pipe", detached: true });
@@ -48,6 +146,8 @@ export async function pump(w: Worker, cmd: string[], timeoutMs = 1_800_000): Pro
     try {
         const decoder = new TextDecoder();
         let buf = "";
+        let offset = 0;
+        const turn = w.seenTurn;
 
         for await (const chunk of child.stdout) {
             buf += decoder.decode(chunk, { stream: true });
@@ -58,6 +158,17 @@ export async function pump(w: Worker, cmd: string[], timeoutMs = 1_800_000): Pro
                 buf = buf.slice(nl + 1);
                 nl = buf.indexOf("\n");
 
+                // Grok tails replay a turn from its start. Position identifies an event; display text does not.
+                const identity = `${turn}:${offset++}`;
+
+                if (w.backend === "grok") {
+                    if (w.seen.has(identity)) {
+                        continue;
+                    }
+
+                    w.seen.add(identity);
+                }
+
                 if (!line.trim()) {
                     continue;
                 }
@@ -65,8 +176,27 @@ export async function pump(w: Worker, cmd: string[], timeoutMs = 1_800_000): Pro
                 w.lastAt = Date.now();
                 w.stallSaid = false;
 
+                // A session-long Codex tail spans idle time between turns: only a started turn can stall
+                // (2026-10-14: an idle worker raised "STALL: no event for 308 s").
+                if (/^▶ turn\b/u.test(line)) {
+                    w.running = true;
+                } else if (/^(✔|✖|⏸|■) turn\b/u.test(line)) {
+                    w.running = false;
+
+                    // A Grok tail also replays finished turns' end lines; watchGrok prints the count at the real end.
+                    if (w.backend === "codex") {
+                        flushHidden(w);
+                    }
+                }
+
                 if (line.startsWith("🔧")) {
-                    say(w, `tool ${line.slice(2).trim()}`);
+                    const call = line.slice(2).trim();
+
+                    if (TOOLS === "all" || (TOOLS === "commands" && SHELL_TOOL.test(call))) {
+                        say(w, `tool ${call}`);
+                    } else {
+                        w.hiddenTools++;
+                    }
                 } else if (line.startsWith("↩") && line.includes("FAILED")) {
                     say(w, line);
                 } else if (MARKERS.test(line)) {
@@ -98,7 +228,11 @@ async function grokStatus(w: Worker): Promise<{ running: boolean; turns: number;
 
     try {
         const meta = SafeJSON.parse(result.stdout.toString(), { strict: true });
-        return { running: Boolean(meta.running), turns: meta.turns ?? 0, exitCode: meta.lastTurn?.exitCode };
+        const running = Boolean(meta.running);
+        const completed = Number.isInteger(meta.turns) && meta.turns >= 0 ? meta.turns : 0;
+        const active = meta.activeTurn?.turn;
+        const turns = running ? (Number.isInteger(active) && active > 0 ? active : completed + 1) : completed;
+        return { running, turns, exitCode: meta.lastTurn?.exitCode };
     } catch {
         return null;
     }
@@ -110,7 +244,30 @@ async function watchGrok(w: Worker): Promise<void> {
 
         if (status?.running) {
             w.running = true;
-            say(w, `turn ${status.turns} RUNNING`);
+
+            // The set retains turn/position identities across tail restarts, including earlier turns.
+            // While a new turn has no log yet the tail reads the finished turn and ends at once, so this branch runs
+            // on every poll: the RUNNING line prints once per turn, not once per poll.
+            if (status.turns !== w.seenTurn) {
+                w.seenTurn = status.turns;
+                say(w, `turn ${status.turns} RUNNING`);
+            }
+
+            // The tail follows the newest log file. Until the running turn has written its own, that is the turn
+            // before it, which the tail replays and ends at once (#521 turns 2 to 4, 2026-10-15). Wait for the turn's
+            // own file, with a deadline.
+            const deadline = Date.now() + 60_000;
+
+            while (!existsSync(turnLogPath(w.name, status.turns)) && Date.now() < deadline) {
+                await Bun.sleep(1000);
+            }
+
+            if (!existsSync(turnLogPath(w.name, status.turns))) {
+                say(w, `turn ${status.turns} log unavailable after 60 s`);
+                await Bun.sleep(3000);
+                continue;
+            }
+
             await pump(w, [
                 process.execPath,
                 "run",
@@ -125,7 +282,13 @@ async function watchGrok(w: Worker): Promise<void> {
                 "none",
             ]);
             const end = await grokStatus(w);
-            say(w, `turn ${end?.turns ?? "?"} ENDED exit=${end?.exitCode ?? "?"}`);
+
+            // Preserve counts while a partial tail restarts; replayed positions are skipped by pump.
+            if (!end?.running) {
+                flushHidden(w);
+                say(w, `turn ${end?.turns ?? "?"} ENDED exit=${end?.exitCode ?? "?"}`);
+            }
+
             w.running = false;
         }
 

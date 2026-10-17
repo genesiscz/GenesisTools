@@ -65,6 +65,13 @@ for (const name of ["TMPDIR", "TMP", "TEMP"]) {
 // production temp paths stay short and stable. This marker is the one thing that redirects it,
 // which is what brings the fixtures built through the repo helper into this root as well.
 env.testing.set("GENESIS_TEST_TMP_ROOT", root);
+// tmux ignores TMPDIR: its socket lives in TMUX_TMPDIR (default /tmp), and a set TMUX names the server of the
+// pane the test runs in. So a test that ran `tmux` started or joined the USER's server, and the first such run
+// became that server's founder: its global environment kept GENESIS_TOOLS_TEST_RUNTIME=1 and the agent's
+// identity, which every dev-dashboard terminal then inherited (2026-09-14 and 2026-10-15). A private socket
+// folder inside this root gives the run its own server, which dies with the root.
+env.testing.set("TMUX_TMPDIR", root);
+env.testing.unset("TMUX");
 
 const sweepStale = (): void => {
     let names: string[];

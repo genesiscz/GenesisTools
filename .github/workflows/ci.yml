@@ -524,6 +524,12 @@ jobs:
         timeout-minutes: 1
         run: bun scripts/ci/check-plugin-standalone.ts
 
+      # Biome reads only the root's JSON files, so a nested manifest that does not parse passed every gate
+      # (d9687720a, 2026-10-14: the genesis-tools plugin failed to load for 12 hours).
+      - name: JSON files parse
+        timeout-minutes: 1
+        run: bun scripts/ci/check-json.ts
+
       # Every command a hint names through toolCommand()/suggestCommand() must still exist, so a
       # renamed command fails here instead of in front of a user.
       # --strict: every `tools …` command in src/** goes through toolCommand() or suggestCommand().

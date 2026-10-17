@@ -59,13 +59,49 @@ function isBareExecutable(command: string): boolean {
  * parsing after `--`, so passing the line as one argv word made `env` look for a program named
  * `echo hi; sleep 300` and the pane died at once. `-i` loads `.zshrc`, where aliases live.
  */
+/**
+ * Variables no new terminal may inherit from the tmux SERVER's global environment, which keeps the
+ * environment of whatever process started the server. On 2026-10-16 a `bun test` run inside a Claude Code
+ * agent had founded it a day earlier, so every dev-dashboard terminal carried `GENESIS_TOOLS_TEST_RUNTIME=1`
+ * (tools refused the real home, the vault's keychain rung was off, `tools claude run` found no token) and
+ * that agent's `CLAUDECODE`, session id, teammate wrapper and cmux pane ids. The pane's login shell sets
+ * the user's own variables again, so dropping these loses nothing a terminal should have.
+ */
+export const TERMINAL_FOREIGN_ENV = [
+    "GENESIS_TOOLS_TEST_RUNTIME",
+    "GENESIS_TEST_TMP_ROOT",
+    "CLAUDECODE",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_TEAMMATE_COMMAND",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_PID",
+    "CODEX_COMPANION_SESSION_ID",
+    "CODEX_COMPANION_TRANSCRIPT_PATH",
+    "AI_AGENT",
+    "TOOLS_CLAUDE_ACCOUNT",
+    "TOOLS_CLAUDE_AUTH",
+    "CMUX_SURFACE_ID",
+    "CMUX_WORKSPACE_ID",
+    "CMUX_PANEL_ID",
+    "CMUX_TAB_ID",
+    "CMUX_TERMINAL_LIFECYCLE_ID",
+    "GHOSTTY_SURFACE_ID",
+] as const;
+
 export function tmuxPaneArgv(
     command: string,
     opts: { unsetEnv?: readonly string[] } = {}
 ): { argv: string[]; commandLine: boolean } {
     const env = buildTerminalSpawnEnv();
-    // `env -u` drops a variable the tmux server's global environment would hand the pane (a caller's identity).
-    const argv: string[] = ["/usr/bin/env", ...(opts.unsetEnv ?? []).flatMap((key) => ["-u", key])];
+    // `env -u` drops a variable the tmux server's global environment would hand the pane: the caller's own
+    // list, and always the test markers and agent identity a stale server may hold (TERMINAL_FOREIGN_ENV).
+    const unset = [...new Set([...TERMINAL_FOREIGN_ENV, ...(opts.unsetEnv ?? [])])];
+    const argv: string[] = ["/usr/bin/env", ...unset.flatMap((key) => ["-u", key])];
 
     for (const key of TMUX_SESSION_ENV_KEYS) {
         const value = env[key];

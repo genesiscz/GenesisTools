@@ -26,9 +26,25 @@ bash scripts/ci/placeholder-check.sh
 git push origin HEAD:refs/heads/<pr-branch>        # a rejected push: fetch, rebase onto origin/<pr-branch>, re-gate
 ```
 
-Then in the main checkout (unified branch): `git cherry-pick <worker sha> <correction sha>`, exact paths only if a
-conflict needs hand-editing. A version-only conflict in `.claude-plugin/marketplace.json` or
-`plugins/genesis-tools/.claude-plugin/plugin.json` keeps the higher version.
+The hooks are the gates (Biome, tsgo, the subject rules, the personal-data probe): workers commit and the lead pushes
+WITH them. The one exception is a stuck syspolicyd (one core at 100%), when the first launch of any new executable
+hangs: a hook copy, a worktree's own `biome`, a fresh Swift test bundle. Prove it first with a brand-new two-line
+`#!/bin/sh` script that does not return (`newExecutablesStall()` in `versions.ts` does exactly that). Only then: run
+Biome from the main checkout's `node_modules/.bin/biome` on the worktree files, authorize the worker's commit with
+`git -c hook.pre-commit.enabled=false -c hook.commit-msg.enabled=false commit`, check its subject with
+`check-commits.ts`, and push with `integrate.ts … --no-push-hooks`. The scripts honour that flag only while the probe
+still stalls, so the switch ends by itself when syspolicyd recovers. Swift tests wait: record them as NOT RUN, but
+`bun .claude/skills/babysit/scripts/swift-typecheck.ts --package <dir>` still proves the Swift code compiles (every
+target through `swiftc` alone, no binary launched; GenesisKit takes about two minutes). Use it also when another
+session holds the one Swift build slot. Hooks set in config ignore `core.hooksPath`: a by-hand replay (rebase,
+cherry-pick, worktree add, which run no gate hook) uses `-c hook.<event>.enabled=false` per event, as `HOOKS_OFF` does.
+
+Then in the main checkout (unified branch):
+`bun .claude/skills/babysit/scripts/pick-unified.ts --branch <unified> <worker sha> <correction sha>`. It skips a
+commit already there, resolves a version-only conflict in `.claude-plugin/marketplace.json` or
+`plugins/genesis-tools/.claude-plugin/plugin.json` to the higher version, and aborts and lists any other conflict.
+Give the listed ones to a free worker in a scratch worktree detached at the unified head (resolve keeping both sides,
+`cherry-pick -x` each), check its tests and Biome, then fast-forward unified to it if unified has not moved.
 
 ## Unified mode
 

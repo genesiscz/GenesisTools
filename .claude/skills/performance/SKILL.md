@@ -1,6 +1,6 @@
 ---
 name: performance
-description: Measuring and improving CPU, I/O and latency in the GenesisTools Bun/TypeScript code — CLI tools, the usage daemon, the hub server, session discovery and listing, file walking and reading, JSON parsing, bun:ffi and native code. Use it whenever a tool, command, daemon tick or server door is slow or burns CPU, before and after any change meant to make something faster, when you profile, benchmark, A/B or compare two ways of doing something, when you consider bun:ffi, TinyCC, a C helper or a cache, and when you write a performance number into a commit, note or ledger — even when the user only says "this is slow", "why does it take 1 s", "can we make it faster", "is FFI faster", "measure it", or asks whether a cache would show stale data. For SwiftUI/AppKit app performance use the swift skill; this one covers the Bun side it calls.
+description: Measuring and improving CPU, I/O and latency in the GenesisTools Bun/TypeScript code — CLI tools, the usage daemon, the hub server, session discovery and listing, file walking and reading, JSON parsing, bun:ffi and native code. Use it whenever a tool, command, daemon tick or server door is slow or burns CPU, before and after any change meant to make something faster, when you profile, benchmark, A/B or compare two ways of doing something, when you consider bun:ffi, TinyCC, a C helper or a cache, when code spawns ps, lsof or pgrep, when a test starts an executable, when a CI run is red, slow or hangs, and when you write a performance number into a commit, note or ledger — even when the user only says "this is slow", "why does it take 1 s", "can we make it faster", "is FFI faster", "measure it", or asks whether a cache would show stale data. For SwiftUI/AppKit app performance use the swift skill; this one covers the Bun side it calls.
 ---
 
 # Performance work in GenesisTools (Bun / TypeScript)
@@ -46,6 +46,11 @@ measured. So the rule of this skill is simple: no change, and no claim, without 
 - **Bun 1.3.13 is still supported.** A Bun 1.4-only API (for example `Bun.JSONL`) may appear in a benchmark arm,
   never in shipped code.
 - **Diagnostics never mutate** (repository rule). A benchmark reads live data; it never rewrites it.
+- **No new `ps`, `lsof` or `pgrep` spawn.** Ask `@genesiscz/utils/process`; the lint rule `no-process-tool-spawn`
+  fails a new spawn, and the platform fallback is the layer's decision, never the caller's. Skip a row you cannot
+  read, and never treat a failed read as "gone". `references/ffi-and-native.md` sections 3b and 3c.
+- **A test never makes an executable per run.** Executing a file that a test just made, then renaming or deleting
+  it, crashed syspolicyd and froze the Mac on 2026-10-14. Use `persistentFixture`. `references/tests-and-ci.md`.
 
 ## Which tool answers which question
 
@@ -61,6 +66,9 @@ measured. So the rule of this skill is simple: no change, and no claim, without 
   anything that must hand full JS objects back.
 - "Is JSON parsing the cost?" → `references/json.md`.
 - "How do I walk or read files cheaply?" → `references/filesystem.md`.
+- "Which call sites still spawn, and at what cost?" → `bun scripts/benchmarks/process/call-sites-bench.ts --runs 3
+  --compare` (cold and warm CPU per site, spawned children included).
+- "Did CI really pass, and why is it red?" → `references/tests-and-ci.md` (a green job can carry failing tests).
 
 ## Measured facts to start from (2026-10-12, this Mac)
 
@@ -74,6 +82,8 @@ measured. So the rule of this skill is simple: no change, and no claim, without 
 - `JSON.parse` of 137 MB of transcript lines: 112 ms. comment-json (the old `SafeJSON.parse` default): 1,026 to
   1,261 ms. `SafeJSON.parse` now tries `JSON.parse` first.
 - The usage daemon's own row build: 1,180 ms before the identity cache, 423 ms after.
+- 62 `ps`, `lsof` and `pgrep` call sites (2026-10-14, #516): total cold CPU 3,446 → 1,467 ms; the `lsof` sites
+  fell 90 to 99% (bundle pruning 371 → 29 ms, `tools port <port>` 245 → 12 ms).
 
 Every number above has its method and commit in `references/` and in the ledger.
 
@@ -82,11 +92,14 @@ Every number above has its method and commit in `references/` and in the ledger.
 - `references/profiling.md`: `tools ts profile`, `bun --cpu-prof`, `sample`, the repository profiler, and the
   traps in each (wall-sampled JS thread, await gaps, `bun test` ignoring `--cpu-prof`).
 - `references/measuring.md`: the benchmark harness, fresh-process cold/warm samples, interleaving, blocks, the
-  old-commit scratch worktree, controls, and how to report a result.
+  old-commit scratch worktree, controls, how to report a result, and a stand-in arm that skipped the module load.
+- `references/tests-and-ci.md`: persistent fixtures for tests that start an executable, the Linux container check
+  (any SHA through git alternates), a green CI job that carries failing tests, and the Linux worker hang.
 - `references/filesystem.md`: `fastWalk`, `readFirstLines` / `readLastLines`, sync vs async fs, stat costs, APFS
   and FSEvents facts, and what was rejected.
 - `references/ffi-and-native.md`: `bun:ffi` rules (the `ptr()` trap), `defineSystemLibrary`, the shared
-  `libSystem` binding, `defineNativeLibrary` (clang cache, TinyCC limits), and when native code pays.
+  `libSystem` binding, process data from the kernel and the lessons of moving 62 call sites onto it,
+  `defineNativeLibrary` (clang cache, TinyCC limits), and when native code pays.
 - `references/json.md`: what `JSON.parse` costs, the `SafeJSON` change, `Bun.JSONL`, simdjson through FFI (full
   parse, field pick, tape plus key cache) and why `SafeJSON.parse(..., { ffi: true })` would lose.
 - `references/caching-and-freshness.md`: the never-staler rule in practice, `FileIdentityCache`, persisted

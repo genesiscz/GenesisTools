@@ -1,7 +1,7 @@
 # Measuring: benchmarks and A/B
 
 Contents: 1. what to measure · 2. the harness · 3. a benchmark pair · 4. A/B against an older commit ·
-5. ordering · 6. controls · 7. reporting.
+5. ordering · 6. controls · 7. reporting · 8. shell traps · 9. stand-in arms.
 
 ## 1. What to measure
 
@@ -98,3 +98,12 @@ BAABBA blocks of 4, load 37, 630 rows in both arms, 747458e06 → 2082e48f9." Th
   of git's usage message. Look at the output once before you count it.
 - **Count the real input.** A vault "with 25 changes" (`git status`, folded) was 3,416 entries with `-uall`, which
   is what the code under test reads.
+
+## 9. A stand-in arm must load what the real arm loads (2026-10-14 22:43)
+
+The call-site benchmark (`scripts/benchmarks/process/call-sites-bench.ts`) first measured ten sites unfairly. Their
+"before" was a stand-in that ran the spawn alone, while the "after" called the real function, which also imported
+the site's module (about 20 ms, the same before and after). The fix: the cold run starts with the site's module
+already loaded, and the baseline was recorded again at the old commit with that child (a6e2c3a7b). The total "before"
+fell from 4,693 to 3,446 ms of CPU, so the first comparison had charged the migration for module loads. When one
+arm is a stand-in, give it every import the real arm pays, or preload them in both.

@@ -25,6 +25,8 @@ export const WAIT_EXIT_USAGE = 2;
 export const WAIT_EXIT_STALLED = 3;
 /** `--timeout` passed first. 124 is what coreutils `timeout` exits with, so a script can treat both alike. */
 export const WAIT_EXIT_TIMEOUT = 124;
+/** The turn ended on an error (Codex: an API outage, a failed compaction, a model at capacity): no work was done. */
+export const WAIT_EXIT_TURN_FAILED = 4;
 
 /** Default silence that counts as a stall. A long tool call (a test run) is silent too, so this is generous. */
 export const DEFAULT_WAIT_STALL_SECONDS = 900;
@@ -184,10 +186,10 @@ export function answerAlreadyRunning(
     );
 }
 
-/** The exit status for an outcome. */
-export function exitCodeOf(outcome: TurnWaitOutcome): number {
+/** The exit status for an outcome. A turn that ended on an error is not done: it did no work. */
+export function exitCodeOf(outcome: TurnWaitOutcome, turnError: string | null = null): number {
     if (outcome === "done") {
-        return WAIT_EXIT_DONE;
+        return turnError ? WAIT_EXIT_TURN_FAILED : WAIT_EXIT_DONE;
     }
 
     return outcome === "stalled" ? WAIT_EXIT_STALLED : WAIT_EXIT_TIMEOUT;
@@ -447,6 +449,8 @@ interface WaitReport {
     lastText: string;
     asksQuestion: boolean;
     interrupted: boolean;
+    /** The error the turn ended with, else null (see `TurnSnapshot.turnError`). */
+    error: string | null;
     /** Questions the agent asked while it kept working (it did not stop for an answer). */
     questions: string[];
     durationMs: number;
@@ -473,6 +477,7 @@ function reportOf(args: {
         lastText: snapshot?.lastText ?? "",
         asksQuestion: snapshot?.asksQuestion ?? false,
         interrupted: snapshot?.interrupted ?? false,
+        error: snapshot?.turnError ?? null,
         questions: args.questions,
         durationMs: args.waitedMs,
         silenceMs: snapshot?.silenceMs ?? null,
@@ -483,6 +488,10 @@ function reportOf(args: {
 function statusLine(report: WaitReport): string {
     const id = report.sessionId.slice(0, 8);
     const waited = formatDuration(report.durationMs, "ms");
+
+    if (report.outcome === "done" && report.error) {
+        return `${report.provider} ${id}: the turn FAILED after ${waited}: ${report.error}`;
+    }
 
     if (report.outcome === "done") {
         const question = report.asksQuestion
@@ -594,7 +603,7 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
                 ? await readTurnExtras(await transcriptPager(resolved), { last, tools: options.tools })
                 : {};
 
-        process.exitCode = exitCodeOf(result.outcome);
+        process.exitCode = exitCodeOf(result.outcome, report.error);
 
         if (options.json) {
             out.result({ ...options.embed, ...report, ...extras });
@@ -663,7 +672,9 @@ Without --json the final assistant message goes to stdout and one status line to
 An idle session returns at once. A turn that ended on a question for the user exits 0 too:
 read "asksQuestion" in --json and never answer a design question for the human.
 A question the agent asks while it keeps working (Codex and Grok do this) does not end the wait;
-it is listed in "questions" (and on stderr) when the turn ends.`
+it is listed in "questions" (and on stderr) when the turn ends.
+A turn that ended on an error (Codex: an API outage, a failed compaction, a model at capacity) exits 4
+and carries the message in "error"; it did no work. Exit codes: 0 done, 3 stalled, 4 turn failed, 124 timeout.`
         )
         .action(async (session: string, options: WaitOptions) => {
             await waitCommand(alias, session, options);

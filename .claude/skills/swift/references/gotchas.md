@@ -104,6 +104,19 @@
   belongs to a Codex session; edit there only when Martin says so, commit only your paths.
 - **placeholder-check blocks a push** on internal repo names in fixtures; replace them in a new
   commit (no history rewrite).
+- **Wait for a free Swift slot by process name, never by command line.** `until ! pgrep -f 'swift-(build|test)|xctest'`
+  waited forever on 2026-10-15: the `zsh -c` running the loop carries that pattern in its own command line, so
+  `pgrep -f` matches the waiting shell itself. `pgrep -x swift-build` is not enough either: the same day a running
+  `swift build` showed the process name `swift-package` (pid 6576), `pgrep -x swift-build` printed nothing, and a
+  worker started its build beside it. Match the executable path, which the waiting shell never has:
+  `while ps -axo comm= | grep -Eq '/(swift-build|swift-test|swift-package|swift-frontend|xctest)$'; do sleep 20; done`.
+  `swift-frontend` also catches an Xcode build of another session, which uses the same CPU.
+  Two waiters that poll the process list can still start together in the same second (two judge runs on
+  2026-10-15). Run the command through `bun .claude/skills/babysit/scripts/swift-slot.ts -- swift test …`: it takes
+  an O_EXCL lock file, takes over a lock whose pid is dead, then waits for other sessions' Swift processes.
+- **Display-driven tests fail while the screen is locked.** After the display sleeps or the screen locks, tests that
+  wait for a display frame (edge panels, transcript scroll) fail with no code change, and `screencapture -l` cannot
+  read a window (2026-10-15 07:05). Rerun them after the screen wakes before you call a change broken.
 
 ## Animated panel verification
 
@@ -263,3 +276,116 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   offset one run-loop turn later and check it again a moment after (`MarkdownFileTreeView.applyPendingPlaceScroll`).
 - **A context menu opened by automation closes within seconds if nothing picks an item.** Run the right-click,
   `see --scope menu` and the press back-to-back (tools control #530, 2026-10-15).
+## ScreenCaptureKit recording — 2026-10-14 03:33
+
+- **replayd (ScreenCaptureKit's daemon) groups its clients by executable PATH.** When any process started from a path
+  exits, every live stream of every other process from that same path stops with -3805 (connection interrupted). It
+  fires at the second process's exit, not at its `stopCapture`, and also when that process only listed windows. Two
+  `tools control capture record` runs therefore cut each other short until each recorder re-ran from its own disk
+  clone (8648526b3 on #502, `native/ax-tool/SnapshotSupport/RecorderExecutable.swift`). A hard link to the same file
+  is not a fix: it made `stopCapture` hang. A 40-line probe without ax-tool reproduced it 7 of 7 from one path and
+  0 of 6 from a copy.
+- **`SCStreamFrameInfo.contentRect` is in points, the frame's pixel buffer is in pixels.** Using the rect as pixels
+  crops a Retina frame to its top-left quarter and scales that up 2x. Multiply by `scaleFactor` (from the same info
+  dictionary) before cropping.
+- **A sheet's window stream holds its whole parent window, shrunk to the sheet's size** (a 400x560 sheet arrived as
+  the 440x760 parent at 0.737). Painting it into the sheet's frame draws a second, smaller parent. When the parent is
+  also recorded, its own stream already shows the sheet; when the sheet is recorded alone, cut it out of the parent at
+  the sheet's frame (dd532721a).
+
+## A window's content sizes the whole tree on every update — 2026-10-14 16:35
+
+- `window.contentView = NSHostingView(rootView:)` keeps the default `sizingOptions`, so every SwiftUI update makes
+  AppKit ask the hosting view for its min, max and intrinsic size, and SwiftUI lays out every subview to answer. In the
+  markdown viewer that was 59% of the main thread's layout for one changed string, and 600 to 1200 ms stalls on a click
+  with 24 tabs. Set `sizingOptions = []` and the window's `minSize` (performance.md, third markdown pass).
+- **`String.count` walks every character.** A path loop that compares `folder.count > root.count` at each level of
+  each entry is quadratic in path length and slower still on accented names (grapheme breaking). Compare
+  `utf8.count`, cut at a `/` found in the UTF-8 view, and compute fixed lengths once (2026-10-14, git tree marks:
+  117 → 31 ms per call).
+
+## Window moves, plants that pass, and tests that touch the system — 2026-10-14 22:41
+
+- **A programmatic `setFrame(_:display:)` posts no move notification inside the call.** A flag set around the call
+  (`placing = true; setFrame…; placing = false`) to tell your own moves from the user's drag guards nothing: the
+  `didMoveNotification` of your own move can come later, when the flag is already off. Remember the frame you placed
+  and treat a move as the user's only when the window is more than a point away from it (AppKit rounds the origin to
+  whole pixels, and a centred default can sit on a half point). The draggable posture message, ba3f99f4c.
+- **A plant that passes is a finding, not a formality.** Removing that flag broke no test, and the probe behind it
+  showed the flag never worked. When a planted regression passes, find out whether the test is weak or the code is
+  dead before you move on.
+- **A test that calls a helper directly cannot catch the removal of its call site.** `trustedJoints` was tested as a
+  static function, so deleting the one line in `process` that applies it passed every test (#514, afbf2ebd6). Test
+  through the path that runs it, or say in the review that the call site is covered by reading only.
+- **SwiftUI `onChange` can miss a change the body already saw.** A tab click changed the value and re-ran the body,
+  and no `onChange` followed, so the old tab's page stayed on screen (ca64b32e0). Let the body start the work for a
+  value that is neither current nor pending instead of driving it from `onChange` alone.
+- **Never start an executable a test just made and then rename or delete it.** macOS scans every new executable in
+  `syspolicyd` after it starts; a scan that finds the file gone crashed `syspolicyd` five times in ten minutes, launchd
+  stopped restarting it, a permission check never answered, and the WindowServer watchdog froze the Mac (2026-10-14
+  20:06). Build a test program once and keep it (`src/utils/test/persistent-fixture.ts`), and check that `syspolicyd`
+  keeps its pid (`pgrep -x syspolicyd`) across the first run of such a test.
+- **A new command-line flag needs a test through the parser that runs live.** `act --allow-outside` passed 13
+  event-factory tests and failed at its first live call: ax-tool keeps a list of flags per command
+  (`WorkflowArguments.swift`), and the new flag was not on it, so it was refused as unknown before anything ran
+  (85d5d6967, fixed in 586f5b391). Add one parse test per new flag, and prove the path with a call that cannot
+  dispatch (an invalid snapshot token must be the refusal, not the flag).
+- **`UserDefaults(suiteName:)` in a test writes a real plist** in `~/Library/Preferences`. `removePersistentDomain`
+  empties it but leaves a 42-byte file. Give test suites one prefix (`genesiskit-tests-…`) and remove them in a
+  teardown block (9a11d77bd).
+
+## Dialogs: modal loops, title bar insets, cut text — 2026-10-15 00:50
+
+- **`NSAlert.runModal()` inside a `DispatchQueue.main` block stops every timer queued on the main queue.** The
+  queue is serial and busy with the block that runs the modal loop, so `DispatchQueue.main.asyncAfter` never
+  fires until the alert closes. The vault and account approval windows had a 170 s "deny by itself" deadline that
+  never ran; the caller's own 180 s timeout killed the window with no audit line, and the caller asked again. Fix:
+  a non-modal panel (GenesisKit `ApprovalPanelPresenter`) and the deadline as a cancellable `DispatchWorkItem`.
+- **`NSHostingController` in a `.fullSizeContentView` window insets its content by the hidden title bar.** The
+  first approval panel had an empty 28 pt band on top. `.ignoresSafeArea()` on the root view; the strip still
+  drags through `.titlebarZone()`. `controller.sizingOptions = [.preferredContentSize]` makes the panel follow the
+  view, so a disclosure grows and shrinks it.
+- **A `Text` in a `Grid` cut a path in the middle at one line while the window had room for two.** The grid measured
+  the row once at one line. `.fixedSize(horizontal: false, vertical: true)` with the `lineLimit` you want.
+- **Five controls in one row of a 480 pt dialog cut the default button's title** ("Allow with…") and wrapped a
+  countdown. Give a choice (a remember picker) its own row; `.fixedSize()` on the default button and the countdown.
+- **Render a dialog for review without showing it:** `NSHostingView` in a borderless `NSWindow` that is never ordered
+  front, then `cacheDisplay(in:to:)`. Unlike `ImageRenderer`, it draws AppKit-backed controls (buttons, pop-up
+  menus). `VaultUnlockTests.testRenderTheVaultWindowWhenAsked` does it behind `APPROVAL_SNAPSHOT_DIR`.
+
+## Dead clicks and accessibility cost in a big SwiftUI window — 2026-10-15 01:07
+
+- **Log presses and actions, not just presses.** To diagnose "clicks do nothing", override the window's
+  `sendEvent` and log every left down and up with the hit view, `clickCount`, key, active, modal and sheet state, and
+  log the action each control runs. A press with no action after it is a click SwiftUI dropped; a press that never
+  arrives is a window or event-routing problem (markdown viewer: f7eaab043, 5c8691e5b).
+- **One click handler per control.** A `Button` with an `.onTapGesture` on the same view, under a parent
+  `.onTapGesture(count: 2)`, gives SwiftUI three gestures to arbitrate for one click; the viewer's tabs had exactly
+  that when its clicks went dead with 100 tabs (cause not proven).
+- **Accessibility hit tests scale with the number of views.** With 100 tabs (about 880 accessibility elements), one
+  `NSHostingView.accessibilityHitTest` from an outside AX client held the main thread 785 ms (HangWatch stack,
+  2026-10-15 00:08). Every AX client (window managers, `tools control see`) pays it. Keep long strips lazy or capped.
+
+## SwiftUI rows in tests, a tree's stale listings, and far scrolls — 2026-10-15 06:35
+
+- **In-process accessibility cannot see SwiftUI list rows.** `accessibilityChildren()` walked from the list's
+  `NSScrollView` never reaches them, and an xctest process has no accessibility windows (`tools control see --app
+  <xctest pid>` answers "no AX windows"). To check which rows are on screen, render the scroll view
+  (`cacheDisplay(in:to:)`) and read it with Vision (`TreeDrawnText` in GenesisKitTests). A narrow column cuts a name
+  in the middle ("2026-10-15-…osals.sol3.md"): match its two ends.
+- **A test can show the real window for a recording without taking focus.** `orderFrontRegardless()` from xctest
+  never activates; write `window.windowNumber` to a file and run `tools control capture record --window-ids <n>`
+  (`MarkdownSidebarRevealDemoTests`). The same test on the old and the new code gives a before and after video.
+- **A file tree that caches folder listings must watch them.** Without a watcher a folder stays as its first read
+  showed it. A note another app wrote later had no row, so "Show in Sidebar" found nothing and did nothing, silently
+  (2026-10-15, note written 05:30:49, reveal 05:33:14). One FSEvents stream over the root; re-read only folders
+  already listed, off the main thread, and rebuild only when the listing changed. A reveal also re-reads a folder
+  whose listing lacks the file.
+- **An animated `scrollTo` to a far row of a `LazyVStack` does not glide.** Recorded at 15 fps: it lands on an
+  estimate, waits about half a second, then jumps to the row. `NSClipView.animator().setBoundsOrigin` on a SwiftUI
+  `ScrollView` did not animate at all, and a position computed from the row index overshot. What works: scroll
+  without animation so the row sits at the nearer edge (`Transaction.disablesAnimations`), wait a moment for the
+  list to lay it out, then animate the last stretch to the centre.
+- **Driving a background app's context menu with `tools control` is not safe yet.** `AXShowMenu` on a SwiftUI tab
+  blocked 2 s and opened the parent's menu first; the menu rows were not in `see --scope menu`; a coordinate click
+  into the open menu closed it without choosing. Trigger the code path from a test instead.

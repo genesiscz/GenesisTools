@@ -225,6 +225,33 @@ describe("codexTurnState", () => {
         expect(finished.lastEventAt).toBe(T0 + 4000);
     });
 
+    it("carries the error a turn ended with, and the next turn clears it", () => {
+        const failed = [
+            codexLine(0, "event_msg", { type: "task_started" }),
+            codexLine(1, "event_msg", {
+                type: "task_complete",
+                last_agent_message: null,
+                error: { message: "Error running remote compaction" },
+            }),
+        ];
+        const ended = codexTurnState(input(failed, 60));
+        const next = codexTurnState(
+            input(
+                [
+                    ...failed,
+                    codexLine(2, "event_msg", { type: "task_started" }),
+                    codexLine(3, "event_msg", { type: "task_complete", last_agent_message: "Shipped." }),
+                ],
+                60
+            )
+        );
+
+        expect(ended.state).toBe("AWAITING-INPUT");
+        expect(ended.turnError).toBe("Error running remote compaction");
+        expect(next.turnError).toBeNull();
+        expect(next.lastText).toBe("Shipped.");
+    });
+
     it("stays finished through settings bookkeeping, and only a record of a new turn reopens it", () => {
         const done = [
             codexLine(0, "event_msg", { type: "task_started" }),
