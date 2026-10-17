@@ -15,6 +15,13 @@ public struct WorkflowArguments {
     public let values: [String: String]
     public let flags: Set<String>
 
+    /// Outside geometry must not bypass the chrome token's omitted-web-content boundary.
+    public static func validateDragScope(scope: String, allowOutside: Bool) throws {
+        guard !allowOutside || scope != "chrome" else {
+            throw WorkflowArgumentError.invalid("--allow-outside requires window scope; chrome scope omits web content")
+        }
+    }
+
     public init(_ args: [String], command: String) throws {
         let valueOptions: Set<String>
         let flagOptions: Set<String>

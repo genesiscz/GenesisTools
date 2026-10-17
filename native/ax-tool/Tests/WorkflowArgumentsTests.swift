@@ -2,6 +2,15 @@ import XCTest
 @testable import SnapshotSupport
 
 final class WorkflowArgumentsTests: XCTestCase {
+    func testChromeScopeRefusesOutsideToolbarToPageDragsBeforeDispatch() throws {
+        XCTAssertThrowsError(try WorkflowArguments.validateDragScope(scope: "chrome", allowOutside: true)) { error in
+            XCTAssertEqual(error.localizedDescription,
+                           "--allow-outside requires window scope; chrome scope omits web content")
+        }
+        XCTAssertNoThrow(try WorkflowArguments.validateDragScope(scope: "chrome", allowOutside: false))
+        XCTAssertNoThrow(try WorkflowArguments.validateDragScope(scope: "window", allowOutside: true))
+    }
+
     // Regression test: #447 D3 — see had no way to return a tree deeper than --depth
     func testSeeTakesTruncate() throws {
         let arguments = try WorkflowArguments(["--app", "Claude", "--truncate"], command: "see")

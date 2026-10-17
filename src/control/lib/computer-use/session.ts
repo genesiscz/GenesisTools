@@ -1031,11 +1031,14 @@ export class ComputerUse {
                     "Get an image-backed state before using screenshot coordinates."
                 );
             }
-            if (x < 0 || y < 0 || x >= screenshot.width || y >= screenshot.height) {
+            if (!allowOutside && (x < 0 || y < 0 || x >= screenshot.width || y >= screenshot.height)) {
                 throw new ComputerUseError("INVALID_POINT", "Point is outside the source screenshot.");
             }
-            x = window.x + (x * window.width) / screenshot.width;
-            y = window.y + (y * window.height) / screenshot.height;
+            x = window.x + (x / screenshot.width) * window.width;
+            y = window.y + (y / screenshot.height) * window.height;
+        }
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            throw new ComputerUseError("INVALID_POINT", "Converted point is not a finite coordinate.");
         }
         if (
             !allowOutside &&

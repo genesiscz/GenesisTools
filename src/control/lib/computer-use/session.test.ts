@@ -1255,7 +1255,7 @@ describe("independent Computer Use session", () => {
             "outside the observed window"
         );
         await expect(
-            computer.drag({ ...drag, allow_outside: true, coordinate_space: "image", from_x: 200, to_x: 801 })
+            computer.drag({ ...drag, allow_outside: true, coordinate_space: "image", from_x: 801, to_x: 200 })
         ).rejects.toThrow("outside the source screenshot");
         await expect(computer.drag({ ...drag, allow_outside: true, to_x: Number.POSITIVE_INFINITY })).rejects.toThrow();
         expect(calls).toHaveLength(1);
@@ -1269,6 +1269,66 @@ describe("independent Computer Use session", () => {
             "100,150",
         ]);
     });
+    test("allow_outside extrapolates image destinations while keeping the image start bounded", async () => {
+        for (const [to_x, screen] of [
+            [-200, "-600,150"],
+            [1000, "0,150"],
+        ] as const) {
+            const { computer, calls } = fixture();
+            const state = await computer.get_app_state({ app: "Fixture" });
+            const drag = { app: "Fixture", revision: state.revision, from_x: 200, from_y: 100, to_x, to_y: 100 };
+            await expect(computer.drag(drag)).rejects.toThrow("outside the source screenshot");
+            await expect(computer.drag({ ...drag, allow_outside: true, from_x: -1 })).rejects.toThrow(
+                "outside the source screenshot"
+            );
+            expect(calls).toHaveLength(1);
+            expect((await computer.drag({ ...drag, allow_outside: true })).ok).toBe(true);
+            expect(calls).toHaveLength(2);
+            expect(calls[1]).toContain("--allow-outside");
+            expect(calls[1].slice(calls[1].indexOf("--coords"), calls[1].indexOf("--coords") + 4)).toEqual([
+                "--coords",
+                "-400,150",
+                "--to",
+                screen,
+            ]);
+        }
+    });
+
+    test("outside image destinations still need screenshot dimensions and finite converted coordinates", async () => {
+        const missing = fixture();
+        const run = missing.native.run;
+        missing.native.run = async (input) => ({ ...(await run(input)), screenshot: {} });
+        const state = await missing.computer.get_app_state({ app: "Fixture" });
+        await expect(
+            missing.computer.drag({
+                app: "Fixture",
+                revision: state.revision,
+                from_x: 0,
+                from_y: 0,
+                to_x: -200,
+                to_y: 100,
+                allow_outside: true,
+            })
+        ).rejects.toThrow("image-backed state");
+        expect(missing.calls).toHaveLength(1);
+
+        const overflow = fixture();
+        overflow.snapshot.screenshot.width = 1;
+        const observed = await overflow.computer.get_app_state({ app: "Fixture" });
+        await expect(
+            overflow.computer.drag({
+                app: "Fixture",
+                revision: observed.revision,
+                from_x: 0,
+                from_y: 0,
+                to_x: Number.MAX_VALUE,
+                to_y: 100,
+                allow_outside: true,
+            })
+        ).rejects.toThrow("not a finite coordinate");
+        expect(overflow.calls).toHaveLength(1);
+    });
+
     test("literal values, context selection and normalized secondary actions keep native argv separate", async () => {
         const { computer, calls } = fixture();
         let state = await computer.get_app_state({ app: "Fixture", image: false });

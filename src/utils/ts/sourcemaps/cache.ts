@@ -160,6 +160,17 @@ export class SourcemapCache {
         return (await this.read()).entries[id] ?? null;
     }
 
+    /** Stops readers reusing an entry while its files are replaced; unfinished files remain prunable. */
+    async invalidate(id: string): Promise<CacheEntry | undefined> {
+        return this.transaction(async () => {
+            const metadata = await this.read();
+            const previous = metadata.entries[id];
+            delete metadata.entries[id];
+            await this.write(metadata);
+            return previous;
+        });
+    }
+
     async list(): Promise<CacheEntry[]> {
         return Object.values((await this.read()).entries).sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt));
     }
@@ -174,12 +185,15 @@ export class SourcemapCache {
         label: string;
         origin: CacheEntryOrigin;
         maxAgeDays?: number;
+        assertValid?: () => void;
+        /** The same recipe's metadata invalidated before replacing its files. */
+        previous?: CacheEntry;
     }): Promise<CacheEntry> {
         const size = await folderSize(this.entryDir(options.id));
         const entry = await this.transaction(async () => {
             const metadata = await this.read();
             const now = new Date().toISOString();
-            const previous = metadata.entries[options.id];
+            const previous = metadata.entries[options.id] ?? options.previous;
             const recorded: CacheEntry = {
                 id: options.id,
                 kind: options.kind,
@@ -192,6 +206,8 @@ export class SourcemapCache {
                 links: previous?.links ?? [],
             };
             metadata.entries[options.id] = recorded;
+            // No await separates this guard from the synchronous atomic metadata write.
+            options.assertValid?.();
             await this.write(metadata);
             return recorded;
         });

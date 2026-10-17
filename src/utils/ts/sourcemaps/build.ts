@@ -267,16 +267,29 @@ async function buildLocked(input: {
     const staging = `${files}.staging`;
     await rm(staging, { recursive: true, force: true });
     await cp(output, staging, { recursive: true });
+    assertNotCancelled();
+    // A refresh must not leave old metadata pointing at newly published but cancelled output.
+    const previous = await options.cache.invalidate(id);
+    assertNotCancelled();
     await rm(files, { recursive: true, force: true });
     await rename(staging, files);
     assertNotCancelled();
-    const entry = await options.cache.commit({
-        id,
-        kind: "build",
-        label: `${commit.slice(0, 12)} ${options.outputDir}`,
-        origin: { repo: options.repo, commit, buildCmd: options.buildCmd, outputDir: options.outputDir },
-    });
-    return { entry, dir, commit, reused: false, durationMs: Math.round(performance.now() - started) };
+    try {
+        const entry = await options.cache.commit({
+            id,
+            kind: "build",
+            label: `${commit.slice(0, 12)} ${options.outputDir}`,
+            origin: { repo: options.repo, commit, buildCmd: options.buildCmd, outputDir: options.outputDir },
+            assertValid: assertNotCancelled,
+            previous,
+        });
+        assertNotCancelled();
+        return { entry, dir, commit, reused: false, durationMs: Math.round(performance.now() - started) };
+    } catch (error) {
+        // commit also prunes asynchronously; cancellation there must retract an entry already written.
+        await options.cache.invalidate(id);
+        throw error;
+    }
 }
 
 /**

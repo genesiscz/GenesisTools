@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
     existsSync,
     lstatSync,
@@ -11,6 +11,7 @@ import {
     utimesSync,
     writeFileSync,
 } from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateRawSync } from "node:zlib";
@@ -569,6 +570,99 @@ describe("buildAtCommit", () => {
         });
     }
 
+    for (const stage of ["copy", "remove", "rename", "commit", "after commit"] as const) {
+        for (const cancellation of ["signal", "release"] as const) {
+            test(`a refresh cancelled by ${cancellation} during ${stage} preserves old output or invalidates reuse`, async () => {
+                const root = mkdtempSync(join(tmpdir(), "gt-refresh-cancel-"));
+                roots.push(root);
+                fixtureRepo(join(root, "repo"));
+                const cache = new SourcemapCache("app", join(root, "cache"));
+                const input = join(root, "input");
+                writeFileSync(input, "old complete output");
+                const options = {
+                    cache,
+                    repo: join(root, "repo"),
+                    commit: "HEAD",
+                    outputDir: "out",
+                    worktree: join(root, "worktree"),
+                    buildCmd: `mkdir -p out && cp '${input}' out/a.js`,
+                };
+                const first = await buildAtCommit(options);
+                writeFileSync(input, "replacement output");
+                const files = join(first.dir, "files");
+                const controller = new AbortController();
+                let stopped: Promise<unknown> | undefined;
+                let cancelled = false;
+                const cancel = () => {
+                    cancelled = true;
+                    if (cancellation === "signal") {
+                        controller.abort();
+                    } else {
+                        stopped = releaseBuildWorktrees({ stop: true });
+                    }
+                };
+                let restore: () => void;
+                if (stage === "copy") {
+                    const copy = fsPromises.cp;
+                    const spy = spyOn(fsPromises, "cp").mockImplementation(async (...args) => {
+                        await copy(...args);
+                        if (String(args[1]) === `${files}.staging`) {
+                            cancel();
+                        }
+                    });
+                    restore = () => spy.mockRestore();
+                } else if (stage === "remove") {
+                    const remove = fsPromises.rm;
+                    const spy = spyOn(fsPromises, "rm").mockImplementation(async (...args) => {
+                        await remove(...args);
+                        if (String(args[0]) === files) {
+                            cancel();
+                        }
+                    });
+                    restore = () => spy.mockRestore();
+                } else if (stage === "rename") {
+                    const rename = fsPromises.rename;
+                    const spy = spyOn(fsPromises, "rename").mockImplementation(async (...args) => {
+                        await rename(...args);
+                        if (String(args[1]) === files) {
+                            cancel();
+                        }
+                    });
+                    restore = () => spy.mockRestore();
+                } else {
+                    const commit = cache.commit.bind(cache);
+                    const spy = spyOn(cache, "commit").mockImplementation(async (args) => {
+                        if (stage === "commit") {
+                            cancel();
+                            return commit(args);
+                        }
+                        const result = await commit(args);
+                        cancel();
+                        return result;
+                    });
+                    restore = () => spy.mockRestore();
+                }
+                try {
+                    await expect(
+                        buildAtCommit({ ...options, refresh: true, signal: controller.signal })
+                    ).rejects.toThrow("build cancelled");
+                    await stopped;
+                    expect(cancelled).toBe(true);
+                } finally {
+                    restore();
+                }
+                const reusable = await cache.get(first.entry.id);
+                if (reusable) {
+                    expect(readFileSync(join(files, "a.js"), "utf8")).toBe("old complete output");
+                    expect((await buildAtCommit(options)).reused).toBe(true);
+                } else {
+                    expect((await buildAtCommit(options)).reused).toBe(false);
+                    expect(readFileSync(join(files, "a.js"), "utf8")).toBe("replacement output");
+                }
+            });
+        }
+    }
+
     test("a refresh replaces the cached output, and a different env is a different build", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-sourcemaps-build-"));
         roots.push(root);
@@ -589,9 +683,13 @@ describe("buildAtCommit", () => {
 
         const first = await build("a");
         expect(readdirSync(join(first.dir, "files"))).toEqual(["chunk-1.js"]);
+        const linked = join(root, "linked-output");
+        await cache.linkOut(first.entry.id, linked, "files");
         const refreshed = await build("a", true);
         expect(refreshed.dir).toBe(first.dir);
         expect(readdirSync(join(refreshed.dir, "files"))).toEqual(["chunk-2.js"]);
+        expect(refreshed.entry.createdAt).toBe(first.entry.createdAt);
+        expect(refreshed.entry.links).toEqual([linked]);
 
         const otherEnv = await build("b");
         expect(otherEnv.reused).toBe(false);

@@ -1745,6 +1745,7 @@ func cmdAct(appName _: String) {
                 // the drag (a panel dragged by its body). The start keeps every check below; each later step checks
                 // that the user has not taken the pointer and that the window is still this window, on screen.
                 let allowOutside = workflowFlag("--allow-outside")
+                try WorkflowArguments.validateDragScope(scope: token.effectiveScope, allowOutside: allowOutside)
                 let end = try parsePoint(destination, requireInside: !allowOutside)
                 if !allowOutside {
                     _ = try verifyPoint(end, pin: .window)
