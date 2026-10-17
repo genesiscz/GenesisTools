@@ -82,6 +82,14 @@ public final class WindowEventFactory {
                      verify: (CGPoint) throws -> Void, post: (CGEvent) -> Void) throws {
         let down = try mouse(type: .leftMouseDown, point: start, clickCount: 1)
         var release = try mouse(type: .leftMouseUp, point: start, clickCount: 1)
+        func postRelease() {
+            if let liveBounds {
+                // Posting the last move can move the window after its release event was allocated.
+                // Refresh the local field without risking a new allocation after mouse-down.
+                setLocation(release, snapshotWindowPoint(release.location, in: liveBounds() ?? bounds))
+            }
+            post(release)
+        }
         try verify(start)
         post(down)
         do {
@@ -95,14 +103,14 @@ public final class WindowEventFactory {
                 release = nextRelease
             }
         } catch {
-            post(release)
+            postRelease()
             // A takeover keeps its own type, so the caller reports it as the terminal refusal it is.
             if error is UserTakeoverError {
                 throw error
             }
             throw WindowEventError.unavailable("drag interrupted after mouse-down: \(error.localizedDescription); inspect the partial outcome")
         }
-        post(release)
+        postRelease()
     }
 
     public func scroll(point: CGPoint, deltaX: Int32, deltaY: Int32) throws -> CGEvent {
