@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as readers from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { loadAllSessionCmuxRefs, lookupSessionCmuxRefs } from "./session-refs";
 
@@ -23,21 +24,38 @@ test("the reader stops in the old part of the journal, and a stray old line does
     const ancient = Array.from({ length: 200 }, (_, index) =>
         entry({ sessionId: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`, at: now - 30 * DAY })
     );
-    // A malformed line deep in the old part: a reader that got that far would log a parse failure, not throw.
+    // A sentinel deep in the old part must never be yielded to the journal lookup.
     const path = journal([
         entry({ sessionId: "11111111-1111-4111-8111-111111111111", at: now - 40 * DAY }),
         ...ancient.slice(0, 100),
-        "not json" as unknown as object,
+        entry({ sessionId: "deep-ancient-sentinel", at: now - 30 * DAY }),
         ...ancient.slice(100),
         entry({ surfaceId: "in-window", at: now - 2 * DAY }),
         entry({ sessionId: "22222222-2222-4222-8222-222222222222", at: now - 9 * DAY }),
         entry({ sessionId: "33333333-3333-4333-8333-333333333333", at: now - 1000 }),
     ]);
 
-    const refs = loadAllSessionCmuxRefs(path);
-    expect(refs.get(SESSION)?.surfaceId).toBe("in-window");
-    expect(refs.has("33333333-3333-4333-8333-333333333333")).toBe(true);
-    expect(refs.size).toBe(2);
+    const readBackward = readers.readLinesBackwardSync;
+    const consumed: string[] = [];
+    const reader = spyOn(readers, "readLinesBackwardSync").mockImplementation(function* (filePath, options) {
+        for (const line of readBackward(filePath, options)) {
+            consumed.push(line);
+            yield line;
+        }
+    });
+
+    try {
+        const refs = loadAllSessionCmuxRefs(path);
+        expect(refs.get(SESSION)?.surfaceId).toBe("in-window");
+        expect(refs.has("33333333-3333-4333-8333-333333333333")).toBe(true);
+        expect(refs.size).toBe(2);
+        expect(reader).toHaveBeenCalled();
+        expect(consumed.length).toBeGreaterThan(0);
+        expect(consumed.length).toBeLessThan(ancient.length);
+        expect(consumed.some((line) => line.includes("deep-ancient-sentinel"))).toBe(false);
+    } finally {
+        reader.mockRestore();
+    }
 });
 
 function journal(lines: object[]): string {
@@ -129,4 +147,20 @@ test("a tab another session took over, or a session ended on purpose, is not a t
     expect(lookupSessionCmuxRefs(SESSION, refOnly)).toBeNull();
     // Control: the same session alone in its tab still resolves.
     expect(lookupSessionCmuxRefs(SESSION, journal([entry({ surfaceId: "surf-1" })]))?.surfaceId).toBe("surf-1");
+});
+
+test("journal read errors are observable without changing the default empty-map fallback", () => {
+    const refsPath = journal([entry()]);
+    const error = Object.assign(new Error("fixture journal permission denied"), { code: "EACCES" });
+    const reader = spyOn(readers, "readLinesBackwardSync").mockImplementation(() => {
+        throw error;
+    });
+    const failures: unknown[] = [];
+
+    try {
+        expect(loadAllSessionCmuxRefs(refsPath, { onReadError: (failure) => failures.push(failure) }).size).toBe(0);
+        expect(failures).toEqual([error]);
+    } finally {
+        reader.mockRestore();
+    }
 });

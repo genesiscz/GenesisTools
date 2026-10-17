@@ -31,7 +31,12 @@ export function classifyCodexArgs(args: string): CodexProcessKind | null {
 export function codexResumeIdFromArgs(args: string): string | null {
     const tokens = args.split(/\s+/);
     const at = tokens.indexOf("resume");
-    const id = at >= 0 ? tokens.slice(at + 1).find((token) => !token.startsWith("-")) : undefined;
+    const id =
+        at >= 0
+            ? tokens
+                  .slice(at + 1)
+                  .find((token) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token))
+            : undefined;
 
-    return id && /^[\w-]+$/.test(id) ? id : null;
+    return id ?? null;
 }

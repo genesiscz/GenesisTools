@@ -11,7 +11,7 @@ import {
     stripModelFlags,
 } from "@app/cmux/lib/render-resume";
 import { loadSurfaceSessions, pickSurfaceSession, staleSessionNote } from "@app/cmux/lib/surface-sessions";
-import { agentOfCommand } from "@app/cmux/lib/tab-process";
+import { agentOfCommand, commandRunsAgent } from "@app/cmux/lib/tab-process";
 import { cleanLaunchCommand, collectTtyCapture } from "@app/cmux/lib/tty-capture";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as processes from "@genesiscz/utils/process/processes";
@@ -783,5 +783,29 @@ describe("pickSurfaceSession", () => {
         expect(staleSessionNote({ ...claude }, undefined, { command: "claude --model x" })[0]).toContain(
             "only before `claude --model x` started"
         );
+    });
+});
+
+describe("cmux agent process classification", () => {
+    test("Codex services do not make a tab a live agent", () => {
+        for (const command of [
+            "codex-gateway serve",
+            "/opt/bin/codex-gateway serve",
+            "/Applications/GenesisTools.app/Contents/MacOS/GenesisTools codex-gateway serve",
+        ]) {
+            expect(agentOfCommand(command)).toBeUndefined();
+            expect(commandRunsAgent(command, "codex")).toBe(false);
+        }
+    });
+
+    test("native Codex, its JS wrapper and tools launchers still count", () => {
+        for (const command of [
+            "/opt/bin/codex resume",
+            "node /opt/lib/@openai/codex/bin/codex.js",
+            "bun /repo/tools codex run work",
+        ]) {
+            expect(commandRunsAgent(command, "codex")).toBe(true);
+        }
+        expect(agentOfCommand("/opt/bin/codex resume")?.kind).toBe("codex");
     });
 });

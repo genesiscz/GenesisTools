@@ -104,8 +104,7 @@ export function resolveTabSession(evidence: TabEvidence, catalog: ReplayCatalog)
             resume: { kind: native.kind, sessionId: native.sessionId },
             // Process-derived native metadata may be stale; the tab's own journal or binding must agree.
             evidence:
-                (session?.provider === native.kind && session.sessionId === native.sessionId) ||
-                native.bindingConfirms
+                (session?.provider === native.kind && session.sessionId === native.sessionId) || native.bindingConfirms
                     ? "journal"
                     : undefined,
             cwd: shellLine?.cwd ?? native.cwd,

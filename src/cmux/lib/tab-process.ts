@@ -43,6 +43,13 @@ export function idleShellTtys(processes: ProcessEntry[], uid: number): Set<strin
     return idle;
 }
 
+/** The broad process classifier also names Codex services such as codex-gateway as agents. */
+function isCodexService(command: string): boolean {
+    return /^(?:\S*\/GenesisTools\.app\/Contents\/MacOS\/GenesisTools\s+)?(?:\S*\/)?codex-[\w-]+(?:\s|$)/.test(
+        command.trim()
+    );
+}
+
 /** The agent process a command line runs (`/…/claude --resume <id>`, `grok -r <id>`), its session lower-cased. */
 export function agentOfCommand(command: string): TtyAgent | undefined {
     const proc = classifyCommand(command);
@@ -50,6 +57,8 @@ export function agentOfCommand(command: string): TtyAgent | undefined {
     // A wrapper (node or bun running the agent's script, a versioned binary) runs the agent too.
     if (
         (proc.kind !== "agent" && proc.kind !== "wrapper") ||
+        // A codex-* helper with no session is a service; a versioned codex binary resuming a session is the agent.
+        (proc.provider === "codex" && !proc.sessionId && isCodexService(command)) ||
         (proc.provider !== "claude" && proc.provider !== "grok" && proc.provider !== "codex")
     ) {
         return undefined;
@@ -65,7 +74,11 @@ const TOOLS_AGENT_LAUNCHER = /(?:^|[\s/])tools\s+(claude|cc|grok|codex)\s+(?:run
 export function commandRunsAgent(command: string, agent: AccountProviderAlias): boolean {
     const proc = classifyCommand(command);
 
-    if ((proc.kind === "agent" || proc.kind === "wrapper") && proc.provider === agent) {
+    if (
+        (proc.kind === "agent" || proc.kind === "wrapper") &&
+        proc.provider === agent &&
+        !(proc.provider === "codex" && isCodexService(command))
+    ) {
         return true;
     }
 

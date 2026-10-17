@@ -1,8 +1,11 @@
-import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
+import { runCmuxJSON, runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
 import { type CmuxPlace, identifyCmux } from "@genesiscz/utils/cmux/lib/place";
+import type { WorkspaceCreateResult } from "@genesiscz/utils/cmux/lib/socket";
 import { surfaceTargetArgs } from "@genesiscz/utils/cmux/lib/target";
 import {
+    buildWorkspaceCreateArgs,
     createWorkspaceWithName,
+    ensureWorkspaceTitle,
     openSplitInWorkspace,
     openSurfaceInPane,
     pickAnchorSurface,
@@ -39,7 +42,7 @@ export interface OpenCommandOptions {
     /** Name and folder of a workspace created for a `window` target. */
     workspaceName?: string;
     cwd?: string;
-    /** Press Enter after typing. Default true. */
+    /** Press Enter after typing. Default true. False is unsupported for a new silent workspace. */
     enter?: boolean;
     /**
      * Open and type without touching the user's view: no workspace select, no window focus, no app raise.
@@ -63,14 +66,38 @@ export interface OpenedPlace {
 export async function openCommandAt(options: OpenCommandOptions): Promise<OpenedPlace> {
     const prof = profiler.scope("claude-cmux-open");
     const { target } = options;
+
+    if (options.silent && target.kind === "window" && options.enter === false) {
+        throw new Error("cmux cannot type without running into a never-shown workspace (silent with enter: false)");
+    }
+
     const placed = await prof.measureAsync("place", async (): Promise<OpenedPlace> => {
         switch (target.kind) {
             case "window": {
-                const created = await createWorkspaceWithName({
-                    name: options.workspaceName,
-                    cwd: options.cwd,
-                    window: target.windowId,
-                });
+                const created = options.silent
+                    ? await runCmuxJSON<WorkspaceCreateResult>(
+                          buildWorkspaceCreateArgs({
+                              name: options.workspaceName,
+                              cwd: options.cwd ?? process.cwd(),
+                              window: target.windowId,
+                              command: options.command,
+                              focus: false,
+                          })
+                      )
+                    : await createWorkspaceWithName({
+                          name: options.workspaceName,
+                          cwd: options.cwd,
+                          window: target.windowId,
+                      });
+
+                if (options.silent && options.workspaceName) {
+                    await ensureWorkspaceTitle({
+                        workspace: created.workspace_id,
+                        window: target.windowId,
+                        title: options.workspaceName,
+                    });
+                }
+
                 // Silent: cmux 0.65 names the new terminal in its answer and lists a never-shown workspace's own
                 // panes, so nothing has to be selected first (probed 2026-10-15).
                 const surfaceId = options.silent
@@ -102,6 +129,11 @@ export async function openCommandAt(options: OpenCommandOptions): Promise<Opened
         await renameSurfaceTab(placed.workspaceId, placed.surfaceId, options.title).catch((err: unknown) => {
             log.debug({ err, surface: placed.surfaceId }, "could not rename the surface tab");
         });
+    }
+
+    // Never-shown workspaces execute their command at creation; a later send can be silently dropped.
+    if (options.silent && target.kind === "window") {
+        return placed;
     }
 
     const payload = `${options.command}${(options.enter ?? true) ? "\n" : ""}`;

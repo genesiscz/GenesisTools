@@ -1,9 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as readers from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { describeJournalCoverage, journalCoverage, journalCoverageWarning } from "./journal-coverage";
+import {
+    describeJournalCoverage,
+    describeJournalJoin,
+    journalCoverage,
+    journalCoverageWarning,
+} from "./journal-coverage";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -101,4 +107,25 @@ describe("journal coverage text", () => {
         expect(many).toContain("7 live agent tabs (s1, s2, s3, s4, s5, and 2 more)");
         expect(many).toContain("their agents");
     });
+});
+
+test("an unreadable journal makes coverage unavailable rather than accusing the hook of missing records", () => {
+    const refsPath = journal([record("fixture-session", "surface-1")]);
+    const error = Object.assign(new Error("fixture journal permission denied"), { code: "EACCES" });
+    const reader = spyOn(readers, "readLinesBackwardSync").mockImplementation(() => {
+        throw error;
+    });
+
+    try {
+        const coverage = journalCoverage({ refsPath, tabs: [{ surfaceId: "surface-1", agent: true }] });
+        expect(coverage).toEqual({ tabs: 1, recorded: null, agentTabs: 1, unrecordedAgentTabs: [] });
+        expect(describeJournalCoverage(coverage)).toBe("not checked (the surface journal could not be read)");
+        expect(describeJournalJoin(coverage)).toBe("not checked (the surface journal could not be read)");
+        expect(journalCoverageWarning(coverage)).toBe(
+            "Surface-journal coverage not checked (the journal could not be read)."
+        );
+        expect(journalCoverageWarning(coverage)).not.toContain("plugin list");
+    } finally {
+        reader.mockRestore();
+    }
 });

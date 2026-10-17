@@ -12,8 +12,8 @@ export interface CoverageTab {
 export interface JournalCoverage {
     /** Live terminal tabs checked. */
     tabs: number;
-    /** Of them, tabs the surface journal names in a record the readers still trust (inside their 7-day window). */
-    recorded: number;
+    /** Tabs with a trusted journal record; null when the journal could not be read. */
+    recorded: number | null;
     agentTabs: number;
     /** Labels of the agent tabs the journal has no record for: a restore cannot place their sessions. */
     unrecordedAgentTabs: string[];
@@ -36,15 +36,27 @@ export function journalCoverage({
     beforeMs?: number;
 }): JournalCoverage {
     const known = new Set<string>();
+    let unavailable = false;
+    const refs = loadAllSessionCmuxRefs(refsPath, {
+        beforeMs,
+        onReadError: () => {
+            unavailable = true;
+        },
+    });
 
-    for (const entry of loadAllSessionCmuxRefs(refsPath, { beforeMs }).values()) {
+    for (const entry of refs.values()) {
         if (entry.surfaceId) {
             known.add(entry.surfaceId.toLowerCase());
         }
     }
 
     const seen = new Set<string>();
-    const coverage: JournalCoverage = { tabs: 0, recorded: 0, agentTabs: 0, unrecordedAgentTabs: [] };
+    const coverage: JournalCoverage = {
+        tabs: 0,
+        recorded: unavailable ? null : 0,
+        agentTabs: 0,
+        unrecordedAgentTabs: [],
+    };
 
     for (const tab of tabs) {
         const id = tab.surfaceId.toLowerCase();
@@ -58,14 +70,14 @@ export function journalCoverage({
 
         const recorded = known.has(id);
 
-        if (recorded) {
+        if (recorded && coverage.recorded !== null) {
             coverage.recorded += 1;
         }
 
         if (tab.agent) {
             coverage.agentTabs += 1;
 
-            if (!recorded) {
+            if (!unavailable && !recorded) {
                 coverage.unrecordedAgentTabs.push(tab.label ?? tab.surfaceId);
             }
         }
@@ -80,6 +92,10 @@ function plural(count: number, noun: string): string {
 
 /** The `cmux doctor` line. */
 export function describeJournalCoverage(coverage: JournalCoverage): string {
+    if (coverage.recorded === null) {
+        return "not checked (the surface journal could not be read)";
+    }
+
     const head = `${coverage.recorded} of ${plural(coverage.tabs, "live tab")} ${coverage.tabs === 1 ? "has" : "have"} a surface-journal record`;
     const missing = coverage.unrecordedAgentTabs.length;
 
@@ -98,6 +114,10 @@ export function describeJournalCoverage(coverage: JournalCoverage): string {
 
 /** The restore plan line: how many of the tabs to restore the journal could be joined to. */
 export function describeJournalJoin(coverage: JournalCoverage): string {
+    if (coverage.recorded === null) {
+        return "not checked (the surface journal could not be read)";
+    }
+
     if (coverage.tabs === 0) {
         return "no terminal tabs to find in the surface journal";
     }
@@ -109,6 +129,10 @@ const WARNING_LABELS = 5;
 
 /** The `agents list` warning for agent tabs the journal has no record of, or null when there are none. */
 export function journalCoverageWarning(coverage: JournalCoverage): string | null {
+    if (coverage.recorded === null) {
+        return "Surface-journal coverage not checked (the journal could not be read).";
+    }
+
     const missing = coverage.unrecordedAgentTabs;
 
     if (missing.length === 0) {

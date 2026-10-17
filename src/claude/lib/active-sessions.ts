@@ -226,6 +226,7 @@ export const CLAUDE_WHO_SOURCE: AgentWhoSource = {
     classify: classifyClaudeArgs,
     isHelper: isHelperChild,
     resumeIdFromArgs: (args) => extractLaunchDetails(args).resumeId,
+    modelFromArgs: (args) => extractLaunchDetails(args).model,
     async activeSessions(): Promise<AgentSessionFacts[]> {
         const activeIds = getActiveSessionIds();
         const listing = await getSessionListing({ excludeSubagents: true });

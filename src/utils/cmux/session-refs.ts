@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { readLinesBackwardSync } from "@genesiscz/utils/fs/read-lines";
@@ -88,11 +88,10 @@ const AT_FIELD = /"at":(\d+)/;
  * read stops after a run of lines older than `sinceMs` (with an hour of slack). On 2026-10-15 the 6.9 MB journal held
  * 13,825 lines older than the readers' 7 days. Null when the file is missing or unreadable.
  */
-function readJournalSince(refsPath: string, sinceMs: number): string[] | null {
-    if (!existsSync(refsPath)) {
-        return null;
-    }
-
+function readJournalSince(
+    refsPath: string,
+    { sinceMs, onReadError }: { sinceMs: number; onReadError?: (error: unknown) => void }
+): string[] | null {
     const lines: string[] = [];
     let oldRun = 0;
 
@@ -108,9 +107,12 @@ function readJournalSince(refsPath: string, sinceMs: number): string[] | null {
             lines.push(line);
         }
     } catch (err) {
-        // A permission or I/O failure must not read as "no journal": that
-        // silently disables session enrichment with nothing to triage from.
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+            return null;
+        }
+
         log.warn({ err, refsPath }, "cannot read the cmux refs journal");
+        onReadError?.(err);
         return null;
     }
 
@@ -121,16 +123,17 @@ function readJournalSince(refsPath: string, sinceMs: number): string[] | null {
  * Newest recorded cmux location per session, one pass over the journal.
  * Entries older than MAX_AGE_MS are dropped; surface-less entries (plain
  * Terminal/tmux launches) are kept — callers that need a cmux target filter.
+ * `onReadError` distinguishes an unreadable journal from one that is empty or does not exist.
  */
 export function loadAllSessionCmuxRefs(
     refsPath: string = CMUX_REFS_PATH,
-    options: { beforeMs?: number } = {}
+    options: { beforeMs?: number; onReadError?: (error: unknown) => void } = {}
 ): Map<string, SessionCmuxRefs> {
     const refs = new Map<string, SessionCmuxRefs>();
     /** `<session>\n<surface>` → the first time that session was seen on that surface. */
     const firstSeen = new Map<string, number>();
     const cutoff = (options.beforeMs ?? Date.now()) - CMUX_REFS_MAX_AGE_MS;
-    const lines = readJournalSince(refsPath, cutoff);
+    const lines = readJournalSince(refsPath, { sinceMs: cutoff, onReadError: options.onReadError });
 
     if (lines === null) {
         return refs;

@@ -30,7 +30,7 @@ export function grokResumeIdFromArgs(args: string): string | null {
         const token = tokens[index];
         const id = token === "-r" || token === "--resume" ? tokens[index + 1] : token.match(/^--resume=(.+)$/)?.[1];
 
-        if (id && /^[\w-]+$/.test(id)) {
+        if (id && !id.startsWith("-") && /^[\w-]+$/.test(id)) {
             return id;
         }
     }

@@ -30,6 +30,16 @@ mock.module("@genesiscz/utils/cmux/lib/cli", () => ({
     runCmuxJSON: async (args: string[]) => {
         argv.push(args);
 
+        if (args[0] === "workspace" && args[1] === "create") {
+            return {
+                workspace_id: WORKSPACE,
+                workspace_ref: "workspace:2",
+                window_id: WINDOW,
+                window_ref: "window:1",
+                surface_id: SURFACE_UUID,
+            };
+        }
+
         if (args.includes("new-surface")) {
             return { surface_id: SURFACE_UUID };
         }
@@ -117,6 +127,69 @@ describe("openCommandAt silent", () => {
         expect(placed).toEqual({ workspaceId: WORKSPACE, surfaceId: SURFACE_UUID });
         expect(argv.filter(changesView)).toEqual([]);
         expect(sendArgs()).toContain("echo probe\n");
+    });
+
+    test.each([undefined, "/repo/fixture"])(
+        "a silent workspace starts its command at creation (cwd %j)",
+        async (cwd) => {
+            const placed = await openCommandAt({
+                command: "echo 'probe command'",
+                target: { kind: "window", windowId: WINDOW },
+                title: "probe",
+                workspaceName: "fixture",
+                cwd,
+                silent: true,
+            });
+
+            expect(placed).toEqual({ workspaceId: WORKSPACE, surfaceId: SURFACE_UUID });
+            const creates = argv.filter((args) => args[0] === "workspace" && args[1] === "create");
+            expect(creates).toEqual([
+                [
+                    "workspace",
+                    "create",
+                    "--window",
+                    WINDOW,
+                    "--cwd",
+                    cwd ?? process.cwd(),
+                    "--focus",
+                    "false",
+                    "--command",
+                    "echo 'probe command'",
+                    "--name",
+                    "fixture",
+                ],
+            ]);
+            expect(argv.some((args) => args[0] === "send")).toBe(false);
+            expect(argv.filter(changesView)).toEqual([]);
+            expect(argv).toContainEqual(["workspace", "rename", WORKSPACE, "--title", "fixture"]);
+        }
+    );
+
+    test.each([true, false])("a silent existing surface still sends, with enter %j", async (enter) => {
+        const placed = await openCommandAt({
+            command: "echo probe",
+            target: { kind: "surface", workspaceId: WORKSPACE, surfaceId: SURFACE_UUID },
+            title: "probe",
+            silent: true,
+            enter,
+        });
+
+        expect(placed).toEqual({ workspaceId: WORKSPACE, surfaceId: SURFACE_UUID });
+        expect(argv).toEqual([["send", "--surface", SURFACE_UUID, `echo probe${enter ? "\n" : ""}`]]);
+    });
+
+    test("a silent new workspace refuses enter:false before creating anything", async () => {
+        await expect(
+            openCommandAt({
+                command: "echo probe",
+                target: { kind: "window", windowId: WINDOW },
+                title: "probe",
+                silent: true,
+                enter: false,
+            })
+        ).rejects.toThrow("cmux cannot type without running into a never-shown workspace");
+
+        expect(argv).toEqual([]);
     });
 
     test("NEGATIVE CONTROL: without silent the same open selects the workspace and focuses the window", async () => {

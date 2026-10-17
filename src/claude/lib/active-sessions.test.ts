@@ -1,17 +1,29 @@
-import { describe, expect, test } from "bun:test";
-import { codexResumeIdFromArgs } from "@app/codex/lib/process-scan";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import { runWho } from "@app/ai/lib/accounts/run-who";
+import { registerWhoCommand } from "@app/claude/commands/who";
+import { CODEX_HELPER_KINDS, classifyCodexArgs, codexResumeIdFromArgs } from "@app/codex/lib/process-scan";
 import { grokResumeIdFromArgs } from "@app/grok/lib/process-scan";
+import type { AgentSearchFilters, AgentSession } from "@genesiscz/utils/agent-sessions/types";
+import type { ActiveAgentProcess } from "@genesiscz/utils/ai/active-processes";
+import * as processScan from "@genesiscz/utils/ai/active-processes";
 import {
     assignSessionIds,
     buildSessionHints,
     countSessionInstances,
     invertSurfaceTtys,
+    listActiveAgentSessions,
     parseCmuxTreeTtys,
+    sessionsFromAdapter,
+    withoutHelpers,
 } from "@genesiscz/utils/ai/active-sessions";
 import type { ContentBlock } from "@genesiscz/utils/claude/types";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
+import * as journalRefs from "@genesiscz/utils/cmux/session-refs";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
+import { Command } from "commander";
 import {
+    CLAUDE_WHO_SOURCE,
     classifyClaudeArgs,
     cleanUserText,
     extractLaunchDetails,
@@ -498,4 +510,286 @@ describe("invertSurfaceTtys", () => {
 
         expect(map.get("ttys000")).toBe("");
     });
+});
+
+describe("Claude who JSON contract", () => {
+    const sessionId = "11111111-1111-4111-8111-111111111111";
+    const row: ActiveAgentProcess = {
+        pid: 123,
+        ppid: 100,
+        tty: "ttys001",
+        startedAt: 1_700_000_000_000,
+        cpuTime: "0:00.01",
+        args: "claude",
+        kind: "tui",
+        account: "work",
+        proxyTarget: null,
+        cwd: "/repo/fixture",
+    };
+
+    async function jsonOutput(input: { entryPoint: string; args: string; extra?: string }): Promise<unknown> {
+        const scanned = [{ ...row, args: input.args, extra: input.extra }];
+        const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue(scanned);
+        const capture = spyOn(processScan, "runCapture").mockResolvedValue('{"windows":[]}');
+        const sessions = spyOn(CLAUDE_WHO_SOURCE, "activeSessions").mockResolvedValue([]);
+        const result = spyOn(out, "result").mockImplementation(() => {});
+
+        try {
+            if (input.entryPoint === "claude") {
+                const program = new Command();
+                registerWhoCommand(program);
+                await program.parseAsync(["node", "fixture", "who", "--json"]);
+            } else {
+                await runWho({ json: true });
+            }
+
+            expect(result).toHaveBeenCalledTimes(1);
+            return result.mock.calls[0]?.[0];
+        } finally {
+            result.mockRestore();
+            sessions.mockRestore();
+            capture.mockRestore();
+            scan.mockRestore();
+        }
+    }
+
+    test.each(["claude", "accounts"])("%s who omits argv and unapproved scan fields", async (entryPoint) => {
+        const secret = "fixture-sensitive-native-option";
+        const output = await jsonOutput({
+            entryPoint,
+            args: `claude --resume ${sessionId} --api-key ${secret} --print private-fixture-prompt`,
+            extra: secret,
+        });
+
+        expect(output).toEqual({
+            sessions: [
+                {
+                    pid: row.pid,
+                    ppid: row.ppid,
+                    tty: row.tty,
+                    startedAt: row.startedAt,
+                    cpuTime: row.cpuTime,
+                    kind: "tui",
+                    account: "work",
+                    proxyTarget: null,
+                    cwd: row.cwd,
+                    resumeId: sessionId,
+                    model: null,
+                    sessionId,
+                    sessionCandidates: 1,
+                    sessionSource: "resume-arg",
+                    surfaceId: null,
+                    surfaceRef: null,
+                    sessionInstances: 1,
+                    sessionTitle: null,
+                    lastUserMessage: null,
+                    lastActivityAt: null,
+                },
+            ],
+        });
+        expect(SafeJSON.stringify(output)).not.toContain(secret);
+        expect(SafeJSON.stringify(output)).not.toContain("private-fixture-prompt");
+    });
+
+    for (const entryPoint of ["claude", "accounts"]) {
+        test.each(["--model fixture-model", "--model=fixture-model", ""])(
+            `${entryPoint} who preserves the model field from %j`,
+            async (flag) => {
+                const output = await jsonOutput({ entryPoint, args: `claude --resume ${sessionId} ${flag}` });
+                expect(output).toEqual({
+                    sessions: [expect.objectContaining({ model: flag ? "fixture-model" : null })],
+                });
+            }
+        );
+    }
+});
+
+describe("helper processes cannot claim live sessions", () => {
+    test.each(["hook-tty", "cwd-unique"])(
+        "a lower-PID Codex helper cannot take the TUI's %s identity",
+        async (source) => {
+            const sessionId = "11111111-1111-4111-8111-111111111111";
+            const tui: ActiveAgentProcess = {
+                pid: 101,
+                ppid: 99,
+                tty: "ttys001",
+                startedAt: 1_700_000_000_000,
+                cpuTime: "0:00.01",
+                args: "codex",
+                kind: "tui",
+                account: "work",
+                proxyTarget: null,
+                cwd: "/repo/fixture",
+            };
+            const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue([
+                { ...tui, pid: 100, args: "codex app-server", kind: "app-server" },
+                tui,
+            ]);
+            const refs = spyOn(journalRefs, "loadAllSessionCmuxRefs").mockReturnValue(
+                new Map([
+                    [
+                        sessionId,
+                        {
+                            sessionId,
+                            provider: "codex",
+                            surfaceId: "surface-uuid",
+                            workspaceId: null,
+                            workspaceRef: null,
+                            paneRef: null,
+                            surfaceRef: null,
+                            windowRef: null,
+                            tmuxPane: null,
+                            cwd: tui.cwd,
+                            at: Date.now(),
+                        },
+                    ],
+                ])
+            );
+            const options = {
+                alias: "codex" as const,
+                classify: classifyCodexArgs,
+                helperKinds: CODEX_HELPER_KINDS,
+                resumeIdFromArgs: codexResumeIdFromArgs,
+                activeSessions: async () => [{ sessionId, cwd: tui.cwd }],
+            };
+
+            try {
+                const all = await listActiveAgentSessions(options, {
+                    runner: async () =>
+                        SafeJSON.stringify({
+                            windows:
+                                source === "hook-tty"
+                                    ? [
+                                          {
+                                              workspaces: [
+                                                  {
+                                                      panes: [
+                                                          {
+                                                              surfaces: [
+                                                                  {
+                                                                      id: "surface-uuid",
+                                                                      ref: "surface:1",
+                                                                      tty: tui.tty,
+                                                                  },
+                                                              ],
+                                                          },
+                                                      ],
+                                                  },
+                                              ],
+                                          },
+                                      ]
+                                    : [],
+                        }),
+                });
+                expect(withoutHelpers(options, all)).toEqual([
+                    expect.objectContaining({
+                        pid: 101,
+                        sessionId,
+                        sessionSource: source,
+                        sessionInstances: 1,
+                    }),
+                ]);
+                expect(all.find((entry) => entry.kind === "app-server")).toMatchObject({
+                    sessionId: null,
+                    sessionSource: "none",
+                });
+            } finally {
+                refs.mockRestore();
+                scan.mockRestore();
+            }
+        }
+    );
+});
+
+describe("bounded adapter catalogs cannot prove cwd uniqueness", () => {
+    const visibleId = "11111111-1111-4111-8111-111111111111";
+    const hiddenId = "22222222-2222-4222-8222-222222222222";
+    const cwd = "/repo/shared";
+
+    for (const mode of ["list", "listCached"] as const) {
+        test.each([
+            { name: "truncated", truncated: true, resume: false, expectedSource: "none" },
+            { name: "complete", truncated: false, resume: false, expectedSource: "cwd-unique" },
+            { name: "truncated with explicit resume", truncated: true, resume: true, expectedSource: "resume-arg" },
+        ])(
+            `${mode}: $name catalog resolves only with sufficient evidence`,
+            async ({ truncated, resume, expectedSource }) => {
+                const now = Date.now();
+                const visible: AgentSession = {
+                    kind: "codex",
+                    sessionId: visibleId,
+                    cwd,
+                    title: "Visible session",
+                    mtime: new Date(now),
+                    filePath: "/fixture/visible.jsonl",
+                };
+                const catalog: AgentSession[] = truncated
+                    ? [
+                          visible,
+                          ...Array.from({ length: 499 }, (_, index) => ({
+                              ...visible,
+                              sessionId: `filler-${index}`,
+                              cwd: `/repo/other-${index}`,
+                          })),
+                          {
+                              ...visible,
+                              sessionId: hiddenId,
+                              title: "Hidden session",
+                              filePath: "/fixture/hidden.jsonl",
+                          },
+                      ]
+                    : [visible];
+                const query = mock(async (filters: AgentSearchFilters) => catalog.slice(0, filters.limit));
+                const adapter = { list: query, ...(mode === "listCached" ? { listCached: query } : {}) };
+                const scan = spyOn(processScan, "listActiveAgentProcesses").mockResolvedValue([
+                    {
+                        pid: 101,
+                        ppid: 99,
+                        tty: "ttys001",
+                        startedAt: now,
+                        cpuTime: "0:00.01",
+                        args: resume ? `codex resume ${visibleId}` : "codex",
+                        kind: "tui",
+                        account: "work",
+                        proxyTarget: null,
+                        cwd,
+                    },
+                ]);
+                const refs = spyOn(journalRefs, "loadAllSessionCmuxRefs").mockReturnValue(new Map());
+
+                try {
+                    const sessions = await listActiveAgentSessions(
+                        {
+                            alias: "codex",
+                            classify: classifyCodexArgs,
+                            resumeIdFromArgs: codexResumeIdFromArgs,
+                            activeSessions: () => sessionsFromAdapter(adapter, now),
+                        },
+                        { runner: async () => '{"windows":[]}' }
+                    );
+                    expect(query).toHaveBeenCalledTimes(1);
+                    expect(query.mock.calls[0]?.[0].limit).toBe(500);
+
+                    if (truncated) {
+                        expect(catalog.filter((session) => session.cwd === cwd)).toHaveLength(2);
+                        expect(catalog.slice(0, 500).filter((session) => session.cwd === cwd)).toHaveLength(1);
+                        expect(catalog[500]?.sessionId).toBe(hiddenId);
+                    }
+
+                    const resolved = !truncated || resume;
+                    expect(sessions).toEqual([
+                        expect.objectContaining({
+                            sessionId: resolved ? visibleId : null,
+                            sessionSource: expectedSource,
+                            sessionTitle: resolved ? "Visible session" : null,
+                            lastActivityAt: resolved ? now : null,
+                        }),
+                    ]);
+                } finally {
+                    refs.mockRestore();
+                    scan.mockRestore();
+                }
+            }
+        );
+    }
 });

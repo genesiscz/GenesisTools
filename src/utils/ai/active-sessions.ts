@@ -22,7 +22,7 @@ export interface AgentSessionFacts {
     title?: string | null;
     /** The transcript, for `tail`. */
     filePath?: string;
-    /** Written to recently enough to be a live session; only these take part in the cwd rung. Default true. */
+    /** Eligible for cwd inference: recent and from a catalog known not to be truncated. Default true. */
     active?: boolean;
     /** When the transcript was last written (epoch ms): the last-turn clock where no `tail` reads one. */
     mtimeMs?: number;
@@ -41,9 +41,11 @@ export interface AgentWhoSource {
     /** Kinds that are machinery rather than billable sessions; hidden unless `--all`. */
     helperKinds?: readonly string[];
     /** A helper decided from the whole table (Claude: an SDK launcher sharing a TUI's tty). */
-    isHelper?(process: ActiveAgentProcess, all: readonly ActiveAgentProcess[]): boolean;
+    isHelper?(process: Omit<ActiveAgentProcess, "args">, all: readonly Omit<ActiveAgentProcess, "args">[]): boolean;
     /** The session id the process names on its own argv (`--resume <id>`, `-r <id>`, `resume <id>`), or null. */
     resumeIdFromArgs?(args: string): string | null;
+    /** The explicitly selected launch model, when the agent exposes one. */
+    modelFromArgs?(args: string): string | null;
     /** Known sessions with their folder and name; those marked `active` take part in the cwd rung. */
     activeSessions?(): Promise<AgentSessionFacts[]>;
     /** The last user message and the last activity of one session. */
@@ -63,6 +65,8 @@ export async function sessionsFromAdapter(
 ): Promise<AgentSessionFacts[]> {
     const filters = { all: true, since: new Date(now - 7 * 24 * 60 * 60 * 1000), limit: 500 };
     const sessions = (await adapter.listCached?.(filters)) ?? (await adapter.list(filters));
+    // A full page may omit a second active session in the same cwd; only stronger evidence can name its rows.
+    const complete = sessions.length < filters.limit;
 
     return sessions.map((session) => ({
         sessionId: session.sessionId,
@@ -70,12 +74,13 @@ export async function sessionsFromAdapter(
         title: session.title || null,
         filePath: session.filePath,
         mtimeMs: session.mtime.getTime(),
-        active: now - session.mtime.getTime() < ACTIVE_WINDOW_MS,
+        active: complete && now - session.mtime.getTime() < ACTIVE_WINDOW_MS,
     }));
 }
 
-export interface ActiveAgentSession extends ActiveAgentProcess {
+export interface ActiveAgentSession extends Omit<ActiveAgentProcess, "args"> {
     resumeId: string | null;
+    model: string | null;
     /** Resolved session id, or null when it cannot be told without guessing. */
     sessionId: string | null;
     /** How many active sessions were candidates (for the "? (n)" cell). */
@@ -354,7 +359,11 @@ export async function listActiveAgentSessions(
         return [];
     }
 
-    const procs = scanned.map((row) => ({ ...row, resumeId: source.resumeIdFromArgs?.(row.args) ?? null }));
+    const procs = scanned.map((row) => ({
+        ...row,
+        resumeId: source.resumeIdFromArgs?.(row.args) ?? null,
+        model: source.modelFromArgs?.(row.args) ?? null,
+    }));
     let active: AgentSessionFacts[] = [];
 
     try {
@@ -366,7 +375,7 @@ export async function listActiveAgentSessions(
     const factsById = new Map(active.map((session) => [session.sessionId, session]));
     const cmux = await readCmuxContext(source.alias, deps.runner ?? runCapture);
     const assignments = assignSessionIds(
-        procs,
+        withoutHelpers(source, procs),
         active.filter((session) => session.active !== false),
         cmux.hints
     );
@@ -407,7 +416,17 @@ export async function listActiveAgentSessions(
         const surfaceRef = cmux.surfaceByTty.get(proc.tty) || null;
 
         return {
-            ...proc,
+            pid: proc.pid,
+            ppid: proc.ppid,
+            tty: proc.tty,
+            startedAt: proc.startedAt,
+            cpuTime: proc.cpuTime,
+            kind: proc.kind,
+            account: proc.account,
+            proxyTarget: proc.proxyTarget,
+            cwd: proc.cwd,
+            resumeId: proc.resumeId,
+            model: proc.model,
             sessionId: assignment.sessionId,
             sessionCandidates: assignment.candidates,
             sessionSource: assignment.source,
@@ -422,7 +441,7 @@ export async function listActiveAgentSessions(
 }
 
 /** The processes `who` lists without `--all`: no helper kinds and no table-decided helpers. */
-export function withoutHelpers(source: AgentWhoSource, all: ActiveAgentSession[]): ActiveAgentSession[] {
+export function withoutHelpers<T extends Omit<ActiveAgentProcess, "args">>(source: AgentWhoSource, all: T[]): T[] {
     const helperKinds = new Set(source.helperKinds ?? []);
     return all.filter((entry) => !helperKinds.has(entry.kind) && !source.isHelper?.(entry, all));
 }

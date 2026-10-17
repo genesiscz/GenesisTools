@@ -44,7 +44,12 @@ export async function runDoctor(flags: DoctorFlags): Promise<void> {
 
     ui.kv("identify", probeLine(health.probes.identify));
     ui.kv("send-self", selfSend.detail);
-    ui.kv("journal", journal ? describeJournalCoverage(journal) : "not checked (the live tabs could not be read)");
+    const journalStatus = journal
+        ? describeJournalCoverage(journal)
+        : health.state === "healthy"
+          ? "not checked (the live tabs could not be read)"
+          : `not checked (cmux is not healthy: ${health.state})`;
+    ui.kv("journal", journalStatus);
 
     switch (health.state) {
         case "healthy":

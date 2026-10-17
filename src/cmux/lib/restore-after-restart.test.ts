@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { setCcRunAliases } from "@app/cmux/lib/launchers";
+import * as liveLayout from "@app/cmux/lib/live-layout";
 import * as restore from "@app/cmux/lib/restore";
-import * as liveSessions from "@app/cmux/lib/session-close-live";
 import type { Profile, Surface, TerminalSurface } from "@app/cmux/lib/types";
 import { PROFILE_VERSION } from "@app/cmux/lib/types";
 import * as cmuxCli from "@genesiscz/utils/cmux/lib/cli";
@@ -383,7 +383,7 @@ describe("planInPlaceRestore", () => {
             ]),
             state
         );
-        const tree = spyOn(liveSessions, "liveTree").mockResolvedValue({
+        const tree = spyOn(liveLayout, "liveTree").mockResolvedValue({
             caller: "surface:104",
             callerId: uuid(4),
             surfaces: new Map(
@@ -463,7 +463,7 @@ describe("planInPlaceRestore", () => {
         if (!target) {
             throw new Error("missing target fixture");
         }
-        const tree = spyOn(liveSessions, "liveTree").mockResolvedValue({
+        const tree = spyOn(liveLayout, "liveTree").mockResolvedValue({
             caller: null,
             callerId: null,
             surfaces: new Map([
