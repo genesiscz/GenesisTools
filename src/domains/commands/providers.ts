@@ -42,7 +42,7 @@ export function createProvidersCommand(): Command {
             out.println(table.toString());
             out.println(
                 pc.dim(
-                    "Default chain: DNS, then the first ready priced registrar, then RDAP. TLD list prices: Porkbun."
+                    "Default chain: DNS, then Vercel in bulk (price + premium flag), then RDAP, then WHOIS. TLD list prices: Porkbun."
                 )
             );
         });

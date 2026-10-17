@@ -53,7 +53,8 @@ export async function whoisServerFor(tld: string): Promise<string | null> {
     }
 
     const reply = await whoisQuery(IANA_WHOIS, tld);
-    const server = reply.match(/^whois:\s*(\S+)/im)?.[1]?.toLowerCase() ?? null;
+    const host = reply.match(/^whois:[ \t]*(\S+)/im)?.[1]?.toLowerCase();
+    const server = host?.includes(".") ? host : null;
     servers[tld] = server;
     await storage.putCacheFile("whois/servers.json", servers, "7 days");
     logger.debug({ tld, server }, "domains: WHOIS server resolved");

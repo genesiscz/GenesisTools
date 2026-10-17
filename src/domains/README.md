@@ -52,17 +52,17 @@ Every command takes `--json` for scripts and agents.
 The default chain stops at the first decisive answer:
 
 1. **DNS** (`dns`): a delegated name is taken, with no API call spent. No NS records proves nothing.
-2. **Priced registrar** (`vercel`): availability plus the exact price, which is how premiums show up.
+2. **Priced registrar** (`vercel`): one bulk call per 200 names returns availability, the exact price and the registry premium flag, with no account.
 3. **RDAP** (`rdap`): the registry's own answer, via the IANA bootstrap (cached a day).
 4. **WHOIS** (`whois`): port 43 for TLDs without RDAP (.io, .eu, .me, .gg, .co ...), server found through whois.iana.org.
 
-A "taken" from any provider beats an "available" from another. Results are cached for 6 hours; `--fresh` skips the cache.
+Each stage runs over the whole batch, so 150 names cost one DNS lookup each and a single Vercel request. A "taken" from any provider beats an "available" from another. Results are cached for 6 hours; `--fresh` skips the cache.
 
 ## Providers
 
 | Id | Auth | Gives |
 |----|------|-------|
-| `vercel` | `VERCEL_TOKEN`, or the Vercel CLI login (`vercel login`) | availability, per-name price, premium detection |
+| `vercel` | none (public bulk search) | availability, per-name price, premium flag; only TLDs Vercel sells |
 | `rdap` | none | availability, registrar, expiry, nameservers |
 | `whois` | none | the same, for TLDs without RDAP |
 | `dns` | none | fast "taken" pre-filter |

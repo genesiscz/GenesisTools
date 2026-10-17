@@ -1,12 +1,12 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { request, storage } from "@app/domains/lib/http";
 import type { DomainProvider } from "@app/domains/lib/providers/types";
 import type { DomainPrice, ParsedDomain, ProviderVerdict } from "@app/domains/lib/types";
-import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
 const API = "https://api.vercel.com/v1/registrar";
+/** The bulk search takes 1 to 200 names per call. */
+const BATCH_SIZE = 200;
 
 interface VercelPrice {
     years: number;
@@ -15,78 +15,19 @@ interface VercelPrice {
     transferPrice: number | null;
 }
 
-/** Where the Vercel CLI keeps its login token on each platform. */
-function vercelCliAuthPaths(): string[] {
-    const home = homedir();
-    const xdg = env.getTrimmed("XDG_DATA_HOME") ?? join(home, ".local", "share");
-    const appData = env.getTrimmed("APPDATA");
-    return [
-        join(home, "Library", "Application Support", "com.vercel.cli", "auth.json"),
-        join(xdg, "com.vercel.cli", "auth.json"),
-        ...(appData ? [join(appData, "com.vercel.cli", "Data", "auth.json")] : []),
-    ];
-}
-
-async function resolveToken(): Promise<{ token: string; source: string } | null> {
-    const fromEnv = env.domains.getVercelToken();
-    if (fromEnv) {
-        return { token: fromEnv, source: "VERCEL_TOKEN" };
-    }
-
-    for (const path of vercelCliAuthPaths()) {
-        const file = Bun.file(path);
-        if (!(await file.exists())) {
-            continue;
-        }
-
-        try {
-            const auth: unknown = await file.json();
-            if (auth && typeof auth === "object" && "token" in auth && typeof auth.token === "string") {
-                return { token: auth.token, source: "Vercel CLI login" };
-            }
-        } catch (error) {
-            logger.debug({ path, error }, "domains: unreadable Vercel CLI auth file");
-        }
-    }
-
-    return null;
-}
-
-let tokenPromise: ReturnType<typeof resolveToken> | null = null;
-
-async function token(): Promise<string> {
-    tokenPromise ??= resolveToken();
-    const resolved = await tokenPromise;
-    if (!resolved) {
-        throw new Error("Vercel: no token. Set VERCEL_TOKEN or run `vercel login`.");
-    }
-
-    return resolved.token;
-}
-
-async function vercelGet<T>(path: string): Promise<{ status: number; body: T | null; text: string }> {
-    return request<T>(`${API}${path}`, { label: "vercel", headers: { Authorization: `Bearer ${await token()}` } });
-}
-
-function toPrice(price: VercelPrice, premium?: boolean): DomainPrice | undefined {
-    if (price.purchasePrice === null) {
-        return undefined;
-    }
-
-    return {
-        registration: price.purchasePrice,
-        renewal: price.renewalPrice ?? undefined,
-        currency: "USD",
-        provider: "vercel",
-        ...(premium !== undefined ? { premium } : {}),
-    };
+interface VercelSearchResult {
+    domain: string;
+    available: boolean;
+    price?: number;
+    renewalPrice?: number;
+    premium?: boolean;
 }
 
 async function supportedTlds(): Promise<Set<string>> {
     const list = await storage.getFileOrPut<string[]>(
         "vercel/tlds.json",
         async () => {
-            const response = await vercelGet<string[]>("/tlds/supported");
+            const response = await request<string[]>(`${API}/tlds/supported`, { label: "vercel tlds" });
             if (!Array.isArray(response.body)) {
                 throw new Error(`Vercel TLD list failed: HTTP ${response.status}`);
             }
@@ -98,60 +39,88 @@ async function supportedTlds(): Promise<Set<string>> {
     return new Set(list);
 }
 
+function toVerdict(result: VercelSearchResult): ProviderVerdict {
+    if (!result.available) {
+        return { provider: "vercel", status: "taken" };
+    }
+
+    const price: DomainPrice | undefined =
+        result.price !== undefined
+            ? {
+                  registration: result.price,
+                  renewal: result.renewalPrice,
+                  currency: "USD",
+                  provider: "vercel",
+                  premium: result.premium ?? false,
+              }
+            : undefined;
+    return { provider: "vercel", status: result.premium ? "premium" : "available", price };
+}
+
+/**
+ * Availability, price and the registry premium flag for up to 200 names per call, with no account.
+ * Names on a TLD Vercel does not sell come back "not available", so callers filter with `supports()` first.
+ */
+export async function vercelSearch(domains: string[]): Promise<Map<string, ProviderVerdict>> {
+    const verdicts = new Map<string, ProviderVerdict>();
+    for (let i = 0; i < domains.length; i += BATCH_SIZE) {
+        const batch = domains.slice(i, i + BATCH_SIZE);
+        const response = await request<{ results?: VercelSearchResult[] }>(`${API}/domains/search`, {
+            method: "POST",
+            label: "vercel search",
+            timeoutMs: 30_000,
+            headers: { "content-type": "application/json" },
+            body: SafeJSON.stringify({ domains: batch }, { strict: true }),
+        });
+        if (!response.body?.results) {
+            logger.warn({ status: response.status, count: batch.length }, "domains: Vercel bulk search failed");
+            continue;
+        }
+
+        for (const result of response.body.results) {
+            verdicts.set(result.domain.toLowerCase(), toVerdict(result));
+        }
+    }
+
+    return verdicts;
+}
+
 export const vercelProvider: DomainProvider = {
     id: "vercel",
-    label: "Vercel Registrar",
+    label: "Vercel Registrar (bulk, no auth)",
     capabilities: { availability: true, price: true, registration: false },
 
     async status() {
-        const resolved = await resolveToken();
-        return resolved
-            ? { configured: true, detail: resolved.source }
-            : { configured: false, detail: "set VERCEL_TOKEN or run `vercel login`" };
+        return { configured: true, detail: "no auth; bulk search with premium flag" };
     },
 
     async supports(tld) {
-        if (!(await resolveToken())) {
-            return false;
-        }
-
         return (await supportedTlds()).has(tld);
     },
 
     async tldPrice(tld) {
         const price = await storage.getFileOrPut<VercelPrice | null>(
             `vercel/tld-price-${tld}.json`,
-            async () => (await vercelGet<VercelPrice>(`/tlds/${tld}/price`)).body,
+            async () => (await request<VercelPrice>(`${API}/tlds/${tld}/price`, { label: "vercel tld price" })).body,
             "1 day"
         );
-        return price ? (toPrice(price, false) ?? null) : null;
+        if (price?.purchasePrice === null || price?.purchasePrice === undefined) {
+            return null;
+        }
+
+        return {
+            registration: price.purchasePrice,
+            renewal: price.renewalPrice ?? undefined,
+            currency: "USD",
+            provider: "vercel",
+        };
     },
 
     async check(parsed: ParsedDomain): Promise<ProviderVerdict> {
-        const availability = await vercelGet<{ available: boolean }>(`/domains/${parsed.domain}/availability`);
-        if (!availability.body || typeof availability.body.available !== "boolean") {
-            return { provider: "vercel", status: "unknown", detail: `HTTP ${availability.status}` };
-        }
+        return (await this.checkBatch?.([parsed]))?.get(parsed.domain) ?? { provider: "vercel", status: "unknown" };
+    },
 
-        if (!availability.body.available) {
-            return { provider: "vercel", status: "taken" };
-        }
-
-        const [quote, base] = await Promise.all([
-            vercelGet<VercelPrice>(`/domains/${parsed.domain}/price`),
-            this.tldPrice?.(parsed.tld) ?? Promise.resolve(null),
-        ]);
-        if (!quote.body) {
-            return { provider: "vercel", status: "available", detail: `price HTTP ${quote.status}` };
-        }
-
-        const registration = quote.body.purchasePrice ?? 0;
-        const premium = base !== null && registration > base.registration * 1.05;
-        return {
-            provider: "vercel",
-            status: premium ? "premium" : "available",
-            price: toPrice(quote.body, premium),
-            ...(premium && base ? { detail: `standard ${base.currency} ${base.registration}` } : {}),
-        };
+    async checkBatch(domains) {
+        return vercelSearch(domains.map((domain) => domain.domain));
     },
 };

@@ -23,6 +23,8 @@ export interface DomainProvider {
     status(): Promise<ProviderStatus>;
     supports(tld: string): Promise<boolean>;
     check(domain: ParsedDomain): Promise<ProviderVerdict>;
+    /** Many names in few requests; keyed by ASCII domain. Names it could not answer are absent. */
+    checkBatch?(domains: ParsedDomain[]): Promise<Map<string, ProviderVerdict>>;
     /** Base (non-premium) first-year price for a TLD, when the provider publishes one. */
     tldPrice?(tld: string): Promise<DomainPrice | null>;
 }

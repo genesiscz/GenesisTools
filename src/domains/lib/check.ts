@@ -10,7 +10,7 @@ import { logger } from "@genesiscz/utils/logger";
 import pLimit from "p-limit";
 
 export interface CheckOptions {
-    /** Provider ids to ask, all of them, in this order. Default: the smart chain (see `checkDomain`). */
+    /** Provider ids to ask, all of them, in this order. Default: the smart chain (see `checkDomains`). */
     providers?: string[];
     /** Ignore cached results. */
     fresh?: boolean;
@@ -70,78 +70,128 @@ async function ask(provider: DomainProvider, parsed: ParsedDomain): Promise<Prov
     }
 }
 
-/**
- * Default chain: DNS first (a delegated name is taken, no API call spent), then the first priced
- * registrar that supports the TLD, then RDAP, stopping at the first decisive answer.
- */
-async function smartChain(parsed: ParsedDomain, details: boolean): Promise<ProviderVerdict[]> {
-    const verdicts: ProviderVerdict[] = [];
-    const dns = await ask(dnsProvider, parsed);
-    if (dns) {
-        verdicts.push(dns);
+/** One batch call for every name the provider supports; failures leave names unanswered, never "available". */
+async function askBatch(provider: DomainProvider, domains: ParsedDomain[]): Promise<Map<string, ProviderVerdict>> {
+    if (!provider.checkBatch) {
+        return new Map();
     }
 
-    if (dns?.status === "taken") {
-        if (details) {
-            const rdap = await ask(rdapProvider, parsed);
-            if (rdap) {
-                verdicts.push(rdap);
+    try {
+        const supported: ParsedDomain[] = [];
+        for (const domain of domains) {
+            if (await provider.supports(domain.tld)) {
+                supported.push(domain);
             }
         }
 
-        return verdicts;
+        return supported.length ? await provider.checkBatch(supported) : new Map();
+    } catch (error) {
+        logger.warn({ provider: provider.id, count: domains.length, error }, "domains: batch check failed");
+        return new Map();
     }
+}
 
-    for (const provider of PROVIDERS.filter((p) => p.id !== "dns")) {
-        if (!(await provider.status()).configured) {
-            continue;
+const isDecisive = (verdict: ProviderVerdict | null | undefined) => !!verdict && verdict.status !== "unknown";
+
+type VerdictMap = Map<string, ProviderVerdict[]>;
+
+/**
+ * Default chain, run as stages over the whole batch:
+ * 1. DNS for every name (a delegated name is taken; no API spent).
+ * 2. Batch-capable priced providers (Vercel: 200 names per call, with the premium flag).
+ * 3. Per-name providers (RDAP, then WHOIS) for whatever is still undecided.
+ * 4. With `details`, RDAP for taken names, for registrar and expiry.
+ */
+async function smartStages(domains: ParsedDomain[], options: CheckOptions): Promise<VerdictMap> {
+    const limit = pLimit(options.concurrency ?? 12);
+    const verdicts: VerdictMap = new Map(domains.map((domain) => [domain.domain, []]));
+    const push = (domain: string, verdict: ProviderVerdict | null | undefined) => {
+        if (verdict) {
+            verdicts.get(domain)?.push(verdict);
         }
+    };
+    const decided = (domain: ParsedDomain) => verdicts.get(domain.domain)?.some(isDecisive) ?? false;
 
-        const verdict = await ask(provider, parsed);
-        if (!verdict) {
-            continue;
-        }
+    await Promise.all(domains.map((domain) => limit(async () => push(domain.domain, await ask(dnsProvider, domain)))));
 
-        verdicts.push(verdict);
-        if (verdict.status !== "unknown") {
+    const others = PROVIDERS.filter((provider) => provider.id !== "dns");
+    for (const provider of others.filter((p) => p.checkBatch)) {
+        const pending = domains.filter((domain) => !decided(domain));
+        if (pending.length === 0) {
             break;
         }
+
+        const answers = await askBatch(provider, pending);
+        for (const domain of pending) {
+            push(domain.domain, answers.get(domain.domain));
+        }
+    }
+
+    const single = others.filter((p) => !p.checkBatch);
+    await Promise.all(
+        domains
+            .filter((domain) => !decided(domain))
+            .map((domain) =>
+                limit(async () => {
+                    for (const provider of single) {
+                        const verdict = await ask(provider, domain);
+                        push(domain.domain, verdict);
+                        if (isDecisive(verdict)) {
+                            return;
+                        }
+                    }
+                })
+            )
+    );
+
+    if (options.details) {
+        const needsDetails = domains.filter((domain) => {
+            const list = verdicts.get(domain.domain) ?? [];
+            return list.some((v) => v.status === "taken") && !list.some((v) => v.expiresAt);
+        });
+        await Promise.all(
+            needsDetails.map((domain) => limit(async () => push(domain.domain, await ask(rdapProvider, domain))))
+        );
     }
 
     return verdicts;
 }
 
-export async function checkDomain(parsed: ParsedDomain, options: CheckOptions = {}): Promise<CheckResult> {
-    const cacheKey = `results/${parsed.domain}${options.providers ? `.${options.providers.join("+")}` : ""}.json`;
-    if (!options.fresh) {
-        const cached = await storage.getCacheFile<CheckResult>(cacheKey, CACHE_TTL);
-        if (cached && (!options.details || cached.status !== "taken" || cached.expiresAt)) {
-            return { ...cached, cached: true };
+async function explicitProviders(domains: ParsedDomain[], ids: string[], concurrency: number): Promise<VerdictMap> {
+    const chosen = ids.map((id) => {
+        const provider = providerById(id);
+        if (!provider) {
+            throw new Error(`Unknown provider "${id}". Known: ${PROVIDERS.map((p) => p.id).join(", ")}`);
         }
-    }
 
-    let verdicts: ProviderVerdict[];
-    if (options.providers) {
-        const chosen = options.providers.map((id) => {
-            const provider = providerById(id);
-            if (!provider) {
-                throw new Error(`Unknown provider "${id}". Known: ${PROVIDERS.map((p) => p.id).join(", ")}`);
+        return provider;
+    });
+    const limit = pLimit(concurrency);
+    const verdicts: VerdictMap = new Map(domains.map((domain) => [domain.domain, []]));
+    const push = (domain: string, verdict: ProviderVerdict | null | undefined) => {
+        if (verdict) {
+            verdicts.get(domain)?.push(verdict);
+        }
+    };
+
+    for (const provider of chosen) {
+        if (provider.checkBatch) {
+            const answers = await askBatch(provider, domains);
+            for (const domain of domains) {
+                push(domain.domain, answers.get(domain.domain));
             }
 
-            return provider;
-        });
-        const answers = await Promise.all(chosen.map((provider) => ask(provider, parsed)));
-        verdicts = answers.filter((v): v is ProviderVerdict => v !== null);
-    } else {
-        verdicts = await smartChain(parsed, options.details ?? false);
+            continue;
+        }
+
+        await Promise.all(domains.map((domain) => limit(async () => push(domain.domain, await ask(provider, domain)))));
     }
 
-    const result = mergeVerdicts(parsed.domain, verdicts);
-    if (result.status !== "unknown") {
-        await storage.putCacheFile(cacheKey, result, CACHE_TTL);
-    }
+    return verdicts;
+}
 
-    return result;
+function cacheKey(domain: string, providers: string[] | undefined): string {
+    return `results/${domain}${providers ? `.${providers.join("+")}` : ""}.json`;
 }
 
 export interface BatchResult {
@@ -161,23 +211,40 @@ export async function checkDomains(inputs: string[], options: CheckOptions = {})
         }
     }
 
-    const items = [...parsed.values()];
-    logger.debug({ count: items.length, invalid: invalid.length }, "domains: checking");
-    const limit = pLimit(options.concurrency ?? 12);
-    const answers = await Promise.all(
-        items.map((domain) =>
-            limit(async () => {
-                try {
-                    const result = await checkDomain(domain, options);
-                    options.onResult?.(result);
-                    return result;
-                } catch (error) {
-                    logger.warn({ domain: domain.domain, error }, "domains: check failed");
-                    return null;
-                }
-            })
-        )
-    );
+    const results = new Map<string, CheckResult>();
+    const pending: ParsedDomain[] = [];
+    for (const domain of parsed.values()) {
+        const cached = options.fresh
+            ? null
+            : await storage.getCacheFile<CheckResult>(cacheKey(domain.domain, options.providers), CACHE_TTL);
+        if (cached && (!options.details || cached.status !== "taken" || cached.expiresAt)) {
+            const result = { ...cached, cached: true };
+            results.set(domain.domain, result);
+            options.onResult?.(result);
+        } else {
+            pending.push(domain);
+        }
+    }
 
-    return { results: answers.filter((r): r is CheckResult => r !== null), invalid };
+    logger.debug({ total: parsed.size, cached: results.size, invalid: invalid.length }, "domains: checking");
+    const verdicts = options.providers
+        ? await explicitProviders(pending, options.providers, options.concurrency ?? 12)
+        : await smartStages(pending, options);
+
+    for (const domain of pending) {
+        const result = mergeVerdicts(domain.domain, verdicts.get(domain.domain) ?? []);
+        results.set(domain.domain, result);
+        options.onResult?.(result);
+        if (result.status !== "unknown") {
+            await storage.putCacheFile(cacheKey(domain.domain, options.providers), result, CACHE_TTL);
+        }
+    }
+
+    return { results: [...parsed.keys()].flatMap((key) => results.get(key) ?? []), invalid };
+}
+
+/** One name, through the same pipeline as a batch of one. */
+export async function checkDomain(parsed: ParsedDomain, options: CheckOptions = {}): Promise<CheckResult> {
+    const { results } = await checkDomains([parsed.domain], options);
+    return results[0] ?? mergeVerdicts(parsed.domain, []);
 }
