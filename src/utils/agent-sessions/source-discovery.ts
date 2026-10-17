@@ -1,8 +1,9 @@
 import type { Dirent } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { profiler } from "@genesiscz/utils/profile";
+import { historyPathUnderRoot } from "./project-scope";
 import type { NativeSourceIssue } from "./types";
 
 export type { HistoryDiscoveryOptions } from "./types";
@@ -21,7 +22,7 @@ export interface WalkSourceRootsResult {
 
 export interface WalkSourceRootsOptions {
     roots: string[];
-    /** Resolve and stat only these files. No readdir, and no root is declared complete. */
+    /** Direct logical paths; external canonical paths get a capped root-link probe. No complete root or tree walk. */
     filePaths?: string[];
     filtered?: boolean;
     signal?: AbortSignal;
@@ -35,6 +36,7 @@ interface DirectoryEntry {
     name: string;
     directory: boolean;
     file: boolean;
+    symlink: boolean;
 }
 
 /** Directories kept: every directory of every session root a resident process walks (about 25k here). */
@@ -58,7 +60,12 @@ async function directoryEntries(directory: string): Promise<DirectoryEntry[]> {
 
     const read: Dirent<string>[] = await readdir(directory, { withFileTypes: true });
     read.sort((left, right) => left.name.localeCompare(right.name));
-    const entries = read.map((entry) => ({ name: entry.name, directory: entry.isDirectory(), file: entry.isFile() }));
+    const entries = read.map((entry) => ({
+        name: entry.name,
+        directory: entry.isDirectory(),
+        file: entry.isFile(),
+        symlink: entry.isSymbolicLink(),
+    }));
     directoryCache.delete(directory);
     if (!settled) {
         return entries;
@@ -133,7 +140,132 @@ function relativeToRoot(root: string, path: string): string {
     return path.startsWith(prefix) ? path.slice(prefix.length) : relative(root, path);
 }
 
-/** Exact-file discovery keeps the provider's normal layout and filters without walking its roots. */
+const EXACT_LINK_ROOT_LIMIT = 32;
+const EXACT_LINK_LIMIT = 128;
+
+async function exactFile({
+    root,
+    logicalPath,
+    path,
+    options,
+}: {
+    root: string;
+    logicalPath: string;
+    path: string;
+    options: WalkSourceRootsOptions;
+}): Promise<DiscoveredSourceFile | undefined> {
+    const parts = relative(root, logicalPath).split(sep);
+    if (options.maxDepth !== undefined && parts.length - 1 > options.maxDepth) {
+        return;
+    }
+
+    if (options.shouldDescend) {
+        for (let depth = 1; depth < parts.length; depth++) {
+            options.signal?.throwIfAborted();
+            const directory = await realpath(join(root, ...parts.slice(0, depth)));
+            if (
+                !options.shouldDescend({ root, path: directory, relativePath: relativeToRoot(root, directory), depth })
+            ) {
+                return;
+            }
+        }
+    }
+
+    const file = { root, path, relativePath: relativeToRoot(root, path) };
+    return !options.includeFile || options.includeFile(file) ? file : undefined;
+}
+
+/** Only root-level links are probed. Ordinary directories and link targets are never enumerated. */
+async function filesThroughRootLinks({
+    roots,
+    targets,
+    options,
+    issues,
+}: {
+    roots: Iterable<string>;
+    targets: Set<string>;
+    options: WalkSourceRootsOptions;
+    issues: NativeSourceIssue[];
+}): Promise<DiscoveredSourceFile[]> {
+    const files: DiscoveredSourceFile[] = [];
+    let rootReads = 0;
+    let linkReads = 0;
+    for (const root of roots) {
+        options.signal?.throwIfAborted();
+        if (targets.size === 0) {
+            break;
+        }
+
+        if (rootReads === EXACT_LINK_ROOT_LIMIT) {
+            issues.push({
+                path: root,
+                message: `Exact-path link lookup stopped at ${EXACT_LINK_ROOT_LIMIT} roots; use a normal history refresh for remaining links`,
+            });
+            break;
+        }
+
+        rootReads++;
+        let entries: DirectoryEntry[];
+        try {
+            entries = await directoryEntries(root);
+        } catch (error) {
+            issues.push(discoveryIssue(root, errorCategory(error, "Source directory read failed")));
+            continue;
+        }
+
+        for (const entry of entries) {
+            if (!entry.symlink) {
+                continue;
+            }
+
+            options.signal?.throwIfAborted();
+            if (targets.size === 0) {
+                break;
+            }
+
+            if (linkReads === EXACT_LINK_LIMIT) {
+                issues.push({
+                    path: root,
+                    message: `Exact-path link lookup stopped at ${EXACT_LINK_LIMIT} links; use a normal history refresh for remaining links`,
+                });
+                return files;
+            }
+
+            linkReads++;
+            const link = childPath(root, entry.name);
+            try {
+                const destination = await realpath(link);
+                const status = await stat(destination);
+                for (const path of targets) {
+                    const throughFile = status.isFile() && destination === path;
+                    const throughDirectory =
+                        status.isDirectory() && historyPathUnderRoot(path, destination) && path !== destination;
+                    if (!throughFile && !throughDirectory) {
+                        continue;
+                    }
+
+                    const logicalPath = throughFile ? link : join(link, relative(destination, path));
+                    if ((await realpath(logicalPath)) !== path) {
+                        continue;
+                    }
+
+                    const file = await exactFile({ root, logicalPath, path, options });
+                    if (file) {
+                        files.push(file);
+                        targets.delete(path);
+                    }
+                }
+            } catch (error) {
+                options.signal?.throwIfAborted();
+                issues.push(discoveryIssue(link, errorCategory(error, "Source entry read failed")));
+            }
+        }
+    }
+
+    return files;
+}
+
+/** Exact paths never start a tree walk: logical links are direct, unknown external targets get a capped root probe. */
 async function sourceFilesForPaths(
     options: WalkSourceRootsOptions & { filePaths: string[] }
 ): Promise<WalkSourceRootsResult> {
@@ -143,11 +275,11 @@ async function sourceFilesForPaths(
         return { files, issues, completeRoots: [] };
     }
 
-    const roots = new Set<string>();
+    const roots = new Map<string, string>();
     for (const inputRoot of options.roots) {
         options.signal?.throwIfAborted();
         try {
-            roots.add(await realpath(inputRoot));
+            roots.set(resolve(inputRoot), await realpath(inputRoot));
         } catch (error) {
             issues.push({
                 ...discoveryIssue(
@@ -161,49 +293,31 @@ async function sourceFilesForPaths(
         }
     }
 
-    const seenFiles = new Set<string>();
+    const canonicalRoots = new Set(roots.values());
+    const seen = new Set<string>();
+    const external = new Set<string>();
     for (const inputPath of new Set(options.filePaths)) {
         options.signal?.throwIfAborted();
         try {
             const path = await realpath(inputPath);
-            if (seenFiles.has(path)) {
+            if (seen.has(path) || !(await stat(path)).isFile()) {
                 continue;
             }
 
-            const root = [...roots].find((candidate) => {
-                const child = relative(candidate, path);
-                return child !== "" && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
-            });
-            if (!root || !(await stat(path)).isFile()) {
+            const logical = resolve(inputPath);
+            const logicalRoot = [...roots].find(([candidate]) => historyPathUnderRoot(logical, candidate));
+            const root =
+                logicalRoot?.[1] ?? [...canonicalRoots].find((candidate) => historyPathUnderRoot(path, candidate));
+            if (!root) {
+                external.add(path);
                 continue;
             }
 
-            seenFiles.add(path);
-            const relativePath = relativeToRoot(root, path);
-            const parts = relativePath.split(sep);
-            if (options.maxDepth !== undefined && parts.length - 1 > options.maxDepth) {
-                continue;
-            }
-
-            let allowed = true;
-            for (let depth = 1; depth < parts.length; depth++) {
-                const directory = parts.slice(0, depth).join(sep);
-                if (
-                    options.shouldDescend &&
-                    !options.shouldDescend({
-                        root,
-                        path: join(root, directory),
-                        relativePath: directory,
-                        depth,
-                    })
-                ) {
-                    allowed = false;
-                    break;
-                }
-            }
-
-            const file = { root, path, relativePath };
-            if (allowed && (!options.includeFile || options.includeFile(file))) {
+            const logicalPath = logicalRoot ? join(root, relative(logicalRoot[0], logical)) : path;
+            const file = await exactFile({ root, logicalPath, path, options });
+            if (file) {
+                seen.add(path);
+                external.delete(path);
                 files.push(file);
             }
         } catch (error) {
@@ -212,6 +326,10 @@ async function sourceFilesForPaths(
                 issues.push(discoveryIssue(inputPath, errorCategory(error, "Source entry read failed")));
             }
         }
+    }
+
+    if (external.size > 0) {
+        files.push(...(await filesThroughRootLinks({ roots: canonicalRoots, targets: external, options, issues })));
     }
 
     files.sort((left, right) => left.root.localeCompare(right.root) || left.path.localeCompare(right.path));

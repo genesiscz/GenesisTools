@@ -1,6 +1,6 @@
-import { realpathSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { statSync } from "node:fs";
 import { concurrentMap } from "@genesiscz/utils/async";
+import { canonicalPath as canonicalRoot } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -71,14 +71,6 @@ function topUpReadLimit(newest: number): number {
     return Math.max(20, newest * 4);
 }
 
-function canonicalRoot(root: string): string {
-    try {
-        return realpathSync(root);
-    } catch {
-        return resolve(root);
-    }
-}
-
 /**
  * `--since` and `--until` were applied only per RECORD, and only when that record carried a
  * timestamp. Grok records carry none and a metadata match has no record at all, so both flags
@@ -138,7 +130,10 @@ function metadataInScope(metadata: CachedHistoryMetadata, filters: AgentSearchFi
         return false;
     }
 
-    if (filters.sourceRoots && !filters.sourceRoots.some((root) => historyPathUnderRoot(metadata.filePath, root))) {
+    if (
+        filters.sourceRoots &&
+        !filters.sourceRoots.some((root) => root === metadata.root || historyPathUnderRoot(metadata.filePath, root))
+    ) {
         return false;
     }
 
@@ -382,7 +377,7 @@ export class HistoryService {
         // reserved a generation in between.
         const discoveryGeneration = this.options.repository.generation(this.options.providerId);
         const discovery = await this.options.reader.discover(this.options.roots, scope);
-        const paths = filters.filePaths === undefined ? undefined : new Set(filters.filePaths);
+        const paths = filters.filePaths === undefined ? undefined : new Set(filters.filePaths.map(canonicalRoot));
         const sources = paths ? discovery.sources.filter((source) => paths.has(source.filePath)) : discovery.sources;
         const candidates = await historyCandidates({ sources, filters: { signal: filters.signal } });
         // A windowed listing refreshes the window and its top-up only; everything older is read
@@ -416,6 +411,7 @@ export class HistoryService {
      * for a diagnostic, which must not write the index.
      */
     async catalog(filters: AgentSearchFilters = {}, options: { maxDiscoveryAgeMs?: number; refresh?: boolean } = {}) {
+        const logicalPaths = filters.filePaths;
         if (filters.filePaths !== undefined) {
             filters = { ...filters, filePaths: filters.filePaths.map(canonicalRoot) };
         }
@@ -448,7 +444,7 @@ export class HistoryService {
                 reindexed: false,
             };
         } else {
-            synchronized = await this.refreshListing(filters);
+            synchronized = await this.refreshListing({ ...filters, filePaths: logicalPaths });
             freshness?.touch(freshnessKey);
         }
 

@@ -1,5 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -21,6 +21,21 @@ export function canonicalDir(dir: string): string {
         logger.debug({ err, dir: abs }, "canonicalDir: realpath failed, using the resolved path");
 
         return abs;
+    }
+}
+
+/**
+ * Canonical key for a file, including a missing leaf beneath an existing parent.
+ * Resolving the parent keeps a deleted file's key stable through directory symlinks.
+ * If the parent is unavailable too, returns the absolute unresolved spelling.
+ */
+export function canonicalPath(path: string): string {
+    const abs = resolve(path);
+    try {
+        return realpathSync(abs);
+    } catch (err) {
+        logger.debug({ err, path: abs }, "canonicalPath: realpath failed, resolving the parent");
+        return join(canonicalDir(dirname(abs)), basename(abs));
     }
 }
 

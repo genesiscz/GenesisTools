@@ -7,6 +7,7 @@ import {
     readFileSync,
     realpathSync,
     rmSync,
+    symlinkSync,
     utimesSync,
     writeFileSync,
 } from "node:fs";
@@ -177,6 +178,119 @@ test("an exact-path Codex catalog never walks history roots or reads unrelated h
         discovery.mockRestore();
         database.close();
         rmSync(home, { recursive: true, force: true });
+    }
+});
+
+test("a logical project link refreshes directly without probing history directories", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "history-catalog-logical-link-")));
+    const root = join(base, "projects");
+    const project = join(root, "fixture");
+    mkdirSync(project, { recursive: true });
+    const id = "11111111-2222-4333-8444-000000000071";
+    const outside = join(base, `${id}.jsonl`);
+    writeFileSync(
+        outside,
+        `${SafeJSON.stringify({
+            type: "user",
+            sessionId: id,
+            cwd: "/projects/fixture",
+            message: { content: "linked prompt" },
+        })}\n`
+    );
+    const logical = join(project, `${id}.jsonl`);
+    symlinkSync(outside, logical);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: claudeHistoryReader,
+    });
+    const directories = spyOn(fsPromises, "readdir");
+    try {
+        const listing = await service.catalog({ excludeAgents: true, filePaths: [logical] });
+        expect(listing.metadata.map((row) => row.sessionId)).toEqual([id]);
+        expect(listing.report.parsed).toBe(1);
+        expect(directories).toHaveBeenCalledTimes(0);
+    } finally {
+        directories.mockRestore();
+        database.close();
+        rmSync(base, { recursive: true, force: true });
+    }
+});
+
+test.each([false, true])("exact-path keys survive a symlinked parent (deleted: %s)", async (deleted) => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "history-catalog-parent-link-key-")));
+    const root = join(base, "real");
+    const alias = join(base, "alias");
+    mkdirSync(root);
+    symlinkSync(root, alias);
+    const id = "11111111-2222-4333-8444-000000000081";
+    session(root, id, HOUR);
+    const canonical = join(root, `${id}.jsonl`);
+    const logical = join(alias, `${id}.jsonl`);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const repository = new HistorySyncRepository(database);
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository,
+        reader: claudeHistoryReader,
+    });
+    try {
+        const indexed = await service.catalog({ filePaths: [canonical] });
+        expect(indexed.metadata.map((row) => row.filePath)).toEqual([canonical]);
+        if (deleted) {
+            rmSync(canonical);
+        }
+
+        const metadata = spyOn(repository.metadata, "listMetadata");
+        try {
+            const cached = await service.catalog({ filePaths: [logical] }, { refresh: false });
+            expect(cached.metadata).toEqual(indexed.metadata);
+            expect(metadata.mock.calls.every(([options]) => options.filePaths?.[0] === canonical)).toBe(true);
+        } finally {
+            metadata.mockRestore();
+        }
+    } finally {
+        database.close();
+        rmSync(base, { recursive: true, force: true });
+    }
+});
+
+test("exact-path refresh prunes a deleted canonical transcript requested through a symlinked parent", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "history-catalog-parent-link-prune-")));
+    const root = join(base, "real");
+    const alias = join(base, "alias");
+    mkdirSync(root);
+    symlinkSync(root, alias);
+    const id = "11111111-2222-4333-8444-000000000082";
+    session(root, id, HOUR);
+    const canonical = join(root, `${id}.jsonl`);
+    const logical = join(alias, `${id}.jsonl`);
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const repository = new HistorySyncRepository(database);
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository,
+        reader: claudeHistoryReader,
+    });
+    try {
+        await service.catalog({ filePaths: [canonical] });
+        expect(repository.sources("anthropic-sub").map((source) => source.filePath)).toEqual([canonical]);
+        rmSync(canonical);
+        const refreshed = await service.catalog({ filePaths: [logical] });
+        expect(refreshed.report.removed).toBe(1);
+        expect(refreshed.metadata).toEqual([]);
+        expect(repository.sources("anthropic-sub")).toEqual([]);
+        expect(repository.metadata.listMetadata({ providerId: "anthropic-sub" })).toEqual([]);
+    } finally {
+        database.close();
+        rmSync(base, { recursive: true, force: true });
     }
 });
 

@@ -1,11 +1,18 @@
 import { expect, spyOn, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CODEX_CACHE_TTL_MS, computeCacheStatus, GROK_CACHE_TTL_MS } from "@app/claude/lib/usage/session-rows";
+import {
+    claudeHistoryReader,
+    codexHistoryReader,
+    grokHistoryReader,
+} from "@genesiscz/utils/agent-sessions/compact-readers";
 import * as historyCatalog from "@genesiscz/utils/agent-sessions/open-service";
 import type { SessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { type AgentSessionRow, cmuxLocationForRow, listAgentSessionRows } from "./agent-session-rows";
 
 /**
@@ -175,6 +182,165 @@ test("exact transcript paths reach both provider catalogs before row hydration",
         }
     } finally {
         catalog.mockRestore();
+    }
+});
+
+test("a mixed Claude and Codex exact-path listing never walks either history root", async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "agent-rows-mixed-")));
+    const claudeRoot = join(home, "claude", "projects");
+    const codexRoot = join(home, "codex", "sessions");
+    mkdirSync(claudeRoot, { recursive: true });
+    mkdirSync(codexRoot, { recursive: true });
+    const claudeId = "11111111-2222-4333-8444-000000000051";
+    const codexId = "11111111-2222-4333-8444-000000000052";
+    const claudePath = join(claudeRoot, `${claudeId}.jsonl`);
+    const codexPath = join(codexRoot, `rollout-${codexId}.jsonl`);
+    writeFileSync(
+        claudePath,
+        `${SafeJSON.stringify({
+            type: "user",
+            sessionId: claudeId,
+            cwd: "/projects/fixture",
+            timestamp: "2026-10-17T00:00:00Z",
+            message: { content: "fixture" },
+        })}\n`
+    );
+    writeFileSync(
+        codexPath,
+        `${SafeJSON.stringify({
+            type: "session_meta",
+            payload: {
+                id: codexId,
+                cwd: "/projects/fixture",
+                history_mode: "legacy",
+            },
+        })}\n`
+    );
+    const claude = spyOn(claudeHistoryReader, "roots").mockReturnValue([claudeRoot]);
+    const codex = spyOn(codexHistoryReader, "roots").mockReturnValue([codexRoot]);
+    const grok = spyOn(grokHistoryReader, "roots").mockReturnValue([]);
+    const directories = spyOn(fsPromises, "readdir");
+    try {
+        const rows = await listAgentSessionRows({
+            providers: ["claude", "codex"],
+            filePaths: [claudePath, codexPath],
+            withUsage: false,
+        });
+        expect(rows.map((row) => row.sessionId).sort()).toEqual([claudeId, codexId]);
+        expect(
+            directories.mock.calls.filter(
+                ([directory]) => String(directory).startsWith(claudeRoot) || String(directory).startsWith(codexRoot)
+            )
+        ).toEqual([]);
+        directories.mockClear();
+        expect(
+            await listAgentSessionRows({
+                providers: ["claude"],
+                filePaths: [codexPath],
+                withUsage: false,
+            })
+        ).toEqual([]);
+        expect(directories.mock.calls.filter(([directory]) => String(directory).startsWith(claudeRoot))).toEqual([]);
+    } finally {
+        directories.mockRestore();
+        claude.mockRestore();
+        codex.mockRestore();
+        grok.mockRestore();
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
+test("throwing provider roots stay inside that provider's failure boundary", async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "agent-rows-root-failure-")));
+    const root = join(home, "claude", "projects");
+    mkdirSync(root, { recursive: true });
+    const id = "11111111-2222-4333-8444-000000000061";
+    const file = join(root, `${id}.jsonl`);
+    writeFileSync(
+        file,
+        `${SafeJSON.stringify({
+            type: "user",
+            sessionId: id,
+            cwd: "/projects/fixture",
+            message: { content: "fixture" },
+        })}\n`
+    );
+    const claude = spyOn(claudeHistoryReader, "roots").mockReturnValue([root]);
+    const codex = spyOn(codexHistoryReader, "roots").mockImplementation(() => {
+        throw new Error("Codex roots unavailable");
+    });
+    const grok = spyOn(grokHistoryReader, "roots").mockReturnValue([]);
+    try {
+        for (const failClosed of [false, true]) {
+            const rows = await listAgentSessionRows({
+                providers: ["claude"],
+                filePaths: [file],
+                withUsage: false,
+                failClosed,
+            });
+            expect(rows.map((row) => row.sessionId)).toEqual([id]);
+        }
+        const available = await listAgentSessionRows({
+            providers: ["claude", "codex"],
+            filePaths: [file],
+            withUsage: false,
+        });
+        expect(available.map((row) => row.sessionId)).toEqual([id]);
+        await expect(
+            listAgentSessionRows({
+                providers: ["claude", "codex"],
+                filePaths: [file],
+                withUsage: false,
+                failClosed: true,
+            })
+        ).rejects.toThrow("Codex roots unavailable");
+    } finally {
+        claude.mockRestore();
+        codex.mockRestore();
+        grok.mockRestore();
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
+test.each(["logical", "canonical"] as const)("a %s request retains a Claude link into Codex roots", async (request) => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "agent-rows-cross-provider-link-")));
+    const claudeRoot = join(home, "claude", "projects");
+    const codexRoot = join(home, "codex", "sessions");
+    mkdirSync(claudeRoot, { recursive: true });
+    mkdirSync(codexRoot, { recursive: true });
+    const id = "11111111-2222-4333-8444-000000000062";
+    const target = join(codexRoot, `rollout-${id}.jsonl`);
+    const link = join(claudeRoot, `${id}.jsonl`);
+    writeFileSync(
+        target,
+        `${SafeJSON.stringify({
+            type: "user",
+            sessionId: id,
+            cwd: "/projects/fixture",
+            message: { content: "linked fixture" },
+        })}\n`
+    );
+    symlinkSync(target, link);
+    const claude = spyOn(claudeHistoryReader, "roots").mockReturnValue([claudeRoot]);
+    const codex = spyOn(codexHistoryReader, "roots").mockReturnValue([codexRoot]);
+    const grok = spyOn(grokHistoryReader, "roots").mockReturnValue([]);
+    try {
+        // A canonical request uses the root association recorded by a normal refresh; a logical one is cold.
+        if (request === "canonical") {
+            await historyCatalog.catalogHistory({ provider: "claude", roots: [claudeRoot] });
+        }
+        const rows = await listAgentSessionRows({
+            providers: ["claude"],
+            filePaths: [request === "logical" ? link : target],
+            withUsage: false,
+        });
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ provider: "claude", sessionId: id, filePath: target });
+    } finally {
+        claude.mockRestore();
+        codex.mockRestore();
+        grok.mockRestore();
+        rmSync(home, { recursive: true, force: true });
     }
 });
 

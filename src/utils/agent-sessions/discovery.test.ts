@@ -106,6 +106,91 @@ test.each(["claude", "codex", "grok"] as const)(
     }
 );
 
+test.each(["depth", "folder"] as const)("an in-root file rejected by %s does no discovery walk", async (filter) => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "gt-discovery-rejected-")));
+    mkdirSync(join(root, "project", "deep"), { recursive: true });
+    const file = join(root, "project", "deep", "session.jsonl");
+    writeFileSync(file, "{}\n");
+    const directories = spyOn(fsPromises, "readdir");
+    try {
+        const result = await walkSourceRoots({
+            roots: [root],
+            filePaths: [file],
+            ...(filter === "depth" ? { maxDepth: 0 } : { shouldDescend: () => false }),
+        });
+        expect(result.files).toEqual([]);
+        expect(directories).toHaveBeenCalledTimes(0);
+    } finally {
+        directories.mockRestore();
+    }
+});
+
+test("an unlinked outside path never enumerates the history tree", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "gt-discovery-unlinked-")));
+    const root = join(base, "root");
+    mkdirSync(root);
+    for (let index = 0; index < 20; index++) {
+        const project = join(root, `project-${index}`);
+        mkdirSync(project);
+        writeFileSync(join(project, "session.jsonl"), "{}\n");
+    }
+    const outside = join(base, "outside.jsonl");
+    writeFileSync(outside, "{}\n");
+    const directories = spyOn(fsPromises, "readdir");
+    try {
+        const result = await walkSourceRoots({ roots: [root], filePaths: [outside] });
+        expect(result.files).toEqual([]);
+        expect(directories.mock.calls.map(([directory]) => String(directory))).toEqual([root]);
+    } finally {
+        directories.mockRestore();
+    }
+});
+
+test("outside link probing stops at its root budget with an incomplete outcome", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "gt-discovery-root-budget-")));
+    const roots = Array.from({ length: 33 }, (_, index) => join(base, `root-${index}`));
+    for (const root of roots) {
+        mkdirSync(root);
+    }
+    const outside = join(base, "outside.jsonl");
+    writeFileSync(outside, "{}\n");
+    const directories = spyOn(fsPromises, "readdir");
+    try {
+        const result = await walkSourceRoots({ roots, filePaths: [outside] });
+        expect(result.files).toEqual([]);
+        expect(result.completeRoots).toEqual([]);
+        expect(directories).toHaveBeenCalledTimes(32);
+        expect(result.issues.some((issue) => issue.message.includes("stopped at 32 roots"))).toBe(true);
+    } finally {
+        directories.mockRestore();
+    }
+});
+
+test("outside link probing stops at its symlink budget without traversing link targets", async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), "gt-discovery-link-budget-")));
+    const root = join(base, "root");
+    mkdirSync(root);
+    const decoy = join(base, "decoy.jsonl");
+    writeFileSync(decoy, "{}\n");
+    const outside = join(base, "outside.jsonl");
+    writeFileSync(outside, "{}\n");
+    for (let index = 0; index < 129; index++) {
+        symlinkSync(decoy, join(root, `link-${index}`));
+    }
+    const directories = spyOn(fsPromises, "readdir");
+    const paths = spyOn(fsPromises, "realpath");
+    try {
+        const result = await walkSourceRoots({ roots: [root], filePaths: [outside] });
+        expect(result.files).toEqual([]);
+        expect(result.issues.some((issue) => issue.message.includes("stopped at 128 links"))).toBe(true);
+        expect(directories.mock.calls.map(([directory]) => String(directory))).toEqual([root]);
+        expect(paths.mock.calls.filter(([file]) => String(file).startsWith(join(root, "link-")))).toHaveLength(128);
+    } finally {
+        directories.mockRestore();
+        paths.mockRestore();
+    }
+});
+
 test("exact-file discovery retains path aliases, depth bounds and directory filters", async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "gt-discovery-exact-filters-")));
     mkdirSync(join(root, "project", "deep"), { recursive: true });
@@ -128,7 +213,99 @@ test("exact-file discovery retains path aliases, depth bounds and directory filt
         filePaths: [shallow],
         shouldDescend: () => false,
     });
+    const normalFiltered = await walkSourceRoots({ roots: [root], shouldDescend: () => false });
+    expect(normalFiltered.files.map((file) => file.path)).toEqual([shallow]);
     expect(filtered.files).toEqual([]);
+    const logicalFiltered = await walkSourceRoots({ roots: [root], filePaths: [alias], shouldDescend: () => false });
+    expect(logicalFiltered.files).toEqual(normalFiltered.files);
+});
+
+test.each(["file", "directory"] as const)(
+    "exact-file discovery matches an external %s symlink, even from its canonical target",
+    async (kind) => {
+        const base = realpathSync(mkdtempSync(join(tmpdir(), "gt-discovery-external-link-")));
+        const root = join(base, "root");
+        const outside = join(base, "outside");
+        mkdirSync(root);
+        mkdirSync(outside);
+        const target = join(outside, "session.jsonl");
+        writeFileSync(target, "{}\n");
+        const linked = join(root, kind === "file" ? "linked.jsonl" : "project");
+        symlinkSync(kind === "file" ? target : outside, linked);
+        const logical = kind === "file" ? linked : join(linked, "session.jsonl");
+        const maxDepth = kind === "file" ? 0 : 1;
+        const options = {
+            roots: [root],
+            maxDepth,
+            includeFile: (file: { path: string }) => file.path.endsWith(".jsonl"),
+        };
+        // Cold canonical lookup: no prior walk has supplied an in-memory alias hint.
+        const cold = await walkSourceRoots({ ...options, filePaths: [target] });
+        const full = await walkSourceRoots(options);
+        expect(full.files.map((file) => file.path)).toEqual([target]);
+        expect(cold.files).toEqual(full.files);
+        const exact = await walkSourceRoots({ ...options, filePaths: [full.files[0].path] });
+        expect(exact.files).toEqual(full.files);
+        const byLink = await walkSourceRoots({ ...options, filePaths: [logical] });
+        expect(byLink.files).toEqual(full.files);
+        const directories = spyOn(fsPromises, "readdir");
+        try {
+            for (const filePaths of [
+                [target, logical],
+                [logical, target],
+            ]) {
+                expect((await walkSourceRoots({ ...options, filePaths })).files).toEqual(full.files);
+            }
+            expect(directories).toHaveBeenCalledTimes(0);
+        } finally {
+            directories.mockRestore();
+        }
+        expect(exact.completeRoots).toEqual([]);
+        if (kind === "directory") {
+            for (const filter of [{ maxDepth: 0 }, { shouldDescend: () => false }]) {
+                const limited = { ...options, ...filter };
+                expect((await walkSourceRoots({ ...limited, filePaths: [target] })).files).toEqual(
+                    (await walkSourceRoots(limited)).files
+                );
+                expect((await walkSourceRoots(limited)).files).toEqual([]);
+            }
+        }
+        const unlinked = join(outside, "not-linked.jsonl");
+        writeFileSync(unlinked, "{}\n");
+        if (kind === "file") {
+            expect((await walkSourceRoots({ ...options, filePaths: [unlinked] })).files).toEqual([]);
+        }
+    }
+);
+
+test("logical shallow links retain their depth while rejected canonical targets do no walk", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "gt-discovery-shallow-link-")));
+    mkdirSync(join(root, "deep"));
+    const target = join(root, "deep", "session.jsonl");
+    writeFileSync(target, "{}\n");
+    symlinkSync(target, join(root, "linked.jsonl"));
+    for (const filter of [{ maxDepth: 0 }, { shouldDescend: () => false }]) {
+        const options = { roots: [root], ...filter };
+        const full = await walkSourceRoots(options);
+        expect(full.files.map((file) => file.path)).toEqual([target]);
+        const directories = spyOn(fsPromises, "readdir");
+        try {
+            expect((await walkSourceRoots({ ...options, filePaths: [target] })).files).toEqual([]);
+            expect((await walkSourceRoots({ ...options, filePaths: [join(root, "linked.jsonl")] })).files).toEqual(
+                full.files
+            );
+            const logical = join(root, "linked.jsonl");
+            for (const filePaths of [
+                [target, logical],
+                [logical, target],
+            ]) {
+                expect((await walkSourceRoots({ ...options, filePaths })).files).toEqual(full.files);
+            }
+            expect(directories).toHaveBeenCalledTimes(0);
+        } finally {
+            directories.mockRestore();
+        }
+    }
 });
 
 test("Claude discovery keeps shallow mains and per-session sidecar revisions", async () => {

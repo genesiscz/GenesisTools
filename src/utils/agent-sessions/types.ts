@@ -235,7 +235,7 @@ export interface HistoryReadOptions {
 }
 
 export interface HistoryDiscoveryOptions {
-    /** Inspect only these exact transcript files, without enumerating history directories. Never a complete root. */
+    /** Exact transcripts: direct logical lookup or a capped root-link probe, never a tree walk or complete root. */
     filePaths?: string[];
     excludeAgents?: boolean;
     agentsOnly?: boolean;

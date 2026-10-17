@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { canonicalDir, isInsideDir } from "./canonical";
+import { canonicalDir, canonicalPath, isInsideDir } from "./canonical";
 
 function tempRoot(prefix: string): string {
     return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -27,6 +27,38 @@ describe("canonicalDir", () => {
     test("a path that does not exist is returned resolved but uncanonicalized", () => {
         const missing = join(tempRoot("canonical-missing-"), "nope", "deeper");
         expect(canonicalDir(missing)).toBe(resolve(missing));
+    });
+});
+
+describe("canonicalPath", () => {
+    test("existing and deleted files under a symlinked parent keep the same key", () => {
+        const root = tempRoot("canonical-file-");
+        const real = join(root, "real");
+        mkdirSync(real);
+        const link = join(root, "link");
+        symlinkSync(real, link);
+        const file = join(real, "session.jsonl");
+        const alias = join(link, "session.jsonl");
+        writeFileSync(file, "{}\n");
+        try {
+            expect(canonicalPath(alias)).toBe(file);
+            expect(canonicalPath(file)).toBe(file);
+            rmSync(file);
+            expect(canonicalPath(alias)).toBe(file);
+            expect(canonicalPath(file)).toBe(file);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test("an unavailable parent falls back to the resolved path", () => {
+        const root = tempRoot("canonical-file-missing-parent-");
+        const file = join(root, "missing", "session.jsonl");
+        try {
+            expect(canonicalPath(file)).toBe(resolve(file));
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
     });
 });
 

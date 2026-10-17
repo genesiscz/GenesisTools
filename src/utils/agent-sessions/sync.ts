@@ -1,6 +1,7 @@
 import { realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
+import { canonicalPath } from "@genesiscz/utils/fs/canonical";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { sourceFingerprint } from "./fingerprint";
@@ -210,7 +211,7 @@ export async function synchronizeHistory(options: {
 
         let unseen: string[];
         if (exactPaths !== undefined) {
-            unseen = [...new Set(exactPaths)].filter((file) => !seen.has(file));
+            unseen = [...new Set(exactPaths.map(canonicalPath))].filter((file) => !seen.has(file));
         } else {
             const listed = repository.metadata.listMetadata({
                 providerId,

@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
 import {
     type CacheStatus,
@@ -7,9 +9,11 @@ import {
     listSessionRows,
     type SessionCmuxLocation,
 } from "@app/claude/lib/usage/session-rows";
-import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
+import { catalogHistory, openHistoryCached } from "@genesiscz/utils/agent-sessions/open-service";
 import type { SessionPin } from "@genesiscz/utils/agent-sessions/pins";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
+import { historyPathUnderRoot } from "@genesiscz/utils/agent-sessions/project-scope";
+import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import { grokAccountNameLookup } from "@genesiscz/utils/ai/providers/plugins/grok-sub/discover";
@@ -284,19 +288,96 @@ async function nativeRows(
     return rows.sort((left, right) => right.mtime - left.mtime).slice(0, options.limit);
 }
 
+function canonicalPath(path: string): string {
+    try {
+        return realpathSync(path);
+    } catch (error) {
+        logger.debug({ error, path }, "[ai] exact-path ownership uses the unresolved path");
+        return resolve(path);
+    }
+}
+
+interface ExactPathScopes {
+    paths: Map<AccountProviderAlias, string[]>;
+    failures: Map<AccountProviderAlias, unknown>;
+}
+
+/** Root ownership is additive: a link's logical owner and an indexed root association survive canonicalization. */
+async function exactPathsByProvider(filePaths: string[]): Promise<ExactPathScopes> {
+    const paths = new Map<AccountProviderAlias, string[]>(ALL.map((alias) => [alias, []]));
+    const failures = new Map<AccountProviderAlias, unknown>();
+    if (filePaths.length === 0) {
+        return { paths, failures };
+    }
+
+    const scopes = [];
+    for (const alias of ALL) {
+        try {
+            const inputRoots = resolveHistoryProvider(alias).reader.roots();
+            const roots = inputRoots.map((root) => ({ logical: resolve(root), canonical: canonicalPath(root) }));
+            const indexed = new Set<string>();
+            let cached: ReturnType<typeof openHistoryCached>;
+            try {
+                cached = openHistoryCached({ provider: alias, roots: inputRoots });
+                if (cached) {
+                    const catalog = await cached.service.catalog({ filePaths }, { refresh: false });
+                    for (const row of catalog.metadata) {
+                        if (row.root && roots.some((root) => root.canonical === row.root)) {
+                            indexed.add(canonicalPath(row.filePath));
+                        }
+                    }
+                }
+            } catch (error) {
+                logger.debug({ error, provider: alias }, "[ai] indexed exact-path ownership unavailable");
+            } finally {
+                cached?.close();
+            }
+
+            scopes.push({ alias, roots, indexed });
+        } catch (error) {
+            failures.set(alias, error);
+            logger.warn({ error, provider: alias }, "[ai] could not resolve this provider's history roots");
+        }
+    }
+
+    for (const file of filePaths) {
+        const canonical = canonicalPath(file);
+        const logical = resolve(file);
+        const owners = scopes.filter(
+            (scope) =>
+                scope.indexed.has(canonical) ||
+                scope.roots.some(
+                    (root) =>
+                        historyPathUnderRoot(canonical, root.canonical) || historyPathUnderRoot(logical, root.logical)
+                )
+        );
+        for (const scope of owners.length > 0 ? owners : scopes) {
+            paths.get(scope.alias)?.push(file);
+        }
+    }
+
+    return { paths, failures };
+}
+
 /** Every provider's sessions in one list, newest first. */
 export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}): Promise<AgentSessionRow[]> {
     const wanted = options.providers ?? ALL;
+    const scopes = options.filePaths === undefined ? undefined : await exactPathsByProvider(options.filePaths);
     // Side by side, not one after another: each provider walks its own tree, so a caller paid the
     // sum of three walks. Their SQLite writes are synchronous transactions on one connection, so
     // they cannot interleave. Rows are joined in `wanted` order, so the sort sees the same input.
     const perProvider = await Promise.all(
         wanted.map(async (alias): Promise<AgentSessionRow[]> => {
             try {
+                if (scopes?.failures.has(alias)) {
+                    throw scopes.failures.get(alias);
+                }
+
+                const scopedOptions = scopes ? { ...options, filePaths: scopes.paths.get(alias) ?? [] } : options;
                 if (alias === "claude") {
                     const claude = await listSessionRows({
                         ...(options.hours === undefined ? {} : { hours: options.hours }),
-                        ...(options.filePaths === undefined ? {} : { filePaths: options.filePaths }),
+                        ...(scopedOptions.filePaths === undefined ? {} : { filePaths: scopedOptions.filePaths }),
                         ...(options.minRows === undefined ? {} : { minRows: options.minRows }),
                         ...(options.now === undefined ? {} : { now: options.now }),
                         ...(options.withUsage === undefined ? {} : { withUsage: options.withUsage }),
@@ -309,7 +390,7 @@ export async function listAgentSessionRows(options: AgentSessionRowsOptions = {}
                     return claude.map((row) => ({ ...row, provider: "claude" as const }));
                 }
 
-                return await nativeRows(alias, options);
+                return await nativeRows(alias, scopedOptions);
             } catch (error) {
                 // One provider's index being unreadable must not blank the other two.
                 logger.warn({ error, provider: alias }, "[ai] could not list this provider's sessions");
