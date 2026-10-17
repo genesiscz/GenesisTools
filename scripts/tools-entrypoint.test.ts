@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { skipWorktreeInstall } from "@genesiscz/utils/cli/worktree-install";
 
@@ -119,6 +120,11 @@ describe("native widget dispatcher", () => {
 });
 
 describe("linked worktree automatic installation", () => {
+    it("reads the auto-install opt-in through the shared environment layer", () => {
+        const source = readFileSync(join(ROOT, "tools"), "utf8");
+        expect(source).toMatch(/autoInstall:\s*env\.get\("TOOLS_AUTOINSTALL"\)/);
+        expect(source).not.toMatch(/process\.env\.TOOLS_AUTOINSTALL/);
+    });
     it("reads the marker once and distinguishes linked and main checkouts", () => {
         for (const linked of [true, false]) {
             let reads = 0;
