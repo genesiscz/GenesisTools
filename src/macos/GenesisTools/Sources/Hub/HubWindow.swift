@@ -923,7 +923,7 @@ final class HubModel: ObservableObject {
                     if let wanted = self.selectedWorktree, wanted != WorktreeCleanup.selectionID,
                               !found.contains(where: { $0.path == wanted }) {
                         // Selected while this walk ran (a commit link's checkout): it joins the list on its own.
-                        self.addWorktreesIfMissing(wanted)
+                        self.addWorktreesIfMissing(wanted, intoEmptyList: true)
                     }
                     self.onSettled?()
                     self.onSettled = nil
@@ -1173,9 +1173,12 @@ final class HubModel: ObservableObject {
     /// A worktree a link or the browser extension names that the list does not hold (its repository
     /// has no recent session): its repository's worktrees join the list, so it opens instead of
     /// "Pick a worktree" with no word about what was asked for.
+    /// An empty list waits for the full discovery (`setMode(.worktrees)` runs it only while the list is empty), so a
+    /// link must not fill it with one repository first; the discovery's own completion passes `intoEmptyList`.
     @MainActor
-    func addWorktreesIfMissing(_ path: String) {
-        guard !worktrees.contains(where: { $0.path == path }), FileManager.default.fileExists(atPath: path) else { return }
+    func addWorktreesIfMissing(_ path: String, intoEmptyList: Bool = false) {
+        guard intoEmptyList || !worktrees.isEmpty, !worktrees.contains(where: { $0.path == path }),
+              FileManager.default.fileExists(atPath: path) else { return }
         DispatchQueue.global(qos: .userInitiated).async {
             let found = WorktreeDiscovery.discover(sessions: [], extra: [path])
             DispatchQueue.main.async { [weak self] in

@@ -176,12 +176,12 @@ final class HubLogicTests: XCTestCase {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("hub-empty-worktrees-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let root = folder.resolvingSymlinksInPath().path
+        // Git names the checkout by its real path (/private/var/…); resolvingSymlinksInPath() gives /var/….
+        XCTAssertNotNil(WorktreeDiscovery.git(folder.path, ["init", "-q"]))
+        let root = try XCTUnwrap(WorktreeDiscovery.git(folder.path, ["rev-parse", "--show-toplevel"])?.trimmed)
         let commit = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "core.hooksPath=/dev/null",
                       "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "linked commit"]
-        for args in [["init", "-q"], commit] {
-            XCTAssertNotNil(WorktreeDiscovery.git(root, args))
-        }
+        XCTAssertNotNil(WorktreeDiscovery.git(root, commit))
         let sha = try XCTUnwrap(WorktreeDiscovery.git(root, ["rev-parse", "HEAD"])?.trimmed)
         let model = HubModel(wantedSession: nil, tab: .transcript)
         model.initialMode = .worktrees
@@ -197,13 +197,28 @@ final class HubLogicTests: XCTestCase {
         model.showCommit(repo: root, sha: sha, title: "linked commit")
         model.worktrees = []
         model.loadingWorktrees = false
-        model.addWorktreesIfMissing(root)
+        model.addWorktreesIfMissing(root, intoEmptyList: true)
         await fulfillment(of: [added], timeout: 5)
 
         XCTAssertEqual(model.selectedWorktree, root)
         XCTAssertNotNil(model.worktrees.first { $0.path == model.selectedWorktree })
         XCTAssertEqual(model.review?.scope, .commit(sha: sha, title: "linked commit"))
         XCTAssertNil(model.error)
+    }
+
+    /// Before the first discovery a link must leave the list empty: opening Worktrees discovers only while the
+    /// list is empty, so one repository's rows would stand in for the whole list.
+    @MainActor
+    func testALinkDoesNotFillTheWorktreeListBeforeDiscovery() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("hub-unloaded-worktrees-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        XCTAssertNotNil(WorktreeDiscovery.git(folder.path, ["init", "-q"]))
+        let root = try XCTUnwrap(WorktreeDiscovery.git(folder.path, ["rev-parse", "--show-toplevel"])?.trimmed)
+        let model = HubModel(wantedSession: nil, tab: .transcript)
+        model.addWorktreesIfMissing(root)
+        try await Task.sleep(nanoseconds: 1_500_000_000)
+        XCTAssertTrue(model.worktrees.isEmpty, "the full discovery fills an empty list")
     }
 
     @MainActor
