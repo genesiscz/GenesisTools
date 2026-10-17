@@ -33,8 +33,8 @@ function exec(cmd: string[], cwd: string): { code: number; out: string } {
 
 function counts(out: string) {
     const text = stripVTControlCharacters(out);
-    const bun = [...text.matchAll(/\b(\d+)\s+(pass|fail)\b/g)];
-    const swift = [...text.matchAll(/Executed (\d+) tests?, with (\d+) failures?[^\n]*/g)];
+    const bun = [...text.matchAll(/^\s*(\d+) (pass|fail)\s*$/gm)];
+    const swift = [...text.matchAll(/Executed (\d+) tests?, with (?:\d+ tests? skipped and )?(\d+) failures?[^\n]*/g)];
     return {
         text,
         bun,
@@ -77,12 +77,8 @@ export function testEvidence(result: { code: number; out: string }, failing: boo
         );
     }
 
-    if (
-        code !== 0 ||
-        /error:.*(?:Cannot find|Could not resolve|No matching export)|Unhandled error between tests|SyntaxError|Build failed|compilation failed/i.test(
-            parsed.text
-        )
-    ) {
+    // A test may log an expected compiler/import error. Completed counts decide; no counts cannot pass.
+    if (code !== 0) {
         return false;
     }
 

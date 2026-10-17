@@ -1532,7 +1532,6 @@ describe("round 6 regressions", () => {
     test("plant evidence accepts parsed failures without a wrapper marker and any failing XCTest count", () => {
         for (const out of [
             "(fail) fixture one\n(fail) fixture two\n240 pass\n2 fail\n",
-            "exit 1 \u00B7 240 pass 2 fail\n(fail) fixture one\n",
             "Executed 1 test, with 3 failures in 0.1 seconds\nExecuted 0 tests, with 0 failures\ntrailer\n",
             "\x1b[31m 240 pass\x1b[0m\n\x1b[31m 2 fail\x1b[0m\n(fail) fixture\n",
         ]) {
@@ -1600,5 +1599,64 @@ describe("round 6 regressions", () => {
                 expect(out).toContain("\u2714 the tests catch the fault and pass on the fix");
             }
         }
+    });
+});
+
+describe("round 6 judge log regressions", () => {
+    test("XCTest totals with skipped tests provide failing and passing evidence", () => {
+        // Inline total copied from real-logs/xctest-fail-with-skipped.log; runtime never reads the work folder.
+        const total = "\t Executed 25 tests, with 1 test skipped and 1 failure (0 unexpected) in 2.120 (2.165) seconds";
+        const trailer =
+            "\n\u25C7 Test run started.\n\u2714 Test run with 0 tests in 0 suites passed after 0.001 seconds.";
+        expect(summarize(total + trailer)).toBe(total.trim());
+        expect(testEvidence({ code: 1, out: total + trailer }, true)).toBe(true);
+        expect(testEvidence({ code: 0, out: total + trailer }, false)).toBe(false);
+        for (const skipped of ["1 test skipped", "2 tests skipped"]) {
+            const passed = total.replace("1 test skipped", skipped).replace("1 failure", "0 failures");
+            expect(testEvidence({ code: 0, out: passed + trailer }, false)).toBe(true);
+            expect(testEvidence({ code: 1, out: passed + trailer }, true)).toBe(false);
+        }
+    });
+
+    test("completed Bun counts take precedence over a logged SyntaxError fixture", () => {
+        // Relevant lines copied from real-logs/bun-pass-with-syntaxerror-fixture.log.
+        const out = [
+            "WARN: [cmux-install] invalid installation manifest",
+            '      "type": "SyntaxError",',
+            "          SyntaxError: Unexpected token 'b', \"{broken\" is not valid JSON",
+            " 944 pass",
+            " 6 skip",
+            " 0 fail",
+            " 3115 expect() calls",
+            "Ran 950 tests across 114 files. [19.68s]",
+            "[test] suite complete (exit 0)",
+        ].join("\n");
+        expect(testEvidence({ code: 0, out }, false)).toBe(true);
+        expect(testEvidence({ code: 1, out }, true)).toBe(false);
+        expect(testEvidence({ code: 0, out: out.replace("944 pass", "0 pass") }, false)).toBe(false);
+        expect(testEvidence({ code: 0, out: "SyntaxError: Unexpected token" }, false)).toBe(false);
+    });
+
+    test("only whole Bun summary lines count, never test names or inline prose", () => {
+        // Summary lines copied from real-logs/bun-pass-with-syntaxerror-fixture.log.
+        const totals =
+            " 944 pass\n 6 skip\n 0 fail\n 3115 expect() calls\nRan 950 tests across 114 files. [19.68s]\n[test] suite complete (exit 0)";
+        const out = "(pass) retries 3 fail before recovering\n" + totals;
+        expect(summarize(out)).toBe("944 pass 0 fail");
+        expect(testEvidence({ code: 0, out }, false)).toBe(true);
+        expect(testEvidence({ code: 1, out }, true)).toBe(false);
+        for (const name of ["(pass) retries 3 fail before recovering", "exit 1 \u00B7 240 pass 2 fail"]) {
+            expect(summarize(name)).toBe("no test count");
+            expect(testEvidence({ code: 1, out: name }, true)).toBe(false);
+        }
+    });
+
+    test("ANSI-colored whole summary lines must be stripped before counting", () => {
+        const failed = "\u001b[32m 7 pass\u001b[0m\n\u001b[31m 1 fail\u001b[0m\n(fail) fixture\n";
+        expect(summarize(failed)).toBe("7 pass 1 fail");
+        expect(testEvidence({ code: 1, out: failed }, true)).toBe(true);
+        const passed = "\u001b[32m 7 pass\u001b[0m\n\u001b[32m 0 fail\u001b[0m\n[test] suite complete (exit 0)";
+        expect(summarize(passed)).toBe("7 pass 0 fail");
+        expect(testEvidence({ code: 0, out: passed }, false)).toBe(true);
     });
 });
