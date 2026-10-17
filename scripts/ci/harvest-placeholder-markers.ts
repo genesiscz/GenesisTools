@@ -6,13 +6,14 @@
  */
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { cacheDbPath } from "@app/ms-teams/lib/paths";
 import { TeamsCache } from "@app/ms-teams/lib/store";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 
 const log = logger.scoped("placeholder-check").log;
 
@@ -171,7 +172,7 @@ export function spliceAutoBlock(existing: string, autoLines: string[]): string {
 }
 
 export function markersPath(home = homedir()): string {
-    return join(home, ".genesis-tools/placeholder-check/markers.txt");
+    return genesisToolsDirIn(home, "placeholder-check", "markers.txt");
 }
 
 function peopleFromConversations(cache: TeamsCache): PersonLike[] {

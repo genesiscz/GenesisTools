@@ -19,6 +19,7 @@ import { dirname, join, resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { openFiles } from "@genesiscz/utils/process/open-files";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 
 const EXPECTED_TABLES = [
     "_migrations",
@@ -48,7 +49,7 @@ export interface NativeCacheRetirementReport {
 }
 
 function retiredTarget(toolsHome: string): string {
-    return join(resolve(toolsHome), ".genesis-tools", "native-history");
+    return genesisToolsDirIn(resolve(toolsHome), "native-history");
 }
 
 function databaseSchema(path: string): { tables: string[]; migrationIds: string[] } {
@@ -163,7 +164,7 @@ export function retireNativeCache(options: {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const manifestDirectory =
         options.manifestDirectory ??
-        join(resolve(options.toolsHome ?? env.tools.getHome()), ".genesis-tools", "history-retirement");
+        genesisToolsDirIn(resolve(options.toolsHome ?? env.tools.getHome()), "history-retirement");
     const manifestRoot = resolve(manifestDirectory);
     if (manifestRoot === report.target || manifestRoot.startsWith(`${report.target}/`)) {
         throw new Error("Retirement manifest must be outside the directory being deleted");

@@ -1,8 +1,7 @@
-import { resolve } from "node:path";
 import { AIChat } from "@ask/AIChat";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import type { ActionHandler } from "../types";
 
 /** Cache of AIChat instances per contact */
@@ -33,7 +32,7 @@ export const handleAsk: ActionHandler = async (message, contact, client, convers
                 logLevel: "silent",
                 session: {
                     id: `telegram-${contact.userId}`,
-                    dir: resolve(env.tools.getHome(), ".genesis-tools/telegram/ai-sessions"),
+                    dir: toolDataDir("telegram", "ai-sessions"),
                     autoSave: true,
                 },
             });

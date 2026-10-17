@@ -10,15 +10,14 @@
  * Usage: bun scripts/backfill-product-units.ts [--dry-run]
  */
 
-import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { ShopsDatabase } from "../src/shops/db/ShopsDatabase";
 import { refreshMasterDenorm } from "../src/shops/lib/master-denorm";
 import { extractFlavorKey, extractPackCount, extractSize, parseUnit, type Unit } from "../src/shops/lib/normalize";
 
 const DRY_RUN = process.argv.includes("--dry-run");
-const DB_PATH = join(env.tools.getHome(), ".genesis-tools/shops/index.db");
+const DB_PATH = toolDataDir("shops", "index.db");
 
 interface Row {
     id: number;

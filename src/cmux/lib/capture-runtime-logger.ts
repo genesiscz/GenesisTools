@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 export function createCaptureRuntimeLogger(options: { directory?: string } = {}) {
     let previous: string | undefined;
@@ -16,7 +16,7 @@ export function createCaptureRuntimeLogger(options: { directory?: string } = {})
             return;
         }
 
-        const directory = options.directory ?? join(env.tools.getHome(), ".genesis-tools/cmux");
+        const directory = options.directory ?? toolDataDir("cmux");
         let line = `${SafeJSON.stringify({ at: new Date().toISOString(), level, message, ...detail })}\n`;
         if (Buffer.byteLength(line) > 65536) {
             line = `${SafeJSON.stringify({ at: new Date().toISOString(), level, message: message.slice(0, 1024), detail: "oversized diagnostic omitted" })}\n`;

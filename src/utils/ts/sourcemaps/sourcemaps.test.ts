@@ -511,6 +511,64 @@ describe("buildAtCommit", () => {
         expect(existsSync(managedWorktree(cache))).toBe(false);
     });
 
+    for (const cancellation of ["release", "signal"] as const) {
+        test(`a zero-exit ${cancellation} cancellation never completes or reuses partial output`, async () => {
+            const root = mkdtempSync(join(tmpdir(), "gt-sourcemaps-cancel-"));
+            roots.push(root);
+            fixtureRepo(join(root, "repo"));
+            const cache = new SourcemapCache("app", join(root, "cache"));
+            const script = join(root, "build.ts");
+            const retry = join(root, "retry");
+            writeFileSync(
+                script,
+                `
+                import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+                process.on("SIGTERM", () => process.exit(0));
+                mkdirSync("out", { recursive: true });
+                const retry = existsSync(${SafeJSON.stringify(retry)});
+                writeFileSync("out/a.js", retry ? "complete" : "partial");
+                if (!retry) {
+                    console.log("ready");
+                    await Bun.sleep(30_000);
+                }
+            `
+            );
+            const controller = new AbortController();
+            const { promise: ready, resolve: onReady } = Promise.withResolvers<void>();
+            const options = {
+                cache,
+                repo: join(root, "repo"),
+                commit: "HEAD",
+                buildCmd: `exec "${process.execPath}" "${script}"`,
+                outputDir: "out",
+                // A named worktree isolates cancellation from process-inspection permissions used during removal.
+                worktree: join(root, "worktree"),
+                onLine: (line: string) => {
+                    if (line === "ready") {
+                        onReady();
+                    }
+                },
+            };
+            const building = buildAtCommit({ ...options, signal: controller.signal });
+            const failed = building.catch((error: unknown) => error);
+            await ready;
+
+            if (cancellation === "release") {
+                await releaseBuildWorktrees({ stop: true });
+            } else {
+                controller.abort();
+            }
+
+            expect(String(await failed)).toContain("build cancelled");
+            expect(await cache.list()).toEqual([]);
+            writeFileSync(retry, "retry");
+            const result = await buildAtCommit(options);
+            expect(result.reused).toBe(false);
+            expect(readFileSync(join(result.dir, "files", "a.js"), "utf8")).toBe("complete");
+            expect((await buildAtCommit(options)).reused).toBe(true);
+        });
+    }
+
     test("a refresh replaces the cached output, and a different env is a different build", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-sourcemaps-build-"));
         roots.push(root);

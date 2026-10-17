@@ -26,6 +26,7 @@ const { log } = logger.scoped("ts:sourcemaps:build");
 const held = {
     worktrees: new Map<string, SourcemapCache>(),
     processes: new Set<Subprocess>(),
+    cancelled: new WeakSet<Subprocess>(),
     /** Each settles once its build has ended and released the worktree lock. */
     builds: new Set<Promise<void>>(),
     stopping: false,
@@ -162,6 +163,7 @@ async function prepareWorktree(options: { repo: string; worktree: string; commit
 }
 
 async function stopBuild(proc: Subprocess): Promise<void> {
+    held.cancelled.add(proc);
     const signalGroup = (signal: NodeJS.Signals): void => {
         try {
             // pid-verified: proc is this process's own Bun.spawn child, started detached, so -pid is the group it leads
@@ -202,12 +204,12 @@ async function buildLocked(input: {
 
     await mkdir(dir, { recursive: true });
     const logPath = join(dir, ".build.log");
-    const logFile = createWriteStream(logPath);
     const started = performance.now();
-    if (held.stopping) {
+    if (held.stopping || options.signal?.aborted) {
         throw new Error(`build of ${commit.slice(0, 12)} not started: the command is stopping its builds`);
     }
 
+    const logFile = createWriteStream(logPath);
     log.info({ commit, worktree, buildCmd: options.buildCmd }, "building");
     const proc = Bun.spawn(["sh", "-c", options.buildCmd], {
         cwd: worktree,
@@ -221,6 +223,9 @@ async function buildLocked(input: {
         void stopBuild(proc);
     };
     options.signal?.addEventListener("abort", abort, { once: true });
+    if (options.signal?.aborted) {
+        abort();
+    }
     const pump = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
         const decoder = new TextDecoder();
         let pending = "";
@@ -244,6 +249,13 @@ async function buildLocked(input: {
         throw new Error(`build command exited ${code} at ${commit.slice(0, 12)}; log: ${logPath}`);
     }
 
+    const assertNotCancelled = (): void => {
+        if (held.cancelled.has(proc) || options.signal?.aborted || held.stopping) {
+            throw new Error(`build cancelled at ${commit.slice(0, 12)}; log: ${logPath}`);
+        }
+    };
+    assertNotCancelled();
+
     const output = join(worktree, options.outputDir);
     if (!(await stat(output).catch(() => null))?.isDirectory()) {
         throw new Error(`build finished but ${output} is not a folder; check --output`);
@@ -257,6 +269,7 @@ async function buildLocked(input: {
     await cp(output, staging, { recursive: true });
     await rm(files, { recursive: true, force: true });
     await rename(staging, files);
+    assertNotCancelled();
     const entry = await options.cache.commit({
         id,
         kind: "build",

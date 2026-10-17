@@ -65,13 +65,34 @@ interface Rule {
  */
 const HARDCODED_TMP = /^["'`]\/tmp\/.+/s;
 const HARDCODED_USER_PATH = /^["'`]\/Users\/[^/]+\//s;
-/** A literal that IS a `.genesis-tools` path segment, or a template that builds one from homedir(). */
-const GENESIS_TOOLS_LITERAL = /^["'`]\.genesis-tools/s;
-const HOMEDIR_GENESIS_TOOLS_TEMPLATE = /\$\{\s*homedir\(\)\s*\}\/\.genesis-tools/s;
+/** An entire storage segment, including a suffix, but not a similarly named folder or plist. */
+const GENESIS_TOOLS_LITERAL = /^["'`]\.genesis-tools(?:[/\\]|["'`])/s;
+const HAND_JOINED_GENESIS_TOOLS_TEMPLATE = /\$\{[^}]+\}[/\\]\.genesis-tools(?:[/\\]|`)/s;
+const STORAGE_ROOT_ALLOWED = /(^|\/)(?:plugins\/|src\/utils\/storage\/root\.ts$)/;
+const STORAGE_ROOT_RULE = {
+    name: "no-hand-joined-genesis-tools",
+    severity: "error" as const,
+    message:
+        "Construct storage paths with genesisToolsDir/toolDataDir from @genesiscz/utils/storage/root. " +
+        "Use genesisToolsDirIn for an explicit fixture or sandbox home.",
+};
 
-const HOMEDIR_MESSAGE =
-    "`homedir()` bypasses the GENESIS_TOOLS_HOME test sandbox. Use `env.tools.getHome()` from " +
-    "@genesiscz/utils/env — it falls back to homedir(), so production is unchanged.";
+function recordHandJoinedStorage(
+    nodes: SgNode[],
+    filenameOf: (node: SgNode) => string,
+    record: (node: SgNode, rule: typeof STORAGE_ROOT_RULE) => void
+): void {
+    for (const node of nodes) {
+        if (STORAGE_ROOT_ALLOWED.test(filenameOf(node))) {
+            continue;
+        }
+
+        const args = node.getMultipleMatches("ARGS");
+        if (args.length > 1 && args.some((arg) => GENESIS_TOOLS_LITERAL.test(arg.text()))) {
+            record(node, STORAGE_ROOT_RULE);
+        }
+    }
+}
 
 const LITERAL_KINDS = ["string", "template_string"];
 
@@ -79,6 +100,12 @@ const LITERAL_KINDS = ["string", "template_string"];
 const GENESIS_ROUTER_LINK = /genesis\.tools\/|genesis-(?:md|tools):\/\//;
 
 const RULES: Rule[] = [
+    {
+        ...STORAGE_ROOT_RULE,
+        kinds: LITERAL_KINDS,
+        test: (text) => text.startsWith("`") && HAND_JOINED_GENESIS_TOOLS_TEMPLATE.test(text),
+        allowedIn: STORAGE_ROOT_ALLOWED,
+    },
     {
         name: "no-hardcoded-tmp",
         severity: "error",
@@ -110,9 +137,6 @@ const RULES: Rule[] = [
         allowedIn: /(^|\/)src\/utils\/browser-router\//,
     },
 ];
-
-/** Shared so `checkSource` (one file) and `scanAll` (whole repo) cannot drift. */
-const HOMEDIR_RULE = { name: "no-homedir-genesis-tools", severity: "error" as const, message: HOMEDIR_MESSAGE };
 
 const PROMPT_BACKEND_RULE = {
     name: "no-direct-prompt-backend",
@@ -743,29 +767,12 @@ export function checkSource(file: string, source: string): Finding[] {
                 record(node, rule);
             }
         }
-
-        if (HOMEDIR_GENESIS_TOOLS_TEMPLATE.test(text)) {
-            record(node, HOMEDIR_RULE);
-        }
     }
 
     recordBusyWaitFindings(root, record);
     recordProcessToolSpawns(root.findAll(PROCESS_TOOL_CALL_MATCHER), () => file, record);
 
-    // The `.genesis-tools` rule is about REACHING that directory through
-    // `homedir()`, not about the literal. `join(env.tools.getHome(),
-    // ".genesis-tools", …)` is the sanctioned form and appears 158 times, so a
-    // rule that only looked at the literal would condemn the correct code.
-    for (const node of root.findAll({ rule: { pattern: "$FN(homedir(), $$$ARGS)" } })) {
-        // Start-anchored per argument, exactly as the GritQL rule was. A loose
-        // `includes(".genesis-tools")` also matches the LaunchAgent plist names
-        // (`com.genesis-tools.daemon.plist`), which are not the data directory.
-        const violating = node.getMultipleMatches("ARGS").some((arg) => GENESIS_TOOLS_LITERAL.test(arg.text()));
-
-        if (violating) {
-            record(node, HOMEDIR_RULE);
-        }
-    }
+    recordHandJoinedStorage(root.findAll({ rule: { pattern: "$FN($$$ARGS)" } }), () => file, record);
 
     for (const node of root.findAll({ rule: { pattern: "$OBJ.$METHOD($$$ARGS)" } })) {
         const object = node.getMatch("OBJ")?.text();
@@ -979,10 +986,6 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
                                 push(node, rule);
                             }
                         }
-
-                        if (HOMEDIR_GENESIS_TOOLS_TEMPLATE.test(text)) {
-                            push(node, HOMEDIR_RULE);
-                        }
                     }
                 })
             ),
@@ -1003,13 +1006,9 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
             processToolPass,
             findInFiles(
                 lang,
-                { paths, matcher: { rule: { pattern: "$FN(homedir(), $$$ARGS)" } } },
+                { paths, matcher: { rule: { pattern: "$FN($$$ARGS)" } } },
                 guard((nodes) => {
-                    for (const node of nodes) {
-                        if (node.getMultipleMatches("ARGS").some((arg) => GENESIS_TOOLS_LITERAL.test(arg.text()))) {
-                            push(node, HOMEDIR_RULE);
-                        }
-                    }
+                    recordHandJoinedStorage(nodes, (node) => node.getRoot().filename(), push);
                 })
             ),
             findInFiles(

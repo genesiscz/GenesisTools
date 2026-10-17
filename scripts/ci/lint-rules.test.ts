@@ -9,12 +9,8 @@ import { checkSource, pluginsDisabledFor } from "./lint-rules";
 /**
  * These pin the behaviour of the six GritQL plugins this checker replaced.
  *
- * Every POSITIVE case was verified to be flagged by the original plugins, and
- * every NEGATIVE case to be left alone by them, before the plugins were removed
- * from biome.json. The negatives matter more than the positives here: a first
- * cut of this checker tested string literals without their context and
- * condemned 317 lines of correct code, 158 of them the sanctioned
- * `join(env.tools.getHome(), ".genesis-tools", …)`.
+ * Storage-path enforcement now requires the canonical root helper for every home expression, including
+ * env.tools.getHome(), so explicit sandbox roots and the user's root follow the same construction contract.
  */
 
 function rules(source: string, file = "src/example.ts"): string[] {
@@ -65,19 +61,39 @@ describe("no-hardcoded-user-paths", () => {
     });
 });
 
-describe("no-homedir-genesis-tools", () => {
+describe("no-hand-joined-genesis-tools", () => {
     test("flags the data directory reached through homedir()", () => {
-        expect(rules('const d = join(homedir(), ".genesis-tools", "daemon");')).toContain("no-homedir-genesis-tools");
+        expect(rules('const d = join(homedir(), ".genesis-tools", "daemon");')).toContain(
+            "no-hand-joined-genesis-tools"
+        );
     });
 
     test("flags a template that builds the same path", () => {
-        expect(rules("const d = `${homedir()}/.genesis-tools/daemon`;")).toContain("no-homedir-genesis-tools");
+        expect(rules("const d = `${homedir()}/.genesis-tools/daemon`;")).toContain("no-hand-joined-genesis-tools");
     });
 
-    test("LEAVES the sanctioned env.tools.getHome() form alone", () => {
-        // 158 sites use this. Flagging it would condemn the correct code and
-        // make the rule unusable.
-        expect(rules('const d = join(env.tools.getHome(), ".genesis-tools", "daemon");')).toEqual([]);
+    test("flags arbitrary homes and path function forms", () => {
+        for (const home of ["env.tools.getHome()", "env.paths.getHome()", "home", "resolve(home)"]) {
+            expect(rules(`const d = join(${home}, ".genesis-tools", "daemon");`)).toContain(
+                "no-hand-joined-genesis-tools"
+            );
+        }
+        expect(rules('const d = path.resolve(home, ".genesis-tools/daemon");')).toContain(
+            "no-hand-joined-genesis-tools"
+        );
+        expect(rules("const d = `${home}/.genesis-tools/daemon`;")).toContain("no-hand-joined-genesis-tools");
+    });
+
+    test("allows helpers, the canonical implementation, tests, plugins and lookalike names", () => {
+        expect(rules('const d = genesisToolsDir("daemon");')).toEqual([]);
+        expect(rules('const d = genesisToolsDirIn(home, "daemon");')).toEqual([]);
+        const direct = 'const d = join(home, ".genesis-tools", "daemon");';
+        expect(rules(direct, "src/utils/storage/root.ts")).toEqual([]);
+        expect(rules(direct, "plugins/example/index.ts")).toEqual([]);
+        expect(rules(direct, "src/example.test.ts")).toEqual([]);
+        expect(rules('const d = join(home, ".genesis-tools-backup");')).toEqual([]);
+        expect(rules(`// lint-rules-ignore: intentional fixture\n${direct}`)).toEqual([]);
+        expect(rules("const shell = '\"${HOME}/.genesis-tools/cmux\"';")).toEqual([]);
     });
 
     test("LEAVES LaunchAgent plist names alone", () => {

@@ -24,6 +24,7 @@ import { renderCaptureShell } from "@app/cmux/lib/capture-shell";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
 
 const START = "# >>> GenesisTools cmux capture >>>";
@@ -71,7 +72,7 @@ function realpathOr(path: string): string {
 
 function paths(options: CaptureInstallOptions) {
     const home = resolve(options.home ?? env.tools.getHome());
-    const root = join(home, ".genesis-tools/cmux");
+    const root = genesisToolsDirIn(home, "cmux");
     const configuredRc = resolve(options.rcPath ?? join(home, ".zshrc"));
     let symlink = false;
     try {
