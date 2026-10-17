@@ -898,14 +898,11 @@ describe("round 1 regression guards", () => {
         const passed = " 1 pass\n 0 fail\n[test] suite complete (exit 0)";
         expect(testEvidence({ code: 1, out: failed }, true)).toBe(true);
         expect(testEvidence({ code: 0, out: passed }, false)).toBe(true);
-        for (const out of [
-            "error: No matching export",
-            "0 pass\n0 fail\n[test] suite complete (exit 1)",
-            failed.replace("[test] suite complete (exit 1)", ""),
-            "1 fail\n[test] suite complete (exit 1)",
-        ]) {
+        for (const out of ["error: No matching export", "0 pass\n0 fail\n[test] suite complete (exit 1)"]) {
             expect(testEvidence({ code: 1, out }, true)).toBe(false);
         }
+        expect(testEvidence({ code: 1, out: failed.replace("[test] suite complete (exit 1)", "") }, true)).toBe(true);
+        expect(testEvidence({ code: 1, out: "1 fail\n[test] suite complete (exit 1)" }, true)).toBe(true);
         expect(testEvidence({ code: 0, out: passed.replace("[test] suite complete (exit 0)", "") }, false)).toBe(false);
         expect(testEvidence({ code: 0, out: "0 pass\n0 fail\n[test] suite complete (exit 0)" }, false)).toBe(false);
         expect(testEvidence({ code: 1, out: "Executed 2 tests, with 1 failure" }, true)).toBe(true);
@@ -1465,4 +1462,143 @@ test("generated worker briefs fix every severity and required file in every roun
         expect(brief).not.toContain("You may change only the PR's own files");
         expect(brief).not.toContain("do NOT fix that one");
     }
+});
+
+describe("round 6 regressions", () => {
+    test("the Grok watch loop follows the active log with finished-turn metadata", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-active-turn-"));
+        const script = join(import.meta.dir, "watch-workers.ts");
+        const cli = join(import.meta.dir, "../../../../src/utils/cli/index.ts");
+        const paths = join(import.meta.dir, "../../../../src/utils/grok/worker-paths.ts");
+        for (const [index, meta, active] of [
+            [0, { running: true, turns: 0, activeTurn: { turn: 1 } }, 1],
+            [1, { running: true, turns: 0 }, 1],
+            [2, { running: true, turns: 3, activeTurn: { turn: 7 } }, 7],
+        ] as const) {
+            const preload = join(dir, "preload-" + index + ".ts");
+            const logFile = join(dir, "turn-" + active + ".jsonl");
+            fs.writeFileSync(logFile, "fixture\n");
+            const feed = "\u{1f527} run_terminal_command echo fixture\n\u{1f4ac} Continue?\n\u2714 turn complete\n";
+            fs.writeFileSync(
+                preload,
+                [
+                    "import { mock } from 'bun:test';",
+                    "import * as cli from " + SafeJSON.stringify(cli) + ";",
+                    "import * as paths from " + SafeJSON.stringify(paths) + ";",
+                    "const originalCli = {...cli}; const originalPaths = {...paths}; let reads = 0;",
+                    "mock.module(" + SafeJSON.stringify(cli) + ", () => ({...originalCli, execTool: async (args) => {",
+                    "  if (args[0] !== 'grok' || args[1] !== 'status') throw new Error('unexpected tool execution');",
+                    "  const meta = reads++ === 0 ? " +
+                        SafeJSON.stringify(meta) +
+                        " : {running:false, turns:" +
+                        active +
+                        ",lastTurn:{turn:" +
+                        active +
+                        ",exitCode:0}};",
+                    "  return {success:true,exitCode:0,stderr:'',stdout:JSON.stringify(meta)};",
+                    "}}));",
+                    "mock.module(" +
+                        SafeJSON.stringify(paths) +
+                        ", () => ({...originalPaths, turnLogPath: (_name, turn) => " +
+                        SafeJSON.stringify(dir + "/turn-") +
+                        " + turn + '.jsonl'}));",
+                    "const spawn = Bun.spawn;",
+                    "Bun.spawn = (args, options) => {",
+                    "  if (!args.includes('grok') || !args.includes('tail')) throw new Error('unexpected child execution');",
+                    "  return spawn([process.execPath, '-e', " +
+                        SafeJSON.stringify("process.stdout.write(" + SafeJSON.stringify(feed) + ")") +
+                        "], {...options,env:process.env});",
+                    "};",
+                    "let elapsed = 0; const initial = Date.now(); Date.now = () => initial + elapsed;",
+                    "Bun.sleep = async (ms) => { elapsed += ms; if (ms === 3000) process.exit(0); };",
+                ].join("\n")
+            );
+            const result = Bun.spawnSync([process.execPath, "--preload", preload, script, "grok:fixture"], {
+                stdout: "pipe",
+                stderr: "pipe",
+                env: process.env,
+                timeout: 5000,
+            });
+            expect({ code: result.exitCode, stderr: result.stderr.toString() }).toEqual({ code: 0, stderr: "" });
+            const out = result.stdout.toString();
+            expect(out).toContain("turn " + active + " RUNNING");
+            expect(out).toContain("tool run_terminal_command echo fixture");
+            expect(out).toContain("QUESTION Continue?");
+            expect(out).toContain("turn " + active + " ENDED exit=0");
+            expect(out).not.toContain("log unavailable");
+        }
+    });
+
+    test("plant evidence accepts parsed failures without a wrapper marker and any failing XCTest count", () => {
+        for (const out of [
+            "(fail) fixture one\n(fail) fixture two\n240 pass\n2 fail\n",
+            "exit 1 \u00B7 240 pass 2 fail\n(fail) fixture one\n",
+            "Executed 1 test, with 3 failures in 0.1 seconds\nExecuted 0 tests, with 0 failures\ntrailer\n",
+            "\x1b[31m 240 pass\x1b[0m\n\x1b[31m 2 fail\x1b[0m\n(fail) fixture\n",
+        ]) {
+            expect(testEvidence({ code: 1, out }, true)).toBe(true);
+            expect(testEvidence({ code: 0, out }, true)).toBe(false);
+        }
+        for (const out of [
+            "Unhandled error between tests\nSyntaxError: No matching export\n0 pass\n1 fail\n[test] suite complete (exit 1)",
+            "SyntaxError: Unexpected token\n0 pass\n1 fail\n",
+        ]) {
+            expect(testEvidence({ code: 1, out }, true)).toBe(false);
+        }
+    });
+
+    test("plant CLI distinguishes import breakage from a caught behavior fault and restores the source", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-plant-evidence-"));
+        const source = join(dir, "source.ts");
+        const preload = join(dir, "preload.ts");
+        const script = join(import.meta.dir, "plant.ts");
+        const loadFailure =
+            "Unhandled error between tests\nSyntaxError: No matching export\n0 pass\n1 fail\n[test] suite complete (exit 1)";
+        for (const [mode, failed] of [
+            ["load", loadFailure],
+            ["behavior", "(fail) fixture\n240 pass\n2 fail\n"],
+        ]) {
+            fs.writeFileSync(source, "fixed\n");
+            fs.writeFileSync(
+                preload,
+                [
+                    "import { readFileSync } from 'node:fs'; const spawn = Bun.spawnSync;",
+                    "Bun.spawnSync = (args, options) => {",
+                    "  if (args[0] === 'git') return spawn([process.execPath,'-e',args[1] === 'show' ? 'console.log(\"old\")' : 'void 0'], options);",
+                    "  if (args[0] !== 'bun' || args[1] !== 'scripts/test.ts') throw new Error('unexpected command');",
+                    "  const planted = readFileSync(" + SafeJSON.stringify(source) + ", 'utf8').trim() === 'old';",
+                    "  const out = planted ? " +
+                        SafeJSON.stringify(failed) +
+                        " : '1 pass\\n0 fail\\n[test] suite complete (exit 0)';",
+                    "  return spawn([process.execPath,'-e','console.log(' + JSON.stringify(out) + ');process.exit(' + (planted ? 1 : 0) + ')'], options);",
+                    "};",
+                ].join("\n")
+            );
+            const result = Bun.spawnSync(
+                [
+                    process.execPath,
+                    "--preload",
+                    preload,
+                    script,
+                    "--wt",
+                    dir,
+                    "--file",
+                    "source.ts",
+                    "--test",
+                    "fixture.test.ts",
+                ],
+                { stdout: "pipe", stderr: "pipe", env: process.env, timeout: 5000 }
+            );
+            const out = result.stdout.toString();
+            expect(fs.readFileSync(source, "utf8")).toBe("fixed\n");
+            if (mode === "load") {
+                expect(result.exitCode).toBe(1);
+                expect(out).toContain("the plant broke the test's import, plant a behaviour fault instead");
+                expect(out).not.toContain("\u2714 the tests catch the fault");
+            } else {
+                expect({ code: result.exitCode, stderr: result.stderr.toString() }).toEqual({ code: 0, stderr: "" });
+                expect(out).toContain("\u2714 the tests catch the fault and pass on the fix");
+            }
+        }
+    });
 });

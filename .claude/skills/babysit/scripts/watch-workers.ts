@@ -215,7 +215,11 @@ async function grokStatus(w: Worker): Promise<{ running: boolean; turns: number;
 
     try {
         const meta = SafeJSON.parse(result.stdout.toString(), { strict: true });
-        return { running: Boolean(meta.running), turns: meta.turns ?? 0, exitCode: meta.lastTurn?.exitCode };
+        const running = Boolean(meta.running);
+        const completed = Number.isInteger(meta.turns) && meta.turns >= 0 ? meta.turns : 0;
+        const active = meta.activeTurn?.turn;
+        const turns = running ? (Number.isInteger(active) && active > 0 ? active : completed + 1) : completed;
+        return { running, turns, exitCode: meta.lastTurn?.exitCode };
     } catch {
         return null;
     }

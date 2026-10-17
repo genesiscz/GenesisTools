@@ -12,6 +12,7 @@
  */
 import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 
 function flags(name: string): string[] {
     const found: string[] = [];
@@ -30,39 +31,66 @@ function exec(cmd: string[], cwd: string): { code: number; out: string } {
     return { code: p.exitCode ?? 1, out: `${p.stdout.toString()}${p.stderr.toString()}` };
 }
 
-/** The pass and fail counts a test run printed (bun or XCTest). */
-export function summarize(out: string): string {
-    const bun = [...out.matchAll(/^\s*(\d+) (pass|fail)$/gm)].map((m) => `${m[1]} ${m[2]}`);
+function counts(out: string) {
+    const text = stripVTControlCharacters(out);
+    const bun = [...text.matchAll(/\b(\d+)\s+(pass|fail)\b/g)];
+    const swift = [...text.matchAll(/Executed (\d+) tests?, with (\d+) failures?[^\n]*/g)];
+    return {
+        text,
+        bun,
+        swift,
+        pass: bun.reduce((total, match) => total + (match[2] === "pass" ? Number(match[1]) : 0), 0),
+        fail: bun.reduce((total, match) => total + (match[2] === "fail" ? Number(match[1]) : 0), 0),
+    };
+}
 
-    if (bun.length > 0) {
-        return bun.join(" ");
+/** The pass and fail counts a test run printed (bun or the final XCTest total). */
+export function summarize(out: string): string {
+    const parsed = counts(out);
+    if (parsed.bun.length > 0) {
+        return parsed.bun.map((match) => match[1] + " " + match[2]).join(" ");
     }
 
-    return out.match(/Executed \d+ tests?, with \d+ failures?[^\n]*/g)?.at(-1) ?? "no test count";
+    return parsed.swift.at(-1)?.[0] ?? "no test count";
+}
+
+function loadFailure(result: { code: number; out: string }): boolean {
+    const parsed = counts(result.out);
+    return (
+        result.code !== 0 &&
+        parsed.pass === 0 &&
+        !parsed.swift.some((match) => Number(match[1]) > 0) &&
+        /Unhandled error between tests|SyntaxError|error:.*(?:Cannot find|Could not resolve|No matching export)/i.test(
+            parsed.text
+        )
+    );
 }
 
 export function testEvidence(result: { code: number; out: string }, failing: boolean): boolean {
     const { code, out } = result;
-    if (failing ? code === 0 : code !== 0) {
-        return false;
+    const parsed = counts(out);
+    if (failing) {
+        return (
+            code !== 0 &&
+            !loadFailure(result) &&
+            (parsed.fail > 0 || parsed.swift.some((match) => Number(match[1]) > 0 && Number(match[2]) > 0))
+        );
     }
+
     if (
-        /error:.*(?:Cannot find|Could not resolve|No matching export|SyntaxError)|Build failed|compilation failed/i.test(
-            out
+        code !== 0 ||
+        /error:.*(?:Cannot find|Could not resolve|No matching export)|Unhandled error between tests|SyntaxError|Build failed|compilation failed/i.test(
+            parsed.text
         )
     ) {
         return false;
     }
-    if (out.includes("[test] suite complete")) {
-        const pass = [...out.matchAll(/^\s*(\d+) pass$/gm)].reduce((n, m) => n + Number(m[1]), 0);
-        const fail = [...out.matchAll(/^\s*(\d+) fail$/gm)].reduce((n, m) => n + Number(m[1]), 0);
-        return (
-            out.includes(`[test] suite complete (exit ${code})`) &&
-            (failing ? fail > 0 && /^\(fail\)/m.test(out) : pass > 0 && fail === 0)
-        );
+
+    if (parsed.bun.length > 0) {
+        return parsed.pass > 0 && parsed.fail === 0 && parsed.text.includes("[test] suite complete (exit 0)");
     }
-    const total = [...out.matchAll(/Executed (\d+) tests?, with (\d+) failures?/g)].at(-1);
-    return !!total && Number(total[1]) > 0 && (failing ? Number(total[2]) > 0 : Number(total[2]) === 0);
+
+    return parsed.swift.some((match) => Number(match[1]) > 0) && parsed.swift.every((match) => Number(match[2]) === 0);
 }
 
 if (import.meta.main) {
@@ -139,8 +167,13 @@ if (import.meta.main) {
     console.log(`fixed: exit ${fixed.code} · ${summarize(fixed.out)}`);
     console.log(`worktree restored as it was · logs in ${backup}`);
 
+    if (loadFailure(planted)) {
+        console.log("✖ the plant broke the test's import, plant a behaviour fault instead");
+        process.exit(1);
+    }
+
     if (!testEvidence(planted, true)) {
-        console.log("✖ the planted run has no completed failing-test evidence");
+        console.log("✖ the planted run has no failing-test evidence");
         process.exit(1);
     }
 
