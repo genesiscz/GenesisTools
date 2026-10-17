@@ -59,6 +59,74 @@ final class HubNavigationTests: XCTestCase {
     }
 
     @MainActor
+    func testCommitNavigationSupersedesAnOlderStartupSessionLookup() async throws {
+        let model = isolatedModel()
+        model.loadingWorktrees = true
+        let old = HubSession(sessionId: "fixture-older")
+        let started = expectation(description: "older startup lookup starts")
+        let returned = expectation(description: "older startup lookup returns")
+        var pending: CheckedContinuation<[HubSession], Error>?
+        model.readSessions = { hours in
+            XCTAssertEqual(hours, HubModel.olderSessionHours)
+            let rows: [HubSession] = try await withCheckedThrowingContinuation {
+                pending = $0
+                started.fulfill()
+            }
+            returned.fulfill()
+            return rows
+        }
+        model.openOlderSession(old.sessionId, settle: true)
+        await fulfillment(of: [started], timeout: 2)
+
+        // The lookup of this nonexistent fixture path has no git or live-app effects.
+        model.apply(HubRequest(["--repo", "/fixture/commit-navigation", "--commit", "abcdef0"]))
+        let request = model.commitLinkRequest
+        model.applyCommitLink(.found(.init(root: "/fixture/commit-navigation", sha: "abcdef0", title: "linked")), request: request)
+        let committedRequest = model.commitLinkRequest
+        try XCTUnwrap(pending).resume(returning: [old])
+        await fulfillment(of: [returned], timeout: 2)
+        for _ in 0..<5 { await Task.yield() }
+
+        XCTAssertNil(model.selectedID, "the superseded startup lookup must not select its session")
+        XCTAssertFalse(model.sessions.contains(where: { $0.id == old.id }))
+        XCTAssertEqual(model.commitLinkRequest, committedRequest)
+        XCTAssertEqual(model.mode, .worktrees)
+        XCTAssertEqual(model.review?.scope, .commit(sha: "abcdef0", title: "linked"))
+    }
+
+    @MainActor
+    func testCommitNavigationClearsASessionWaitingForTheRecentList() async throws {
+        let model = isolatedModel()
+        model.loadingWorktrees = true
+        let old = HubSession(sessionId: "fixture-pending")
+        let started = expectation(description: "recent session lookup starts")
+        let loaded = expectation(description: "recent session list lands")
+        var pending: CheckedContinuation<[HubSession], Error>?
+        model.readSessions = { hours in
+            XCTAssertEqual(hours, HubModel.recentHours)
+            return try await withCheckedThrowingContinuation {
+                pending = $0
+                started.fulfill()
+            }
+        }
+        model.writeSessionCache = { _, _ in loaded.fulfill() }
+        model.apply(HubRequest(["--session", old.sessionId]))
+        await fulfillment(of: [started], timeout: 2)
+
+        model.apply(HubRequest(["--repo", "/fixture/commit-navigation", "--commit", "abcdef0"]))
+        let request = model.commitLinkRequest
+        try XCTUnwrap(pending).resume(returning: [old])
+        await fulfillment(of: [loaded], timeout: 2)
+        for _ in 0..<5 { await Task.yield() }
+
+        XCTAssertNil(model.selectedID, "a later list may contain the session without navigating back to it")
+        XCTAssertEqual(model.commitLinkRequest, request)
+        model.applyCommitLink(.found(.init(root: "/fixture/commit-navigation", sha: "abcdef0", title: "linked")), request: request)
+        XCTAssertEqual(model.mode, .worktrees)
+        XCTAssertEqual(model.review?.scope, .commit(sha: "abcdef0", title: "linked"))
+    }
+
+    @MainActor
     func testLateHeaderSuccessOrFailureCannotPopulateTheNextSession() async throws {
         for fail in [false, true] {
             let a = HubSession(sessionId: "fixture-a"), b = HubSession(sessionId: "fixture-b")

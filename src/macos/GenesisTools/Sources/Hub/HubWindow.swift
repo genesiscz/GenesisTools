@@ -972,6 +972,7 @@ final class HubModel: ObservableObject {
     /// the worktrees includes it; a launch that has not settled yet opens the mode when it settles.
     @MainActor
     func showCommit(repo: String, sha: String, title: String) {
+        cancelSessionNavigation()
         commitLinkRequest = UUID()
         selectedWorktree = repo
         notice = nil
@@ -1124,6 +1125,12 @@ final class HubModel: ObservableObject {
     static let olderSessionHours = 24 * 30
     private var olderSessionRequest = 0
 
+    /// New navigation supersedes both the older-session lookup and a session waiting on the recent list.
+    func cancelSessionNavigation() {
+        olderSessionRequest += 1
+        pendingSession = nil
+    }
+
     /// A session asked for by id (`--session`, a link, Agent processes) that the list's last
     /// `recentHours` do not hold: the list is asked once for the last 30 days, and the session joins
     /// the list and opens. Not found, it says so. It used to open the newest session instead, saying
@@ -1136,7 +1143,7 @@ final class HubModel: ObservableObject {
         let modeAtStart = mode
         let selectionAtStart = selectedID
         Task { @MainActor in
-            let rows = (try? await HubSource.sessions(hours: Self.olderSessionHours)) ?? []
+            let rows = (try? await readSessions(Self.olderSessionHours)) ?? []
             // A newer lookup owns the navigation now, and a reader who picked another session or mode while
             // this one ran must not be pulled back. A launch lookup (`settle`) has nobody to be pulled from.
             guard request == olderSessionRequest, settle || (mode == modeAtStart && selectedID == selectionAtStart) else {
@@ -1501,14 +1508,9 @@ final class HubModel: ObservableObject {
         if request.session != nil || request.mode != nil || request.agent != nil || request.worktree != nil
             || request.pr != nil || request.commit != nil {
             commitLinkRequest = UUID()
+            cancelSessionNavigation()
         }
         applyOverlays(request)
-        // A request that navigates owns the navigation from here on. An older-session lookup still waiting for
-        // its list must not select its session over it, whether the request resolves from the list, waits for a
-        // fresher one or only changes the mode.
-        if request.session != nil || request.mode != nil || request.agent != nil || request.worktree != nil {
-            olderSessionRequest += 1
-        }
         if let tab = request.tab {
             self.tab = tab
         }

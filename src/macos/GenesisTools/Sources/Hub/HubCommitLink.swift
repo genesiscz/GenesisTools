@@ -120,6 +120,7 @@ extension HubModel {
             notice = "Commit \(sha) needs its PR (pr=) or its project (repo=) to open"
             return
         }
+        cancelSessionNavigation()
         let known = prs.allProjects
         Task {
             let span = HubPerf.begin("hub.commitLink", "\(repo) \(sha)", awaits: true)
