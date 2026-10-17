@@ -180,7 +180,7 @@ export function agentRunLauncher(command: string): { agent: SessionAgentId; laun
         return undefined;
     }
 
-    return { agent, launcher: ["tools", ...words.slice(1)].map(bareShellWord).join(" ") };
+    return { agent, launcher: words.map(bareShellWord).join(" ") };
 }
 
 export type AccountChoice = Pick<AccountEntry, "id" | "name" | "provider" | "enabled">;

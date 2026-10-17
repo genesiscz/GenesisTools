@@ -80,6 +80,41 @@ describe("attachTmuxToCmux", () => {
         focusSpy.mockRestore();
     });
 
+    test.each(["terminal", "browser"])("terminal validation requests the UUID of a %s surface", async (type) => {
+        const listed = spyOn(cli, "runCmuxJSON").mockImplementation(
+            async <T>(args: string[]): Promise<T> =>
+                ({
+                    surfaces: [
+                        {
+                            ...(args[0] === "--id-format" && args[1] === "both" ? { id: SURFACE } : {}),
+                            ref: "surface:8",
+                            type,
+                        },
+                    ],
+                }) as T
+        );
+        try {
+            if (type === "terminal") {
+                await expect(workspace.assertTerminalSurface(WORKSPACE, PANE, SURFACE)).resolves.toBeUndefined();
+            } else {
+                await expect(workspace.assertTerminalSurface(WORKSPACE, PANE, SURFACE)).rejects.toThrow(
+                    "not a terminal"
+                );
+            }
+            expect(listed).toHaveBeenCalledWith([
+                "--id-format",
+                "both",
+                "list-pane-surfaces",
+                "--workspace",
+                WORKSPACE,
+                "--pane",
+                PANE,
+            ]);
+        } finally {
+            listed.mockRestore();
+        }
+    });
+
     test("throws when tmux session missing", async () => {
         setTmuxBinForTests("/mock/tmux");
         setTmuxSpawnSyncForTests(() => ({ exitCode: 0, stdout: "" }));
@@ -107,16 +142,30 @@ describe("attachTmuxToCmux", () => {
             return { exitCode: 0, stdout: "" };
         });
 
-        // In call order: list-panes, list-pane-surfaces (the terminal check), identify (focus guard).
-        const listed = spyOn(cli, "runCmuxJSON")
-            .mockResolvedValueOnce({
-                panes: [
-                    { id: OTHER_PANE, ref: "pane:5", surface_ids: [OTHER_SURFACE], surface_refs: ["surface:3"] },
-                    { id: PANE, ref: "pane:2", surface_ids: [SURFACE], surface_refs: ["surface:8"] },
-                ],
-            })
-            .mockResolvedValueOnce({ surfaces: [{ id: SURFACE, ref: "surface:8", type: "terminal" }] })
-            .mockResolvedValueOnce({ focused: { workspace_id: WORKSPACE } });
+        // Like cmux, expose UUID fields only when the caller explicitly requests both id formats.
+        const listed = spyOn(cli, "runCmuxJSON").mockImplementation(async <T>(args: string[]): Promise<T> => {
+            const both = args[0] === "--id-format" && args[1] === "both";
+            if (args.includes("list-panes")) {
+                return {
+                    panes: [
+                        {
+                            ...(both ? { id: OTHER_PANE, surface_ids: [OTHER_SURFACE] } : {}),
+                            ref: "pane:5",
+                            surface_refs: ["surface:3"],
+                        },
+                        {
+                            ...(both ? { id: PANE, surface_ids: [SURFACE] } : {}),
+                            ref: "pane:2",
+                            surface_refs: ["surface:8"],
+                        },
+                    ],
+                } as T;
+            }
+            if (args.includes("list-pane-surfaces")) {
+                return { surfaces: [{ ...(both ? { id: SURFACE } : {}), ref: "surface:8", type: "terminal" }] } as T;
+            }
+            return { focused: { workspace_id: WORKSPACE } } as T;
+        });
         const sendSpy = spyOn(workspace, "sendAttachCommand").mockResolvedValue(undefined);
         spyOn(workspace, "renameSurfaceTab").mockResolvedValue(undefined);
         const focusSpy = spyOn(controls, "focusCmuxPane").mockResolvedValue(undefined);
@@ -128,7 +177,16 @@ describe("attachTmuxToCmux", () => {
             });
 
             expect(result.paneId).toBe(PANE);
-            expect(listed.mock.calls[1]?.[0]).toEqual(["list-pane-surfaces", "--workspace", WORKSPACE, "--pane", PANE]);
+            expect(listed.mock.calls[0]?.[0]).toEqual(["--id-format", "both", "list-panes", "--workspace", WORKSPACE]);
+            expect(listed.mock.calls[1]?.[0]).toEqual([
+                "--id-format",
+                "both",
+                "list-pane-surfaces",
+                "--workspace",
+                WORKSPACE,
+                "--pane",
+                PANE,
+            ]);
             expect(sendSpy).toHaveBeenCalledTimes(1);
             expect(focusSpy).toHaveBeenCalledWith({ workspaceId: WORKSPACE, paneId: PANE });
         } finally {

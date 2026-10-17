@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+import { shellWords } from "@genesiscz/utils/session-changes/words";
 
 interface CommandToken {
     value: string;
@@ -33,6 +34,11 @@ export function tokenizeCommand(command: string): CommandToken[] {
 
         while (index < command.length) {
             const char = command[index];
+
+            if (char === "\\" && quote !== "'") {
+                index += command[index + 1] === undefined ? 1 : 2;
+                continue;
+            }
 
             if (quote) {
                 if (char === quote) {
@@ -171,14 +177,22 @@ export function launcherRes(): Launchers {
 export const GROK_LAUNCHER = /^grok(?![\w-])/;
 export const CODEX_LAUNCHER = /^codex(?![\w-])/;
 /** `tools <agent> run|start`: the GenesisTools wrapper, which takes an account and passes native args after `--`. */
-const TOOLS_RUN_LAUNCHER = /^tools (cc|claude|codex|grok) (?:run|start)(?![\w-])/;
+const TOOLS_RUN_TAIL = /^\s+(cc|claude|codex|grok)\s+(?:run|start)(?![\w-])/;
 
 /** The wrapper's agent and where its launcher words end; a cc-run alias (`cr`) is a Claude wrapper too. */
 export function toolsRunLauncher(command: string): { kind: AccountProviderAlias; end: number } | undefined {
-    const tools = TOOLS_RUN_LAUNCHER.exec(command);
+    const executable = tokenizeCommand(command)[0];
+    const word = executable ? shellWords(executable.value)[0] : undefined;
+    const tools =
+        word && !word.dynamic && word.value.split(/[/\\]/).at(-1) === "tools" && executable
+            ? TOOLS_RUN_TAIL.exec(command.slice(executable.end))
+            : null;
 
-    if (tools) {
-        return { kind: tools[1] === "cc" ? "claude" : (tools[1] as AccountProviderAlias), end: tools[0].length };
+    if (tools && executable) {
+        return {
+            kind: tools[1] === "cc" ? "claude" : (tools[1] as AccountProviderAlias),
+            end: executable.end + tools[0].length,
+        };
     }
 
     const alias = launcherRes().ccRun.exec(command);
@@ -218,7 +232,7 @@ export function isAgentLauncher(command: string): boolean {
 
     return (
         isSimpleAgentCommand(command) &&
-        (TOOLS_RUN_LAUNCHER.test(trimmed) ||
+        (toolsRunLauncher(trimmed) !== undefined ||
             launcherRes().claude.test(trimmed) ||
             GROK_LAUNCHER.test(trimmed) ||
             CODEX_LAUNCHER.test(trimmed))

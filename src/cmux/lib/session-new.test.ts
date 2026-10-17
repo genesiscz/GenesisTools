@@ -9,7 +9,7 @@ import * as cmuxCli from "@genesiscz/utils/cmux/lib/cli";
 import { formatDateTime } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
-import { shellQuote } from "@genesiscz/utils/shell/quote";
+import { shellQuote, shellWord } from "@genesiscz/utils/shell/quote";
 import { Command } from "commander";
 import { formatSessionList, registerAgentsCommand, runSessionNew } from "../commands/agents";
 import { accountChoiceMessage, budgetsFromCache, budgetsFromSnapshots } from "./account-budgets";
@@ -135,19 +135,19 @@ test("agentRunLauncher reads back the launcher of every line agentRunCommand wri
 
     expect(agentRunLauncher(withPidNote(claude, "/state/sessions/triage.pid"))).toEqual({
         agent: "claude",
-        launcher: "tools claude run work -m sonnet --cross-messages",
+        launcher: `${shellWord(toolsEntrypoint())} claude run work -m sonnet --cross-messages`,
     });
     expect(agentRunLauncher(agentRunCommand({ agent: "claude", account: "work", promptFile: "/tmp/p.md" }))).toEqual({
         agent: "claude",
-        launcher: "tools claude run work",
+        launcher: `${shellWord(toolsEntrypoint())} claude run work`,
     });
     expect(agentRunLauncher(agentRunCommand({ agent: "grok", account: "side", prompt: "go" }))).toEqual({
         agent: "grok",
-        launcher: "tools grok run side",
+        launcher: `${shellWord(toolsEntrypoint())} grok run side`,
     });
     expect(agentRunLauncher(agentRunCommand({ agent: "codex", account: "side" }))).toEqual({
         agent: "codex",
-        launcher: "tools codex run side",
+        launcher: `${shellWord(toolsEntrypoint())} codex run side`,
     });
 });
 

@@ -16,6 +16,7 @@ import {
     tmuxMissHint,
 } from "@app/claude/lib/cmux/resolve";
 import type { CmuxLivePane, CmuxLiveSnapshot, CmuxLiveSurface } from "@genesiscz/utils/cmux/lib/live-snapshot";
+import { identityOf } from "@genesiscz/utils/cmux/lib/place";
 import {
     findAllTmuxHosts,
     findTmuxHosts,
@@ -958,6 +959,53 @@ describe("tmuxAttachCommand", () => {
             "tmux -S '/tmp/my dir/sock' attach -t 'a;rm x'"
         );
     });
+});
+
+test("findSessionTargets excludes the caller by UUID on a stale-record retry, with includeSelf as an override", async () => {
+    const workspaceId = "11111111-1111-4111-8111-111111111111";
+    const callerPane = "22222222-2222-4222-8222-222222222222";
+    const callerSurface = "33333333-3333-4333-8333-333333333333";
+    const otherPane = "44444444-4444-4444-8444-444444444444";
+    const otherSurface = "55555555-5555-4555-8555-555555555555";
+    const view = snapshot(
+        [
+            pane({
+                id: callerPane,
+                ref: "pane:1",
+                workspaceId,
+                preview: SESSION_A,
+                surfaces: [surface({ id: callerSurface, ref: "surface:1", selected: true, preview: SESSION_A })],
+            }),
+            pane({
+                id: otherPane,
+                ref: "pane:2",
+                workspaceId,
+                surfaces: [
+                    surface({ id: otherSurface, ref: "surface:2", selected: true, preview: resumeScreen(SESSION_A) }),
+                ],
+            }),
+        ],
+        [{ id: workspaceId, name: "shop" }]
+    );
+    const deps: ResolveDeps = {
+        identify: async () =>
+            identityOf({
+                caller: {
+                    pane_id: callerPane,
+                    pane_ref: "pane:1",
+                    surface_id: callerSurface,
+                    surface_ref: "surface:1",
+                },
+            }),
+        fetchSnapshot: async () => view,
+        lookupRefs: () => null,
+        lookupSession: async () => ({ aliases: [], sessionId: SESSION_A }),
+        tmuxHosts: async () => [],
+    };
+    const result = await findSessionTargets(SESSION_A, { deps, skipRecorded: true });
+    expect(result.targets.map((target) => target.surfaceId)).toEqual([otherSurface]);
+    const includingSelf = await findSessionTargets(SESSION_A, { deps, skipRecorded: true, includeSelf: true });
+    expect(includingSelf.targets.map((target) => target.paneId).sort()).toEqual([callerPane, otherPane].sort());
 });
 
 describe("findSessionTargets through tmux", () => {

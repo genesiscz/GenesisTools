@@ -290,6 +290,8 @@ export async function renameSurfaceTab(workspaceId: string, surfaceId: string, t
 /** Reject a missing or non-terminal surface before sending commands to the requested pane. */
 export async function assertTerminalSurface(workspaceId: string, paneId: string, surfaceId: string): Promise<void> {
     const surfaces = await runCmuxJSON<{ surfaces?: Array<{ id?: string; ref?: string; type?: string }> }>([
+        "--id-format",
+        "both",
         "list-pane-surfaces",
         "--workspace",
         workspaceId,

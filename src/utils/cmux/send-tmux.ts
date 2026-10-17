@@ -27,6 +27,8 @@ async function resolveSurfaceForExisting(
     surfaceId: string
 ): Promise<{ paneId: string; surfaceId: string }> {
     const panes = await runCmuxJSON<{ panes?: Array<{ id?: string; surface_ids?: string[] }> }>([
+        "--id-format",
+        "both",
         "list-panes",
         "--workspace",
         workspaceId,

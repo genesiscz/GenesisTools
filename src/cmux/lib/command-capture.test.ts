@@ -10,11 +10,14 @@ import {
     resumeTargetFromCommand,
     stripModelFlags,
 } from "@app/cmux/lib/render-resume";
+import { withPidNote } from "@app/cmux/lib/session-agents";
 import { loadSurfaceSessions, pickSurfaceSession, staleSessionNote } from "@app/cmux/lib/surface-sessions";
 import { agentOfCommand, commandRunsAgent } from "@app/cmux/lib/tab-process";
 import { cleanLaunchCommand, collectTtyCapture } from "@app/cmux/lib/tty-capture";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as processes from "@genesiscz/utils/process/processes";
+import { shellWords } from "@genesiscz/utils/session-changes/words";
+import { shellCommandLine, shellWord } from "@genesiscz/utils/shell/quote";
 
 beforeAll(() => {
     setCcRunAliases(["cr"]);
@@ -623,8 +626,31 @@ describe("loadSurfaceSessions", () => {
     });
 });
 
-// The user starts agents through aliases, functions and wrappers this code has never seen. The tab's
-// surface journal is the evidence of which session ran there, not the words typed.
+// An agents-new line must keep its checkout while dropping the initial prompt before resume pinning.
+describe("journal replay preserves the tools checkout", () => {
+    for (const entrypoint of ["/tmp/checkout/tools", "/tmp/work tree/tools", "/tmp/it's checkout/tools"]) {
+        test.each(["claude", "grok", "codex"] as const)(`resumes %s using ${entrypoint}`, (agent) => {
+            const sessionId = "aaaaaaaa-1111-4111-8111-111111111111";
+            const line = shellCommandLine([entrypoint, agent, "run", "work", "--", "do the initial task"]);
+            const recovered = journalReplayCommand({ command: withPidNote(line, "/tmp/tab.pid"), atMs: 1_000 });
+            expect(recovered.command).toBe(`${shellWord(entrypoint)} ${agent} run work`);
+            expect(isAgentLauncher(recovered.command)).toBe(true);
+            expect(agentKindFromLauncher(recovered.command)).toBe(agent);
+            const resumed = deriveReplayCommand({ original: recovered.command, sessionId, account: "work" });
+            expect(shellWords(resumed.command).map((word) => word.value)).toEqual([
+                entrypoint,
+                agent,
+                "run",
+                "work",
+                "--",
+                ...(agent === "codex" ? ["resume"] : [agent === "grok" ? "-r" : "--resume"]),
+                sessionId,
+            ]);
+            expect(resumed.command).not.toContain("do the initial task");
+        });
+    }
+});
+
 describe("journalReplayCommand", () => {
     const CLAUDE_ID = "6bdfb457-cee9-4202-8105-21be8a801757";
     const session = { sessionId: CLAUDE_ID, provider: "claude" as const, account: "work", at: 2_000 };
