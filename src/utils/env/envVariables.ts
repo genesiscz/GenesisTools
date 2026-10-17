@@ -157,6 +157,13 @@ export const env = {
 
     brave: createApiKeyAccessor(["BRAVE_API_KEY"]),
 
+    /** Registrar credentials for `tools domains`. Each provider is optional; RDAP and DNS need none. */
+    domains: {
+        getVercelToken: () => getTrimmed("VERCEL_TOKEN"),
+        getPorkbunApiKey: () => getTrimmed("PORKBUN_API_KEY"),
+        getPorkbunSecretKey: () => getFirstValue(["PORKBUN_SECRET_API_KEY", "PORKBUN_SECRET_KEY"]),
+    },
+
     google: {
         // GOOGLE_GENERATIVE_AI_API_KEY is what the bare @ai-sdk/google singleton
         // read on its own. It was therefore invisible to this facade and to every
