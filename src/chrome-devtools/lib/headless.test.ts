@@ -59,4 +59,13 @@ describe.skipIf(!HAS_CHROME)("launchHeadlessChrome", () => {
             await chrome.close();
         }
     }, 30_000);
+
+    test("closeBrowserOnPort quits a browser this process does not own", async () => {
+        const chrome = await launchHeadlessChrome();
+        try {
+            expect(await closeBrowserOnPort({ port: chrome.port })).toMatchObject({ status: "closed" });
+        } finally {
+            await chrome.close();
+        }
+    }, 30_000);
 });

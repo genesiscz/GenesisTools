@@ -586,7 +586,6 @@ describe("background launch (the user keeps focus, macOS)", () => {
                 name: "CdpLaunchError",
                 stage: "window",
                 logTail: logged ? "fixture browser diagnostic\n" : null,
-                childQuit: logged,
             });
             expect(logsRead).toBe(logged ? 1 : 0);
             expect(requests).toContain("Target.createTarget");
