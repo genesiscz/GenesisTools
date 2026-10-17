@@ -273,6 +273,29 @@ final class HubLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testANewRequestClearsThePreviousNoticeForTheSamePR() throws {
+        let model = PRsModel()
+        // A bare ref with no rows or known project starts no CLI fetch in this logic test.
+        let ref = try XCTUnwrap(HubPRRef("7"))
+        model.notice = PRNotice(ref: ref, text: "previous commit missing; whole PR shows")
+        model.request(ref, commit: "abcdef0")
+        XCTAssertNil(model.notice)
+        XCTAssertEqual(model.pendingCommit?.sha, "abcdef0")
+
+        let review = ReviewModel(repo: URL(fileURLWithPath: "/fixture/app"), options: DiffViewOptions(), renderer: NullRenderer())
+        let commit = HubPRDetail.Commit(sha: "abcdef0123", title: "linked", author: nil, authorLogin: nil, date: nil, body: nil)
+        review.scope = .commit(sha: commit.sha, title: commit.title)
+        model.showLinkedCommit(commit, prID: "fixture-pr", review: review)
+        XCTAssertNil(model.notice, "a successful same-PR link must not retain the old missing-commit warning")
+
+        model.request(ref, commit: "invalid")
+        XCTAssertEqual(model.notice?.text, HubCommitSha.invalid("invalid"), "new validation errors still show")
+        XCTAssertNil(model.pendingCommit)
+        model.request(ref)
+        XCTAssertNil(model.notice, "a whole-PR request clears the previous validation error too")
+    }
+
+    @MainActor
     func testAMissingPRCommitReplacesThePreviousCommitScopeWithTheWholePR() throws {
         let json = """
         {"repo":"app","repoRoot":"/fixture/app","origin":{"kind":"github","host":"github.com","web":"https://github.com/acme/app"},

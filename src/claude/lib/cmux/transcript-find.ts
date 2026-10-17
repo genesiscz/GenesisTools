@@ -100,6 +100,10 @@ export async function findInTranscript(
     await io.text("/");
 
     if (!(await waitFor(io, searchBarOpen, timeoutMs))) {
+        if (opened) {
+            await io.key("ctrl+o");
+        }
+
         return { found: false, reason: "no-search-bar" };
     }
 

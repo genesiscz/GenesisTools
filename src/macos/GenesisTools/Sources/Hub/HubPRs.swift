@@ -485,6 +485,7 @@ final class PRsModel: ObservableObject {
     /// of a PR without a worktree, and the diff load, so one click is enough. `commit` (a sha or a prefix
     /// of 7 or more hex characters) selects that commit of the PR the same way (`pickPendingCommit`).
     func request(_ ref: HubPRRef, reveal: PRReveal? = nil, commit: String? = nil) {
+        notice = nil
         pendingReveal = reveal
         pendingCommit = nil
         if let commit {

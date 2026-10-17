@@ -415,6 +415,24 @@ describe("hub agents workers", () => {
 });
 
 describe("hub open deep link", () => {
+    test("the documented commit-link outcomes distinguish a PR miss from a repo-only link", async () => {
+        const readme = await Bun.file(new URL("../../README.md", import.meta.url)).text();
+        const outcomes = readme
+            .split("\n")
+            .filter((line) => line.startsWith("| `pr` + `commit`") || line.startsWith("| `repo` + `commit`"))
+            .map((line) =>
+                line
+                    .split("|")
+                    .slice(1, -1)
+                    .map((cell) => cell.trim())
+            );
+        expect(outcomes).toEqual([
+            ["`pr` + `commit`, commit belongs to the PR", "Select that commit in the PR diff."],
+            ["`pr` + `commit`, commit absent from the PR", "Show the whole PR and a missing-commit notice."],
+            ["`repo` + `commit`", "Open the commit in the project's Worktrees diff."],
+        ]);
+    });
+
     test("the app arguments and the URL carry the parent session and the agent", () => {
         expect(hubArgs({ session: SESSION, agent: "aworker-one-0000000000000001" })).toEqual([
             "--hub",

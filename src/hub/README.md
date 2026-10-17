@@ -15,7 +15,17 @@ The GenesisTools.app agent hub. `tools hub` opens the hub window (it builds the 
     tools hub open --worktree /path/to/checkout      # the Worktrees mode on that checkout
     tools hub open --no-activate                     # open behind the window in front, without focus
 
-`--commit` takes 7 to 40 hex characters; a prefix is enough, because the hub matches it against the PR's full shas. With `--pr`, the hub opens the PR, selects that commit in the commit list and shows it in the diff; a commit the PR does not hold is reported, and the whole PR shows. Without a PR, `--repo` names the commit's project: an absolute checkout path, or its forge path (`owner/repo`, `group/sub/app`), which the hub maps to the checkout under the repo roots (`tools hub pr projects`).
+`--commit` takes 7 to 40 hex characters; a prefix is enough, because the hub matches it against the PR's full shas. The PR and repository forms have these separate outcomes:
+
+| Link inputs | Outcome |
+| --- | --- |
+| `pr` + `commit`, commit belongs to the PR | Select that commit in the PR diff. |
+| `pr` + `commit`, commit absent from the PR | Show the whole PR and a missing-commit notice. |
+| `repo` + `commit` | Open the commit in the project's Worktrees diff. |
+
+A missing PR commit does not trigger a project-diff lookup. To open that commit in its project instead, use `--repo` with `--commit` and omit `--pr`.
+
+`--repo` names an absolute checkout path, an explicit relative checkout path (`.`, `./app`, `../app`), or a forge path (`owner/repo`, `group/sub/app`). Relative checkout paths are resolved by the CLI; forge paths are mapped to checkouts under the repo roots (`tools hub pr projects`).
 
 Other `open` flags: `--agent`, `--filter`, `--palette [text]`, `--find [text]`, `--session-search [text]`, `--digest`, `--rules`, `--prompts`, `--handoff`, `--no-build` (`tools hub open --help`).
 

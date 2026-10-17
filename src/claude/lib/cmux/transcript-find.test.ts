@@ -319,6 +319,28 @@ describe("transcript find", () => {
         expect(SafeJSON.parse(args[second + 2])).toEqual({ surface_id: "surface:42", text: "line  text" });
     });
 
+    test("search-bar failure restores only a transcript this call opened", async () => {
+        for (const alreadyOpen of [false, true]) {
+            const claude = fakeClaude({ hit: "ctrl+o to toggle · n/N to navigate   1/1" });
+
+            if (alreadyOpen) {
+                await claude.io.key("ctrl+o");
+                claude.typed.length = 0;
+            }
+
+            const read = claude.io.screen;
+            claude.io.screen = async () => {
+                const screen = await read();
+                return screen.endsWith("/") ? BANNER : screen;
+            };
+            expect(await findInTranscript(claude.io, { query: "needle", oldest: false, timeoutMs: 0 })).toEqual({
+                found: false,
+                reason: "no-search-bar",
+            });
+            expect(claude.typed).toEqual(alreadyOpen ? ["/"] : ["key:ctrl+o", "/", "key:ctrl+o"]);
+        }
+    });
+
     test("a miss closes the transcript view it opened", async () => {
         const claude = fakeClaude({ hit: "ctrl+o to toggle · n/N to navigate      no matches" });
         const outcome = await findInTranscript(claude.io, { query: "nothing", oldest: true, timeoutMs: 0 });
