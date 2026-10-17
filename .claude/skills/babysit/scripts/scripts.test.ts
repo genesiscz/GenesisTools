@@ -1298,3 +1298,123 @@ describe("round 3 approval boundaries", () => {
         }
     });
 });
+
+describe("round 5 carried findings", () => {
+    const workerFor = (backend: "grok" | "codex") => ({
+        backend,
+        name: "fixture",
+        label: backend + ":fixture",
+        lastAt: 0,
+        running: true,
+        stallSaid: false,
+        hiddenTools: 0,
+        seen: new Set<string>(),
+        seenTurn: 1,
+    });
+    const feed = (lines: string[]) => [
+        process.execPath,
+        "-e",
+        "process.stdout.write(" + SafeJSON.stringify(lines.join("\n") + "\n") + ")",
+    ];
+
+    test("Codex displays repeated commands within and across turns", async () => {
+        const output: string[] = [];
+        const log = spyOn(console, "log").mockImplementation((value) => output.push(String(value)));
+        const worker = workerFor("codex");
+        const tool = "\u{1f527} exec_command echo fixture";
+        try {
+            expect(
+                await pump(
+                    worker,
+                    feed(["\u25B6 turn 1", tool, tool, "\u2714 turn 1", "\u25B6 turn 2", tool, "\u2714 turn 2"])
+                )
+            ).toBe(0);
+            expect(output.filter((line) => line.includes("tool exec_command echo fixture"))).toHaveLength(3);
+            // A restarted session-long --tail 0 feed contains new events, even if their text repeats.
+            expect(await pump(worker, feed(["\u25B6 turn 3", tool, "\u2714 turn 3"]))).toBe(0);
+            expect(output.filter((line) => line.includes("tool exec_command echo fixture"))).toHaveLength(4);
+        } finally {
+            log.mockRestore();
+        }
+    });
+
+    test("Grok deduplicates replayed positions, preserving equal calls and new turns", async () => {
+        const output: string[] = [];
+        const log = spyOn(console, "log").mockImplementation((value) => output.push(String(value)));
+        const worker = workerFor("grok");
+        const tool = "\u{1f527} exec_command echo fixture";
+        const partial = ["\u25B6 turn 1", tool, "\u{1f527} read_file fixture", tool];
+        const complete = [...partial, tool, "\u2714 turn 1"];
+        try {
+            expect(await pump(worker, feed(partial))).toBe(0);
+            expect(output.filter((line) => line.includes("tool exec_command echo fixture"))).toHaveLength(2);
+            expect(worker.hiddenTools).toBe(1);
+            expect(await pump(worker, feed(complete))).toBe(0);
+            expect(output.filter((line) => line.includes("tool exec_command echo fixture"))).toHaveLength(3);
+            expect(worker.hiddenTools).toBe(1);
+            const afterComplete = output.length;
+            expect(await pump(worker, feed(complete))).toBe(0);
+            expect(output).toHaveLength(afterComplete);
+            expect(worker.hiddenTools).toBe(1);
+            worker.seenTurn = 2;
+            expect(await pump(worker, feed(["\u25B6 turn 2", tool, tool, "\u2714 turn 2"]))).toBe(0);
+            expect(output.filter((line) => line.includes("tool exec_command echo fixture"))).toHaveLength(5);
+        } finally {
+            log.mockRestore();
+        }
+    });
+
+    test("judge pack rejects invalid refs and worktrees without overwriting an existing pack", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-judge-errors-"));
+        const out = join(dir, "pack.md");
+        const script = join(import.meta.dir, "judge-pack.ts");
+        fs.writeFileSync(out, "existing approved pack\n");
+        for (const args of [
+            ["--range", "missing-fixture-ref..HEAD"],
+            ["--wt", join(dir, "missing"), "--range", "HEAD..HEAD"],
+        ]) {
+            const result = Bun.spawnSync([process.execPath, script, ...args, "--out", out], {
+                stdout: "pipe",
+                stderr: "pipe",
+                env: process.env,
+            });
+            expect(result.exitCode).not.toBe(0);
+            expect(result.stderr.toString()).toContain("git log");
+            expect(result.stderr.toString()).toContain("failed (exit");
+            expect(result.stdout.toString()).toBe("");
+            expect(fs.readFileSync(out, "utf8")).toBe("existing approved pack\n");
+        }
+    });
+
+    test("judge pack stops at any failed Git stage, including a per-file diff", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-judge-stages-"));
+        const script = join(import.meta.dir, "judge-pack.ts");
+        for (const stage of ["log", "--stat", "--name-only", "per-file"]) {
+            const preload = join(dir, stage + ".ts");
+            const out = join(dir, stage + ".md");
+            const mock = [
+                "const spawn = Bun.spawnSync;",
+                "Bun.spawnSync = (args, options) => {",
+                "  const stage = " + SafeJSON.stringify(stage) + ";",
+                "  if (args[0] === 'git') {",
+                "    const fail = stage === 'per-file' ? args[3] === 'diff' && args.includes('--') : args.includes(stage);",
+                "    if (fail) return spawn([process.execPath, '-e', 'console.error(\"fixture Git read failed\");process.exit(42)'], options);",
+                "    if (stage === 'per-file' && args.includes('--name-only')) return spawn([process.execPath, '-e', 'console.log(\"fixture.ts\")'], options);",
+                "  }",
+                "  return spawn(args, options);",
+                "};",
+            ].join("\n");
+            fs.writeFileSync(preload, mock);
+            fs.writeFileSync(out, "existing approved pack\n");
+            const result = Bun.spawnSync(
+                [process.execPath, "--preload", preload, script, "--range", "HEAD..HEAD", "--out", out],
+                { stdout: "pipe", stderr: "pipe", env: process.env }
+            );
+            expect(result.exitCode).not.toBe(0);
+            expect(result.stderr.toString()).toContain("failed (exit 42)");
+            expect(result.stderr.toString()).toContain("fixture Git read failed");
+            expect(result.stdout.toString()).toBe("");
+            expect(fs.readFileSync(out, "utf8")).toBe("existing approved pack\n");
+        }
+    });
+});

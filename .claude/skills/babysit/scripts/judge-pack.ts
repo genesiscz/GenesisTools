@@ -33,8 +33,15 @@ out.push(
     report ? readFileSync(report, "utf8") : "⚠ Worker report missing: rerun with --report <file> before judging.",
     ""
 );
-const git = (args: string[]) =>
-    Bun.spawnSync(["git", "-C", wt, ...args], { stdout: "pipe", stderr: "pipe" }).stdout.toString();
+const git = (args: string[]): string => {
+    const result = Bun.spawnSync(["git", "-C", wt, ...args], { stdout: "pipe", stderr: "pipe" });
+
+    if (result.exitCode !== 0) {
+        throw new Error(`git ${args.join(" ")} failed (exit ${result.exitCode}): ${result.stderr.toString().trim()}`);
+    }
+
+    return result.stdout.toString();
+};
 
 if (repliesPath) {
     const r = SafeJSON.parse(readFileSync(repliesPath, "utf8"), { strict: true }) as {
