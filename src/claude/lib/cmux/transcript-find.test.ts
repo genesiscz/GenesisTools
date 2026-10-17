@@ -341,6 +341,31 @@ describe("transcript find", () => {
         }
     });
 
+    test("a no-match result with the query still visible completes before the deadline", async () => {
+        const claude = fakeClaude({ hit: "/needle                    no matches" });
+        let sleeps = 0;
+        claude.io.sleep = async () => {
+            sleeps++;
+            throw new Error("a definitive no-match result must not wait for the query line to close");
+        };
+
+        expect(await findInTranscript(claude.io, { query: "needle", oldest: false, timeoutMs: 1000 })).toEqual({
+            found: false,
+            reason: "no-match",
+        });
+        expect(sleeps).toBe(0);
+        expect(claude.typed).toEqual(["key:ctrl+o", "/", "needle", "key:enter", "key:ctrl+o"]);
+    });
+
+    test("a visible query without a result still reaches the deadline", async () => {
+        const claude = fakeClaude({ hit: "/needle" });
+
+        expect(await findInTranscript(claude.io, { query: "needle", oldest: false, timeoutMs: 0 })).toEqual({
+            found: false,
+            reason: "no-result",
+        });
+    });
+
     test("a miss closes the transcript view it opened", async () => {
         const claude = fakeClaude({ hit: "ctrl+o to toggle · n/N to navigate      no matches" });
         const outcome = await findInTranscript(claude.io, { query: "nothing", oldest: true, timeoutMs: 0 });
