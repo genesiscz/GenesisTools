@@ -7,7 +7,7 @@ import { genesisToolsDir } from "@genesiscz/utils/storage/root";
  * resolve session paths via this constant — keep them in sync by importing
  * from here instead of re-deriving the path.
  */
-export const SESSIONS_DIR = genesisToolsDir("debugging-master", "sessions");
+export const SESSIONS_DIR = resolve(genesisToolsDir("debugging-master", "sessions"));
 
 /**
  * Resolve the JSONL file path for a session by name. Defense-in-depth:

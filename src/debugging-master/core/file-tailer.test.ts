@@ -1,9 +1,24 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { FileTailer } from "@app/debugging-master/core/file-tailer";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+
+it("relative storage overrides keep session paths absolute and contained", async () => {
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: "relative-session-fixture" }, async () => {
+        const modulePath = `${import.meta.dir}/paths.ts?relative-storage-regression`;
+        const { SESSIONS_DIR, sessionFilePath } = await import(modulePath);
+        expect(isAbsolute(SESSIONS_DIR)).toBe(true);
+        expect(SESSIONS_DIR).toBe(
+            resolve("relative-session-fixture", ".genesis-tools", "debugging-master", "sessions")
+        );
+        expect(sessionFilePath("valid-session")).toBe(join(SESSIONS_DIR, "valid-session.jsonl"));
+        expect(() => sessionFilePath("../escape")).toThrow("Invalid session name");
+        expect(() => sessionFilePath(resolve("outside-session"))).toThrow("Invalid session name");
+    });
+});
 
 describe("FileTailer truncation", () => {
     const dirs: string[] = [];

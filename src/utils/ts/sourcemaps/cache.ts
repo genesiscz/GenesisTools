@@ -74,8 +74,12 @@ export function sourcemapsRoot(): string {
 /** The projects that have a cache folder under `root`, sorted. */
 export async function cacheProjects(root: string = sourcemapsRoot()): Promise<string[]> {
     const entries = await readdir(root, { withFileTypes: true }).catch((error: unknown) => {
-        log.debug({ err: error, root }, "no sourcemaps cache yet");
-        return [];
+        if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+            log.debug({ err: error, root }, "no sourcemaps cache yet");
+            return [];
+        }
+
+        throw error;
     });
     return entries
         .filter((entry) => entry.isDirectory())

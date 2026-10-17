@@ -21,7 +21,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { alignOffset, normalizeIdentifiers } from "./align.ts";
 import { buildAtCommit, managedWorktree, releaseBuildWorktrees, removeBuildWorktree } from "./build.ts";
-import { type PruneResult, SourcemapCache } from "./cache.ts";
+import { cacheProjects, type PruneResult, SourcemapCache } from "./cache.ts";
 import { calibrate, sampleLiterals } from "./calibrate.ts";
 import { carryMap, type EqualRun, encodeMappings, equalRuns } from "./carry.ts";
 import { DirectoryMapSource, debugIdOf, mapsInArtifactBundle, SentryArtifactSource } from "./debug-id.ts";
@@ -243,6 +243,33 @@ function fixtureRepo(dir: string): (...args: string[]) => string {
 const prunedNames = (result: PruneResult): string[] => result.removed.map((item) => item.name);
 
 describe("SourcemapCache", () => {
+    test("cache discovery treats only a missing root as empty", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-cache-discovery-"));
+        try {
+            expect(await cacheProjects(join(root, "missing"))).toEqual([]);
+            const file = join(root, "file");
+            writeFileSync(file, "not a directory");
+            await expect(cacheProjects(file)).rejects.toMatchObject({ code: "ENOTDIR" });
+            mkdirSync(join(root, "zebra"));
+            mkdirSync(join(root, "alpha"));
+            expect(await cacheProjects(root)).toEqual(["alpha", "zebra"]);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+
+    test("cache discovery propagates permission and IO failures unchanged", async () => {
+        const readDirectory = spyOn(fsPromises, "readdir");
+        try {
+            for (const code of ["EACCES", "EIO"]) {
+                const error = Object.assign(new Error(`cannot inspect cache: ${code}`), { code });
+                readDirectory.mockRejectedValueOnce(error);
+                await expect(cacheProjects("unreadable-cache-fixture")).rejects.toBe(error);
+            }
+        } finally {
+            readDirectory.mockRestore();
+        }
+    });
     const roots: string[] = [];
     afterEach(() => {
         for (const root of roots.splice(0)) {
