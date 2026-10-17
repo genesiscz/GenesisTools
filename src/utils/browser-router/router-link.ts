@@ -44,8 +44,8 @@ export interface LinkTargets {
         open: HubLinkQuery;
     };
     "claude-find": {
-        /** Scroll a live Claude session's transcript to where DECISION `decision` was first asked. */
-        decision: { session: string; decision: number };
+        /** Scroll to DECISION `decision`; oldest by default, or the requested position. */
+        decision: { session: string; decision: number; at?: "oldest" | "newest" };
         /** Scroll it to `q`, the first (`oldest`) or the latest (`newest`, the default) match. */
         text: { session: string; q: string; at?: "oldest" | "newest" };
     };
@@ -147,7 +147,8 @@ const TARGETS: TargetTable = {
     },
     "claude-find": {
         decision: {
-            path: (data) => `claude/find/${encodeURIComponent(data.session)}/decision/${data.decision}`,
+            path: (data) =>
+                `claude/find/${encodeURIComponent(data.session)}/decision/${data.decision}${query([["at", data.at]], { keepSlash: false })}`,
         },
         text: {
             path: (data) =>

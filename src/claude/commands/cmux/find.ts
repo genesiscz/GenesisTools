@@ -75,7 +75,7 @@ async function printFindLink({
         ? routerLink({
               preset: "claude-find",
               action: "decision",
-              data: { session, decision: Number(decision) },
+              data: { session, decision: Number(decision), ...(at ? { at } : {}) },
               fallback: () => "",
           })
         : routerLink({

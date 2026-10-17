@@ -220,7 +220,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
                     pattern: claudeFindPatterns(host).decision,
                     action: {
                         type: "run",
-                        argv: ["tools", "claude", "cmux", "find", "$1", "--decision", "$2"],
+                        argv: ["tools", "claude", "cmux", "find", "--decision", "$2", "--at={at}", "--", "$1"],
                         approval: "allow",
                         notify: "Showing DECISION $2",
                     },

@@ -98,6 +98,77 @@ describe("transcript find", () => {
         }
     });
 
+    test("printed decision links preserve default and explicit positions through the real command", async () => {
+        const host = "links.example.test";
+        const gate = {
+            version: 2,
+            at: Date.now(),
+            configMtimeMs: 0,
+            installed: true,
+            defaultHandler: true,
+            httpsHandler: "fixture.router",
+            configured: true,
+            linkHost: host,
+            presets: { "claude-find": { available: true, enabled: true, routed: true, missing: [] } },
+        };
+        const source = `
+            import { mock } from "bun:test";
+            const gates = await import("@genesiscz/utils/browser-router/link-gate");
+            mock.module("@genesiscz/utils/browser-router/link-gate", () => ({
+                ...gates, linkGate: () => (${SafeJSON.stringify(gate)}),
+            }));
+            const { findCommand } = await import("@app/claude/commands/cmux/find");
+            const { out } = await import("@genesiscz/utils/logger");
+            for (const at of [undefined, "oldest", "newest"]) {
+                await findCommand("fixture", undefined, { decision: "7", at, link: true });
+            }
+            await out.flush();
+        `;
+        const proc = Bun.spawn([process.execPath, "-e", source], {
+            cwd: join(import.meta.dir, "../../../.."),
+            env: env.getProcessEnv(),
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+        const [stdout, stderr, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+        expect({ code, stderr }).toMatchObject({ code: 0 });
+        const links = [...stdout.matchAll(/\]\((https:[^)]+)\)/g)].map((match) => match[1]);
+        expect(links).toHaveLength(3);
+        const chosen = { ...defaultRouterConfig(), linkHost: host, presets: { "claude-find": {} } };
+        const config = { ...chosen, routes: applyPresets([], presets({ config: chosen, check: () => true })) };
+
+        for (const [index, at] of [undefined, "oldest", "newest"].entries()) {
+            expect(new URL(links[index]).searchParams.get("at")).toBe(at ?? null);
+            const plan = route(links[index], config);
+            expect(plan.kind).toBe("run");
+
+            if (plan.kind !== "run") {
+                throw new Error("decision link must run find");
+            }
+
+            let parsed: unknown;
+            const program = new Command().name("claude").exitOverride();
+            registerCmuxCommand(program);
+            const find = program.commands
+                .find((command) => command.name() === "cmux")
+                ?.commands.find((command) => command.name() === "find");
+
+            if (!find) {
+                throw new Error("the real command must register find");
+            }
+
+            find.action((session, text, options) => {
+                parsed = { session, text, decision: options.decision, at: options.at || undefined };
+            });
+            await program.parseAsync(plan.argv.slice(2), { from: "user" });
+            expect(parsed).toEqual({ session: "fixture", text: undefined, decision: "7", at });
+        }
+    });
+
     test("reads the match counter and the no-match marker from the bottom line", () => {
         expect(searchCount("x\n  /DECISION 2                    no matches  ")).toBe("none");
         expect(searchCount("x\n  ctrl+o to toggle · n/N to navigate     3/4  ")).toEqual({ current: 3, total: 4 });
