@@ -47,6 +47,12 @@ function parseCall<M extends ComputerMethod>(
     signal?.throwIfAborted();
     return { options: computerSchemas[method].parse(args) as ComputerArgs<M>, signal };
 }
+const windowBoundsSchema = z.object({
+    x: z.number().finite(),
+    y: z.number().finite(),
+    width: z.number().finite().positive(),
+    height: z.number().finite().positive(),
+});
 const snapshotSchema = observationSchema.and(
     z.object({
         window: z.object({ x: z.number(), y: z.number(), width: z.number().positive(), height: z.number().positive() }),
@@ -1161,6 +1167,7 @@ export class ComputerUse {
                 clipboardRestore: result.clipboardRestore,
                 recovery: result.recovery,
                 note: typeof result.note === "string" ? result.note : undefined,
+                windowBoundsAfter: windowBoundsSchema.safeParse(result.windowBoundsAfter).data,
             };
         });
     }

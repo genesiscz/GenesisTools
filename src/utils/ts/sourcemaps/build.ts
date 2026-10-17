@@ -396,7 +396,20 @@ export async function removeBuildWorktree(options: {
 
     try {
         // No waiting: a held lock means a build is running in it right now.
-        return await withFileLock(worktreeLockPath(options.cache, worktree), () => removeUnusedWorktree(worktree), 0);
+        return await withFileLock(
+            worktreeLockPath(options.cache, worktree),
+            async () => {
+                if (options.idleMs !== undefined) {
+                    const current = await stat(worktree);
+                    if (Date.now() - current.mtimeMs < options.idleMs) {
+                        return { worktree, outcome: "recent", bytes: 0 };
+                    }
+                }
+
+                return removeUnusedWorktree(worktree);
+            },
+            0
+        );
     } catch (error) {
         if (error instanceof LockTimeoutError) {
             return { worktree, outcome: "busy", bytes: 0, detail: "a build is running in it" };

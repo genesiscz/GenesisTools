@@ -11,6 +11,7 @@ import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 import { refreshInstallRecord } from "@genesiscz/utils/install-record";
 import { genesisAppLauncher } from "@genesiscz/utils/macos/genesis-app";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 import { diagnose } from "./scripts/test-deps";
 
 // --- Configuration ---
@@ -298,7 +299,7 @@ async function runWithReinstallGuard(args: string[], workspaceRoot: string, exec
     if (skipWorktreeInstall({ workspaceRoot, autoInstall: env.get("TOOLS_AUTOINSTALL") })) {
         process.stderr.write(
             "\n\x1b[33m[tools]\x1b[0m Likely node_modules mismatch in this worktree. Not installing automatically here;\n" +
-                `\x1b[33m[tools]\x1b[0m repair it with: cd ${workspaceRoot} && bun install   (or rerun with TOOLS_AUTOINSTALL=1)\n`
+                `\x1b[33m[tools]\x1b[0m repair it with: cd ${shellQuote(workspaceRoot)} && bun install   (or rerun with TOOLS_AUTOINSTALL=1)\n`
         );
         return exitCode;
     }

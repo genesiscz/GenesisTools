@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { skipWorktreeInstall } from "@genesiscz/utils/cli/worktree-install";
+import { shellQuote } from "@genesiscz/utils/shell/quote";
 
 /**
  * Guards the `tools` dispatcher at the repo root.
@@ -120,6 +122,23 @@ describe("native widget dispatcher", () => {
 });
 
 describe("linked worktree automatic installation", () => {
+    it("prints a shell-safe repair command for workspace paths with metacharacters", () => {
+        const workspaceRoot = mkdtempSync(join(tmpdir(), "gt repair '$literal; "));
+        try {
+            const source = readFileSync(join(ROOT, "tools"), "utf8");
+            const hint = source.split("\n").find((line) => line.includes("repair it with: cd "));
+            expect(hint).toBeDefined();
+            const template = hint!.slice(hint!.indexOf("`"), hint!.lastIndexOf("`") + 1);
+
+            const render = new Function("workspaceRoot", "shellQuote", `return ${template}`);
+            const command = render(workspaceRoot, shellQuote).match(/repair it with: (.*) && bun install/)[1];
+            const result = spawnSync("/bin/sh", ["-c", `${command} && pwd -P`], { encoding: "utf8", env: process.env });
+            expect(result.status).toBe(0);
+            expect(result.stdout.trim()).toBe(realpathSync(workspaceRoot));
+        } finally {
+            rmSync(workspaceRoot, { recursive: true, force: true });
+        }
+    });
     it("reads the auto-install opt-in through the shared environment layer", () => {
         const source = readFileSync(join(ROOT, "tools"), "utf8");
         expect(source).toMatch(/autoInstall:\s*env\.get\("TOOLS_AUTOINSTALL"\)/);

@@ -424,6 +424,41 @@ describe("SourcemapCache", () => {
         expect(existsSync(cache.entryDir("build-running-2"))).toBe(true);
     });
 
+    test("prune rechecks idle age after taking the worktree lock", async () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-idle-race-"));
+        roots.push(root);
+        const git = fixtureRepo(join(root, "repo"));
+        const cache = new SourcemapCache("app", join(root, "cache"));
+        const worktree = managedWorktree(cache);
+        git("worktree", "add", "-q", "--detach", worktree, "HEAD");
+        const old = new Date(Date.now() - 2 * 3_600_000);
+        utimesSync(worktree, old, old);
+        const stat = fsPromises.stat;
+        let refreshed = false;
+        const statAndRefresh = async (...args: Parameters<typeof stat>) => {
+            const result = await stat(...args);
+            if (String(args[0]) === worktree && !refreshed) {
+                refreshed = true;
+                const now = new Date();
+                utimesSync(worktree, now, now);
+            }
+            return result;
+        };
+        // Forwarding every argument and result preserves stat's numeric and bigint overloads.
+        const spy = spyOn(fsPromises, "stat").mockImplementation(statAndRefresh as typeof stat);
+        try {
+            expect(await removeBuildWorktree({ cache, worktree, idleMs: 3_600_000 })).toEqual({
+                worktree,
+                outcome: "recent",
+                bytes: 0,
+            });
+            expect(refreshed).toBe(true);
+            expect(existsSync(worktree)).toBe(true);
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
     test("prune keeps an idle build worktree that is locked, has tracked changes or has a process inside", async () => {
         const root = mkdtempSync(join(tmpdir(), "gt-sourcemaps-cache-"));
         roots.push(root);

@@ -392,7 +392,13 @@ async function pruneCaches(opts: {
     const failures: { project: string; error: string }[] = [];
     for (const project of projects) {
         try {
-            results.push({ project, ...(await new SourcemapCache(project).prune({ maxAgeDays })) });
+            const result = await new SourcemapCache(project).prune({ maxAgeDays });
+            results.push({ project, ...result });
+            for (const kept of result.kept) {
+                if (kept.outcome === "failed") {
+                    failures.push({ project, error: `${kept.worktree}: ${kept.detail ?? "worktree removal failed"}` });
+                }
+            }
         } catch (error) {
             logger.warn({ error, project }, "could not prune sourcemaps cache");
             failures.push({ project, error: error instanceof Error ? error.message : String(error) });

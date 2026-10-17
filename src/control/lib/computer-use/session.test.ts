@@ -920,6 +920,45 @@ test("a paste reports the clipboard restore on every path, and an unreported or 
     expect(replies).toHaveLength(0);
 });
 
+test("outside drag returns validated final bounds even when refresh fails", async () => {
+    for (const bounds of [
+        { x: -300, y: 100, width: 800, height: 600 },
+        { x: Number.POSITIVE_INFINITY, y: 0, width: 800, height: 600 },
+        { x: 0, y: 0, width: -1, height: 600 },
+        { x: "invalid", y: 0, width: 800, height: 600 },
+    ]) {
+        const f = fixture();
+        const original = f.native.run;
+        f.native.run = async (call) =>
+            call.args[0] === "act"
+                ? {
+                      ok: true,
+                      dispatchState: "dispatched",
+                      windowBoundsAfter: bounds,
+                      after: { ok: false },
+                      note: "refresh failed",
+                  }
+                : original(call);
+        const state = await f.computer.get_app_state({ app: "Fixture" });
+        const result = await f.computer.drag({
+            app: "Fixture",
+            revision: state.revision,
+            from_x: 100,
+            from_y: 100,
+            to_x: -100,
+            to_y: 100,
+            allow_outside: true,
+        });
+        expect(result.ok).toBe(true);
+        expect(result.state).toBeUndefined();
+        expect(result.note).toBe("refresh failed");
+        expect(result).toMatchObject({
+            windowBoundsAfter:
+                typeof bounds.x === "number" && Number.isFinite(bounds.x) && bounds.width > 0 ? bounds : undefined,
+        });
+    }
+});
+
 test("a dispatched press whose refresh ran out of budget comes back dispatched with the note, not as a timeout", async () => {
     const f = fixture();
     const original = f.native.run;
