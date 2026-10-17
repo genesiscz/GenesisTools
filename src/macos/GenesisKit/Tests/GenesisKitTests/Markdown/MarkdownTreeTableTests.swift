@@ -79,7 +79,9 @@ final class MarkdownTreeTableTests: XCTestCase {
             }
             XCTAssertEqual(rig.readings[rows[0].id], reduced, "the hosted row receives the effective environment preference")
         }
-        expect(false)
+        // Writable overrides cannot disable the inherited system preference.
+        let systemBaseline = GenMotion.systemReduceMotion
+        expect(systemBaseline)
         let table = try XCTUnwrap(box.scrollView?.documentView as? NSTableView)
         let coordinator = try XCTUnwrap(table.dataSource as? MarkdownTreeTable<Int>.Coordinator)
         var preferences: [Bool] = []
@@ -102,14 +104,14 @@ final class MarkdownTreeTableTests: XCTestCase {
         expect(true)
         changeRows(open, expected: [true])
         rig.app = false
-        expect(false)
-        changeRows(rows, expected: [true, false])
+        expect(systemBaseline)
+        changeRows(rows, expected: [true, systemBaseline])
         rig.widget = true
         expect(true)
-        changeRows(open, expected: [true, false, true])
+        changeRows(open, expected: [true, systemBaseline, true])
         rig.widget = false
-        expect(false)
-        changeRows(rows, expected: [true, false, true, false])
+        expect(systemBaseline)
+        changeRows(rows, expected: [true, systemBaseline, true, systemBaseline])
     }
 
     /// Cached path keys agree for identical UTF-8 paths and distinguish neighboring names.
