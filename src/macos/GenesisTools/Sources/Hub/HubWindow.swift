@@ -1175,7 +1175,7 @@ final class HubModel: ObservableObject {
     /// "Pick a worktree" with no word about what was asked for.
     @MainActor
     func addWorktreesIfMissing(_ path: String) {
-        guard !worktrees.isEmpty, !worktrees.contains(where: { $0.path == path }), FileManager.default.fileExists(atPath: path) else { return }
+        guard !worktrees.contains(where: { $0.path == path }), FileManager.default.fileExists(atPath: path) else { return }
         DispatchQueue.global(qos: .userInitiated).async {
             let found = WorktreeDiscovery.discover(sessions: [], extra: [path])
             DispatchQueue.main.async { [weak self] in

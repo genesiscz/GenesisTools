@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import GenesisTools
 
@@ -168,6 +169,41 @@ final class HubLogicTests: XCTestCase {
             return XCTFail("a commit the checkout lacks must be said")
         }
         XCTAssertTrue(message.contains("is not in"), message)
+    }
+
+    @MainActor
+    func testLinkedCheckoutJoinsAnEmptyWorktreeDiscoveryResult() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("hub-empty-worktrees-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let root = folder.resolvingSymlinksInPath().path
+        let commit = ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "core.hooksPath=/dev/null",
+                      "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "linked commit"]
+        for args in [["init", "-q"], commit] {
+            XCTAssertNotNil(WorktreeDiscovery.git(root, args))
+        }
+        let sha = try XCTUnwrap(WorktreeDiscovery.git(root, ["rev-parse", "HEAD"])?.trimmed)
+        let model = HubModel(wantedSession: nil, tab: .transcript)
+        model.initialMode = .worktrees
+        model.mode = .worktrees
+        model.loadingWorktrees = true
+        let added = expectation(description: "linked checkout is in the sidebar")
+        let observation = model.$worktrees.filter { rows in rows.contains { $0.path == root } }.prefix(1).sink { _ in
+            added.fulfill()
+        }
+        defer { observation.cancel() }
+
+        // The commit resolves after discovery captured its inputs, but before its empty result lands.
+        model.showCommit(repo: root, sha: sha, title: "linked commit")
+        model.worktrees = []
+        model.loadingWorktrees = false
+        model.addWorktreesIfMissing(root)
+        await fulfillment(of: [added], timeout: 5)
+
+        XCTAssertEqual(model.selectedWorktree, root)
+        XCTAssertNotNil(model.worktrees.first { $0.path == model.selectedWorktree })
+        XCTAssertEqual(model.review?.scope, .commit(sha: sha, title: "linked commit"))
+        XCTAssertNil(model.error)
     }
 
     @MainActor
