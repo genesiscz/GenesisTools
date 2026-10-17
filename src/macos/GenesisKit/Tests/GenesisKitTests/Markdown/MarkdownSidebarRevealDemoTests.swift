@@ -2,8 +2,8 @@ import AppKit
 @testable import GenesisKit
 import XCTest
 
-/// Martin's "Show in Sidebar" case played slowly in a visible window, for a screen recording (it never activates, so
-/// it takes nobody's focus). Skipped unless MARKDOWN_REVEAL_DEMO names a scratch vault folder; real notes are never
+/// Martin's "Show in Sidebar" case played slowly in a visible window ordered below the other windows, for a screen
+/// recording without bringing it front. Skipped unless MARKDOWN_REVEAL_DEMO names a scratch vault folder; real notes are never
 /// written. The window's number goes to MARKDOWN_REVEAL_DEMO_WINDOW so a recorder can attach to it. The folder and the
 /// two notes are MARKDOWN_REVEAL_DEMO_FOLDER, MARKDOWN_REVEAL_DEMO_LATE and MARKDOWN_REVEAL_DEMO_EARLY.
 ///
@@ -38,7 +38,7 @@ final class MarkdownSidebarRevealDemoTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.title = "Reveal demo"
         window.contentView = MarkdownDocumentWindowController.contentView(model: model)
-        window.orderFrontRegardless()
+        window.order(.below, relativeTo: 0)
         defer {
             window.orderOut(nil)
             window.close()

@@ -155,9 +155,15 @@ public final class FileTreeModel: ObservableObject {
         watch(next.path)
         rebuild()
         load(next.path)
+        let prefix = (next.path == "/" ? "/" : next.path + "/").nativeUTF8
         // An open folder whose read the new generation dropped would stay open and empty: read it again.
-        for path in expanded where path.hasPrefix(next.path + "/") && children[path] == nil {
+        for path in expanded where path.hasPrefix(prefix) && children[path] == nil {
             load(path)
+        }
+        // The previous watcher did not cover this root while it was inactive. Keep its cached rows visible, but
+        // refresh every cached descendant, including closed folders that can be opened after Back returns here.
+        for path in children.keys where path != next.path && path.hasPrefix(prefix) {
+            relist(path)
         }
     }
 

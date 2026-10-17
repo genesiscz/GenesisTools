@@ -28,7 +28,7 @@ final class MarkdownSidebarFarRevealTests: XCTestCase {
         window.contentView = MarkdownDocumentWindowController.contentView(model: model)
         window.alphaValue = 0
         window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
-        window.orderFrontRegardless()
+        window.order(.below, relativeTo: 0)
         defer {
             window.orderOut(nil)
             window.close()
@@ -81,7 +81,7 @@ final class MarkdownSidebarFarRevealTests: XCTestCase {
         window.contentView = MarkdownDocumentWindowController.contentView(model: model)
         window.alphaValue = 0
         window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
-        window.orderFrontRegardless()
+        window.order(.below, relativeTo: 0)
         defer {
             window.orderOut(nil)
             window.close()
@@ -136,7 +136,7 @@ final class MarkdownSidebarFarRevealTests: XCTestCase {
         window.contentView = MarkdownDocumentWindowController.contentView(model: model)
         window.alphaValue = 0
         window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
-        window.orderFrontRegardless()
+        window.order(.below, relativeTo: 0)
         defer {
             window.orderOut(nil)
             window.close()

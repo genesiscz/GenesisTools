@@ -45,7 +45,7 @@ final class MarkdownWindowPublishCostTests: XCTestCase {
             window.contentView = NSHostingView(rootView: MarkdownDocumentWindowController.root(model: model))
             window.alphaValue = 0
             window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
-            window.orderFrontRegardless()
+            window.order(.below, relativeTo: 0)
             settle(window, 0.8)
             let needed = window.contentMinSize
             let stated = MarkdownWindowMinimum.size(for: model)
@@ -104,7 +104,7 @@ final class MarkdownWindowPublishCostTests: XCTestCase {
         window.contentView = MarkdownDocumentWindowController.contentView(model: model)
         window.alphaValue = 0
         window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
-        window.orderFrontRegardless()
+        window.order(.below, relativeTo: 0)
         defer {
             window.orderOut(nil)
             window.close()
@@ -140,6 +140,24 @@ final class MarkdownWindowPublishCostTests: XCTestCase {
         settle(window, 0.2)
         let selected = RenderProbe.snapshot().merging(beforeSelect) { now, then in now - then }
         XCTAssertGreaterThan(selected["md.tab", default: 0], 0, "a selection still redraws the tabs it changes")
+    }
+
+    /// Automated viewer fixtures must never order a window front, including opt-in measurements and recording fixtures.
+    func testViewerFixturesNeverOrderTheirWindowsFront() throws {
+        let folder = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        let fixtures = [
+            "MarkdownSidebarFarRevealTests.swift", "MarkdownSidebarRevealBenchTests.swift",
+            "MarkdownSidebarRevealDemoTests.swift", "MarkdownTreeLagBenchTests.swift",
+            "MarkdownTreeOverlayTests.swift", "MarkdownWindowPublishCostTests.swift", "MarkdownDocumentWindowTests.swift",
+        ]
+        // Split the spellings so this policy test does not match its own deny-list.
+        let forbidden = ["order" + "Front(", "orderFront" + "Regardless(", "makeKeyAnd" + "OrderFront("]
+        for fixture in fixtures {
+            let source = try String(contentsOf: folder.appendingPathComponent(fixture), encoding: .utf8)
+            for call in forbidden {
+                XCTAssertFalse(source.contains(call), "\(fixture) must use hosted below-window ordering, found \(call)")
+            }
+        }
     }
 
     @MainActor

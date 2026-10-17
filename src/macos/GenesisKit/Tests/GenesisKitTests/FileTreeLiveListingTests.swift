@@ -192,6 +192,44 @@ final class FileTreeLiveListingTests: XCTestCase {
         XCTAssertEqual(calls.withLock { $0 }, 3)
     }
 
+    /// Returning to a watched root refreshes listings changed while its watcher covered another root.
+    func testReturningToARootRefreshesCachedDescendantsChangedWhileAway() async throws {
+        let folder = root.appendingPathComponent("Návrhy").standardizedFileURL
+        let nested = folder.appendingPathComponent("nested")
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        let removed = folder.appendingPathComponent("old.md")
+        let renamed = nested.appendingPathComponent("before.md")
+        try Data("before".utf8).write(to: renamed)
+        let model = FileTreeModel(root: root)
+        model.watchesDisk = false
+        model.setRoot(root)
+        model.restoreExpanded([folder.path.nativeUTF8, nested.path.nativeUTF8])
+        await settle { model.rows.contains { $0.name == "before.md" } }
+        XCTAssertTrue(model.rows.contains { $0.name == "old.md" })
+        XCTAssertTrue(model.rows.contains { $0.name == "before.md" })
+
+        // Cache the nested folder, then close it before leaving. Reopening it after Back must use a fresh listing too.
+        model.toggle(nested.path.nativeUTF8)
+        let saved = model.expandedFolders
+        let elsewhere = root.appendingPathComponent("elsewhere")
+        try FileManager.default.createDirectory(at: elsewhere, withIntermediateDirectories: true)
+        model.setRoot(elsewhere)
+        try FileManager.default.removeItem(at: removed)
+        try FileManager.default.moveItem(at: renamed, to: nested.appendingPathComponent("after.md"))
+        try Data("added".utf8).write(to: folder.appendingPathComponent("added.md"))
+
+        // No diskChanged call: the old watcher was stopped, so no event can repair these cached snapshots.
+        model.setRoot(root)
+        model.restoreExpanded(saved)
+        await settle { model.rows.contains { $0.name == "added.md" } && !model.rows.contains { $0.name == "old.md" } }
+        XCTAssertTrue(model.rows.contains { $0.name == "added.md" }, "returning refreshes a cached open folder")
+        XCTAssertFalse(model.rows.contains { $0.name == "old.md" }, "deletions while away cannot remain as obsolete rows")
+        model.toggle(nested.path.nativeUTF8)
+        await settle { model.rows.contains { $0.name == "after.md" } }
+        XCTAssertTrue(model.rows.contains { $0.name == "after.md" }, "a cached closed descendant refreshes too")
+        XCTAssertFalse(model.rows.contains { $0.name == "before.md" }, "a rename while away replaces the old row")
+    }
+
     /// Editing a note without changing its directory entries publishes no new tree rows.
     func testANoteSavedInPlaceChangesNoRows() async throws {
         let model = await openTree()
