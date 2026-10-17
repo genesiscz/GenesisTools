@@ -90,9 +90,21 @@ the stop point. After the confirmation period, state the plan in one line and pr
    the hidden channels, `expand` every thread (the L1 table can scramble files). Keep each thread's `threadId`.
 4. Read the source at every cited line before you brief: a stale or wrong finding is briefed as such, so the worker
    does not "fix" it.
-5. **Round policy.** Fix every valid finding in its PR in every round, Medium and Low included. Martin,
-   2026-10-17: "nothing is a follow up or out of scope". A deferral is not accepted. A `no-change` or rejection needs
-   a cited file:line that proves the finding wrong.
+5. **Round policy** (Martin, 2026-10-17 12:16; it replaces "fix every finding in every round", because eve opened
+   new Medium and Low findings on every push of #536 for 28 rounds). Count the fix rounds of the PR; a follow-up PR
+   starts again at round 1.
+   - A PR with more than 100 changed files: rounds 1 to 3 fix every valid finding, Medium and Low included. From
+     round 4, fix only Critical and High.
+   - A PR with 100 changed files or fewer: rounds 1 and 2 fix every valid finding. From round 3, fix only Critical
+     and High.
+   - In the rounds that fix only Critical and High, a Medium or Low finding gets a reply (valid or not, and why),
+     and its thread is resolved. It is not fixed in that PR.
+   - Inside the fix-everything rounds, a deferral is not accepted ("nothing is a follow up or out of scope", Martin,
+     2026-10-17), and every file a valid fix needs is in scope. A `no-change` or rejection needs a cited file:line
+     that proves the finding wrong.
+   - **Merge bar:** when the last round's Critical and High findings are fixed and judged, merge without waiting
+     for eve to review that last fix. The PR still needs at least one CodeRabbit review, green CI and a reply on
+     every thread.
 6. Scope: `git fetch origin <pr branch>`, then `bun .claude/skills/babysit/scripts/pr-scope.ts <N> --compare HEAD`.
    It lists the PR's files, the test file of each one (a sibling `.test.ts`, or a neighbour test that imports it),
    and whether unified differs from the PR branch per file. That list is the starting context, not a scope limit.
