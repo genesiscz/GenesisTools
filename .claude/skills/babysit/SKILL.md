@@ -90,13 +90,14 @@ the stop point. After the confirmation period, state the plan in one line and pr
    the hidden channels, `expand` every thread (the L1 table can scramble files). Keep each thread's `threadId`.
 4. Read the source at every cited line before you brief: a stale or wrong finding is briefed as such, so the worker
    does not "fix" it.
-5. **Round policy.** review-loop decides what gets fixed in each round (rounds 1 and 2: every valid finding; later
-   rounds: critical and high). When the user's own words ask for a fix the policy would only answer ("fix the open
-   threads"), the user's words win; say so in the plan.
+5. **Round policy.** Fix every valid finding in its PR in every round, Medium and Low included. Martin,
+   2026-10-17: "nothing is a follow up or out of scope". A deferral is not accepted. A `no-change` or rejection needs
+   a cited file:line that proves the finding wrong.
 6. Scope: `git fetch origin <pr branch>`, then `bun .claude/skills/babysit/scripts/pr-scope.ts <N> --compare HEAD`.
    It lists the PR's files, the test file of each one (a sibling `.test.ts`, or a neighbour test that imports it),
-   and whether unified differs from the PR branch per file. That list is the outer bound. The brief allows the files
-   the findings cite plus their tests, and any other PR file a fix provably needs. Missing a test file in the scope
+   and whether unified differs from the PR branch per file. That list is the starting context, not a scope limit.
+   The brief allows every file a valid fix needs, including files outside the original PR diff; explain those files
+   in the reply. Missing a test file in the scope
    put Grok's tests in the wrong file on 2026-10-14.
 7. **Worktree** (worktree mode): `bun .claude/skills/babysit/scripts/setup-wt.ts --run <dir> --pr <N>`. Detached at
    the PR head, `bun install --ignore-scripts` plus the repo's patches, the test wrapper's install stamp (else
@@ -186,7 +187,8 @@ Three Monitors, all with `timeout_ms: 1800000`, each re-armed as the very next t
    itself accepts read-only commands (since 886b44308); this driver approves the brief's file edits, `git add` of
    scope files, the one commit with the brief's subject, and the brief's verify commands, including their one
    sandbox escalation for loopback tests. Everything else prints `NEEDS LEAD`; decide it yourself. Deny rituals
-   (`tools say`), pushes, and anything outside scope.
+   (`tools say`), pushes, and unrelated file changes. Add every file a valid fix needs to the worker's scope before
+   approving it.
 
 Two-way proof: once per new worker, send a ping on the bus (`--to grok_pr<N>` or `--to codex_<name>`) and see the
 reply arrive (Sol answered in 20 s, Grok in 59 s). During the confirmation period do it for every worker.
@@ -222,10 +224,9 @@ fix against the module's documented contracts and its callers (the #511 defect h
 commit, nothing staged that is not the worker's; check the ready-to-post replies against the final code. Verdict per
 PR: VERIFIED, VERIFIED WITH CAVEATS, or REFUTED, with evidence.
 
-Every deferral is judged too, by severity. A critical or high finding the worker left OPEN because its fix needs a
-file outside the PR is the lead's decision in the same round, not a reply: when the finding is about the PR's own
-subject (on 2026-10-14 #516's one-scan rule needed `enrich.ts`), allow the file in a steer and send it back before
-the push; defer it only with the reason in the reply. A Swift change the worker could not run is not judged until the
+Every valid finding is fixed in its PR before the push, in every round, Medium and Low included. A deferral is
+not accepted. If the fix needs a file outside the original PR diff, change that file in this PR and explain it in
+the reply; neither scope nor severity is a reason to leave a valid finding OPEN. A Swift change the worker could not run is not judged until the
 lead ran its tests: `swift-typecheck.ts` proves it compiles, and #501 round 2 typechecked clean yet broke a test.
 
 ## 7. Correct, integrate, push

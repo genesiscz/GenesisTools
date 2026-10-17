@@ -31,10 +31,7 @@ const meta = SafeJSON.parse(view.stdout.toString(), { strict: true }) as {
     headRefName: string;
     baseRefName: string;
 };
-const policy =
-    round <= 2
-        ? `Round ${round}: fix EVERY valid finding, critical, high, medium and low.`
-        : `Round ${round}: fix only critical and high findings. A new medium or low finding gets a verdict and a reply (no code change unless it is a one-line obvious fix), so the lead can resolve it.`;
+const policy = `Round ${round}: fix EVERY valid finding, critical, high, medium and low. Fix it in this PR; never defer.`;
 // Another repository's run card names its own checks: GenesisTools' commands do not exist there (2026-10-14,
 // GenesisPlayground #94 round 2 got `bun scripts/test.ts` and lint-rules in its brief).
 const verify = run.verify ? run.verify.map((line) => `   - ${line}`).join("\n") : defaultVerify();

@@ -1418,3 +1418,51 @@ describe("round 5 carried findings", () => {
         }
     });
 });
+
+test("generated worker briefs fix every severity and required file in every round", () => {
+    const dir = fs.mkdtempSync(join(tmpdir(), "babysit-policy-"));
+    const preload = join(dir, "github-fixture.ts");
+    fs.writeFileSync(join(dir, "run.json"), SafeJSON.stringify({ repo: "fixture/repo", main: dir }));
+    const fixture = SafeJSON.stringify({ title: "Fixture review", headRefName: "fixture", baseRefName: "main" });
+    fs.writeFileSync(
+        preload,
+        [
+            "const spawn = Bun.spawnSync;",
+            "Bun.spawnSync = (args, options) => args[0] === 'gh'",
+            " ? spawn([process.execPath, '-e', " +
+                SafeJSON.stringify("console.log(" + SafeJSON.stringify(fixture) + ")") +
+                "], options)",
+            " : spawn(args, options);",
+        ].join("\n")
+    );
+    for (const round of [1, 3, 5]) {
+        const target = join(dir, "brief-" + round + ".md");
+        const result = Bun.spawnSync(
+            [
+                process.execPath,
+                "--preload",
+                preload,
+                join(import.meta.dir, "fill-brief.ts"),
+                "--run",
+                dir,
+                "--pr",
+                "536",
+                "--round",
+                String(round),
+                "--wt",
+                dir,
+                "--out",
+                target,
+            ],
+            { stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        expect(result.exitCode).toBe(0);
+        const brief = fs.readFileSync(target, "utf8");
+        expect(brief).toContain("Round " + round + ": fix EVERY valid finding, critical, high, medium and low.");
+        expect(brief).toContain("Change every file the fix needs in this PR");
+        expect(brief).toContain("never defer");
+        expect(brief).not.toContain("not worth a change");
+        expect(brief).not.toContain("You may change only the PR's own files");
+        expect(brief).not.toContain("do NOT fix that one");
+    }
+});
