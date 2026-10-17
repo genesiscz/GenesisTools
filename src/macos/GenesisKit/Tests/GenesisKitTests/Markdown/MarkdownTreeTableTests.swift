@@ -70,19 +70,29 @@ final class MarkdownTreeTableTests: XCTestCase {
             window.contentView = nil
             window.close()
         }
+        let table = try XCTUnwrap(box.scrollView?.documentView as? NSTableView)
+        func reading(in view: NSView) -> Bool? {
+            if let marker = view as? MotionReadingView { return marker.reduced }
+            return view.subviews.lazy.compactMap { reading(in: $0) }.first
+        }
+        func mountedReading() -> Bool? {
+            guard let cell = table.view(atColumn: 0, row: 0, makeIfNecessary: false),
+                  cell.isDescendant(of: table) else { return nil }
+            // The sizing probe has its own marker, outside this mounted cell's hierarchy.
+            return reading(in: cell)
+        }
         func expect(_ reduced: Bool) {
             let deadline = Date().addingTimeInterval(2)
-            while rig.readings[rows[0].id] != reduced, Date() < deadline {
+            while mountedReading() != reduced, Date() < deadline {
                 window.contentView?.layoutSubtreeIfNeeded()
                 window.displayIfNeeded()
                 RunLoop.main.run(until: Date().addingTimeInterval(0.02))
             }
-            XCTAssertEqual(rig.readings[rows[0].id], reduced, "the hosted row receives the effective environment preference")
+            XCTAssertEqual(mountedReading(), reduced, "the mounted row receives the effective environment preference")
         }
         // Writable overrides cannot disable the inherited system preference.
         let systemBaseline = GenMotion.systemReduceMotion
         expect(systemBaseline)
-        let table = try XCTUnwrap(box.scrollView?.documentView as? NSTableView)
         let coordinator = try XCTUnwrap(table.dataSource as? MarkdownTreeTable<Int>.Coordinator)
         var preferences: [Bool] = []
         coordinator.animateRows = { old, new, table, reduced in
@@ -142,7 +152,6 @@ final class MarkdownTreeTableTests: XCTestCase {
         @Published var app = false
         @Published var widget = false
         @Published var rows: [FileTreeRow] = []
-        var readings: [String: Bool] = [:]
     }
 
     private struct MotionHost: View {
@@ -164,9 +173,21 @@ final class MarkdownTreeTableTests: XCTestCase {
         @GenReduceMotion private var reduceMotion
 
         var body: some View {
-            let _ = rig.readings.updateValue(reduceMotion, forKey: id)
-            Text(id)
+            Text(id).background(MotionReading(reduced: reduceMotion))
         }
+    }
+
+    /// Each cell or sizing host owns a separate native marker, inspected only through the mounted table cell.
+    private struct MotionReading: NSViewRepresentable {
+        let reduced: Bool
+
+        func makeNSView(context: Context) -> MotionReadingView { MotionReadingView(frame: .zero) }
+        func updateNSView(_ view: MotionReadingView, context: Context) { view.reduced = reduced }
+    }
+
+    @MainActor
+    private final class MotionReadingView: NSView {
+        var reduced: Bool?
     }
 
     @MainActor
