@@ -103,6 +103,9 @@ the stop point. After the confirmation period, state the plan in one line and pr
      file that `integrate.ts` resolves (Martin, 2026-10-17 12:45).
    - **A valid security finding is always fixed**, at any severity and in any round (Martin, 2026-10-17 12:45:
      "security valid always"). Read the reviewer's category (`🔒 Security`), not only its severity.
+   - **A dedicated code review the user asks for** (an independent worker review such as `review-brief.ts` on Astra
+     or Sol) is fixed in full: every valid finding, Medium and Low included, whatever round the PR is in. Fix it
+     yourself or steer the PR's fixing worker, then judge it as any round (Martin, 2026-10-17 13:05).
    - Inside the fix-everything rounds, a deferral is not accepted ("nothing is a follow up or out of scope", Martin,
      2026-10-17), and every file a valid fix needs is in scope. A `no-change` or rejection needs a cited file:line
      that proves the finding wrong.
