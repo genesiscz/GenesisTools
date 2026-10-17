@@ -1,7 +1,7 @@
 import type { Dirent } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { relative, sep } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { profiler } from "@genesiscz/utils/profile";
 import type { NativeSourceIssue } from "./types";
 
@@ -21,6 +21,8 @@ export interface WalkSourceRootsResult {
 
 export interface WalkSourceRootsOptions {
     roots: string[];
+    /** Resolve and stat only these files. No readdir, and no root is declared complete. */
+    filePaths?: string[];
     filtered?: boolean;
     signal?: AbortSignal;
     maxDepth?: number;
@@ -94,6 +96,10 @@ function errorCategory(error: unknown, fallback: string, missing = fallback): st
  * timer here prices the whole corpus scan.
  */
 export async function walkSourceRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRootsResult> {
+    if (options.filePaths !== undefined) {
+        return sourceFilesForPaths({ ...options, filePaths: options.filePaths });
+    }
+
     let files: number | undefined;
     let issues: number | undefined;
     return profiler.scope("agent-sessions").measureAsync(
@@ -125,6 +131,92 @@ function childPath(directory: string, name: string): string {
 function relativeToRoot(root: string, path: string): string {
     const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
     return path.startsWith(prefix) ? path.slice(prefix.length) : relative(root, path);
+}
+
+/** Exact-file discovery keeps the provider's normal layout and filters without walking its roots. */
+async function sourceFilesForPaths(
+    options: WalkSourceRootsOptions & { filePaths: string[] }
+): Promise<WalkSourceRootsResult> {
+    const files: DiscoveredSourceFile[] = [];
+    const issues: NativeSourceIssue[] = [];
+    if (options.filePaths.length === 0) {
+        return { files, issues, completeRoots: [] };
+    }
+
+    const roots = new Set<string>();
+    for (const inputRoot of options.roots) {
+        options.signal?.throwIfAborted();
+        try {
+            roots.add(await realpath(inputRoot));
+        } catch (error) {
+            issues.push({
+                ...discoveryIssue(
+                    inputRoot,
+                    errorCategory(error, "Source root read failed", "Source root unavailable")
+                ),
+                ...(error instanceof Error && "code" in error && error.code === "ENOENT"
+                    ? { code: "root-missing" as const }
+                    : {}),
+            });
+        }
+    }
+
+    const seenFiles = new Set<string>();
+    for (const inputPath of new Set(options.filePaths)) {
+        options.signal?.throwIfAborted();
+        try {
+            const path = await realpath(inputPath);
+            if (seenFiles.has(path)) {
+                continue;
+            }
+
+            const root = [...roots].find((candidate) => {
+                const child = relative(candidate, path);
+                return child !== "" && child !== ".." && !child.startsWith(`..${sep}`) && !isAbsolute(child);
+            });
+            if (!root || !(await stat(path)).isFile()) {
+                continue;
+            }
+
+            seenFiles.add(path);
+            const relativePath = relativeToRoot(root, path);
+            const parts = relativePath.split(sep);
+            if (options.maxDepth !== undefined && parts.length - 1 > options.maxDepth) {
+                continue;
+            }
+
+            let allowed = true;
+            for (let depth = 1; depth < parts.length; depth++) {
+                const directory = parts.slice(0, depth).join(sep);
+                if (
+                    options.shouldDescend &&
+                    !options.shouldDescend({
+                        root,
+                        path: join(root, directory),
+                        relativePath: directory,
+                        depth,
+                    })
+                ) {
+                    allowed = false;
+                    break;
+                }
+            }
+
+            const file = { root, path, relativePath };
+            if (allowed && (!options.includeFile || options.includeFile(file))) {
+                files.push(file);
+            }
+        } catch (error) {
+            options.signal?.throwIfAborted();
+            if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+                issues.push(discoveryIssue(inputPath, errorCategory(error, "Source entry read failed")));
+            }
+        }
+    }
+
+    files.sort((left, right) => left.root.localeCompare(right.root) || left.path.localeCompare(right.path));
+    issues.sort((left, right) => left.path.localeCompare(right.path) || left.message.localeCompare(right.message));
+    return { files, issues, completeRoots: [] };
 }
 
 async function walkRoots(options: WalkSourceRootsOptions): Promise<WalkSourceRootsResult> {

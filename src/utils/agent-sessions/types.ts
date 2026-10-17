@@ -235,6 +235,8 @@ export interface HistoryReadOptions {
 }
 
 export interface HistoryDiscoveryOptions {
+    /** Inspect only these exact transcript files, without enumerating history directories. Never a complete root. */
+    filePaths?: string[];
     excludeAgents?: boolean;
     agentsOnly?: boolean;
     project?: string;

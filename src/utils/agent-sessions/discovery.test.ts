@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import {
     appendFileSync,
     mkdirSync,
@@ -12,6 +12,7 @@ import {
     utimesSync,
     writeFileSync,
 } from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -19,6 +20,7 @@ import { discoverClaudeHistorySources, readBounded } from "./readers/claude-disc
 import { discoverCodexHistorySources } from "./readers/codex-discovery";
 import { discoverGrokHistorySources } from "./readers/grok-discovery";
 import { walkSourceRoots } from "./source-discovery";
+import type { NativeSessionReader } from "./types";
 
 const ID_A = "11111111-2222-4333-8444-555555555555";
 const ID_B = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -57,6 +59,76 @@ test("canonical walker deduplicates aliases and withholds incomplete roots", asy
         "Source entry read failed",
         "Source root unavailable",
     ]);
+});
+
+test.each(["claude", "codex", "grok"] as const)(
+    "%s exact-file discovery preserves source metadata without walking a history directory",
+    async (kind) => {
+        const home = realpathSync(mkdtempSync(join(tmpdir(), "gt-discovery-exact-")));
+        const root = join(home, kind === "claude" ? "projects" : "sessions");
+        const paths = [ID_A, ID_B].map((id) => {
+            const file =
+                kind === "claude"
+                    ? join(root, "-projects-fixture", `${id}.jsonl`)
+                    : kind === "codex"
+                      ? join(root, "nested", `rollout-${id}.jsonl`)
+                      : join(root, encodeURIComponent("/projects/fixture"), id, "chat_history.jsonl");
+            mkdirSync(join(file, ".."), { recursive: true });
+            writeFileSync(
+                file,
+                kind === "codex"
+                    ? line({ type: "session_meta", payload: { id, cwd: "/projects/fixture", history_mode: "legacy" } })
+                    : line({ type: "user", sessionId: id, message: { content: "fixture" } })
+            );
+            return realpathSync(file);
+        });
+        const discover: NativeSessionReader<string>["discover"] =
+            kind === "claude"
+                ? discoverClaudeHistorySources
+                : kind === "codex"
+                  ? discoverCodexHistorySources
+                  : discoverGrokHistorySources;
+        const all = await discover([root], { excludeAgents: true });
+        const directories = spyOn(fsPromises, "readdir");
+        try {
+            const narrow = await discover([root], { excludeAgents: true, filePaths: [paths[0]] });
+            expect(narrow.sources).toEqual(all.sources.filter((source) => source.filePath === paths[0]));
+            expect(narrow.completeRoots).toEqual([]);
+            expect(directories.mock.calls.filter(([directory]) => String(directory).startsWith(root))).toEqual([]);
+            directories.mockClear();
+            const empty = await discover([root], { filePaths: [] });
+            expect(empty.sources).toEqual([]);
+            expect(empty.completeRoots).toEqual([]);
+            expect(directories).toHaveBeenCalledTimes(0);
+        } finally {
+            directories.mockRestore();
+        }
+    }
+);
+
+test("exact-file discovery retains path aliases, depth bounds and directory filters", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "gt-discovery-exact-filters-")));
+    mkdirSync(join(root, "project", "deep"), { recursive: true });
+    const shallow = join(root, "project", "a.jsonl");
+    const deep = join(root, "project", "deep", "b.jsonl");
+    writeFileSync(shallow, "{}\n");
+    writeFileSync(deep, "{}\n");
+    const alias = join(root, "alias.jsonl");
+    symlinkSync(shallow, alias);
+    const found = await walkSourceRoots({
+        roots: [root],
+        filePaths: [deep, alias, shallow],
+        maxDepth: 1,
+        includeFile: (file) => file.path.endsWith(".jsonl"),
+    });
+    expect(found.files.map((file) => file.path)).toEqual([shallow]);
+    expect(found.completeRoots).toEqual([]);
+    const filtered = await walkSourceRoots({
+        roots: [root],
+        filePaths: [shallow],
+        shouldDescend: () => false,
+    });
+    expect(filtered.files).toEqual([]);
 });
 
 test("Claude discovery keeps shallow mains and per-session sidecar revisions", async () => {

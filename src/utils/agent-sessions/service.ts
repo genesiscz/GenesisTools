@@ -374,6 +374,7 @@ export class HistoryService {
             agentsOnly: filters.agentsOnly,
             excludeAgents: filters.excludeAgents,
             project: filters.project,
+            filePaths: filters.filePaths,
             signal: filters.signal,
         };
         // Read BEFORE the walk: `synchronizeHistory` reuses this walk for its write pass only
@@ -432,7 +433,7 @@ export class HistoryService {
         const recent = age !== null && options.maxDiscoveryAgeMs !== undefined && age < options.maxDiscoveryAgeMs;
         let synchronized: { report: NativeIndexSyncResult; reindexed: boolean };
 
-        if (recent || options.refresh === false) {
+        if (recent || options.refresh === false || filters.filePaths?.length === 0) {
             logger.debug(
                 { provider: this.options.providerId, ageMs: age === null ? null : Math.round(age) },
                 recent ? "[history] listing reuses a recent refresh" : "[history] listing reads the index unrefreshed"

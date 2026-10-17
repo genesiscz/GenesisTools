@@ -143,6 +143,7 @@ export async function discoverGrokHistorySources(
     const walked = await walkSourceRoots({
         roots,
         filtered,
+        filePaths: options.filePaths,
         signal: options.signal,
         // A transcript sits at `<root>/<cwd>/<session>/`. Below that are only a session's own
         // folders (terminal, subagents, images, ...): 630 of 1,500 directories here, none holding a

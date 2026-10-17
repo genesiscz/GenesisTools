@@ -138,6 +138,7 @@ export async function discoverClaudeHistorySources(
     const walked = await walkSourceRoots({
         roots,
         filtered,
+        filePaths: options.filePaths,
         signal: options.signal,
         ...(shallowMainOnly ? { maxDepth: 1 } : {}),
         includeFile: ({ path, relativePath }) =>

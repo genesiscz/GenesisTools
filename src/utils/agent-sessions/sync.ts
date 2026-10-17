@@ -145,7 +145,12 @@ export async function synchronizeHistory(options: {
 
     signal?.throwIfAborted();
     const roots = [...new Set(options.roots.map(canonicalRoot))];
-    const filtered = Boolean(options.scope?.excludeAgents || options.scope?.agentsOnly || options.scope?.project);
+    const filtered = Boolean(
+        options.scope?.excludeAgents ||
+            options.scope?.agentsOnly ||
+            options.scope?.project ||
+            options.scope?.filePaths !== undefined
+    );
     const prof = profiler.scope("agent-sessions");
     // Split from the full pass below: one answers "how cheap is the unchanged check", the other
     // "how expensive is a real re-scan", and a single number for both hides which one is slow.
@@ -194,34 +199,40 @@ export async function synchronizeHistory(options: {
     // the index until a full sync: a Grok session deleted on 2026-10-11 was still listed a day later, and
     // the hub asked for its stuck verdict on every refresh. The listing's window bounds the check.
     const windowSide =
-        options.pruneFrom === undefined || !filtered || options.scope?.project
+        options.pruneFrom === undefined || !filtered || options.scope?.project || options.scope?.filePaths !== undefined
             ? null
             : options.scope?.agentsOnly === true;
     const vanished = (seen: ReadonlySet<string>): Array<{ source: HistorySourceSnapshot; root: string }> => {
-        if (windowSide === null) {
+        const exactPaths = options.scope?.filePaths;
+        if (windowSide === null && exactPaths === undefined) {
             return [];
         }
 
-        const listed = repository.metadata.listMetadata({
-            providerId,
-            mtimeFrom: options.pruneFrom,
-            withUserText: false,
-        });
-        const topUp = options.pruneNewest
-            ? repository.metadata.listMetadata({
-                  providerId,
-                  orderBy: "mtime",
-                  limit: options.pruneNewest,
-                  withUserText: false,
-              })
-            : [];
-        const unseen = [
-            ...new Set(
-                [...listed, ...topUp]
-                    .filter((entry) => Boolean(entry.isSubagent) === windowSide && !seen.has(entry.filePath))
-                    .map((entry) => entry.filePath)
-            ),
-        ];
+        let unseen: string[];
+        if (exactPaths !== undefined) {
+            unseen = [...new Set(exactPaths)].filter((file) => !seen.has(file));
+        } else {
+            const listed = repository.metadata.listMetadata({
+                providerId,
+                mtimeFrom: options.pruneFrom,
+                withUserText: false,
+            });
+            const topUp = options.pruneNewest
+                ? repository.metadata.listMetadata({
+                      providerId,
+                      orderBy: "mtime",
+                      limit: options.pruneNewest,
+                      withUserText: false,
+                  })
+                : [];
+            unseen = [
+                ...new Set(
+                    [...listed, ...topUp]
+                        .filter((entry) => Boolean(entry.isSubagent) === windowSide && !seen.has(entry.filePath))
+                        .map((entry) => entry.filePath)
+                ),
+            ];
+        }
 
         if (unseen.length === 0) {
             return [];

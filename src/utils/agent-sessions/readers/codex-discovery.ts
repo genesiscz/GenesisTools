@@ -376,6 +376,7 @@ export async function discoverCodexHistorySources(
     const walked = await walkSourceRoots({
         roots,
         filtered,
+        filePaths: options.filePaths,
         signal: options.signal,
         includeFile: ({ path }) => basename(path).startsWith("rollout-") && path.endsWith(".jsonl"),
     });

@@ -10,11 +10,13 @@ import {
     utimesSync,
     writeFileSync,
 } from "node:fs";
+import * as fsPromises from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import * as edgeLines from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { claudeHistoryReader, grokHistoryReader } from "./compact-readers";
+import { claudeHistoryReader, codexHistoryReader, grokHistoryReader } from "./compact-readers";
 import { HistoryDatabase, historyDatabasePath } from "./database";
 import { initializeCompactHistorySchema, initializeHistorySchema } from "./migrations";
 import { catalogHistory, openHistoryService } from "./open-service";
@@ -117,6 +119,101 @@ test("an exact-path catalog refreshes and queries only the requested transcripts
         expect(metadata.mock.calls.every(([options]) => options.filePaths?.length === 2)).toBe(true);
     } finally {
         metadata.mockRestore();
+        database.close();
+        rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test("an exact-path Codex catalog never walks history roots or reads unrelated headers", async () => {
+    const home = realpathSync(mkdtempSync(join(tmpdir(), "history-catalog-direct-")));
+    const root = join(home, "sessions");
+    mkdirSync(join(root, "nested"), { recursive: true });
+    const ids = ["11111111-2222-4333-8444-000000000031", "11111111-2222-4333-8444-000000000032"];
+    const paths = ids.map((id) => join(root, "nested", `rollout-${id}.jsonl`));
+    paths.forEach((file, index) => {
+        writeFileSync(
+            file,
+            `${SafeJSON.stringify({
+                type: "session_meta",
+                payload: {
+                    id: ids[index],
+                    cwd: "/projects/fixture",
+                    history_mode: "legacy",
+                },
+            })}\n`
+        );
+    });
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const service = new HistoryService({
+        providerId: "openai-sub",
+        roots: [root],
+        repository: new HistorySyncRepository(database),
+        reader: codexHistoryReader,
+    });
+    const directories = spyOn(fsPromises, "readdir");
+    const headers = spyOn(edgeLines, "readFirstLines");
+    const discovery = spyOn(codexHistoryReader, "discover");
+    try {
+        const empty = await service.catalog({ filePaths: [] });
+        expect(empty.metadata).toEqual([]);
+        expect(discovery).toHaveBeenCalledTimes(0);
+        expect(directories).toHaveBeenCalledTimes(0);
+        expect(headers).toHaveBeenCalledTimes(0);
+        const narrow = await service.catalog({ filePaths: [paths[0]] });
+        expect(narrow.metadata.map((row) => row.sessionId)).toEqual([ids[0]]);
+        expect(directories.mock.calls.filter(([directory]) => String(directory).startsWith(root))).toEqual([]);
+        expect(headers.mock.calls.length).toBeGreaterThan(0);
+        expect(headers.mock.calls.every(([file]) => file === paths[0])).toBe(true);
+        directories.mockClear();
+        headers.mockClear();
+        discovery.mockClear();
+        const cached = await service.catalog({ filePaths: [paths[0]] }, { refresh: false });
+        expect(cached.metadata).toEqual(narrow.metadata);
+        expect(discovery).toHaveBeenCalledTimes(0);
+    } finally {
+        directories.mockRestore();
+        headers.mockRestore();
+        discovery.mockRestore();
+        database.close();
+        rmSync(home, { recursive: true, force: true });
+    }
+});
+
+test("exact-path refresh cannot prune unrelated cached sessions", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "history-catalog-exact-prune-")));
+    const ids = ["11111111-2222-4333-8444-000000000041", "11111111-2222-4333-8444-000000000042"];
+    ids.forEach((id) => {
+        session(root, id, HOUR);
+    });
+    const database = new Database(":memory:");
+    initializeCompactHistorySchema(database);
+    const repository = new HistorySyncRepository(database);
+    const service = new HistoryService({
+        providerId: "anthropic-sub",
+        roots: [root],
+        repository,
+        reader: claudeHistoryReader,
+    });
+    try {
+        await service.catalog({});
+        rmSync(join(root, `${ids[1]}.jsonl`));
+        for (const excludeAgents of [undefined, true]) {
+            const scoped = await service.catalog({
+                filePaths: [join(root, `${ids[0]}.jsonl`)],
+                excludeAgents,
+                mtimeFrom: 0,
+                newest: 2,
+            });
+            expect(scoped.metadata.map((row) => row.sessionId)).toEqual([ids[0]]);
+            expect(repository.metadata.listMetadata({ providerId: "anthropic-sub" })).toHaveLength(2);
+        }
+        const missing = await service.catalog({ filePaths: [join(root, `${ids[1]}.jsonl`)] });
+        expect(missing.metadata).toEqual([]);
+        expect(repository.metadata.listMetadata({ providerId: "anthropic-sub" })).toHaveLength(1);
+        const full = await service.catalog({});
+        expect(full.metadata.map((row) => row.sessionId)).toEqual([ids[0]]);
+    } finally {
         database.close();
         rmSync(root, { recursive: true, force: true });
     }
