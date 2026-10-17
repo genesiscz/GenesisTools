@@ -2,8 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { chmod, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { registerCmuxCommand } from "@app/claude/commands/cmux";
+import { applyPresets, presets } from "@genesiscz/utils/browser-router/presets";
+import { defaultRouterConfig, route } from "@genesiscz/utils/browser-router/route";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { Command } from "commander";
 import {
     findInTranscript,
     pressesToOldest,
@@ -57,6 +61,43 @@ function fakeClaude({ opens = true, hit }: { opens?: boolean; hit: string }) {
 }
 
 describe("transcript find", () => {
+    test("free-text links parse as literal operands through the real cmux command", async () => {
+        const host = "links.example.test";
+        const chosen = { ...defaultRouterConfig(), linkHost: host, presets: { "claude-find": {} } };
+        const config = { ...chosen, routes: applyPresets([], presets({ config: chosen, check: () => true })) };
+
+        for (const query of ["--help", "--link", "--decision", "-n", "normal text"]) {
+            const plan = route(`https://${host}/claude/find/session?q=${encodeURIComponent(query)}&at=oldest`, config);
+            expect(plan.kind).toBe("run");
+
+            if (plan.kind !== "run") {
+                throw new Error("find link must run its command");
+            }
+
+            let parsed: unknown;
+            const program = new Command().name("claude").exitOverride();
+            registerCmuxCommand(program);
+            const find = program.commands
+                .find((command) => command.name() === "cmux")
+                ?.commands.find((command) => command.name() === "find");
+
+            if (!find) {
+                throw new Error("the real cmux command must register find");
+            }
+
+            // Replace only the effectful action; arguments, flags and defaults stay the real command's.
+            find.action((session, text, options) => {
+                parsed = { session, text, options };
+            });
+            await program.parseAsync(plan.argv.slice(2), { from: "user" });
+            expect(parsed).toEqual({
+                session: "session",
+                text: query,
+                options: { at: "oldest", uses: "1", activate: true },
+            });
+        }
+    });
+
     test("reads the match counter and the no-match marker from the bottom line", () => {
         expect(searchCount("x\n  /DECISION 2                    no matches  ")).toBe("none");
         expect(searchCount("x\n  ctrl+o to toggle · n/N to navigate     3/4  ")).toEqual({ current: 3, total: 4 });

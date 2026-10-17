@@ -642,13 +642,18 @@ final class PRsModel: ObservableObject {
         if settled {
             pendingCommit = nil
         }
-        if case .commit(let sha, _) = review.scope, sha == commit.sha { return }
         HubPerf.log("prs.commit \(shown.label) \(commit.sha.prefix(10)) settled=\(settled)")
-        review.setScope(.commit(sha: commit.sha, title: commit.title))
+        showLinkedCommit(commit, prID: id, review: review)
+    }
+
+    /// A repeated link reveals the diff and scrolls again even when its commit is already selected.
+    func showLinkedCommit(_ commit: HubPRDetail.Commit, prID: String, review: ReviewModel) {
         // What a click on the row does (`PRCommitsSection`): the diff beside it, the commits section open.
         HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
         HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
-        commitScroll = PRCommitScroll(prID: id, sha: commit.sha)
+        commitScroll = PRCommitScroll(prID: prID, sha: commit.sha)
+        if case .commit(let sha, _) = review.scope, sha == commit.sha { return }
+        review.setScope(.commit(sha: commit.sha, title: commit.title))
     }
 
     /// A settled miss replaces any previously selected commit with the whole PR before saying so.

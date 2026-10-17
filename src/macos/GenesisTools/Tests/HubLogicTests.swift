@@ -242,6 +242,37 @@ final class HubLogicTests: XCTestCase {
     }
 
     @MainActor
+    func testReopeningTheSelectedCommitRevealsTheDiffAndScrollsAgain() throws {
+        let diffKey = "hub.prs.showDiff", foldKey = "hub.prs.fold.commits"
+        let previousDiff = HubDefaults.store.object(forKey: diffKey)
+        let previousFold = HubDefaults.store.object(forKey: foldKey)
+        defer {
+            HubDefaults.store.set(previousDiff, forKey: diffKey)
+            HubDefaults.store.set(previousFold, forKey: foldKey)
+        }
+        let model = PRsModel()
+        let review = ReviewModel(repo: URL(fileURLWithPath: "/fixture/app"), options: DiffViewOptions(), renderer: NullRenderer())
+        let commit = HubPRDetail.Commit(sha: "abcdef0123", title: "linked", author: nil, authorLogin: nil, date: nil, body: nil)
+        review.scope = .commit(sha: commit.sha, title: commit.title)
+        var previousScroll: PRCommitScroll?
+
+        for _ in 0..<2 {
+            HubDefaults.store.set(false, forKey: diffKey)
+            HubDefaults.store.set(true, forKey: foldKey)
+            model.showLinkedCommit(commit, prID: "fixture-pr", review: review)
+
+            XCTAssertTrue(HubDefaults.store.bool(forKey: diffKey))
+            XCTAssertFalse(HubDefaults.store.bool(forKey: foldKey))
+            let scroll = try XCTUnwrap(model.commitScroll)
+            XCTAssertEqual(scroll.prID, "fixture-pr")
+            XCTAssertEqual(scroll.sha, commit.sha)
+            XCTAssertNotEqual(scroll.id, previousScroll?.id)
+            XCTAssertEqual(review.scope, .commit(sha: commit.sha, title: commit.title))
+            previousScroll = scroll
+        }
+    }
+
+    @MainActor
     func testAMissingPRCommitReplacesThePreviousCommitScopeWithTheWholePR() throws {
         let json = """
         {"repo":"app","repoRoot":"/fixture/app","origin":{"kind":"github","host":"github.com","web":"https://github.com/acme/app"},

@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { Command } from "commander";
 import type { Capability } from "./capabilities";
 import { applyPresets, presetById, presetRouted, presets, presetWarnings } from "./presets";
 import { defaultRouterConfig, type RouteRule, type RouterConfig, route } from "./route";
@@ -75,38 +74,6 @@ describe("preset kinds", () => {
         expect(presetWarnings(chosen, presets({ config: chosen, check: all(true) }))).toEqual([]);
         expect(presetWarnings(never, presets({ config: never, check: all(false) }))).toEqual([]);
         expect(presetWarnings(null, presets({ config: null, check: all(false) }))).toEqual([]);
-    });
-
-    test("free-text find links keep option-looking queries as literal operands", async () => {
-        const chosen = configWith({ "claude-find": {} });
-        const config = { ...chosen, routes: applyPresets([], presets({ config: chosen, check: all(true) })) };
-
-        for (const query of ["--help", "--link", "--decision", "-n", "normal text"]) {
-            const plan = route(
-                `https://${LINK_HOST}/claude/find/session?q=${encodeURIComponent(query)}&at=oldest`,
-                config
-            );
-            expect(plan.kind).toBe("run");
-
-            if (plan.kind !== "run") {
-                throw new Error("find link must run its command");
-            }
-
-            let parsed: unknown;
-            const command = new Command()
-                .name("find")
-                .argument("<session>")
-                .argument("[text]")
-                .option("--at [where]")
-                .option("--link")
-                .option("--decision <n>")
-                .exitOverride()
-                .action((session, text, options) => {
-                    parsed = { session, text, options };
-                });
-            await command.parseAsync(plan.argv.slice(4), { from: "user" });
-            expect(parsed).toEqual({ session: "session", text: query, options: { at: "oldest" } });
-        }
     });
 
     test("the catalog ships no personal presets", () => {
