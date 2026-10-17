@@ -26,26 +26,62 @@ const CURSOR_CONTROL = /\u001b\[[0-9;?]*[A-LN-Za-ln-z]/;
 
 function recordingStream() {
     const chunks: string[] = [];
+    let pending: { includes: string; resolve: () => void } | undefined;
+    const text = () => chunks.join("");
     const output = new Writable({
         write(chunk, _encoding, done) {
             chunks.push(String(chunk));
+            const current = pending;
+
+            if (current && text().includes(current.includes)) {
+                pending = undefined;
+                current.resolve();
+            }
+
             done();
         },
     });
 
-    return { output, text: () => chunks.join("") };
-}
+    function whenWritten(includes: string, what: string): Promise<void> {
+        const timeoutMs = 2000;
 
-async function until(condition: () => boolean, what: string, timeoutMs = 2000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-
-    while (!condition()) {
-        if (Date.now() > deadline) {
-            throw new Error(`waited ${timeoutMs} ms for ${what}`);
+        if (text().includes(includes)) {
+            return Promise.resolve();
         }
 
-        await Bun.sleep(10);
+        return new Promise((resolve, reject) => {
+            let settled = false;
+            const timer = setTimeout(() => {
+                if (settled) {
+                    return;
+                }
+
+                settled = true;
+                pending = undefined;
+                reject(new Error(`waited ${timeoutMs} ms for ${what}`));
+            }, timeoutMs);
+            pending = {
+                includes,
+                resolve: () => {
+                    if (settled) {
+                        return;
+                    }
+
+                    settled = true;
+                    clearTimeout(timer);
+                    resolve();
+                },
+            };
+
+            if (text().includes(includes)) {
+                const current = pending;
+                pending = undefined;
+                current.resolve();
+            }
+        });
     }
+
+    return { output, text, whenWritten };
 }
 
 // Regression test: the patch in patches/@clack%2Fprompts@1.7.0.patch makes the spinner treat an output stream that
@@ -69,14 +105,14 @@ describe("patched clack spinner on a stream that is not a terminal", () => {
         const spinner = clack.spinner({ output: stream.output, indicator: "dots" });
 
         spinner.start("loading");
-        await until(() => stream.text().includes("loading"), "the first message");
+        await stream.whenWritten("loading", "the first message");
         const settled = stream.text().length;
         await Bun.sleep(300);
 
         expect(stream.text().length).toBe(settled);
 
         spinner.message("parsing");
-        await until(() => stream.text().includes("parsing"), "the changed message");
+        await stream.whenWritten("parsing", "the changed message");
         spinner.stop("done");
 
         const text = stream.text();

@@ -22,6 +22,9 @@ tools cursor --model gpt-5 "explain this file"
 
 # Raw mode — only the final answer text, no tool calls
 tools cursor --raw "give me the summary" > answer.md
+
+# A question that starts with a dash
+tools cursor -- -why did this fail
 ```
 
 ---
@@ -36,6 +39,7 @@ tools cursor --raw "give me the summary" > answer.md
 | `--workspace <dir>` | Workspace root for Cursor | cwd |
 | `--raw` | Only print the final answer text | off |
 | `-h, --help` | Show help | — |
+| `--` | End of options. The words after it are the question, even when one starts with a dash | — |
 
 ---
 

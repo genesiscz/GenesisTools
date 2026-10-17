@@ -2,12 +2,12 @@ import { createBot } from "@app/telegram-bot/lib/bot";
 import { loadTelegramConfig, notConfiguredMessage, saveWebhookUrl } from "@app/telegram-bot/lib/config";
 import { COMMANDS } from "@app/telegram-bot/lib/handlers/help";
 import { createTelegramApi, describeApiError } from "@app/telegram-bot/lib/webhook/api";
-import { ensureWebhookSecret } from "@app/telegram-bot/lib/webhook/secret";
 import { runWebhookService } from "@app/telegram-bot/lib/webhook/service";
 import { resolveApiRoot, resolveWebhookSettings, WebhookSettingsError } from "@app/telegram-bot/lib/webhook/settings";
 import * as p from "@clack/prompts";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { secrets } from "@genesiscz/utils/security";
 import type { TelegramBotConfig } from "@genesiscz/utils/telegram-bot/lib/types";
 import type { Command } from "commander";
 
@@ -46,7 +46,6 @@ async function startWebhook(config: TelegramBotConfig, opts: StartOptions): Prom
         path: opts.path,
         port: opts.port === undefined ? undefined : Number(opts.port),
     });
-    const secret = await ensureWebhookSecret();
     await saveWebhookUrl(settings.url);
 
     const bot = createBot(config.botToken, config.chatId, { apiRoot: resolveApiRoot(config.apiRoot) });
@@ -64,7 +63,7 @@ async function startWebhook(config: TelegramBotConfig, opts: StartOptions): Prom
             await runWebhookService({
                 bot,
                 api: createTelegramApi(config),
-                secret,
+                store: await secrets(),
                 settings,
                 deleteOnExit: opts.deleteOnExit === true,
                 signal: stop.signal,

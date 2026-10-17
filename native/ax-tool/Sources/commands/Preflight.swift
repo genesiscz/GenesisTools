@@ -12,18 +12,14 @@ let BROWSER_APPLESCRIPT_APPS: Set<String> = ["Brave Browser", "Google Chrome", "
 /// Runs AppleScript and returns its string result. With a budget, nothing runs once it is spent, and an app
 /// that never answers an Apple Event is given up on when the budget ends instead of after two minutes.
 func runAppleScript(_ source: String, budget: WalkBudget? = nil) -> String? {
-    var runnable = source
-    if let budget {
-        if budget.spent() { return nil }
-        if let seconds = AppleScriptTimeout.seconds(until: budget.deadline) {
-            runnable = AppleScriptTimeout.wrap(source, seconds: seconds)
-        }
+    if let budget, budget.spent() { return nil }
+    return AppleScriptTimeout.run(source, deadline: budget?.deadline) { runnable in
+        var error: NSDictionary?
+        let script = NSAppleScript(source: runnable)
+        let result = script?.executeAndReturnError(&error)
+        guard error == nil else { return nil }
+        return result?.stringValue
     }
-    var error: NSDictionary?
-    let script = NSAppleScript(source: runnable)
-    let result = script?.executeAndReturnError(&error)
-    guard error == nil else { return nil }
-    return result?.stringValue
 }
 
 func screensInfo() -> [[String: Any]] {
@@ -59,21 +55,9 @@ func browserTabInfo(_ appName: String, axWindowTitles: [String], budget: WalkBud
     let titleScript = appName == "Safari"
         ? "tell application \"Safari\" to get name of front document"
         : "tell application \"\(appName)\" to get title of active tab of front window"
-    var tab: [String: Any] = [:]
-    if let u = runAppleScript(urlScript, budget: budget) { tab["url"] = u }
-    if let t = runAppleScript(titleScript, budget: budget) { tab["title"] = t }
-    guard !tab.isEmpty else { return nil }
-    // AppleScript addresses the app by NAME — with two same-named instances it
-    // may answer for the OTHER process. Cross-check the tab title against this
-    // pid's AX window titles so a mismatch is visible instead of silently wrong.
-    if let title = tab["title"] as? String, !title.isEmpty {
-        let matches = axWindowTitles.contains { $0.localizedCaseInsensitiveContains(title) }
-        tab["pidMatch"] = matches
-        if !matches {
-            tab["warning"] = "tab title not found in this pid's window titles — likely from ANOTHER instance of \(appName) (AppleScript resolves by name, not pid); do not trust for this process"
-        }
-    }
-    return tab
+    let url = runAppleScript(urlScript, budget: budget)
+    let title = runAppleScript(titleScript, budget: budget)
+    return BrowserTabInfo.checked(url: url, title: title, appName: appName, axWindowTitles: axWindowTitles)
 }
 
 func cmdPreflight(appName: String, maxDepth: Int) {

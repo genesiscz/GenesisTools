@@ -8,11 +8,23 @@ public enum AppleScriptTimeout {
         "with timeout of \(max(1, seconds)) seconds\n\(source)\nend timeout"
     }
 
-    /// Whole seconds from `now` until `deadline`, rounded up and at least 1. Nil when the deadline is not a
-    /// real point in time (no budget was set), so the caller keeps the default.
+    /// Applies the caller's deadline before handing the script to its in-process executor.
+    public static func run(
+        _ source: String, deadline: Date? = nil, now: Date = Date(), execute: (String) -> String?
+    ) -> String? {
+        var runnable = source
+        if let deadline, let seconds = seconds(until: deadline, now: now) {
+            guard seconds > 0 else { return nil }
+            runnable = wrap(source, seconds: seconds)
+        }
+        return execute(runnable)
+    }
+
+    /// Whole seconds that fit before `deadline`, or zero when less than a second remains. Nil means no
+    /// finite deadline was set, so the caller keeps the default timeout.
     public static func seconds(until deadline: Date, now: Date = Date()) -> Int? {
         let remaining = deadline.timeIntervalSince(now)
         guard remaining.isFinite else { return nil }
-        return max(1, Int(remaining.rounded(.up)))
+        return max(0, Int(remaining.rounded(.down)))
     }
 }

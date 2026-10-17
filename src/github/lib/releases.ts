@@ -32,7 +32,9 @@ const NAME_PART = /^[\w.-]+$/;
 /** `owner/repo`, an https or ssh github.com URL (with or without `.git` or a trailing path). */
 export function parseRepoRef(input: string): RepoRef | null {
     const trimmed = input.trim();
-    const url = /^(?:(?:https?|ssh|git):\/\/)?(?:[\w.-]+@)?(?:www\.)?github\.com[:/]+([^/]+)\/([^/#?]+)/i.exec(trimmed);
+    const url =
+        /^(?:https?|ssh|git):\/\/(?:[\w.-]+@)?(?:www\.)?github\.com(?::\d+)?\/([^/]+)\/([^/#?]+)/i.exec(trimmed) ??
+        /^(?:[\w.-]+@)?(?:www\.)?github\.com[:/]([^/]+)\/([^/#?]+)/i.exec(trimmed);
     const short = /^([^/]+)\/([^/]+)$/.exec(trimmed);
     const match = url ?? short;
 

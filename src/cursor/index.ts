@@ -35,8 +35,9 @@ Options:
   --workspace <dir> Workspace directory (default: cwd)
   --raw             Print only the final answer text, no tool calls
   -h, --help        Show this help
+  --                End of options. The rest is the question, even when it starts with a dash.
 
-Each option also takes its value as --option=value.`);
+Each option also takes its value as --option=value. A question that starts with a dash needs -- before it.`);
     process.exit(0);
 }
 
@@ -64,7 +65,7 @@ if (model) {
     cursorArgs.push("--model", model);
 }
 
-cursorArgs.push(question);
+cursorArgs.push("--", question);
 
 const proc = Bun.spawn(["cursor", ...cursorArgs], {
     stdout: "pipe",

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { randomBytes, randomInt } from "node:crypto";
 import { chmodSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createBot, handleUpdate } from "@app/telegram-bot/lib/bot";
 import { getStorage, loadTelegramConfig, saveTelegramConfig } from "@app/telegram-bot/lib/config";
 import { createRateLimiter } from "@app/telegram-bot/lib/security";
+import { withTimeout } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type SecretStore, secureRef } from "@genesiscz/utils/security";
 import type { Update } from "grammy/types";
@@ -514,8 +515,8 @@ describe("webhook secret", () => {
 interface FakeTelegram {
     apiRoot: string;
     calls: Array<{ method: string; body: Record<string, unknown> }>;
-    /** Settles once the fake has been asked for `method`, whether that already happened or not. */
-    seen(method: string): Promise<void>;
+    /** Settles once the fake has been asked for `method` at least `occurrence` times (once, by default). */
+    seen(method: string, occurrence?: number): Promise<void>;
     stop(): Promise<void>;
 }
 
@@ -548,14 +549,21 @@ function startFakeTelegram(options: { rejects?: string } = {}): FakeTelegram {
     return {
         apiRoot: `http://127.0.0.1:${server.port}`,
         calls,
-        seen: (method) =>
+        seen: (method, occurrence = 1) =>
             new Promise<void>((resolve) => {
-                if (calls.some((call) => call.method === method)) {
+                const count = () => calls.filter((call) => call.method === method).length;
+                const wake = () => {
+                    if (count() >= occurrence) {
+                        resolve();
+                    }
+                };
+
+                if (count() >= occurrence) {
                     resolve();
                     return;
                 }
 
-                waiting.set(method, [...(waiting.get(method) ?? []), resolve]);
+                waiting.set(method, [...(waiting.get(method) ?? []), wake]);
             }),
         stop: () => server.stop(true),
     };
@@ -676,43 +684,170 @@ describe("webhook secret rotation", () => {
     // Regression test: an ordinary `webhook set` resolved the secret, released the lock, and only then registered
     // it, so a rotation that landed in between left Telegram with the old secret and the vault with the new one
     it("registers the stored secret with the lock held, so an ordinary set cannot undo a rotation", async () => {
-        const { store, old } = await rotationSetup();
+        const store = memorySecretStore();
+        await saveTelegramConfig({ botToken: fakeToken(), chatId: fakeChatId(), configuredAt: "2026-01-01" });
+        const old = await ensureWebhookSecret({ store });
         const registered: string[] = [];
         let release: () => void = () => {};
         const gate = new Promise<void>((resolve) => {
             release = resolve;
         });
-        const waitFor = async (condition: () => boolean) => {
-            const deadline = Date.now() + 2000;
-
-            while (!condition()) {
-                if (Date.now() > deadline) {
-                    throw new Error("waited 2000 ms for the registration");
+        let markEntered: () => void = () => {};
+        const enteredRegistration = new Promise<void>((resolve, reject) => {
+            let settled = false;
+            const timer = setTimeout(() => {
+                if (settled) {
+                    return;
                 }
 
-                await Bun.sleep(5);
+                settled = true;
+                reject(new Error("waited 2000 ms for the registration"));
+            }, 2000);
+            markEntered = () => {
+                if (settled) {
+                    return;
+                }
+
+                settled = true;
+                clearTimeout(timer);
+                resolve();
+            };
+        });
+
+        let markRequested: () => void = () => {};
+        const rotationRequested = new Promise<void>((resolve) => {
+            markRequested = resolve;
+        });
+        let tail = Promise.resolve();
+        let requests = 0;
+        let completedLocks = 0;
+        const lock = spyOn(getStorage(), "withConfigLock").mockImplementation(async <T>(fn: () => Promise<T>) => {
+            const previous = tail;
+            let unlock: () => void = () => {};
+            tail = new Promise<void>((resolve) => {
+                unlock = resolve;
+            });
+            requests++;
+
+            if (requests === 2) {
+                markRequested();
             }
-        };
+
+            await previous;
+
+            try {
+                return await fn();
+            } finally {
+                completedLocks++;
+                unlock();
+            }
+        });
+        let released = false;
 
         const ordinary = registerWithStoredSecret({
             store,
             register: async (secret) => {
                 registered.push(secret);
+                markEntered();
                 await gate;
             },
         });
-        await waitFor(() => registered.length === 1);
-        const rotation = rotateWebhookSecret({ store, register: async (secret) => void registered.push(secret) });
-        await Bun.sleep(LOCK_POLL_MS * 2 + 20);
+        let rotation: Promise<string> | undefined;
 
-        expect(registered).toEqual([old]);
+        try {
+            await enteredRegistration;
+            rotation = rotateWebhookSecret({
+                store,
+                register: async (secret) => {
+                    if (!released) {
+                        throw new Error("rotation registered while the ordinary registration held the lock");
+                    }
 
-        release();
-        await Promise.all([ordinary, rotation]);
+                    registered.push(secret);
+                },
+            });
+            await withTimeout(rotationRequested, 2000);
+            expect(completedLocks).toBe(0);
+            expect(registered).toEqual([old]);
+            released = true;
+            release();
+            await Promise.all([ordinary, rotation]);
 
-        expect(registered).toHaveLength(2);
-        expect(registered[0]).toBe(old);
-        expect(await store.get(WEBHOOK_SECRET_PATH)).toBe(registered[1]);
+            expect(lock).toHaveBeenCalledTimes(2);
+            expect(registered).toHaveLength(2);
+            expect(registered[0]).toBe(old);
+            expect(await store.get(WEBHOOK_SECRET_PATH)).toBe(registered[1]);
+        } finally {
+            released = true;
+            release();
+            await Promise.allSettled([ordinary, rotation]);
+            lock.mockRestore();
+        }
+    });
+
+    // Regression test: startup read the secret, released the lock, then registered that captured value.
+    // A rotation that finished in between left the vault on the new secret and startup sending the old one.
+    it("registers the stored secret when a rotation finished after the secret was first read", async () => {
+        const { store, old, fake, register } = await rotationSetup();
+        const rotated = await rotateWebhookSecret({ store, register });
+        const stop = new AbortController();
+        const token = fakeToken();
+        const bot = createBot(token, fakeChatId(), { apiRoot: fake.apiRoot });
+        await bot.init();
+        let port = 0;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+
+        const running = runWebhookService({
+            bot,
+            api: createTelegramApi({ botToken: token, apiRoot: fake.apiRoot }),
+            secret: old,
+            store,
+            settings: { url, hostname: "bot.example.test", path: "/hook", port: 0 },
+            deleteOnExit: false,
+            signal: stop.signal,
+            onListening: (server) => {
+                port = server.port;
+            },
+        });
+
+        try {
+            await Promise.race([
+                fake.seen("setWebhook", 2),
+                new Promise<never>((_, reject) => {
+                    timer = setTimeout(
+                        () => reject(new Error("waited 2000 ms for startup to register the stored secret")),
+                        2000
+                    );
+                }),
+            ]);
+
+            const tokens = fake.calls
+                .filter((call) => call.method === "setWebhook")
+                .map((call) => call.body.secret_token);
+
+            expect(tokens).toHaveLength(2);
+            expect(tokens[1]).toBe(await store.get(WEBHOOK_SECRET_PATH));
+            expect(tokens[1]).toBe(rotated);
+            expect(tokens[1]).not.toBe(old);
+
+            const post = (secret: string, updateId: number) =>
+                fetch(`http://127.0.0.1:${port}/hook`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json", [WEBHOOK_SECRET_HEADER]: secret },
+                    body: SafeJSON.stringify(messageUpdate(updateId, 42, "/help")),
+                });
+
+            expect((await post(rotated, 1)).status).toBe(200);
+            expect((await post(old, 2)).status).toBe(401);
+        } finally {
+            if (timer !== undefined) {
+                clearTimeout(timer);
+            }
+
+            stop.abort();
+            await running;
+            await fake.stop();
+        }
     });
 });
 

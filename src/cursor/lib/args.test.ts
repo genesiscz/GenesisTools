@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -69,6 +69,40 @@ describe("parseCursorArgs", () => {
         expect(refused(["--moode=plan", "q"])).toContain("Unknown option --moode");
     });
 
+    it("refuses a short option it does not know, and a short option used as a value", () => {
+        expect(refused(["-x", "q"])).toContain("Unknown option -x");
+        expect(refused(["--model", "-x", "q"])).toContain("--model needs a value");
+    });
+
+    it("takes a question that starts with a dash after the -- end of options", () => {
+        expect(parsed(["--", "-x", "q"]).question).toBe("-x q");
+        expect(parsed(["hello", "--", "-x"]).question).toBe("hello -x");
+        expect(parsed(["--", "--raw"])).toEqual({
+            mode: "ask",
+            model: undefined,
+            workspace: "/work/repo",
+            raw: false,
+            help: false,
+            question: "--raw",
+        });
+        expect(parsed(["--model", "gpt-5", "--", "-why"])).toEqual({
+            mode: "ask",
+            model: "gpt-5",
+            workspace: "/work/repo",
+            raw: false,
+            help: false,
+            question: "-why",
+        });
+        expect(parsed(["--", "-h"])).toEqual({
+            mode: "ask",
+            model: undefined,
+            workspace: "/work/repo",
+            raw: false,
+            help: false,
+            question: "-h",
+        });
+    });
+
     it("lets help win over everything else", () => {
         expect(parsed(["--nope", "--mode=bad", "-h"]).help).toBe(true);
         expect(parsed(["--help"]).help).toBe(true);
@@ -81,6 +115,62 @@ describe("parseCursorArgs", () => {
 });
 
 describe("tools cursor entrypoint", () => {
+    it.each([
+        { words: ["ordinary", "question"] },
+        { words: ["-why", "did", "this", "fail"] },
+        { words: ["-h"] },
+        { words: ["--raw"] },
+    ])("forwards question words %j after the child's end-of-options marker", async ({ words }) => {
+        const dir = mkdtempSync(join(tmpdir(), "cursor-bin-"));
+        const marker = join(dir, "argv");
+        writeFileSync(join(dir, "cursor"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${marker}"\n`, { mode: 0o755 });
+
+        try {
+            const proc = Bun.spawn(
+                [
+                    "bun",
+                    "run",
+                    join(import.meta.dir, "../index.ts"),
+                    "--mode=plan",
+                    "--model=gpt-5",
+                    "--workspace=/work/repo",
+                    "--",
+                    ...words,
+                ],
+                {
+                    env: { ...process.env, PATH: `${dir}:${env.get("PATH") ?? ""}` },
+                    stdin: "ignore",
+                    stdout: "pipe",
+                    stderr: "pipe",
+                }
+            );
+            const [stdout, stderr, exitCode] = await Promise.all([
+                new Response(proc.stdout).text(),
+                new Response(proc.stderr).text(),
+                proc.exited,
+            ]);
+
+            expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+            expect(readFileSync(marker, "utf8").trimEnd().split("\n")).toEqual([
+                "agent",
+                "--mode=plan",
+                "--print",
+                "--stream-partial-output",
+                "--output-format",
+                "stream-json",
+                "--trust",
+                "--workspace",
+                "/work/repo",
+                "--model",
+                "gpt-5",
+                "--",
+                words.join(" "),
+            ]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     // Regression test: `--mode=unsupported` passed the guard and started Cursor in its default mode
     it("exits 1 and never starts cursor for an unsupported mode written with an equals sign", async () => {
         const dir = mkdtempSync(join(tmpdir(), "cursor-bin-"));

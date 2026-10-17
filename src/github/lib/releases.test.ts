@@ -54,6 +54,15 @@ describe("parseRepoRef", () => {
         expect(parseRepoRef("git@github.com:acme/widgets.git")).toEqual(expected);
     });
 
+    it("parses URL ports without treating the port as the owner", () => {
+        const expected = { owner: "acme", repo: "widgets" };
+
+        expect(parseRepoRef("https://github.com:443/acme/widgets")).toEqual(expected);
+        expect(parseRepoRef("ssh://git@github.com:22/acme/widgets.git")).toEqual(expected);
+        expect(parseRepoRef("git@github.com:acme/widgets.git")).toEqual(expected);
+        expect(parseRepoRef("https://github.com:invalid/acme/widgets")).toBeNull();
+    });
+
     it("keeps a dot in the repository name", () => {
         expect(parseRepoRef("https://github.com/acme/next.js")).toEqual({ owner: "acme", repo: "next.js" });
     });
