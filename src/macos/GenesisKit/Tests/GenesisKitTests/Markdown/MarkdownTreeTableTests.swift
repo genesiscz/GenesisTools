@@ -110,9 +110,6 @@ final class MarkdownTreeTableTests: XCTestCase {
         rig.widget = false
         expect(false)
         changeRows(rows, expected: [true, false, true, false])
-        rig.system = true
-        expect(true)
-        changeRows(open, expected: [true, false, true, false, true])
     }
 
     /// Cached path keys agree for identical UTF-8 paths and distinguish neighboring names.
@@ -142,7 +139,6 @@ final class MarkdownTreeTableTests: XCTestCase {
     private final class MotionRig: ObservableObject {
         @Published var app = false
         @Published var widget = false
-        @Published var system = false
         @Published var rows: [FileTreeRow] = []
         var readings: [String: Bool] = [:]
     }
@@ -155,7 +151,6 @@ final class MarkdownTreeTableTests: XCTestCase {
             MarkdownTreeTable(rows: rig.rows, revision: 0, box: box) { row in
                 AnyView(MotionRow(id: row.id, rig: rig))
             }
-            .environment(\.accessibilityReduceMotion, rig.system)
             .environment(\.nativeSettingsReduceMotion, rig.app)
             .environment(\.widgetReduceMotion, rig.widget)
         }

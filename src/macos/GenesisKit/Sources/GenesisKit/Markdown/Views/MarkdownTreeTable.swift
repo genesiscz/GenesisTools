@@ -84,7 +84,7 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
         let reduced = reduceMotion
         let buildCell = cell
         // Each row has its own NSHostingView, so it needs the enclosing environment's effective preference explicitly.
-        coordinator.cell = { row in AnyView(buildCell(row).environment(\.accessibilityReduceMotion, reduced)) }
+        coordinator.cell = { row in AnyView(buildCell(row).environment(\.nativeSettingsReduceMotion, reduced)) }
         let rowsChanged = force || coordinator.rows != rows
         let revisionChanged = force || coordinator.reduceMotion != reduced || coordinator.revision as? Revision != revision
         coordinator.reduceMotion = reduced
