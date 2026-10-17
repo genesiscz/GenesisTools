@@ -16,6 +16,7 @@ import SwiftUI
 /// that changes when something the cells draw changes besides the rows themselves (the selection, a pulse, the git
 /// marks, the style), so the visible cells are built again.
 struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
+    @GenReduceMotion private var reduceMotion
     /// The visible tree rows in depth-first display order.
     let rows: [FileTreeRow]
     /// The selection, style and decoration revision used to invalidate visible cells.
@@ -80,21 +81,25 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
     }
 
     private func apply(to coordinator: Coordinator, table: NSTableView, force: Bool) {
-        coordinator.cell = cell
+        let reduced = reduceMotion
+        let buildCell = cell
+        // Each row has its own NSHostingView, so it needs the enclosing environment's effective preference explicitly.
+        coordinator.cell = { row in AnyView(buildCell(row).environment(\.accessibilityReduceMotion, reduced)) }
         let rowsChanged = force || coordinator.rows != rows
-        let revisionChanged = force || coordinator.revision as? Revision != revision
+        let revisionChanged = force || coordinator.reduceMotion != reduced || coordinator.revision as? Revision != revision
+        coordinator.reduceMotion = reduced
         let old = coordinator.rows
         coordinator.rows = rows
         coordinator.revision = revision
         if coordinator.rowHeight == nil || revisionChanged, let first = rows.first {
-            let height = MarkdownTreeTableCell.height(of: cell(first))
+            let height = MarkdownTreeTableCell.height(of: coordinator.cell(first))
             if height != coordinator.rowHeight {
                 coordinator.rowHeight = height
                 table.rowHeight = height
             }
         }
         if rowsChanged {
-            if force || !Self.animate(from: old, to: rows, in: table) {
+            if force || !coordinator.animateRows(old, rows, table, reduced) {
                 table.reloadData()
             }
             if revisionChanged { coordinator.rebuildVisible() }
@@ -104,11 +109,11 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
     }
 
     /// A folder opening or closing: its rows slide in or out, and the rows whose value changed (the folder's chevron)
-    /// take their views again. False when a reload fits better: Reduce Motion, a new root, or a change too large to
-    /// watch.
+    /// take their views again. False when a reload fits better: effective Reduce Motion, a new root, or a change too
+    /// large to watch.
     @MainActor
-    static func animate(from old: [FileTreeRow], to new: [FileTreeRow], in table: NSTableView) -> Bool {
-        guard !old.isEmpty, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return false }
+    static func animate(from old: [FileTreeRow], to new: [FileTreeRow], in table: NSTableView, reduceMotion: Bool) -> Bool {
+        guard !old.isEmpty, !reduceMotion else { return false }
         let difference = new.map(\.key).difference(from: old.map(\.key))
         var removed = IndexSet()
         var inserted = IndexSet()
@@ -138,6 +143,12 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
         weak var table: NSTableView?
         /// The row snapshot currently exposed to the table data source.
         var rows: [FileTreeRow] = []
+        /// The effective preference last applied to native animations and isolated cell hosts.
+        var reduceMotion = false
+        /// Native row updates, with the effective preference supplied by the representable; injectable for hosted tests.
+        var animateRows: ([FileTreeRow], [FileTreeRow], NSTableView, Bool) -> Bool = { old, new, table, reduced in
+            MarkdownTreeTable<Revision>.animate(from: old, to: new, in: table, reduceMotion: reduced)
+        }
         /// The last applied cell revision, compared with the next representable update.
         var revision: Any?
         /// The measured height shared by all visible table rows.
