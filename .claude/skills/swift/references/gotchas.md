@@ -262,4 +262,4 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   `onChange(of: rows)` ran before `updateNSView` handed the table its rows, and the reload landed at offset 0. Set the
   offset one run-loop turn later and check it again a moment after (`MarkdownFileTreeView.applyPendingPlaceScroll`).
 - **A context menu opened by automation closes within seconds if nothing picks an item.** Run the right-click,
-  `see --scope menu` and the press back to back (tools control #530, 2026-10-15).
+  `see --scope menu` and the press back-to-back (tools control #530, 2026-10-15).

@@ -216,9 +216,10 @@ public final class FileTreeModel: ObservableObject {
     /// Reads one folder again (after a rename, duplicate or move to trash inside it). A quiet read already
     /// running is dropped: its snapshot predates this, and it must not replace the listing this read returns.
     public func refresh(_ folder: String) {
+        let folder = folder.nativeUTF8
         children[folder] = nil
-        relistEpoch[folder.nativeUTF8, default: 0] += 1
-        relistAgain.remove(folder.nativeUTF8)
+        relistEpoch[folder, default: 0] += 1
+        relistAgain.remove(folder)
         if loading.contains(folder) {
             stale.insert(folder)
         }
@@ -270,13 +271,16 @@ public final class FileTreeModel: ObservableObject {
             let listed = await Task.detached(priority: .utility) { read(path) }.value
             guard let self else { return }
             self.relisting.remove(path)
+            // Discarding an obsolete snapshot must still drain an event queued in the new generation.
+            defer {
+                if self.relistAgain.remove(path) != nil {
+                    self.relist(path)
+                }
+            }
             guard generation == self.generation, self.relistEpoch[path, default: 0] == epoch else { return }
             if let old = self.children[path], old != listed {
                 self.children[path] = listed
                 self.rebuild()
-            }
-            if self.relistAgain.remove(path) != nil {
-                self.relist(path)
             }
         }
     }

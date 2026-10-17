@@ -224,6 +224,7 @@ struct MarkdownWebView: NSViewRepresentable {
     /// A page leaving the window: its coordinator lets go of it, and it waits as the next spare
     /// (`MarkdownWebSpare.recycle`), so the next tab switch renders into a loaded page instead of building one.
     static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) {
+        coordinator.renderReady = nil
         coordinator.web = nil
         if coordinator.parent.proxy?.web === web {
             coordinator.parent.proxy?.web = nil

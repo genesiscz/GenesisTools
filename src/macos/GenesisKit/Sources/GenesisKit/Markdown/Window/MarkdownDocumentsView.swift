@@ -412,8 +412,25 @@ final class MarkdownLivePreview: ObservableObject {
 /// revision stays on screen when the file on disk is no longer text.
 @MainActor
 enum MarkdownPaneContent {
+    /// An image request changes with the file's contents and the pane's pixel size.
+    struct PictureRequest: Hashable {
+        let url: URL
+        let modifiedAt: Date?
+        let pixels: CGFloat
+
+        init(url: URL, modifiedAt: Date?, pixels: CGFloat) {
+            self.url = url
+            self.modifiedAt = modifiedAt
+            self.pixels = CGFloat(MediaThumbnailCache.bucket(forPixels: pixels))
+        }
+
+        func load() async -> MarkdownHoverImage.Picture {
+            await MarkdownHoverImage.picture(url: url, pixels: pixels, draft: nil)
+        }
+    }
+
     static func waitsForPage(_ doc: MarkdownDocument, model: MarkdownDocumentsModel) -> Bool {
-        guard model.renderer == .web, !(doc.missing && !doc.isDirty), !doc.binary,
+        guard model.renderer == .web, !(doc.missing && !doc.isDirty), !showsBinary(doc, model: model),
               model.revisionView?.docID != doc.id else { return false }
         return model.mode == .preview || model.mode == .split
     }
@@ -430,6 +447,8 @@ private struct MarkdownDocumentPane: View {
     @StateObject private var live: MarkdownLivePreview
     @StateObject private var gutter = GitGutterModel()
     @StateObject private var blame = AgentBlameModel()
+    @State private var binaryPicture: MarkdownHoverImage.Picture = .loading
+    @Environment(\.displayScale) private var displayScale
     @ObservedObject private var configuration = GenesisKitMarkdownConfiguration.shared
 
     /// The tab being switched away from, on screen until the new tab's page has rendered: it owns no sheet, no find
@@ -524,15 +543,35 @@ private struct MarkdownDocumentPane: View {
     /// A file that is not text: a picture is drawn to fit the pane; anything else names the file.
     @ViewBuilder
     private var binaryView: some View {
-        if MarkdownHoverImage.isImage(doc.url), let image = NSImage(contentsOf: doc.url) {
-            Image(nsImage: image)
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
+        if MarkdownHoverImage.isImage(doc.url) {
+            GeometryReader { geometry in
+                let request = MarkdownPaneContent.PictureRequest(
+                    url: doc.url, modifiedAt: doc.modifiedAt,
+                    pixels: MarkdownHoverImage.pixels(for: geometry.size, scale: displayScale)
+                )
+                Group {
+                    if case .ready(let thumbnail) = binaryPicture {
+                        Image(decorative: thumbnail.image, scale: max(1, displayScale))
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .accessibilityLabel(doc.url.lastPathComponent)
+                            .accessibilityIdentifier("markdown-binary-image")
+                    } else if case .failed = binaryPicture {
+                        pathButton
+                    } else {
+                        ProgressView().controlSize(.small)
+                    }
+                }
                 .padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityLabel(doc.url.lastPathComponent)
-                .accessibilityIdentifier("markdown-binary-image")
+                .task(id: request) {
+                    binaryPicture = .loading
+                    let picture = await request.load()
+                    guard !Task.isCancelled else { return }
+                    binaryPicture = picture
+                }
+            }
         } else {
             VStack(spacing: 8) {
                 Text("Not a text file")

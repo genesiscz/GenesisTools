@@ -27,6 +27,21 @@ final class MarkdownWebSpare: NSObject, WKScriptMessageHandler, WKNavigationDele
     private var media: MarkdownMediaRegistry?
     private var ready = false
     private var scheduled = false
+    private var resetting: MarkdownDropWebView?
+    typealias ResetPage = (MarkdownDropWebView, @escaping (Error?) -> Void) -> Void
+    private let resetPage: ResetPage
+
+    /// The reset completion is injectable so tests can hold it across a take or another recycle.
+    init(resetPage: @escaping ResetPage = { page, completion in
+        page.evaluateJavaScript(
+            "window.gnDiff([]);window.gnGitMarks([]);window.gnHighlightLines(null);window.gnWidth(null);window.scrollTo(0,0);"
+                + "document.documentElement.removeAttribute('style');"
+        ) { _, error in completion(error) }
+    }) {
+        self.resetPage = resetPage
+        super.init()
+    }
+
     /// Off in tests that count web views, and wherever a host does not want a page kept in memory.
     nonisolated(unsafe) static var enabled = true
 
@@ -55,24 +70,30 @@ final class MarkdownWebSpare: NSObject, WKScriptMessageHandler, WKNavigationDele
     /// 2026-10-15 (580 to 1799 ms each, a burst of opened tabs). Its marks, line highlight and scroll go first; the
     /// next pane's render replaces the article before the window shows it (`GenRenderSwap` waits for that render).
     func recycle(_ page: MarkdownDropWebView, media: MarkdownMediaRegistry) {
-        guard Self.enabled, web == nil, !page.isLoading else { return }
+        guard Self.enabled, web == nil, resetting == nil, !page.isLoading else { return }
+        resetting = page
         page.removeFromSuperview()
         let controller = page.configuration.userContentController
         controller.removeScriptMessageHandler(forName: "bridge")
-        controller.add(self, name: "bridge")
-        page.navigationDelegate = self
+        page.navigationDelegate = nil
         page.onDropFiles = nil
         page.magnification = 1
         // What a pane sets only when it has one (a column width, marks, a line highlight, theme variables) must not
         // carry over. `gnTheme` only sets properties, and a host with no theme of its own never replaces them.
-        page.evaluateJavaScript(
-            "window.gnDiff([]);window.gnGitMarks([]);window.gnHighlightLines(null);window.gnWidth(null);window.scrollTo(0,0);"
-                + "document.documentElement.removeAttribute('style');"
-        )
-        web = page
-        self.media = media
-        ready = true
-        recycled += 1
+        resetPage(page) { [weak self] error in
+            guard let self, self.resetting === page else { return }
+            self.resetting = nil
+            guard error == nil, Self.enabled else {
+                self.prepareSoon()
+                return
+            }
+            controller.add(self, name: "bridge")
+            page.navigationDelegate = self
+            self.web = page
+            self.media = media
+            self.ready = true
+            self.recycled += 1
+        }
     }
 
     /// Pages taken back by `recycle` (tests and the log read it).
@@ -80,7 +101,7 @@ final class MarkdownWebSpare: NSObject, WKScriptMessageHandler, WKNavigationDele
 
     /// Makes the next spare a moment from now, once.
     func prepareSoon(after delay: TimeInterval = 1.5) {
-        guard Self.enabled, web == nil, !scheduled else { return }
+        guard Self.enabled, web == nil, resetting == nil, !scheduled else { return }
         scheduled = true
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self else { return }
@@ -90,7 +111,7 @@ final class MarkdownWebSpare: NSObject, WKScriptMessageHandler, WKNavigationDele
     }
 
     private func prepare() {
-        guard web == nil else { return }
+        guard Self.enabled, web == nil, resetting == nil else { return }
         let media = MarkdownMediaRegistry()
         let controller = WKUserContentController()
         controller.add(self, name: "bridge")
@@ -110,10 +131,12 @@ final class MarkdownWebSpare: NSObject, WKScriptMessageHandler, WKNavigationDele
 
     func userContentController(_ ucc: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any], body["type"] as? String == "ready" else { return }
+        guard message.webView === web else { return }
         ready = true
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard webView === web else { return }
         ready = true
     }
 

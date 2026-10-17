@@ -105,7 +105,7 @@ final class MarkdownViewerSpeedTests: XCTestCase {
 
     /// The page a pane gives back is the next spare: the next take gets it at once, already loaded.
     func testAPageThatLeavesTheWindowIsTheNextSpare() throws {
-        let spare = MarkdownWebSpare()
+        let spare = MarkdownWebSpare(resetPage: { _, completion in completion(nil) })
         let page = MarkdownDropWebView(frame: .zero, configuration: WKWebViewConfiguration())
         let host = NSView(frame: .zero)
         host.addSubview(page)
@@ -123,6 +123,59 @@ final class MarkdownViewerSpeedTests: XCTestCase {
         spare.recycle(MarkdownDropWebView(frame: .zero, configuration: WKWebViewConfiguration()), media: MarkdownMediaRegistry())
         spare.recycle(MarkdownDropWebView(frame: .zero, configuration: WKWebViewConfiguration()), media: MarkdownMediaRegistry())
         XCTAssertEqual(spare.recycled, 2)
+    }
+
+    func testAResettingPageCannotBeTakenOrReplaced() throws {
+        var finish: ((Error?) -> Void)?
+        let spare = MarkdownWebSpare(resetPage: { _, completion in finish = completion })
+        let page = MarkdownDropWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let view = MarkdownWebView(
+            markdown: "# Doc", scrollTarget: nil, highlightQuery: nil, highlightToken: 0,
+            onWikilink: { _ in }, onActiveSection: { _ in }
+        )
+        let coordinator = MarkdownWebView.Coordinator(view)
+        spare.recycle(page, media: MarkdownMediaRegistry())
+        XCTAssertNil(spare.take(for: coordinator), "a reset in flight is not ready")
+        let firstFinish = try XCTUnwrap(finish)
+        finish = nil
+        spare.recycle(MarkdownDropWebView(frame: .zero, configuration: WKWebViewConfiguration()), media: MarkdownMediaRegistry())
+        XCTAssertNil(finish, "a second recycle cannot start during the first reset")
+        XCTAssertEqual(spare.recycled, 0)
+        firstFinish(nil)
+        XCTAssertTrue(try XCTUnwrap(spare.take(for: coordinator)).web === page)
+        XCTAssertEqual(spare.recycled, 1)
+    }
+
+    func testAFailedResetNeverBecomesASpare() throws {
+        var finish: ((Error?) -> Void)?
+        let spare = MarkdownWebSpare(resetPage: { _, completion in finish = completion })
+        let page = MarkdownDropWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        spare.recycle(page, media: MarkdownMediaRegistry())
+        try XCTUnwrap(finish)(NSError(domain: "reset-fixture", code: 1))
+        let view = MarkdownWebView(
+            markdown: "# Doc", scrollTarget: nil, highlightQuery: nil, highlightToken: 0,
+            onWikilink: { _ in }, onActiveSection: { _ in }
+        )
+        XCTAssertNil(spare.take(for: MarkdownWebView.Coordinator(view)))
+        XCTAssertEqual(spare.recycled, 0)
+        finish = nil
+        spare.recycle(page, media: MarkdownMediaRegistry())
+        XCTAssertNotNil(finish, "failure releases the reset slot for another page")
+        finish?(NSError(domain: "reset-fixture", code: 2))
+    }
+
+    func testDismantlingClearsTheOldReadinessSignal() {
+        let view = MarkdownWebView(
+            markdown: "# Doc", scrollTarget: nil, highlightQuery: nil, highlightToken: 0,
+            onWikilink: { _ in }, onActiveSection: { _ in }
+        )
+        let coordinator = MarkdownWebView.Coordinator(view)
+        var signals = 0
+        coordinator.renderReady = GenRenderReady(token: "old") { signals += 1 }
+        MarkdownWebView.dismantleNSView(WKWebView(frame: .zero), coordinator: coordinator)
+        coordinator.renderReady?()
+        XCTAssertNil(coordinator.renderReady)
+        XCTAssertEqual(signals, 0)
     }
 
     /// A page recycled from a themed pane must not keep that pane's inline theme. A host with no theme of its own

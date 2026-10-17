@@ -147,6 +147,47 @@ final class FileTreeLiveListingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(calls.withLock { $0 }, 3, "the refresh reads the folder itself")
     }
 
+    /// An obsolete quiet snapshot must still drain a disk event queued after navigation back to the folder.
+    func testARootChangeKeepsANewerQueuedQuietRead() async {
+        let model = FileTreeModel(root: root)
+        model.watchesDisk = false
+        let folder = root.appendingPathComponent("Návrhy").standardizedFileURL.path
+        let rootPath = root.standardizedFileURL.path
+        let calls = OSAllocatedUnfairLock(initialState: 0)
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        let child = FileTreeEntry(path: folder, name: "Návrhy", isFolder: true)
+        let old = FileTreeEntry(path: folder + "/old.md", name: "old.md", isFolder: false)
+        let fresh = FileTreeEntry(path: folder + "/fresh.md", name: "fresh.md", isFolder: false)
+        model.listing = { path in
+            if path == rootPath { return [child] }
+            guard path == folder else { return [] }
+            let call = calls.withLock { state -> Int in
+                state += 1
+                return state
+            }
+            if call == 2 {
+                _ = gate.wait(timeout: .now() + 5)
+                return [old]
+            }
+            return call >= 3 ? [old, fresh] : [old]
+        }
+        model.setRoot(root)
+        model.toggle(folder)
+        await settle { model.rows.contains { $0.name == "old.md" } }
+        XCTAssertTrue(model.rows.contains { $0.name == "old.md" })
+        model.diskChanged([folder])
+        await settle { calls.withLock { $0 } == 2 }
+        XCTAssertEqual(calls.withLock { $0 }, 2, "the quiet read has its old snapshot")
+        model.setRoot(root.appendingPathComponent("elsewhere"))
+        model.setRoot(root)
+        model.diskChanged([folder])
+        gate.signal()
+        await settle { model.rows.contains { $0.name == "fresh.md" } }
+        XCTAssertTrue(model.rows.contains { $0.name == "fresh.md" }, "the event after the root change starts a current read")
+        XCTAssertEqual(calls.withLock { $0 }, 3)
+    }
+
     func testANoteSavedInPlaceChangesNoRows() async throws {
         let model = await openTree()
         try? await Task.sleep(for: .milliseconds(300))

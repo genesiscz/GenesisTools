@@ -90,6 +90,7 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
             }
         // The minimum follows the sidebars: the content no longer imposes it (`contentView(model:)`).
         MarkdownWindowMinimum.apply(to: window, model: model)
+        // objectWillChange precedes storage: defer to the main queue so apply reads the new widths.
         minimumSink = model.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in

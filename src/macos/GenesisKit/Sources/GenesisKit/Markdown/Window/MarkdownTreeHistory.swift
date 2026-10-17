@@ -46,3 +46,17 @@ final class MarkdownTreeHistory: ObservableObject {
         return place
     }
 }
+
+/// Every delayed write belongs to one restore. A newer navigation invalidates even callbacks already enqueued.
+final class MarkdownTreeRestore {
+    private(set) var current = UUID()
+
+    func begin() -> UUID {
+        current = UUID()
+        return current
+    }
+
+    func cancel() { current = UUID() }
+
+    func isCurrent(_ token: UUID) -> Bool { token == current }
+}

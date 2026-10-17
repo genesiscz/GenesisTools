@@ -50,6 +50,7 @@ struct MarkdownFileTreeView: View {
     @State private var headerPulse: FileTreePulse?
     /// A place from Back or Forward whose scroll offset waits for its folders' rows (`applyPendingPlaceScroll`).
     @State private var pendingPlaceScroll: Double?
+    @State private var placeRestore = MarkdownTreeRestore()
     @ObservedObject private var history: MarkdownTreeHistory
     @GenReduceMotion private var reduceMotion
 
@@ -160,6 +161,7 @@ struct MarkdownFileTreeView: View {
             if let place { restore(place) }
         }
         .onDisappear {
+            cancelPlaceRestore()
             scrollBox.cancelGlide()
             model.treePlace = nil
         }
@@ -199,9 +201,8 @@ struct MarkdownFileTreeView: View {
         let selected = revealed ?? model.selected?.id
         let pulse = rowPulse
         let git: GitTreeDecorations? = gitMarks ? gitTree.decorations : nil
-        let rows = git.map { changedOnly ? FileTreeView.changedRows(tree.rows, $0) : tree.rows } ?? tree.rows
         return MarkdownFileTreeRows(
-            rows: rows, selected: selected, style: style, actions: actions, pulse: pulse, git: git, tree: tree,
+            rows: displayedRows, selected: selected, style: style, actions: actions, pulse: pulse, git: git, tree: tree,
             model: model, box: scrollBox
         )
         .equatable()
@@ -363,6 +364,7 @@ struct MarkdownFileTreeView: View {
     /// opens itself too). A new root: the tree scrolls to its top and the header pulses; a file in it
     /// still scrolls into view, without a second light. The search closes, so the tree is on screen.
     private func handleReveal(_ proxy: ScrollViewProxy) {
+        cancelPlaceRestore()
         // A new root, a header reveal or another row: the glide already running would keep writing the old target.
         scrollBox.cancelGlide()
         guard let pulse = model.revealPulse else { return }
@@ -420,6 +422,7 @@ struct MarkdownFileTreeView: View {
     }
 
     private func revealSelected(_ root: URL) {
+        cancelPlaceRestore()
         scrollBox.cancelGlide()
         tree.setRoot(root)
         search.setRoot(root)
@@ -478,8 +481,18 @@ struct MarkdownFileTreeView: View {
         place.root.isEmpty ? "the open document's folder" : (place.root as NSString).lastPathComponent
     }
 
+    static func folderName(_ folder: URL) -> String {
+        folder.lastPathComponent.isEmpty ? "/" : folder.lastPathComponent
+    }
+
+    private func cancelPlaceRestore() {
+        placeRestore.cancel()
+        pendingPlaceScroll = nil
+    }
+
     /// Back or Forward: the root, exactly the folders that were open, then the scroll offset once their rows are in.
     private func restore(_ place: MarkdownTreePlace) {
+        let token = placeRestore.begin()
         scrollBox.cancelGlide()
         pendingRow = nil
         if searchOpen { closeSearch() }
@@ -490,7 +503,10 @@ struct MarkdownFileTreeView: View {
         pendingPlaceScroll = place.scrollY
         applyPendingPlaceScroll(force: false)
         // Folders read off the main thread may never make the list tall enough (one was deleted): place it anyway.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { applyPendingPlaceScroll(force: true) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            guard placeRestore.isCurrent(token) else { return }
+            applyPendingPlaceScroll(force: true)
+        }
     }
 
     /// The saved offset, once the rows can hold it. It is set a run-loop turn later, after the table has taken the new
@@ -501,10 +517,13 @@ struct MarkdownFileTreeView: View {
         guard force || Self.maxScroll(scroll) >= y - 1 else { return }
         pendingPlaceScroll = nil
         let rows = tree.rows.count
+        let token = placeRestore.current
         DispatchQueue.main.async {
+            guard placeRestore.isCurrent(token) else { return }
             Self.place(scroll, at: y)
             GenesisKit.log("markdown: sidebar place scroll \(Int(y)) (max \(Int(Self.maxScroll(scroll))), forced \(force), rows \(rows))")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                guard placeRestore.isCurrent(token) else { return }
                 let now = scroll.contentView.bounds.origin.y
                 if abs(now - y) > 2, Self.maxScroll(scroll) >= y - 1 {
                     GenesisKit.log("markdown: sidebar place scroll moved to \(Int(now)) after restore, set \(Int(y)) again")
@@ -542,7 +561,7 @@ struct MarkdownFileTreeView: View {
         }
         if folders.count == 1 {
             return [PathAction.newFile, .newFolder].compactMap { action in
-                item(action, in: root, title: "\(action == .newFile ? "New File" : "New Folder") in \(root.lastPathComponent)…")
+                item(action, in: root, title: "\(action == .newFile ? "New File" : "New Folder") in \(Self.folderName(root))…")
                     .map(PathMenuEntry.item)
             }
         }
@@ -550,7 +569,7 @@ struct MarkdownFileTreeView: View {
             .map { action, title, symbol in
                 .submenu(id: "\(action.rawValue)-in", title: "\(title)…", systemImage: symbol,
                          entries: folders.compactMap { folder in
-                             item(action, in: folder, title: folder.lastPathComponent.isEmpty ? "/" : folder.lastPathComponent)
+                             item(action, in: folder, title: Self.folderName(folder))
                                  .map(PathMenuEntry.item)
                          })
             }
@@ -643,8 +662,8 @@ struct MarkdownFileTreeView: View {
             .accessibilityLabel("New file or folder")
             .accessibilityIdentifier("markdown-files-new")
             .instantTooltip(newItemFolder.path == root.path
-                ? "New file or folder in \(root.lastPathComponent)"
-                : "New file or folder in \(newItemFolder.lastPathComponent) or \(root.lastPathComponent)")
+                ? "New file or folder in \(Self.folderName(root))"
+                : "New file or folder in \(Self.folderName(newItemFolder)) or \(Self.folderName(root))")
 
             if gitMarks {
                 Button {

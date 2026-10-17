@@ -114,6 +114,11 @@ final class MarkdownTreeHistoryTests: XCTestCase {
         XCTAssertTrue(doc.binary)
         XCTAssertTrue(doc.isDirty)
         XCTAssertFalse(MarkdownPaneContent.showsBinary(doc, model: model), "an unsaved draft stays on screen")
+        model.rendererRaw = MarkdownRenderer.web.rawValue
+        XCTAssertTrue(MarkdownPaneContent.waitsForPage(doc, model: model), "the draft still renders a web page")
+        model.setMode(.split)
+        XCTAssertTrue(MarkdownPaneContent.waitsForPage(doc, model: model), "split also renders the draft")
+        model.setMode(.preview)
 
         let picture = MarkdownDocument(url: try pictureFile())
         XCTAssertTrue(MarkdownPaneContent.showsBinary(picture, model: model))
@@ -136,6 +141,55 @@ final class MarkdownTreeHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testABinaryPictureLoadsAndItsRequestFollowsTheFileAndSize() async throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("md-picture-load-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let image = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0
+        )!
+        try XCTUnwrap(image.representation(using: .png, properties: [:])).write(to: file)
+        let date = Date(timeIntervalSince1970: 100)
+        let request = MarkdownPaneContent.PictureRequest(url: file, modifiedAt: date, pixels: 400)
+        guard case .ready(let thumbnail) = await request.load() else {
+            return XCTFail("the binary pane loads through the async thumbnail cache")
+        }
+        XCTAssertEqual(thumbnail.sourceSize, CGSize(width: 2, height: 2))
+        XCTAssertEqual(request, MarkdownPaneContent.PictureRequest(url: file, modifiedAt: date, pixels: 401),
+                       "resizing inside one decode bucket does not restart the image task")
+        XCTAssertNotEqual(request, MarkdownPaneContent.PictureRequest(url: file, modifiedAt: date.addingTimeInterval(1), pixels: 400))
+        XCTAssertNotEqual(request, MarkdownPaneContent.PictureRequest(url: file, modifiedAt: date, pixels: 800))
+        XCTAssertNotEqual(request, MarkdownPaneContent.PictureRequest(url: file.appendingPathExtension("other"), modifiedAt: date, pixels: 400))
+    }
+
+    @MainActor
+    func testTheRootFolderHasANameInMenusAndTooltips() {
+        XCTAssertEqual(MarkdownFileTreeView.folderName(URL(fileURLWithPath: "/")), "/")
+        XCTAssertEqual(MarkdownFileTreeView.folderName(URL(fileURLWithPath: "/notes")), "notes")
+    }
+
+    func testANewerRestoreAndNavigationInvalidateQueuedScrollCallbacks() {
+        let restore = MarkdownTreeRestore()
+        var scroll = 0
+        var completions = 0
+        let first = restore.begin()
+        let oldWrite = {
+            if restore.isCurrent(first) { scroll = 100; completions += 1 }
+        }
+        let second = restore.begin()
+        oldWrite()
+        XCTAssertEqual(scroll, 0, "the first restore cannot force the second before its rows arrive")
+        if restore.isCurrent(second) { scroll = 200; completions += 1 }
+        oldWrite()
+        XCTAssertEqual(scroll, 200, "the first restore cannot overwrite the second offset")
+        restore.cancel()
+        if restore.isCurrent(second) { scroll = 300; completions += 1 }
+        XCTAssertEqual(scroll, 200, "a reveal or leaving the sidebar cancels delayed writes")
+        XCTAssertEqual(completions, 1, "an obsolete callback cannot acknowledge the newer place")
+    }
+
+    @MainActor
     func testTheSidebarDropsItsPlaceProviderWhenItLeaves() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("md-place-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -153,8 +207,11 @@ final class MarkdownTreeHistoryTests: XCTestCase {
             XCTAssertNotNil(model?.treePlace, "the sidebar publishes its place")
             window.contentView = nil
             window.close()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
             model = nil
+        }
+        let released = Date().addingTimeInterval(2)
+        while alive != nil, Date() < released {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
         }
         XCTAssertNil(alive, "leaving the sidebar releases the window model")
     }
