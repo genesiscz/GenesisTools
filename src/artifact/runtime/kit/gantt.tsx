@@ -245,9 +245,19 @@ function shortDay(format: Intl.DateTimeFormat, date: GanttDate): string {
         .join("");
 }
 
+function axisCellDays(axis: GanttAxis): number {
+    const days = axis.cellDays ?? DEFAULT_CELL_DAYS;
+
+    if (!Number.isInteger(days) || days <= 0) {
+        throw new RangeError("cellDays must be a positive finite integer");
+    }
+
+    return days;
+}
+
 /** The header cells of an axis. The short range never carries a year, so it cannot clip at 84 px. */
 export function ganttCells(axis: GanttAxis, locale?: string): GanttCell[] {
-    const cellDays = axis.cellDays ?? DEFAULT_CELL_DAYS;
+    const cellDays = axisCellDays(axis);
     const total = ganttDayIndex(axis.end, axis.start) + 1;
     const short = dateFormat(locale, { day: "numeric", month: "numeric" });
     const long = dateFormat(locale, { day: "numeric", month: "short", year: "numeric" });
@@ -310,6 +320,8 @@ interface DragState {
     id: string;
     edge: "start" | "end" | "move";
     x0: number;
+    source: GanttSpan;
+    view: GanttView;
     origin: GanttSpan;
     preview: GanttSpan;
     moved: boolean;
@@ -366,11 +378,12 @@ export function Gantt({
     labelTitle,
 }: GanttProps) {
     const dayWidth = axis.dayWidth ?? DEFAULT_DAY_WIDTH;
-    const cellWidth = (axis.cellDays ?? DEFAULT_CELL_DAYS) * dayWidth;
+    const cellWidth = axisCellDays(axis) * dayWidth;
     const totalDays = ganttDayIndex(axis.end, axis.start) + 1;
     const trackWidth = totalDays * dayWidth;
     const headerHeight = markers.length > 0 ? HEADER_WITH_MARKERS : HEADER;
-    const mode: GanttView = view ?? (bars.some((b) => b.ghost) ? "compare" : "current");
+    const mode: GanttView =
+        view ?? (bars.some((b) => b.ghost) || milestones.some((m) => m.ghost) ? "compare" : "current");
     const rights = editRights(editable);
     const fmt: Formatters = { day: dateFormat(locale, { day: "numeric", month: "short" }) };
     const [drag, setDrag] = useState<DragState | null>(null);
@@ -409,9 +422,42 @@ export function Gantt({
         }
     }, [activeIndex]);
 
+    const isValidDrag = (current: DragState): boolean => {
+        const row = rows.find((candidate) => candidate.kind === "bar" && candidate.bar.id === current.id);
+
+        if (row?.kind !== "bar" || current.view !== mode) {
+            return false;
+        }
+
+        const bar = row.bar;
+
+        if (bar.start !== current.source.start || bar.end !== current.source.end) {
+            return false;
+        }
+
+        const span = mode === "baseline" && bar.ghost ? bar.ghost : bar;
+
+        if (span.start !== current.origin.start || span.end !== current.origin.end) {
+            return false;
+        }
+
+        return Number.isNaN(current.x0)
+            ? Boolean(onBarClick)
+            : mode !== "baseline" && (current.edge === "move" ? rights.move : rights[current.edge]);
+    };
+    const activeDrag = drag && isValidDrag(drag) ? drag : null;
+
+    useLayoutEffect(() => {
+        if (drag && !activeDrag) {
+            dragRef.current = null;
+            setDrag(null);
+            setAnnounce("Cancelled. The timeline changed.");
+        }
+    });
+
     const spanOf = (bar: GanttBar): GanttSpan => {
-        if (drag && drag.id === bar.id) {
-            return drag.preview;
+        if (activeDrag && activeDrag.id === bar.id) {
+            return activeDrag.preview;
         }
 
         return mode === "baseline" && bar.ghost ? bar.ghost : { start: bar.start, end: bar.end };
@@ -422,7 +468,7 @@ export function Gantt({
         dragRef.current = null;
         setDrag(null);
 
-        if (!current) {
+        if (!current || !isValidDrag(current)) {
             return;
         }
 
@@ -440,7 +486,7 @@ export function Gantt({
     };
 
     useEffect(() => {
-        if (!drag) {
+        if (!activeDrag) {
             return;
         }
 
@@ -455,7 +501,7 @@ export function Gantt({
     });
 
     const onBarPointerDown = (event: PointerEvent<HTMLElement>, bar: GanttBar): void => {
-        if (event.button !== 0 || mode === "baseline") {
+        if (event.button !== 0) {
             return;
         }
 
@@ -464,7 +510,7 @@ export function Gantt({
                 ? event.target.closest("[data-gantt-handle]")?.getAttribute("data-gantt-handle")
                 : null;
         const edge = handle === "start" || handle === "end" ? handle : "move";
-        const allowed = edge === "move" ? rights.move : rights[edge];
+        const allowed = mode !== "baseline" && (edge === "move" ? rights.move : rights[edge]);
 
         if (!allowed && !onBarClick) {
             return;
@@ -473,12 +519,15 @@ export function Gantt({
         event.preventDefault();
         const capture = event.target instanceof Element ? event.target : event.currentTarget;
         capture.setPointerCapture?.(event.pointerId);
-        const origin = { start: bar.start, end: bar.end };
+        const source = { start: bar.start, end: bar.end };
+        const origin = mode === "baseline" && bar.ghost ? { ...bar.ghost } : source;
         // A click-only bar records the press (x0 NaN) but never previews a move.
         dragRef.current = {
             id: bar.id,
             edge: allowed ? edge : "move",
             x0: allowed ? event.clientX : Number.NaN,
+            source,
+            view: mode,
             origin,
             preview: origin,
             moved: false,
@@ -489,7 +538,17 @@ export function Gantt({
     const onBarPointerMove = (event: PointerEvent<HTMLElement>): void => {
         const current = dragRef.current;
 
-        if (!current || Number.isNaN(current.x0)) {
+        if (!current) {
+            return;
+        }
+
+        if (!isValidDrag(current)) {
+            endDrag(false);
+
+            return;
+        }
+
+        if (Number.isNaN(current.x0)) {
             return;
         }
 
@@ -557,7 +616,7 @@ export function Gantt({
             target = 0;
         } else if (event.key === "End") {
             target = focusable.length - 1;
-        } else if (event.key === "Enter" && row?.kind === "bar" && onBarClick) {
+        } else if ((event.key === "Enter" || event.key === " ") && row?.kind === "bar" && onBarClick) {
             event.preventDefault();
             onBarClick(row.bar.id);
 
@@ -696,7 +755,12 @@ export function Gantt({
 
                         if (row.kind === "milestone") {
                             return (
-                                <MilestoneRow key={`ms-${row.milestone.id}`} milestone={row.milestone} {...common} />
+                                <MilestoneRow
+                                    key={`ms-${row.milestone.id}`}
+                                    milestone={row.milestone}
+                                    view={mode}
+                                    {...common}
+                                />
                             );
                         }
 
@@ -715,8 +779,8 @@ export function Gantt({
                                 rowHeight={rowHeight}
                                 rights={mode === "baseline" ? editRights(false) : rights}
                                 clickable={Boolean(onBarClick)}
-                                dragging={drag?.id === row.bar.id && drag.moved}
-                                dragEdge={drag?.id === row.bar.id ? drag.edge : "move"}
+                                dragging={activeDrag?.id === row.bar.id && activeDrag.moved}
+                                dragEdge={activeDrag?.id === row.bar.id ? activeDrag.edge : "move"}
                                 onPointerDown={(event) => onBarPointerDown(event, row.bar)}
                                 onPointerMove={onBarPointerMove}
                                 onPointerUp={() => endDrag(true)}
@@ -807,6 +871,7 @@ function LaneRow({
 
 function MilestoneRow({
     milestone,
+    view,
     index,
     tabIndex,
     register,
@@ -816,14 +881,15 @@ function MilestoneRow({
     trackWidth,
     axis,
     fmt,
-}: RowCommon & { milestone: GanttMilestone }) {
+}: RowCommon & { milestone: GanttMilestone; view: GanttView }) {
     const dayWidth = axis.dayWidth ?? DEFAULT_DAY_WIDTH;
-    const at = (ganttDayIndex(milestone.date, axis.start) + 0.5) * dayWidth;
+    const date = view === "baseline" && milestone.ghost ? milestone.ghost : milestone.date;
+    const at = (ganttDayIndex(date, axis.start) + 0.5) * dayWidth;
     const ghostAt =
-        milestone.ghost && milestone.ghost !== milestone.date
+        view === "compare" && milestone.ghost && milestone.ghost !== milestone.date
             ? (ganttDayIndex(milestone.ghost, axis.start) + 0.5) * dayWidth
             : null;
-    const dateText = fmt.day.format(utcDate(milestone.date));
+    const dateText = fmt.day.format(utcDate(date));
     const tip = useTooltip(
         () =>
             milestone.tooltip ?? {
@@ -851,6 +917,7 @@ function MilestoneRow({
                 {ghostAt !== null ? (
                     <span
                         aria-hidden="true"
+                        data-gantt-milestone-ghost=""
                         className="absolute top-1/2 h-3 w-3 rotate-45 border border-dashed border-dim"
                         style={{ left: ghostAt - 6, marginTop: -6 }}
                     />
@@ -1014,8 +1081,7 @@ function BarRow({
                     <a
                         href={bar.href}
                         title={bar.label}
-                        tabIndex={-1}
-                        className="truncate text-[12.5px] text-dim hover:text-ink hover:underline"
+                        className="truncate text-[12.5px] text-dim hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-info"
                     >
                         {bar.label}
                     </a>
@@ -1161,7 +1227,8 @@ export interface GanttTableProps {
 /** The chart as a plain table (lane, item, start, end, days, shift): the non-visual equivalent. */
 export function GanttTable({ lanes, bars, milestones = [], locale, view }: GanttTableProps) {
     const fmt = dateFormat(locale, { day: "numeric", month: "short", year: "numeric" });
-    const mode: GanttView = view ?? (bars.some((b) => b.ghost) ? "compare" : "current");
+    const mode: GanttView =
+        view ?? (bars.some((b) => b.ghost) || milestones.some((m) => m.ghost) ? "compare" : "current");
     const laneName = new Map(lanes.map((lane) => [lane.id, lane.label]));
     const cell = "px-3 py-1.5 align-top";
     const num = `${cell} text-right font-mono text-[0.82rem] tabular-nums`;
@@ -1187,7 +1254,9 @@ export function GanttTable({ lanes, bars, milestones = [], locale, view }: Gantt
                         <tr key={`ms-${m.id}`} className="border-t border-line/70">
                             <td className={cell}>Milestone</td>
                             <td className={cell}>{m.label}</td>
-                            <td className={cell}>{fmt.format(utcDate(m.date))}</td>
+                            <td className={cell}>
+                                {fmt.format(utcDate(mode === "baseline" && m.ghost ? m.ghost : m.date))}
+                            </td>
                             <td className={cell} />
                             <td className={num} />
                             <td className={num}>

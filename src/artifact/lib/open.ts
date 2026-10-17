@@ -233,6 +233,15 @@ export interface OpenLibraryOptions {
 export function openLibrary(options: OpenLibraryOptions): Promise<OpenArtifactResult> {
     const target = "library";
     const startPort = options.port ?? options.defaultPort;
+
+    if (!Number.isInteger(startPort) || startPort < 1 || startPort > 65535) {
+        return Promise.reject(
+            new RangeError(
+                "Library opening requires a port from 1 to 65535. Omit --port to use the default; ephemeral port 0 is supported by library up only."
+            )
+        );
+    }
+
     const base = defaultDeps();
     const deps: OpenArtifactDeps = {
         ...base,

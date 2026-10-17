@@ -4,7 +4,7 @@
 import "../runtime/templates/auto/theme.css";
 import { FOCUS_RING, Hero, Page, ThemeToggle } from "@artifact/kit";
 import { useEffect, useMemo, useState } from "react";
-import { filterGalleryEntries, type GalleryPageModule, galleryEntries, groupByFamily } from "./_entries";
+import { filterGalleryEntries, type GalleryPageModule, galleryEntries, galleryPageId, groupByFamily } from "./_entries";
 import { InGallery } from "./_frame";
 
 const ENTRIES = galleryEntries(import.meta.glob<GalleryPageModule>("./*.tsx", { eager: true }));
@@ -15,11 +15,7 @@ const FAMILY_COUNT = groupByFamily(ENTRIES).length;
  * chart views), and a gallery id there would be overwritten by the first tab click. An old `#<id>` link still works.
  */
 function currentId(): string {
-    const fromQuery = new URLSearchParams(window.location.search).get("page") ?? "";
-    const fromHash = decodeURIComponent(window.location.hash.slice(1));
-    const known = [fromQuery, fromHash].find((id) => ENTRIES.some((e) => e.id === id));
-
-    return known ?? ENTRIES[0]?.id ?? "";
+    return galleryPageId(ENTRIES, new URL(window.location.href));
 }
 
 function pageHref(id: string): string {
@@ -32,6 +28,9 @@ export default function KitGallery() {
     const groups = useMemo(() => groupByFamily(filterGalleryEntries(ENTRIES, query)), [query]);
 
     useEffect(() => {
+        const url = new URL(window.location.href);
+        url.searchParams.set("page", currentId());
+        history.replaceState(null, "", url);
         const onPop = (): void => setActive(currentId());
         window.addEventListener("popstate", onPop);
 

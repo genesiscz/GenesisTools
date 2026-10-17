@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { tabHash, tabIdFromHash } from "./data";
 import { composeHash, isChartSegment, plainSegment, withPlainSegment } from "./hash";
 import { mountDom } from "./test-dom";
-import { TimeSeries } from "./timeseries";
+import { TimeSeries, type TsSeries } from "./timeseries";
 import {
     assignPanels,
     clampRange,
@@ -17,6 +18,8 @@ import {
     laneGutterWidth,
     layoutLanes,
     layoutLanesIn,
+    localParts,
+    logScale,
     MINUTE,
     nearestIndex,
     niceScale,
@@ -31,6 +34,7 @@ import {
     timeTicks,
     toCsv,
     tzOffset,
+    type ValueScale,
     valueAt,
     visibleMarkerKinds,
     writeHashState,
@@ -195,6 +199,60 @@ describe("lanes, markers, stacks, panels", () => {
         expect(clusters.map((c) => c.items)).toEqual([[0, 1, 2], [3], [4, 5]]);
     });
 
+    test("round 3: stacked geometry includes asynchronous lower-layer changes", () => {
+        const layers = stackPoints([
+            [
+                [0, 10],
+                [10, 20],
+            ],
+            [
+                [5, 1],
+                [15, 2],
+            ],
+        ]);
+        expect(layers[0].top).toEqual([
+            [0, 10],
+            [5, 10],
+            [10, 20],
+            [15, 20],
+        ]);
+        expect(layers[1].top).toEqual([
+            [0, null],
+            [5, 11],
+            [10, 21],
+            [15, 22],
+        ]);
+        expect(layers[1].base).toEqual([
+            [0, 10],
+            [5, 10],
+            [10, 20],
+            [15, 20],
+        ]);
+        expect(valueAt(layers[1].top, 10)).toBe(21);
+    });
+
+    test("round 3: stacked gaps remain gaps and hold their left edge until the gap starts", () => {
+        const layers = stackPoints([
+            [
+                [0, 10],
+                [10, null],
+                [20, 5],
+            ],
+            [
+                [0, 1],
+                [5, null],
+                [15, 2],
+                [25, 3],
+            ],
+        ]);
+        expect(layers[1].top).toContainEqual([10, null]);
+        expect(valueAt(layers[1].top, 10)).toBeNull();
+        expect(layers[1].top).toContainEqual([5, 11]);
+        expect(layers[1].top).toContainEqual([5, null]);
+        expect(layers[1].top).toContainEqual([20, 7]);
+        expect(layers[1].base).toContainEqual([20, 5]);
+    });
+
     test("stackPoints adds the lower layer's step value", () => {
         const [, top] = stackPoints([
             [
@@ -208,7 +266,9 @@ describe("lanes, markers, stacks, panels", () => {
         ]);
 
         expect(top.top).toEqual([
+            [0, null],
             [5, 11],
+            [10, 21],
             [15, 22],
         ]);
     });
@@ -407,6 +467,112 @@ describe("TimeSeries render", () => {
         await dom.unmount();
     });
 
+    test("round 1: copied links preserve file and HTTP URLs, query, tab and sibling chart state", async () => {
+        for (const href of [
+            "file:///tmp/report.html?page=time-series#overview&ts.other=keep&ts.main=l%3Dsplit",
+            "https://example.com/report?page=time-series#overview&ts.other=keep&ts.main=l%3Dsplit",
+        ]) {
+            const dom = await mountDom(<TimeSeries id="main" series={[]} layout="split" />, href);
+            const copied: string[] = [];
+            Object.defineProperty(dom.window.navigator, "clipboard", {
+                configurable: true,
+                value: {
+                    writeText: async (value: string) => {
+                        copied.push(value);
+                    },
+                },
+            });
+            await dom.click([...dom.container.querySelectorAll("button")].find((b) => b.textContent === "⋯"));
+            await dom.click([...dom.container.querySelectorAll("button")].find((b) => b.textContent === "Link"));
+            expect(copied).toHaveLength(1);
+            const url = new URL(copied[0]);
+            const original = new URL(href);
+            expect([url.protocol, url.pathname, url.search]).toEqual([
+                original.protocol,
+                original.pathname,
+                original.search,
+            ]);
+            expect(tabIdFromHash(url.hash)).toBe("overview");
+            expect(readHashState(url.hash, "other")).toBe("keep");
+            expect(readHashState(url.hash, "main")).toBe("l=split");
+            await dom.unmount();
+        }
+    });
+
+    test("round 3: renderer draws stacked areas as steps and keeps bars at their own sample times", async () => {
+        const dom = await mountDom(<p>canvas harness</p>);
+        const strokes: Array<{ color: string; points: Array<[number, number]> }> = [];
+        const rectangles: string[] = [];
+        let path: Array<[number, number]> = [];
+        const context = new Proxy(
+            {
+                fillStyle: "",
+                strokeStyle: "",
+                beginPath: () => {
+                    path = [];
+                },
+                moveTo: (x: number, y: number) => {
+                    path.push([x, y]);
+                },
+                lineTo: (x: number, y: number) => {
+                    path.push([x, y]);
+                },
+                stroke() {
+                    strokes.push({ color: this.strokeStyle, points: path.slice() });
+                },
+                fillRect() {
+                    rectangles.push(this.fillStyle);
+                },
+                measureText: () => ({ width: 30 }),
+            },
+            {
+                get(target, key, receiver) {
+                    return Reflect.has(target, key) ? Reflect.get(target, key, receiver) : () => undefined;
+                },
+            }
+        );
+        Object.defineProperty(dom.window.HTMLCanvasElement.prototype, "getContext", {
+            configurable: true,
+            value: () => context,
+        });
+        Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 600 });
+        const series: TsSeries[] = [
+            {
+                id: "lower",
+                label: "Lower",
+                color: "#123456",
+                stack: "load",
+                points: [
+                    [T0, 10],
+                    [T0 + 10 * MINUTE, 20],
+                ],
+            },
+            {
+                id: "upper",
+                label: "Upper",
+                color: "#abcdef",
+                stack: "load",
+                points: [
+                    [T0 + 5 * MINUTE, 1],
+                    [T0 + 15 * MINUTE, 2],
+                ],
+            },
+        ];
+        await dom.render(<TimeSeries series={series.map((s) => ({ ...s, kind: "area" }))} brush={false} />);
+        const upper = strokes.find((stroke) => stroke.color === "#abcdef");
+        expect(upper?.points).toHaveLength(5);
+        for (let i = 1; i < (upper?.points.length ?? 0); i += 1) {
+            const previous = upper?.points[i - 1];
+            const current = upper?.points[i];
+            expect(previous?.[0] === current?.[0] || previous?.[1] === current?.[1]).toBe(true);
+        }
+        rectangles.length = 0;
+        await dom.render(<TimeSeries series={series.map((s) => ({ ...s, kind: "bar" }))} brush={false} />);
+        expect(rectangles.filter((color) => color === "#123456")).toHaveLength(2);
+        expect(rectangles.filter((color) => color === "#abcdef")).toHaveLength(2);
+        await dom.unmount();
+    });
+
     test("renders chips and toggles, and the layout switch updates", async () => {
         const series = [
             { id: "ctx", label: "Context", unit: "tokens", points: sawtooth(50, 30) },
@@ -441,5 +607,201 @@ describe("TimeSeries render", () => {
         expect(dom.html()).toContain("rows in view");
 
         await dom.unmount();
+    });
+});
+
+describe("round 4 long-range ticks", () => {
+    test("quarterly ticks cover the final year of a multi-year viewport", () => {
+        const ticks = timeTicks({
+            range: [Date.parse("2026-02-15T12:00:00Z"), Date.parse("2029-03-31T21:00:00Z")],
+            width: 1800,
+            timeZone: "Europe/Prague",
+        });
+        expect(ticks.map((tick) => tick.label)).toEqual([
+            "Apr 2026",
+            "Jul 2026",
+            "Oct 2026",
+            "Jan 2027",
+            "Apr 2027",
+            "Jul 2027",
+            "Oct 2027",
+            "Jan 2028",
+            "Apr 2028",
+            "Jul 2028",
+            "Oct 2028",
+            "Jan 2029",
+        ]);
+        expect(ticks.every((tick) => localParts(tick.t, "Europe/Prague").hour === 0)).toBe(true);
+    });
+
+    test("yearly ticks use January boundaries through the entire twelve-year viewport", () => {
+        const ticks = timeTicks({
+            range: [Date.parse("2026-06-15T00:00:00Z"), Date.parse("2038-06-15T00:00:00Z")],
+            width: 1200,
+            timeZone: "UTC",
+        });
+        expect(ticks.map((tick) => tick.label)).toEqual(
+            Array.from({ length: 12 }, (_, index) => `Jan ${2027 + index}`)
+        );
+    });
+});
+
+describe("round 5 logarithmic boundaries", () => {
+    test("subnormal and maximum finite log ranges finish with finite ordered ticks", async () => {
+        const ranges = [
+            [Number.MIN_VALUE, 1],
+            [1, Number.MAX_VALUE],
+            [Number.MIN_VALUE, Number.MIN_VALUE],
+            [Number.MAX_VALUE, Number.MAX_VALUE],
+            [1e308, 1.1e308],
+            [1e-320, 1e-319],
+            [1e-6, 1e-5],
+            [Number.MIN_VALUE, Number.MAX_VALUE],
+            // Just above 1e-300, Math.log10 rounds down, so 10 ** ceil(log10(max)) lands below max without the upper step.
+            [1e-301, 1.0000000000000002e-300],
+        ];
+        const probe = Bun.spawn(
+            [
+                process.execPath,
+                "--eval",
+                `
+            import { logScale } from ${SafeJSON.stringify(new URL("./timeseries-core.ts", import.meta.url).pathname)};
+            import { SafeJSON } from ${SafeJSON.stringify(new URL("../../../utils/json.ts", import.meta.url).pathname)};
+            console.log(SafeJSON.stringify(${SafeJSON.stringify(ranges)}.map(([lo, hi]) => logScale(lo, hi))));
+        `,
+            ],
+            { stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        const deadline = setTimeout(() => probe.kill(), 2000);
+        try {
+            const [exitCode, stdout, stderr] = await Promise.all([
+                probe.exited,
+                new Response(probe.stdout).text(),
+                new Response(probe.stderr).text(),
+            ]);
+            expect(stderr).toBe("");
+            expect(exitCode, "logScale boundary probe must finish before its deadline").toBe(0);
+            const scales: ValueScale[] = SafeJSON.parse(stdout);
+            expect(scales).toHaveLength(ranges.length);
+            for (const [index, scale] of scales.entries()) {
+                expect(Number.isFinite(scale.min) && scale.min > 0).toBe(true);
+                expect(Number.isFinite(scale.max) && scale.max > scale.min).toBe(true);
+                expect(scale.min).toBeLessThanOrEqual(ranges[index][0]);
+                expect(scale.max).toBeGreaterThanOrEqual(ranges[index][1]);
+                expect(scale.ticks.length).toBeGreaterThan(0);
+                expect(scale.ticks.length).toBeLessThanOrEqual(634);
+                expect(
+                    scale.ticks.every(
+                        (tick, at) =>
+                            Number.isFinite(tick) &&
+                            tick >= scale.min &&
+                            tick <= scale.max &&
+                            (at === 0 || tick > scale.ticks[at - 1])
+                    )
+                ).toBe(true);
+            }
+        } finally {
+            clearTimeout(deadline);
+            probe.kill();
+        }
+    });
+
+    test("ordinary log ranges retain decade and minor ticks", () => {
+        expect(logScale(1, 1000)).toEqual({
+            min: 1,
+            max: 1000,
+            ticks: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+        });
+    });
+});
+
+describe("round 6 DST ticks", () => {
+    test("spring transition skips nonexistent hours and half hours without duplicate or reversed ticks", () => {
+        const start = Date.parse("2026-03-29T00:00:00Z");
+        for (const width of [300, 600]) {
+            const ticks = timeTicks({ range: [start, start + 3 * HOUR], width, timeZone: "Europe/Prague" });
+            const expectedStep = width === 300 ? HOUR : 30 * MINUTE;
+            expect(ticks.map((tick) => tick.t)).toEqual(
+                Array.from({ length: (3 * HOUR) / expectedStep + 1 }, (_, index) => start + index * expectedStep)
+            );
+            expect(ticks.map((tick) => tick.label)).toEqual(
+                width === 300
+                    ? ["01:00", "03:00", "04:00", "05:00"]
+                    : ["01:00", "01:30", "03:00", "03:30", "04:00", "04:30", "05:00"]
+            );
+        }
+    });
+
+    test("a nonexistent tick cannot stop scanning before a valid tick at the viewport end", () => {
+        const start = Date.parse("2026-03-29T00:00:00Z");
+        const ticks = timeTicks({
+            range: [start, start + 70 * MINUTE],
+            width: 300,
+            timeZone: "Europe/Prague",
+        });
+        expect(ticks.map((tick) => tick.label)).toEqual(["01:00", "01:30", "03:00"]);
+    });
+
+    test("fall transition still resolves real wall-clock ticks after the offset changes", () => {
+        const start = Date.parse("2026-10-25T00:00:00Z");
+        const ticks = timeTicks({ range: [start, start + 3 * HOUR], width: 300, timeZone: "Europe/Prague" });
+        expect(ticks.map((tick) => tick.label)).toEqual(["02:00", "03:00", "04:00"]);
+        expect(ticks.map((tick) => tick.t)).toEqual([start, start + 2 * HOUR, start + 3 * HOUR]);
+    });
+});
+
+describe("round 8 interval packing", () => {
+    test("packing preserves first-free rows, ties, gaps and byte-identical lane layouts", () => {
+        const items = Object.freeze(
+            [
+                { start: 11, end: 20 },
+                { start: 1, end: 3 },
+                { start: 0, end: 10 },
+                { start: 2, end: 5 },
+                { start: 11, end: 12 },
+                { start: 12, end: 12 },
+                { start: 12, end: 14 },
+            ].map((item) => Object.freeze(item))
+        );
+        expect(packRows(items)).toEqual([1, 1, 0, 2, 0, 0, 0]);
+        expect(packRows(items, 1)).toEqual([1, 1, 0, 2, 0, 2, 3]);
+        expect(packRows(items, -1)).toEqual([0, 1, 0, 1, 0, 1, 1]);
+        expect(packRows([])).toEqual([]);
+        const spans = [
+            ...items.map((item) => ({ ...item, lane: "work" })),
+            { start: 0, end: 1, lane: "notes" },
+            { start: 0, end: 1 },
+        ];
+        expect(SafeJSON.stringify(layoutLanes(spans))).toBe(
+            SafeJSON.stringify([
+                { name: "work", items: [0, 1, 2, 3, 4, 5, 6], itemRows: [1, 1, 0, 2, 0, 0, 0], rows: 3 },
+                { name: "notes", items: [7], itemRows: [0], rows: 1 },
+                { name: "Other", items: [8], itemRows: [0], rows: 1 },
+            ])
+        );
+        expect(SafeJSON.stringify(layoutLanesIn(spans, [11, 12], ["work", "notes", "Other"]))).toBe(
+            SafeJSON.stringify([
+                { name: "work", items: [0, 4, 5, 6], itemRows: [1, 0, 0, 0], rows: 2 },
+                { name: "notes", rows: 1, items: [], itemRows: [] },
+                { name: "Other", rows: 1, items: [], itemRows: [] },
+            ])
+        );
+    });
+
+    test("dense overlaps stay within a logarithmic comparison-operand budget", () => {
+        const count = 4096;
+        let coordinateReads = 0;
+        const items = Array.from({ length: count }, () => ({
+            get start() {
+                coordinateReads += 1;
+                return 0;
+            },
+            get end() {
+                coordinateReads += 1;
+                return 1;
+            },
+        }));
+        expect(packRows(items)).toEqual(Array.from({ length: count }, (_, index) => index));
+        expect(coordinateReads).toBeLessThanOrEqual(8 * count * Math.ceil(Math.log2(count)));
     });
 });

@@ -293,35 +293,45 @@ export function extentIn(points: readonly TsPoint[], t0: number, t1: number): [n
 // ─── Stacking ───
 
 export interface StackedPoints {
-    /** Cumulative top of this layer at each of its own points. */
+    /** Cumulative top on the union of layer change times. Nulls retain gaps. */
     top: TsPoint[];
     /** Cumulative bottom (the layers below) at the same times. */
     base: TsPoint[];
 }
 
 /**
- * Stack layers in order (first = bottom). Layers need not share timestamps:
- * a lower layer contributes its step value (last point at or before t).
+ * Stack layers in order (first = bottom) on their shared change-time grid.
+ * Every layer holds its last sample until the next change, including after its
+ * last timestamp. Before its first sample and during a null run it is absent.
+ * A null layer contributes zero below higher layers, while its own top stays null.
+ * The left limit at a gap boundary is retained so a step fill reaches the gap.
  */
 export function stackPoints(layers: ReadonlyArray<readonly TsPoint[]>): StackedPoints[] {
-    const out: StackedPoints[] = [];
+    const out: StackedPoints[] = layers.map(() => ({ top: [], base: [] }));
+    const times = [...new Set(layers.flatMap((layer) => layer.map(([t]) => t)))].sort((a, b) => a - b);
+    const positions = layers.map(() => -1);
 
-    for (const [index, layer] of layers.entries()) {
-        const top: TsPoint[] = [];
-        const base: TsPoint[] = [];
+    for (const t of times) {
+        let below = 0;
 
-        for (const [t, v] of layer) {
-            let below = 0;
+        for (const [index, layer] of layers.entries()) {
+            while (positions[index] + 1 < layer.length && layer[positions[index] + 1][0] <= t) {
+                positions[index] += 1;
+            }
 
-            for (let j = 0; j < index; j += 1) {
-                below += Math.max(0, valueAt(layers[j], t) ?? 0);
+            const v = positions[index] < 0 ? null : layer[positions[index]][1];
+            const { top, base } = out[index];
+            const previous = top.at(-1);
+
+            if (v === null && previous && previous[1] !== null) {
+                top.push([t, previous[1]]);
+                base.push([t, base[base.length - 1][1]]);
             }
 
             base.push([t, below]);
             top.push([t, v === null ? null : below + Math.max(0, v)]);
+            below += Math.max(0, v ?? 0);
         }
-
-        out.push({ top, base });
     }
 
     return out;
@@ -515,8 +525,9 @@ export function timeTicks({ range, width, timeZone, minGap = 90 }: TimeTicksOpti
     const ticks: TimeTick[] = [];
     const toInstant = (wall: number) => {
         const guess = wall - off0;
-
-        return wall - tzOffset(guess, timeZone);
+        const t = wall - tzOffset(guess, timeZone);
+        // A nonexistent local time cannot round-trip through the zone's actual offset.
+        return t + tzOffset(t, timeZone) === wall ? t : Number.NaN;
     };
 
     if (step < DAY) {
@@ -524,6 +535,10 @@ export function timeTicks({ range, width, timeZone, minGap = 90 }: TimeTicksOpti
 
         for (let guard = 0; guard < 500; guard += 1, wall += step) {
             const t = toInstant(wall);
+
+            if (!Number.isFinite(t) || t < t0 || t <= (ticks.at(-1)?.t ?? -Infinity)) {
+                continue;
+            }
 
             if (t > t1) {
                 break;
@@ -543,25 +558,31 @@ export function timeTicks({ range, width, timeZone, minGap = 90 }: TimeTicksOpti
     }
 
     const days = Math.round(step / DAY);
-    let wallDay = Math.ceil((t0 + off0) / DAY) * DAY;
+    const months = days >= 365 ? 12 : days >= 90 ? 3 : days >= 28 ? 1 : 0;
+    const start = localParts(t0, timeZone);
+    let month = Math.floor(start.month / (months || 1)) * (months || 1);
+    let wall = months ? Date.UTC(start.year, month, 1) : Math.ceil((t0 + off0) / step) * step;
 
-    for (let guard = 0; guard < 800; guard += 1, wallDay += DAY) {
-        const t = toInstant(wallDay);
+    // Advance calendar intervals directly; the safety cap counts ticks, not days scanned.
+    while (ticks.length < 500 && Number.isFinite(wall)) {
+        const t = toInstant(wall);
 
         if (t > t1) {
             break;
         }
 
-        const p = localParts(t, timeZone);
-        const index = Math.round(wallDay / DAY);
-        const keep = days >= 28 ? p.day === 1 && (days < 90 || p.month % 3 === 0) : index % days === 0;
-
-        if (!keep) {
-            continue;
+        if (Number.isFinite(t) && t >= t0 && t > (ticks.at(-1)?.t ?? -Infinity)) {
+            const p = localParts(t, timeZone);
+            const label = months ? `${p.monthName} ${p.year}` : `${p.day} ${p.monthName}`;
+            ticks.push({ t, label, major: p.day === 1 });
         }
 
-        const label = days >= 28 ? `${p.monthName} ${p.year}` : `${p.day} ${p.monthName}`;
-        ticks.push({ t, label, major: p.day === 1 });
+        if (months) {
+            month += months;
+            wall = Date.UTC(start.year, month, 1);
+        } else {
+            wall += step;
+        }
     }
 
     return ticks;
@@ -615,16 +636,46 @@ export function niceScale(min: number, max: number, count = 5): ValueScale {
 
 /** Log axis over positive values: decades, with 2 and 5 between when there are few decades. */
 export function logScale(min: number, max: number): ValueScale {
-    const lo = 10 ** Math.floor(Math.log10(Math.max(min, Number.MIN_VALUE)));
-    const hi = 10 ** Math.ceil(Math.log10(Math.max(max, lo * 10)));
-    const decades = Math.round(Math.log10(hi / lo));
+    const smallest = Math.max(min, Number.MIN_VALUE);
+    let lowerExponent = Math.max(-324, Math.floor(Math.log10(smallest)));
+    let lo = Math.max(Number.MIN_VALUE, 10 ** lowerExponent);
+
+    if (lo > smallest && lowerExponent > -324) {
+        lowerExponent -= 1;
+        lo = Math.max(Number.MIN_VALUE, 10 ** lowerExponent);
+    }
+
+    const largest = Math.max(max, Math.min(Number.MAX_VALUE, lo * 10));
+    let upperExponent = Math.min(309, Math.ceil(Math.log10(largest)));
+    let hi = Math.min(Number.MAX_VALUE, 10 ** upperExponent);
+
+    if (hi < largest && upperExponent < 309) {
+        upperExponent += 1;
+        hi = Math.min(Number.MAX_VALUE, 10 ** upperExponent);
+    }
+
+    const decades = Math.round(Math.log10(hi) - Math.log10(lo));
     const ticks: number[] = [];
+    const addTick = (value: number): void => {
+        if (!Number.isFinite(value) || value < lo || value > hi) {
+            return;
+        }
 
-    for (let d = lo; d <= hi * 1.0001; d *= 10) {
-        ticks.push(Number(d.toPrecision(12)));
+        const tick = Math.max(lo, Math.min(hi, Number(value.toPrecision(12))));
 
-        if (decades <= 3 && d * 10 <= hi * 1.0001) {
-            ticks.push(Number((d * 2).toPrecision(12)), Number((d * 5).toPrecision(12)));
+        if (tick > (ticks.at(-1) ?? 0)) {
+            ticks.push(tick);
+        }
+    };
+
+    // IEEE-754's finite positive range spans at most 634 candidate decades.
+    for (let exponent = lowerExponent; exponent <= upperExponent; exponent += 1) {
+        const d = Math.max(lo, Math.min(hi, 10 ** exponent));
+        addTick(d);
+
+        if (decades <= 3) {
+            addTick(d * 2);
+            addTick(d * 5);
         }
     }
 
@@ -693,24 +744,53 @@ export interface PackInput {
 /**
  * Greedy interval packing: each item (in start order) goes into the first row
  * whose last item ended before it starts. Returns the row per input index.
+ * Sorting and first-free-row lookup take O(n log n) time with O(n) storage.
  */
 export function packRows(items: readonly PackInput[], gap = 0): number[] {
     const order = items.map((_, i) => i).sort((a, b) => items[a].start - items[b].start || items[a].end - items[b].end);
-    const rowEnds: number[] = [];
-    const rows = new Array<number>(items.length).fill(0);
+    let firstLeaf = 1;
+
+    while (firstLeaf < items.length) {
+        firstLeaf *= 2;
+    }
+
+    // Each node holds the minimum reusable time in its row range. Searching left
+    // first preserves the old lowest-row choice, even when higher rows ended earlier.
+    const minReadyAt = new Array<number | undefined>(firstLeaf * 2);
+    const rows = new Array<number>(items.length);
+    let rowCount = 0;
 
     for (const i of order) {
         const item = items[i];
-        let row = rowEnds.findIndex((end) => end + gap <= item.start);
+        const start = item.start;
+        const earliest = minReadyAt[1];
+        let row: number;
+        let node = 1;
 
-        if (row === -1) {
-            row = rowEnds.length;
-            rowEnds.push(item.end);
+        if (earliest !== undefined && earliest <= start) {
+            while (node < firstLeaf) {
+                const left = node * 2;
+                const leftReadyAt = minReadyAt[left];
+                node = leftReadyAt !== undefined && leftReadyAt <= start ? left : left + 1;
+            }
+
+            row = node - firstLeaf;
         } else {
-            rowEnds[row] = item.end;
+            row = rowCount;
+            rowCount += 1;
         }
 
         rows[i] = row;
+        node = firstLeaf + row;
+        const readyAt = item.end + gap;
+        minReadyAt[node] = Number.isNaN(readyAt) ? undefined : readyAt;
+
+        while (node > 1) {
+            node = Math.floor(node / 2);
+            const left = minReadyAt[node * 2];
+            const right = minReadyAt[node * 2 + 1];
+            minReadyAt[node] = left === undefined ? right : right === undefined ? left : Math.min(left, right);
+        }
     }
 
     return rows;

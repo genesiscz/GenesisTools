@@ -1,5 +1,5 @@
 /**
- * Shared array utilities for CLI tools.
+ * Shared array utilities.
  */
 
 /**
@@ -29,4 +29,25 @@ export function chunk<T>(items: T[], size: number): T[][] {
     }
 
     return chunks;
+}
+
+/** Immutable index move. Invalid indexes return an unchanged copy. */
+export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
+    if (
+        !Number.isInteger(from) ||
+        !Number.isInteger(to) ||
+        from < 0 ||
+        from >= list.length ||
+        to < 0 ||
+        to >= list.length ||
+        from === to
+    ) {
+        return [...list];
+    }
+
+    const next = [...list];
+    const [item] = next.splice(from, 1);
+    next.splice(to, 0, item);
+
+    return next;
 }

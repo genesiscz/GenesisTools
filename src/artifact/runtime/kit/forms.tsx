@@ -123,7 +123,7 @@ export function Field({ label, hint, error, required = false, children }: FieldP
     const controlId = children.props.id ?? `${id}-control`;
     const hintId = hint ? `${id}-hint` : undefined;
     const errorId = error ? `${id}-error` : undefined;
-    const describedBy = [hintId, errorId].filter(Boolean).join(" ") || undefined;
+    const describedBy = [children.props["aria-describedby"], hintId, errorId].filter(Boolean).join(" ") || undefined;
 
     return (
         <div className="flex min-w-0 flex-col gap-1">
@@ -227,8 +227,13 @@ export function NumberInput({ value, onChange, min, max, step, unit, invalid, di
         const parsed = parseNumberDraft(draft);
         setDraft(null);
 
-        if (parsed !== undefined && parsed !== value) {
-            onChange(parsed);
+        const next =
+            parsed == null
+                ? parsed
+                : Math.min(max ?? Number.POSITIVE_INFINITY, Math.max(min ?? Number.NEGATIVE_INFINITY, parsed));
+
+        if (next !== undefined && next !== value) {
+            onChange(next);
         }
     };
 
@@ -429,15 +434,18 @@ export function FileInput({
     const [error, setError] = useState<string | null>(null);
     const [over, setOver] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
+    const selection = useRef(0);
     const errorId = `${inputId}-error`;
 
     const takeFiles = async (list: FileList | null): Promise<void> => {
-        const files = list ? Array.from(list) : [];
+        const supplied = list ? Array.from(list) : [];
+        const files = multiple ? supplied : supplied.slice(0, 1);
 
         if (files.length === 0) {
             return;
         }
 
+        const generation = ++selection.current;
         const tooBig = files.find((f) => f.size > maxBytes);
 
         if (tooBig) {
@@ -455,8 +463,31 @@ export function FileInput({
         setPicked(files);
         const result: PickedFile[] = [];
 
-        for (const file of files) {
-            result.push(read === "text" ? { file, text: await file.text() } : { file });
+        try {
+            for (const file of files) {
+                result.push(read === "text" ? { file, text: await file.text() } : { file });
+
+                if (generation !== selection.current) {
+                    return;
+                }
+            }
+        } catch (error) {
+            if (generation !== selection.current) {
+                return;
+            }
+
+            setError(
+                error instanceof Error
+                    ? `Unable to read the selected file: ${error.message}`
+                    : "Unable to read the selected file. Please try again."
+            );
+            setPicked([]);
+
+            if (inputRef.current) {
+                inputRef.current.value = "";
+            }
+
+            return;
         }
 
         onFiles(result);

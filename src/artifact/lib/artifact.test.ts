@@ -17,14 +17,20 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import * as storage from "@genesiscz/utils/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
+import { plugin } from "bun";
+import { act, type ComponentType, createElement } from "react";
 import {
     filterGalleryEntries,
     GALLERY_FAMILIES,
     type GalleryEntry,
+    type GalleryPageModule,
+    galleryPageId,
     groupByFamily,
     matchGalleryEntry,
 } from "../gallery/_entries";
 import * as kit from "../runtime/kit";
+import { mountDom } from "../runtime/kit/test-dom";
+import { writeHashState } from "../runtime/kit/timeseries-core";
 import {
     buildSingleFile,
     collectEmbeddableFiles,
@@ -56,6 +62,7 @@ import {
     defaultPageForTarget,
     type OpenArtifactDeps,
     openArtifact,
+    openLibrary,
     openServeArgv,
     pageUrl,
     runningArtifactPort,
@@ -1180,6 +1187,24 @@ describe("openArtifact", () => {
         };
     }
 
+    test("round 3: library opening rejects an ephemeral port before any process starts", async () => {
+        const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+            throw new Error("A server must not be started for an invalid port");
+        });
+        const lock = spyOn(storage, "withFileLock").mockImplementation((_file, work) => work());
+
+        try {
+            await expect(openLibrary({ port: 0, defaultPort: 3077, open: false, timeoutMs: 0 })).rejects.toThrow(
+                "port from 1 to 65535"
+            );
+            expect(spawn).not.toHaveBeenCalled();
+            expect(lock).not.toHaveBeenCalled();
+        } finally {
+            spawn.mockRestore();
+            lock.mockRestore();
+        }
+    });
+
     test("a running server is opened at the page, and nothing is started", async () => {
         const deps = fakeDeps({ findPort: () => 3099 });
         const result = await openArtifact({ target: "demo", path: "/report", deps });
@@ -1456,6 +1481,16 @@ describe("kit gallery", () => {
         expect(missing).toEqual([]);
     });
 
+    test("round 1: query routes survive component hash state and malformed legacy links", () => {
+        const first = entries[0].id;
+        const page = entries.find((entry) => entry.id === "time-series")?.id ?? "";
+        expect(page).toBe("time-series");
+        expect(galleryPageId(entries, new URL(`http://localhost/?page=${page}#overview&ts.main=saved`))).toBe(page);
+        expect(galleryPageId(entries, new URL(`http://localhost/?page=${page}#%E0%A4%A`))).toBe(page);
+        expect(galleryPageId(entries, new URL("http://localhost/#%E0%A4%A"))).toBe(first);
+        expect(galleryPageId(entries, new URL(`http://localhost/#${page}`))).toBe(page);
+    });
+
     test("every page names a known family and only real kit components", () => {
         const known = new Set<string>(GALLERY_FAMILIES);
         const exported = new Set(Object.keys(kit));
@@ -1500,5 +1535,94 @@ describe("kit gallery", () => {
     test("galleryPath points at the index, with the page in the query", () => {
         expect(galleryPath()).toBe("a/kit-gallery/index");
         expect(galleryPath("time-series")).toBe("a/kit-gallery/index?page=time-series");
+    });
+});
+
+describe("gallery component routing", () => {
+    let Gallery: ComponentType;
+
+    beforeAll(async () => {
+        const modules: Record<string, GalleryPageModule> = {
+            "./first.tsx": {
+                meta: { title: "First demo", family: "Layout" },
+                default: () => createElement("p", null, "First demo body"),
+            },
+            "./time-series.tsx": {
+                meta: { title: "Time series", family: "Charts" },
+                default: () =>
+                    createElement(kit.Tabs, {
+                        tabs: [
+                            { id: "overview", label: "Overview", content: "Overview body" },
+                            { id: "cache", label: "Cache", content: "Cache body" },
+                        ],
+                    }),
+            },
+        };
+        plugin({
+            name: "gallery-vite-glob-fixture",
+            setup(build) {
+                build.module("gallery-test:modules", () => ({ loader: "object", exports: { modules } }));
+                // Supply Vite's import-time glob and CSS only. The index's routing and component run unchanged.
+                build.onLoad({ filter: /[/\\]artifact[/\\]gallery[/\\]index\.tsx$/ }, ({ path: sourcePath }) => ({
+                    loader: "tsx",
+                    contents:
+                        'import { modules as galleryTestModules } from "gallery-test:modules";\nimport.meta.glob = () => galleryTestModules;\n' +
+                        readFileSync(sourcePath, "utf8"),
+                }));
+                build.onLoad({ filter: /[/\\]artifact[/\\]runtime[/\\]templates[/\\]auto[/\\]theme\.css$/ }, () => ({
+                    loader: "object",
+                    exports: {},
+                }));
+            },
+        });
+        Gallery = (await import("../gallery/index")).default;
+    });
+
+    const selectedPage = (container: HTMLElement): string | null | undefined =>
+        container.querySelector('nav[aria-label="Components"] a[aria-current="page"]')?.textContent;
+
+    test("a legacy page survives tab and chart hash writes and reload", async () => {
+        const dom = await mountDom(createElement(Gallery), "http://localhost/index#time-series");
+        expect(selectedPage(dom.container)).toBe("Time series");
+        expect(new URL(dom.window.location.href).searchParams.get("page")).toBe("time-series");
+        await dom.click([...dom.container.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "Cache"));
+        expect(dom.window.location.hash).toBe("#cache");
+        dom.window.history.replaceState(null, "", writeHashState(dom.window.location.hash, "demo", "l=split"));
+        const copied = dom.window.location.href;
+        expect(new URL(copied).hash).toBe("#cache&ts.demo=l%3Dsplit");
+        await dom.unmount();
+        const reloaded = await mountDom(createElement(Gallery), copied);
+        expect(selectedPage(reloaded.container)).toBe("Time series");
+        expect(reloaded.container.textContent).toContain("Cache body");
+        await reloaded.unmount();
+    });
+
+    test("a malformed legacy hash renders the fallback page", async () => {
+        const dom = await mountDom(createElement(Gallery), "http://localhost/index#%E0%A4%A");
+        expect(selectedPage(dom.container)).toBe("First demo");
+        expect(dom.container.textContent).toContain("First demo body");
+        await dom.unmount();
+    });
+
+    test("a valid query page renders despite a malformed legacy hash", async () => {
+        const dom = await mountDom(createElement(Gallery), "http://localhost/index?page=time-series#%E0%A4%A");
+        expect(selectedPage(dom.container)).toBe("Time series");
+        expect(dom.container.textContent).toContain("Overview body");
+        await dom.unmount();
+    });
+
+    test("popstate resolves a query page and safely falls back for a malformed hash", async () => {
+        const dom = await mountDom(createElement(Gallery), "http://localhost/index?page=first");
+        await act(async () => {
+            dom.window.history.pushState(null, "", "?page=time-series#cache&ts.demo=l%3Dsplit");
+            dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+        });
+        expect(selectedPage(dom.container)).toBe("Time series");
+        await act(async () => {
+            dom.window.history.pushState(null, "", "/index#%E0%A4%A");
+            dom.window.dispatchEvent(new dom.window.PopStateEvent("popstate"));
+        });
+        expect(selectedPage(dom.container)).toBe("First demo");
+        await dom.unmount();
     });
 });

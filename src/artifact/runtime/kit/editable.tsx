@@ -64,6 +64,22 @@ export function editableCellError(column: EditableColumn, row: EditableRow, rows
         return `${column.label} is required`;
     }
 
+    if (column.type === "number" && typeof value === "number") {
+        const problem = numberBoundsError(column, value);
+
+        if (problem) {
+            return problem;
+        }
+    }
+
+    if (column.type === "date" && value !== null) {
+        const problem = dateBoundsError(column, String(value));
+
+        if (problem) {
+            return problem;
+        }
+    }
+
     return column.validate?.(value, row, rows);
 }
 
@@ -88,6 +104,22 @@ export function editableTotal(column: EditableColumn, rows: EditableRow[]): Reac
     }
 
     return column.total(rows);
+}
+
+function numberBoundsError(column: EditableColumn, value: number | null): string | undefined {
+    if (value === null) {
+        return undefined;
+    }
+
+    if (column.min !== undefined && value < Number(column.min)) {
+        return `${column.label} must be at least ${column.min}`;
+    }
+
+    if (column.max !== undefined && value > Number(column.max)) {
+        return `${column.label} must be at most ${column.max}`;
+    }
+
+    return undefined;
 }
 
 /** Check a date draft against the column bounds. Returns an error message or undefined. */
@@ -131,13 +163,18 @@ function toText(value: EditableValue): string {
 
 function EditCell({ column, value, rowIndex, colIndex, error, onCommit, onReject, onEnter }: CellProps) {
     const [draft, setDraft] = useState<string | null>(null);
+    const draftRef = useRef<string | null>(null);
+    const updateDraft = (text: string | null): void => {
+        draftRef.current = text;
+        setDraft(text);
+    };
     const type = column.type ?? "text";
     const numeric = type === "number";
     const label = `${column.label}, row ${rowIndex + 1}`;
     const shown = draft ?? toText(value);
 
     const commit = (text: string | null): void => {
-        setDraft(null);
+        updateDraft(null);
 
         if (text === null) {
             return;
@@ -150,6 +187,14 @@ function EditCell({ column, value, rowIndex, colIndex, error, onCommit, onReject
 
             if (parsed === undefined) {
                 onReject(`${column.label} must be a number`);
+
+                return;
+            }
+
+            const problem = numberBoundsError(column, parsed);
+
+            if (problem) {
+                onReject(problem);
 
                 return;
             }
@@ -175,10 +220,10 @@ function EditCell({ column, value, rowIndex, colIndex, error, onCommit, onReject
     const onKeyDown = (event: KeyboardEvent<HTMLInputElement | HTMLSelectElement>): void => {
         if (event.key === "Escape") {
             event.preventDefault();
-            setDraft(null);
+            updateDraft(null);
         } else if (event.key === "Enter") {
             event.preventDefault();
-            commit(draft);
+            commit(draftRef.current);
             onEnter();
         }
     };
@@ -218,8 +263,8 @@ function EditCell({ column, value, rowIndex, colIndex, error, onCommit, onReject
             min={type === "date" && typeof column.min === "string" ? column.min : undefined}
             max={type === "date" && typeof column.max === "string" ? column.max : undefined}
             value={shown}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => commit(draft)}
+            onChange={(e) => updateDraft(e.target.value)}
+            onBlur={() => commit(draftRef.current)}
             className={`${CELL_INPUT} ${invalid} ${numeric || column.mono ? "font-mono tabular-nums" : ""} ${numeric ? "text-right" : ""}`}
         />
     );

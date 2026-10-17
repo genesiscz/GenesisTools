@@ -1,5 +1,6 @@
-import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Button } from "./forms";
+import { plainSegment, withPlainSegment } from "./hash";
 import { type BodyContent, renderBody, TONE_BORDER, TONE_TEXT } from "./primitives";
 import { STEP_GLYPH, STEP_TONE, type StepStatus } from "./structure";
 
@@ -46,7 +47,7 @@ function hashStep(steps: WizardStep[]): string | null {
         return null;
     }
 
-    let id = window.location.hash.slice(1);
+    let id = plainSegment(window.location.hash);
 
     try {
         id = decodeURIComponent(id);
@@ -82,6 +83,7 @@ export function Wizard({
     labels = {},
     hash = false,
 }: WizardProps) {
+    const instanceId = useId();
     const [settled, setSettled] = useState<Record<string, "done" | "skipped">>({});
     const frontier = mode === "free" ? steps.length - 1 : wizardFrontier(steps, settled);
     const [own, setOwn] = useState<string>(() => {
@@ -101,6 +103,15 @@ export function Wizard({
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const busyRef = useRef(false);
+    const [enterRequested, setEnterRequested] = useState(false);
+    const nextRef = useRef<() => Promise<void>>(async () => {});
+
+    useEffect(() => {
+        if (enterRequested) {
+            setEnterRequested(false);
+            void nextRef.current();
+        }
+    }, [enterRequested]);
     const headingRefs = useRef(new Map<string, HTMLHeadingElement>());
     const moved = useRef(false);
 
@@ -117,13 +128,21 @@ export function Wizard({
 
         moved.current = true;
         setError(null);
+        const destination = steps.findIndex((candidate) => candidate.id === id);
+
+        if (mode === "linear" && destination >= 0 && destination < activeIndex) {
+            const stillValid = new Set(steps.slice(0, destination).map((candidate) => candidate.id));
+            setSettled((previous) =>
+                Object.fromEntries(Object.entries(previous).filter(([key]) => stillValid.has(key)))
+            );
+        }
 
         if (current === undefined) {
             setOwn(id);
         }
 
         if (hash && typeof window !== "undefined") {
-            window.history.replaceState(null, "", `#${encodeURIComponent(id)}`);
+            window.history.replaceState(null, "", withPlainSegment(window.location.hash, encodeURIComponent(id)));
         }
 
         onChange?.(id, activeId);
@@ -156,18 +175,24 @@ export function Wizard({
                 return;
             }
 
-            setSettled((prev) => ({ ...prev, [step.id]: "done" }));
-
             if (last) {
                 await onFinish?.();
-            } else {
+            }
+
+            setSettled((prev) => ({ ...prev, [step.id]: "done" }));
+
+            if (!last) {
                 go(steps[activeIndex + 1].id);
             }
+        } catch (error) {
+            setError(error instanceof Error ? error.message : "Unable to complete this step. Please try again.");
         } finally {
             busyRef.current = false;
             setBusy(false);
         }
     };
+
+    nextRef.current = next;
 
     const skip = (): void => {
         if (!step || last || busyRef.current) {
@@ -188,7 +213,7 @@ export function Wizard({
             !event.nativeEvent.isComposing
         ) {
             event.preventDefault();
-            void next();
+            setEnterRequested(true);
         }
     };
 
@@ -215,10 +240,11 @@ export function Wizard({
                                 <button
                                     type="button"
                                     aria-current={i === activeIndex ? "step" : undefined}
-                                    aria-disabled={locked || undefined}
+                                    aria-disabled={locked || busy || undefined}
+                                    disabled={busy}
                                     data-status={status}
                                     onClick={() => {
-                                        if (!locked) {
+                                        if (!locked && !busyRef.current) {
                                             go(s.id);
                                         }
                                     }}
@@ -249,9 +275,13 @@ export function Wizard({
             </nav>
             <div className="px-4 py-4" onKeyDown={onPanelKey}>
                 {steps.map((s, i) => (
-                    <section key={s.id} hidden={i !== activeIndex} aria-labelledby={`wizard-${s.id}-title`}>
+                    <section
+                        key={s.id}
+                        hidden={i !== activeIndex}
+                        aria-labelledby={`wizard-${instanceId}-${encodeURIComponent(s.id)}-title`}
+                    >
                         <h3
-                            id={`wizard-${s.id}-title`}
+                            id={`wizard-${instanceId}-${encodeURIComponent(s.id)}-title`}
                             ref={(el) => {
                                 if (el) {
                                     headingRefs.current.set(s.id, el);

@@ -20,7 +20,7 @@ tools artifact gallery gantt                                              # the 
 | `library up` | ONE server: `/` lists every registered artifact folder (counts, age, click to open); each mounts at `/a/<name>/` via a lazily-started sub-server. At most 8 mounts stay live at once; the least recently used one is closed on overflow, because every mount holds compiled modules and file watchers. Clean URLs work under every mount. |
 | `gallery [name]` | Open the built-in kit gallery (every kit component, grouped by family, with a search box), starting the library server first when none runs. A name opens one page, fuzzy and case-insensitive: `gantt`, `time series`, `datatable`. `--list` prints the pages by family and exits; `--no-open` prints the URL only; `--port` uses or starts the library on that port. |
 | `build [target]` | Self-contained single-file HTML into `<dir>/dist/` (override with `-o/--out`; pick the entry with `-e/--entry`). `.html` entries bundle local refs (scripts, stylesheets and media alike); `.tsx` entries bundle via a generated wrapper; `.md` entries render into the template's themed page chrome (`-t/--template` picks the theme). Sibling text-data files embed behind a `fetch()` shim so `file://` works (`--max-embed` caps one file, `--max-embed-total` caps them together). Any explicitly named entry (file target, `--entry`, or a registry entry) embeds ONLY referenced files (never the surrounding vault); a bare directory embeds every sibling data file (`--embed referenced\|tree` overrides). `--watch` rebuilds on change. Idempotent. |
-| `templates` | List the shipped themes: graphite (default), bone, forest, steel, tan, cobalt. |
+| `templates` | List the shipped themes: graphite (default), bone, forest, steel, tan, cobalt, auto. |
 | `kit` | Print the kit's generated `.d.ts` API — author against it without reading component source. |
 | `types [dir]` | Write an OPTIONAL editor-only `tsconfig.json` (IntelliSense for `@artifact/kit`, repo imports, react). |
 | `init <file>` | Scaffold a starter (`.html` report shape, `.tsx` kit dashboard shape). |
@@ -79,7 +79,6 @@ Core CJS deps (react, marked) are aliased to the repo's node_modules AND prebund
   PNG export; clustered `markers`; `spans` as Gantt lanes; `syncId` shares viewport and crosshair;
   `id` persists the view in localStorage and the URL hash; `groups` titles split panels,
   `markerKinds` sets the marker kinds shown at first, `series={[]}` with `spans` draws an activity timeline). Demo: `src/artifact/gallery/time-series.tsx`
-- Viz: `Sparkline` (inline trend), `Meter` (bar with thresholds), `Heatmap` (rows × cols grid)
 - Viz: `Sparkline` (inline trend), `Meter` (bar with thresholds), `Heatmap` (rows × cols grid),
   `Gantt` + `GanttTable` (sprint axis, tinted lanes, baseline ghosts with a shift label,
   milestones, today line, drag and keyboard editing), `CapacityGrid` (load against capacity)

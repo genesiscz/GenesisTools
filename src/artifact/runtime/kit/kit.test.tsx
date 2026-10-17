@@ -9,14 +9,14 @@ import { contrastRatio, parseCssColor, readableTextOn } from "./color";
 import { DataTable, type DataTableCell, Tabs, tabHash, tabIdFromHash } from "./data";
 import { Mermaid } from "./diagrams";
 import { DiffView, diffFileFromPatch, pairDiffRows } from "./diff";
-import { type EditableColumn, type EditableRow, EditableTable, editableTotal } from "./editable";
+import { type EditableColumn, type EditableRow, EditableTable, editableCellError, editableTotal } from "./editable";
 import { Button, Field, FileInput, NumberInput, parseNumberDraft, TextInput } from "./forms";
 import { ChangeLedger, diffFields, type FieldChange, FieldDiff, type LedgerEntry } from "./ledger";
 import { Md, MdViewer } from "./md";
 import { configureMermaid, type MermaidApi } from "./mermaid-core";
 import { CodeBlock, Collapse, FilterChips, SegmentedControl, StatGrid, statDeltaTone } from "./primitives";
 import { matchRoute } from "./router";
-import { moveItem, SortableList } from "./sortable";
+import { moveItem, type SortableItem, SortableList, type SortableMove } from "./sortable";
 import { JsonView, Steps, TreeView, treeFromPaths } from "./structure";
 import { mountDom } from "./test-dom";
 import { resolvedColorScheme, THEME_STORAGE_KEY, ThemeToggle } from "./theme";
@@ -664,8 +664,51 @@ describe("Tooltip", () => {
         expect(button?.getAttribute("aria-describedby")).toBe(card?.id ?? "missing");
 
         await dom.pointer(button, "pointerout", { pointerType: "mouse" });
+        await act(() => new Promise<void>((resolve) => setTimeout(resolve, 170)));
         expect(dom.window.document.querySelector('[role="tooltip"]')).toBeNull();
         expect(button?.hasAttribute("aria-describedby")).toBe(false);
+        await dom.unmount();
+    });
+
+    test("round 1: card hover survives the pointer gap and Escape dismisses it", async () => {
+        const dom = await mountDom(
+            <Tooltip content="Details">
+                <button type="button">target</button>
+            </Tooltip>
+        );
+        const button = dom.container.querySelector("button");
+        await dom.pointer(button, "pointermove", { pointerType: "mouse" });
+        const card = dom.window.document.querySelector('[role="tooltip"]');
+        expect(card).not.toBeNull();
+        expect(card?.className).not.toContain("pointer-events-none");
+        await dom.pointer(button, "pointerout", { pointerType: "mouse" });
+        await dom.pointer(card, "pointerover", { pointerType: "mouse" });
+        await act(() => new Promise<void>((resolve) => setTimeout(resolve, 170)));
+        expect(dom.window.document.querySelector('[role="tooltip"]')).toBe(card);
+        await dom.press(card, "Escape");
+        expect(dom.window.document.querySelector('[role="tooltip"]')).toBeNull();
+        await dom.pointer(button, "pointermove", { pointerType: "mouse" });
+        await dom.pointer(dom.window.document.querySelector('[role="tooltip"]'), "pointerout", {
+            pointerType: "mouse",
+        });
+        expect(dom.window.document.querySelector('[role="tooltip"]')).toBeNull();
+        await dom.unmount();
+    });
+
+    test("round 1: disabling and unmounting the owner clear the card", async () => {
+        const target = (disabled = false) => (
+            <Tooltip disabled={disabled} content="Details">
+                <button type="button">target</button>
+            </Tooltip>
+        );
+        const dom = await mountDom(target());
+        await dom.pointer(dom.container.querySelector("button"), "pointermove", { pointerType: "mouse" });
+        await dom.render(target(true));
+        expect(dom.window.document.querySelector('[role="tooltip"]')).toBeNull();
+        await dom.render(target());
+        await dom.pointer(dom.container.querySelector("button"), "pointermove", { pointerType: "mouse" });
+        await dom.render(<p>removed</p>);
+        expect(dom.window.document.querySelector('[role="tooltip"]')).toBeNull();
         await dom.unmount();
     });
 
@@ -772,6 +815,60 @@ describe("form controls", () => {
         expect(commits).toEqual([1]);
         expect(input?.value).toBe("3");
         await dom.unmount();
+    });
+
+    test("round 1: NumberInput clamps Enter, blur and stepping to the same bounds", async () => {
+        const commits: Array<number | null> = [];
+        const dom = await mountDom(<NumberInput value={3} min={0} max={24} onChange={(v) => commits.push(v)} />);
+        const input = dom.container.querySelector("input");
+        await dom.type(input, "100");
+        await dom.press(input, "Enter");
+        await dom.type(input, "-5");
+        await dom.fire(input, new dom.window.FocusEvent("focusout", { bubbles: true }));
+        await dom.type(input, "24");
+        await dom.press(input, "ArrowUp");
+        await dom.type(input, "0");
+        await dom.press(input, "ArrowDown");
+        await dom.type(input, "");
+        await dom.press(input, "Enter");
+        expect(commits).toEqual([24, 0, 24, 0, null]);
+        await dom.unmount();
+    });
+
+    test("round 1: FileInput applies multiple policy to drop and picker before reading", async () => {
+        for (const multiple of [false, true]) {
+            for (const source of ["drop", "picker"]) {
+                const picked: string[][] = [];
+                const dom = await mountDom(
+                    <FileInput
+                        multiple={multiple}
+                        read="text"
+                        onFiles={(files) => picked.push(files.map((f) => f.text ?? ""))}
+                    />
+                );
+                const first = new dom.window.File(["one"], "one.csv");
+                const second = new dom.window.File(["two"], "two.csv");
+                let secondReads = 0;
+                Object.defineProperty(second, "text", {
+                    value: async () => {
+                        secondReads += 1;
+                        return "two";
+                    },
+                });
+                const input = dom.container.querySelector("input");
+                if (source === "picker") {
+                    Object.defineProperty(input, "files", { value: [first, second], configurable: true });
+                    await dom.fire(input, new dom.window.Event("change", { bubbles: true }));
+                } else {
+                    const event = new dom.window.Event("drop", { bubbles: true, cancelable: true });
+                    Object.defineProperty(event, "dataTransfer", { value: { files: [first, second] } });
+                    await dom.fire(dom.container.querySelector("label"), event);
+                }
+                expect(picked).toEqual([multiple ? ["one", "two"] : ["one"]]);
+                expect(secondReads).toBe(multiple ? 1 : 0);
+                await dom.unmount();
+            }
+        }
     });
 
     test("Button busy is disabled with aria-busy", async () => {
@@ -943,6 +1040,32 @@ describe("CapacityGrid", () => {
         expect(cells[2].textContent).toBe("·");
         expect(dom.container.querySelectorAll('th[scope="col"]').length).toBe(4);
         await dom.unmount();
+    });
+
+    test("round 1: CapacityGrid names its table and describes all cells before focus", async () => {
+        const dom = await mountDom(
+            <CapacityGrid
+                title="Team capacity"
+                cols={cols}
+                unit="h"
+                rows={[{ label: "Backend", load: [5, 12, null], capacity: 10 }]}
+            />
+        );
+        const titleId = dom.container.querySelector("table")?.getAttribute("aria-labelledby");
+        expect(dom.window.document.getElementById(titleId ?? "")?.textContent).toBe("Team capacity");
+        const cells = [...dom.container.querySelectorAll<HTMLTableCellElement>("tbody td")];
+        expect(cells.map((cell) => cell.getAttribute("aria-label"))).toEqual([
+            "Backend, S1: 5.0 h of 10 h (50%)",
+            "Backend, S2: 12.0 h of 10 h (120%)",
+            "Backend, S3: no data",
+        ]);
+        expect(cells.every((cell) => cell.tabIndex === 0)).toBe(true);
+        await dom.fire(cells[0], new dom.window.FocusEvent("focusin", { bubbles: true }));
+        expect(dom.window.document.querySelector('[role="tooltip"]')?.textContent).toContain("5.0 h of 10 h (50%)");
+        await dom.unmount();
+        const untitled = await mountDom(<CapacityGrid cols={[]} rows={[]} />);
+        expect(untitled.container.querySelector("table")?.hasAttribute("aria-labelledby")).toBe(false);
+        await untitled.unmount();
     });
 
     test("a per-column capacity changes only that column's status", async () => {
@@ -1284,6 +1407,99 @@ describe("Wizard", () => {
         await linear.unmount();
     });
 
+    test("round 1: stepper cannot leave while validation is pending", async () => {
+        let release: (valid: boolean) => void = () => {};
+        const dom = await mountDom(
+            <Wizard
+                mode="free"
+                steps={steps({
+                    map: {
+                        validate: () =>
+                            new Promise<boolean>((resolve) => {
+                                release = resolve;
+                            }),
+                    },
+                })}
+            />
+        );
+        await dom.click(stepButtons(dom.container)[1]);
+        await dom.click(buttonByText(dom.container, "Next"));
+        const first = stepButtons(dom.container)[0];
+        expect(first.disabled).toBe(true);
+        await dom.click(first);
+        expect(stepButtons(dom.container)[1].getAttribute("aria-current")).toBe("step");
+        await act(async () => release(true));
+        expect(stepButtons(dom.container)[2].getAttribute("aria-current")).toBe("step");
+        expect(stepButtons(dom.container)[0].disabled).toBe(false);
+        await dom.unmount();
+    });
+
+    test("round 1: Enter validates the committed NumberInput value on the first attempt", async () => {
+        function Harness() {
+            const [lanes, setLanes] = useState<number | null>(null);
+            return (
+                <Wizard
+                    steps={[
+                        {
+                            id: "lanes",
+                            label: "Lanes",
+                            validate: () => (lanes !== null && lanes > 0) || "Add a lane",
+                            content: <NumberInput value={lanes} onChange={setLanes} />,
+                        },
+                        { id: "done", label: "Done", content: "Done" },
+                    ]}
+                />
+            );
+        }
+        const dom = await mountDom(<Harness />);
+        await dom.type(dom.container.querySelector("input"), "3");
+        await dom.press(dom.container.querySelector("input"), "Enter");
+        expect(stepButtons(dom.container)[1].getAttribute("aria-current")).toBe("step");
+        expect(dom.container.querySelector('[role="alert"]')?.textContent).toBe("");
+        await dom.unmount();
+    });
+
+    test("round 1: rejected validation and finish show errors and failed finish stays unsettled", async () => {
+        let fail = true;
+        const dom = await mountDom(
+            <Wizard
+                mode="free"
+                steps={steps({
+                    source: {
+                        validate: async () => {
+                            if (fail) {
+                                throw new Error("Validation unavailable");
+                            }
+                            return true;
+                        },
+                    },
+                })}
+                onFinish={async () => {
+                    if (fail) {
+                        throw new Error("Save failed");
+                    }
+                }}
+            />
+        );
+        await dom.click(buttonByText(dom.container, "Next"));
+        expect(dom.container.querySelector('[role="alert"]')?.textContent).toBe("Validation unavailable");
+        fail = false;
+        await dom.click(buttonByText(dom.container, "Next"));
+        expect(stepButtons(dom.container)[0].getAttribute("data-status")).toBe("done");
+        await dom.click(stepButtons(dom.container)[2]);
+        fail = true;
+        await dom.click(buttonByText(dom.container, "Finish"));
+        expect(dom.container.querySelector('[role="alert"]')?.textContent).toBe("Save failed");
+        await dom.click(stepButtons(dom.container)[1]);
+        expect(stepButtons(dom.container)[2].getAttribute("data-status")).toBe("pending");
+        await dom.click(stepButtons(dom.container)[2]);
+        fail = false;
+        await dom.click(buttonByText(dom.container, "Finish"));
+        await dom.click(stepButtons(dom.container)[1]);
+        expect(stepButtons(dom.container)[2].getAttribute("data-status")).toBe("done");
+        await dom.unmount();
+    });
+
     test("Enter in a single-line field runs Next", async () => {
         const dom = await mountDom(<Wizard steps={steps()} />);
         await dom.press(dom.container.querySelector("input"), "Enter");
@@ -1355,6 +1571,41 @@ describe("EditableTable", () => {
         await dom.click(dom.container.querySelector('[aria-label="Remove row 3"]'));
         expect(log[1].type).toBe("remove");
         expect(log[1].rows.map((r) => r.hours)).toEqual([4, null, null]);
+        await dom.unmount();
+    });
+
+    test("round 1: numeric bounds reject Enter and blur and flag invalid initial values", async () => {
+        const columns: EditableColumn[] = [{ key: "hours", label: "Hours", type: "number", min: 0, max: "40" }];
+        const log: EditableRow[][] = [];
+        const dom = await mountDom(
+            <EditableTable columns={columns} rows={[{ hours: 3 }]} onChange={(rows) => log.push(rows)} />
+        );
+        const input = dom.container.querySelector("input");
+        await dom.type(input, "-5");
+        await dom.press(input, "Enter");
+        expect(log).toEqual([]);
+        expect(dom.container.querySelector("[data-editable-live]")?.textContent).toBe("Hours must be at least 0");
+        await dom.type(input, "100");
+        await blur(dom, input);
+        expect(log).toEqual([]);
+        expect(dom.container.querySelector("[data-editable-live]")?.textContent).toBe("Hours must be at most 40");
+        await dom.type(input, "20");
+        await blur(dom, input);
+        expect(log).toEqual([[{ hours: 20 }]]);
+        expect(editableCellError(columns[0], { hours: 100 }, [{ hours: 100 }])).toBe("Hours must be at most 40");
+        await dom.unmount();
+    });
+
+    test("round 1: Enter followed by synchronous focus blur emits one edit", async () => {
+        const log: Array<{ rows: EditableRow[]; type: string }> = [];
+        const dom = await mountDom(<Harness initial={ROWS} log={log} />);
+        const input = cell(dom.container, 0, 0);
+        await act(async () => input?.focus());
+        await dom.type(input, "Updated");
+        await dom.press(input, "Enter");
+        expect(dom.window.document.activeElement).toBe(cell(dom.container, 1, 0));
+        expect(log).toHaveLength(1);
+        expect(log[0].rows[0].task).toBe("Updated");
         await dom.unmount();
     });
 
@@ -1506,4 +1757,548 @@ describe("ChangeLedger", () => {
         expect(dom.container.textContent).toContain("<2026-10-09>");
         await dom.unmount();
     });
+});
+
+describe("round 1 scheme resolution", () => {
+    test("fixed schemes ignore a stale override, dual and empty declarations accept it", async () => {
+        const dom = await mountDom(<p>scheme</p>);
+        const root = dom.window.document.documentElement;
+        for (const [declared, forced, expected] of [
+            ["dark", "light", "dark"],
+            ["light", "dark", "light"],
+            ["light dark", "dark", "dark"],
+            ["", "light", "light"],
+        ] as const) {
+            root.style.colorScheme = declared;
+            root.setAttribute("data-theme", forced);
+            expect(resolvedColorScheme()).toBe(expected);
+        }
+        root.style.colorScheme = "light dark";
+        root.removeAttribute("data-theme");
+        Object.defineProperty(dom.window, "matchMedia", { configurable: true, value: () => ({ matches: true }) });
+        expect(resolvedColorScheme()).toBe("dark");
+        await dom.unmount();
+    });
+});
+
+describe("round 2", () => {
+    function pendingText() {
+        let resolve: (text: string) => void = () => {};
+        let reject: (error: Error) => void = () => {};
+        const promise = new Promise<string>((done, fail) => {
+            resolve = done;
+            reject = fail;
+        });
+
+        return { promise, resolve, reject };
+    }
+
+    async function fileReader() {
+        const picked: string[] = [];
+        const dom = await mountDom(
+            <FileInput read="text" maxBytes={10} onFiles={(files) => picked.push(files[0].text ?? "")} />
+        );
+        const input = dom.container.querySelector("input");
+        const pick = async (file: File): Promise<void> => {
+            Object.defineProperty(input, "files", { value: [file], configurable: true });
+            await dom.fire(input, new dom.window.Event("change", { bubbles: true }));
+        };
+        const deferredFile = (name: string) => {
+            const deferred = pendingText();
+            const file = new dom.window.File(["small"], name);
+            Object.defineProperty(file, "text", { value: () => deferred.promise });
+
+            return { file, ...deferred };
+        };
+
+        return { dom, picked, pick, deferredFile };
+    }
+
+    test("Wizard restores and updates its plain step without erasing either chart view", async () => {
+        const steps: WizardStep[] = [
+            { id: "start", label: "Start", content: "start" },
+            { id: "map fields", label: "Map fields", content: "mapping" },
+            { id: "review", label: "Review", content: "reviewing" },
+        ];
+        const dom = await mountDom(
+            <Wizard steps={steps} mode="free" hash />,
+            "http://localhost/setup#map%20fields&ts.first=r%3D1~2&ts.second=l%3Dsplit"
+        );
+        expect(dom.container.querySelector('nav [aria-current="step"]')?.textContent).toContain("Map fields");
+        await dom.click(
+            [...dom.container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Next")
+        );
+        expect(dom.window.location.hash).toBe("#review&ts.first=r%3D1~2&ts.second=l%3Dsplit");
+        const copied = dom.window.location.href;
+        await dom.unmount();
+        const restored = await mountDom(<Wizard steps={steps} mode="free" hash />, copied);
+        expect(restored.container.querySelector('nav [aria-current="step"]')?.textContent).toContain("Review");
+        await restored.unmount();
+    });
+
+    test("horizontal sorting uses the pointer row when X midpoints repeat after wrapping", async () => {
+        const items = ["alpha", "bravo", "charlie", "delta"].map((id) => ({ id, content: id }));
+        const moves: string[][] = [];
+        const dom = await mountDom(
+            <SortableList
+                orientation="horizontal"
+                label="Wrapped steps"
+                items={items}
+                onReorder={(ids) => moves.push(ids)}
+            />
+        );
+        dom.container.querySelectorAll<HTMLElement>("[data-sortable-item]").forEach((item, index) => {
+            item.getBoundingClientRect = () =>
+                new dom.window.DOMRect((index % 2) * 100, Math.floor(index / 2) * 40, 90, 36);
+        });
+        const grip = dom.container.querySelector('[data-sortable-item="alpha"] button');
+        await dom.pointer(grip, "pointerdown", { clientX: 20, clientY: 18, button: 0 });
+        await dom.pointer(grip, "pointermove", { clientX: 60, clientY: 58 });
+        expect(
+            [...dom.container.querySelectorAll("[data-sortable-item]")].map((item) =>
+                item.getAttribute("data-sortable-item")
+            )
+        ).toEqual(["bravo", "charlie", "alpha", "delta"]);
+        await dom.pointer(grip, "pointermove", { clientX: 60, clientY: 18 });
+        expect(
+            [...dom.container.querySelectorAll("[data-sortable-item]")].map((item) =>
+                item.getAttribute("data-sortable-item")
+            )
+        ).toEqual(["alpha", "bravo", "charlie", "delta"]);
+        await dom.pointer(grip, "pointermove", { clientX: 60, clientY: 58 });
+        await dom.pointer(grip, "pointerup", { clientX: 60, clientY: 58 });
+        expect(moves).toEqual([["bravo", "charlie", "alpha", "delta"]]);
+        await dom.unmount();
+    });
+
+    test("a newer file selection wins when the first read finishes last", async () => {
+        const { dom, picked, pick, deferredFile } = await fileReader();
+        const first = deferredFile("first.csv");
+        const second = deferredFile("second.csv");
+        await pick(first.file);
+        await pick(second.file);
+        await act(async () => second.resolve("second"));
+        await act(async () => first.resolve("first"));
+        expect(picked).toEqual(["second"]);
+        expect(dom.container.textContent).toContain("second.csv");
+        expect(dom.container.textContent).not.toContain("first.csv");
+        await dom.unmount();
+    });
+
+    test("an oversized selection invalidates an earlier pending file read", async () => {
+        const { dom, picked, pick, deferredFile } = await fileReader();
+        const first = deferredFile("first.csv");
+        await pick(first.file);
+        await pick(new dom.window.File(["far too much data"], "large.csv"));
+        await act(async () => first.resolve("first"));
+        expect(picked).toEqual([]);
+        expect(dom.container.querySelector('[role="alert"]')?.textContent).toContain("over the 10 B limit");
+        await dom.unmount();
+    });
+
+    test("a rejected current file read shows an error and the next selection can recover", async () => {
+        const { dom, picked, pick, deferredFile } = await fileReader();
+        const failed = deferredFile("failed.csv");
+        await pick(failed.file);
+        await act(async () => failed.reject(new Error("Read unavailable")));
+        expect(picked).toEqual([]);
+        expect(dom.container.querySelector('[role="alert"]')?.textContent).toContain("Read unavailable");
+        expect(dom.container.textContent).not.toContain("failed.csv");
+        await pick(new dom.window.File(["good"], "good.csv"));
+        expect(picked).toEqual(["good"]);
+        expect(dom.container.querySelector('[role="alert"]')).toBeNull();
+        await dom.unmount();
+    });
+
+    test("a rejected stale file read cannot replace a newer successful selection with an error", async () => {
+        const { dom, picked, pick, deferredFile } = await fileReader();
+        const first = deferredFile("first.csv");
+        await pick(first.file);
+        await pick(new dom.window.File(["good"], "good.csv"));
+        await act(async () => first.reject(new Error("Old read failed")));
+        expect(picked).toEqual(["good"]);
+        expect(dom.container.querySelector('[role="alert"]')).toBeNull();
+        expect(dom.container.textContent).toContain("good.csv");
+        await dom.unmount();
+    });
+});
+
+describe("round 3", () => {
+    test("Tooltip retains child help and error descriptions while hidden, visible and disabled", async () => {
+        const target = (disabled = false) => (
+            <Tooltip content="Extra detail" disabled={disabled}>
+                <button type="button" aria-describedby="help error">
+                    Target
+                </button>
+            </Tooltip>
+        );
+        const dom = await mountDom(target());
+        const button = dom.container.querySelector("button");
+        expect(button?.getAttribute("aria-describedby")).toBe("help error");
+        await dom.fire(button, new dom.window.FocusEvent("focusin", { bubbles: true }));
+        const card = dom.window.document.querySelector('[role="tooltip"]');
+        expect(button?.getAttribute("aria-describedby")?.split(" ")).toEqual(["help", "error", card?.id ?? "missing"]);
+        await dom.press(button, "Escape");
+        expect(button?.getAttribute("aria-describedby")).toBe("help error");
+        await dom.fire(button, new dom.window.FocusEvent("focusin", { bubbles: true }));
+        await dom.render(target(true));
+        expect(button?.getAttribute("aria-describedby")).toBe("help error");
+        expect(dom.window.document.querySelector('[role="tooltip"]')).toBeNull();
+        await dom.unmount();
+    });
+
+    test("whole-row sorting leaves controls alone but still drags from the explicit grip", async () => {
+        const calls: string[][] = [];
+        const dom = await mountDom(
+            <SortableList
+                handle="row"
+                buttons
+                label="Editable steps"
+                items={[
+                    {
+                        id: "a",
+                        content: (
+                            <>
+                                <label>
+                                    Name
+                                    <input defaultValue="before" />
+                                </label>
+                                <a href="#detail">Detail</a>
+                                <select defaultValue="one">
+                                    <option>one</option>
+                                </select>
+                            </>
+                        ),
+                    },
+                    { id: "b", content: "Second" },
+                ]}
+                onReorder={(ids) => calls.push(ids)}
+            />
+        );
+        let captures = 0;
+        dom.container.querySelectorAll<HTMLElement>("[data-sortable-item]").forEach((row, index) => {
+            row.getBoundingClientRect = () => new dom.window.DOMRect(0, index * 40, 200, 36);
+            row.setPointerCapture = () => {
+                captures += 1;
+            };
+        });
+        for (const target of dom.container.querySelectorAll(
+            '[data-sortable-item="a"] input, [data-sortable-item="a"] select, [data-sortable-item="a"] a, [data-sortable-item="a"] button[aria-label^="Move"]'
+        )) {
+            const event = new dom.window.PointerEvent("pointerdown", {
+                bubbles: true,
+                cancelable: true,
+                pointerId: 1,
+                button: 0,
+            });
+            await dom.fire(target, event);
+            expect(event.defaultPrevented).toBe(false);
+            await dom.pointer(target, "pointermove", { clientY: 100 });
+            await dom.pointer(target, "pointerup", { clientY: 100 });
+        }
+        expect(captures).toBe(0);
+        expect(calls).toEqual([]);
+        const input = dom.container.querySelector("input");
+        await dom.type(input, "after");
+        expect(input?.value).toBe("after");
+        const grip = dom.container.querySelector('[data-sortable-item="a"] button[aria-label^="Reorder"]');
+        await dom.pointer(grip, "pointerdown", { clientY: 10, button: 0 });
+        await dom.pointer(grip, "pointermove", { clientY: 100 });
+        await dom.pointer(grip, "pointerup", { clientY: 100 });
+        expect(captures).toBe(1);
+        expect(calls).toEqual([["b", "a"]]);
+        await dom.unmount();
+    });
+
+    test("whole-row sorting still drags inside a focusable container", async () => {
+        const calls: string[][] = [];
+        const dom = await mountDom(
+            <div tabIndex={-1}>
+                <SortableList
+                    handle="row"
+                    label="Steps in a dialog"
+                    items={[
+                        { id: "a", content: "First" },
+                        { id: "b", content: "Second" },
+                    ]}
+                    onReorder={(ids) => calls.push(ids)}
+                />
+            </div>
+        );
+        dom.container.querySelectorAll<HTMLElement>("[data-sortable-item]").forEach((row, index) => {
+            row.getBoundingClientRect = () => new dom.window.DOMRect(0, index * 40, 200, 36);
+            row.setPointerCapture = () => {};
+        });
+        const text = dom.container.querySelector('[data-sortable-item="a"] .flex-1');
+        await dom.pointer(text, "pointerdown", { clientY: 10, button: 0 });
+        await dom.pointer(text, "pointermove", { clientY: 100 });
+        await dom.pointer(text, "pointerup", { clientY: 100 });
+        expect(calls).toEqual([["b", "a"]]);
+        await dom.unmount();
+    });
+
+    test("returning to a linear step invalidates its completion and prevents a stale forward jump", async () => {
+        let finished = 0;
+        function Flow() {
+            const [source, setSource] = useState("valid");
+            return (
+                <Wizard
+                    onFinish={() => {
+                        finished += 1;
+                    }}
+                    steps={[
+                        {
+                            id: "source",
+                            label: "Source",
+                            validate: () => source.length > 0 || "Source required",
+                            content: <TextInput value={source} onChange={setSource} />,
+                        },
+                        { id: "map", label: "Map", content: "mapping" },
+                        { id: "review", label: "Review", content: "reviewing" },
+                    ]}
+                />
+            );
+        }
+        const dom = await mountDom(<Flow />);
+        const button = (name: string) =>
+            [...dom.container.querySelectorAll("button")].find((element) => element.textContent?.trim() === name);
+        await dom.click(button("Next"));
+        await dom.click(button("Next"));
+        await dom.click(button("Back"));
+        await dom.click(button("Back"));
+        await dom.type(dom.container.querySelector("input"), "");
+        const review = dom.container.querySelectorAll("nav button")[2];
+        expect(review.getAttribute("aria-disabled")).toBe("true");
+        await dom.click(review);
+        expect(dom.container.querySelector('nav [aria-current="step"]')?.textContent).toContain("Source");
+        await dom.click(button("Next"));
+        expect(dom.container.querySelector('[role="alert"]')?.textContent).toBe("Source required");
+        expect(finished).toBe(0);
+        await dom.type(dom.container.querySelector("input"), "fixed");
+        await dom.click(button("Next"));
+        await dom.click(button("Next"));
+        await dom.click(button("Finish"));
+        expect(finished).toBe(1);
+        await dom.unmount();
+    });
+});
+
+describe("round 4 regressions", () => {
+    test("Field preserves external descriptions with and without its own messages", async () => {
+        for (const messages of [{}, { hint: "Hint", error: "Error" }]) {
+            const dom = await mountDom(
+                <Field label="Name" {...messages}>
+                    <TextInput value="" onChange={() => {}} aria-describedby="external another" />
+                </Field>
+            );
+            const ids = dom.container.querySelector("input")?.getAttribute("aria-describedby")?.split(/\s+/);
+            expect(ids?.slice(0, 2)).toEqual(["external", "another"]);
+            expect(ids).toHaveLength("hint" in messages ? 4 : 2);
+            for (const id of ids?.slice(2) ?? []) {
+                expect(dom.window.document.getElementById(id)?.textContent).toMatch(/Hint|Error/);
+            }
+            await dom.unmount();
+        }
+    });
+
+    test("moveItem leaves invalid source and destination indexes unchanged", () => {
+        const input = ["a", "b", "c"];
+        for (const [from, to] of [
+            [3, 0],
+            [-1, 0],
+            [0, 3],
+            [0, -1],
+            [NaN, 0],
+            [0, 0.5],
+        ]) {
+            const moved = moveItem(input, from, to);
+            expect(moved).toEqual(input);
+            expect(moved).not.toBe(input);
+        }
+        expect(input).toEqual(["a", "b", "c"]);
+    });
+});
+
+describe("round 6 supplied date validation", () => {
+    const column: EditableColumn = {
+        key: "start",
+        label: "Start",
+        type: "date",
+        min: "2026-09-01",
+        max: "2026-12-31",
+    };
+
+    test("supplied dates use the same bounds and format checks as drafts", () => {
+        for (const [start, message] of [
+            ["2026-08-01", "Start must be on or after 2026-09-01"],
+            ["2027-01-01", "Start must be on or before 2026-12-31"],
+            ["not-a-date", "Start must be a date (YYYY-MM-DD)"],
+        ]) {
+            const row = { start };
+            expect(editableCellError(column, row, [row])).toBe(message);
+        }
+        for (const start of [null, "", "2026-09-01", "2026-12-31"]) {
+            const row = { start };
+            expect(editableCellError(column, row, [row])).toBeUndefined();
+        }
+    });
+
+    test("initial and externally replaced dates update invalid cells and the problem count", async () => {
+        const render = (start: string) => <EditableTable columns={[column]} rows={[{ start }]} onChange={() => {}} />;
+        const dom = await mountDom(render("2026-08-01"));
+        try {
+            for (const [start, message] of [
+                ["2026-08-01", "Start must be on or after 2026-09-01"],
+                ["2027-01-01", "Start must be on or before 2026-12-31"],
+            ]) {
+                await dom.render(render(start));
+                const input = dom.container.querySelector("input");
+                expect(input?.getAttribute("aria-invalid")).toBe("true");
+                expect(input?.title).toBe(message);
+                expect(dom.container.querySelector("[data-editable-problems]")?.textContent).toBe(
+                    "1 cell needs attention"
+                );
+            }
+            await dom.render(render("2026-10-15"));
+            expect(dom.container.querySelector("input")?.getAttribute("aria-invalid")).not.toBe("true");
+            expect(dom.container.querySelector("[data-editable-problems]")).toBeNull();
+        } finally {
+            await dom.unmount();
+        }
+    });
+});
+
+describe("round 7 Wizard heading ownership", () => {
+    test("two Wizards with the same step IDs label every section with their own heading", async () => {
+        const pair = () => (
+            <>
+                {["first", "second"].map((name) => (
+                    <div key={name} data-wizard-test={name}>
+                        <Wizard
+                            steps={["details", "review"].map((id) => ({
+                                id,
+                                label: `${name} ${id}`,
+                                content: `${name} ${id} content`,
+                            }))}
+                        />
+                    </div>
+                ))}
+            </>
+        );
+        const dom = await mountDom(pair());
+        try {
+            const ids: string[] = [];
+            for (const wizard of dom.container.querySelectorAll("[data-wizard-test]")) {
+                const sections = wizard.querySelectorAll("section[aria-labelledby]");
+                expect(sections).toHaveLength(2);
+                for (const section of sections) {
+                    const id = section.getAttribute("aria-labelledby") ?? "";
+                    const heading = dom.window.document.getElementById(id);
+                    expect(heading?.tagName).toBe("H3");
+                    expect(wizard.contains(heading)).toBe(true);
+                    expect(heading).toBe(section.querySelector("h3"));
+                    ids.push(id);
+                }
+            }
+            expect(new Set(ids).size).toBe(4);
+            await dom.render(pair());
+            expect(
+                [...dom.container.querySelectorAll("section[aria-labelledby]")].map((section) =>
+                    section.getAttribute("aria-labelledby")
+                )
+            ).toEqual(ids);
+        } finally {
+            await dom.unmount();
+        }
+    });
+});
+
+describe("round 9 controlled sorting updates", () => {
+    const initial: SortableItem[] = ["alpha", "bravo", "charlie"].map((id) => ({ id, content: id }));
+
+    async function pending(kind: "keyboard" | "pointer") {
+        const calls: Array<{ ids: string[]; moved: SortableMove }> = [];
+        const errors: unknown[] = [];
+        const render = (items: SortableItem[]) => (
+            <SortableList items={items} label="Live steps" onReorder={(ids, moved) => calls.push({ ids, moved })} />
+        );
+        const dom = await mountDom(render(initial));
+        dom.window.addEventListener("error", (event) => {
+            errors.push(event.error);
+            event.preventDefault();
+        });
+        const grip = (id: string) => dom.container.querySelector(`[data-sortable-item="${id}"] button`);
+        dom.container.querySelectorAll<HTMLElement>("[data-sortable-item]").forEach((row, index) => {
+            row.getBoundingClientRect = () => new dom.window.DOMRect(0, index * 40, 200, 36);
+        });
+        if (kind === "keyboard") {
+            await dom.press(grip("charlie"), " ");
+            await dom.press(grip("charlie"), "ArrowUp");
+            await dom.press(grip("charlie"), "ArrowUp");
+        } else {
+            await dom.pointer(grip("charlie"), "pointerdown", { button: 0, clientY: 100 });
+            await dom.pointer(grip("charlie"), "pointermove", { clientY: 0 });
+        }
+        const finish = async () => {
+            const target = grip("charlie") ?? grip("alpha");
+            expect(target).not.toBeNull();
+            if (kind === "keyboard") {
+                await dom.press(target, "Enter");
+            } else {
+                await dom.pointer(target, "pointerup", { clientY: 0 });
+            }
+        };
+        return { dom, calls, errors, finish, replace: (items: SortableItem[]) => dom.render(render(items)) };
+    }
+
+    for (const kind of ["keyboard", "pointer"] as const) {
+        const cases: Array<{ name: string; items: SortableItem[] }> = [
+            { name: "removing the picked item", items: initial.slice(0, 2) },
+            { name: "removing another item", items: [initial[0], initial[2]] },
+            { name: "reordering controlled items", items: [initial[1], initial[0], initial[2]] },
+            {
+                name: "disabling a row in the move path",
+                items: initial.map((item) => (item.id === "bravo" ? { ...item, disabled: true } : item)),
+            },
+        ];
+        for (const change of cases) {
+            test(`${kind}: ${change.name} cancels the pending move without a callback or crash`, async () => {
+                const state = await pending(kind);
+                try {
+                    await state.replace(change.items);
+                    expect(state.dom.container.querySelector("[data-sortable-slot]")).toBeNull();
+                    await state.finish();
+                    expect(state.errors).toEqual([]);
+                    expect(state.calls).toEqual([]);
+                    expect(
+                        [...state.dom.container.querySelectorAll("[data-sortable-item]")].map((row) =>
+                            row.getAttribute("data-sortable-item")
+                        )
+                    ).toEqual(change.items.map((item) => item.id));
+                } finally {
+                    await state.dom.unmount();
+                }
+            });
+        }
+
+        test(`${kind}: refreshing content with the same ID order preserves the pending move`, async () => {
+            const state = await pending(kind);
+            try {
+                await state.replace(initial.map((item) => ({ ...item, content: `${item.id} refreshed` })));
+                await state.finish();
+                expect(state.errors).toEqual([]);
+                expect(state.calls).toEqual([
+                    {
+                        ids: ["charlie", "alpha", "bravo"],
+                        moved: { id: "charlie", from: 2, to: 0 },
+                    },
+                ]);
+                expect(state.dom.container.querySelector("[data-sortable-live]")?.textContent).toBe(
+                    "Moved charlie refreshed to position 1 of 3"
+                );
+            } finally {
+                await state.dom.unmount();
+            }
+        });
+    }
 });

@@ -1,4 +1,7 @@
+import { moveItem } from "@genesiscz/utils/array";
 import { type KeyboardEvent, type PointerEvent, type ReactNode, useLayoutEffect, useRef, useState } from "react";
+
+export { moveItem } from "@genesiscz/utils/array";
 
 /**
  * A list the user reorders by dragging a grip (or the whole row) or with the
@@ -36,15 +39,6 @@ export interface SortableListProps {
     buttons?: boolean;
 }
 
-/** Pure move: a new array with the item at `from` placed at `to`. The input is untouched. */
-export function moveItem<T>(items: T[], from: number, to: number): T[] {
-    const next = items.slice();
-    const [item] = next.splice(from, 1);
-    next.splice(Math.max(0, Math.min(next.length, to)), 0, item);
-
-    return next;
-}
-
 /** True when moving `from` to `to` would shift a disabled item (or move a disabled one). */
 export function sortableMoveBlocked(items: Array<{ disabled?: boolean }>, from: number, to: number): boolean {
     const lo = Math.min(from, to);
@@ -63,12 +57,26 @@ function nameOf(item: SortableItem): string {
     return item.label ?? (typeof item.content === "string" ? item.content : item.id);
 }
 
-interface PointerDrag {
-    id: string;
-    from: number;
-    to: number;
+interface DropRow {
+    top: number;
+    bottom: number;
+    before: number;
+    mids: number[];
+}
+
+interface SortAction extends SortableMove {
+    /** Pickup order for pending gestures; immediate move buttons omit it. */
+    order?: string[];
+}
+
+interface PendingMove extends SortAction {
+    order: string[];
+}
+
+interface PointerDrag extends PendingMove {
     /** Midpoints of the OTHER items, in their original order, measured at pointer down. */
     mids: number[];
+    rows: DropRow[];
 }
 
 /** Reorderable list. See the module comment for the keyboard model. */
@@ -83,7 +91,7 @@ export function SortableList({
 }: SortableListProps) {
     const vertical = orientation === "vertical";
     // A keyboard pick: the item and where it currently sits in the working order.
-    const [picked, setPicked] = useState<{ id: string; from: number; to: number } | null>(null);
+    const [picked, setPicked] = useState<PendingMove | null>(null);
     const [drag, setDrag] = useState<PointerDrag | null>(null);
     const dragRef = useRef<PointerDrag | null>(null);
     const [announce, setAnnounce] = useState("");
@@ -91,9 +99,25 @@ export function SortableList({
     const gripRefs = useRef(new Map<string, HTMLElement>());
     const lastRects = useRef(new Map<string, DOMRect>());
 
-    const moving = picked ?? drag;
-    const shown = moving ? moveItem(items, moving.from, moving.to) : items;
     const total = items.length;
+    const isValidMove = (move: SortAction): boolean =>
+        items[move.from]?.id === move.id &&
+        move.to >= 0 &&
+        move.to < total &&
+        (!move.order || (move.order.length === total && move.order.every((id, index) => items[index].id === id))) &&
+        !sortableMoveBlocked(items, move.from, move.to);
+    const pending = picked ?? drag;
+    const moving = pending && isValidMove(pending) ? pending : null;
+    const shown = moving ? moveItem(items, moving.from, moving.to) : items;
+
+    useLayoutEffect(() => {
+        if (pending && !moving) {
+            dragRef.current = null;
+            setPicked(null);
+            setDrag(null);
+            setAnnounce("Cancelled. The list changed.");
+        }
+    });
 
     // The others slide into place (a FLIP over 120 ms) when the working order changes.
     useLayoutEffect(() => {
@@ -122,17 +146,17 @@ export function SortableList({
         }
     });
 
-    const commit = (move: { id: string; from: number; to: number }): void => {
-        if (move.from === move.to) {
+    const commit = (move: SortAction): void => {
+        if (!isValidMove(move) || move.from === move.to) {
             return;
         }
 
+        const item = items[move.from];
         const next = moveItem(items, move.from, move.to);
         onReorder(
             next.map((item) => item.id),
             { id: move.id, from: move.from, to: move.to }
         );
-        const item = items[move.from];
         setAnnounce(`Moved ${nameOf(item)} to position ${move.to + 1} of ${total}`);
     };
 
@@ -146,11 +170,18 @@ export function SortableList({
         if (!picked) {
             if ((event.key === " " || event.key === "Enter") && !item.disabled) {
                 event.preventDefault();
-                setPicked({ id: item.id, from: index, to: index });
+                setPicked({ id: item.id, from: index, to: index, order: items.map((entry) => entry.id) });
                 setAnnounce(
                     `Picked up ${nameOf(item)}, position ${index + 1} of ${total}. Use the arrow keys to move.`
                 );
             }
+
+            return;
+        }
+
+        if (!isValidMove(picked)) {
+            event.preventDefault();
+            setPicked(null);
 
             return;
         }
@@ -200,9 +231,30 @@ export function SortableList({
             return;
         }
 
+        const target = event.target;
+
+        if (handle === "row" && target instanceof Element) {
+            const control = target.closest(
+                'a[href], button, input, select, textarea, label, summary, [contenteditable]:not([contenteditable="false"]), [tabindex]'
+            );
+
+            const row = itemRefs.current.get(item.id);
+
+            // Only a control inside this row counts: a focusable dialog or panel around the list is not one.
+            if (
+                control &&
+                control !== row &&
+                row?.contains(control) &&
+                !gripRefs.current.get(item.id)?.contains(target)
+            ) {
+                return;
+            }
+        }
+
         event.preventDefault();
         event.currentTarget.setPointerCapture?.(event.pointerId);
         const mids: number[] = [];
+        const rows: DropRow[] = [];
 
         for (const other of items) {
             if (other.id === item.id) {
@@ -210,10 +262,23 @@ export function SortableList({
             }
 
             const rect = itemRefs.current.get(other.id)?.getBoundingClientRect();
-            mids.push(rect ? (vertical ? rect.top + rect.height / 2 : rect.left + rect.width / 2) : 0);
+            const mid = rect ? (vertical ? rect.top + rect.height / 2 : rect.left + rect.width / 2) : 0;
+
+            if (!vertical && rect) {
+                const row = rows[rows.length - 1];
+
+                if (row && rect.top < row.bottom && rect.bottom > row.top) {
+                    row.bottom = Math.max(row.bottom, rect.bottom);
+                    row.mids.push(mid);
+                } else {
+                    rows.push({ top: rect.top, bottom: rect.bottom, before: mids.length, mids: [mid] });
+                }
+            }
+
+            mids.push(mid);
         }
 
-        dragRef.current = { id: item.id, from: index, to: index, mids };
+        dragRef.current = { id: item.id, from: index, to: index, order: items.map((entry) => entry.id), mids, rows };
         setDrag(dragRef.current);
     };
 
@@ -224,8 +289,27 @@ export function SortableList({
             return;
         }
 
+        if (!isValidMove(current)) {
+            dragRef.current = null;
+            setDrag(null);
+
+            return;
+        }
+
         const at = vertical ? event.clientY : event.clientX;
-        const to = current.mids.filter((mid) => mid < at).length;
+        let to = current.mids.filter((mid) => mid < at).length;
+
+        if (!vertical) {
+            const distance = (row: DropRow): number => Math.max(row.top - event.clientY, event.clientY - row.bottom, 0);
+            const row = current.rows.reduce<DropRow | null>(
+                (nearest, candidate) => (!nearest || distance(candidate) < distance(nearest) ? candidate : nearest),
+                null
+            );
+
+            if (row) {
+                to = row.before + row.mids.filter((mid) => mid < event.clientX).length;
+            }
+        }
 
         if (to !== current.to && tryMove(current.from, to)) {
             dragRef.current = { ...current, to };

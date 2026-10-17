@@ -118,8 +118,17 @@ const listeners = new Set<() => void>();
 let state: TooltipState = HIDDEN;
 let host: HTMLElement | null = null;
 let hostRoot: Root | null = null;
+let hideTimer: ReturnType<typeof setTimeout> | null = null;
+
+function cancelHide(): void {
+    if (hideTimer !== null) {
+        clearTimeout(hideTimer);
+        hideTimer = null;
+    }
+}
 
 function emit(next: TooltipState): void {
+    cancelHide();
     state = next;
 
     for (const listener of listeners) {
@@ -147,7 +156,11 @@ function onDocumentKey(event: globalThis.KeyboardEvent): void {
 function onDocumentPointerDown(event: globalThis.PointerEvent): void {
     const target = event.target;
 
-    if (state.owner && state.element && !(target instanceof Node && state.element.contains(target))) {
+    if (
+        state.owner &&
+        state.element &&
+        !(target instanceof Node && (state.element.contains(target) || host?.contains(target)))
+    ) {
         emit(HIDDEN);
     }
 }
@@ -280,7 +293,15 @@ function TooltipLayer() {
             ref={cardRef}
             id={TOOLTIP_ID}
             role="tooltip"
-            className="pointer-events-none fixed z-50 max-w-[400px] rounded-card border px-3 py-2.5 text-[12.5px] leading-snug shadow-[0_6px_24px_rgba(0,0,0,.35)]"
+            onPointerEnter={cancelHide}
+            onPointerLeave={(event) => {
+                const next = event.relatedTarget;
+
+                if (!(next instanceof Node && current.element?.contains(next))) {
+                    hideFor(current.owner ?? "");
+                }
+            }}
+            className="fixed z-50 max-w-[400px] rounded-card border px-3 py-2.5 text-[12.5px] leading-snug shadow-[0_6px_24px_rgba(0,0,0,.35)]"
             style={{
                 left: current.x,
                 top: current.y,
@@ -321,11 +342,19 @@ export function useTooltip(content: TooltipInput, options: TooltipOptions = {}):
     const active = useSyncExternalStore(subscribe, () => state.owner === owner);
 
     useLayoutEffect(() => {
-        if (active && shownRef.current !== content) {
+        if (disabled) {
+            hideFor(owner);
+        }
+
+        return () => hideFor(owner);
+    }, [owner, disabled]);
+
+    useLayoutEffect(() => {
+        if (active && !disabled && shownRef.current !== content) {
             shownRef.current = content;
             emit({ ...state, content: resolveContent(content) });
         }
-    }, [active, content]);
+    }, [active, content, disabled]);
 
     const showAt = useCallback(
         (element: Element, x: number, y: number, mode: TooltipPlaceInput["mode"]): void => {
@@ -370,7 +399,14 @@ export function useTooltip(content: TooltipInput, options: TooltipOptions = {}):
         },
         onPointerLeave: (event) => {
             if (event.pointerType !== "touch") {
-                hideFor(owner);
+                const next = event.relatedTarget;
+
+                if (next instanceof Node && host?.contains(next)) {
+                    cancelHide();
+                } else {
+                    cancelHide();
+                    hideTimer = setTimeout(() => hideFor(owner), 150);
+                }
             }
         },
         onPointerDown: (event) => {
@@ -395,8 +431,15 @@ export function useTooltip(content: TooltipInput, options: TooltipOptions = {}):
 export function Tooltip({ content, children, placement = "pointer", disabled = false }: TooltipProps) {
     const target = useTooltip(content, { placement, disabled });
     const own = children.props;
+    const describedBy = [
+        ...new Set(
+            [own["aria-describedby"], target["aria-describedby"]].flatMap(
+                (ids) => ids?.split(/\s+/).filter(Boolean) ?? []
+            )
+        ),
+    ].join(" ");
     const merged: Partial<TooltipTargetProps> = {
-        "aria-describedby": target["aria-describedby"],
+        "aria-describedby": describedBy || undefined,
         onPointerMove: (event) => {
             own.onPointerMove?.(event);
             target.onPointerMove(event);

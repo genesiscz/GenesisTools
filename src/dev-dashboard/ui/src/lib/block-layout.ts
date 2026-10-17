@@ -1,3 +1,7 @@
+import { moveItem } from "@genesiscz/utils/array";
+
+export { moveItem } from "@genesiscz/utils/array";
+
 /**
  * Pure helpers behind the reorderable sidebar and the reorderable section
  * blocks. Both persist an ordered list and reconcile it against the current
@@ -25,18 +29,6 @@ export function reconcileLayout(stored: readonly BlockEntry[] | null, defaults: 
     const visibility = new Map((stored ?? []).map((b) => [b.id, b.visible] as const));
 
     return order.map((id) => ({ id, visible: visibility.get(id) ?? true }));
-}
-
-export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
-    if (from < 0 || from >= list.length || to < 0 || to >= list.length || from === to) {
-        return [...list];
-    }
-
-    const next = [...list];
-    const [item] = next.splice(from, 1);
-    next.splice(to, 0, item);
-
-    return next;
 }
 
 /**

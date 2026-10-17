@@ -7,6 +7,7 @@ import {
     type GanttMilestone,
     type GanttProps,
     type GanttSpan,
+    GanttTable,
     ganttBarFitsLabel,
     ganttCells,
     ganttDayIndex,
@@ -55,6 +56,26 @@ describe("Gantt day maths", () => {
         expect(ganttDayIndex("2026-10-26", "2026-10-24")).toBe(2);
         expect(ganttDayIndex("2026-11-02", "2026-10-31")).toBe(2);
         expect(ganttDayIndex("2027-03-29", "2027-03-27")).toBe(2);
+    });
+
+    test("round 3: invalid cellDays are rejected before the header loop", () => {
+        for (const cellDays of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, 0.5]) {
+            let labels = 0;
+            const axis = {
+                ...AXIS,
+                cellDays,
+                cellLabel: () => {
+                    labels += 1;
+                    if (labels > 4) {
+                        throw new Error("Header loop safety stop");
+                    }
+                    return "Sprint";
+                },
+            };
+            expect(() => ganttCells(axis)).toThrow(RangeError);
+            expect(labels).toBe(0);
+        }
+        expect(ganttCells({ start: "2026-10-01", end: "2026-10-03", cellDays: 1 })).toHaveLength(3);
     });
 
     test("span pixels: 6 px a day, never under 6 px", () => {
@@ -153,6 +174,45 @@ describe("Gantt render", () => {
         const drawn = baseline.container.querySelector<HTMLElement>('[data-gantt-bar="late"]');
         expect(drawn?.style.left).toBe(`${ganttDayIndex("2026-10-01", AXIS.start) * 6}px`);
         await baseline.unmount();
+    });
+
+    test("round 1: milestone dates and ghosts follow compare, current and baseline in chart and table", async () => {
+        for (const view of ["compare", "current", "baseline"] as const) {
+            const dom = await mountDom(
+                <>
+                    <Gantt axis={AXIS} lanes={[]} bars={[]} milestones={[MILESTONES[1]]} view={view} locale="en-GB" />
+                    <GanttTable lanes={[]} bars={[]} milestones={[MILESTONES[1]]} view={view} locale="en-GB" />
+                </>
+            );
+            const date = view === "baseline" ? "2027-03-12" : "2027-03-25";
+            const diamond = dom.container.querySelector<HTMLElement>("[data-gantt-milestone]");
+            expect(diamond?.style.left).toBe(`${(ganttDayIndex(date, AXIS.start) + 0.5) * 6 - 12}px`);
+            expect(diamond?.getAttribute("aria-label")).toContain(view === "baseline" ? "12 Mar" : "25 Mar");
+            expect(dom.container.querySelectorAll("[data-gantt-milestone-ghost]").length).toBe(
+                view === "compare" ? 1 : 0
+            );
+            expect(dom.container.querySelector("tbody tr td:nth-child(3)")?.textContent).toBe(
+                view === "baseline" ? "12 Mar 2027" : "25 Mar 2027"
+            );
+            expect(dom.container.querySelector("tbody tr td:last-child")?.textContent).toBe(
+                view === "compare" ? "+13 d" : ""
+            );
+            await dom.unmount();
+        }
+        const automatic = await mountDom(<Gantt axis={AXIS} lanes={[]} bars={[]} milestones={[MILESTONES[1]]} />);
+        expect(automatic.container.querySelector("[data-gantt-milestone-ghost]")).not.toBeNull();
+        await automatic.unmount();
+    });
+
+    test("round 1: item links stay in the keyboard tab order", async () => {
+        const dom = await mountGantt({
+            bars: [bar("linked", "design", "2026-10-01", "2026-10-10", { href: "#details" })],
+        });
+        const link = dom.container.querySelector<HTMLAnchorElement>('a[href="#details"]');
+        expect(link?.tabIndex).toBe(0);
+        await dom.fire(link, new dom.window.FocusEvent("focusin", { bubbles: true }));
+        expect(link?.textContent).toBe("Item linked");
+        await dom.unmount();
     });
 
     test("today is exactly one element at (index + 0.5) * dayWidth", async () => {
@@ -279,5 +339,155 @@ describe("Gantt editing", () => {
         await dom.press(bars[1], "End");
         expect(bars[9].tabIndex).toBe(0);
         await dom.unmount();
+    });
+});
+
+describe("round 4 baseline interactions", () => {
+    test("baseline bars accept pointer and keyboard actions without editing or moving the ghost", async () => {
+        const clicks: string[] = [];
+        const changes: string[] = [];
+        const dom = await mountGantt({
+            bars: [
+                bar("x", "design", "2026-10-01", "2026-10-10", {
+                    ghost: { start: "2026-09-20", end: "2026-09-25" },
+                }),
+            ],
+            view: "baseline",
+            editable: true,
+            onBarClick: (id) => clicks.push(id),
+            onBarChange: (id) => changes.push(id),
+        });
+        const target = dom.container.querySelector('[data-gantt-bar="x"]');
+        const style = target?.getAttribute("style");
+        await dom.pointer(target, "pointerdown", { button: 0, clientX: 100 });
+        expect(target?.getAttribute("style")).toBe(style);
+        await dom.pointer(target, "pointermove", { clientX: 160 });
+        await dom.pointer(target, "pointerup", { clientX: 160 });
+        expect(clicks).toEqual(["x"]);
+        await dom.press(target, "Enter");
+        expect(clicks).toEqual(["x", "x"]);
+        await dom.press(target, "ArrowRight");
+        expect(changes).toEqual([]);
+        expect(target?.getAttribute("style")).toBe(style);
+        await dom.unmount();
+    });
+});
+
+describe("round 5 button keyboard activation", () => {
+    test("Enter and Space activate bars and prevent page scrolling in every view", async () => {
+        for (const view of ["current", "compare", "baseline"] as const) {
+            const clicks: string[] = [];
+            const dom = await mountGantt({ view, onBarClick: (id) => clicks.push(id) });
+            const target = dom.container.querySelector('[data-gantt-bar="a"]');
+            expect(target?.getAttribute("role")).toBe("button");
+            try {
+                for (const key of ["Enter", " "]) {
+                    const event = new dom.window.KeyboardEvent("keydown", {
+                        key,
+                        bubbles: true,
+                        cancelable: true,
+                    });
+                    await dom.fire(target, event);
+                    expect(event.defaultPrevented).toBe(true);
+                }
+                expect(clicks).toEqual(["a", "a"]);
+            } finally {
+                await dom.unmount();
+            }
+        }
+    });
+});
+
+describe("round 10 controlled Gantt updates", () => {
+    const first = bar("x", "design", "2026-10-01", "2026-10-10", {
+        ghost: { start: "2026-09-20", end: "2026-09-25" },
+    });
+    const other = bar("y", "build", "2026-10-01", "2026-10-10");
+    const cases: Array<{ name: string; props: Partial<GanttProps> }> = [
+        {
+            name: "changing source dates",
+            props: { bars: [{ ...first, start: "2026-11-01", end: "2026-11-10" }, other] },
+        },
+        { name: "removing the source bar", props: { bars: [other] } },
+        { name: "switching to baseline", props: { view: "baseline" } },
+        { name: "revoking all editing", props: { editable: false } },
+        { name: "revoking the dragged edge", props: { editable: { move: true, start: true, end: false } } },
+        { name: "hiding the source lane", props: { hiddenLanes: ["design"] } },
+    ];
+
+    async function pending(preview: boolean) {
+        const changes: Array<{ id: string; next: GanttSpan; phase: string }> = [];
+        const clicks: string[] = [];
+        const render = (props: Partial<GanttProps> = {}) => (
+            <Gantt
+                axis={AXIS}
+                lanes={LANES}
+                bars={[first, other]}
+                view="compare"
+                editable
+                onBarChange={(id, next, phase) => changes.push({ id, next, phase })}
+                onBarClick={(id) => clicks.push(id)}
+                {...props}
+            />
+        );
+        const dom = await mountDom(render());
+        const handle = dom.container.querySelector('[data-gantt-bar="x"] [data-gantt-handle="end"]');
+        expect(handle).not.toBeNull();
+        await dom.pointer(handle, "pointerdown", { button: 0, clientX: 100 });
+        if (preview) {
+            await dom.pointer(handle, "pointermove", { clientX: 130 });
+            expect(changes).toHaveLength(1);
+            expect(changes[0].phase).toBe("preview");
+        }
+        changes.length = 0;
+        return { dom, changes, clicks, replace: (props: Partial<GanttProps>) => dom.render(render(props)) };
+    }
+
+    for (const preview of [false, true]) {
+        for (const change of cases) {
+            test(`${change.name} ${preview ? "after" : "before"} preview cancels without stale writes`, async () => {
+                const state = await pending(preview);
+                try {
+                    await state.replace(change.props);
+                    const stalePreview = state.dom.container.querySelector("[data-gantt-drag-tag]") !== null;
+                    const target =
+                        state.dom.container.querySelector('[data-gantt-bar="x"]') ??
+                        state.dom.container.querySelector('[data-gantt-bar="y"]');
+                    expect(target).not.toBeNull();
+                    if (!preview) {
+                        await state.dom.pointer(target, "pointermove", { clientX: 160 });
+                    }
+                    await state.dom.pointer(target, "pointerup", { clientX: 160 });
+                    expect(state.changes).toEqual([]);
+                    expect(state.clicks).toEqual([]);
+                    expect(stalePreview).toBe(false);
+                } finally {
+                    await state.dom.unmount();
+                }
+            });
+        }
+    }
+
+    test("refreshing labels and unrelated permissions preserves a valid drag", async () => {
+        const state = await pending(true);
+        try {
+            await state.replace({
+                bars: [
+                    { ...first, label: "Updated task" },
+                    { ...other, label: "Updated other task" },
+                ],
+                editable: { end: true },
+            });
+            const target = state.dom.container.querySelector('[data-gantt-bar="x"]');
+            await state.dom.pointer(target, "pointermove", { clientX: 160 });
+            await state.dom.pointer(target, "pointerup", { clientX: 160 });
+            expect(state.changes).toEqual([
+                { id: "x", next: { start: "2026-10-01", end: "2026-10-20" }, phase: "preview" },
+                { id: "x", next: { start: "2026-10-01", end: "2026-10-20" }, phase: "commit" },
+            ]);
+            expect(state.clicks).toEqual([]);
+        } finally {
+            await state.dom.unmount();
+        }
     });
 });

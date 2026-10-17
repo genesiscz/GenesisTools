@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { moveItem as sharedMoveItem } from "@genesiscz/utils/array";
 import {
     assignBlockSpans,
     moveItem,
@@ -39,6 +40,11 @@ describe("reconcileLayout", () => {
 });
 
 describe("moveItem", () => {
+    test("reuses the shared helper and safely rejects non-integer indexes", () => {
+        expect(moveItem).toBe(sharedMoveItem);
+        expect(moveItem(["a", "b"], NaN, 1)).toEqual(["a", "b"]);
+        expect(moveItem(["a", "b"], 0, 0.5)).toEqual(["a", "b"]);
+    });
     test("moves within bounds and returns a copy out of bounds", () => {
         expect(moveItem(["a", "b", "c"], 0, 2)).toEqual(["b", "c", "a"]);
         expect(moveItem(["a", "b", "c"], 0, 5)).toEqual(["a", "b", "c"]);

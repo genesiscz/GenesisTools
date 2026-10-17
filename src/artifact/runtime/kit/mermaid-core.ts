@@ -56,22 +56,26 @@ export function configureMermaid(next: MermaidSource): void {
 // chartjs.tsx import them from here, so there is one copy.
 
 /**
- * The scheme the page renders in right now. `data-theme` on the root wins;
- * otherwise the root's `color-scheme`, and for `light dark` (the auto
- * template) the system preference. Reading `color-scheme` alone is wrong
- * there: it says "light dark" whatever the system shows.
+ * The scheme the page renders in right now. A single computed `color-scheme`
+ * wins, including auto's override selectors. A dual declaration consults
+ * `data-theme`, then the system preference. No declaration accepts `data-theme`
+ * or falls back to dark.
  */
 export function resolvedColorScheme(): "light" | "dark" {
     const root = document.documentElement;
+    const declared = getComputedStyle(root).getPropertyValue("color-scheme").trim();
+    const hasLight = declared.includes("light");
+    const hasDark = declared.includes("dark");
+
+    if (hasLight !== hasDark) {
+        return hasLight ? "light" : "dark";
+    }
+
     const forced = root.getAttribute("data-theme");
 
     if (forced === "light" || forced === "dark") {
         return forced;
     }
-
-    const declared = getComputedStyle(root).getPropertyValue("color-scheme").trim();
-    const hasLight = declared.includes("light");
-    const hasDark = declared.includes("dark");
 
     if (hasLight && hasDark) {
         return typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches

@@ -83,6 +83,20 @@ function familyRank(family: string): number {
     return FAMILY_RANK.get(family) ?? GALLERY_FAMILIES.length;
 }
 
+/** Resolve the query route, accepting old hash links without throwing on truncated escapes. */
+export function galleryPageId(entries: GalleryEntry[], url: URL): string {
+    const fromQuery = url.searchParams.get("page") ?? "";
+    let fromHash = url.hash.slice(1);
+
+    try {
+        fromHash = decodeURIComponent(fromHash);
+    } catch {
+        // A malformed legacy link cannot name a gallery page; fall back below.
+    }
+
+    return [fromQuery, fromHash].find((id) => entries.some((entry) => entry.id === id)) ?? entries[0]?.id ?? "";
+}
+
 /** Entries grouped by family, in nav order; `galleryEntries` already sorted them. */
 export function groupByFamily(entries: GalleryEntry[]): GalleryGroup[] {
     const groups: GalleryGroup[] = [];

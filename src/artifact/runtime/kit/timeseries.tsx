@@ -535,7 +535,7 @@ function tracePath(
         if (!pen) {
             ctx.moveTo(x, y);
             pen = true;
-        } else if (sf.kind === "step") {
+        } else if (sf.kind === "step" || (sf.stacked && sf.kind === "area")) {
             ctx.lineTo(x, lastY);
             ctx.lineTo(x, y);
         } else {
@@ -564,7 +564,7 @@ function fillUnder(ctx: CanvasRenderingContext2D, frame: Frame, panel: PanelFram
         ctx.moveTo(run[0][0], base);
 
         for (const [i, [x, y]] of run.entries()) {
-            if (sf.kind === "step" && i > 0) {
+            if ((sf.kind === "step" || (sf.stacked && sf.kind === "area")) && i > 0) {
                 ctx.lineTo(x, run[i - 1][1]);
             }
 
@@ -1263,7 +1263,9 @@ export function TimeSeries({
 
             for (const [i, m] of members.entries()) {
                 const many = members.length > 1;
-                map.set(m.id, { src: stacked[i].top, base: many ? stacked[i].base : null, stacked: many });
+                const top =
+                    m.kind === "bar" ? m.points.map<TsPoint>(([t]) => [t, valueAt(stacked[i].top, t)]) : stacked[i].top;
+                map.set(m.id, { src: top, base: many ? stacked[i].base : null, stacked: many });
             }
         }
 
@@ -1623,7 +1625,7 @@ export function TimeSeries({
                     let v: number | null = null;
                     let t = crosshairT;
 
-                    if (sf.kind === "step") {
+                    if (sf.kind === "step" || (sf.stacked && sf.kind === "area")) {
                         v = valueAt(sf.src, crosshairT);
                     } else {
                         const i = nearestIndex(sf.src, crosshairT, maxGap);
@@ -2076,7 +2078,9 @@ export function TimeSeries({
         const full = view[0] <= bounds[0] && view[1] >= bounds[1];
         const encoded = encodeViewState({ ...saved, range: full ? undefined : view });
         const hash = writeHashState(window.location.hash, id, encoded);
-        const url = `${window.location.origin}${window.location.pathname}${window.location.search}${hash}`;
+        const link = new URL(window.location.href);
+        link.hash = hash;
+        const url = link.href;
 
         try {
             await navigator.clipboard.writeText(url);
@@ -2099,7 +2103,7 @@ export function TimeSeries({
                     const s = sf.s;
                     let v: number | null = null;
 
-                    if (sf.kind === "step") {
+                    if (sf.kind === "step" || (sf.stacked && sf.kind === "area")) {
                         v = valueAt(s.points, t);
                     } else {
                         const i = nearestIndex(s.points, t, msPerPx * 40);

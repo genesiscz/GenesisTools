@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { type CSSProperties, useId } from "react";
 import { TONE_COLOR } from "./charts";
 import { TONE_DOT, TONE_TEXT, type Tone } from "./primitives";
 import { useTooltip } from "./tooltip";
@@ -373,19 +373,16 @@ interface CapacityCellProps {
 
 function CapacityCell({ row, colLabel, load, capacity, unit, format, fullAt, heat }: CapacityCellProps) {
     const suffix = unit ? ` ${unit}` : "";
-    const tip = useTooltip(() => {
-        if (load === null) {
-            return `${row.label}, ${colLabel}: no data`;
-        }
-
-        const pct = capacity ? ` (${Math.round((load / capacity) * 100)}%)` : "";
-
-        return `${row.label}: ${load.toFixed(1)}${suffix} of ${capacity === null ? "?" : trimNumber(capacity)}${suffix}${pct}`;
-    });
+    const pct = load !== null && capacity ? ` (${Math.round((load / capacity) * 100)}%)` : "";
+    const description =
+        load === null
+            ? `${row.label}, ${colLabel}: no data`
+            : `${row.label}, ${colLabel}: ${load.toFixed(1)}${suffix} of ${capacity === null ? "?" : trimNumber(capacity)}${suffix}${pct}`;
+    const tip = useTooltip(description);
     const base = "rounded px-1.5 py-[3px] text-center tabular-nums";
 
     if (load === null) {
-        return <td className={base} aria-label={`${colLabel}: no data`} {...tip} />;
+        return <td className={base} aria-label={description} tabIndex={0} {...tip} />;
     }
 
     const status: CapacityStatus =
@@ -406,6 +403,8 @@ function CapacityCell({ row, colLabel, load, capacity, unit, format, fullAt, hea
     return (
         <td
             data-status={status}
+            aria-label={description}
+            tabIndex={0}
             className={`${base} ${status === "over" ? "font-bold text-err" : status === "full" ? "font-bold text-ink" : status === "idle" ? "text-dim" : "text-ink"}`}
             style={style}
             {...tip}
@@ -433,6 +432,7 @@ export function CapacityGrid({
     totals = false,
     title,
 }: CapacityGridProps) {
+    const titleId = useId();
     const columns = cols.map((col) => (typeof col === "string" ? { label: col } : col));
     const sum = (values: Array<number | null>): number =>
         values.reduce<number>((acc, v) => acc + (typeof v === "number" ? v : 0), 0);
@@ -441,9 +441,14 @@ export function CapacityGrid({
 
     return (
         <div className="my-3">
-            {title ? <div className="mb-1 text-xs text-dim">{title}</div> : null}
+            {title ? (
+                <div id={titleId} className="mb-1 text-xs text-dim">
+                    {title}
+                </div>
+            ) : null}
             <div className="overflow-x-auto">
                 <table
+                    aria-labelledby={title ? titleId : undefined}
                     className="w-full table-fixed border-separate border-spacing-0.5 text-xs"
                     style={{ minWidth: 130 + (columns.length + (totals ? 1 : 0)) * 36 }}
                 >
