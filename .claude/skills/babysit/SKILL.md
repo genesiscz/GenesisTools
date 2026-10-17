@@ -97,8 +97,12 @@ the stop point. After the confirmation period, state the plan in one line and pr
      round 4, fix only Critical and High.
    - A PR with 100 changed files or fewer: rounds 1 and 2 fix every valid finding. From round 3, fix only Critical
      and High.
-   - In the rounds that fix only Critical and High, a Medium or Low finding gets a reply (valid or not, and why),
-     and its thread is resolved. It is not fixed in that PR.
+   - In the rounds that fix only Critical and High, a Medium or Low finding gets a reply (valid or not, and why).
+     It is not fixed in that PR, and its thread stays OPEN: resolve only a thread that was acted on (fixed, or
+     rejected with a cited file:line). Post such a reply without `--resolve-thread`, and keep it out of the reply
+     file that `integrate.ts` resolves (Martin, 2026-10-17 12:45).
+   - **A valid security finding is always fixed**, at any severity and in any round (Martin, 2026-10-17 12:45:
+     "security valid always"). Read the reviewer's category (`🔒 Security`), not only its severity.
    - Inside the fix-everything rounds, a deferral is not accepted ("nothing is a follow up or out of scope", Martin,
      2026-10-17), and every file a valid fix needs is in scope. A `no-change` or rejection needs a cited file:line
      that proves the finding wrong.
