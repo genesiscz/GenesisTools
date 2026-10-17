@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type ReactNode, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Button, parseNumberDraft } from "./forms";
 import { moveItem } from "./sortable";
 
@@ -162,6 +162,7 @@ function toText(value: EditableValue): string {
 }
 
 function EditCell({ column, value, rowIndex, colIndex, error, onCommit, onReject, onEnter }: CellProps) {
+    const errorId = useId();
     const [draft, setDraft] = useState<string | null>(null);
     const draftRef = useRef<string | null>(null);
     const updateDraft = (text: string | null): void => {
@@ -231,42 +232,48 @@ function EditCell({ column, value, rowIndex, colIndex, error, onCommit, onReject
     const common = {
         "aria-label": label,
         "aria-invalid": error ? true : undefined,
+        "aria-describedby": error ? errorId : undefined,
         title: error,
         "data-cell": `${rowIndex}:${colIndex}`,
         onKeyDown,
     };
     const invalid = error ? "border-err hover:border-err" : "";
 
-    if (type === "select") {
-        return (
-            <select
-                {...common}
-                value={toText(value)}
-                onChange={(e) => onCommit(e.target.value === "" ? null : e.target.value)}
-                className={`${CELL_INPUT} ${invalid}`}
-            >
-                <option value="">Choose</option>
-                {column.options?.map((option) => (
-                    <option key={option.value} value={option.value}>
-                        {option.label}
-                    </option>
-                ))}
-            </select>
-        );
-    }
-
     return (
-        <input
-            {...common}
-            type={type === "date" ? "date" : "text"}
-            inputMode={numeric ? "decimal" : undefined}
-            min={type === "date" && typeof column.min === "string" ? column.min : undefined}
-            max={type === "date" && typeof column.max === "string" ? column.max : undefined}
-            value={shown}
-            onChange={(e) => updateDraft(e.target.value)}
-            onBlur={() => commit(draftRef.current)}
-            className={`${CELL_INPUT} ${invalid} ${numeric || column.mono ? "font-mono tabular-nums" : ""} ${numeric ? "text-right" : ""}`}
-        />
+        <>
+            {type === "select" ? (
+                <select
+                    {...common}
+                    value={toText(value)}
+                    onChange={(e) => onCommit(e.target.value === "" ? null : e.target.value)}
+                    className={`${CELL_INPUT} ${invalid}`}
+                >
+                    <option value="">Choose</option>
+                    {column.options?.map((option) => (
+                        <option key={option.value} value={option.value}>
+                            {option.label}
+                        </option>
+                    ))}
+                </select>
+            ) : (
+                <input
+                    {...common}
+                    type={type === "date" ? "date" : "text"}
+                    inputMode={numeric ? "decimal" : undefined}
+                    min={type === "date" && typeof column.min === "string" ? column.min : undefined}
+                    max={type === "date" && typeof column.max === "string" ? column.max : undefined}
+                    value={shown}
+                    onChange={(e) => updateDraft(e.target.value)}
+                    onBlur={() => commit(draftRef.current)}
+                    className={`${CELL_INPUT} ${invalid} ${numeric || column.mono ? "font-mono tabular-nums" : ""} ${numeric ? "text-right" : ""}`}
+                />
+            )}
+            {error ? (
+                <span id={errorId} className="block px-2 pb-1 text-xs text-err">
+                    {error}
+                </span>
+            ) : null}
+        </>
     );
 }
 

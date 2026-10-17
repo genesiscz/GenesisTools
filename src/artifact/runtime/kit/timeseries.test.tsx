@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { act } from "react";
 import { tabHash, tabIdFromHash } from "./data";
 import { composeHash, isChartSegment, plainSegment, withPlainSegment } from "./hash";
 import { mountDom } from "./test-dom";
@@ -803,5 +804,112 @@ describe("round 8 interval packing", () => {
         }));
         expect(packRows(items)).toEqual(Array.from({ length: count }, (_, index) => index));
         expect(coordinateReads).toBeLessThanOrEqual(8 * count * Math.ceil(Math.log2(count)));
+    });
+});
+
+describe("round 11 auto-theme canvas colors", () => {
+    test("canvas paints concrete auto-theme colors and resolves them again after a scheme flip", async () => {
+        const dom = await mountDom(<p>canvas theme harness</p>);
+        const css = await Bun.file(new URL("../templates/auto/theme.css", import.meta.url)).text();
+        const tokens = Object.fromEntries(
+            [...css.matchAll(/(--[\w-]+):\s*([^;]+);/g)].map((match) => [match[1], match[2].trim()])
+        );
+        const paints: string[] = [];
+        const probes: Element[] = [];
+        const nativeComputed = dom.window.getComputedStyle.bind(dom.window);
+        const computed: typeof dom.window.getComputedStyle = (element, pseudo) =>
+            new Proxy(nativeComputed(element, pseudo), {
+                get(target, key) {
+                    if (key === "getPropertyValue") {
+                        return (name: string) => tokens[name] ?? target.getPropertyValue(name);
+                    }
+
+                    if (
+                        key === "color" &&
+                        element instanceof dom.window.HTMLSpanElement &&
+                        element.style.display === "none"
+                    ) {
+                        if (element.parentElement) {
+                            probes.push(element.parentElement);
+                        }
+
+                        let raw = element.style.color;
+                        const variable = /^var\((--[\w-]+)\)$/.exec(raw);
+                        raw = variable ? (tokens[variable[1]] ?? raw) : raw;
+                        const pair = /^light-dark\((rgb\([^)]+\)|#[\da-f]+),\s*(rgb\([^)]+\)|#[\da-f]+)\)$/.exec(raw);
+                        if (pair) {
+                            const sample = dom.window.document.createElement("span");
+                            sample.style.color =
+                                pair[dom.window.document.documentElement.getAttribute("data-theme") === "dark" ? 2 : 1];
+                            return sample.style.color;
+                        }
+                    }
+
+                    const value = Reflect.get(target, key, target);
+                    return typeof value === "function" ? value.bind(target) : value;
+                },
+            });
+        const context = new Proxy<Record<string, unknown>>(
+            { measureText: () => ({ width: 30 }) },
+            {
+                get(target, key) {
+                    return Reflect.has(target, key) ? Reflect.get(target, key) : () => undefined;
+                },
+                set(target, key, value) {
+                    if ((key === "fillStyle" || key === "strokeStyle") && typeof value === "string") {
+                        paints.push(value);
+                    }
+
+                    return Reflect.set(target, key, value);
+                },
+            }
+        );
+        Object.defineProperty(dom.window.HTMLCanvasElement.prototype, "getContext", {
+            configurable: true,
+            value: () => context,
+        });
+        Object.defineProperty(dom.window.HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 600 });
+        dom.window.getComputedStyle = computed;
+        Object.assign(globalThis, { getComputedStyle: computed });
+        try {
+            await dom.render(
+                <TimeSeries
+                    series={[
+                        {
+                            id: "load",
+                            label: "Load",
+                            points: [
+                                [T0, 1],
+                                [T0 + HOUR, 2],
+                            ],
+                        },
+                    ]}
+                />
+            );
+            for (const color of [
+                "rgb(246, 247, 249)",
+                "rgb(255, 255, 255)",
+                "rgb(219, 224, 232)",
+                "rgb(29, 78, 216)",
+            ]) {
+                expect(paints).toContain(color);
+            }
+            expect(paints.some((color) => /light-dark\(|color-mix\(|var\(/.test(color))).toBe(false);
+            expect(probes.length).toBeGreaterThan(0);
+            expect(probes.every((element) => dom.container.contains(element))).toBe(true);
+            paints.length = 0;
+            await act(async () => {
+                dom.window.document.documentElement.setAttribute("data-theme", "dark");
+                await Promise.resolve();
+            });
+            for (const color of ["rgb(13, 15, 19)", "rgb(21, 25, 32)", "rgb(37, 43, 54)", "rgb(108, 182, 240)"]) {
+                expect(paints).toContain(color);
+            }
+            expect(paints.some((color) => /light-dark\(|color-mix\(|var\(/.test(color))).toBe(false);
+        } finally {
+            await dom.unmount();
+            dom.window.getComputedStyle = nativeComputed;
+            Object.assign(globalThis, { getComputedStyle: nativeComputed });
+        }
     });
 });

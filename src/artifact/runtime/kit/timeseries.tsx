@@ -11,6 +11,7 @@ import {
     useState,
 } from "react";
 import { TONE_COLOR } from "./charts";
+import { resolveCssColorValue } from "./mermaid-core";
 import type { Tone } from "./primitives";
 import {
     assignPanels,
@@ -190,19 +191,19 @@ function readTheme(el: Element): Theme {
         }
 
         const m = /^var\((--[\w-]+)\)$/.exec(css.trim());
-        const value = m ? prop(m[1], "#8a93a4") : css;
+        const value = resolveCssColorValue(m ? prop(m[1], "#8a93a4") : css, el);
         cache.set(css, value);
 
         return value;
     };
 
     return {
-        bg: prop("--bg", "#0d0f13"),
-        panel: prop("--panel", "#151920"),
-        border: prop("--border", "#252b36"),
-        text: prop("--text", "#e2e6ec"),
-        dim: prop("--dim", "#8a93a4"),
-        accent: prop("--accent", "#4dd0b1"),
+        bg: resolve(prop("--bg", "#0d0f13")),
+        panel: resolve(prop("--panel", "#151920")),
+        border: resolve(prop("--border", "#252b36")),
+        text: resolve(prop("--text", "#e2e6ec")),
+        dim: resolve(prop("--dim", "#8a93a4")),
+        accent: resolve(prop("--accent", "#4dd0b1")),
         font: prop("--font-body", "ui-sans-serif, system-ui, sans-serif"),
         resolve,
     };

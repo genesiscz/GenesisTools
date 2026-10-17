@@ -2302,3 +2302,69 @@ describe("round 9 controlled sorting updates", () => {
         });
     }
 });
+
+describe("round 11 editable error descriptions", () => {
+    test("each invalid cell describes its error within its own table and clears the link on recovery", async () => {
+        const columns: EditableColumn[] = [
+            { key: "task", label: "Task", required: true },
+            { key: "hours", label: "Hours", type: "number", min: 1 },
+            { key: "start", label: "Start", type: "date", min: "2026-09-01" },
+            {
+                key: "choice",
+                label: "Choice",
+                type: "select",
+                options: [
+                    { value: "a", label: "Draft" },
+                    { value: "b", label: "Reviewed" },
+                ],
+                validate: (value) => (value === "b" ? undefined : "Choose a reviewed option"),
+            },
+        ];
+        const invalid = [{ task: "", hours: 0, start: "2026-08-01", choice: "a" }];
+        const valid = [{ task: "Done", hours: 1, start: "2026-09-01", choice: "b" }];
+        const pair = (rows: EditableRow[]) => (
+            <>
+                {["first", "second"].map((name) => (
+                    <div key={name} data-table-test={name}>
+                        <EditableTable columns={columns} rows={rows} onChange={() => {}} />
+                    </div>
+                ))}
+            </>
+        );
+        const dom = await mountDom(pair(invalid));
+        try {
+            const ids: string[] = [];
+            for (const table of dom.container.querySelectorAll("[data-table-test]")) {
+                const controls = table.querySelectorAll("[data-cell]");
+                expect(controls).toHaveLength(4);
+                for (const [index, control] of [...controls].entries()) {
+                    expect(control.getAttribute("aria-invalid")).toBe("true");
+                    const id = control.getAttribute("aria-describedby");
+                    expect(id).toBeTruthy();
+                    const message = dom.window.document.getElementById(id ?? "");
+                    expect(control.closest("td")?.contains(message)).toBe(true);
+                    expect(message?.textContent).toBe(
+                        [
+                            "Task is required",
+                            "Hours must be at least 1",
+                            "Start must be on or after 2026-09-01",
+                            "Choose a reviewed option",
+                        ][index]
+                    );
+                    ids.push(id ?? "");
+                }
+            }
+            expect(new Set(ids).size).toBe(8);
+            await dom.render(pair(valid));
+            for (const control of dom.container.querySelectorAll("[data-cell]")) {
+                expect(control.hasAttribute("aria-describedby")).toBe(false);
+                expect(control.hasAttribute("aria-invalid")).toBe(false);
+            }
+            for (const id of ids) {
+                expect(dom.window.document.getElementById(id)).toBeNull();
+            }
+        } finally {
+            await dom.unmount();
+        }
+    });
+});

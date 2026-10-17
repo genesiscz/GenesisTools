@@ -107,7 +107,13 @@ export function onColorSchemeChange(listener: () => void): () => void {
  */
 export function resolveCssColor(name: string): string {
     const root = document.documentElement;
-    const raw = getComputedStyle(root).getPropertyValue(name).trim();
+
+    return resolveCssColorValue(getComputedStyle(root).getPropertyValue(name), root);
+}
+
+/** Resolve a CSS color expression in the element's inherited theme and color-scheme. */
+export function resolveCssColorValue(css: string, context: Element): string {
+    const raw = css.trim();
 
     if (!/^(light-dark|color-mix|var)\(/.test(raw)) {
         return raw;
@@ -115,8 +121,8 @@ export function resolveCssColor(name: string): string {
 
     const probe = document.createElement("span");
     probe.style.display = "none";
-    probe.style.color = `var(${name})`;
-    root.appendChild(probe);
+    probe.style.color = raw;
+    context.appendChild(probe);
     const resolved = getComputedStyle(probe).color;
     probe.remove();
 
