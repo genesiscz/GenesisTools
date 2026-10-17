@@ -136,20 +136,42 @@ test("agentRunLauncher reads back the launcher of every line agentRunCommand wri
     expect(agentRunLauncher(withPidNote(claude, "/state/sessions/triage.pid"))).toEqual({
         agent: "claude",
         launcher: `${shellWord(toolsEntrypoint())} claude run work -m sonnet --cross-messages`,
+        droppedInitialTask: true,
     });
     expect(agentRunLauncher(agentRunCommand({ agent: "claude", account: "work", promptFile: "/tmp/p.md" }))).toEqual({
         agent: "claude",
         launcher: `${shellWord(toolsEntrypoint())} claude run work`,
+        droppedInitialTask: true,
     });
     expect(agentRunLauncher(agentRunCommand({ agent: "grok", account: "side", prompt: "go" }))).toEqual({
         agent: "grok",
         launcher: `${shellWord(toolsEntrypoint())} grok run side`,
+        droppedInitialTask: true,
     });
     expect(agentRunLauncher(agentRunCommand({ agent: "codex", account: "side" }))).toEqual({
         agent: "codex",
         launcher: `${shellWord(toolsEntrypoint())} codex run side`,
+        droppedInitialTask: false,
     });
 });
+
+test("agentRunLauncher preserves a quoted native tail without claiming an initial task was dropped", () => {
+    const tail = "  --permission-mode plan --add-dir '/tmp/a dir'";
+    const line = `${TOOLS} 'claude' 'run' 'work' '--'${tail}`;
+    expect(agentRunLauncher(withPidNote(line, "/tmp/tab.pid"))).toEqual({
+        agent: "claude",
+        launcher: `${shellWord(toolsEntrypoint())} claude run work --${tail}`,
+        droppedInitialTask: false,
+    });
+});
+
+test.each(['--add-dir "$(pwd)"', "--add-dir `pwd`", "--permission-mode plan && printf stale"])(
+    "agentRunLauncher declines a non-simple native tail: %s",
+    (tail) => {
+        const line = `/tmp/checkout/tools claude run work -- ${tail}`;
+        expect(agentRunLauncher(withPidNote(line, "/tmp/tab.pid"))).toBeUndefined();
+    }
+);
 
 test("agentRunLauncher leaves every other command alone", () => {
     expect(agentRunLauncher("tail -f /tmp/service.log")).toBeUndefined();

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { journalReplayCommand } from "@app/cmux/lib/command-capture";
@@ -17,7 +17,7 @@ import { cleanLaunchCommand, collectTtyCapture } from "@app/cmux/lib/tty-capture
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as processes from "@genesiscz/utils/process/processes";
 import { shellWords } from "@genesiscz/utils/session-changes/words";
-import { shellCommandLine, shellWord } from "@genesiscz/utils/shell/quote";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 
 beforeAll(() => {
     setCcRunAliases(["cr"]);
@@ -129,6 +129,33 @@ describe("deriveReplayCommand", () => {
         const result = deriveReplayCommand({ original: "tools cc run", sessionId, account: "work" });
         expect(result.command).toBe(`tools cc run work -- --resume ${sessionId}`);
         expect(result.drift.some((d) => d.includes('account "work" added'))).toBe(true);
+    });
+
+    for (const existing of [true, false]) {
+        test.each(["my account", "owner's"])(
+            `quotes a pinned account when ${existing ? "replacing" : "adding"} it: %s`,
+            (account) => {
+                const original = existing ? "tools claude run 'old account' --verbose" : "tools claude run --verbose";
+                const result = deriveReplayCommand({ original, sessionId, account });
+                expect(shellWords(result.command).map((word) => word.value)).toEqual([
+                    "tools",
+                    "claude",
+                    "run",
+                    account,
+                    "--verbose",
+                    "--",
+                    "--resume",
+                    sessionId,
+                ]);
+                expect(isAgentLauncher(result.command)).toBe(true);
+            }
+        );
+    }
+
+    test("a literal account pin replaces a matching decoded expansion with a static shell word", () => {
+        const account = "$ACCOUNT";
+        const result = deriveReplayCommand({ original: 'tools claude run "$ACCOUNT"', sessionId, account });
+        expect(shellWords(result.command)).toContainEqual({ value: account, dynamic: false });
     });
 
     // Sonnet F13, probe A: the typed account used to win, so a tab resumed another account's session where that
@@ -434,6 +461,30 @@ describe("discoverCcRunAliases", () => {
         expect(discoverCcRunAliases(dir)).toEqual(["ccr", "cr"]);
     });
 
+    test("finds a wrapper at the start of a sparse file larger than 2 GiB", () => {
+        const dir = mkdtempSync(join(tmpdir(), "cc-run-aliases-large-"));
+        try {
+            const wrapper = join(dir, "large-wrapper");
+            writeFileSync(wrapper, '#!/bin/sh\nexec tools cc run "$@"\n');
+            truncateSync(wrapper, 2 ** 31 + 1);
+            expect(discoverCcRunAliases(dir)).toEqual(["large-wrapper"]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test("bounds the prefix in bytes, so multibyte comments cannot expose a later launcher", () => {
+        const dir = mkdtempSync(join(tmpdir(), "cc-run-aliases-bytes-"));
+        try {
+            const header = `#${"é".repeat(2047)}\n`;
+            expect(Buffer.byteLength(header)).toBe(4096);
+            writeFileSync(join(dir, "late-wrapper"), `${header}exec tools cc run "$@"\n`);
+            expect(discoverCcRunAliases(dir)).toEqual([]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     test("a missing directory yields no aliases", () => {
         expect(discoverCcRunAliases(join(tmpdir(), "does-not-exist-cc-run-aliases"))).toEqual([]);
     });
@@ -629,24 +680,57 @@ describe("loadSurfaceSessions", () => {
 // An agents-new line must keep its checkout while dropping the initial prompt before resume pinning.
 describe("journal replay preserves the tools checkout", () => {
     for (const entrypoint of ["/tmp/checkout/tools", "/tmp/work tree/tools", "/tmp/it's checkout/tools"]) {
-        test.each(["claude", "grok", "codex"] as const)(`resumes %s using ${entrypoint}`, (agent) => {
-            const sessionId = "aaaaaaaa-1111-4111-8111-111111111111";
-            const line = shellCommandLine([entrypoint, agent, "run", "work", "--", "do the initial task"]);
-            const recovered = journalReplayCommand({ command: withPidNote(line, "/tmp/tab.pid"), atMs: 1_000 });
-            expect(recovered.command).toBe(`${shellWord(entrypoint)} ${agent} run work`);
-            expect(isAgentLauncher(recovered.command)).toBe(true);
-            expect(agentKindFromLauncher(recovered.command)).toBe(agent);
-            const resumed = deriveReplayCommand({ original: recovered.command, sessionId, account: "work" });
-            expect(shellWords(resumed.command).map((word) => word.value)).toEqual([
-                entrypoint,
-                agent,
-                "run",
-                "work",
-                "--",
-                ...(agent === "codex" ? ["resume"] : [agent === "grok" ? "-r" : "--resume"]),
-                sessionId,
-            ]);
-            expect(resumed.command).not.toContain("do the initial task");
+        for (const pidNote of [false, true]) {
+            test.each(["claude", "grok", "codex"] as const)(
+                `resumes %s using ${entrypoint} (pid note: ${pidNote})`,
+                (agent) => {
+                    const sessionId = "aaaaaaaa-1111-4111-8111-111111111111";
+                    const line = `${shellWord(entrypoint)} ${agent} run work -- 'do the initial task'`;
+                    const recovered = journalReplayCommand({
+                        command: pidNote ? withPidNote(line, "/tmp/tab.pid") : line,
+                        atMs: 1_000,
+                    });
+                    expect(recovered.command).toBe(`${shellWord(entrypoint)} ${agent} run work`);
+                    expect(recovered.drift.join("\n")).toContain("first prompt is not sent again");
+                    expect(isAgentLauncher(recovered.command)).toBe(true);
+                    expect(agentKindFromLauncher(recovered.command)).toBe(agent);
+                    const resumed = deriveReplayCommand({ original: recovered.command, sessionId, account: "work" });
+                    expect(shellWords(resumed.command).map((word) => word.value)).toEqual([
+                        entrypoint,
+                        agent,
+                        "run",
+                        "work",
+                        "--",
+                        ...(agent === "codex" ? ["resume"] : [agent === "grok" ? "-r" : "--resume"]),
+                        sessionId,
+                    ]);
+                    expect(resumed.command).not.toContain("do the initial task");
+                }
+            );
+        }
+    }
+});
+
+describe("PID-noted native launchers", () => {
+    const sessionId = "aaaaaaaa-1111-4111-8111-111111111111";
+    for (const recorded of [false, true]) {
+        test.each([
+            { agent: "claude" as const, tail: "  --permission-mode plan --add-dir '/tmp/a dir'" },
+            { agent: "grok" as const, tail: "  --max-turns 5" },
+            { agent: "codex" as const, tail: "  --sandbox read-only" },
+            { agent: "codex" as const, tail: "  resume bbbbbbbb-2222-4222-8222-222222222222 --sandbox read-only" },
+        ])(`preserves $agent's native tail (surface record: ${recorded})`, ({ agent, tail }) => {
+            const line = `/tmp/checkout/tools ${agent} run work --${tail}`;
+            const session = recorded ? { provider: agent, sessionId, account: "work", at: 2_000 } : undefined;
+            const replay = journalReplayCommand({ command: withPidNote(line, "/tmp/tab.pid"), atMs: 1_000 }, session);
+            expect(replay).toEqual({ command: line, drift: [] });
+            expect(isAgentLauncher(replay.command)).toBe(true);
+            const resumed = deriveReplayCommand({ original: replay.command, sessionId, account: "work" });
+            expect(shellWords(resumed.command)[0]?.value).toBe("/tmp/checkout/tools");
+            expect(resumeTargetFromCommand(resumed.command)).toBe(sessionId);
+            const expected = tail.replace("bbbbbbbb-2222-4222-8222-222222222222", sessionId);
+            expect(resumed.command).toContain(`--${expected}`);
+            expect(resumed.command).not.toContain("printf");
         });
     }
 });
@@ -703,6 +787,16 @@ describe("journalReplayCommand", () => {
             command: "tail -f app.log",
             drift: [],
         });
+    });
+
+    test.each([
+        "tools claude run work -- --resume aaaaaaaa-1111-4111-8111-111111111111 --permission-mode plan",
+        "/tmp/checkout/tools claude run work -- --chrome --permission-mode plan",
+        "/tmp/checkout/tools claude run 'work' --  --permission-mode plan",
+        "/tmp/checkout/tools grok run work -- -r aaaaaaaa-1111-4111-8111-111111111111",
+        "/tmp/checkout/tools codex run work -- resume aaaaaaaa-1111-4111-8111-111111111111",
+    ])("preserves native resume arguments in %s", (command) => {
+        expect(journalReplayCommand({ command, atMs: 1_000 }, session)).toEqual({ command, drift: [] });
     });
 
     test("a known launcher is left for the replay path to pin", () => {

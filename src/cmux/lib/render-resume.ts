@@ -8,6 +8,8 @@ import {
     toolsRunLauncher,
 } from "@app/cmux/lib/launchers";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
+import { shellWords } from "@genesiscz/utils/session-changes/words";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 
 /**
  * Every code that writes a resume line: a known launcher's line with the session pinned on
@@ -406,23 +408,27 @@ function replaceToolsRunResume(input: {
 }): ReplayDerivation {
     const { original, kind, launcherEnd, sessionId, pinnedAccount } = input;
     const drift: string[] = [];
-    const accountMatch = original.slice(launcherEnd).match(/^\s+(?!-)(\S+)/);
-    const account = pinnedAccount ?? accountMatch?.[1];
+    const rawAccount = tokenizeCommand(original).find((token) => token.start >= launcherEnd);
+    const word = rawAccount ? shellWords(rawAccount.value)[0] : undefined;
+    const accountToken =
+        rawAccount && word && !word.op && !word.value.startsWith("-")
+            ? { start: rawAccount.start, end: rawAccount.end, ...word }
+            : undefined;
+    const account = pinnedAccount ?? accountToken?.value;
     let command = original;
 
-    if (accountMatch && pinnedAccount && accountMatch[1].replace(/^(['"])(.*)\1$/, "$2") !== pinnedAccount) {
-        const at = launcherEnd + (accountMatch.index ?? 0) + accountMatch[0].length - accountMatch[1].length;
+    if (accountToken && pinnedAccount && (accountToken.dynamic || accountToken.value !== pinnedAccount)) {
         drift.push(
-            `account "${accountMatch[1]}" replaced with "${pinnedAccount}", the account session ${sessionId} was started with`
+            `account "${accountToken.value}" replaced with "${pinnedAccount}", the account session ${sessionId} was started with`
         );
-        command = `${command.slice(0, at)}${pinnedAccount}${command.slice(at + accountMatch[1].length)}`;
+        command = `${command.slice(0, accountToken.start)}${shellWord(pinnedAccount)}${command.slice(accountToken.end)}`;
     }
 
-    if (!accountMatch && pinnedAccount) {
+    if (!accountToken && pinnedAccount) {
         drift.push(
             `account "${pinnedAccount}" added from the session pin journal — the original had none (it may have been picked interactively)`
         );
-        command = `${command.slice(0, launcherEnd)} ${pinnedAccount}${command.slice(launcherEnd)}`;
+        command = `${command.slice(0, launcherEnd)} ${shellWord(pinnedAccount)}${command.slice(launcherEnd)}`;
     }
 
     if (!account) {

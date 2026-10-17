@@ -1,6 +1,6 @@
 import type { CapturedCommand } from "@app/cmux/lib/capture-journal";
 import { isAgentLauncher } from "@app/cmux/lib/launchers";
-import { agentRunLauncher } from "@app/cmux/lib/session-agents";
+import { agentRunContext, agentRunLauncher } from "@app/cmux/lib/session-agents";
 import type { SurfaceSessionInfo } from "@app/cmux/lib/surface-sessions";
 import { resumeCommandLine } from "@genesiscz/utils/agent-sessions/resume-argv";
 import { carryAgentFlags } from "@genesiscz/utils/agent-sessions/resume-flags";
@@ -20,7 +20,7 @@ const CMUX_RESTORE_KINDS: readonly AccountProviderAlias[] = ["claude", "grok", "
 /**
  * The command a shell-journal line restores as.
  *
- * - A known agent launcher is returned as it was; the replay path pins the session onto it.
+ * - Other known agent launchers are returned as they were; the replay path pins the session onto them.
  * - `cmux restore <kind> <id>`, which cmux types itself at relaunch, yields to the surface journal when the
  *   journal names another session for the tab.
  * - A line `tools cmux agents new` typed (pid note, absolute `tools` path, first prompt) becomes its plain
@@ -34,6 +34,19 @@ export function journalReplayCommand(
     journal: Pick<CapturedCommand, "command" | "atMs">,
     session?: SurfaceSessionInfo
 ): { command: string; drift: string[] } {
+    const run = agentRunLauncher(journal.command);
+
+    if (run) {
+        return {
+            command: !run.droppedInitialTask && isAgentLauncher(journal.command) ? journal.command : run.launcher,
+            drift: run.droppedInitialTask
+                ? [
+                      `\`${toolCommand("cmux", "agents", "new")}\` ${run.agent} tab: resumes its session, the first prompt is not sent again`,
+                  ]
+                : [],
+        };
+    }
+
     if (isAgentLauncher(journal.command)) {
         return { command: journal.command, drift: [] };
     }
@@ -62,24 +75,20 @@ export function journalReplayCommand(
         };
     }
 
-    const run = agentRunLauncher(journal.command);
-
-    if (run) {
-        return {
-            command: run.launcher,
-            drift: [
-                `\`${toolCommand("cmux", "agents", "new")}\` ${run.agent} tab: resumes its session, the first prompt is not sent again`,
-            ],
-        };
-    }
-
     if (session?.at !== undefined && session.at >= journal.atMs) {
         const typed = journal.command.split("\n")[0].slice(0, 60);
         const flags = carryAgentFlags(session.provider, journal.command);
-        const resume = resumeCommandLine(session.provider, session.sessionId, session.account);
+        const context = agentRunContext(journal.command);
+        const account = session.account ?? (context?.agent === session.provider ? context.account : undefined);
+        const resume = resumeCommandLine(session.provider, session.sessionId, account);
+        // The shared recipe spells its wrapper as bare tools; a captured checkout must keep its own entrypoint.
+        const concreteResume =
+            context && resume.startsWith("tools ")
+                ? `${shellWord(context.executable)}${resume.slice("tools".length)}`
+                : resume;
 
         return {
-            command: [resume, ...flags.kept.map(shellWord)].join(" "),
+            command: [concreteResume, ...flags.kept.map(shellWord)].join(" "),
             drift: [
                 `the surface journal saw ${session.provider} session ${session.sessionId} in this tab after \`${typed}\` started, so the tab resumes that session`,
                 ...(flags.kept.length > 0 ? [`kept ${session.provider}'s own flags: ${flags.kept.join(" ")}`] : []),

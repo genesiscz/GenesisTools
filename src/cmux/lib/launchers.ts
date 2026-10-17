@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { closeSync, openSync, readdirSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/alias-list";
 import { env } from "@genesiscz/utils/env";
@@ -109,7 +109,7 @@ export function agentKindFromLauncher(command: string): AccountProviderAlias | u
 // (2026-09-08, every renamed session lost after a reboot).
 const CC_RUN_EXEC_RE = /^\s*exec\s+tools\s+(?:cc|claude)\s+run(?![\w-])/m;
 
-/** Names of executable wrappers in `dir` whose body execs `tools cc run`. */
+/** Names of executable wrappers in `dir` whose first 4096 bytes exec `tools cc run`. */
 export function discoverCcRunAliases(dir: string): string[] {
     const names: string[] = [];
     try {
@@ -120,8 +120,15 @@ export function discoverCcRunAliases(dir: string): string[] {
                     continue;
                 }
 
-                if (CC_RUN_EXEC_RE.test(readFileSync(path, "utf8").slice(0, 4096))) {
-                    names.push(name);
+                const fd = openSync(path, "r");
+                try {
+                    const prefix = Buffer.allocUnsafe(4096);
+                    const bytesRead = readSync(fd, prefix, 0, prefix.length, 0);
+                    if (CC_RUN_EXEC_RE.test(prefix.toString("utf8", 0, bytesRead))) {
+                        names.push(name);
+                    }
+                } finally {
+                    closeSync(fd);
                 }
             } catch (error) {
                 logger.debug({ error, path }, "[command-capture] alias candidate unreadable");

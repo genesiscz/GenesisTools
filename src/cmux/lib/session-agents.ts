@@ -1,6 +1,8 @@
+import { isAgentLauncher } from "@app/cmux/lib/launchers";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
+import { shellWords } from "@genesiscz/utils/session-changes/words";
 import { shellCommandLine, shellQuote } from "@genesiscz/utils/shell/quote";
 
 /** The agents `tools cmux agents new` can start. Each one has a `tools <id> run` door with the same shape. */
@@ -92,10 +94,10 @@ export function withPidNote(command: string, pidFile: string): string {
 const PID_NOTE_RE = /^printf '%s' \$\$ > (?:'(?:[^']|'\\'')*'|\S+); /;
 
 /**
- * Shell words up to a bare `--`, or undefined when the line holds anything but plain words
+ * Shell words up to `--` and the untouched tail, or undefined when the prefix holds anything but plain words
  * (an expansion, a pipe, a second command). Enough to read back what `shellCommandLine` wrote.
  */
-function leadingShellWords(line: string): string[] | undefined {
+function leadingShellWords(line: string): { words: string[]; passthrough?: string } | undefined {
     const words: string[] = [];
     let word = "";
     let inWord = false;
@@ -126,7 +128,7 @@ function leadingShellWords(line: string): string[] | undefined {
 
         if (/\s/.test(char)) {
             if (inWord && word === "--") {
-                return words;
+                return { words, passthrough: line.slice(index) };
             }
 
             if (inWord) {
@@ -150,37 +152,71 @@ function leadingShellWords(line: string): string[] | undefined {
         words.push(word);
     }
 
-    return words;
+    return { words };
 }
 
 function bareShellWord(word: string): string {
     return /^[A-Za-z0-9_./:@=-]+$/.test(word) ? word : shellQuote(word);
 }
 
+function agentRunParts(command: string): { agent: SessionAgentId; words: string[]; passthrough?: string } | undefined {
+    const leading = leadingShellWords(command.trim().replace(PID_NOTE_RE, ""));
+    if (!leading) {
+        return undefined;
+    }
+
+    const { words } = leading;
+    if (words.length < 4 || words[0].split("/").at(-1) !== "tools" || words[2] !== "run") {
+        return undefined;
+    }
+
+    const agent = words[1];
+    return isSessionAgentId(agent) ? { ...leading, agent } : undefined;
+}
+
+/** Literal executable and account from a tools-run prefix, even when its pass-through tail needs a session fallback. */
+export function agentRunContext(
+    command: string
+): { agent: SessionAgentId; executable: string; account: string } | undefined {
+    const parts = agentRunParts(command);
+    return parts ? { agent: parts.agent, executable: parts.words[0], account: parts.words[3] } : undefined;
+}
+
 /**
  * The plain launcher inside a line `agentRunCommand` (and `withPidNote`) wrote, without the pid note and
  * without the prompt: `tools claude run work -m sonnet`, `tools codex run work`, `tools grok run work`. The account
  * stays, because a session lives in its account's home (Sonnet F13c: Codex and Grok tabs resumed under the default
- * home). Undefined for any other command.
+ * home). Native options and Codex's resume tail stay intact; `droppedInitialTask` says whether a task was removed.
+ * Undefined for any other command.
  *
  * Restore must resume the session such a tab ran. Replaying the recorded line itself sends the first
  * prompt again and starts a second session that repeats the whole task (2026-10-14: a production triage
  * tab would have started the triage over).
  */
-export function agentRunLauncher(command: string): { agent: SessionAgentId; launcher: string } | undefined {
-    const words = leadingShellWords(command.trim().replace(PID_NOTE_RE, ""));
-
-    if (!words || words.length < 4 || words[0].split("/").at(-1) !== "tools" || words[2] !== "run") {
+export function agentRunLauncher(
+    command: string
+): { agent: SessionAgentId; launcher: string; droppedInitialTask: boolean } | undefined {
+    const parts = agentRunParts(command);
+    if (!parts) {
         return undefined;
     }
 
-    const agent = words[1];
+    const { agent, words, passthrough } = parts;
 
-    if (!isSessionAgentId(agent)) {
+    // Native options and Codex's resume subcommand are not an initial task to remove.
+    const firstArgument = passthrough ? shellWords(passthrough)[0] : undefined;
+    const native = firstArgument?.value.startsWith("-") || (agent === "codex" && firstArgument?.value === "resume");
+    const prefix = words.map(bareShellWord).join(" ");
+    const launcher = native ? `${prefix} --${passthrough}` : prefix;
+    if (native && !isAgentLauncher(launcher)) {
         return undefined;
     }
 
-    return { agent, launcher: words.map(bareShellWord).join(" ") };
+    return {
+        agent,
+        launcher,
+        droppedInitialTask: Boolean(firstArgument) && !native,
+    };
 }
 
 export type AccountChoice = Pick<AccountEntry, "id" | "name" | "provider" | "enabled">;
