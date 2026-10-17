@@ -9,13 +9,19 @@ reruns your checks, and pushes. Quality is judged, not speed.
   commit: no branches, no checkout of other commits. It is a throwaway worktree; `node_modules` is installed.
 - Read `CLAUDE.md` first, then the area rule files it names for every file you touch (`.claude/rules/*.md`).
 - PR #{{PR}}: "{{TITLE}}".
-- You may change only the PR's own files (`git diff --name-only origin/{{BASE}}...HEAD`) and the test files next to
-  them. Anything else: stop and report.
+- Change every file the fix needs in this PR, including files outside the original diff and their tests. Explain
+  the added files in the reply. Apply the derived round policy below to decide which valid findings require changes.
+- Git reads that can run a configured converter take the off switches, or each one waits for the lead's approval:
+  `git diff|show|log --no-textconv --no-ext-diff …`, `git blame|grep --no-textconv …`.
 - Commit subject: `fix({{SCOPES}}): #{{PR}} followup - <what the round fixes, short>`. The commit-msg hook checks the
   scopes; if it prints a corrected subject, commit with that.
 
-## 1. Fetch the open threads yourself (read-only)
+## 1. Read the open threads (read-only)
 
+- The lead fetched them for you, because a sandboxed worker has no network: `.claude/work/babysit/{{PR}}-r{{ROUND}}-threads.md`
+  (every unresolved thread, listed with its Thread ID and then expanded), `{{PR}}-r{{ROUND}}-review-bodies.md` and
+  `{{PR}}-r{{ROUND}}-pr-comments.md` in the same folder. Work from those files and do not call GitHub. Only when the
+  files are missing and your shell has network, fetch them yourself as below.
 - `tools github review {{PR}} --llm -u -s bs-{{PR}}-r{{ROUND}}` lists every unresolved thread from every reviewer
   (eve-bot-lovinka, coderabbitai, humans). Never filter by reviewer.
 - Expand EVERY listed thread: `tools github review expand t1,t2,… -s bs-{{PR}}-r{{ROUND}}` (no PR number in this
@@ -28,8 +34,10 @@ reruns your checks, and pushes. Quality is judged, not speed.
 
 1. For each finding, read the current source at the cited lines BEFORE you judge it. A finding is a claim with a
    timestamp. One verdict per finding: `fixed`, `rejected` (cite the file:line that disproves it), `already-done`
-   (name the commit), or `no-change` (real but not worth a change; say why).
-2. Fix the valid ones at the root. Respect each module's documented contracts and its callers. Add or extend a test
+   (name the commit), or `no-change` (only when a cited file:line proves the finding wrong). For valid findings deferred
+   by the derived policy, use `belongs-elsewhere` (the reply schema's deferral verdict), explain the policy, and keep
+   the thread OPEN. Do not add fields the installed reply schema does not support.
+2. Fix the valid findings selected by the derived round policy at the root. Respect each module's documented contracts and its callers. Add or extend a test
    that fails without the fix, in an existing test file next to the code. Do not create a new test file unless the
    code has none.
 3. Verify, and keep the real output of each command. Prefix every check with `timeout 600`, and never run
@@ -82,13 +90,13 @@ Post NOTHING to GitHub: no `gh pr comment`, no `gh api` writes, no `tools github
 
 - Do steps 1 to 3, then STOP with your final report. Do not start another PR.
 - A failing test, a compile error or a lint hit that your own change caused is part of the work, not a reason to
-  stop: fix it and rerun until the checks pass. Stop early only for something you cannot fix inside the PR's scope,
-  and say what it is. (On 2026-10-15 three Grok workers ended their turns at the first compile error with the fix
+  stop: fix it and rerun until the checks pass. Stop early only when you cannot make progress, and give the
+  concrete blocker. (On 2026-10-15 three Grok workers ended their turns at the first compile error with the fix
   already named in their OPEN line, and each needed a second steer.)
-- A finding whose fix needs a file outside the PR, a new dependency, or a change to a public interface that code
-  outside the PR uses: do NOT fix that one, and do NOT stop the round for it. Fix every in-scope finding, commit,
-  write the reply file (that finding's verdict `no-change`, with "needs <file>: out of the PR's scope" in its reply),
-  and name it under OPEN in your report. The lead decides and may allow the file in a follow-up.
+- A fix that needs a file outside the PR's original diff changes that file in this PR, and the reply explains why.
+  The same applies to necessary new files, dependencies and public-interface changes: update the callers and tests
+  the fix needs. Scope never excuses a required fix. Only the derived round policy permits a deferral; valid security
+  findings and findings from a dedicated user review are always fixed in this PR.
 - Do NOT spawn subagents or delegate.
 - Do NOT build, install, launch, relaunch or quit the user's apps. Never run `tools macos permissions build`,
   `src/macos/index.ts`, `scripts/native/*` or anything else that writes `~/Applications/*.app` or restarts a running

@@ -13,6 +13,7 @@ import type { ShellMatch, ShellRule } from "./types";
 
 /** Runners that start the next word as the command: `bunx biome`, `npx biome`, `pnpm biome`. */
 const RUNNERS = new Set(["bunx", "npx", "pnpx", "pnpm", "yarn"]);
+const EXEC_RUNNERS = new Set(["yarn", "pnpm", "npm"]);
 const BIOME = new Set(["biome", "@biomejs/biome"]);
 const UNSAFE = new Set(["--unsafe", "--apply-unsafe"]);
 
@@ -24,6 +25,13 @@ function biomeIndex(word: string, args: string[]): number {
 
     if (RUNNERS.has(word) && BIOME.has(commandWord(args[0] ?? ""))) {
         return 0;
+    }
+
+    if (EXEC_RUNNERS.has(word) && args[0] === "exec") {
+        const index = args[1] === "--" ? 2 : 1;
+        if (BIOME.has(commandWord(args[index] ?? ""))) {
+            return index;
+        }
     }
 
     // `bun x biome …`
@@ -71,19 +79,25 @@ export const biomeUnsafeDeletesComments: ShellRule = {
                         continue;
                     }
 
-                    const unsafe = args.findIndex((arg) => UNSAFE.has(arg));
+                    const unsafe = args.flatMap((arg, index) => (UNSAFE.has(arg.split("=")[0]) ? [index] : []));
 
-                    if (unsafe === -1) {
+                    if (unsafe.length === 0) {
                         continue;
                     }
 
-                    const flag = tokens[cmd + 1 + unsafe];
                     const matched = originalSlice(scan, tokens[cmd].start, element.start + element.text.length);
-                    // `--apply-unsafe` (Biome 1.x) becomes `--apply`; `--unsafe` is dropped.
-                    const replacement = args[unsafe] === "--apply-unsafe" ? "--apply" : "";
-                    const before = scan.command.slice(0, flag.start).trimEnd();
-                    const after = scan.command.slice(flag.start + flag.text.length);
-                    const suggestion = replacement ? `${before} ${replacement}${after}` : `${before}${after}`;
+                    let suggestion = scan.command;
+                    // Edit right to left to retain the original offsets and all unrelated shell text.
+                    for (const index of unsafe.toReversed()) {
+                        const flag = tokens[cmd + 1 + index];
+                        // Biome 1.x's legacy option becomes its safe equivalent, retaining any explicit value.
+                        const replacement = args[index].startsWith("--apply-unsafe")
+                            ? args[index].replace("--apply-unsafe", "--apply")
+                            : "";
+                        const before = suggestion.slice(0, flag.start).trimEnd();
+                        const after = suggestion.slice(flag.start + flag.text.length);
+                        suggestion = replacement ? `${before} ${replacement}${after}` : `${before}${after}`;
+                    }
 
                     return { matched, index: tokens[cmd].start, suggestion };
                 }

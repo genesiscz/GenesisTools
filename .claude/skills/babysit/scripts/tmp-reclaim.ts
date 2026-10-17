@@ -12,11 +12,12 @@
  * Candidates are the top-level entries of /tmp and $TMPDIR, plus each `/tmp/cc/<project>/<session>` folder (agent
  * scratch). An entry is NEVER a candidate when:
  * - it names a live session: an agent transcript (~/.claude/projects, ~/.codex/sessions, ~/.grok) changed in the
- *   last --live-hours (default 12), the run card's session, or a `--protect <id-or-path>`;
+ *   last --live-hours (default 12), the run card's session, or a `--protect <id>`;
+ * - it is, contains, or lies within a canonical `--protect <path>`;
  * - it is a system or service entry (com.apple.*, launchd, tmux-*, ssh-*, the Claude harness folders, sockets);
  * - anything inside it is a socket or a FIFO (a live service), or a `.git` (a repository or worktree: remove those
  *   with `git worktree remove` / the worktree-lock release, never by deleting files);
- * - a running process holds a file open inside it (one lsof listing; if lsof fails, the whole run stops);
+ * - a running process holds a file open inside it (lsof is refreshed before every removal; a failed listing stops apply);
  * - anything inside it changed in the last --min-age-hours (default 6; newest mtime or ctime in the tree);
  * - it is a symlink, belongs to another user, or lives on another device;
  * - its tree could not be scanned within the time budget.
@@ -28,6 +29,7 @@ import {
     existsSync,
     lstatSync,
     mkdirSync,
+    mkdtempSync,
     readdirSync,
     readFileSync,
     realpathSync,
@@ -35,9 +37,10 @@ import {
     rmSync,
     writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { nativeSessionRoots, nativeTranscriptMaxDepth } from "@genesiscz/utils/providers/session-paths";
 import { appendEvent } from "./ledger";
 import { flag, has } from "./run";
 
@@ -67,22 +70,73 @@ const SYSTEM_PREFIXES = [
     ".X",
     ".tmp-reclaim-",
 ];
-let minAgeHours = Number(flag("--min-age-hours") ?? 6);
-const liveHours = Number(flag("--live-hours") ?? 12);
-const runDir = flag("--run") ?? process.env.BABYSIT_RUN;
+function validAge(value: unknown, label: string): number {
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        throw new Error(`${label} must be a finite nonnegative number of hours`);
+    }
+    return value;
+}
+
+function ageFlag(name: string, fallback: number): number {
+    const raw = flag(name);
+    if (has(name) && (raw === undefined || raw.trim() === "")) {
+        throw new Error(`${name} must be a finite nonnegative number of hours`);
+    }
+    return validAge(Number(raw ?? fallback), name);
+}
+
+let minAgeHours = ageFlag("--min-age-hours", 6);
+const liveHours = ageFlag("--live-hours", 12);
+const runDir = flag("--run") ?? env.get("BABYSIT_RUN");
 const uid = process.getuid?.() ?? -1;
-const roots = [...new Set(["/tmp", process.env.TMPDIR ?? "/tmp"].map((root) => realpathSync(root)))];
+const roots = [...new Set(["/tmp", env.get("TMPDIR") ?? "/tmp"].map((root) => realpathSync(root)))];
 
-function protectedIds(): string[] {
-    const ids = process.argv.flatMap((a, i) => (process.argv[i - 1] === "--protect" ? [a] : []));
+interface Protection {
+    ids: string[];
+    paths: string[];
+}
+
+function canonicalProtection(path: string): string {
+    const tail: string[] = [];
+    let current = resolve(path);
+    while (!existsSync(current)) {
+        const parent = dirname(current);
+        if (parent === current) {
+            throw new Error("cannot canonicalize protected path: " + path);
+        }
+        tail.unshift(basename(current));
+        current = parent;
+    }
+    return join(realpathSync(current), ...tail);
+}
+
+function containsPath(parent: string, child: string): boolean {
+    const suffix = relative(parent, child);
+    return suffix === "" || (suffix !== ".." && !suffix.startsWith("../") && !isAbsolute(suffix));
+}
+
+function protectedEntries(): Protection {
+    const explicit = process.argv.flatMap((a, i) => (process.argv[i - 1] === "--protect" ? [a] : []));
+    const paths: string[] = [];
+    const ids: string[] = [];
+    for (const value of explicit) {
+        // A bare word stays an id (matched anywhere in a path) even when a file of that name sits in the cwd,
+        // so a session id that happens to name a local file never loses its wider protection.
+        if (isAbsolute(value) || value.includes("/")) {
+            paths.push(canonicalProtection(value));
+        } else {
+            ids.push(value);
+            if (existsSync(value)) {
+                paths.push(canonicalProtection(value));
+            }
+        }
+    }
     const cutoff = Date.now() - liveHours * 3_600_000;
-    const transcriptDirs = [
-        join(homedir(), ".claude/projects"),
-        join(homedir(), ".codex/sessions"),
-        join(homedir(), ".grok"),
-    ];
+    const transcriptDirs = (["claude", "codex", "grok"] as const).flatMap((kind) =>
+        nativeSessionRoots(kind).map((top) => ({ kind, top, depthLimit: nativeTranscriptMaxDepth(kind) }))
+    );
 
-    for (const top of transcriptDirs) {
+    for (const { kind, top, depthLimit } of transcriptDirs) {
         const stack: Array<{ dir: string; depth: number }> = [{ dir: top, depth: 0 }];
 
         while (stack.length) {
@@ -105,11 +159,12 @@ function protectedIds(): string[] {
                     continue;
                 }
 
-                if (st.isDirectory() && depth < 4) {
+                if (st.isDirectory() && depth < depthLimit) {
                     stack.push({ dir: path, depth: depth + 1 });
                 } else if (st.isFile() && st.mtimeMs >= cutoff) {
-                    // A session id is a UUID-like token in the file name; its first 8 characters name scratch folders.
-                    const id = /([0-9a-f]{8})-?[0-9a-f-]{20,}/i.exec(name)?.[1];
+                    // Grok stores chat_history/updates inside the UUID directory; other providers name the file.
+                    const identity = kind === "grok" ? basename(dirname(path)) : name;
+                    const id = /([0-9a-f]{8})-?[0-9a-f-]{20,}/i.exec(identity)?.[1];
 
                     if (id) {
                         ids.push(id.toLowerCase());
@@ -119,19 +174,16 @@ function protectedIds(): string[] {
         }
     }
 
-    return [...new Set(ids)];
+    return { ids: [...new Set(ids)], paths: [...new Set(paths)] };
 }
 
-function openPaths(): string[] {
+export function openPaths(): string[] {
     // lint-rules-ignore: a deletion guard needs every open AND mapped file (lsof's mem rows), which the process layer does not read
     const p = Bun.spawnSync(["lsof", "-n", "-Fn", "-w"], { stdout: "pipe", stderr: "pipe" });
     const out = p.stdout.toString();
 
-    // lsof exits 1 when some processes could not be read, but then still lists the rest. An empty listing is a
-    // failure: deleting under a blind check is exactly what this script must never do.
-    if (!out.includes("\nn/")) {
-        console.error(`✖ lsof gave no listing (exit ${p.exitCode}): refusing to judge what is open`);
-        process.exit(1);
+    if (p.exitCode !== 0 || p.stderr.length > 0 || !out.includes("\nn/")) {
+        throw new Error(`lsof listing incomplete (exit ${p.exitCode}): refusing to judge what is open`);
     }
 
     return out
@@ -158,7 +210,7 @@ function scan(path: string, rootDev: number): { newest: number; bytes: number } 
         try {
             st = lstatSync(p);
         } catch {
-            continue;
+            return { refuse: "unreadable" };
         }
 
         if (st.dev !== rootDev) {
@@ -190,7 +242,7 @@ function scan(path: string, rootDev: number): { newest: number; bytes: number } 
     return { newest, bytes };
 }
 
-function judge(path: string, ids: string[], open: string[]): Candidate | string {
+function judge(path: string, protection: Protection, open: string[]): Candidate | string {
     const name = basename(path);
     let st: ReturnType<typeof lstatSync>;
 
@@ -216,7 +268,10 @@ function judge(path: string, ids: string[], open: string[]): Candidate | string 
     const run = runDir && existsSync(runDir) ? realpathSync(runDir) : null;
 
     if (
-        ids.some((id) => path.toLowerCase().includes(id.toLowerCase())) ||
+        protection.ids.some((id) => path.toLowerCase().includes(id.toLowerCase())) ||
+        protection.paths.some(
+            (protectedPath) => containsPath(path, protectedPath) || containsPath(protectedPath, path)
+        ) ||
         (run && (run === path || run.startsWith(`${path}/`)))
     ) {
         return "live-session";
@@ -240,6 +295,26 @@ function judge(path: string, ids: string[], open: string[]): Candidate | string 
     return { path, ino: st.ino, bytes: tree.bytes, newest: tree.newest };
 }
 
+/** Only canonical paths (realpath equal, so no symlink anywhere in them) with the planner's shapes may be reclaimed. */
+function candidateRoot(path: string): string | null {
+    if (typeof path !== "string" || resolve(path) !== path) {
+        return null;
+    }
+
+    const root = roots.find((r) => path.startsWith(r + "/"));
+    if (!root) {
+        return null;
+    }
+
+    const parts = relative(root, path).split("/");
+    const session = root === roots[0] && parts.length === 3 && parts[0] === "cc";
+    if ((!session && (parts.length !== 1 || parts[0] === "cc")) || realpathSync(path) !== path) {
+        return null;
+    }
+
+    return root;
+}
+
 function entries(): string[] {
     const out: string[] = [];
 
@@ -249,6 +324,10 @@ function entries(): string[] {
 
             // Agent scratch is judged per session folder, so one live session does not shield every dead one.
             if (path === join(roots[0] ?? "/tmp", "cc")) {
+                if (!lstatSync(path).isDirectory() || lstatSync(path).isSymbolicLink()) {
+                    continue;
+                }
+
                 for (const project of readdirSync(path)) {
                     const projectPath = join(path, project);
 
@@ -269,104 +348,133 @@ function entries(): string[] {
 
 const gb = (bytes: number) => `${(bytes / 1e9).toFixed(2)} GB`;
 
-if (!has("--apply")) {
-    const ids = protectedIds();
+function main(): void {
+    if (!has("--apply")) {
+        const protection = protectedEntries();
+        const open = openPaths();
+        const candidates: Candidate[] = [];
+        const skipped: Record<string, number> = {};
+
+        for (const path of entries()) {
+            const verdict = judge(path, protection, open);
+
+            if (typeof verdict === "string") {
+                skipped[verdict] = (skipped[verdict] ?? 0) + 1;
+            } else {
+                candidates.push(verdict);
+            }
+        }
+
+        candidates.sort((a, b) => b.bytes - a.bytes);
+
+        for (const c of candidates.slice(0, 40)) {
+            const age = ((Date.now() - c.newest) / 3_600_000).toFixed(1);
+            console.log(`${(c.bytes / 1e6).toFixed(0).padStart(7)} MB  ${age.padStart(6)} h  ${c.path}`);
+        }
+
+        const total = candidates.reduce((sum, c) => sum + c.bytes, 0);
+        const planDir = runDir ? join(runDir, "logs") : join(roots[0] ?? "/tmp", "cc");
+        mkdirSync(planDir, { recursive: true });
+        const planPath = join(planDir, `tmp-reclaim-plan-${Date.now()}.json`);
+        const plan: Plan = { createdAt: Date.now(), minAgeHours, candidates };
+        writeFileSync(planPath, SafeJSON.stringify(plan, null, 2));
+        console.log(
+            `${candidates.length} candidates, ${gb(total)}; protected ids ${protection.ids.length}, paths ${protection.paths.length}; skipped ${SafeJSON.stringify(skipped)}`
+        );
+        console.log(`plan: ${planPath}\napply it within 30 minutes: bun tmp-reclaim.ts --apply --plan ${planPath}`);
+        process.exit(0);
+    }
+
+    const planPath = flag("--plan");
+
+    if (!planPath || !existsSync(planPath)) {
+        console.error("✖ --apply needs --plan <file> from a dry run");
+        process.exit(2);
+    }
+
+    const plan = SafeJSON.parse(readFileSync(planPath, "utf8"), { strict: true }) as Plan;
+
+    const age = Date.now() - plan.createdAt;
+    if (
+        typeof plan.createdAt !== "number" ||
+        !Number.isFinite(plan.createdAt) ||
+        !Number.isFinite(age) ||
+        age < 0 ||
+        age > PLAN_MAX_AGE_MS
+    ) {
+        console.error("✖ the plan needs a finite numeric createdAt within the last 30 minutes: run the dry run again");
+        process.exit(2);
+    }
+
+    // The dry run decided with its own threshold; the re-check uses the same one.
+    minAgeHours = validAge(plan.minAgeHours, "plan.minAgeHours");
+
+    const protection = protectedEntries();
     const open = openPaths();
-    const candidates: Candidate[] = [];
-    const skipped: Record<string, number> = {};
+    let freed = 0;
+    let removed = 0;
+    const refused: Record<string, number> = {};
 
-    for (const path of entries()) {
-        const verdict = judge(path, ids, open);
+    // Only these exclusively created, private (0700) directories belong to this run.
+    const quarantines = new Map<string, string>();
+    try {
+        for (const planned of plan.candidates) {
+            let root: string | null = null;
+            try {
+                root = candidateRoot(planned.path);
+            } catch {
+                // A vanished or unreadable path is no longer a candidate either.
+            }
 
-        if (typeof verdict === "string") {
-            skipped[verdict] = (skipped[verdict] ?? 0) + 1;
-        } else {
-            candidates.push(verdict);
+            if (!root) {
+                refused["invalid-path"] = (refused["invalid-path"] ?? 0) + 1;
+                continue;
+            }
+
+            const now = judge(planned.path, protection, open);
+
+            if (typeof now === "string" || now.ino !== planned.ino) {
+                const why = typeof now === "string" ? now : "replaced";
+                refused[why] = (refused[why] ?? 0) + 1;
+                continue;
+            }
+
+            // Scanning earlier candidates may take minutes. Refresh immediately before the irreversible move.
+            // A failed listing throws and stops apply; an old snapshot cannot authorize a deletion.
+            const freshOpen = openPaths();
+            if (freshOpen.some((path) => path === planned.path || path.startsWith(planned.path + "/"))) {
+                refused["open-file"] = (refused["open-file"] ?? 0) + 1;
+                continue;
+            }
+
+            let trash = quarantines.get(root);
+            if (!trash) {
+                trash = mkdtempSync(join(root, ".tmp-reclaim-"));
+                quarantines.set(root, trash);
+            }
+
+            try {
+                renameSync(planned.path, join(trash, `${removed}-${basename(planned.path)}`));
+                removed++;
+                freed += now.bytes;
+            } catch (error) {
+                console.error(`could not move ${planned.path}: ${String(error)}`);
+            }
+        }
+    } finally {
+        for (const trash of quarantines.values()) {
+            rmSync(trash, { recursive: true, force: true });
         }
     }
 
-    candidates.sort((a, b) => b.bytes - a.bytes);
+    const summary = `removed ${removed} of ${plan.candidates.length} planned entries, about ${gb(freed)}; refused at apply ${SafeJSON.stringify(refused)}`;
+    console.log(summary);
 
-    for (const c of candidates.slice(0, 40)) {
-        const age = ((Date.now() - c.newest) / 3_600_000).toFixed(1);
-        console.log(`${(c.bytes / 1e6).toFixed(0).padStart(7)} MB  ${age.padStart(6)} h  ${c.path}`);
-    }
-
-    const total = candidates.reduce((sum, c) => sum + c.bytes, 0);
-    const planDir = runDir ? join(runDir, "logs") : join(roots[0] ?? "/tmp", "cc");
-    mkdirSync(planDir, { recursive: true });
-    const planPath = join(planDir, `tmp-reclaim-plan-${Date.now()}.json`);
-    const plan: Plan = { createdAt: Date.now(), minAgeHours, candidates };
-    writeFileSync(planPath, SafeJSON.stringify(plan, null, 2));
-    console.log(
-        `${candidates.length} candidates, ${gb(total)}; protected ids ${ids.length}; skipped ${SafeJSON.stringify(skipped)}`
-    );
-    console.log(`plan: ${planPath}\napply it within 30 minutes: bun tmp-reclaim.ts --apply --plan ${planPath}`);
-    process.exit(0);
-}
-
-const planPath = flag("--plan");
-
-if (!planPath || !existsSync(planPath)) {
-    console.error("✖ --apply needs --plan <file> from a dry run");
-    process.exit(2);
-}
-
-const plan = SafeJSON.parse(readFileSync(planPath, "utf8"), { strict: true }) as Plan;
-
-if (Date.now() - plan.createdAt > PLAN_MAX_AGE_MS) {
-    console.error("✖ the plan is older than 30 minutes: run the dry run again");
-    process.exit(2);
-}
-
-// The dry run decided with its own threshold; the re-check uses the same one.
-minAgeHours = plan.minAgeHours;
-
-const ids = protectedIds();
-const open = openPaths();
-let freed = 0;
-let removed = 0;
-const refused: Record<string, number> = {};
-
-for (const planned of plan.candidates) {
-    const now = judge(planned.path, ids, open);
-
-    if (typeof now === "string" || now.ino !== planned.ino) {
-        const why = typeof now === "string" ? now : "replaced";
-        refused[why] = (refused[why] ?? 0) + 1;
-        continue;
-    }
-
-    const root = roots.find((r) => planned.path.startsWith(`${r}/`));
-
-    if (!root) {
-        refused["outside-roots"] = (refused["outside-roots"] ?? 0) + 1;
-        continue;
-    }
-
-    const trash = join(root, `.tmp-reclaim-${process.pid}`);
-    mkdirSync(trash, { recursive: true });
-
-    try {
-        renameSync(planned.path, join(trash, `${removed}-${basename(planned.path)}`));
-        removed++;
-        freed += now.bytes;
-    } catch (error) {
-        console.error(`could not move ${planned.path}: ${String(error)}`);
+    if (runDir) {
+        appendEvent(runDir, { kind: "note", text: `tmp-reclaim: ${summary} (plan ${planPath})` });
     }
 }
 
-for (const root of roots) {
-    const trash = join(root, `.tmp-reclaim-${process.pid}`);
-
-    if (existsSync(trash)) {
-        rmSync(trash, { recursive: true, force: true });
-    }
-}
-
-const summary = `removed ${removed} of ${plan.candidates.length} planned entries, about ${gb(freed)}; refused at apply ${SafeJSON.stringify(refused)}`;
-console.log(summary);
-
-if (runDir) {
-    appendEvent(runDir, { kind: "note", text: `tmp-reclaim: ${summary} (plan ${planPath})` });
+if (import.meta.main) {
+    main();
 }

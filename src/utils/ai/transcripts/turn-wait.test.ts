@@ -1,11 +1,11 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ActivityState } from "./activity";
 import type { TurnSnapshot } from "./turn-state";
-import { codexTurnState, grokTurnState, readTurnState } from "./turn-state";
+import { codexTurnState, grokTurnState, readTurnState, TURN_TAIL_BYTES } from "./turn-state";
 import { looksLikeQuestion, questionOf, TRANSCRIPT_GONE_MS, turnAnswers, waitForTurn, watchTurn } from "./turn-wait";
 
 function snap(state: ActivityState, lastEventAt: number | null, turnStartedAt: number | null = null): TurnSnapshot {
@@ -45,6 +45,60 @@ function clock(): { now: () => number; sleep: (ms: number) => Promise<void> } {
         },
     };
 }
+
+describe("round 33 tail-only answering turns", () => {
+    const sentAt = Date.parse("2026-10-17T12:00:00Z");
+    const line = (at: number, payload: Record<string, unknown>): string =>
+        `${SafeJSON.stringify({ timestamp: new Date(at).toISOString(), type: "event_msg", payload })}\n`;
+
+    it.each(["bytes", "newer", "after"] as const)("accepts a long answer under a %s fence", async (fence) => {
+        const file = join(mkdtempSync(join(tmpdir(), "answer-tail-")), "rollout.jsonl");
+        const baseline = line(sentAt - 1000, { type: "task_complete", last_agent_message: "previous" });
+        const middle = line(sentAt + 2000, { type: "agent_message", message: "x".repeat(1024) });
+        writeFileSync(
+            file,
+            baseline +
+                line(sentAt + 1000, { type: "task_started" }) +
+                middle.repeat(Math.ceil(TURN_TAIL_BYTES / middle.length) + 5) +
+                line(sentAt + 3000, { type: "task_complete", last_agent_message: "long answer" })
+        );
+        const read = () => readTurnState("codex", file, { now: sentAt + 4000, stallTimeoutMs: 60_000 });
+        expect(read()?.turnStartedAt).toBeNull();
+        const options =
+            fence === "bytes"
+                ? { openedFromByte: Buffer.byteLength(baseline), turnNewerThan: sentAt }
+                : fence === "newer"
+                  ? { turnNewerThan: sentAt }
+                  : { turnStartedAfter: sentAt };
+        const result = await waitForTurn({ read, ...options, ...clock(), pollMs: 100, timeoutMs: 200 });
+        expect(result.outcome).toBe("done");
+        expect(result.snapshot?.lastText).toBe("long answer");
+    });
+
+    it.each(["bytes", "newer", "after"] as const)(
+        "rejects a tail overlapping the send under a %s fence",
+        async (fence) => {
+            const file = join(mkdtempSync(join(tmpdir(), "predecessor-tail-")), "rollout.jsonl");
+            const old = line(sentAt - 1000, { type: "agent_message", message: "x".repeat(1024) });
+            const beforeSend =
+                line(sentAt - 2000, { type: "task_started" }) + old.repeat(Math.ceil(TURN_TAIL_BYTES / old.length) + 5);
+            writeFileSync(
+                file,
+                beforeSend + line(sentAt + 1000, { type: "task_complete", last_agent_message: "previous" })
+            );
+            const read = () => readTurnState("codex", file, { now: sentAt + 2000, stallTimeoutMs: 60_000 });
+            expect(read()?.turnStartedAt).toBeNull();
+            const options =
+                fence === "bytes"
+                    ? { openedFromByte: Buffer.byteLength(beforeSend), turnNewerThan: sentAt }
+                    : fence === "newer"
+                      ? { turnNewerThan: sentAt }
+                      : { turnStartedAfter: sentAt };
+            const result = await waitForTurn({ read, ...options, ...clock(), pollMs: 100, timeoutMs: 200 });
+            expect(result.outcome).toBe("timeout");
+        }
+    );
+});
 
 describe("waitForTurn", () => {
     it("returns at once when the turn is already idle", async () => {
@@ -225,8 +279,13 @@ describe("waitForTurn", () => {
         expect(turnAnswers(second, window, undefined)).toBe(false);
     });
 
-    it("with turnStartedAfter, a turn whose start is outside the tail still counts", async () => {
-        const reader = script(snap("RUNNING", 90, null), snap("AWAITING-INPUT", 100, null));
+    it("with turnStartedAfter, an unknown predecessor never counts before an identifiable answer", async () => {
+        const reader = script(
+            snap("RUNNING", 90, null),
+            snap("AWAITING-INPUT", 100, null),
+            snap("RUNNING", 130, 120),
+            snap("AWAITING-INPUT", 180, 120)
+        );
         const result = await waitForTurn({
             read: reader.read,
             next: true,
@@ -236,6 +295,8 @@ describe("waitForTurn", () => {
         });
 
         expect(result.outcome).toBe("done");
+        expect(result.snapshot?.turnStartedAt).toBe(120);
+        expect(result.waitedMs).toBe(2000);
     });
 
     it("with next, a turn that ends in the baseline's second still counts once it was seen running", async () => {
@@ -474,5 +535,61 @@ describe("watchTurn deadline", () => {
 
         expect(result.outcome).toBe("timeout");
         expect(Date.now() - started).toBeLessThan(2_000);
+    });
+});
+
+describe("round 33 fenced wait bounds", () => {
+    it.each([30, null])("bounds a permanently stalled predecessor with turn start %s", async (turnStart) => {
+        let time = 0;
+        const result = await waitForTurn({
+            read: () => snap("STALLED", 40, turnStart),
+            turnStartedAfter: 110,
+            pollMs: 31 * 60_000,
+            now: () => time,
+            sleep: async (ms) => {
+                time += ms;
+                if (time > 2 * 60 * 60_000) {
+                    throw new Error("the fenced wait has no finite default deadline");
+                }
+            },
+        });
+        expect(result.outcome).toBe("timeout");
+        expect(result.waitedMs).toBe(30 * 60_000);
+    });
+
+    it("an explicit shorter deadline also bounds an unknown finished predecessor", async () => {
+        const result = await waitForTurn({
+            read: () => snap("FINISHED", 100, null),
+            turnNewerThan: 100,
+            timeoutMs: 2500,
+            pollMs: 1000,
+            ...clock(),
+        });
+        expect(result.outcome).toBe("timeout");
+        expect(result.waitedMs).toBe(2500);
+    });
+
+    it.each([30, null])("arms the same finite default deadline for the watcher, turn start %s", async (turnStart) => {
+        const file = join(mkdtempSync(join(tmpdir(), "fenced-watch-")), "stalled.jsonl");
+        writeFileSync(file, "{}\n");
+        const delays: Array<number | undefined> = [];
+        const original = globalThis.setTimeout;
+        const timers = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void, ms?: number) => {
+            delays.push(ms);
+            return original(callback, ms === 30 * 60_000 ? 10 : ms);
+        }) as typeof setTimeout);
+        try {
+            const result = await watchTurn({
+                path: file,
+                read: () => snap("STALLED", 40, turnStart),
+                turnStartedAfter: 110,
+                pollMs: 20_000,
+                signal: AbortSignal.timeout(1000),
+            });
+            expect(result.outcome).toBe("timeout");
+            expect(delays).toContain(30 * 60_000);
+        } finally {
+            timers.mockRestore();
+        }
     });
 });

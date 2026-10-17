@@ -39,6 +39,8 @@ interface Hunk {
 
 export interface FileDiff {
     file: string;
+    /** Null only for additions; omitted by older in-memory callers that use the same path on both sides. */
+    oldFile?: string | null;
     hunks: Hunk[];
 }
 
@@ -49,6 +51,50 @@ const textOf = (line: string) =>
         .replace(/^\s*(\/\/+|\/\*+|\*\/|\*)\s?/, "")
         .replace(/\*\/\s*$/, "")
         .trim();
+
+function diffPath(header: string): string | null {
+    const value = header.slice(4).split("\t")[0];
+    let path = value;
+    if (value.startsWith('"')) {
+        if (!value.endsWith('"')) {
+            throw new Error("unterminated Git path: " + value);
+        }
+
+        const escapes: Record<string, string> = {
+            a: "\x07",
+            b: "\b",
+            t: "\t",
+            n: "\n",
+            v: "\v",
+            f: "\f",
+            r: "\r",
+            '"': '"',
+            "\\": "\\",
+        };
+        const chunks = value
+            .slice(1, -1)
+            .split(/(\\(?:[0-7]{1,3}|.))/s)
+            .map((chunk) => {
+                if (!chunk.startsWith("\\")) {
+                    return Buffer.from(chunk);
+                }
+
+                const octal = /^\\([0-7]{1,3})$/.exec(chunk);
+                if (octal) {
+                    return Buffer.from([Number.parseInt(octal[1], 8)]);
+                }
+
+                const decoded = escapes[chunk.slice(1)];
+                if (decoded === undefined) {
+                    throw new Error("invalid Git path escape: " + chunk);
+                }
+                return Buffer.from(decoded);
+            });
+        // Octal escapes encode UTF-8 bytes, not separate Unicode code points.
+        path = Buffer.concat(chunks).toString("utf8");
+    }
+    return path === "/dev/null" ? null : path.slice(2);
+}
 
 /** Per-file hunks of a `git diff -U0` output. Deleted files are left out: nothing of theirs survives anyway. */
 export function parseZeroContextDiff(diff: string): FileDiff[] {
@@ -70,11 +116,27 @@ export function parseZeroContextDiff(diff: string): FileDiff[] {
     for (const line of diff.split("\n")) {
         if (line.startsWith("diff --git ")) {
             close();
-            current = { file: line.slice(line.lastIndexOf(" b/") + 3), hunks: [] };
+            const split = line.lastIndexOf(" b/");
+            current = { file: line.slice(split + 3), oldFile: line.slice("diff --git a/".length, split), hunks: [] };
             continue;
         }
 
         if (!current) {
+            continue;
+        }
+
+        if (line.startsWith("new file mode")) {
+            current.oldFile = null;
+            continue;
+        }
+
+        if (line.startsWith("--- ")) {
+            current.oldFile = diffPath(line);
+            continue;
+        }
+
+        if (line.startsWith("+++ ")) {
+            current.file = diffPath(line) ?? current.file;
             continue;
         }
 
@@ -174,25 +236,35 @@ export function findLostComments(input: { diff: FileDiff; oldContent: string; ne
     return found;
 }
 
-function git(args: string[], allowMissing = false): string | null {
+function git(args: string[]): string {
     const result = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe" });
-
     if (result.exitCode !== 0) {
-        if (allowMissing) {
-            return null;
-        }
-
-        console.error(`✖ git ${args.join(" ")} failed (exit ${result.exitCode}): ${result.stderr.toString().trim()}`);
+        console.error(
+            "\u2716 git " +
+                args.join(" ") +
+                " failed (exit " +
+                result.exitCode +
+                "): " +
+                result.stderr.toString().trim()
+        );
         process.exit(2);
     }
-
     return result.stdout.toString();
 }
 
-/** Losses in one diff; `before` and `after` read a path's old and new content. */
+/** Each side uses its own path; only a diff-declared addition has no old blob. */
 function scan(diff: string, before: (file: string) => string, after: (file: string) => string): LostComment[] {
-    return parseZeroContextDiff(diff).flatMap((fileDiff) =>
-        findLostComments({ diff: fileDiff, oldContent: before(fileDiff.file), newContent: after(fileDiff.file) })
+    return (
+        parseZeroContextDiff(diff)
+            // Without removed lines there cannot be a deleted comment/import; pure renames need no blob reads.
+            .filter((fileDiff) => fileDiff.hunks.some((hunk) => hunk.removed.length > 0))
+            .flatMap((fileDiff) =>
+                findLostComments({
+                    diff: fileDiff,
+                    oldContent: fileDiff.oldFile === null ? "" : before(fileDiff.oldFile ?? fileDiff.file),
+                    newContent: after(fileDiff.file),
+                })
+            )
     );
 }
 
@@ -215,24 +287,43 @@ function main(): void {
 
     if (rangeAt > 0) {
         const range = process.argv[rangeAt + 1];
-        const commits = (git(["rev-list", "--no-merges", range]) ?? "").split("\n").filter(Boolean);
+        const commits = git(["rev-list", "--no-merges", range]).split("\n").filter(Boolean);
 
         for (const commit of commits) {
-            const diff = git(["diff", "-U0", "-M", "--no-color", `${commit}^`, commit, ...SOURCE_PATHSPEC], true) ?? "";
+            const diff = git([
+                "show",
+                "--format=",
+                "-U0",
+                "-M",
+                "--no-color",
+                "--no-textconv",
+                "--no-ext-diff",
+                commit,
+                ...SOURCE_PATHSPEC,
+            ]);
             const found = scan(
                 diff,
-                (file) => git(["show", `${commit}^:${file}`], true) ?? "",
-                (file) => git(["show", `${commit}:${file}`], true) ?? ""
+                (file) => git(["show", `${commit}^:${file}`]),
+                (file) => git(["show", `${commit}:${file}`])
             );
             losses.push(...found.map((loss) => ({ ...loss, commit })));
         }
     } else if (process.argv.includes("--staged")) {
-        const diff = git(["diff", "--cached", "-U0", "-M", "--no-color", ...SOURCE_PATHSPEC]) ?? "";
+        const diff = git([
+            "diff",
+            "--cached",
+            "-U0",
+            "-M",
+            "--no-color",
+            "--no-textconv",
+            "--no-ext-diff",
+            ...SOURCE_PATHSPEC,
+        ]);
         losses.push(
             ...scan(
                 diff,
-                (file) => git(["show", `HEAD:${file}`], true) ?? "",
-                (file) => git(["show", `:${file}`], true) ?? ""
+                (file) => git(["show", `HEAD:${file}`]),
+                (file) => git(["show", `:${file}`])
             )
         );
     } else {

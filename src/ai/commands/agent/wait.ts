@@ -12,7 +12,7 @@ import {
 } from "@genesiscz/utils/ai/transcripts/types";
 import { formatDuration } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
-import type { Command } from "commander";
+import { type Command, InvalidArgumentError, Option } from "commander";
 import pc from "picocolors";
 
 const { log } = logger.scoped("agent-wait");
@@ -640,6 +640,14 @@ export async function waitCommand(alias: TurnProvider, query: string, options: W
     }
 }
 
+function parseFenceNumber(value: string): number {
+    const number = Number(value);
+    if (!value.trim() || !Number.isSafeInteger(number) || number < 0) {
+        throw new InvalidArgumentError("expected a nonnegative finite integer");
+    }
+    return number;
+}
+
 /** Register transcript waiting, output controls and distinct timeout or stall exit statuses for one provider. */
 export function registerAgentWaitCommand(program: Command, alias: TurnProvider): Command {
     return program
@@ -664,6 +672,9 @@ export function registerAgentWaitCommand(program: Command, alias: TurnProvider):
         .option("--last <n>", "Print the last N assistant messages of the session, not only the final one")
         .option("--tools", "Also list the tool calls of the turn that ended (name ×count)")
         .option("--quiet", "Suppress live progress, retaining requested messages, tools and the final status")
+        .addOption(new Option("--sent-at <epoch-ms>").hideHelp().argParser(parseFenceNumber))
+        .addOption(new Option("--baseline-turn-started-at <epoch-ms>").hideHelp().argParser(parseFenceNumber))
+        .addOption(new Option("--baseline-transcript-bytes <bytes>").hideHelp().argParser(parseFenceNumber))
         .addHelpText(
             "after",
             `

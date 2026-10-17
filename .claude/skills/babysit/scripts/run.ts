@@ -5,9 +5,11 @@
  *   { "vault": "<notes folder of this run>", "judge": "Claude Opus 5.5", "repo": "owner/name",
  *     "worktrees": "<dir>", "reviewLoopScripts": "<dir>", "prs": [...], ... }
  */
+
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 export interface RunCard {
@@ -24,6 +26,8 @@ export interface RunCard {
     /** Parent folder of the per-PR worker worktrees (`bs-<N>`). */
     worktrees: string;
     reviewLoopScripts: string;
+    /** Publication requires true or an explicit --post; absent permission means ask. */
+    post?: boolean | "ask";
     /**
      * The brief's verify bullets for a repository whose checks are not GenesisTools' (run.json `verify`, one string
      * per bullet). Unset: fill-brief writes GenesisTools' test, tsgo, Biome and lint-rules commands.
@@ -41,7 +45,7 @@ export function has(name: string): boolean {
 }
 
 function capture(cmd: string[], cwd?: string): string {
-    const p = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: process.env });
+    const p = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: env.getProcessEnv() });
     return p.exitCode === 0 ? p.stdout.toString().trim() : "";
 }
 
@@ -67,7 +71,7 @@ export function runPaths(given: string): { runDir: string; cardPath: string } {
     return { runDir: path, cardPath: join(path, "run.json") };
 }
 
-export function loadRun(dir = flag("--run") ?? process.env.BABYSIT_RUN): RunCard {
+export function loadRun(dir = flag("--run") ?? env.get("BABYSIT_RUN")): RunCard {
     if (!dir) {
         console.error("no run dir: pass --run <dir> or set BABYSIT_RUN");
         process.exit(2);
@@ -99,6 +103,7 @@ export function loadRun(dir = flag("--run") ?? process.env.BABYSIT_RUN): RunCard
         main: text("main") ?? (commonDir ? dirname(commonDir) : process.cwd()),
         vault: text("vault") ?? join(runDir, "vault"),
         judge: text("judge") ?? "Claude",
+        post: typeof card.post === "boolean" ? card.post : "ask",
         worktrees: text("worktrees") ?? join(runDir, "worktrees"),
         reviewLoopScripts: text("reviewLoopScripts") ?? join(homedir(), ".claude/skills/review-loop/scripts"),
         verify:
@@ -110,4 +115,9 @@ export function loadRun(dir = flag("--run") ?? process.env.BABYSIT_RUN): RunCard
 
 export function worktreeFor(run: RunCard, pr: string | number): string {
     return join(run.worktrees, `bs-${pr}`);
+}
+
+/** A reviewer's probe folder, beside the run folder: its brief names it and the approval driver accepts writes there. */
+export function reviewScratch(runDir: string, pr: string | number): string {
+    return join(runDir, "..", `review-${pr}`);
 }

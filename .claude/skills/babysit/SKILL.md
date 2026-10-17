@@ -90,13 +90,35 @@ the stop point. After the confirmation period, state the plan in one line and pr
    the hidden channels, `expand` every thread (the L1 table can scramble files). Keep each thread's `threadId`.
 4. Read the source at every cited line before you brief: a stale or wrong finding is briefed as such, so the worker
    does not "fix" it.
-5. **Round policy.** review-loop decides what gets fixed in each round (rounds 1 and 2: every valid finding; later
-   rounds: critical and high). When the user's own words ask for a fix the policy would only answer ("fix the open
-   threads"), the user's words win; say so in the plan.
+5. **Round policy** (Martin, 2026-10-17 12:16; it replaces "fix every finding in every round", because eve opened
+   new Medium and Low findings on every push of #536 for 28 rounds). The executable rule is `scripts/policy.ts`;
+   `fill-brief.ts` derives it from the round, GitHub's changed-file count and `--dedicated-review`. Both brief
+   templates and judging use that generated policy. Count the PR's fix rounds; a follow-up PR starts at round 1.
+   - A PR with more than 100 changed files: rounds 1 to 3 fix every valid finding, Medium and Low included. From
+     round 4, fix only Critical and High.
+   - A PR with 100 changed files or fewer: rounds 1 and 2 fix every valid finding. From round 3, fix only Critical
+     and High.
+   - In the rounds that fix only Critical and High, a Medium or Low finding gets a reply (valid or not, and why).
+     It is not fixed in that PR, and its thread stays OPEN: resolve only a thread that was acted on (fixed, or
+     rejected with a cited file:line). Record a policy deferral with the reply transport's supported
+     `"verdict": "belongs-elsewhere"` and explain the policy in the reply; do not add unsupported schema fields. `integrate.ts` keeps it in the summary but partitions it into a separate
+     `post-replies.ts --no-resolve` batch, never the batch that resolves threads (Martin, 2026-10-17 12:45).
+   - **A valid security finding is always fixed**, at any severity and in any round (Martin, 2026-10-17 12:45:
+     "security valid always"). Read the reviewer's category (`🔒 Security`), not only its severity.
+   - **A dedicated code review the user asks for** (an independent worker review such as `review-brief.ts` on Astra
+     or Sol) is fixed in full: every valid finding, Medium and Low included, whatever round the PR is in. Fix it
+     yourself or steer the PR's fixing worker, then judge it as any round (Martin, 2026-10-17 13:05).
+   - Inside the fix-everything rounds, a deferral is not accepted ("nothing is a follow up or out of scope", Martin,
+     2026-10-17), and every file a valid fix needs is in scope. A `no-change` or rejection needs a cited file:line
+     that proves the finding wrong.
+   - **Merge bar:** when the last round's Critical and High findings are fixed and judged, merge without waiting
+     for eve to review that last fix. The PR still needs at least one CodeRabbit review, green CI and a reply on
+     every thread.
 6. Scope: `git fetch origin <pr branch>`, then `bun .claude/skills/babysit/scripts/pr-scope.ts <N> --compare HEAD`.
    It lists the PR's files, the test file of each one (a sibling `.test.ts`, or a neighbour test that imports it),
-   and whether unified differs from the PR branch per file. That list is the outer bound. The brief allows the files
-   the findings cite plus their tests, and any other PR file a fix provably needs. Missing a test file in the scope
+   and whether unified differs from the PR branch per file. That list is the starting context, not a scope limit.
+   The brief allows every file a valid fix needs, including files outside the original PR diff; explain those files
+   in the reply. Missing a test file in the scope
    put Grok's tests in the wrong file on 2026-10-14.
 7. **Worktree** (worktree mode): `bun .claude/skills/babysit/scripts/setup-wt.ts --run <dir> --pr <N>`. Detached at
    the PR head, `bun install --ignore-scripts` plus the repo's patches, the test wrapper's install stamp (else
@@ -112,6 +134,11 @@ the stop point. After the confirmation period, state the plan in one line and pr
    `Runtime.evaluate` of the page text, and never reload, navigate or restart the browser for it.
 
 ## 4. Brief and dispatch
+
+A Codex worker's sandbox has no network, so `tools github review` and `gh` fail inside it (2026-10-16: two round 2
+fixers stopped before their first edit). Before every spawn or steer of a round, run
+`bun .claude/skills/babysit/scripts/fetch-threads.ts --run <dir> --pr <N> --round <R>`: it writes the threads (listed
+and expanded, with Thread IDs), the review bodies and the bot PR comments into the worktree, and the brief points there.
 
 Two brief forms. **Self-fetch** (the default since 2026-10-14):
 `bun .claude/skills/babysit/scripts/fill-brief.ts --run <dir> --pr <N> --round <R> --model "<label>" --scopes "<a, b>"
@@ -181,15 +208,18 @@ Three Monitors, all with `timeout_ms: 1800000`, each re-armed as the very next t
    itself accepts read-only commands (since 886b44308); this driver approves the brief's file edits, `git add` of
    scope files, the one commit with the brief's subject, and the brief's verify commands, including their one
    sandbox escalation for loopback tests. Everything else prints `NEEDS LEAD`; decide it yourself. Deny rituals
-   (`tools say`), pushes, and anything outside scope.
+   (`tools say`), pushes, and unrelated file changes. Add every file a valid fix needs to the worker's scope before
+   approving it.
 
 Two-way proof: once per new worker, send a ping on the bus (`--to grok_pr<N>` or `--to codex_<name>`) and see the
 reply arrive (Sol answered in 20 s, Grok in 59 s). During the confirmation period do it for every worker.
 
 Waiting on a Codex turn: `bun .claude/skills/babysit/scripts/wait-turn.ts --run <dir> --worker <name> --thread <id>
 --pr <N> --round <R>` with Bash `run_in_background`; the harness wakes the lead when the turn ends, and the worker's
-final message lands in the ledger. Never poll. Steer with `scripts/steer.ts` (same flags plus `--file`), which logs the
-prompt. `bun .claude/skills/babysit/scripts/round-ready.ts --run <dir> <N>…` says which PRs the reviewer bot has
+final message lands in the ledger. Never poll. First steer with `scripts/steer.ts` (same flags plus `--file`), which logs
+the prompt and the pre-delivery answering-turn fence. A live wait needs that steer record for the worker, PR and
+round; an earlier finished turn never answers it, while a new reply that finished before the wait starts still counts.
+`bun .claude/skills/babysit/scripts/round-ready.ts --run <dir> <N>…` says which PRs the reviewer bot has
 re-reviewed at their current head, so their next round can start; add `--wait <minutes>` under Bash `run_in_background`
 to block until eve (or every bot `--bots` names) reviewed each head (exit 0) or the deadline passes (exit 3). Never
 write a one-off waiter that greps its output. To be woken on every change instead, run
@@ -210,17 +240,19 @@ hook, believing it was a worker's.
 🛑 Invoke the `fable-judge` skill for every round, before the push, and read the worker's summary, its reply file and
 the full diff together ([references/judging.md](references/judging.md) is the checklist, the rule comes first there):
 `bun .claude/skills/babysit/scripts/judge-pack.ts --wt <worktree> --range origin/<branch>..HEAD --replies <reply json>
---out <file>` puts the claims, the flagged refusals and deferrals, and the diff (tests first) in one file.
+--report <worker-final file> --out <file>` puts the claims, the flagged refusals and deferrals, and the diff (tests first) in one file.
 Checks plus planted regressions are not a judgement; the code itself is judged. In short: the diff is the truth, not the report;
 rerun every claimed check yourself; plant the old code back to prove each new test fails without the fix; check the
 fix against the module's documented contracts and its callers (the #511 defect hid in a caller); check scope, one
 commit, nothing staged that is not the worker's; check the ready-to-post replies against the final code. Verdict per
 PR: VERIFIED, VERIFIED WITH CAVEATS, or REFUTED, with evidence.
 
-Every deferral is judged too, by severity. A critical or high finding the worker left OPEN because its fix needs a
-file outside the PR is the lead's decision in the same round, not a reply: when the finding is about the PR's own
-subject (on 2026-10-14 #516's one-scan rule needed `enrich.ts`), allow the file in a steer and send it back before
-the push; defer it only with the reason in the reply. A Swift change the worker could not run is not judged until the
+Judge against the same derived round policy from `scripts/policy.ts` that `fill-brief.ts` put in the brief.
+Every required finding is fixed in its PR before the push; a valid security finding and every valid finding in a
+dedicated user review are always required, including Medium and Low. Other Medium/Low findings deferred by the
+ordinary later-round policy get explained replies and remain OPEN. Verify that integrate partitions those replies
+into its no-resolve batch. If a required fix needs a file outside the original diff, change it in this PR and explain
+it in the reply; scope never excuses a required fix. A Swift change the worker could not run is not judged until the
 lead ran its tests: `swift-typecheck.ts` proves it compiles, and #501 round 2 typechecked clean yet broke a test.
 
 ## 7. Correct, integrate, push
@@ -230,7 +262,7 @@ place, a misleading reply). None when the judge found nothing; say so. Worktree 
 `bun .claude/skills/babysit/scripts/integrate.ts --run <dir> --pr <N> --round <R>` runs the gates, pushes the judged
 SHA (never HEAD at push time: a worker steered into its next round may commit meanwhile), copies the reply file to the
 vault with the judge, renders and posts the round summary once (a `.posted` marker stops a rerun from posting twice),
-then posts the thread replies and resolves them, and logs `push` and `post`. Details:
+then posts the thread replies, resolves acted-on items, leaves policy-deferred threads OPEN, and logs `push` and `post`. Details:
 [references/integrate.md](references/integrate.md):
 
 - worktree mode: the correction goes on the worker's worktree; verify there; push `HEAD:refs/heads/<pr-branch>`;
@@ -263,7 +295,7 @@ still needs rounds, or a PR merged with fewer than three, run an independent rea
 .claude/skills/babysit/scripts/review-brief.ts --run <dir> --pr <N> --wt <worktree> [--post-merge] [--swift]`, then
 `steer.ts` with the printed file to a worker that did NOT fix this PR (Sol; Astra only for a risky cross-system PR,
 by the model rule in step 1). Judge its findings like a bot's. Before a merge they become the next fix round (`fill-brief --judge <review
-file>`); after a merge they go to a follow-up PR from master (2026-10-14: #518 carried #509's after-merge findings).
+file> --dedicated-review`); after a merge they go to a follow-up PR from master (2026-10-14: #518 carried #509's after-merge findings).
 Never count a reply-only round, or a label, as a fix round: on 2026-10-14 the report said "#500 merged after 3
 rounds" when GitHub showed two round summaries.
 
@@ -273,9 +305,11 @@ Off unless the user approves it in their own words for this run ("drive the PRs 
 only for PRs the run owns: never another session's PR, never the integration branch. Ask once, early, and keep
 running review rounds while the question is open: a missing answer never blocks a round, it only means no merge.
 
-A PR lands when all hold: at least 3 review rounds done; no open critical or high finding; the reviewer bot reviewed
-the CURRENT head; CI green on that head; its base is master or a parent the run merges first (a PR stacked on another
-session's branch waits for that branch). Then the review-loop landing recipe, which
+A PR lands when all hold: at least 3 review rounds done; every finding required by the derived policy is fixed
+and judged (including every valid security finding and all dedicated-review findings); at least one CodeRabbit
+review; a reply on every thread; CI green on the landing tree; its base is master or a parent the run merges first
+(a PR stacked on another session's branch waits for that branch). Merge without waiting for eve to review the last
+judged fix. Policy-deferred Medium/Low threads may remain OPEN. Then the review-loop landing recipe, which
 `bun .claude/skills/babysit/scripts/land.ts --run <dir> --pr <N> --merge` runs as one command (without `--merge` it
 only prepares and prints the squash; every git call is an argument array, because a hand-typed
 `--force-with-lease=$B:c1a…` in zsh read `:c` as a modifier and pushed without the lease):
@@ -291,7 +325,8 @@ only prepares and prints the squash; every git call is an argument array, becaus
    tree is identical (`git rev-parse HEAD^{tree}` before and after) and run `bun scripts/git/check-commits.ts
    origin/master..HEAD`.
 2. Push with `--force-with-lease=<branch>:<old head>`. An identical tree on a green head needs no new CI run
-   (review-loop 4e); a rebase that resolved a conflict is new code: wait for CI and the bot.
+   (review-loop 4e); a rebase that resolved a conflict is new code: rerun CI and judge it. Do not wait for eve to
+   review the last judged fix; the CodeRabbit-review and per-thread-reply requirements still hold.
 3. `git fetch origin <branch>` in the main checkout (`tools github merge` compares against the local remote ref and
    refuses a "moved" branch otherwise), then `tools github merge --rebase <N>`. Stacks merge bottom-up; the tool
    retargets dependents.
@@ -305,7 +340,8 @@ the worker who knows the PR, as a merge-prep steer that authorizes the rebase. `
 forked from on its parent (a child stacked on a parent that kept growing forked before the parent's later commits;
 find it with `git merge-base <child> <old parent head>`). Check with `git range-diff`, run the area tests, give a
 child that changes plugin files a version above its new base, then push with `--force-with-lease`. A restack is new
-code: wait for CI and the reviewer bot before the merge. When the restack carries a fix round too, push it with
+code: rerun CI and judge it before the merge; eve need not re-review the last judged fix. Keep at least one
+CodeRabbit review and a reply on every thread. When the restack carries a fix round too, push it with
 `integrate.ts … --restacked-from <old head>`: the lease is that old head, and the gates check only the PR's own commits.
 
 ## 7c. Disk: watch it, reclaim /tmp safely

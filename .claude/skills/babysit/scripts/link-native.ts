@@ -8,7 +8,7 @@
  *   bun link-native.ts --main <checkout> <worktree> [...]
  */
 import { lstatSync, readdirSync, readFileSync, rmSync, symlinkSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 const MACHO_MAGIC = new Set(["cffaedfe", "cefaedfe", "cafebabe", "bebafeca"]);
 
@@ -29,9 +29,11 @@ function isNative(path: string, mode: number, size: number): boolean {
 }
 
 export function linkNativeFiles(options: { worktree: string; main: string }): { linked: number; differ: number } {
+    const worktree = resolve(options.worktree);
+    const main = resolve(options.main);
     let linked = 0;
     let differ = 0;
-    const stack = [join(options.worktree, "node_modules")];
+    const stack = [join(worktree, "node_modules")];
 
     while (stack.length) {
         const dir = stack.pop() as string;
@@ -60,7 +62,7 @@ export function linkNativeFiles(options: { worktree: string; main: string }): { 
                 continue;
             }
 
-            const twin = join(options.main, relative(options.worktree, path));
+            const twin = join(main, relative(worktree, path));
 
             try {
                 if (!readFileSync(twin).equals(readFileSync(path))) {

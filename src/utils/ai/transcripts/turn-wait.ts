@@ -71,6 +71,45 @@ function endedTurn(snapshot: TurnSnapshot): boolean {
  *  the file was deleted) ends the wait as `stalled`: no write can ever wake it again. */
 export const TRANSCRIPT_GONE_MS = 30_000;
 
+/** A queued answering turn must become identifiable within 30 minutes unless the caller supplies a deadline. */
+export const DEFAULT_FENCED_TIMEOUT_MS = 30 * 60_000;
+
+interface AnswerFence {
+    turnStartedAfter?: number;
+    turnNewerThan?: number;
+    openedFromByte?: number;
+}
+
+function hasAnswerFence(options: AnswerFence): boolean {
+    return (
+        options.turnStartedAfter !== undefined ||
+        options.turnNewerThan !== undefined ||
+        options.openedFromByte !== undefined
+    );
+}
+
+/** When the opening record left the tail, the whole retained window must be after the send. */
+function tailAnswers(snapshot: TurnSnapshot, fence: AnswerFence): boolean {
+    if (!hasAnswerFence(fence)) {
+        return true;
+    }
+
+    if (fence.openedFromByte !== undefined) {
+        return snapshot.tailStartOffset !== undefined && snapshot.tailStartOffset >= fence.openedFromByte;
+    }
+
+    const earliest = snapshot.earliestTailEventAt;
+    return (
+        earliest !== undefined &&
+        (fence.turnNewerThan === undefined || earliest > fence.turnNewerThan) &&
+        (fence.turnStartedAfter === undefined || earliest > fence.turnStartedAfter)
+    );
+}
+
+function waitTimeout(options: AnswerFence & { timeoutMs?: number }): number | undefined {
+    return options.timeoutMs ?? (hasAnswerFence(options) ? DEFAULT_FENCED_TIMEOUT_MS : undefined);
+}
+
 export class TurnJudge {
     readonly questions: string[] = [];
     private snapshot: TurnSnapshot | null = null;
@@ -118,12 +157,12 @@ export class TurnJudge {
 
         const isNew =
             !this.options.next || this.sawRunning || (snapshot.lastEventAt ?? 0) > (this.options.baselineEnd ?? 0);
-        // A turn whose start is outside the tail (null) cannot be told apart, so it counts, as it did before.
-        // This also keeps the running-turn rule above honest for `message --wait`: seeing the turn that was
-        // already running when the message was sent makes its end "new", but it did not begin after the send.
+        // A missing opening record needs proof that the whole tail follows the send; an overlapping
+        // predecessor remains unconfirmed, while an answer longer than the tail can still finish.
         const answering =
-            snapshot.turnStartedAt === null ||
-            turnAnswers(snapshot.turnStartedAt, this.options, snapshot.turnStartOffset);
+            snapshot.turnStartedAt === null
+                ? tailAnswers(snapshot, this.options)
+                : turnAnswers(snapshot.turnStartedAt, this.options, snapshot.turnStartOffset);
 
         if (ended && isNew && answering) {
             return this.result("done");
@@ -193,7 +232,7 @@ export interface WaitForTurnOptions {
     /** The transcript's byte size before the send: a turn that began in the same instant as `turnNewerThan` counts
      *  when it opened at or past it (see `turnAnswers`). */
     openedFromByte?: number;
-    /** Give up after this long. Undefined waits for ever. */
+    /** Give up after this long. Fenced waits default to 30 minutes; unfenced waits may wait indefinitely. */
     timeoutMs?: number;
     /** Time between two reads. */
     pollMs: number;
@@ -253,7 +292,8 @@ export async function waitForTurn(options: WaitForTurnOptions): Promise<TurnWait
         openedFromByte: options.openedFromByte,
         now,
     });
-    const deadline = options.timeoutMs === undefined ? Number.POSITIVE_INFINITY : now() + options.timeoutMs;
+    const timeoutMs = waitTimeout(options);
+    const deadline = timeoutMs === undefined ? Number.POSITIVE_INFINITY : now() + timeoutMs;
 
     while (true) {
         const snapshot = options.read();
@@ -307,7 +347,8 @@ export async function watchTurn(options: WatchTurnOptions): Promise<TurnWaitResu
     // The watcher checks its deadline only on a write or a poll, so a quiet transcript would overrun
     // `--timeout` by up to one poll. A timer aborts it on time instead.
     const deadline = new AbortController();
-    const timer = options.timeoutMs === undefined ? null : setTimeout(() => deadline.abort(), options.timeoutMs);
+    const timeoutMs = waitTimeout(options);
+    const timer = timeoutMs === undefined ? null : setTimeout(() => deadline.abort(), timeoutMs);
     const signals = options.signal ? [deadline.signal, options.signal] : [deadline.signal];
 
     try {

@@ -113,7 +113,8 @@
   `swift-frontend` also catches an Xcode build of another session, which uses the same CPU.
   Two waiters that poll the process list can still start together in the same second (two judge runs on
   2026-10-15). Run the command through `bun .claude/skills/babysit/scripts/swift-slot.ts -- swift test …`: it takes
-  an O_EXCL lock file, takes over a lock whose pid is dead, then waits for other sessions' Swift processes.
+  a kernel `flock` on a persistent lock inode, then waits for other sessions' Swift processes. Never unlink the
+  lock file: the kernel releases ownership when the holder closes its descriptor or exits; there is no dead-PID takeover.
 - **Display-driven tests fail while the screen is locked.** After the display sleeps or the screen locks, tests that
   wait for a display frame (edge panels, transcript scroll) fail with no code change, and `screencapture -l` cannot
   read a window (2026-10-15 07:05). Rerun them after the screen wakes before you call a change broken.

@@ -63,6 +63,11 @@ resolved it: it goes into the report (#511's import line, 2026-10-14).
 
 ## After the push
 
+The worker's scope and reply disposition come from `scripts/policy.ts`, as rendered by `fill-brief.ts`.
+A deferred ordinary later-round Medium/Low item carries the supported reply verdict `"belongs-elsewhere"` and
+an explanation of the policy deferral: it stays in the summary, but `integrate.ts` posts it in a separate `--no-resolve` batch.
+Only acted-on items enter the resolving batch. Security findings and dedicated user reviews are always fixed.
+
 - `git log --oneline origin/<pr-branch>..HEAD` must be empty, and the push line names the old and new head.
 - Fetch new threads before you post anything (review-loop: `new-threads.ts`), because the bots answer the push.
 - The vault copy of the reply file names the PR-branch SHAs; render the summary with `--range <old>..<new>

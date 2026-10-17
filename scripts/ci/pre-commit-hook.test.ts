@@ -6,25 +6,35 @@ import {
     mkdirSync,
     mkdtempSync,
     readFileSync,
+    realpathSync,
     renameSync,
     rmSync,
     symlinkSync,
     writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
+import { env as testEnvironment } from "@genesiscz/utils/env.client";
+import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
 import { jsonProblem } from "./check-json";
 import { findLostComments, parseZeroContextDiff } from "./check-lost-comments";
 
 /**
- * Runs the real `.githooks/pre-commit` in a scratch repository. The hook formats each staged blob by piping it
- * through `biome check --write --stdin-file-path`. For a path biome has no handler for (Swift, Markdown) and that is
- * not on disk, biome prints NOTHING and exits 0, and the hook used to write that empty output back as the staged
- * blob: a file staged and then moved or deleted in the working tree was committed empty (2026-10-13, found when a
- * GenesisKit agent's Swift commits came out with empty test and store files).
+ * Runs the real `.githooks/pre-commit` in a scratch repository. Staged blobs are formatted in a temporary tree at
+ * their original paths. The old stdin formatter printed nothing for unhandled Swift/Markdown paths missing from
+ * disk, and the hook committed that empty output (2026-10-13). These tests preserve staged bytes, unstaged hunks,
+ * exact-path rules and Unicode without using console output as file content.
  */
 
 const ROOT = resolve(import.meta.dir, "../..");
+
+/** Executed files stay outside the wrapper's cleanup root and are immutable once published. */
+function executableFixture(name: string, body: string): string {
+    return persistentFixture(name, body, (path) => {
+        writeFileSync(path, body);
+        chmodSync(path, 0o755);
+    });
+}
 
 // A test run inside another git process (a hook, a rebase --exec) inherits GIT_DIR / GIT_INDEX_FILE, which would
 // point every git call below at the outer repository.
@@ -51,25 +61,25 @@ describe("config hook installer", () => {
         mkdirSync(join(directory, "scripts/git"), { recursive: true });
         copyFileSync(join(ROOT, "scripts/git/install-hooks.ts"), join(directory, "scripts/git/install-hooks.ts"));
         mkdirSync(join(directory, ".githooks"));
-        writeFileSync(
-            join(directory, ".githooks/pre-commit"),
-            '#!/bin/sh\nprintf "pre-commit\\n" >> hook-runs\ntest ! -f fail-hook\n'
+        symlinkSync(
+            executableFixture("pre-commit", '#!/bin/sh\nprintf "pre-commit\\n" >> hook-runs\ntest ! -f fail-hook\n'),
+            join(directory, ".githooks/pre-commit")
         );
-        writeFileSync(join(directory, ".githooks/commit-msg"), '#!/bin/sh\nprintf "%s\\n" "$@" > hook-args\n');
+        symlinkSync(
+            executableFixture("commit-msg", '#!/bin/sh\nprintf "%s\\n" "$@" > hook-args\n'),
+            join(directory, ".githooks/commit-msg")
+        );
         if (unsupported) {
-            const bin = join(directory, "bin");
-            mkdirSync(bin);
             const realGit = Bun.which("git");
             if (!realGit) {
                 throw new Error("git is required");
             }
 
-            writeFileSync(
-                join(bin, "git"),
+            const wrapper = executableFixture(
+                "git",
                 `#!/bin/sh\nif [ "$1" = hook ] && [ "$2" = list ]; then exit 1; fi\nexec '${realGit}' "$@"\n`
             );
-            chmodSync(join(bin, "git"), 0o755);
-            testEnv.PATH = `${bin}:${testEnv.PATH}`;
+            testEnv.PATH = `${dirname(wrapper)}:${testEnv.PATH}`;
         }
 
         const install = () => {
@@ -99,40 +109,39 @@ describe("config hook installer", () => {
         }
     });
 
-    test.each([false, true])("preserves inherited global and system hook paths, unsupported=%s", (unsupported) => {
-        for (const scope of ["--global", "--system"]) {
-            for (const local of [false, true]) {
-                const s = scratch(unsupported);
-                expect(s.runGit("config", scope, "core.hooksPath", "inherited-hooks").code).toBe(0);
-                if (local) {
-                    expect(s.runGit("config", "--local", "core.hooksPath", ".githooks").code).toBe(0);
-                }
-
-                s.install();
-                if (local && !unsupported) {
-                    chmodSync(join(s.directory, ".githooks/pre-commit"), 0o755);
-                    chmodSync(join(s.directory, ".githooks/commit-msg"), 0o755);
-                    expect(s.runGit("commit", "--allow-empty", "-qm", "inherited path fixture").code).toBe(0);
-                    expect(readFileSync(join(s.directory, "hook-runs"), "utf8")).toBe("pre-commit\n");
-                }
-
-                expect(s.runGit("config", scope, "--get", "core.hooksPath").out).toBe("inherited-hooks");
-                expect(s.runGit("config", "--local", "--get", "core.hooksPath").out).toBe(local ? ".githooks" : "");
-                expect(s.runGit("config", "--get", "core.hooksPath").out).toBe(local ? ".githooks" : "inherited-hooks");
-            }
-        }
-    });
-
-    test("older Git keeps the repository hook folder when unset or repository-owned", () => {
-        for (const local of [false, true]) {
-            const s = scratch(true);
+    test.each(
+        [false, true].flatMap((unsupported) =>
+            ["--global", "--system"].flatMap((scope) => [false, true].map((local) => ({ unsupported, scope, local })))
+        )
+    )(
+        "preserves inherited hook paths, unsupported=$unsupported scope=$scope local=$local",
+        ({ unsupported, scope, local }) => {
+            const s = scratch(unsupported);
+            expect(s.runGit("config", scope, "core.hooksPath", "inherited-hooks").code).toBe(0);
             if (local) {
                 expect(s.runGit("config", "--local", "core.hooksPath", ".githooks").code).toBe(0);
             }
 
             s.install();
-            expect(s.runGit("config", "--local", "--get", "core.hooksPath").out).toBe(".githooks");
+            if (local && !unsupported) {
+                expect(s.runGit("commit", "--allow-empty", "-qm", "inherited path fixture").code).toBe(0);
+                expect(readFileSync(join(s.directory, "hook-runs"), "utf8")).toBe("pre-commit\n");
+            }
+
+            expect(s.runGit("config", scope, "--get", "core.hooksPath").out).toBe("inherited-hooks");
+            expect(s.runGit("config", "--local", "--get", "core.hooksPath").out).toBe(local ? ".githooks" : "");
+            expect(s.runGit("config", "--get", "core.hooksPath").out).toBe(local ? ".githooks" : "inherited-hooks");
         }
+    );
+
+    test.each([false, true])("older Git keeps the repository hook folder, local .githooks=%s", (local) => {
+        const s = scratch(true);
+        if (local) {
+            expect(s.runGit("config", "--local", "core.hooksPath", ".githooks").code).toBe(0);
+        }
+
+        s.install();
+        expect(s.runGit("config", "--local", "--get", "core.hooksPath").out).toBe(".githooks");
     });
 
     test.skipIf(!supportsConfigHooks).each([false, true])(
@@ -163,15 +172,35 @@ describe("config hook installer", () => {
         }
     );
 
+    test("executable fixtures survive scratch cleanup outside the test temp root", () => {
+        // Construction only: the old scratch executables are never launched by this regression.
+        const s = scratch(true);
+        const wrapper = Bun.which("git", { PATH: s.testEnv.PATH });
+        expect(wrapper).not.toBeNull();
+        const programs = [
+            join(s.directory, ".githooks/pre-commit"),
+            join(s.directory, ".githooks/commit-msg"),
+            wrapper ?? "",
+        ].map((path) => realpathSync(path));
+        const sandbox = testEnvironment.test.getTmpRoot();
+        expect(sandbox).toBeTruthy();
+        for (const program of programs) {
+            const local = relative(realpathSync(sandbox ?? s.directory), program);
+            expect(local === ".." || local.startsWith(".." + sep)).toBe(true);
+        }
+        rmSync(s.directory, { recursive: true, force: true });
+        for (const program of programs) {
+            expect(existsSync(program)).toBe(true);
+            expect(readFileSync(program, "utf8")).toStartWith("#!/bin/sh");
+        }
+    });
+
     test("checkout and rebase early exits never start git or tools", () => {
         const s = scratch();
-        const bin = join(s.directory, "blocked-bin");
-        mkdirSync(bin);
-        for (const command of ["git", "bun", "tools"]) {
-            const file = join(bin, command);
-            writeFileSync(file, '#!/bin/sh\nprintf "unexpected process\\n" >> unexpected-process\nexit 99\n');
-            chmodSync(file, 0o755);
-        }
+        const programs = ["git", "bun", "tools"].map((command) =>
+            executableFixture(command, '#!/bin/sh\nprintf "unexpected process\\n" >> unexpected-process\nexit 99\n')
+        );
+        const bin = dirname(programs[0]);
 
         const linked = join(s.directory, "linked");
         mkdirSync(linked);
@@ -233,8 +262,10 @@ beforeAll(() => {
     symlinkSync(join(ROOT, "node_modules"), join(repo, "node_modules"));
     copyFileSync(join(ROOT, "biome.json"), join(repo, "biome.json"));
     mkdirSync(join(repo, ".githooks"));
-    copyFileSync(join(ROOT, ".githooks", "pre-commit"), join(repo, ".githooks", "pre-commit"));
-    chmodSync(join(repo, ".githooks", "pre-commit"), 0o755);
+    symlinkSync(
+        executableFixture("pre-commit", readFileSync(join(ROOT, ".githooks/pre-commit"), "utf8")),
+        join(repo, ".githooks/pre-commit")
+    );
     mkdirSync(join(repo, "scripts", "ci"), { recursive: true });
     copyFileSync(join(ROOT, "scripts", "ci", "check-json.ts"), join(repo, "scripts", "ci", "check-json.ts"));
     copyFileSync(
@@ -314,6 +345,27 @@ describe("pre-commit hook: staged content survives the biome pass", () => {
 
 // d9687720a (2026-10-14): a conflict resolver wrote the word `ours` into both plugin manifests. Biome reads only the
 // root's JSON files, so the hook passed it with "Checked 0 files", and the plugin did not load for 12 hours.
+describe("round 16 exact Biome overrides", () => {
+    test("a partly staged exact-path restriction blocks the index and preserves Unicode on a valid retry", () => {
+        const file = "src/utils/logger/client.ts";
+        const bad = 'import color from "picocolors";\nexport const mark = color.green("fixture");\n';
+        const good = 'export const mark = "✔ ✖ ⚠ ℹ";\n';
+        write(file, bad);
+        git("add", "--", file);
+        write(file, good);
+        const before = git("rev-parse", "HEAD").out;
+        const blocked = git("commit", "-qm", "exact override fixture");
+        expect(blocked.code, blocked.out).not.toBe(0);
+        expect(blocked.out).toContain("noRestrictedImports");
+        expect(git("rev-parse", "HEAD").out).toBe(before);
+        expect(readFileSync(join(repo, file), "utf8")).toBe(good);
+        git("add", "--", file);
+        const committed = git("commit", "-qm", "valid exact override fixture");
+        expect(committed.code, committed.out).toBe(0);
+        expect(headBlob(file)).toBe(good);
+    });
+});
+
 describe("pre-commit hook: staged JSON must parse", () => {
     const stray = '{\n    "name": "genesis-tools",\nours    "description": "Skills"\n}\n';
 
@@ -424,4 +476,180 @@ describe("pre-commit hook: no comment deleted with an import", () => {
         });
         expect(allowed.exitCode, allowed.stderr.toString()).toBe(0);
     }, 60_000);
+});
+
+describe("round 7 lost-comment rename regressions", () => {
+    function renamedFixture() {
+        const directory = mkdtempSync(join(tmpdir(), "gt-lost-rename-"));
+        const runGit = (...args: string[]) =>
+            Bun.spawnSync(["git", "-c", "core.hooksPath=/dev/null", ...args], {
+                cwd: directory,
+                env,
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+        expect(runGit("init", "-q").exitCode).toBe(0);
+        runGit("config", "user.name", "Fixture");
+        runGit("config", "user.email", "fixture@example.com");
+        const header = "/** Important fixture header explaining retained behavior. */\nimport 'unused-fixture';\n";
+        const body = Array.from({ length: 30 }, (_, i) => "export const fixture" + i + " = " + i + ";\n").join("");
+        writeFileSync(join(directory, "old name.ts"), header + body);
+        runGit("add", "--", "old name.ts");
+        expect(runGit("commit", "-qm", "fixture baseline").exitCode).toBe(0);
+        const baseline = runGit("rev-parse", "HEAD").stdout.toString().trim();
+        renameSync(join(directory, "old name.ts"), join(directory, "new name.ts"));
+        writeFileSync(join(directory, "new name.ts"), body);
+        runGit("add", "--", "old name.ts", "new name.ts");
+        const check = (args: string[], preload?: string) =>
+            Bun.spawnSync(
+                [
+                    process.execPath,
+                    ...(preload ? ["--preload", preload] : []),
+                    join(ROOT, "scripts/ci/check-lost-comments.ts"),
+                    ...args,
+                ],
+                { cwd: directory, env, stdout: "pipe", stderr: "pipe", timeout: 5000 }
+            );
+        return { directory, runGit, baseline, check };
+    }
+
+    test("staged and range audits read a rename's old path and still allow additions", () => {
+        const s = renamedFixture();
+        const staged = s.check(["--staged"]);
+        expect(staged.exitCode, staged.stderr.toString()).toBe(1);
+        expect(staged.stderr.toString()).toContain("new name.ts:1: the file header");
+        expect(s.runGit("commit", "-qm", "fixture renamed").exitCode).toBe(0);
+        const ranged = s.check(["--range", s.baseline + "..HEAD"]);
+        expect(ranged.exitCode, ranged.stderr.toString()).toBe(1);
+        expect(ranged.stderr.toString()).toContain("new name.ts:1: the file header");
+        writeFileSync(join(s.directory, "added.ts"), "export const added = 1;\n");
+        writeFileSync(join(s.directory, "empty.ts"), "");
+        s.runGit("add", "--", "added.ts", "empty.ts");
+        expect(s.check(["--staged"]).exitCode).toBe(0);
+    });
+
+    test("unexpected blob read errors fail the audit instead of standing in for empty content", () => {
+        const s = renamedFixture();
+        const preload = join(s.directory, "read-error.ts");
+        writeFileSync(
+            preload,
+            "const spawn = Bun.spawnSync; Bun.spawnSync = (args,opts) => args[0] === 'git' && args[1] === 'show' ? {...spawn([process.execPath,'-e','void 0'],opts),exitCode:128,stdout:Buffer.from(''),stderr:Buffer.from('fixture blob read failed')} : spawn(args,opts);\n"
+        );
+        const result = s.check(["--staged"], preload);
+        expect(result.exitCode).toBe(2);
+        expect(result.stderr.toString()).toContain("fixture blob read failed");
+    });
+});
+
+describe("round 8 quoted pure rename regression", () => {
+    test("staged and range audits skip blob reads for a content-identical rename with Git-quoted names", () => {
+        const directory = mkdtempSync(join(tmpdir(), "gt-pure-rename-"));
+        const runGit = (...args: string[]) =>
+            Bun.spawnSync(["git", "-c", "core.hooksPath=/dev/null", ...args], {
+                cwd: directory,
+                env,
+                stdout: "pipe",
+                stderr: "pipe",
+            });
+        expect(runGit("init", "-q").exitCode).toBe(0);
+        runGit("config", "user.name", "Fixture");
+        runGit("config", "user.email", "fixture@example.com");
+        runGit("config", "core.quotePath", "true");
+        const before = "café.ts";
+        const after = "žluťoučký.ts";
+        writeFileSync(
+            join(directory, before),
+            "/** A fixture header that remains unchanged. */\nimport 'fixture';\nexport const fixture = 1;\n"
+        );
+        runGit("add", "--", before);
+        expect(runGit("commit", "-qm", "fixture baseline").exitCode).toBe(0);
+        const baseline = runGit("rev-parse", "HEAD").stdout.toString().trim();
+        renameSync(join(directory, before), join(directory, after));
+        runGit("add", "--", before, after);
+        const diff = runGit("diff", "--cached", "-U0", "-M").stdout.toString();
+        expect(diff).toContain('diff --git "a/');
+        expect(diff).not.toContain("@@");
+        const check = (args: string[]) =>
+            Bun.spawnSync([process.execPath, join(ROOT, "scripts/ci/check-lost-comments.ts"), ...args], {
+                cwd: directory,
+                env,
+                stdout: "pipe",
+                stderr: "pipe",
+                timeout: 5000,
+            });
+        const staged = check(["--staged"]);
+        expect(staged.exitCode, staged.stderr.toString()).toBe(0);
+        expect(staged.stdout.toString()).toContain("no comment was deleted");
+        expect(runGit("commit", "-qm", "fixture pure rename").exitCode).toBe(0);
+        const range = check(["--range", baseline + "..HEAD"]);
+        expect(range.exitCode, range.stderr.toString()).toBe(0);
+        expect(range.stdout.toString()).toContain("no comment was deleted");
+    });
+});
+
+describe("round 20 modified quoted paths", () => {
+    test.each(["café.ts", "with\ttab.ts", 'with"quote.ts', "with\\slash.ts", "with\nnewline.ts", "plain.ts"])(
+        "staged and range comment audits read the real filename %j",
+        (file) => {
+            const directory = mkdtempSync(join(tmpdir(), "gt-modified-quoted-"));
+            const runGit = (...args: string[]) =>
+                Bun.spawnSync(["git", "-c", "core.hooksPath=/dev/null", ...args], {
+                    cwd: directory,
+                    env,
+                    stdout: "pipe",
+                    stderr: "pipe",
+                });
+            expect(runGit("init", "-q").exitCode).toBe(0);
+            runGit("config", "user.name", "Fixture");
+            runGit("config", "user.email", "fixture@example.com");
+            runGit("config", "core.quotePath", "true");
+            const header = "/** Important fixture header explaining retained behavior. */\nimport 'unused-fixture';\n";
+            const body = "export const kept = 1;\n";
+            writeFileSync(join(directory, file), header + body + "export const removed = 2;\n");
+            expect(runGit("add", "--", file).exitCode).toBe(0);
+            expect(runGit("commit", "-qm", "fixture baseline").exitCode).toBe(0);
+            const baseline = runGit("rev-parse", "HEAD").stdout.toString().trim();
+            const check = (args: string[]) =>
+                Bun.spawnSync([process.execPath, join(ROOT, "scripts/ci/check-lost-comments.ts"), ...args], {
+                    cwd: directory,
+                    env,
+                    stdout: "pipe",
+                    stderr: "pipe",
+                    timeout: 5000,
+                });
+            writeFileSync(join(directory, file), header + body);
+            runGit("add", "--", file);
+            const safe = check(["--staged"]);
+            expect(safe.exitCode, safe.stderr.toString()).toBe(0);
+            expect(safe.stdout.toString()).toContain("no comment was deleted");
+            writeFileSync(join(directory, file), body);
+            runGit("add", "--", file);
+            const staged = check(["--staged"]);
+            expect(staged.exitCode, staged.stderr.toString()).toBe(1);
+            expect(staged.stderr.toString()).toContain(file + ":1: the file header");
+            expect(runGit("commit", "-qm", "fixture comment removed").exitCode).toBe(0);
+            const range = check(["--range", baseline + "..HEAD"]);
+            expect(range.exitCode, range.stderr.toString()).toBe(1);
+            expect(range.stderr.toString()).toContain(file + ":1: the file header");
+        }
+    );
+});
+
+describe("round 33 nested mirror configuration", () => {
+    test("a partly staged dashboard file uses its standalone nested Biome config", () => {
+        const config = "src/claude-history-dashboard/biome.json";
+        const file = "src/claude-history-dashboard/src/staged.ts";
+        write(
+            config,
+            '{"formatter":{"indentStyle":"tab"},"javascript":{"formatter":{"quoteStyle":"single"}},"linter":{"enabled":false},"assist":{"enabled":false}}\n'
+        );
+        const staged = 'export function staged() {\n return "✔";\n}\n';
+        write(file, staged);
+        expect(git("add", "--", config, file).code).toBe(0);
+        write(file, staged + 'export const unstaged = "kept";\n');
+        const result = git("commit", "-qm", "nested config mirror");
+        expect(result.code, result.out).toBe(0);
+        expect(headBlob(file)).toBe("export function staged() {\n\treturn '✔';\n}\n");
+        expect(readFileSync(join(repo, file), "utf8")).toContain("export const unstaged = 'kept';");
+    });
 });

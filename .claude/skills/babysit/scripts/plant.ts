@@ -12,6 +12,8 @@
  */
 import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
+import { env } from "@genesiscz/utils/env";
 
 function flags(name: string): string[] {
     const found: string[] = [];
@@ -26,19 +28,66 @@ function flags(name: string): string[] {
 }
 
 function exec(cmd: string[], cwd: string): { code: number; out: string } {
-    const p = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: process.env });
+    const p = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: env.getProcessEnv() });
     return { code: p.exitCode ?? 1, out: `${p.stdout.toString()}${p.stderr.toString()}` };
 }
 
-/** The pass and fail counts a test run printed (bun or XCTest). */
-export function summarize(out: string): string {
-    const bun = [...out.matchAll(/^\s*(\d+) (pass|fail)$/gm)].map((m) => `${m[1]} ${m[2]}`);
+function counts(out: string) {
+    const text = stripVTControlCharacters(out);
+    const bun = [...text.matchAll(/^\s*(\d+) (pass|fail)\s*$/gm)];
+    const swift = [...text.matchAll(/Executed (\d+) tests?, with (?:\d+ tests? skipped and )?(\d+) failures?[^\n]*/g)];
+    return {
+        text,
+        bun,
+        swift,
+        pass: bun.reduce((total, match) => total + (match[2] === "pass" ? Number(match[1]) : 0), 0),
+        fail: bun.reduce((total, match) => total + (match[2] === "fail" ? Number(match[1]) : 0), 0),
+    };
+}
 
-    if (bun.length > 0) {
-        return bun.join(" ");
+/** The pass and fail counts a test run printed (bun or the final XCTest total). */
+export function summarize(out: string): string {
+    const parsed = counts(out);
+    if (parsed.bun.length > 0) {
+        return parsed.bun.map((match) => match[1] + " " + match[2]).join(" ");
     }
 
-    return out.match(/Executed \d+ tests?, with \d+ failures?[^\n]*/g)?.at(-1) ?? "no test count";
+    return parsed.swift.at(-1)?.[0] ?? "no test count";
+}
+
+function loadFailure(result: { code: number; out: string }): boolean {
+    const parsed = counts(result.out);
+    return (
+        result.code !== 0 &&
+        parsed.pass === 0 &&
+        !parsed.swift.some((match) => Number(match[1]) > 0) &&
+        /Unhandled error between tests|SyntaxError|error:.*(?:Cannot find|Could not resolve|No matching export)/i.test(
+            parsed.text
+        )
+    );
+}
+
+export function testEvidence(result: { code: number; out: string }, failing: boolean): boolean {
+    const { code, out } = result;
+    const parsed = counts(out);
+    if (failing) {
+        return (
+            code !== 0 &&
+            !loadFailure(result) &&
+            (parsed.fail > 0 || parsed.swift.some((match) => Number(match[1]) > 0 && Number(match[2]) > 0))
+        );
+    }
+
+    // A test may log an expected compiler/import error. Completed counts decide; no counts cannot pass.
+    if (code !== 0) {
+        return false;
+    }
+
+    if (parsed.bun.length > 0) {
+        return parsed.pass > 0 && parsed.fail === 0 && parsed.text.includes("[test] suite complete (exit 0)");
+    }
+
+    return parsed.swift.some((match) => Number(match[1]) > 0) && parsed.swift.every((match) => Number(match[2]) === 0);
 }
 
 if (import.meta.main) {
@@ -58,11 +107,26 @@ if (import.meta.main) {
 
     const runTests = (): { code: number; out: string } =>
         swiftPackage && swiftFilter
-            ? exec(["swift", "test", "--filter", swiftFilter], join(wt, swiftPackage))
+            ? exec(
+                  [
+                      "bun",
+                      join(import.meta.dir, "swift-slot.ts"),
+                      "--wait-minutes",
+                      "40",
+                      "--run-minutes",
+                      "60",
+                      "--",
+                      "swift",
+                      "test",
+                      "--filter",
+                      swiftFilter,
+                  ],
+                  join(wt, swiftPackage)
+              )
             : exec(["bun", "scripts/test.ts", ...tests], wt);
 
     const before = exec(["git", "status", "--short", "--untracked-files=no"], wt).out;
-    const backup = mkdtempSync(join(process.env.TMPDIR ?? "/tmp", "babysit-plant-"));
+    const backup = mkdtempSync(join(env.get("TMPDIR") ?? "/tmp", "babysit-plant-"));
     const old = new Map<string, string>();
 
     // Read every old version and back up every fixed file BEFORE writing anything: a miss stops with nothing changed.
@@ -115,13 +179,18 @@ if (import.meta.main) {
     console.log(`fixed: exit ${fixed.code} · ${summarize(fixed.out)}`);
     console.log(`worktree restored as it was · logs in ${backup}`);
 
-    if (planted.code === 0) {
-        console.log("✖ the planted run PASSED: the tests do not catch the fault");
+    if (loadFailure(planted)) {
+        console.log("✖ the plant broke the test's import, plant a behaviour fault instead");
         process.exit(1);
     }
 
-    if (fixed.code !== 0) {
-        console.log("✖ the fixed run FAILED");
+    if (!testEvidence(planted, true)) {
+        console.log("✖ the planted run has no failing-test evidence");
+        process.exit(1);
+    }
+
+    if (!testEvidence(fixed, false)) {
+        console.log("✖ the fixed run has no completed passing-test evidence");
         process.exit(1);
     }
 

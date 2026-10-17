@@ -4,7 +4,7 @@
  * verdict and the reply text it wants posted), the refusals and deferrals flagged, then the full diff with the test
  * files first (removed assertions are guilty until explained). Read it whole before the push (judging.md).
  *
- *   bun judge-pack.ts --wt <worktree> --range <a>..<b> --replies <json> [--out <file>]
+ *   bun judge-pack.ts --wt <worktree> --range <a>..<b> --replies <json> [--report <worker-final.txt>] [--out <file>]
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -26,8 +26,22 @@ const wt = flag("--wt") ?? ".";
 const range = flag("--range") ?? "HEAD~1..HEAD";
 const repliesPath = flag("--replies");
 const out: string[] = [];
-const git = (args: string[]) =>
-    Bun.spawnSync(["git", "-C", wt, ...args], { stdout: "pipe", stderr: "pipe" }).stdout.toString();
+const report = flag("--report");
+out.push(
+    "# Worker final report",
+    "",
+    report ? readFileSync(report, "utf8") : "⚠ Worker report missing: rerun with --report <file> before judging.",
+    ""
+);
+const git = (args: string[]): string => {
+    const result = Bun.spawnSync(["git", "-C", wt, ...args], { stdout: "pipe", stderr: "pipe" });
+
+    if (result.exitCode !== 0) {
+        throw new Error(`git ${args.join(" ")} failed (exit ${result.exitCode}): ${result.stderr.toString().trim()}`);
+    }
+
+    return result.stdout.toString();
+};
 
 if (repliesPath) {
     const r = SafeJSON.parse(readFileSync(repliesPath, "utf8"), { strict: true }) as {
@@ -79,7 +93,7 @@ out.push(
     "```",
     ""
 );
-const files = git(["diff", "--name-only", range]).split("\n").filter(Boolean);
+const files = git(["diff", "--name-only", "-z", range]).split("\0").filter(Boolean);
 const tests = files.filter((f) => /(\.test\.tsx?|Tests?\.swift|__tests__)/.test(f));
 const sources = files.filter((f) => !tests.includes(f));
 

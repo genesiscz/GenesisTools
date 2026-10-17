@@ -7,11 +7,13 @@
  *
  *   bun setup-wt.ts --run <dir> --pr 499 [--branch <head branch>]
  *
- * An existing worktree (a PR force-pushed after a restack) moves to the new head when it holds no tracked change, then
- * gets the same install steps; a dirty one stops the script.
+ * An existing worktree moves to the fetched PR head only when clean and its HEAD is reachable from that head, or
+ * every commit it holds is in that head by patch (a restack).
+ * Unpublished, divergent or unverifiable history stops for an explicit recovery decision; no worker commit is discarded.
  */
 import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { linkNativeFiles } from "./link-native";
 import { flag, loadRun, worktreeFor } from "./run";
@@ -35,7 +37,7 @@ mkdirSync(logs, { recursive: true });
 const log: string[] = [];
 
 function step(cmd: string[], cwd: string, label: string): void {
-    const p = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: process.env });
+    const p = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe", env: env.getProcessEnv() });
     log.push(`$ ${cmd.join(" ")} → ${p.exitCode}`, p.stdout.toString(), p.stderr.toString());
 
     if (p.exitCode !== 0) {
@@ -57,6 +59,44 @@ if (existsSync(wt)) {
 
     if (dirty.exitCode !== 0 || dirty.stdout.toString().trim() !== "") {
         console.error(`✖ ${wt} has tracked changes (or is no worktree): commit or move them, then run again`);
+        process.exit(1);
+    }
+
+    const published = Bun.spawnSync(["git", "merge-base", "--is-ancestor", "HEAD", `origin/${branch}`], {
+        cwd: wt,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: env.getProcessEnv(),
+        timeout: 30_000,
+    });
+    // A restack (rebase plus force-push) leaves the old HEAD off the new head's ancestry while every one of its
+    // commits is there by patch; `git cherry` marks such commits "-", and one "+" means real unpublished work.
+    const cherry =
+        published.exitCode === 1
+            ? Bun.spawnSync(["git", "cherry", `origin/${branch}`, "HEAD"], {
+                  cwd: wt,
+                  stdout: "pipe",
+                  stderr: "pipe",
+                  env: env.getProcessEnv(),
+                  timeout: 30_000,
+              })
+            : null;
+    const restacked =
+        cherry?.exitCode === 0 &&
+        !cherry.stdout
+            .toString()
+            .split("\n")
+            .some((line) => line.startsWith("+"));
+
+    if (published.exitCode !== 0 && !restacked) {
+        const reason =
+            published.exitCode === 1
+                ? "has unpublished or divergent commits relative to origin/" + branch
+                : "cannot verify HEAD is published in origin/" + branch;
+        console.error("✖ " + wt + " " + reason + "; preserve or recover that HEAD before running setup again");
+        if (published.stderr.length > 0) {
+            console.error(published.stderr.toString().trim());
+        }
         process.exit(1);
     }
 

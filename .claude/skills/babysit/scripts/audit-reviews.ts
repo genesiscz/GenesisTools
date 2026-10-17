@@ -14,8 +14,11 @@
  * fixed CodeRabbit thread silently because a reply spends CodeRabbit's hourly chat budget, and the round summary
  * comment carries the answer (2026-10-14: five such threads on #515 were answered by hand for nothing).
  *
- * Exit 1 when any PR has an open thread, an unanswered thread, or something that arrived after its merge.
+ * --ack-body <review-id> (repeatable) acknowledges the body findings of that exact review after they have been
+ * fixed and answered. The audit prints review IDs even without --bodies. Other bodies and late activity still block.
+ * Exit 1 for open/unanswered threads, unacknowledged outside-diff bodies, or activity after a merge.
  */
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { has, loadRun } from "./run";
 
@@ -35,6 +38,7 @@ interface Thread {
 }
 
 interface Review extends Comment {
+    id: string;
     state: string;
     commit?: { oid: string };
 }
@@ -53,10 +57,23 @@ interface Pr {
 const run = loadRun();
 const [owner, name] = run.repo.split("/");
 const prs = process.argv.slice(2).filter((a, i, all) => /^\d+$/.test(a) && !all[i - 1]?.startsWith("--"));
+const acknowledgedBodies = new Set<string>();
+for (const [i, arg] of process.argv.entries()) {
+    if (arg !== "--ack-body") {
+        continue;
+    }
+
+    const id = process.argv[i + 1];
+    if (!id || id.startsWith("--")) {
+        throw new Error("--ack-body requires an exact review ID from this audit");
+    }
+
+    acknowledgedBodies.add(id);
+}
 const page = "pageInfo{hasNextPage}";
 const query = `query($n:Int!){viewer{login} repository(owner:"${owner}",name:"${name}"){pullRequest(number:$n){
  title state mergedAt headRefOid
- reviews(first:100){${page} nodes{author{login} state createdAt:submittedAt body commit{oid}}}
+ reviews(first:100){${page} nodes{id author{login} state createdAt:submittedAt body commit{oid}}}
  reviewThreads(first:100){${page} nodes{id isResolved resolvedBy{login} path line comments(first:50){nodes{author{login} createdAt body}}}}
  comments(first:100){${page} nodes{author{login} createdAt body}}
  timelineItems(last:1,itemTypes:[HEAD_REF_FORCE_PUSHED_EVENT]){nodes{... on HeadRefForcePushedEvent{createdAt}}}}}}`;
@@ -92,7 +109,7 @@ for (const n of prs) {
     const p = Bun.spawnSync(["gh", "api", "graphql", "-f", `query=${query}`, "-F", `n=${n}`], {
         stdout: "pipe",
         stderr: "pipe",
-        env: process.env,
+        env: env.getProcessEnv(),
     });
 
     if (p.exitCode !== 0) {
@@ -115,6 +132,7 @@ for (const n of prs) {
 
     for (const kind of ["reviews", "reviewThreads", "comments"] as const) {
         if (pr[kind].pageInfo.hasNextPage) {
+            problems++;
             flags.push(`⚠ more than 100 ${kind}: this audit read only the first 100`);
         }
     }
@@ -138,6 +156,7 @@ for (const n of prs) {
     });
     console.log(`  reviewers: ${reviewers.join(" · ") || "none"}`);
 
+    let outstandingBodies = 0;
     for (const [who, list] of byReviewer) {
         for (const review of list) {
             // Findings a review keeps in its body: CodeRabbit's "outside the diff" and nitpick blocks, a bot's
@@ -146,8 +165,13 @@ for (const n of prs) {
             const outside = /Outside diff range|outside the diff/i.test(review.body);
 
             if (outside) {
+                const acknowledged = acknowledgedBodies.has(review.id);
+                if (!acknowledged) {
+                    outstandingBodies++;
+                }
+
                 flags.push(
-                    `⚠ ${who} review ${local(review.createdAt)} has findings outside the diff (no thread)${bodies ? `\n${review.body.slice(review.body.search(/Outside diff range|outside the diff/i), review.body.search(/Outside diff range|outside the diff/i) + 1500).replace(/^/gm, "      | ")}` : ""}`
+                    `⚠ ${who} review ${local(review.createdAt)} [${review.id}] has findings outside the diff (no thread; ${acknowledged ? "acknowledged" : "needs work"})${bodies ? `\n${review.body.slice(review.body.search(/Outside diff range|outside the diff/i), review.body.search(/Outside diff range|outside the diff/i) + 1500).replace(/^/gm, "      | ")}` : ""}`
                 );
             }
 
@@ -228,7 +252,12 @@ for (const n of prs) {
         console.log(`  ${line}`);
     }
 
-    problems += open + unanswered + flags.filter((line) => line.includes("after merge")).length;
+    problems +=
+        open +
+        unanswered +
+        resolvedSilently +
+        outstandingBodies +
+        flags.filter((line) => line.includes("after merge")).length;
 }
 
 process.exit(problems > 0 ? 1 : 0);

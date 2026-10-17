@@ -73,6 +73,10 @@ export interface TurnSnapshot {
      * that opened after a send starts at or past the size the file had before it.
      */
     turnStartOffset?: number;
+    /** Byte offset of the first whole line in the disk tail. Absent for readers without a byte window. */
+    tailStartOffset?: number;
+    /** Earliest retained activity event, used to fence a turn whose opening record left the tail. */
+    earliestTailEventAt?: number;
     /** The newer of `lastEventAt` and the file's modification time. */
     lastActivityAt: number;
     /** `now` minus `lastActivityAt`. */
@@ -304,6 +308,7 @@ function snapshotOf({
         interrupted,
         turnError,
         lastEventAt,
+        ...(events.length > 0 ? { earliestTailEventAt: Math.min(...events.map((event) => event.ts)) } : {}),
         turnStartedAt,
         ...(turnStartOffset !== undefined ? { turnStartOffset } : {}),
         lastActivityAt,
@@ -963,13 +968,16 @@ export function readTurnState(
             from = end + 1;
         }
 
-        return turnStateOf(provider, {
-            records,
-            offsets,
-            lastModified: stat.mtimeMs,
-            now,
-            stallTimeoutMs: options.stallTimeoutMs,
-        });
+        return {
+            ...turnStateOf(provider, {
+                records,
+                offsets,
+                lastModified: stat.mtimeMs,
+                now,
+                stallTimeoutMs: options.stallTimeoutMs,
+            }),
+            tailStartOffset: tail.start,
+        };
     } catch (err) {
         logger.debug({ err, filePath, provider }, "[transcripts] could not read the turn state of a transcript");
         return null;

@@ -47,8 +47,11 @@ report, its reply file (every verdict and every reply text it wants posted) and 
 7. **The ready-to-post replies.** Each reply must be true of the final code after your correction: file names,
    counts, behaviour. Grok's said "the table is in prs.test.ts" after the move; such a line is corrected in the vault
    copy, not posted as is.
-   - **Every refusal and deferral is judged on its merits.** A `rejected` needs the file:line that disproves the
-     finding. A `no-change` or "follow-up" whose fix belongs in this PR (it is small, it is about this PR's change,
+   - **Every refusal and deferral is judged against the derived round policy in `scripts/policy.ts`.** A valid
+     security finding or a dedicated user review is always fixed in full. Other Medium/Low findings in ordinary
+     later rounds receive replies and stay OPEN; verify their policy explanation and the no-resolve posting batch.
+     A deferral permitted by that policy is accepted. A `rejected` needs the file:line that disproves the
+     finding. For a finding the derived policy requires fixing, a `no-change` or "follow-up" whose fix belongs in this PR (it is small, it is about this PR's change,
      or it is not code at all, like a wrong PR description) is not accepted: do it in this round. On 2026-10-14 a
      worker answered "the PR description calls login-io.ts a new file" with no-change; the fix was a one-line body
      edit.

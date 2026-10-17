@@ -114,6 +114,39 @@ function fold(text: string, summary: string): string[] {
     ];
 }
 
+function renderEvent(e: LedgerEvent): string[] {
+    const out: string[] = [];
+    const who = [e.worker, e.model].filter(Boolean).join(", ");
+    const date = new Date(e.at);
+    const time = Number.isNaN(date.getTime()) ? "unknown time" : LOCAL.format(date);
+    const head = `### ${ICON[e.kind]} ${time} ${e.kind}${e.round !== undefined ? ` · round ${e.round}` : ""}${who ? ` · ${who}` : ""}`;
+    out.push(head);
+    if (e.meta && Object.keys(e.meta).length) {
+        out.push(
+            "",
+            ...Object.entries(e.meta).map(
+                ([k, v]) => `- **${k}**: ${typeof v === "string" ? v : SafeJSON.stringify(v, { strict: true })}`
+            )
+        );
+    }
+
+    if (e.text) {
+        out.push(
+            ...fold(
+                e.text,
+                e.kind === "steer" || e.kind === "spawn"
+                    ? "prompt"
+                    : e.kind === "turn"
+                      ? "worker's final message"
+                      : "text"
+            )
+        );
+    } else {
+        out.push("");
+    }
+    return out;
+}
+
 export function renderMarkdown(events: LedgerEvent[], options: { title?: string; pr?: number } = {}): string {
     const shown = options.pr === undefined ? events : events.filter((e) => e.pr === options.pr || e.pr === undefined);
     const prs = [...new Set(shown.map((e) => e.pr).filter((p): p is number => p !== undefined))].sort((a, b) => a - b);
@@ -140,43 +173,14 @@ export function renderMarkdown(events: LedgerEvent[], options: { title?: string;
     if (general.length) {
         out.push("## Run-wide events", "");
         for (const e of general) {
-            out.push(
-                `- ${ICON[e.kind]} ${LOCAL.format(new Date(e.at))} **${e.kind}** ${e.text?.split("\n")[0]?.slice(0, 200) ?? ""}`
-            );
+            out.push(...renderEvent(e));
         }
-
-        out.push("");
     }
 
     for (const pr of prs) {
         out.push(`## PR #${pr}`, "");
         for (const e of shown.filter((x) => x.pr === pr)) {
-            const who = [e.worker, e.model].filter(Boolean).join(", ");
-            const head = `### ${ICON[e.kind]} ${LOCAL.format(new Date(e.at))} ${e.kind}${e.round !== undefined ? ` · round ${e.round}` : ""}${who ? ` · ${who}` : ""}`;
-            out.push(head);
-            if (e.meta && Object.keys(e.meta).length) {
-                out.push(
-                    "",
-                    ...Object.entries(e.meta).map(
-                        ([k, v]) => `- **${k}**: ${typeof v === "string" ? v : SafeJSON.stringify(v, { strict: true })}`
-                    )
-                );
-            }
-
-            if (e.text) {
-                out.push(
-                    ...fold(
-                        e.text,
-                        e.kind === "steer" || e.kind === "spawn"
-                            ? "prompt"
-                            : e.kind === "turn"
-                              ? "worker's final message"
-                              : "text"
-                    )
-                );
-            } else {
-                out.push("");
-            }
+            out.push(...renderEvent(e));
         }
     }
 

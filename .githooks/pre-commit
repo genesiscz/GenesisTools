@@ -14,48 +14,54 @@ set -e
 # partial `git commit <paths>` runs the hook against a temporary index and must keep doing so.
 unset GIT_DIR
 
-# Biome's --staged flag only SELECTS staged files; --write fixes them in the
-# working tree and leaves the index alone. Until 2026-09-02 this hook believed
-# biome re-staged its fixes, so a commit carried the unfixed copy and CI's
-# biome step went red on an import order the hook had already corrected
-# (PR #346, run 33681440922). So the index is formatted on its own: every
-# staged blob biome touched goes through biome on stdin and the result is
-# written back as a blob. The commit gets biome(staged copy) and nothing else.
-# A bare `git add` here would also sweep in the file's unstaged hunks and
-# whatever an editor or a parallel agent wrote while biome was running.
+# Biome's --staged flag selects working files, so format the index separately.
+# Each staged blob gets its original full path in a temporary mirror of the
+# configuration hierarchy. Exact-basename overrides and JSONC parser defaults
+# then match, and Biome writes real file bytes without console substitutions.
+# Never use --stdin-file-path as a source of blob bytes: Biome 2.5.11's console
+# changes ✔ ✖ ⚠ ℹ into √ × ! i. Never stage the live working copy either: that
+# would sweep in unstaged hunks or an editor's concurrent writes.
 biome_staged() {
     bunx biome check --write --staged --no-errors-on-unmatched
 
-    fixed=$(mktemp)
+    staged_mirror=$(mktemp -d)
+    trap 'rm -rf "$staged_mirror"' EXIT
+    repo_root=$(git rev-parse --show-toplevel)
+    # Use existing assessed binaries; the mirror never installs dependencies.
+    if [ -d "$repo_root/node_modules" ]; then
+        ln -s "$repo_root/node_modules" "$staged_mirror/node_modules"
+    fi
     git diff --cached --name-only --diff-filter=d --relative | while IFS= read -r f; do
         [ -n "$f" ] || continue
-        # Neither biome nor anyone else touched it: the index is already right.
-        # A file that differs only by its own unstaged hunks gets one biome run
-        # below and comes out with the same blob, so nothing is written.
         git diff --quiet -- "$f" && continue
         entry=$(git ls-files --stage --full-name -- "$f")
         mode=$(printf '%s\n' "$entry" | cut -d' ' -f1)
         full=$(printf '%s\n' "$entry" | cut -f2)
         case "$mode" in 100644|100755) ;; *) continue ;; esac
-        # A binary blob (git: a NUL early in the file, numstat prints "-  -")
-        # is nothing biome can take, so its index entry is left as it is.
-        # Files outside biome's includes come back unchanged with exit 0. Any
-        # other failure, a parse error in the staged copy or a broken config,
-        # aborts the commit through set -e.
         case "$(git diff --cached --numstat -- "$f")" in -*) continue ;; esac
-        git show ":./$f" | bunx biome check --write --stdin-file-path="$f" > "$fixed"
-        # biome prints NOTHING (exit 0, a files/missingHandler note on stderr) for a path it has no handler for that
-        # is not on disk: a Swift or Markdown file staged and then moved or deleted. Writing that back committed the
-        # file empty (2026-10-13). Empty output for a non-empty staged blob is never a format result, so the staged
-        # blob stays.
-        if [ ! -s "$fixed" ] && [ "$(git cat-file -s ":./$f")" -gt 0 ]; then
-            continue
+        mkdir -p "$staged_mirror/$(dirname "$full")"
+        config_dir=$(dirname "$full")
+        while :; do
+            for config in biome.json biome.jsonc .editorconfig; do
+                if [ -f "$repo_root/$config_dir/$config" ]; then
+                    cp "$repo_root/$config_dir/$config" "$staged_mirror/$config_dir/$config"
+                fi
+            done
+            [ "$config_dir" != . ] || break
+            config_dir=$(dirname "$config_dir")
+        done
+        target="$staged_mirror/$full"
+        git show ":./$f" > "$target"
+        # VCS ignores do not apply in this temporary tree, but configuration includes still do.
+        if ! (cd "$(dirname "$target")" && bunx biome check --write --no-errors-on-unmatched --vcs-enabled=false "./$(basename "$target")") > /dev/null; then
+            exit 1
         fi
-        blob=$(git hash-object -w -- "$fixed")
+        blob=$(git hash-object -w -- "$target")
         case "$entry" in *" $blob "*) continue ;; esac
         git update-index --cacheinfo "$mode,$blob,$full"
     done
-    rm -f "$fixed"
+    rm -rf "$staged_mirror"
+    trap - EXIT
 }
 
 echo "▶ biome check --write --staged..."

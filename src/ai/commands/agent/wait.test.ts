@@ -261,6 +261,9 @@ describe("registerAgentWaitCommand", () => {
             "--last",
             "--tools",
             "--quiet",
+            "--sent-at",
+            "--baseline-turn-started-at",
+            "--baseline-transcript-bytes",
         ]);
         expect(command.description()).toContain("grok");
         expect(DEFAULT_WAIT_STALL_SECONDS).toBeGreaterThan(120);
@@ -817,5 +820,57 @@ describe("cmuxNamedSessionId", () => {
         expect(cmuxNamedSessionId({ alias: "grok", query: "verify", records, refs })).toBe("verify-session");
         expect(cmuxNamedSessionId({ alias: "codex", query: "verify", records, refs })).toBeNull();
         expect(cmuxNamedSessionId({ alias: "grok", query: "other", records, refs })).toBeNull();
+    });
+});
+
+describe("persisted answering-turn CLI fences", () => {
+    it("parses the saved pre-delivery baseline as numbers without losing a fast finished reply", async () => {
+        const program = new Command();
+        const command = registerAgentWaitCommand(program, "codex");
+        let received: Record<string, unknown> = {};
+        command.action((_session, options) => {
+            received = options;
+        });
+        await program.parseAsync(
+            [
+                "wait",
+                "fixture-thread",
+                "--next",
+                "--sent-at",
+                "1000",
+                "--baseline-turn-started-at",
+                "10",
+                "--baseline-transcript-bytes",
+                "100",
+            ],
+            { from: "user" }
+        );
+        expect(received).toMatchObject({
+            next: true,
+            sentAt: 1000,
+            baselineTurnStartedAt: 10,
+            baselineTranscriptBytes: 100,
+        });
+        const window = {
+            turnStartedAfter: received.sentAt as number,
+            turnNewerThan: received.baselineTurnStartedAt as number,
+            openedFromByte: received.baselineTranscriptBytes as number,
+        };
+        expect(turnWait.turnAnswers(10, window, 0)).toBe(false);
+        expect(turnWait.turnAnswers(2000, window, 200)).toBe(true);
+    });
+
+    it("rejects invalid saved fence arguments", async () => {
+        for (const option of ["--sent-at", "--baseline-turn-started-at", "--baseline-transcript-bytes"]) {
+            for (const value of ["NaN", "Infinity", "-1", "1.5"]) {
+                const program = new Command().exitOverride().configureOutput({ writeErr: () => {} });
+                registerAgentWaitCommand(program, "codex").action(() => {
+                    throw new Error("must not wait");
+                });
+                await expect(
+                    program.parseAsync(["wait", "fixture-thread", option, value], { from: "user" })
+                ).rejects.toThrow("nonnegative finite integer");
+            }
+        }
     });
 });

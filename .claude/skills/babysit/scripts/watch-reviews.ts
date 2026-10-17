@@ -12,11 +12,23 @@
  * that way delivered no event for 25 minutes on 2026-10-14, the same loop under `zsh <path>` delivered at once.
  */
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { flag, loadRun } from "./run";
 
 const run = loadRun();
 const every = Number(flag("--every") ?? 120) * 1000;
-const deadline = Date.now() + Number(flag("--for") ?? 30) * 60_000;
+const lifetimeMinutes = Number(flag("--for") ?? 30);
+const deadline = Date.now() + lifetimeMinutes * 60_000;
+if (
+    !Number.isFinite(deadline) ||
+    !Number.isFinite(lifetimeMinutes) ||
+    lifetimeMinutes < 0 ||
+    !Number.isFinite(every) ||
+    every < 100
+) {
+    console.error("watch-reviews: --for must be finite and nonnegative; --every must be at least 0.1 seconds");
+    process.exit(2);
+}
 const prs = process.argv.slice(2).filter((a, i, all) => /^\d+$/.test(a) && !all[i - 1]?.startsWith("--"));
 const seen = new Map<string, string>();
 
@@ -30,8 +42,14 @@ while (Date.now() < deadline) {
         cwd: run.main,
         stdout: "pipe",
         stderr: "pipe",
-        env: process.env,
+        env: env.getProcessEnv(),
+        timeout: Math.max(1, deadline - Date.now()),
+        killSignal: "SIGKILL",
     });
+
+    if (Date.now() >= deadline) {
+        break;
+    }
 
     for (const line of p.stdout.toString().split("\n").filter(Boolean)) {
         const pr = line.split(" ")[0];
@@ -48,3 +66,5 @@ while (Date.now() < deadline) {
 
     await Bun.sleep(Math.min(every, Math.max(0, deadline - Date.now())));
 }
+console.log(`review watch expired after ${lifetimeMinutes} min`);
+process.exit(124);

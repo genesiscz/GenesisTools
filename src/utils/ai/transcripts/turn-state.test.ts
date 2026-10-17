@@ -335,6 +335,8 @@ describe("readTurnState", () => {
 
         expect(snap?.state).toBe("AWAITING-INPUT");
         expect(snap?.lastText).toBe("hi");
+        expect(snap?.tailStartOffset).toBe(0);
+        expect(snap?.earliestTailEventAt).toBe(T0);
         expect(readTurnState("claude", empty, { stallTimeoutMs: 900_000 })).toBeNull();
         expect(readTurnState("claude", join(dir, "missing.jsonl"), { stallTimeoutMs: 900_000 })).toBeNull();
     });

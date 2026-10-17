@@ -395,6 +395,39 @@ describe("biome-unsafe-deletes-comments", () => {
         ]);
     });
 
+    it.each([
+        ["bunx biome check --write --unsafe --unsafe src", "bunx biome check --write src"],
+        ["bunx biome check --apply-unsafe --unsafe src", "bunx biome check --apply src"],
+        ["bunx biome check --write --unsafe src --unsafe", "bunx biome check --write src"],
+        [
+            "bunx biome check src --apply-unsafe --unsafe --apply-unsafe --verbose",
+            "bunx biome check src --apply --apply --verbose",
+        ],
+        ["bunx biome check --write --unsafe=true src --unsafe=false", "bunx biome check --write src"],
+        [
+            "bunx biome check --apply-unsafe=true src --unsafe --apply-unsafe=false",
+            "bunx biome check --apply=true src --apply=false",
+        ],
+        [
+            "cd app && bunx biome check --write --unsafe 'src/with space' --verbose --unsafe 2>&1 | tail -3",
+            "cd app && bunx biome check --write 'src/with space' --verbose 2>&1 | tail -3",
+        ],
+    ])("removes every unsafe option while preserving the other arguments in %s", (command, expected) => {
+        const suggestions = fired(command);
+        expect(suggestions).toEqual([expected]);
+        expect(suggestions[0]).not.toMatch(/--(?:unsafe|apply-unsafe)(?:[=\s]|$)/);
+        expect(fired(expected)).toEqual([]);
+    });
+
+    it.each(["yarn exec", "pnpm exec", "npm exec", "npm exec --"])("blocks unsafe Biome fixes through %s", (runner) => {
+        expect(fired(`${runner} biome lint --write --unsafe src`)).toEqual([`${runner} biome lint --write src`]);
+        expect(fired(`${runner} @biomejs/biome check src --apply-unsafe --unsafe`)).toEqual([
+            `${runner} @biomejs/biome check src --apply`,
+        ]);
+        expect(fired(`${runner} eslint --fix --unsafe src`)).toEqual([]);
+        expect(fired(`${runner} biome check --write src`)).toEqual([]);
+    });
+
     it("leaves the safe fixes and other tools alone", () => {
         expect(fired("bunx biome check --write src")).toEqual([]);
         expect(fired("bunx biome lint --only=correctness/noUnusedImports src")).toEqual([]);

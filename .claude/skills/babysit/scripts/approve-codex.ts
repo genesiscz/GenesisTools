@@ -14,11 +14,13 @@
  *
  * Usage: bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <codex session>
  */
-import { readFileSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { strictShellWords } from "@app/codex/lib/bus-approval";
 import { execTool } from "@genesiscz/utils/cli";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { reviewScratch } from "./run";
 
 export interface RunEntry {
     name: string;
@@ -26,6 +28,10 @@ export interface RunEntry {
     scope: string[];
     subject: string;
     verify: string[];
+    role?: string;
+    pr?: number;
+    /** A second scratch folder outside the worktree: a reviewer's probe folder, which its brief names. */
+    scratch?: string;
 }
 
 const inScope = (entry: RunEntry, path: string) => {
@@ -39,6 +45,67 @@ const inScope = (entry: RunEntry, path: string) => {
 
     const scratch = resolve(root, ".claude/work/babysit");
     return entry.scope.some((allowed) => target === resolve(root, allowed)) || target.startsWith(scratch + sep);
+};
+
+/** Follow existing targets, or resolve the nearest existing parent before an editor creates missing directories. */
+function canonicalWriteTarget(target: string): string {
+    let ancestor = target;
+    const suffix: string[] = [];
+    for (;;) {
+        try {
+            // Unlike existsSync, lstat sees dangling symlinks: realpath must then fail, never treat one as a new file.
+            lstatSync(ancestor);
+        } catch (error) {
+            const parent = dirname(ancestor);
+            if (!(error instanceof Error && "code" in error && error.code === "ENOENT") || parent === ancestor) {
+                throw error;
+            }
+            suffix.unshift(basename(ancestor));
+            ancestor = parent;
+            continue;
+        }
+        const canonical = realpathSync(ancestor);
+        if (suffix.length > 0 && !statSync(ancestor).isDirectory()) {
+            throw new Error("write parent is not a directory");
+        }
+        return join(canonical, ...suffix);
+    }
+}
+
+/** Resolve the final command's log destination after its preceding directory changes. */
+const inScratch = (entry: RunEntry, command: string, path: string) => {
+    const segments = chainSegments(command);
+    if (!segments?.length) {
+        return false;
+    }
+
+    const cwd = segments.length === 1 ? entry.cwd : readOnlyCwd(entry, segments.slice(0, -1).join(" && "));
+    if (!cwd || (segments.length > 1 && /[;|\n]/.test(command))) {
+        return false;
+    }
+
+    try {
+        const target = isAbsolute(path) ? path : `${cwd}/${path}`;
+        // Shell redirection cannot create directories; preserve that stricter prerequisite.
+        realpathSync(dirname(target));
+        const canonical = canonicalWriteTarget(target);
+        try {
+            if (lstatSync(target).isSymbolicLink() || !statSync(target).isFile()) {
+                return false;
+            }
+        } catch (error) {
+            if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) {
+                return false;
+            }
+        }
+
+        const scratch = join(realpathSync(entry.cwd), ".claude/work/babysit");
+        const roots = [scratch, ...(entry.scratch ? [realpathSync(entry.scratch)] : [])];
+        return roots.some((allowed) => canonical.startsWith(allowed + sep));
+    } catch {
+        // Missing or unreadable destination directories cannot be approved.
+        return false;
+    }
 };
 
 const SHELLS = ["/bin/sh", "/bin/bash", "/bin/zsh", "/usr/bin/sh", "/usr/bin/bash", "/usr/bin/zsh"];
@@ -83,6 +150,13 @@ export function innerCommand(command: string): string {
     return inner;
 }
 
+/** Closed long-option sets also refuse getopt's abbreviated executable options. */
+const longOptionsAllowed = (args: string[], allowed: string) => {
+    const names = new Set(allowed.split(" "));
+    // Check even after --: a preceding value-taking flag may consume it instead of ending option parsing.
+    return args.every((arg) => arg === "--" || !arg.startsWith("--") || names.has(arg.split("=", 1)[0]));
+};
+
 /** Each program a reader may run in a chain, with a check of its arguments: it reads, writes nothing, runs no code. */
 const READERS: Record<string, (args: string[]) => boolean> = {
     pwd: () => true,
@@ -94,21 +168,45 @@ const READERS: Record<string, (args: string[]) => boolean> = {
     nl: () => true,
     cut: () => true,
     tr: () => true,
-    file: () => true,
-    stat: () => true,
+    // -z/-Z run decompressors; -C writes a magic database. Long options are closed against abbreviations.
+    file: (args) =>
+        !args.some((arg) => /^-[^-]*[zZC]/.test(arg)) &&
+        longOptionsAllowed(
+            args,
+            "--brief --mime --mime-type --mime-encoding --keep-going --dereference --no-dereference --separator --files-from --magic-file --exclude --exclude-quiet --no-pad --raw --special-files --help --version"
+        ),
+    // zsh stat -A/-H stores results in shell arrays/hashes, which can change later command resolution.
+    stat: (args) => !args.some((arg) => /^-[^-]*[AH]/.test(arg)),
     basename: () => true,
     dirname: () => true,
     realpath: () => true,
     echo: () => true,
-    printf: () => true,
+    // Shell printf -v assigns a variable; %n conversions also assign through a format operand.
+    printf: (args) => {
+        const format = args[0] === "--" ? args[1] : args[0];
+        return (
+            format !== undefined &&
+            !format.startsWith("-") &&
+            !/%(?:\d+\$)?[-+ #0']*(?:\d+|\*)?(?:\.(?:\d+|\*))?[hlLjzt]*n/.test(format)
+        );
+    },
     true: () => true,
     test: () => true,
     diff: () => true,
     jq: () => true,
     grep: () => true,
-    uniq: (args) => args.filter((arg) => !arg.startsWith("-")).length <= 1,
-    sort: (args) => !args.some((arg) => arg === "-o" || arg.startsWith("--output") || /^-[a-zA-Z]*o/.test(arg)),
-    rg: (args) => !args.some((arg) => arg === "--pre" || arg.startsWith("--pre=")),
+    uniq: uniqReader,
+    // Unknown long options require the lead, including --compress-program and every accepted abbreviation.
+    sort: (args) =>
+        !args.some((arg) => /^-[^-]*o/.test(arg)) &&
+        longOptionsAllowed(
+            args,
+            "--ignore-leading-blanks --dictionary-order --ignore-case --general-numeric-sort --ignore-nonprinting --month-sort --human-numeric-sort --numeric-sort --random-sort --random-source --reverse --sort --version-sort --check --merge --key --stable --unique --field-separator --zero-terminated --buffer-size --temporary-directory --parallel --batch-size --files0-from --debug --help --version"
+        ),
+    rg: (args) =>
+        !args.some(
+            (arg) => /^--(?:pre|hostname-bin)(?:=|$)/.test(arg) || arg === "--search-zip" || /^-[^-]*z/.test(arg)
+        ),
     find: (args) =>
         !args.some((arg) =>
             ["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"].includes(arg)
@@ -136,32 +234,165 @@ const READERS: Record<string, (args: string[]) => boolean> = {
             "shortlog",
             "describe",
         ].includes(args[0] ?? "") &&
+        (args[0] !== "cat-file" ||
+            longOptionsAllowed(
+                args.slice(1),
+                "--batch --batch-check --batch-command --buffer --follow-symlinks --unordered --allow-unknown-type --use-mailmap --no-use-mailmap --help"
+            )) &&
+        (!["diff", "show", "log", "blame", "grep"].includes(args[0]) ||
+            args.slice(1, args.indexOf("--") < 0 ? undefined : args.indexOf("--")).includes("--no-textconv")) &&
+        (!["diff", "show", "log"].includes(args[0]) ||
+            args.slice(1, args.indexOf("--") < 0 ? undefined : args.indexOf("--")).includes("--no-ext-diff")) &&
         !args.some(
             (arg) =>
-                arg.startsWith("--output") ||
-                arg === "--ext-diff" ||
+                // Git accepts unique long-option prefixes, which can re-enable execution after the no-* flags.
+                (arg.startsWith("--") &&
+                    arg.length > 2 &&
+                    ["--output", "--ext-diff", "--textconv", "--open-files-in-pager"].some((option) =>
+                        option.startsWith(arg.split("=", 1)[0])
+                    )) ||
                 // `-O<cmd>` attached runs the command as git grep's pager (a #536 reviewer's probe, 2026-10-16).
-                arg.startsWith("-O") ||
-                arg.startsWith("--open-files-in-pager")
+                arg.startsWith("-O")
         ),
     gh: (args) =>
-        (args[0] === "pr" && ["view", "diff", "checks", "list"].includes(args[1] ?? "")) ||
-        (args[0] === "api" && !args.some((arg) => /^(-X|--method|-f|-F|--field|--raw-field|--input)/.test(arg))),
+        (args[0] === "pr" &&
+            ["view", "diff", "checks", "list"].includes(args[1] ?? "") &&
+            !args.some((arg) => /^--web(?:=|$)/.test(arg) || /^-[^-]*w/.test(arg))) ||
+        (args[0] === "api" &&
+            !args.some((arg) => /^(-X|--method|-f|-F|--field|--raw-field|--input|--cache)/.test(arg))),
     tools: toolsReader,
     "./tools": toolsReader,
 };
 
-/** `tools github review` without its write verbs, and `tools ts skeleton|duplicates|refactors`, which only read. */
+/** Parse the portable option prefix; after the first operand (or --), even dash words are operands. */
+function uniqReader(args: string[]): boolean {
+    let operands = 0;
+    let options = true;
+    const numbers = new Set(["--skip-fields", "--skip-chars", "--check-chars"]);
+    const switches = new Set([
+        "--count",
+        "--repeated",
+        "--unique",
+        "--ignore-case",
+        "--zero-terminated",
+        "--help",
+        "--version",
+    ]);
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index];
+        if (options && arg === "--") {
+            options = false;
+            continue;
+        }
+
+        if (options && arg.startsWith("--")) {
+            const [name, inline] = arg.split(/=(.*)/s, 2);
+            if (numbers.has(name)) {
+                if (!/^\d+$/.test(inline ?? args[++index] ?? "")) {
+                    return false;
+                }
+            } else if (name === "--all-repeated" || name === "--group") {
+                const methods =
+                    name === "--group" ? ["separate", "prepend", "append", "both"] : ["none", "prepend", "separate"];
+                if (inline !== undefined && !methods.includes(inline)) {
+                    return false;
+                }
+            } else if (!switches.has(name) || inline !== undefined) {
+                return false;
+            }
+            continue;
+        }
+
+        if (options && arg.startsWith("-") && arg !== "-") {
+            for (let offset = 1; offset < arg.length; offset++) {
+                const option = arg[offset];
+                if ("fsw".includes(option)) {
+                    if (!/^\d+$/.test(arg.slice(offset + 1) || args[++index] || "")) {
+                        return false;
+                    }
+                    break;
+                }
+                if (!"cdiuzD".includes(option)) {
+                    return false;
+                }
+            }
+            continue;
+        }
+
+        // BSD uniq stops parsing options at its first operand; assuming GNU permutation could approve an output file.
+        options = false;
+        if (++operands > 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/** Named review reads and their complete flag grammar; every other operation asks the lead. */
 function toolsReader(args: string[]): boolean {
     if (args[0] === "ts") {
-        return ["skeleton", "duplicates", "refactors"].includes(args[1] ?? "") && !args.includes("--recommend");
+        return (
+            ["skeleton", "duplicates", "refactors"].includes(args[1] ?? "") &&
+            !args.some((arg) => arg === "--recommend" || arg.startsWith("--recommend="))
+        );
     }
 
-    return (
-        args[0] === "github" &&
-        args[1] === "review" &&
-        !args.some((arg) => /^-?-?(respond|resolve|reply|unresolve)$/.test(arg))
-    );
+    if (args[0] !== "github" || args[1] !== "review") {
+        return false;
+    }
+
+    const [operation, ...rest] = args.slice(2);
+    if (operation === "sessions") {
+        return rest.length === 0;
+    }
+
+    const values = new Set(["-s", "--session"]);
+    const switches = new Set<string>();
+    if (operation === "expand") {
+        if (!/^t\d+(?:,t\d+)*$/.test(rest.shift() ?? "")) {
+            return false;
+        }
+        values.add("--repo");
+    } else if (operation !== "summary") {
+        if (!/^\d+$/.test(operation ?? "")) {
+            return false;
+        }
+        for (const value of ["--repo", "-a", "--author"]) {
+            values.add(value);
+        }
+        for (const option of [
+            "-u",
+            "--unresolved-only",
+            "-g",
+            "--group-by-file",
+            "-j",
+            "--json",
+            "--llm",
+            "-v",
+            "--verbose",
+            "--no-pr-comments",
+        ]) {
+            switches.add(option);
+        }
+    }
+
+    for (let index = 0; index < rest.length; index++) {
+        const [option, inline] = rest[index].split(/=(.*)/s, 2);
+        if (switches.has(option) && inline === undefined) {
+            continue;
+        }
+
+        if (!values.has(option)) {
+            return false;
+        }
+
+        const value = inline ?? rest[++index];
+        if (!value || value.startsWith("-")) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /**
@@ -226,14 +457,22 @@ const SHELL_KEYWORDS = new Set(["if", "then", "else", "elif"]);
 
 /** A chain of commands that only read: each one a known reader with arguments it cannot write or execute with. */
 export function readOnlyChain(entry: RunEntry, command: string): boolean {
+    return readOnlyCwd(entry, command) !== null;
+}
+
+function readOnlyCwd(entry: RunEntry, command: string): string | null {
     const segments = chainSegments(command);
 
     if (!segments || segments.length === 0) {
-        return false;
+        return null;
     }
 
-    return segments.every((segment) => {
-        const parsed = strictShellWords(segment);
+    let cwd = entry.cwd;
+    let logicalCwd = entry.cwd;
+    const accepted = segments.every((segment) => {
+        // `test ! -f X || cat X` opens every worker's first command; the negation reads nothing, but the strict
+        // parser refuses a bare `!`, so it is dropped before parsing (only right after `test`).
+        const parsed = strictShellWords(segment.replace(/^test ! /, "test "));
 
         if (!parsed || parsed.length === 0) {
             return false;
@@ -252,12 +491,43 @@ export function readOnlyChain(entry: RunEntry, command: string): boolean {
         }
 
         if (words[0] === "cd") {
-            return words.length === 2 && (resolve(entry.cwd, words[1]) + sep).startsWith(resolve(entry.cwd) + sep);
+            if (
+                words.length !== 2 ||
+                /[;|\n]/.test(command) ||
+                segments.some((part) => /^(if|then|else|elif)\b/.test(part))
+            ) {
+                return false;
+            }
+
+            try {
+                const logicalTarget = resolve(logicalCwd, words[1]);
+                const target = realpathSync(logicalTarget);
+                const root = realpathSync(entry.cwd);
+                if (!statSync(target).isDirectory() || !(target + sep).startsWith(root + sep)) {
+                    return false;
+                }
+                cwd = target;
+                logicalCwd = logicalTarget;
+                return true;
+            } catch {
+                return false;
+            }
+        }
+
+        if (words[0].includes("/")) {
+            try {
+                const executable = realpathSync(isAbsolute(words[0]) ? words[0] : `${cwd}/${words[0]}`);
+                const trusted = realpathSync(resolve(import.meta.dir, "../../../../tools"));
+                return executable === trusted && toolsReader(words.slice(1));
+            } catch {
+                return false;
+            }
         }
 
         const check = READERS[words[0]];
         return check !== undefined && check(words.slice(1));
     });
+    return accepted ? cwd : null;
 }
 
 /**
@@ -279,41 +549,122 @@ export function testRunCommand(entry: RunEntry, words: string[]): boolean {
     });
 }
 
-const FABLE_CLI =
-    /(^|\/)(plugins\/genesis-tools|genesis-tools\/genesis-tools\/[\d.]+)\/skills\/fable-replace\/scripts\/cli\.ts$/;
+const MAIN_CLI = (() => {
+    const common = Bun.spawnSync(
+        [
+            "git",
+            "-C",
+            resolve(import.meta.dir, "../../../.."),
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
+        { stdout: "pipe", stderr: "pipe" }
+    );
+    return common.exitCode === 0
+        ? resolve(dirname(common.stdout.toString().trim()), "plugins/genesis-tools/skills/fable-replace/scripts/cli.ts")
+        : null;
+})();
+const CACHE_ROOT = join(homedir(), ".codex/plugins/cache/genesis-tools/genesis-tools");
 const FABLE_ENV = new Set(["GENESIS_TOOLS_HOME", "TMPDIR", "FABLE_REPLACE_HOME"]);
 
-/**
- * The briefs' edit tool: `[ENV=<scratch> …] bun <…>/fable-replace/scripts/cli.ts <<'TAG' … TAG`, approved when every
- * `@@ <file>` it names is in the brief's scope (or the babysit scratch folder) and each environment value is a
- * `/tmp/cc/` scratch path. Every fixer edit woke the lead before (2026-10-16: the #537 and #533 fixers' first edits).
- */
-export function fableReplaceCommand(entry: RunEntry, command: string): boolean {
-    const match = /^((?:[A-Z_]+=\S+ )*)bun (\S+) <<'([A-Za-z0-9_]+)'\n([\s\S]*)\n\3\s*$/.exec(command);
-
-    if (!match || !FABLE_CLI.test(match[2])) {
+/** Compare canonical paths, never a worker-controlled suffix. Temp paths stay untrusted even through symlinks. */
+function trustedFableCli(entry: RunEntry, path: string): boolean {
+    const candidate = resolve(entry.cwd, path);
+    const forbidden = (value: string) =>
+        /^\/(?:private\/)?tmp(?:\/|$)/.test(value) || /\/\.claude\/work(?:\/|$)/.test(value);
+    if (forbidden(candidate)) {
         return false;
     }
 
-    const envOk = match[1]
-        .trim()
-        .split(/\s+/)
-        .filter(Boolean)
-        .every((pair) => {
-            const [key, value] = [pair.slice(0, pair.indexOf("=")), pair.slice(pair.indexOf("=") + 1)];
-            return FABLE_ENV.has(key) && /^\/(private\/)?tmp\/cc\//.test(value) && !value.includes("..");
-        });
-    const targets = match[4]
-        .split("\n")
-        .filter((line) => line.startsWith("@@"))
-        .map((line) => line.slice(2).trim());
+    try {
+        const canonical = realpathSync(candidate);
+        if (forbidden(canonical)) {
+            return false;
+        }
 
-    return envOk && targets.length > 0 && targets.every((path) => !/[`$]/.test(path) && inScope(entry, path));
+        if (MAIN_CLI && canonical === realpathSync(MAIN_CLI)) {
+            return true;
+        }
+
+        const cache = realpathSync(CACHE_ROOT);
+        const local = relative(cache, canonical);
+        return /^\d+(?:\.\d+)*\/skills\/fable-replace\/scripts\/cli\.ts$/.test(local);
+    } catch {
+        // Missing or unreadable tools cannot be trusted.
+        return false;
+    }
+}
+
+/** Only literal invocations of the trusted editor, with one closed quoted heredoc and scoped edits. */
+export function fableReplaceCommand(entry: RunEntry, command: string): boolean {
+    const match = /^([^\n]+) <<'([A-Za-z0-9_]+)'\n([\s\S]*)\n\2\n?$/.exec(command);
+    if (!match || match[3].split("\n").includes(match[2]) || match[3].trimStart().startsWith("[")) {
+        return false;
+    }
+
+    const prefix = strictShellWords(match[1]);
+    if (!prefix || prefix.length < 2 || prefix[prefix.length - 2] !== "bun") {
+        return false;
+    }
+
+    const cli = prefix.at(-1) ?? "";
+    if (!trustedFableCli(entry, cli)) {
+        return false;
+    }
+
+    const envOk = prefix.slice(0, -2).every((pair) => {
+        const equals = pair.indexOf("=");
+        const [key, value] = [pair.slice(0, equals), pair.slice(equals + 1)];
+        return (
+            equals > 0 && FABLE_ENV.has(key) && /^\/(private\/)?tmp\/cc\/[\w./-]+$/.test(value) && !value.includes("..")
+        );
+    });
+    const lines = match[3].split("\n");
+    // Moves can also rewrite importers. All such operations require the lead, even with a scoped destination.
+    if (lines.some((line) => line.startsWith("<<<") && /(?:^|\s)(?:move|to=|imports=|renameTo=)/.test(line.slice(3)))) {
+        return false;
+    }
+
+    const targets = lines.filter((line) => line.startsWith("@@")).map((line) => line.slice(2).trim());
+    return (
+        envOk &&
+        targets.length > 0 &&
+        targets.every((path) => {
+            if (/[\x60$]/.test(path) || !inScope(entry, path)) {
+                return false;
+            }
+            try {
+                const canonical = canonicalWriteTarget(resolve(entry.cwd, path));
+                // Project the physical target back onto the logical root so /tmp aliases and scoped absolute paths
+                // keep their meaning, without trusting a symlink's destination as a new allowed root.
+                return inScope(entry, relative(realpathSync(entry.cwd), canonical));
+            } catch {
+                // Dangling links, loops, unreadable paths and non-directory parents cannot be approved.
+                return false;
+            }
+        })
+    );
 }
 
 /** Whether a command approval is one the brief allows. Pure, so it can be replayed on a past session's requests. */
 export function allowedCommand(entry: RunEntry, command: string): boolean {
     if (readOnlyChain(entry, command) || fableReplaceCommand(entry, command)) {
+        return true;
+    }
+
+    // A check whose output goes to the scratch folder (`<check> > .claude/work/babysit/x.log 2>&1`), or that runs
+    // under `timeout <s>`, is the same check: the fixers write every verify log there (2026-10-16, #537 round 1).
+    const logged = /^(.*\S)\s+>\s*(.+?)\s+2>&1$/.exec(command);
+    const destination = logged ? strictShellWords(logged[2]) : null;
+
+    if (logged && destination?.length === 1 && inScratch(entry, logged[1], destination[0]) && !/[<>]/.test(logged[1])) {
+        return allowedCommand(entry, logged[1]);
+    }
+
+    const timed = /^timeout \d+ (.+)$/s.exec(command);
+
+    if (timed && !timed[1].startsWith("timeout ") && allowedCommand(entry, timed[1])) {
         return true;
     }
 
@@ -348,6 +699,12 @@ export function allowedCommand(entry: RunEntry, command: string): boolean {
 
     if (testRunCommand(entry, words)) {
         return true;
+    }
+
+    // Biome on files of the scope, with or without --write (the brief's format step).
+    if (words[0] === "bunx" && words[1] === "biome" && words[2] === "check") {
+        const rest = words.slice(3).filter((word) => word !== "--write");
+        return rest.length > 0 && rest.every((path) => !path.startsWith("-") && inScope(entry, path));
     }
 
     return entry.verify.some((verify) => {
@@ -507,7 +864,10 @@ async function main(): Promise<void> {
         process.exit(2);
     }
 
-    await watchApprovals({ entry });
+    // A reviewer writes its probes and logs to the folder review-brief names; the driver approves those writes too.
+    const scratch =
+        entry.scratch ?? (entry.role === "review" && entry.pr ? reviewScratch(dirname(runPath), entry.pr) : undefined);
+    await watchApprovals({ entry: { ...entry, scratch } });
 }
 
 if (import.meta.main) {
