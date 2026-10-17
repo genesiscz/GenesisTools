@@ -161,8 +161,8 @@ The tool uses a unified configuration file at `~/.genesis-tools/mcp-manager/conf
 
 #### Claude enable/disable semantics
 
-Verified against the Claude Code binary (2.1.296, research note
-`2026-10-13-ClaudeCodeGlobalMcpSwitch.md`): Claude Code reads `disabledMcpServers`
+Recorded against Claude Code 2.1.296 on 2026-10-13 ([maintained evidence and
+recheck procedure](claude-code-disable-evidence.md)): Claude Code reads `disabledMcpServers`
 **only** from per-project entries (`.projects[<cwd>].disabledMcpServers`). The
 **top-level `disabledMcpServers` key is never read by Claude Code** — it is an
 mcp-manager-only marker. The only mechanism Claude Code honors globally

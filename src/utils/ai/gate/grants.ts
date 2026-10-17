@@ -6,6 +6,7 @@ import { appendGateAudit } from "@genesiscz/utils/audit/gates";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { parseJSON, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { redactCredentialFields } from "@genesiscz/utils/security/vault-purpose";
 import { isJsonObject, readJsonFileForUpdateSync } from "@genesiscz/utils/storage/atomic-file";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -128,8 +129,25 @@ export function vaultGrantsPath(): string {
     return join(gateDir(), "vault-grants.json");
 }
 
-function isVaultGrant(value: unknown): value is VaultGrant {
+type VaultGrantWire = Omit<VaultGrant, "until"> & { until?: number | null };
+
+function isVaultGrant(value: unknown): value is VaultGrantWire {
     return isJsonObject(value) && typeof value.key === "string" && typeof value.tool === "string";
+}
+
+interface VaultGrantsFile {
+    version: 1;
+    grants: VaultGrantWire[];
+}
+
+function isVaultGrantsFile(value: unknown): value is VaultGrantsFile {
+    return (
+        isJsonObject(value) && value.version === 1 && Array.isArray(value.grants) && value.grants.every(isVaultGrant)
+    );
+}
+
+function normalizedVaultGrants(grants: VaultGrantWire[]): VaultGrant[] {
+    return grants.map((grant) => ({ ...grant, until: grant.until ?? null }));
 }
 
 function readVaultGrants(): VaultGrant[] {
@@ -138,8 +156,8 @@ function readVaultGrants(): VaultGrant[] {
         return [];
     }
 
-    const parsed = parseJSON<{ grants?: unknown[] }>(readFileSync(path, "utf8"));
-    return (parsed?.grants ?? []).filter(isVaultGrant);
+    const parsed = parseJSON<unknown>(readFileSync(path, "utf8"));
+    return isVaultGrantsFile(parsed) ? normalizedVaultGrants(parsed.grants) : [];
 }
 
 /** Vault-key approvals GenesisTools.app remembers that have not ended. */
@@ -159,7 +177,8 @@ export async function revokeVaultGrants(selector: string): Promise<number> {
     await withFileLock(
         `${path}.lock`,
         async () => {
-            const grants = readVaultGrants();
+            const existing = readJsonFileForUpdateSync(path, { accepts: isVaultGrantsFile });
+            const grants = existing.state === "ok" ? normalizedVaultGrants(existing.value.grants) : [];
             const kept = grants.filter(
                 (grant) => selector !== "*" && grant.key !== selector && grant.tool !== selector
             );
@@ -205,7 +224,7 @@ export interface AuditEntry {
 export async function appendAudit(entry: AuditEntry): Promise<void> {
     const path = auditPath();
     mkdirSync(dirname(path), { recursive: true });
-    await appendFile(path, `${SafeJSON.stringify(entry)}\n`, { mode: 0o600 });
+    await appendFile(path, `${SafeJSON.stringify(redactCredentialFields(entry))}\n`, { mode: 0o600 });
     // The shared trail of every gate (src/utils/audit/gates.ts) gets the same decision.
     appendGateAudit({ gate: "ai-account", ...entry });
     // File-only: a client that runs `tools ai gate request` reads stderr for the deny reason, so

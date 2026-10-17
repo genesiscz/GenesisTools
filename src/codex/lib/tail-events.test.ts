@@ -1,6 +1,21 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { countStartedTurns, numberTurnLine, planFollowRead, takeCompleteLines } from "./tail-events";
+import { out } from "@genesiscz/utils/logger";
+import * as adapter from "./adapter";
+import { sessionEventsPath } from "./paths";
+import { type CodexSessionMeta, CodexSessionStore } from "./store";
+import {
+    countStartedTurns,
+    followSessionEvents,
+    numberTurnLine,
+    planFollowRead,
+    takeCompleteLines,
+} from "./tail-events";
 
 describe("takeCompleteLines", () => {
     // The regression: a size snapshot cut a record in half, the half failed to
@@ -73,6 +88,106 @@ describe("planFollowRead", () => {
         // offset` was false on every later poll, so it printed nothing again
         // while still looking like it was following.
         expect(planFollowRead(40, 5_000)).toEqual({ from: 0, rewound: true });
+    });
+
+    test("the real follower restarts rendered turn numbers on rewind and preserves them on append", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-tail-rewind-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const started = `${SafeJSON.stringify({ source: "app-server", method: "turn/started", params: { threadId: "t" } })}\n`;
+            const done = `${SafeJSON.stringify({ source: "app-server", method: "turn/completed", params: { threadId: "t", turn: {} } })}\n`;
+            const path = sessionEventsPath("rewind");
+            mkdirSync(dirname(path), { recursive: true });
+            const meta: CodexSessionMeta = {
+                name: "rewind",
+                daemonPid: process.pid,
+                cwd: "/repo",
+                sandbox: "read-only",
+                approvalPolicy: "never",
+                writePolicy: "deny",
+                status: "running",
+                agentName: "fixture",
+                rendezvousSession: "parent",
+                agentsEnabled: false,
+                startedAt: "2026-01-01T00:00:00Z",
+                lastEventAt: "2026-01-01T00:00:00Z",
+                codexVersion: "fixture",
+                pendingApprovals: {},
+            };
+            for (const rewound of [true, false]) {
+                writeFileSync(path, started.repeat(3));
+                let reads = 0;
+                const output: string[] = [];
+                const metadata = spyOn(CodexSessionStore.prototype, "readMeta").mockImplementation(() => {
+                    if (++reads === 1) {
+                        writeFileSync(path, (rewound ? "" : started.repeat(3)) + started + done);
+                        return meta;
+                    }
+                    return null;
+                });
+                const print = spyOn(out, "println").mockImplementation((line) => {
+                    output.push(String(line));
+                });
+                const sleep = spyOn(Bun, "sleep").mockResolvedValue(undefined);
+                try {
+                    await followSessionEvents("rewind", true);
+                    expect(output).toHaveLength(2);
+                    expect(output[0]).toContain(`turn ${rewound ? 1 : 4} started`);
+                    expect(output[1]).toContain(`turn ${rewound ? 1 : 4} completed`);
+                } finally {
+                    metadata.mockRestore();
+                    print.mockRestore();
+                    sleep.mockRestore();
+                }
+            }
+        });
+    });
+
+    test("seeds historical turns through bounded reads without formatting skipped output", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-tail-history-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const path = sessionEventsPath("history");
+            mkdirSync(dirname(path), { recursive: true });
+            const started = SafeJSON.stringify({ method: "turn/started", source: "app-server" });
+            const output = SafeJSON.stringify({
+                source: "app-server",
+                method: "item/completed",
+                params: { item: { type: "commandExecution", aggregatedOutput: "x".repeat(128 * 1024) } },
+            });
+            const body = `${[started, ...Array.from({ length: 20 }, () => output), started].join("\n")}\n`;
+            writeFileSync(path, body);
+            const file = Bun.file(path);
+            const originalSlice = file.slice.bind(file);
+            const slices = spyOn(file, "slice").mockImplementation(
+                (start?: number | string, end?: number | string, type?: string) => {
+                    const begin = typeof start === "number" ? start : 0;
+                    const until = typeof end === "number" ? end : file.size;
+                    const contentType = typeof start === "string" ? start : typeof end === "string" ? end : type;
+                    expect(until - begin).toBeLessThanOrEqual(64 * 1024);
+                    return originalSlice(begin, until, contentType);
+                }
+            );
+            const files = spyOn(Bun, "file").mockReturnValue(file);
+            const reads = spyOn(fs, "createReadStream");
+            const formatted = spyOn(adapter, "formatStoredEventLine");
+            const metadata = spyOn(CodexSessionStore.prototype, "readMeta").mockReturnValue(null);
+            try {
+                await followSessionEvents("history", true);
+                expect(reads).toHaveBeenCalledTimes(1);
+                expect(reads.mock.calls[0]?.[1]).toMatchObject({
+                    highWaterMark: 64 * 1024,
+                    end: Buffer.byteLength(body) - 1,
+                });
+                expect(formatted).not.toHaveBeenCalled();
+                expect(countStartedTurns(body)).toBe(2);
+                expect(formatted).not.toHaveBeenCalled();
+            } finally {
+                metadata.mockRestore();
+                formatted.mockRestore();
+                reads.mockRestore();
+                files.mockRestore();
+                slices.mockRestore();
+            }
+        });
     });
 
     test("an emptied file rewinds too", () => {

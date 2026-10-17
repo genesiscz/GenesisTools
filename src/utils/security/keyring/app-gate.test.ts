@@ -5,6 +5,8 @@ import {
     currentCommandLine,
     currentToolName,
     noteVaultSecret,
+    redactCredentialArgs,
+    redactCredentialText,
     setVaultPurpose,
 } from "../vault-purpose";
 import { appGateKey, createAppGateKeyProvider, VaultKeyDeniedError, type VaultUnlockRequest } from "./app-gate";
@@ -48,6 +50,59 @@ describe("the app rung", () => {
 
         expect(await rung.get()).toEqual(KEY);
         expect(rung.getSync?.()).toEqual(KEY);
+    });
+
+    test("concurrent cold reads share one delayed approval without poisoning later reads", async () => {
+        const approval = Promise.withResolvers<typeof allow>();
+        let asked = 0;
+        const app = createAppGateKeyProvider({
+            available: () => true,
+            rpc: async () => {
+                asked++;
+                return approval.promise;
+            },
+        });
+        const first = app.get();
+        const second = app.get();
+        expect(asked).toBe(1);
+        approval.resolve(allow);
+        expect(await Promise.all([first, second])).toEqual([KEY, KEY]);
+        expect(await app.get()).toEqual(KEY);
+        expect(asked).toBe(2);
+    });
+
+    test("concurrent denials share one decision and keep the existing refusal policy", async () => {
+        const approval = Promise.withResolvers<typeof deny>();
+        let asked = 0;
+        const app = createAppGateKeyProvider({
+            available: () => true,
+            rpc: async () => {
+                asked++;
+                return approval.promise;
+            },
+        });
+        const reads = Promise.allSettled([app.get(), app.get()]);
+        expect(asked).toBe(1);
+        approval.resolve(deny);
+        expect((await reads).map((read) => read.status)).toEqual(["rejected", "rejected"]);
+        await expect(app.get()).rejects.toThrow("denied in the approval window");
+        expect(asked).toBe(1);
+    });
+
+    test("an RPC failure releases the in-flight request so a later read can retry", async () => {
+        let asked = 0;
+        const app = createAppGateKeyProvider({
+            available: () => true,
+            rpc: async () => {
+                if (++asked === 1) {
+                    throw new Error("fixture transport failure");
+                }
+                return allow;
+            },
+        });
+        await expect(app.get()).rejects.toThrow("fixture transport failure");
+        expect(await app.get()).toEqual(KEY);
+        expect(asked).toBe(2);
     });
 
     test("a deny throws with the window's reason and never reaches the keychain", () => {
@@ -156,6 +211,30 @@ describe("the app rung", () => {
 });
 
 describe("the caller's name and command", () => {
+    test("credential arguments are redacted before commands and purposes are built", () => {
+        const token = "fixture-secret-never-real";
+        for (const flag of ["--token", "--api-key", "--key", "--password", "--secret"]) {
+            for (const args of [[flag, token], [`${flag}=${token}`]]) {
+                const argv = ["gt-claude", "/repo/src/claude/index.ts", "config", "add", "work", ...args];
+                expect(currentCommandLine(argv)).not.toContain(token);
+                expect(redactCredentialArgs(argv).join(" ")).toContain("[REDACTED]");
+                expect(redactCredentialText(`run ${argv.join(" ")}`)).not.toContain(token);
+            }
+        }
+
+        expect(redactCredentialText('run tools claude --token="fixture with spaces"')).toBe(
+            "run tools claude --token=[REDACTED]"
+        );
+        expect(redactCredentialArgs(["tools", "wakeup", "daemon", "register", "-t", token]).at(-1)).toBe("[REDACTED]");
+        expect(
+            redactCredentialArgs(["bun", "/repo/src/wakeup/index.ts", "daemon", "register", `-t=${token}`]).at(-1)
+        ).toBe("-t=[REDACTED]");
+        expect(redactCredentialArgs(["tools", "claude", "tail", "-t", "5"]).at(-1)).toBe("5");
+        expect(currentCommandLine(["gt-claude", "/repo/src/claude/index.ts", "--token", token], 40)).not.toContain(
+            "fixture"
+        );
+    });
+
     test("from the tool's entry script, else from its gt- launcher", () => {
         expect(currentToolName(["/Users/x/.genesis-tools/bin/gt-claude", "/repo/src/claude/index.ts", "info"])).toBe(
             "claude"

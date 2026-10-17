@@ -50,8 +50,8 @@ function isDeniedByClaude(denied: unknown[], registeredName: string, url: string
  * Claude Desktop MCP provider.
  * Manages MCP servers in ~/.claude.json
  *
- * IMPORTANT (verified against the Claude Code binary 2.1.296, research note
- * 2026-10-13-ClaudeCodeGlobalMcpSwitch.md): Claude Code reads
+ * Recorded against Claude Code 2.1.296 on 2026-10-13; maintained excerpts and a
+ * recheck procedure: src/mcp-manager/claude-code-disable-evidence.md. That version reads
  * `disabledMcpServers` ONLY from per-project entries
  * (`.projects[<cwd>].disabledMcpServers`). The TOP-LEVEL `disabledMcpServers`
  * key is NEVER read by Claude Code — it is an mcp-manager-only marker. The only

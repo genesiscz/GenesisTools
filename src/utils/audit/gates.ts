@@ -2,6 +2,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { redactCredentialArgs, redactCredentialFields } from "@genesiscz/utils/security/vault-purpose";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 /**
@@ -30,9 +31,9 @@ export function appendGateAudit(entry: GateAuditEntry): void {
         const line = {
             ...entry,
             at: new Date().toISOString(),
-            writer: { pid: process.pid, argv: process.argv.slice(1, 3) },
+            writer: { pid: process.pid, argv: redactCredentialArgs(process.argv).slice(1, 3) },
         };
-        appendFileSync(path, `${SafeJSON.stringify(line)}\n`, { mode: 0o600 });
+        appendFileSync(path, `${SafeJSON.stringify(redactCredentialFields(line))}\n`, { mode: 0o600 });
 
         if (created) {
             chmodSync(path, 0o600);

@@ -5,7 +5,13 @@ import {
     genesisAppRpcSync,
     isGenesisAppRpcAvailable,
 } from "@genesiscz/utils/macos/genesis-app-rpc";
-import { currentCommandLine, currentToolName, vaultPurpose, vaultSecretAsked } from "../vault-purpose";
+import {
+    currentCommandLine,
+    currentToolName,
+    redactCredentialText,
+    vaultPurpose,
+    vaultSecretAsked,
+} from "../vault-purpose";
 import { decodeMasterKey, isTestProcess, type MasterKeyProvider } from "./types";
 
 /**
@@ -62,7 +68,7 @@ export function vaultUnlockRequest(): VaultUnlockRequest {
 
     return {
         tool: currentToolName(),
-        purpose: vaultPurpose() ?? `run ${command}`,
+        purpose: redactCredentialText(vaultPurpose() ?? `run ${command}`),
         secret: vaultSecretAsked(),
         command,
     };
@@ -124,6 +130,7 @@ export function createAppGateKeyProvider(deps: AppGateDeps = {}): MasterKeyProvi
             genesisAppRpcSync<VaultUnlockReply>("vault.unlock", params(request), options));
 
     let refusal: VaultKeyDeniedError | undefined;
+    let pending: Promise<Buffer | undefined> | undefined;
     const answer = (outcome: GenesisAppRpcOutcome<VaultUnlockReply>, tool: string): Buffer | undefined => {
         try {
             return keyFromReply(outcome, tool);
@@ -150,8 +157,16 @@ export function createAppGateKeyProvider(deps: AppGateDeps = {}): MasterKeyProvi
                 throw refusal;
             }
 
-            const request = vaultUnlockRequest();
-            return answer(await rpc(request), request.tool);
+            if (!pending) {
+                const request = vaultUnlockRequest();
+                pending = rpc(request).then((outcome) => answer(outcome, request.tool));
+            }
+
+            try {
+                return await pending;
+            } finally {
+                pending = undefined;
+            }
         },
         getSync() {
             if (!available()) {

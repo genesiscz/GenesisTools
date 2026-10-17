@@ -65,9 +65,9 @@ tools grok sessions [--json]
 
 🛑 Never reach past the harness for safety flags — two raw-grok flags LOOK like safety dials and are not (both verified): `--permission-mode plan` does not restrict a headless run (the worker edited a file under it), and `--disallowed-tools` silently refuses to remove `run_terminal_command` (the worker appended via the shell instead).
 
-There are no mid-turn approvals. The Auto-mode jail plus the checkpoint contract below are the only brakes.
+There are no mid-turn approvals or project jail. A disposable worktree keeps changes away from the live checkout; the checkpoint contract below tells the worker when to stop, but does not enforce a filesystem boundary.
 
-🛑 **A dispatch the user did not ask for is `--readonly`.** The skill triggers proactively, and the default mode edits and runs commands inside `--cwd` with no confirmation. So when *you* decided to hand the task off, pass `--readonly`, or give the worker a disposable worktree (`git worktree add`) that is not the user's live checkout. A writable run against a real working tree needs the user to have asked for the handoff, or to have said yes to it. Being inside the project jail is not consent: the jail only stops writes *outside* `--cwd`, and everything the user cares about is inside it.
+🛑 **A dispatch the user did not ask for is `--readonly`.** The skill triggers proactively, and the default mode edits and runs commands inside `--cwd` with no confirmation. So when *you* decided to hand the task off, pass `--readonly`, or give the worker a disposable worktree (`git worktree add`) that is not the user's live checkout. A writable run against a real working tree needs the user to have asked for the handoff, or to have said yes to it. The default grants broad write access; `--cwd` selects a working directory and does not constrain filesystem access.
 
 ### 🛑 `--readonly` costs more than editing
 
@@ -75,10 +75,10 @@ The read-only worker gets `read_file,list_dir,grep` and **no terminal tool at al
 
 So for a read-only grok review, plan for it up front:
 
-- If the deliverable is a file (Obsidian vault, report.md), do **not** pass `--readonly`. Use the default jail with `--cwd` at the note folder, or write `/tmp` and let the orchestrator copy. Same class of miss as Codex `--write deny` on 2026-08-31.
+- If the deliverable is a file (Obsidian vault, report.md), do **not** pass `--readonly`. Use a disposable worktree and let the orchestrator copy the report to the note folder. Same class of miss as Codex `--write deny` on 2026-08-31.
 - Make **inline output the deliverable** only when the review is actually inline. Say so in the brief; do not ask for a file.
 - Expect **zero executed verification**. If the worker reports on test quality or runtime behavior, it inferred that from reading. Say so when you relay it, or re-run the claim yourself.
-- If the review genuinely needs to run something, do not reach for `--writable`. Give the worker a disposable worktree and let it run in the default Auto-mode jail there.
+- If the review genuinely needs to run something, do not reach for `--writable`. Give the worker a disposable worktree and let it run there under the checkpoint contract, with broad write access.
 
 ## Checkpoints
 

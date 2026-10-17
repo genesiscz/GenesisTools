@@ -1,4 +1,5 @@
-import { existsSync, statSync } from "node:fs";
+import { createReadStream, existsSync, statSync } from "node:fs";
+import { createInterface } from "node:readline";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatStoredEventLine, type StoredCodexEvent } from "./adapter";
@@ -41,30 +42,59 @@ export function numberTurnLine(line: string, turns: TurnCounter): string {
     return line;
 }
 
-function renderedLines(text: string): string[] {
-    const lines: string[] = [];
-
-    for (const rawLine of text.split("\n")) {
-        if (!rawLine.trim()) {
-            continue;
-        }
-
-        try {
-            const line = formatStoredEventLine(SafeJSON.parse(rawLine, { strict: true }) as StoredCodexEvent);
-            if (line) {
-                lines.push(line);
-            }
-        } catch (err) {
-            logger.debug({ err, rawLine: rawLine.slice(0, 200) }, "[codex:tail] skipping unparseable event line");
-        }
+function isTurnStartLine(rawLine: string): boolean {
+    if (!rawLine.trim()) {
+        return false;
     }
 
-    return lines;
+    try {
+        const event = SafeJSON.parse(rawLine, { strict: true }) as StoredCodexEvent | null;
+        return event?.method === "turn/started";
+    } catch (err) {
+        logger.debug({ err, rawLine: rawLine.slice(0, 200) }, "[codex:tail] skipping unparseable event line");
+        return false;
+    }
 }
 
-/** How many turns the skipped part of the log already started, so the first followed turn gets the next number. */
+/** How many turns the skipped part of the log already started, without rendering or retaining output. */
 export function countStartedTurns(text: string): number {
-    return renderedLines(text).filter((line) => line.startsWith("▶ turn")).length;
+    let count = 0;
+    let from = 0;
+    while (from < text.length) {
+        const newline = text.indexOf("\n", from);
+        const end = newline === -1 ? text.length : newline;
+        if (isTurnStartLine(text.slice(from, end))) {
+            count++;
+        }
+        from = end + 1;
+    }
+    return count;
+}
+
+/** Read only the snapshotted prefix, in 64 KiB blocks, retaining at most one JSONL record. */
+async function countHistoricalTurns(path: string, bytes: number): Promise<number> {
+    const input = createReadStream(path, { encoding: "utf8", highWaterMark: 64 * 1024, start: 0, end: bytes - 1 });
+    const lines = createInterface({ input, crlfDelay: Infinity });
+    let failure: Error | undefined;
+    input.once("error", (error) => {
+        failure = error;
+        lines.close();
+    });
+    let count = 0;
+    try {
+        for await (const line of lines) {
+            if (isTurnStartLine(line)) {
+                count++;
+            }
+        }
+        if (failure) {
+            throw failure;
+        }
+        return count;
+    } finally {
+        lines.close();
+        input.destroy();
+    }
 }
 
 export function printFollowedChunk(text: string, asEvents: boolean, turns: TurnCounter = { n: 0 }): void {
@@ -126,7 +156,7 @@ export async function followSessionEvents(name: string, asEvents: boolean): Prom
     let offset = existsSync(path) ? statSync(path).size : 0;
     let carry = "";
     const turns: TurnCounter = {
-        n: asEvents && offset > 0 ? countStartedTurns(await Bun.file(path).slice(0, offset).text()) : 0,
+        n: asEvents && offset > 0 ? await countHistoricalTurns(path, offset) : 0,
     };
     // A streaming decoder, not `.text()` per read: a size snapshot can cut
     // a multi-byte codepoint in half, and decoding each byte slice on its
@@ -143,6 +173,7 @@ export async function followSessionEvents(name: string, asEvents: boolean): Prom
 
             if (plan?.rewound) {
                 logger.debug({ path, size, offset }, "[codex:tail] events file shrank, following from 0");
+                turns.n = 0;
                 carry = "";
                 decoder = new TextDecoder("utf-8");
             }

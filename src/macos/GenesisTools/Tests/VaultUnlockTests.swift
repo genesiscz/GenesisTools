@@ -29,6 +29,85 @@ final class VaultUnlockTests: XCTestCase {
                     cwd: "/Users/alice/project", ancestors: ancestors.map { (pid: $0.0, command: $0.1) })
     }
 
+    func testVaultRecipientRequiresTheCallerToBeTheOnlyPeerHolder() {
+        let identity = VaultRecipient.Identity(pid: 42, startSeconds: 100, startMicroseconds: 7, executable: "/bin/client")
+        let channels: [(VaultRecipient.Endpoint, VaultRecipient.Endpoint)] = [
+            (.pipe(handle: 10, peer: 20), .pipe(handle: 20, peer: 10)),
+            (.socket(pcb: 10, peer: 20), .socket(pcb: 20, peer: 10)),
+        ]
+        for (output, peer) in channels {
+            let caller = VaultRecipient.ProcessFDs(pid: 42, endpoints: [peer, peer])
+            let unrelated = VaultRecipient.ProcessFDs(pid: 43, endpoints: [.pipe(handle: 30, peer: 40), output])
+            XCTAssertNil(VaultRecipient.rejection(stdout: output, caller: identity, current: identity,
+                                                  processes: [caller, unrelated]), "duplicated fds in one process are allowed")
+            let child = VaultRecipient.ProcessFDs(pid: 44, endpoints: [peer])
+            XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: identity, current: identity,
+                                                     processes: [caller, child]), "a forked reader denies release")
+            XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: identity, current: identity,
+                                                     processes: [child]), "the sole reader must be the verified caller")
+            XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: identity, current: identity,
+                                                     processes: [unrelated]), "no reader denies release")
+            XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: identity, current: identity,
+                                                     processes: [caller, .init(pid: 45, endpoints: nil)]))
+        }
+    }
+
+    func testVaultRecipientSkipsOnlyExitedOrPermissionDeniedSystemProcesses() {
+        let identity = VaultRecipient.Identity(pid: 42, startSeconds: 100, startMicroseconds: 7, executable: "/bin/client")
+        let output = VaultRecipient.Endpoint.pipe(handle: 10, peer: 20)
+        let caller = VaultRecipient.ProcessFDs(pid: 42, endpoints: [.pipe(handle: 20, peer: 10)])
+        let exited = VaultRecipient.ProcessFDs(pid: 43, endpoints: nil, failure: .exited)
+        XCTAssertNil(VaultRecipient.rejection(stdout: output, caller: identity, current: identity, processes: [caller, exited]))
+        for executable in ["/usr/bin/login", "/usr/sbin/service", "/usr/libexec/service", "/bin/sh", "/sbin/service", "/System/Library/service"] {
+            let protected = VaultRecipient.ProcessFDs(pid: 43, endpoints: nil,
+                failure: .unavailable(code: EPERM, executable: executable))
+            XCTAssertNil(VaultRecipient.rejection(stdout: output, caller: identity, current: identity,
+                                                  processes: [caller, protected]), executable)
+        }
+        for executable in ["/Users/x/evil", "/usr/local/bin/evil", "/usr/bin-evil/program", "/Systematic/evil", "/usr/bin/../local/bin/evil", "/System/Volumes/Data/Users/x/evil", nil] {
+            let unreadable = VaultRecipient.ProcessFDs(pid: 43, endpoints: nil,
+                failure: .unavailable(code: EPERM, executable: executable))
+            XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: identity, current: identity,
+                                                     processes: [caller, unreadable]))
+        }
+        let otherError = VaultRecipient.ProcessFDs(pid: 43, endpoints: nil,
+            failure: .unavailable(code: EIO, executable: "/usr/bin/login"))
+        XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: identity, current: identity, processes: [caller, otherError]))
+        let reader = VaultRecipient.ProcessFDs(pid: 43, endpoints: [.pipe(handle: 20, peer: 10)],
+            failure: .unavailable(code: EPERM, executable: "/usr/bin/login"))
+        XCTAssertEqual(VaultRecipient.rejection(stdout: output, caller: identity, current: identity, processes: [caller, reader]),
+                       "another process holds the output", "readable holders are never skipped")
+        XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: identity, current: identity, processes: [exited]),
+                        "skipping an exited caller cannot authorize release")
+    }
+
+    func testVaultRecipientRejectsChangedOrUnknownProcessIdentity() {
+        let identity = VaultRecipient.Identity(pid: 42, startSeconds: 100, startMicroseconds: 7, executable: "/bin/client")
+        let output = VaultRecipient.Endpoint.pipe(handle: 10, peer: 20)
+        let processes = [VaultRecipient.ProcessFDs(pid: 42, endpoints: [.pipe(handle: 20, peer: 10)])]
+        var changedSeconds = identity
+        changedSeconds.startSeconds += 1
+        var changedMicroseconds = identity
+        changedMicroseconds.startMicroseconds += 1
+        var changedPath = identity
+        changedPath.executable = "/bin/other"
+        var changedPid = identity
+        changedPid.pid += 1
+        for current in [changedSeconds, changedMicroseconds, changedPath, changedPid, nil] {
+            XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: identity, current: current, processes: processes))
+        }
+        XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: nil, current: identity, processes: processes))
+    }
+
+    func testVaultRecipientRejectsUnsupportedDisconnectedAndWrongKindEndpoints() {
+        let identity = VaultRecipient.Identity(pid: 42, startSeconds: 100, startMicroseconds: 7, executable: "/bin/client")
+        let processes = [VaultRecipient.ProcessFDs(pid: 42, endpoints: [.pipe(handle: 20, peer: 10)])]
+        for output in [VaultRecipient.Endpoint.other, .pipe(handle: 10, peer: 0), .socket(pcb: 0, peer: 20),
+                       .pipe(handle: 10, peer: 10), .socket(pcb: 10, peer: 20)] {
+            XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: identity, current: identity, processes: processes))
+        }
+    }
+
     func testTheKernelBytesSplitIntoExecutableArgumentsAndEnvironment() throws {
         let bytes = procArgsBytes(argc: 3, executable: "/Users/alice/.genesis-tools/bin/gt-claude",
                                   arguments: ["gt-claude", "/repo/src/claude/index.ts", "info"],
@@ -57,6 +136,136 @@ final class VaultUnlockTests: XCTestCase {
         let bare = caller("/Users/alice/.bun/bin/bun", arguments: ["/Users/alice/.bun/bin/bun", "repl"])
         XCTAssertNil(bare.script)
         XCTAssertEqual(bare.onceOnlyReason, "the script it runs is not known")
+    }
+
+    func testCheckoutUnderSourceParentUsesLastSourceSegment() {
+        let root = "/work/src/GenesisTools"
+        let preloads = VaultCaller.ownPreloads.flatMap { ["--preload", "\(root)/\($0)"] }
+        let who = caller("/usr/bin/bun", arguments: ["bun"] + preloads + ["\(root)/src/claude/index.ts"])
+        XCTAssertEqual(who.toolName, "claude")
+        XCTAssertNil(who.onceOnlyReason)
+        XCTAssertEqual(VaultWindowContent.programPath("\(root)/src/claude/index.ts"), "GenesisTools/src/claude/index.ts")
+    }
+
+    func testOtherInterpretersWithoutAKnownScriptCannotRememberOrMatchABroadGrant() {
+        for name in ["Python", "python3.12", "pypy3", "ruby", "perl", "php", "lua", "tclsh", "osascript", "java", "pwsh", "sh", "bash", "zsh", "fish"] {
+            let executable = "/usr/bin/\(name)"
+            let who = caller(executable, arguments: [executable, "program.py"])
+            XCTAssertTrue(who.isInterpreter, name)
+            XCTAssertEqual(who.onceOnlyReason, "the script it runs is not known", name)
+            let broad = VaultGrant(key: name, tool: name, executable: executable, script: nil,
+                                   grantedAt: 1_000, until: nil, method: "touch-id")
+            XCTAssertTrue(broad.isTooBroad, name)
+            XCTAssertNil(VaultGrants.live(executable: executable, script: nil, now: 1_500,
+                                          in: VaultGrantsFile(version: 1, grants: [broad])), name)
+        }
+        XCTAssertNil(caller("/usr/bin/python3", arguments: ["python3", "run", "/approved/script.ts"]).script)
+        XCTAssertNil(caller("/usr/bin/bun", arguments: ["bun", "run", "run", "/approved/script.ts"]).script)
+        XCTAssertFalse(caller("/usr/bin/native-client", arguments: ["native-client"]).isInterpreter)
+        XCTAssertNil(caller("/usr/bin/native-client", arguments: ["native-client"]).onceOnlyReason)
+    }
+
+    func testInlineCodeAndUnknownLeadingFlagsCannotUseAnApprovedScriptGrant() {
+        let executable = "/Users/alice/.bun/bin/bun"
+        let script = "/repo/src/claude/index.ts"
+        let grant = VaultGrant(key: "k", tool: "claude", executable: executable, script: script,
+                               grantedAt: 1_000, until: nil, method: "touch-id")
+        let file = VaultGrantsFile(version: 1, grants: [grant])
+        for flags in [["--eval=arbitrary()"], ["--print=arbitrary()"], ["-e", "arbitrary()"], ["-p", "arbitrary()"],
+                      ["--eval", "arbitrary()"], ["--print", "arbitrary()"], ["-e=arbitrary()"], ["-p=arbitrary()"], ["--unknown"]] {
+            let who = caller(executable, arguments: [executable] + flags + [script])
+            XCTAssertEqual(who.onceOnlyReason, "extra code may be loaded", flags.joined(separator: " "))
+            let matched = who.onceOnlyReason == nil
+                ? VaultGrants.live(executable: executable, script: who.script, now: 1_500, in: file) : nil
+            XCTAssertNil(matched)
+        }
+    }
+
+    func testVaultAuditRedactsBothFilesAndTheCommandHelp() throws {
+        let home = (NSTemporaryDirectory() as NSString).appendingPathComponent("vault-audit-\(UUID().uuidString)")
+        setenv("GENESIS_TOOLS_HOME", home, 1)
+        defer { unsetenv("GENESIS_TOOLS_HOME"); try? FileManager.default.removeItem(atPath: home) }
+        let token = "fixture-secret-never-real"
+        let command = "tools claude config add work --token \(token)"
+        let params = VaultUnlockParams(tool: "claude", purpose: "run \(command)", secret: nil, command: command)
+        let who = caller(arguments: ["gt-claude", "/repo/src/claude/index.ts", "config", "add", "work", "--token", token])
+        let content = VaultWindowContent.build(params, caller: who, session: VaultSessionInfo())
+        let fact = try XCTUnwrap(content.details.first { $0.label == "Command" })
+        XCTAssertFalse(content.purpose.contains(token))
+        XCTAssertFalse((fact.help ?? "").contains(token))
+        vaultAudit("prompted", params: params, caller: who, session: VaultSessionInfo(), shown: content)
+        for path in [GateAudit.path, (VaultGrants.directory as NSString).appendingPathComponent("audit.jsonl")] {
+            let text = try String(contentsOfFile: path, encoding: .utf8)
+            XCTAssertFalse(text.contains(token), path)
+            XCTAssertTrue(text.contains("[REDACTED]"), path)
+            XCTAssertTrue(text.contains("config add work"), path)
+        }
+    }
+
+    func testGrantTransactionsWaitForTheSharedPidLockAndReloadAfterRevocation() async throws {
+        let directory = (NSTemporaryDirectory() as NSString).appendingPathComponent("vault-store-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: directory) }
+        let path = (directory as NSString).appendingPathComponent("vault-grants.json")
+        let lock = path + ".lock"
+        let old = VaultGrant(key: "old", tool: "old", executable: "/bin/native-old", script: nil,
+                             grantedAt: 1_000, until: nil, method: "touch-id")
+        let next = VaultGrant(key: "next", tool: "next", executable: "/bin/native-next", script: nil,
+                              grantedAt: 1_000, until: nil, method: "touch-id")
+        XCTAssertTrue(VaultGrants.save(VaultGrantsFile(version: 1, grants: [old]), to: path))
+        try Data("\(getpid())\n".utf8).write(to: URL(fileURLWithPath: lock))
+        let blocked = await VaultGrants.store(next, now: 1_500, to: path, timeout: 0)
+        XCTAssertFalse(blocked, "a TypeScript lock must prevent the native write")
+        XCTAssertEqual(VaultGrants.load(from: path).grants, [old])
+        // The TypeScript revoker publishes its empty snapshot before releasing this lock.
+        XCTAssertTrue(VaultGrants.save(VaultGrantsFile(version: 1, grants: []), to: path))
+        try FileManager.default.removeItem(atPath: lock)
+        let arbiter = lock + ".claim-arbitration.lock"
+        try FileManager.default.createDirectory(atPath: arbiter, withIntermediateDirectories: false)
+        let arbitrating = await VaultGrants.store(next, now: 1_500, to: path, timeout: 0)
+        XCTAssertFalse(arbitrating, "the TypeScript claim/stale-takeover arbiter must also be respected")
+        try FileManager.default.removeItem(atPath: arbiter)
+        let stored = await VaultGrants.store(next, now: 1_500, to: path)
+        XCTAssertTrue(stored)
+        XCTAssertEqual(VaultGrants.load(from: path).grants, [next], "revoked grants are never resurrected")
+        async let first = VaultGrants.store(old, now: 1_500, to: path)
+        async let second = VaultGrants.store(next, now: 1_500, to: path)
+        let results = await [first, second]
+        XCTAssertEqual(results, [true, true])
+        XCTAssertEqual(Set(VaultGrants.load(from: path).grants.map(\.key)), ["old", "next"])
+    }
+
+    func testLoaderEnvironmentAndUnreadableArgumentsCannotReuseNativeGrants() {
+        let executable = "/usr/bin/native-client"
+        let grant = VaultGrant(key: "native", tool: "native", executable: executable, script: nil,
+                               grantedAt: 1_000, until: nil, method: "touch-id")
+        let grants = VaultGrantsFile(version: 1, grants: [grant])
+        for name in ["LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"] {
+            let who = caller(executable, arguments: [executable], environment: ["\(name)=/fixture/library"])
+            XCTAssertTrue(who.injected.contains(name), name)
+            XCTAssertEqual(who.onceOnlyReason, "extra code may be loaded", name)
+            XCTAssertNil(who.onceOnlyReason == nil
+                ? VaultGrants.live(executable: executable, script: nil, now: 1_500, in: grants) : nil)
+        }
+        var unreadable = caller(executable, arguments: [executable])
+        unreadable.args = nil
+        XCTAssertEqual(unreadable.onceOnlyReason, "the caller's arguments and environment could not be read")
+        let normal = caller(executable, arguments: [executable], environment: ["PATH=/usr/bin", "NODE_OPTIONS=--conditions=fixture"])
+        XCTAssertNil(normal.onceOnlyReason, "native code does not execute Node options")
+        XCTAssertNotNil(VaultGrants.live(executable: executable, script: nil, now: 1_500, in: grants))
+    }
+
+    func testInterpreterEnvironmentChecksMatchTheAccountGateConservativePolicy() {
+        let names = ["NODE_OPTIONS", "NODE_PATH", "BUN_OPTIONS", "BUN_INSPECT_PRELOAD", "DENO_AUTH_TOKENS",
+                     "PYTHONSTARTUP", "PYTHONPATH", "PYTHONHOME", "RUBYOPT", "RUBYLIB", "PERL5OPT", "PERL5LIB", "PERLLIB",
+                     "BASH_ENV", "ZDOTDIR", "ENV"]
+        for name in names {
+            let who = caller(arguments: ["gt-claude", "/repo/src/claude/index.ts"], environment: ["\(name)=fixture"])
+            XCTAssertTrue(who.injected.contains(name), name)
+            XCTAssertEqual(who.onceOnlyReason, "extra code may be loaded", name)
+        }
+        XCTAssertFalse(caller(arguments: ["gt-claude", "/repo/src/claude/index.ts"], environment: ["NODE_OPTIONS="]).injected.isEmpty)
+        XCTAssertNil(caller(arguments: ["gt-claude", "/repo/src/claude/index.ts"], environment: ["PATH=/usr/bin"]).onceOnlyReason)
     }
 
     func testLoadedExtraCodeAllowsOnlyOnce() {

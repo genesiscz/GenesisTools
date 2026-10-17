@@ -45,6 +45,41 @@ describe("the checkout's own preloads", () => {
         );
     });
 
+    test("separated own preloads before run preserve the script and verified identity", () => {
+        const root = "/repo";
+        const script = `${root}/src/claude/index.ts`;
+        const before = `--preload ${root}/${OWN_PRELOADS[0]}`;
+        const after = `--preload ${root}/${OWN_PRELOADS[1]}`;
+        for (const executable of ["/opt/bun/bin/bun", "/fixture/bin/gt-claude"]) {
+            const command = [executable, before, "run", after, script, "info"].join(" ");
+            expect(scriptOf(command, "/work", executable)).toBe(script);
+            expect(codeInjectionSignals(command, null, executable)).toEqual([]);
+            const lookup = lookupOf(
+                [row(700, 1, command), row(800, 700, "tools ai gate request")],
+                { 700: "/work" },
+                { 700: executable },
+                { 700: command }
+            );
+            expect(describeClient({ name: "work", pid: 700 }, lookup, 800)).toMatchObject({
+                script,
+                verified: true,
+                injected: [],
+            });
+            expect(scriptOf([executable, before, "test", script].join(" "), "/work", executable)).toBeNull();
+            expect(
+                codeInjectionSignals([executable, "--preload /other.ts run", script].join(" "), null, executable)
+            ).toEqual(["flag --preload"]);
+        }
+    });
+
+    test("own preloads stay trusted under a parent folder named src", () => {
+        const root = "/work/src/GenesisTools";
+        const preloads = OWN_PRELOADS.map((relative) => `--preload ${root}/${relative}`).join(" ");
+        expect(
+            codeInjectionSignals(`/usr/bin/bun ${preloads} ${root}/src/claude/index.ts`, null, "/usr/bin/bun")
+        ).toEqual([]);
+    });
+
     test("a tool the launcher starts with all its preloads shows no loaded-code signal", () => {
         const root = "/work/GenesisTools";
         const preloads = OWN_PRELOADS.map((relative) => `--preload ${root}/${relative}`).join(" ");

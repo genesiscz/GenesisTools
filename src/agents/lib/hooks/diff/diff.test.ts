@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, join, relative } from "node:path";
+import { withSpawnCounter } from "@app/benchmark/lib/spawn-counter";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { stripAnsi } from "@genesiscz/utils/string";
@@ -63,10 +64,11 @@ import {
     type DiffDecision,
     flushDeferred,
     noteFileToolInput,
+    renamesIn,
     runDiffPost,
     silentReason,
 } from "./run";
-import { languageOf, syntaxRows } from "./syntax";
+import { createSyntaxEngineLoader, languageOf, syntaxRows } from "./syntax";
 import { resolvePalette } from "./theme";
 import { writerChanges } from "./writers";
 
@@ -3813,6 +3815,33 @@ describe("syntax colour from highlight.js", () => {
         throw new Error("claude-dark has a palette");
     }
 
+    it("caches a missing optional language and still loads a different language", () => {
+        const loads: string[] = [];
+        const registered = new Set<string>();
+        const painter = {
+            getLanguage: (language: string) => registered.has(language),
+            registerLanguage: (language: string) => {
+                registered.add(language);
+            },
+            highlight: () => ({ value: "painted" }),
+        };
+        const load = createSyntaxEngineLoader((name) => {
+            loads.push(name);
+            if (name.endsWith("/missing")) {
+                throw new Error("fixture missing optional language");
+            }
+            return painter;
+        });
+        expect(load("missing")).toBeNull();
+        expect(load("missing")).toBeNull();
+        expect(load("typescript")).toBe(painter);
+        expect(loads).toEqual([
+            "highlight.js/lib/core",
+            "highlight.js/lib/languages/missing",
+            "highlight.js/lib/languages/typescript",
+        ]);
+    });
+
     it("colours a TypeScript row in Claude Code's own palette", () => {
         const rows = syntaxRows({
             text: 'const label = "a"; // note\nreturn 42;',
@@ -4457,6 +4486,96 @@ describe("the misfires of 2026-10-14", () => {
         expect(build).not.toContain("moved unchanged");
         expect(build).not.toContain("owned-src.ts → owned-dst.ts");
         git(["commit", "-qm", "owned done"]);
+    });
+
+    it("pairs one real destination only once when files and status use symlink aliases", () => {
+        writeFileSync(join(repo, "alias-a.ts"), "identical alias fixture\n");
+        writeFileSync(join(repo, "alias-b.ts"), "identical alias fixture\n");
+        git(["add", "alias-a.ts", "alias-b.ts"]);
+        git(["commit", "-qm", "alias sources"]);
+        const alias = join(repo, "checkout-alias");
+        symlinkSync(repo, alias, "dir");
+        try {
+            renameSync(join(repo, "alias-a.ts"), join(repo, "alias-new.ts"));
+            rmSync(join(repo, "alias-b.ts"));
+            const pairs = renamesIn({
+                root: repo,
+                base: "HEAD",
+                files: [
+                    { path: join(repo, "alias-a.ts"), root: repo, deleted: true, untracked: false },
+                    { path: join(repo, "alias-b.ts"), root: repo, deleted: true, untracked: false },
+                    { path: join(alias, "alias-new.ts"), root: repo, deleted: false, untracked: true },
+                ],
+                entries: statusEntries(repo),
+            });
+            expect(pairs).toHaveLength(1);
+            expect(pairs[0]?.to).toBe(join(realpathSync(repo), "alias-new.ts"));
+        } finally {
+            rmSync(alias);
+            git(["add", "alias-a.ts", "alias-b.ts", "alias-new.ts"]);
+            git(["commit", "-qm", "alias move done"]);
+        }
+    });
+
+    it("bounds rename directory scans before expansion and shares the remaining candidate budget", async () => {
+        const dirs = ["budget-a", "budget-b", "budget-c"];
+        for (const dir of dirs) {
+            mkdirSync(join(repo, dir));
+            writeFileSync(join(repo, dir, "one.ts"), "one\n");
+            writeFileSync(join(repo, dir, "two.ts"), "two\n");
+        }
+        try {
+            const entries = statusEntries(repo).filter((entry) => entry.path.startsWith("budget-"));
+            expect(entries).toHaveLength(3);
+            const gone = (count: number) =>
+                Array.from({ length: count }, (_, index) => ({
+                    path: join(repo, `deleted-${index}.ts`),
+                    root: repo,
+                    deleted: true,
+                    untracked: false,
+                }));
+            const known = ["one.ts", "two.ts"].map((name) => ({
+                path: join(repo, "budget-a", name),
+                root: repo,
+                deleted: false,
+                untracked: true,
+            }));
+            const overKnown = await withSpawnCounter(async () =>
+                renamesIn({
+                    root: repo,
+                    base: "HEAD",
+                    files: [...gone(3_999), ...known],
+                    entries,
+                })
+            );
+            const overDirectories = await withSpawnCounter(async () =>
+                renamesIn({
+                    root: repo,
+                    base: "HEAD",
+                    files: gone(3_997),
+                    entries,
+                })
+            );
+            const disappeared = await withSpawnCounter(async () =>
+                renamesIn({
+                    root: repo,
+                    base: "HEAD",
+                    files: gone(3_997),
+                    entries: Array.from({ length: 50 }, (_, index) => ({
+                        ...entries[0],
+                        path: `budget-missing-${index}/`,
+                    })),
+                })
+            );
+            expect(overKnown.result).toEqual([]);
+            expect(overDirectories.result).toEqual([]);
+            expect(disappeared.result).toEqual([]);
+            expect([overKnown.count, overDirectories.count, disappeared.count]).toEqual([0, 2, 3]);
+        } finally {
+            for (const dir of dirs) {
+                rmSync(join(repo, dir), { recursive: true, force: true });
+            }
+        }
     });
 
     it("pairs a whole folder moved with one mv, past the expansion cap and the old scan limit", () => {

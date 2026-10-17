@@ -242,7 +242,7 @@ const OVERFLOW_PATCHES_PER_FILE = 3;
  * fixtures folder, 18 blocks); now one line names them. Two git spawns, only when a root has both
  * a deletion and another change.
  */
-function renamesIn({
+export function renamesIn({
     root,
     base,
     files,
@@ -267,20 +267,53 @@ function renamesIn({
     // passed only when the write and the move fell in one second). A folder moved whole is one
     // collapsed `? new-folder/` entry; it is expanded here, past `untrackedExpansionCap`, because the
     // cap bounds what is shown and a rename costs no row.
-    const collapsed = entries
-        .filter((entry) => entry.kind === "untracked" && entry.path.endsWith("/"))
-        .flatMap((entry) =>
-            (untrackedFilesIn(root, entry.path, RENAME_SCAN_LIMIT) ?? []).map((name) => join(root, name))
-        );
-    const fresh = [
-        ...new Set([
-            ...files.filter((file) => !file.deleted).map((file) => file.path),
-            ...entries
-                .filter((entry) => (entry.kind === "untracked" && !entry.path.endsWith("/")) || entry.index === "A")
-                .map((entry) => join(root, entry.path)),
-            ...collapsed,
-        ]),
-    ].filter((path) => {
+    const freshPaths = new Set<string>();
+    let remaining = RENAME_SCAN_LIMIT - gone.length;
+    if (remaining <= 0) {
+        return [];
+    }
+
+    const addKnown = (path: string): boolean => {
+        const normalized = canonical(path);
+        if (!freshPaths.has(normalized)) {
+            freshPaths.add(normalized);
+            remaining--;
+        }
+        return remaining >= 0;
+    };
+    for (const file of files) {
+        if (!file.deleted && !addKnown(file.path)) {
+            return [];
+        }
+    }
+    for (const entry of entries) {
+        if (
+            ((entry.kind === "untracked" && !entry.path.endsWith("/")) || entry.index === "A") &&
+            !addKnown(join(root, entry.path))
+        ) {
+            return [];
+        }
+    }
+
+    // Discovery shares one work budget with the known candidates. A stale empty directory costs
+    // one slot too, so many vanished directories cannot cause unbounded synchronous git spawns.
+    for (const entry of entries) {
+        if (entry.kind !== "untracked" || !entry.path.endsWith("/")) {
+            continue;
+        }
+        if (remaining === 0) {
+            return [];
+        }
+        const names = untrackedFilesIn(root, entry.path, remaining + 1);
+        if (!names || names.length > remaining) {
+            return [];
+        }
+        remaining -= Math.max(1, names.length);
+        for (const name of names) {
+            freshPaths.add(canonical(join(root, name)));
+        }
+    }
+    const fresh = [...freshPaths].filter((path) => {
         try {
             return statSync(path).size <= RENAME_MAX_BYTES;
         } catch {
@@ -288,7 +321,7 @@ function renamesIn({
         }
     });
 
-    if (fresh.length === 0 || fresh.length + gone.length > RENAME_SCAN_LIMIT) {
+    if (fresh.length === 0) {
         return [];
     }
 

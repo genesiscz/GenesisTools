@@ -24,7 +24,7 @@ function refusal(statusCode: number, message: string): APICallError {
     });
 }
 
-function target(doStream: () => Promise<never>): CallTarget {
+function target(doStream: MockLanguageModelV4["doStream"]): CallTarget {
     return {
         model: new MockLanguageModelV4({ doStream }) as unknown as LanguageModel,
         providerType: "anthropic",
@@ -67,6 +67,34 @@ describe("coreChat streaming errors", () => {
         } finally {
             printed.mockRestore();
         }
+    });
+
+    test("rejects the provider error after a stream has already produced text", async () => {
+        const error = refusal(403, "fixture stream refused after starting");
+        const chunks: string[] = [];
+        const outcome = await coreChat({
+            target: target(async () => ({
+                stream: new ReadableStream({
+                    start(controller) {
+                        controller.enqueue({ type: "stream-start", warnings: [] });
+                        controller.enqueue({ type: "text-start", id: "part" });
+                        controller.enqueue({ type: "text-delta", id: "part", delta: "before error" });
+                        controller.enqueue({ type: "error", error });
+                        controller.close();
+                    },
+                }),
+            })),
+            prompt: "hi",
+            stream: true,
+            onChunk: (chunk) => {
+                chunks.push(chunk);
+            },
+        }).then(
+            () => undefined,
+            (caught: unknown) => caught
+        );
+        expect(chunks.join("")).toBe("before error");
+        expect(outcome).toBe(error);
     });
 
     test("maxRetries: 0 asks a retryable refusal once", async () => {

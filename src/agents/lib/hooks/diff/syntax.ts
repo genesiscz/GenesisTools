@@ -128,23 +128,34 @@ interface Engine {
     getLanguage(name: string): unknown;
 }
 
-let engine: Engine | undefined;
-
-function engineFor(language: string): Engine {
-    // lazy: saves 7.4 ms of cold import (highlight.js core plus one language) on every hook call that
-    // paints nothing, and a language is loaded only when a diff holds it (measured 2026-10-15)
-    engine ??= require("highlight.js/lib/core");
-
-    if (!engine) {
-        throw new Error("highlight.js did not load");
-    }
-
-    if (!engine.getLanguage(language)) {
-        engine.registerLanguage(language, require(`highlight.js/lib/languages/${language}`));
-    }
-
-    return engine;
+/** Missing optional modules fall back once, without repeated loads or diagnostics. */
+export function createSyntaxEngineLoader(
+    load: (name: string) => unknown = require
+): (language: string) => Engine | null {
+    let engine: Engine | undefined;
+    const failed = new Set<string>();
+    return (language) => {
+        if (failed.has(language)) {
+            return null;
+        }
+        try {
+            engine ??= load("highlight.js/lib/core") as Engine;
+            if (!engine) {
+                throw new Error("highlight.js did not load");
+            }
+            if (!engine.getLanguage(language)) {
+                engine.registerLanguage(language, load(`highlight.js/lib/languages/${language}`));
+            }
+            return engine;
+        } catch (error) {
+            failed.add(language);
+            hookDiag("highlight.js language could not load, so bat does", { err: error, language });
+            return null;
+        }
+    };
 }
+
+const engineFor = createSyntaxEngineLoader();
 
 /** The xterm 256-colour index nearest to a colour: the grey ramp for greys, else the 6x6x6 cube. */
 function nearest256([red, green, blue]: Rgb): number {
@@ -221,7 +232,11 @@ export function syntaxRows({
     }
 
     try {
-        const html = engineFor(language).highlight(text, { language, ignoreIllegals: true }).value;
+        const painter = engineFor(language);
+        if (!painter) {
+            return null;
+        }
+        const html = painter.highlight(text, { language, ignoreIllegals: true }).value;
         const stack: Array<{ scope: string; colour: Rgb | undefined }> = [];
         const rows: string[] = [];
         let row = "";

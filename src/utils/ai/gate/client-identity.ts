@@ -236,8 +236,9 @@ function scriptArgs(command: string, executable: string): string[] | null {
         return args;
     }
 
-    const index = args.findIndex((arg) => !arg.startsWith("-"));
-    const word = index === -1 ? undefined : args[index];
+    const { rest } = splitLeadingFlags(args, executable);
+    const index = args.length - rest.length;
+    const word = rest[0];
 
     if (word === "run") {
         return [...args.slice(0, index), ...args.slice(index + 1)];
@@ -285,7 +286,7 @@ export function codeInjectionSignals(
     const { flags, rest } = splitLeadingFlags(scriptArgs(command, executable) ?? [], executable);
     const script = rest[0];
     const checkout =
-        script && isAbsolute(script) && script.includes("/src/") ? script.slice(0, script.indexOf("/src/")) : null;
+        script && isAbsolute(script) && script.includes("/src/") ? script.slice(0, script.lastIndexOf("/src/")) : null;
     const own = new Set(checkout ? OWN_PRELOADS.map((relative) => join(checkout, relative)) : []);
 
     for (const { flag, value } of flags) {

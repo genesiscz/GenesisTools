@@ -49,6 +49,7 @@ struct VaultCaller {
     var args: ProcArgs?
     var cwd: String?
     var ancestors: [(pid: pid_t, command: String)]
+    var identity: VaultRecipient.Identity? = nil
 
     private static let scriptExtensions = [".ts", ".tsx", ".js", ".mjs", ".cjs"]
 
@@ -65,14 +66,24 @@ struct VaultCaller {
         "src/utils/bun/preload-orphan-watchdog.ts",
     ]
 
+    private var supportsRunSubcommand: Bool {
+        let name = executable.map { ($0 as NSString).lastPathComponent.lowercased() } ?? ""
+        return ["bun", "deno"].contains(name) || name.hasPrefix("gt-")
+    }
+
     /// The interpreter's flags before the script, each with its value (`--preload=x` or `--preload x`).
     private var leadingFlags: [(flag: String, value: String?)] {
         guard let arguments = args?.arguments, arguments.count > 1 else { return [] }
         var flags: [(flag: String, value: String?)] = []
         var index = 1
+        var skippedRun = false
         while index < arguments.count {
             let argument = arguments[index]
-            if argument == "run" { index += 1; continue }
+            if supportsRunSubcommand, !skippedRun, argument == "run" {
+                skippedRun = true
+                index += 1
+                continue
+            }
             guard argument.hasPrefix("-") else { break }
             if let equals = argument.firstIndex(of: "=") {
                 flags.append((String(argument[..<equals]), String(argument[argument.index(after: equals)...])))
@@ -93,9 +104,14 @@ struct VaultCaller {
     private var scriptIndex: Int? {
         guard let arguments = args?.arguments, arguments.count > 1 else { return nil }
         var index = 1
+        var skippedRun = false
         while index < arguments.count {
             let argument = arguments[index]
-            if argument == "run" { index += 1; continue }
+            if supportsRunSubcommand, !skippedRun, argument == "run" {
+                skippedRun = true
+                index += 1
+                continue
+            }
             guard argument.hasPrefix("-") else { break }
             index += !argument.contains("=") && Self.valueFlags.contains(argument) ? 2 : 1
         }
@@ -115,16 +131,21 @@ struct VaultCaller {
         return ((cwd as NSString).appendingPathComponent(raw) as NSString).standardizingPath
     }
 
-    /// bun, node, deno, or a `gt-<tool>` link of bun: the program is the script, not the executable.
-    var isInterpreter: Bool {
-        let name = executable.map { ($0 as NSString).lastPathComponent } ?? ""
-        return ["bun", "node", "deno"].contains(name) || name.hasPrefix("gt-")
+    static func isInterpreter(_ executable: String) -> Bool {
+        let name = (executable as NSString).lastPathComponent.lowercased()
+        return name.hasPrefix("gt-") || name.range(of:
+            #"^(node|nodejs|bun|deno|python[0-9.]*|pypy[0-9.]*|ruby[0-9.]*|perl[0-9.]*|php[0-9.]*|lua[0-9.]*|luajit|tclsh[0-9.]*|wish|osascript|java|pwsh|sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh)$"#,
+            options: .regularExpression) != nil
     }
+
+    /// An interpreter's executable alone never identifies the program it runs.
+    var isInterpreter: Bool { executable.map(Self.isInterpreter) ?? false }
 
     /// The tool as GenesisTools names it, from the kernel's view: `src/<tool>/` in the script, else the `gt-<tool>` link.
     var toolName: String? {
-        if let script, let range = script.range(of: #"/src/([^/]+)/"#, options: .regularExpression) {
-            return String(script[range].dropFirst(5).dropLast())
+        if let script, let range = script.range(of: "/src/", options: .backwards),
+           let slash = script[range.upperBound...].firstIndex(of: "/") {
+            return String(script[range.upperBound..<slash])
         }
 
         let name = executable.map { ($0 as NSString).lastPathComponent } ?? ""
@@ -134,24 +155,23 @@ struct VaultCaller {
     /// Flags and environment that load code the script path does not name. Any of them: no remembered approval.
     var injected: [String] {
         var found: [String] = []
-        let environment = args?.environmentValue
-        if let value = environment?("DYLD_INSERT_LIBRARIES"), !value.isEmpty {
-            found.append("DYLD_INSERT_LIBRARIES")
-        }
-
-        for name in ["NODE_OPTIONS", "BUN_OPTIONS"] {
-            if let value = environment?(name), ["--require", "-r ", "--import", "--loader", "--preload"].contains(where: value.contains) {
-                found.append(name)
-            }
+        let loaderEnvironment = ["LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"]
+        let interpreterEnvironment = [
+            "NODE_OPTIONS", "NODE_PATH", "BUN_OPTIONS", "BUN_INSPECT_PRELOAD", "DENO_AUTH_TOKENS",
+            "PYTHONSTARTUP", "PYTHONPATH", "PYTHONHOME", "RUBYOPT", "RUBYLIB", "PERL5OPT", "PERL5LIB", "PERLLIB",
+            "BASH_ENV", "ZDOTDIR", "ENV",
+        ]
+        for name in loaderEnvironment + (isInterpreter ? interpreterEnvironment : []) {
+            if args?.environmentValue(name) != nil { found.append(name) }
         }
 
         // A checkout's own preloads are part of the program; any other preload, or any other loading flag, is not.
-        let checkout = script.flatMap { path in path.range(of: "/src/").map { String(path[..<$0.lowerBound]) } }
+        let checkout = script.flatMap { path in path.range(of: "/src/", options: .backwards).map { String(path[..<$0.lowerBound]) } }
         let own = Set(Self.ownPreloads.compactMap { relative in checkout.map { root in "\(root)/\(relative)" } })
         let foreign = leadingFlags.filter { flag in
             !(flag.flag == "--preload" && flag.value.map { value in own.contains((value as NSString).standardizingPath) } == true)
         }
-        if foreign.contains(where: { ["--preload", "-r", "--require", "--import", "--loader"].contains($0.flag) }) {
+        if !foreign.isEmpty {
             let shown = foreign.map { flag in flag.value.map { value in "\(flag.flag) \(value)" } ?? flag.flag }
             found.append("interpreter flags \(shown.joined(separator: " "))")
         }
@@ -161,6 +181,7 @@ struct VaultCaller {
 
     /// Why this request can only be allowed once, or nil when an allow may be remembered.
     var onceOnlyReason: String? {
+        if args == nil { return "the caller's arguments and environment could not be read" }
         if !injected.isEmpty { return "extra code may be loaded" }
         if isInterpreter, script == nil { return "the script it runs is not known" }
         return nil
@@ -245,6 +266,7 @@ enum VaultProcess {
     }
 
     static func caller(_ pid: pid_t) -> VaultCaller {
+        let identity = VaultRecipient.identity(pid)
         var ancestors: [(pid: pid_t, command: String)] = []
         var current = parent(pid)
         while let ancestor = current, ancestor > 1, ancestors.count < 8 {
@@ -252,7 +274,10 @@ enum VaultProcess {
             current = parent(ancestor)
         }
 
-        return VaultCaller(pid: pid, executable: path(pid), args: procArgs(pid), cwd: cwd(pid), ancestors: ancestors)
+        var caller = VaultCaller(pid: pid, executable: identity?.executable, args: procArgs(pid), cwd: cwd(pid), ancestors: ancestors)
+        // Bracket the caller metadata reads so a changed process cannot inherit this approval snapshot.
+        if identity == VaultRecipient.identity(pid) { caller.identity = identity }
+        return caller
     }
 }
 
@@ -345,8 +370,7 @@ struct VaultGrant: Codable, Equatable {
     /// grants for `bun run <script>` callers. They match nothing and go on the next write.
     var isTooBroad: Bool {
         guard script == nil else { return false }
-        let name = (executable as NSString).lastPathComponent
-        return ["bun", "node", "deno"].contains(name) || name.hasPrefix("gt-")
+        return VaultCaller.isInterpreter(executable)
     }
 }
 
@@ -411,14 +435,43 @@ enum VaultGrants {
         return next
     }
 
-    static func save(_ file: VaultGrantsFile, to path: String = path) {
+    /// The TypeScript revoker uses O_EXCL at this same path and understands a bare PID record. Its proper-lockfile
+    /// claim arbiter is a directory with the suffix below; hold it while creating the PID record and updating.
+    /// Never steal here: TypeScript owns stale recovery; an unavailable lock makes this allow once-only.
+    static func store(_ grant: VaultGrant, now: Int64, to path: String = path, timeout: TimeInterval = 10) async -> Bool {
+        let lockPath = path + ".lock"
+        do {
+            try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
+                                                    withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        } catch { return false }
+        let deadline = Date().addingTimeInterval(timeout)
+        let arbiter = lockPath + ".claim-arbitration.lock"
+        while true {
+            if mkdir(arbiter, 0o700) == 0 {
+                defer { rmdir(arbiter) }
+                let fd = open(lockPath, O_WRONLY | O_CREAT | O_EXCL, 0o600)
+                if fd >= 0 {
+                    defer { close(fd); unlink(lockPath) }
+                    let pid = Data("\(getpid())\n".utf8)
+                    guard pid.withUnsafeBytes({ Darwin.write(fd, $0.baseAddress, $0.count) }) == pid.count else { return false }
+                    return save(remember(grant, now: now, in: load(from: path)), to: path)
+                }
+                guard errno == EEXIST else { return false }
+            } else if errno != EEXIST { return false }
+            guard Date() < deadline else { return false }
+            do { try await Task.sleep(nanoseconds: 100_000_000) } catch { return false }
+        }
+    }
+
+    @discardableResult
+    static func save(_ file: VaultGrantsFile, to path: String = path) -> Bool {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(file) else { return }
+        guard let data = try? encoder.encode(file) else { return false }
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         let temporary = path + ".tmp-\(getpid())"
-        guard FileManager.default.createFile(atPath: temporary, contents: data, attributes: [.posixPermissions: 0o600]) else { return }
-        _ = rename(temporary, path)
+        guard FileManager.default.createFile(atPath: temporary, contents: data, attributes: [.posixPermissions: 0o600]) else { return false }
+        return rename(temporary, path) == 0
     }
 }
 
@@ -469,7 +522,7 @@ struct VaultWindowContent {
     /// A script inside a project reads from the project's folder: `GenesisTools/src/ai/commands/usage/poll-daemon.ts`,
     /// not a home path cut in the middle (Martin's screenshot, 2026-10-15 00:46).
     static func programPath(_ path: String, home: String = NSHomeDirectory()) -> String {
-        guard let range = path.range(of: "/src/") else { return shortPath(path, home: home) }
+        guard let range = path.range(of: "/src/", options: .backwards) else { return shortPath(path, home: home) }
         let project = (String(path[..<range.lowerBound]) as NSString).lastPathComponent
         return project.isEmpty ? shortPath(path, home: home) : project + path[range.lowerBound...]
     }
@@ -513,7 +566,7 @@ struct VaultWindowContent {
         var details = [ApprovalFact("Process", "pid \(caller.pid)"),
                        ApprovalFact("Executable", caller.executable ?? "unknown", monospaced: true)]
         if let arguments = caller.args?.arguments, !arguments.isEmpty {
-            let command = arguments.joined(separator: " ")
+            let command = GateCredentialRedactor.arguments(arguments).joined(separator: " ")
             details.append(ApprovalFact("Command", command.count > 400 ? String(command.prefix(399)) + "…" : command,
                                         help: command, monospaced: true))
         }
@@ -533,7 +586,7 @@ struct VaultWindowContent {
         let injected = caller.injected
         return VaultWindowContent(
             title: "“\(tool)” wants the vault key",
-            purpose: sentence(params.purpose),
+            purpose: sentence(GateCredentialRedactor.text(params.purpose)),
             facts: facts,
             details: details,
             warning: injected.isEmpty ? nil : "Extra code may be loaded (\(injected.joined(separator: ", "))). It can only be allowed once.",
@@ -628,7 +681,7 @@ enum VaultKeychain {
 /// Every request's line in `audit.jsonl` carries what decides it (the command, its parents, the folder, any loaded-code
 /// signal, why it is once-only) and, for `prompted`, everything the window showed, warnings included: an approval can
 /// be audited later from the file alone (Martin, 2026-10-16).
-private func vaultAudit(_ event: String, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo, detail: String = "",
+func vaultAudit(_ event: String, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo, detail: String = "",
                         shown: VaultWindowContent? = nil) {
     var parts = ["purpose: \(params.purpose)"]
     if let secret = params.secret { parts.append("secret: \(secret)") }
@@ -640,7 +693,7 @@ private func vaultAudit(_ event: String, params: VaultUnlockParams, caller: Vaul
     client["executable"] = caller.executable
     client["script"] = caller.script
     client["cwd"] = caller.cwd
-    client["argv"] = caller.args?.arguments
+    client["argv"] = caller.args.map { GateCredentialRedactor.arguments($0.arguments) }
     client["parents"] = caller.ancestors.map { ["pid": Int($0.pid), "command": $0.command] }
     client["injected"] = caller.injected
 
@@ -661,24 +714,22 @@ private func vaultAudit(_ event: String, params: VaultUnlockParams, caller: Vaul
             "onceOnly": shown.onceOnlyReason as Any,
         ]
     }
+    entry = entry.mapValues(GateCredentialRedactor.fields)
     GateAudit.write(gate: "vault", event: event, entry)
     guard let data = try? JSONSerialization.data(withJSONObject: entry, options: [.sortedKeys]) else { return }
     let path = (VaultGrants.directory as NSString).appendingPathComponent("audit.jsonl")
-    try? FileManager.default.createDirectory(atPath: VaultGrants.directory, withIntermediateDirectories: true)
-    if !FileManager.default.fileExists(atPath: path) {
-        FileManager.default.createFile(atPath: path, contents: nil, attributes: [.posixPermissions: 0o600])
-    }
-
-    guard let handle = FileHandle(forWritingAtPath: path) else { return }
-    defer { try? handle.close() }
-    _ = try? handle.seekToEnd()
-    try? handle.write(contentsOf: data + Data("\n".utf8))
+    GateAudit.appendLine(data, to: path)
 }
 
-private func emitVaultKey(remembered: Bool) -> Never {
+private func emitVaultKey(remembered: Bool, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo) -> Never {
     switch VaultKeychain.key() {
     case let .key(key, fromCopy):
         logClick("vault.unlock key from=\(fromCopy ? "app copy" : "keychain item")")
+        // Keychain access can block: inspect the recipient after it finishes, immediately before serialization.
+        if let reason = VaultRecipient.releaseRejection(caller: caller.identity) {
+            vaultAudit("denied", params: params, caller: caller, session: session, detail: reason)
+            vaultDeny(reason)
+        }
         emitResult(["decision": "allow", "key": key, "remembered": remembered])
     case .missing:
         emitError(code: "no_key", message: "the keychain holds no genesis-tools master key", exitCode: 66)
@@ -709,7 +760,7 @@ func unlockVault(_ params: VaultUnlockParams) {
 
     if rememberable, VaultGrants.live(executable: executable, script: caller.script, now: now, in: VaultGrants.load()) != nil {
         vaultAudit("remembered", params: params, caller: caller, session: session)
-        emitVaultKey(remembered: true)
+        emitVaultKey(remembered: true, params: params, caller: caller, session: session)
     }
 
     guard VaultWindowLock.acquire(VaultWindowLock.path(for: "vault|\(VaultGrants.runtime(of: executable))|\(caller.script ?? "")")) != nil else {
@@ -756,18 +807,22 @@ func unlockVault(_ params: VaultUnlockParams) {
                         vaultDeny(failure)
                     }
 
-                    let forever = rememberable && choice != nil && choice?.seconds == nil
-                    if rememberable, remember != 0 || forever {
-                        let until = forever ? nil : Optional(now + Int64(remember) * 1_000)
-                        let grant = VaultGrant(key: key, tool: tool, executable: executable, script: caller.script,
-                                               grantedAt: now, until: until, method: method)
-                        VaultGrants.save(VaultGrants.remember(grant, now: now, in: VaultGrants.load()))
-                    }
+                    Task { @MainActor in
+                        let forever = rememberable && choice != nil && choice?.seconds == nil
+                        var stored = false
+                        if rememberable, remember != 0 || forever {
+                            let until = forever ? nil : Optional(now + Int64(remember) * 1_000)
+                            let grant = VaultGrant(key: key, tool: tool, executable: executable, script: caller.script,
+                                                   grantedAt: now, until: until, method: method)
+                            stored = await VaultGrants.store(grant, now: now)
+                            if !stored { logClick("vault.unlock could not remember approval: grant lock or write failed") }
+                        }
 
-                    vaultAudit("allowed", params: params, caller: caller, session: session,
-                               detail: "method: \(method); remembered: \(forever ? "always" : remember == 0 ? "once" : "\(remember / 3_600) h")")
-                    logClick("vault.unlock decision=allow tool=\(tool) method=\(method)")
-                    emitVaultKey(remembered: false)
+                        vaultAudit("allowed", params: params, caller: caller, session: session,
+                                   detail: "method: \(method); remembered: \(!stored ? "once" : forever ? "always" : "\(remember / 3_600) h")")
+                        logClick("vault.unlock decision=allow tool=\(tool) method=\(method)")
+                        emitVaultKey(remembered: false, params: params, caller: caller, session: session)
+                    }
                 }
             }
         }
