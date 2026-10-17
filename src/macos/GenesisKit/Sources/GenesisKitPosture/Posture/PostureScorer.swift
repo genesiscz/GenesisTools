@@ -234,15 +234,17 @@ public struct PostureScorer: Equatable, Sendable {
                              enterThreshold: enter, exitThreshold: 0.85 * tolerance + 0.7 * zone * span, severity: 1)
     }
 
-    /// How far `measure` drifted in `metrics` from `baseline`, as scoring judges it; nil when either lacks it.
+    /// How far `measure` drifted in `metrics` from `baseline`, as scoring judges it; nil when either lacks it
+    /// or a face-aware baseline's Forward head ratio has no current face evidence to corroborate it.
     /// Calibration measures tolerance and span with this too, so a calibrated slouch scores as a slouch.
     static func drift(_ measure: PostureMeasure, in metrics: PostureMetrics, baseline: PostureMetrics) -> Double? {
         guard let current = metrics[measure], let base = baseline[measure],
               let deviation = measure.deviation(current: current, baseline: base, baselineFaceWidth: baseline[.faceWidth])
         else { return nil }
         guard measure.kind == .forwardHead, measure != .faceWidth,
-              let face = metrics[.faceWidth], let baseFace = baseline[.faceWidth], baseFace > 0
+              let baseFace = baseline[.faceWidth], baseFace > 0
         else { return deviation }
+        guard let face = metrics[.faceWidth] else { return nil }
         // A head that comes forward comes closer to the camera, so the face itself grows. A ratio to the shoulders
         // that grows while the face does not comes from the shoulder reading: 3D shoulders estimated below a low
         // camera's frame jumped 0.44 → 0.77 → 0.58 image heights between runs while the face stayed within 5%
@@ -251,6 +253,7 @@ public struct PostureScorer: Equatable, Sendable {
         return min(deviation, face / baseFace - 1)
     }
 
+    /// Scores the first comparable measure of each enabled fault, using the same drift as calibration.
     public func score(_ metrics: PostureMetrics, against baseline: PostureBaseline) -> PostureScore {
         let zone = deadZone.fraction
         var signals: [PostureSignal] = []

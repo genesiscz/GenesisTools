@@ -477,6 +477,39 @@ final class PostureMonitorTests: XCTestCase {
         XCTAssertEqual(VisionPose.selectFace([other, own], near: nil)?.confidence, 0.99)
     }
 
+    /// A wide frame changes the shoulder gate and candidate ordering: x distances must be measured in
+    /// image heights, just like y distances, before comparing them with the 2D shoulder span.
+    func testThe2DShoulderGateUsesImageHeights() {
+        let horizontal: [PoseJoint: PoseJointPoint] = [
+            .leftShoulder: PoseJointPoint(x: 0.4, y: 0.5, confidence: 0.9),
+            .rightShoulder: PoseJointPoint(x: 0.6, y: 0.5, confidence: 0.9),
+        ]
+        let vertical: [PoseJoint: PoseJointPoint] = [
+            .leftShoulder: PoseJointPoint(x: 0.5, y: 0.4, confidence: 0.9),
+            .rightShoulder: PoseJointPoint(x: 0.5, y: 0.6, confidence: 0.9),
+        ]
+        func body(x: Double, y: Double) -> VisionPose.Body3DCandidate {
+            VisionPose.Body3DCandidate(
+                confidence: 0.9,
+                left: PoseJointPoint(x: x - 0.05, y: y, confidence: 0.9),
+                right: PoseJointPoint(x: x + 0.05, y: y, confidence: 0.9),
+                neck: PoseJointPoint(x: x, y: y, confidence: 0.9))
+        }
+        let below = body(x: 0.5, y: 0.8)
+        XCTAssertNil(VisionPose.selectBody([below], matching: horizontal, aspect: 1))
+        XCTAssertEqual(VisionPose.selectBody([below], matching: horizontal, aspect: 2), below,
+                       "0.3 image heights is inside the 0.4 shoulder span, despite raw 0.3 > 0.2")
+
+        let sideways = body(x: 0.65, y: 0.5)
+        XCTAssertEqual(VisionPose.selectBody([sideways], matching: vertical, aspect: 1), sideways)
+        XCTAssertNil(VisionPose.selectBody([sideways], matching: vertical, aspect: 2),
+                     "0.3 image heights exceeds the vertical 0.2 span, despite raw 0.15 < 0.2")
+
+        let nearerInImageHeights = body(x: 0.5, y: 0.7)
+        XCTAssertEqual(VisionPose.selectBody([sideways, nearerInImageHeights], matching: horizontal, aspect: 2),
+                       nearerInImageHeights, "0.2 down is closer than 0.3 sideways")
+    }
+
     /// Debug recording 2026-10-15 14:58 (Office): the camera sits low, so the user's shoulders are below the frame,
     /// while a colleague stands behind with both shoulders visible. The colleague's joints are the recording's; the
     /// user is the nearer, larger head.
@@ -513,9 +546,11 @@ final class PostureMonitorTests: XCTestCase {
         let userBody = body(0.6, midX: 0.31, y: 0.97)
         XCTAssertEqual(VisionPose.selectBody([colleagueBody, userBody], matching: user)?.confidence, 0.6)
         XCTAssertNil(VisionPose.selectBody([colleagueBody], matching: user), "the colleague's body is not under the head")
+        XCTAssertEqual(VisionPose.selectBody([colleagueBody, userBody], matching: user, aspect: 16.0 / 9.0)?.confidence, 0.6,
+                       "a wide frame still measures the sideways reach in normalized x")
     }
 
-    /// The head's size: ear to ear, else the eyes doubled; a person seen only by the shoulders ranks by an estimate.
+    /// The head's size: ear to ear, else the eyes doubled. An ear at the confidence gate does not count.
     func testHeadSizeFromEarsElseEyes() {
         let ears: [PoseJoint: PoseJointPoint] = [
             .leftEar: PoseJointPoint(x: 0.6, y: 0.5, confidence: 0.9), .rightEar: PoseJointPoint(x: 0.4, y: 0.5, confidence: 0.9),
@@ -526,6 +561,205 @@ final class PostureMonitorTests: XCTestCase {
         XCTAssertEqual(VisionPose.headSize(ears) ?? 0, 0.2, accuracy: 1e-9)
         XCTAssertEqual(VisionPose.headSize(eyes) ?? 0, 0.2, accuracy: 1e-9)
         XCTAssertNil(VisionPose.headSize([.nose: PoseJointPoint(x: 0.5, y: 0.5, confidence: 0.9)]))
+        XCTAssertNil(VisionPose.headSize([:]))
+
+        // Ears win even when the doubled eye span is the longer segment.
+        var both = ears
+        both[.leftEye] = PoseJointPoint(x: 0.62, y: 0.5, confidence: 0.9)
+        both[.rightEye] = PoseJointPoint(x: 0.38, y: 0.5, confidence: 0.9)
+        XCTAssertEqual(VisionPose.headSize(both) ?? 0, 0.2, accuracy: 1e-9)
+
+        // An ear at the gate (0.3 is not above it) falls through to the eyes. Below the gate, same path.
+        var oneEarAtGate = eyes
+        oneEarAtGate[.leftEar] = PoseJointPoint(x: 0.7, y: 0.5, confidence: 0.3)
+        oneEarAtGate[.rightEar] = PoseJointPoint(x: 0.3, y: 0.5, confidence: 0.29)
+        XCTAssertEqual(VisionPose.headSize(oneEarAtGate) ?? 0, 0.2, accuracy: 1e-9)
+        XCTAssertNil(VisionPose.headSize([
+            .leftEar: PoseJointPoint(x: 0.6, y: 0.5, confidence: 0.3),
+            .rightEar: PoseJointPoint(x: 0.4, y: 0.5, confidence: 0.9),
+        ]))
+    }
+
+    /// On a 16:9 frame a horizontal span of 0.10 is a longer image-height than a vertical span of 0.15.
+    /// Raw hypot() ranks the rolled head first and would track the farther person.
+    func testAWideFrameDoesNotRankARolledHeadAboveAWiderUprightOne() {
+        let wide = 16.0 / 9.0
+        let upright: [PoseJoint: PoseJointPoint] = [
+            .leftEar: PoseJointPoint(x: 0.55, y: 0.50, confidence: 0.9),
+            .rightEar: PoseJointPoint(x: 0.45, y: 0.50, confidence: 0.9),
+        ]
+        let rolled: [PoseJoint: PoseJointPoint] = [
+            .leftEar: PoseJointPoint(x: 0.50, y: 0.425, confidence: 0.9),
+            .rightEar: PoseJointPoint(x: 0.50, y: 0.575, confidence: 0.9),
+        ]
+        XCTAssertGreaterThan(VisionPose.headSize(rolled) ?? 0, VisionPose.headSize(upright) ?? 0)
+        XCTAssertGreaterThan(VisionPose.headSize(upright, aspect: wide) ?? 0, VisionPose.headSize(rolled, aspect: wide) ?? 0)
+        XCTAssertEqual(VisionPose.nearestPerson([upright, rolled], aspect: wide), upright)
+        XCTAssertEqual(VisionPose.nearestPerson([rolled, upright]), rolled)
+
+        // A vertical shoulder line is a height. On a wide frame it must not beat a wider upright head.
+        let wideHead: [PoseJoint: PoseJointPoint] = [
+            .leftEar: PoseJointPoint(x: 0.60, y: 0.50, confidence: 0.9),
+            .rightEar: PoseJointPoint(x: 0.40, y: 0.50, confidence: 0.9),
+        ]
+        let shoulders: [PoseJoint: PoseJointPoint] = [
+            .leftShoulder: PoseJointPoint(x: 0.50, y: 0.25, confidence: 0.9),
+            .rightShoulder: PoseJointPoint(x: 0.50, y: 0.75, confidence: 0.9),
+        ]
+        XCTAssertEqual(VisionPose.nearestPerson([wideHead, shoulders]), shoulders)
+        XCTAssertEqual(VisionPose.nearestPerson([shoulders, wideHead], aspect: wide), wideHead)
+    }
+
+    /// The person order is a measured head, then a shoulder estimate, then the nose's confidence.
+    /// A joint at exactly 0.3 does not count, and an empty frame is nobody.
+    func testNearestPersonFallsBackFromHeadToShouldersToNoseConfidence() {
+        let head: [PoseJoint: PoseJointPoint] = [
+            .leftEar: PoseJointPoint(x: 0.60, y: 0.5, confidence: 0.9),
+            .rightEar: PoseJointPoint(x: 0.40, y: 0.5, confidence: 0.9),
+        ]
+        let shoulders: [PoseJoint: PoseJointPoint] = [
+            .leftShoulder: PoseJointPoint(x: 0.35, y: 0.8, confidence: 0.9),
+            .rightShoulder: PoseJointPoint(x: 0.65, y: 0.8, confidence: 0.9),
+        ]
+        let nose: [PoseJoint: PoseJointPoint] = [.nose: PoseJointPoint(x: 0.5, y: 0.4, confidence: 1)]
+        let quietNose: [PoseJoint: PoseJointPoint] = [.nose: PoseJointPoint(x: 0.2, y: 0.4, confidence: 0.4)]
+        XCTAssertEqual(VisionPose.nearestPerson([shoulders, head]), head, "a head of 0.20 beats a shoulder estimate of 0.135")
+        XCTAssertEqual(VisionPose.nearestPerson([nose, shoulders]), shoulders)
+        XCTAssertEqual(VisionPose.nearestPerson([quietNose, nose]), nose)
+        XCTAssertEqual(VisionPose.nearestPerson([nose, head]), head, "any measured size outranks a confident nose")
+        XCTAssertEqual(VisionPose.nearestPerson([]), [:])
+
+        let gatedShoulders: [PoseJoint: PoseJointPoint] = [
+            .leftShoulder: PoseJointPoint(x: 0.2, y: 0.8, confidence: 0.3),
+            .rightShoulder: PoseJointPoint(x: 0.8, y: 0.8, confidence: 0.3),
+            .nose: PoseJointPoint(x: 0.5, y: 0.4, confidence: 0.5),
+        ]
+        XCTAssertEqual(VisionPose.nearestPerson([gatedShoulders, nose]), nose, "confidence 0.3 is not above the gate")
+
+        let wideShoulders: [PoseJoint: PoseJointPoint] = [
+            .leftShoulder: PoseJointPoint(x: 0.1, y: 0.8, confidence: 0.9),
+            .rightShoulder: PoseJointPoint(x: 0.9, y: 0.8, confidence: 0.9),
+        ]
+        let smallHead: [PoseJoint: PoseJointPoint] = [
+            .leftEar: PoseJointPoint(x: 0.52, y: 0.5, confidence: 0.9),
+            .rightEar: PoseJointPoint(x: 0.48, y: 0.5, confidence: 0.9),
+        ]
+        XCTAssertEqual(VisionPose.nearestPerson([smallHead, wideShoulders]), wideShoulders,
+                       "a shoulder-only person can be nearer than a small head")
+    }
+
+    /// A colleague in line with the user has the smaller horizontal offset and used to supply the shoulders.
+    /// The projected head picks the user. Two bodies with no head, both under the nose, are left unmatched.
+    func testABodyInLineWithTheHeadIsNotTakenByShoulderOffset() {
+        let user: [PoseJoint: PoseJointPoint] = [
+            .nose: PoseJointPoint(x: 0.29, y: 0.58, confidence: 0.9),
+            .leftEar: PoseJointPoint(x: 0.39, y: 0.55, confidence: 0.8),
+            .rightEar: PoseJointPoint(x: 0.19, y: 0.55, confidence: 0.7),
+        ]
+        func body(_ confidence: Double, midX: Double, y: Double, headY: Double? = nil) -> VisionPose.Body3DCandidate {
+            VisionPose.Body3DCandidate(
+                confidence: confidence,
+                left: PoseJointPoint(x: midX + 0.08, y: y, confidence: confidence),
+                right: PoseJointPoint(x: midX - 0.08, y: y, confidence: confidence),
+                neck: PoseJointPoint(x: midX, y: y - 0.02, confidence: confidence),
+                head: headY.map { PoseJointPoint(x: midX, y: $0, confidence: confidence) })
+        }
+        let colleague = body(0.95, midX: 0.29, y: 0.70, headY: 0.30)
+        let own = body(0.6, midX: 0.31, y: 0.97, headY: 0.50)
+        XCTAssertEqual(VisionPose.selectBody([colleague, own], matching: user)?.confidence, 0.6)
+        XCTAssertNil(VisionPose.selectBody([colleague], matching: user), "the colleague's head is not this nose")
+
+        let otherHead = body(0.9, midX: 0.28, y: 0.80, headY: 0.49)
+        let ownHead = body(0.6, midX: 0.31, y: 0.97, headY: 0.52)
+        XCTAssertNil(VisionPose.selectBody([otherHead, ownHead], matching: user), "two heads on the nose are ambiguous")
+
+        XCTAssertNil(VisionPose.selectBody([body(0.95, midX: 0.29, y: 0.70), body(0.6, midX: 0.31, y: 0.97)], matching: user),
+                     "without a head, two bodies under the nose are not ranked by x")
+        XCTAssertEqual(VisionPose.selectBody([body(0.6, midX: 0.31, y: 0.97)], matching: user)?.confidence, 0.6)
+
+        var faintNose = user
+        faintNose[.nose] = PoseJointPoint(x: 0.29, y: 0.58, confidence: 0.3)
+        XCTAssertEqual(VisionPose.selectBody([colleague, own], matching: faintNose)?.confidence, 0.95,
+                       "a nose at the confidence gate does not anchor the body")
+    }
+
+    /// Between 3D refreshes a newly selected head must be matched against the cached candidates again.
+    /// A person absent from that cache gets no shoulders until the next refresh.
+    func testCached3DShouldersFollowASelectionChangeBetweenRefreshes() {
+        func person(x: Double, width: Double) -> [PoseJoint: PoseJointPoint] {
+            [.nose: PoseJointPoint(x: x, y: 0.35, confidence: 0.9),
+             .leftEar: PoseJointPoint(x: x + width / 2, y: 0.3, confidence: 0.9),
+             .rightEar: PoseJointPoint(x: x - width / 2, y: 0.3, confidence: 0.9)]
+        }
+        func body(x: Double) -> VisionPose.Body3DCandidate {
+            VisionPose.Body3DCandidate(
+                confidence: 0.9,
+                left: PoseJointPoint(x: x + 0.1, y: 0.7, confidence: 0.9),
+                right: PoseJointPoint(x: x - 0.1, y: 0.7, confidence: 0.9),
+                neck: PoseJointPoint(x: x, y: 0.65, confidence: 0.9),
+                head: PoseJointPoint(x: x, y: 0.32, confidence: 0.9))
+        }
+        let colleague = person(x: 0.75, width: 0.1)
+        let user = person(x: 0.25, width: 0.2)
+        let colleagueBody = body(x: 0.75)
+        let userBody = body(x: 0.25)
+        let cached = [colleagueBody, userBody]
+
+        // Frame 0 refreshes 3D with the colleague selected. Frame 1 selects the larger user head.
+        let first = VisionPose.nearestPerson([colleague])
+        XCTAssertEqual(VisionPose.shoulders3D(from: cached, matching: first, aspect: 1)[.neck], colleagueBody.neck)
+        let next = VisionPose.nearestPerson([colleague, user])
+        XCTAssertEqual(next, user)
+        XCTAssertEqual(VisionPose.shoulders3D(from: cached, matching: next, aspect: 1, cached: true)[.neck], userBody.neck)
+        XCTAssertTrue(VisionPose.shoulders3D(from: [colleagueBody], matching: next, aspect: 1, cached: true).isEmpty)
+        XCTAssertEqual(VisionPose.shoulders3D(from: [userBody], matching: next, aspect: 1)[.neck], userBody.neck,
+                       "the next refresh restores the user's own shoulders")
+        XCTAssertTrue(VisionPose.shoulders3D(from: cached, matching: [:], aspect: 1, cached: true).isEmpty)
+        let unanchored = [PoseJoint.leftEye: PoseJointPoint(x: 0.25, y: 0.3, confidence: 0.9)]
+        XCTAssertTrue(VisionPose.shoulders3D(from: cached, matching: unanchored, aspect: 1, cached: true).isEmpty,
+                      "a visible joint without a matching anchor cannot borrow cached shoulders")
+    }
+
+    /// With no 2D body, the current face must keep matching the same 3D shoulders on refresh and cached
+    /// frames. A face alone must not let a different or ambiguous cached person supply the shoulders.
+    func testFaceOnlyFramesKeepTheirMatched3DShoulders() throws {
+        let face = PoseFace(box: CGRect(x: 0.4, y: 0.2, width: 0.2, height: 0.3), confidence: 0.9)
+        func body(x: Double, confidence: Double = 0.9) -> VisionPose.Body3DCandidate {
+            VisionPose.Body3DCandidate(
+                confidence: confidence,
+                left: PoseJointPoint(x: x - 0.1, y: 0.7, confidence: confidence),
+                right: PoseJointPoint(x: x + 0.1, y: 0.7, confidence: confidence),
+                neck: PoseJointPoint(x: x, y: 0.65, confidence: confidence),
+                head: PoseJointPoint(x: x, y: 0.33, confidence: confidence))
+        }
+        let own = body(x: 0.5)
+        let other = body(x: 0.85, confidence: 0.99)
+        let frames = (0..<3).map { index in
+            let cached = index > 0
+            let joints = VisionPose.shoulders3D(from: [other, own], matching: [:], aspect: 1,
+                                                cached: cached, face: face)
+            let trusted = VisionBodyPoseEngine.trustedJoints(joints, current: [:], cachedShoulders: cached, face: face)
+            return PoseSample(time: Double(index), engine: .visionBody, joints: trusted, face: face, imageAspect: 1)
+        }
+        let baseline = try XCTUnwrap(PostureBaseline.calibrate(
+            upright: Array(repeating: PostureMetrics(sample: frames[0]), count: 6)))
+        let scorer = PostureScorer(enabled: [.forwardHead], forwardHeadWithoutShoulders: .needsShoulders)
+        for frame in frames {
+            XCTAssertEqual(frame.joints[.neck], own.neck, "the current face selects its own cached body")
+            let metrics = PostureMetrics(sample: frame)
+            XCTAssertNotNil(metrics[.shoulderWidth], "shoulder measurements persist between refreshes")
+            let score = scorer.score(metrics, against: baseline)
+            XCTAssertEqual(score.signals.first?.measure, .faceWidthRatio)
+            XCTAssertFalse(score.unjudged.contains(.forwardHead), "Needs shoulders can still judge Forward head")
+        }
+        XCTAssertTrue(VisionPose.shoulders3D(from: [own], matching: [:], aspect: 1, cached: true).isEmpty)
+        var faint = face
+        faint.confidence = PoseSample.minimumConfidence
+        XCTAssertTrue(VisionPose.shoulders3D(from: [own], matching: [:], aspect: 1, cached: true, face: faint).isEmpty)
+        let elsewhere = PoseFace(box: CGRect(x: 0.75, y: 0.2, width: 0.15, height: 0.3), confidence: 0.9)
+        XCTAssertTrue(VisionPose.shoulders3D(from: [own], matching: [:], aspect: 1, cached: true, face: elsewhere).isEmpty)
+        XCTAssertTrue(VisionPose.shoulders3D(from: [own, body(x: 0.51)], matching: [:], aspect: 1,
+                                            cached: true, face: face).isEmpty, "two heads on the face are ambiguous")
     }
 
     /// Live run 2026-10-14: a hand over one shoulder left the nose, the eyes and one shoulder. The body
@@ -554,6 +788,36 @@ final class PostureMonitorTests: XCTestCase {
         XCTAssertFalse(PostureCore.needsFaceOnEveryFrame(calibrating: false, baseline: body))
         XCTAssertTrue(PostureCore.needsFaceOnEveryFrame(calibrating: true, baseline: body))
         XCTAssertFalse(PostureCore.needsFaceOnEveryFrame(calibrating: false, baseline: nil))
+    }
+
+    /// Calibration and monitoring must both sample the face when a body baseline uses face growth to
+    /// corroborate Forward head. Stable eyes with narrower 3D shoulders alone must stay clear.
+    func testBodyBaselineKeepsFaceCorroborationAfterCalibration() throws {
+        let face = PoseFace(box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.2), confidence: 0.9)
+        var upright = postureSample()
+        upright.face = face
+        let base = try XCTUnwrap(PostureBaseline.calibrate(
+            upright: Array(repeating: PostureMetrics(sample: upright), count: 6)))
+        XCTAssertTrue(PostureCore.needsFaceOnEveryFrame(calibrating: true, baseline: nil))
+        let alwaysFace = PostureCore.needsFaceOnEveryFrame(calibrating: false, baseline: base)
+        XCTAssertTrue(alwaysFace, "the face-growth cap needs the face after calibration too")
+
+        var monitoring = postureSample(shoulderWidth: 0.28, time: 1)
+        XCTAssertFalse(VisionBodyPoseEngine.needsFace(monitoring.joints), "confident 3D shoulders skip fallback detection")
+        if alwaysFace || VisionBodyPoseEngine.needsFace(monitoring.joints) { monitoring.face = face }
+        let scorer = PostureScorer(enabled: [.forwardHead])
+        XCTAssertFalse(scorer.score(PostureMetrics(sample: upright), against: base).isBad)
+        XCTAssertFalse(scorer.score(PostureMetrics(sample: monitoring), against: base).isBad,
+                       "a steady head must not slouch when only the shoulder estimate narrows")
+
+        monitoring.face = PoseFace(box: CGRect(x: 0.375, y: 0.3, width: 0.25, height: 0.2), confidence: 0.9)
+        XCTAssertTrue(scorer.score(PostureMetrics(sample: monitoring), against: base).isBad,
+                      "a growing face still corroborates a real forward head")
+        let faceRatioOnly = PostureBaseline(metrics: PostureMetrics([
+            .shoulderWidth: 0.4, .faceWidthRatio: 0.5, .faceWidth: 0.2]))
+        XCTAssertTrue(PostureCore.needsFaceOnEveryFrame(calibrating: false, baseline: faceRatioOnly))
+        let bodyOnly = PostureBaseline(metrics: PostureMetrics([.shoulderWidth: 0.4, .eyeSpanRatio: 0.25]))
+        XCTAssertFalse(PostureCore.needsFaceOnEveryFrame(calibrating: false, baseline: bodyOnly))
     }
 
     /// The same reading once the face rides along: head on one hand, one shoulder hidden, the face rolled

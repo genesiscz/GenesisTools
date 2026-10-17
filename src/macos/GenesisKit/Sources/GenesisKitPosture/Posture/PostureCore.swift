@@ -167,8 +167,8 @@ final class PostureCore: @unchecked Sendable {
 
     /// One camera frame: Vision outside the lock, then the reading. While calibrating, a Vision body
     /// engine also runs the face request, so the baseline holds the face measures, and its 3D shoulder
-    /// request on every frame, so the baseline holds the shoulders; it keeps running the face request
-    /// while the baseline has only face measures, or no reading could ever be compared with it.
+    /// request on every frame, so the baseline holds the shoulders. Face sampling continues when the
+    /// baseline needs face measures, including face growth to corroborate a shoulder-based Forward head.
     func process(_ frame: CameraFrame) {
         let (engine, alwaysFace, calibrating) = lock.withLock { () -> (FramePoseEngine?, Bool, Bool) in
             guard machine.usesCamera, !shutDown else { return (nil, false, false) }
@@ -211,10 +211,14 @@ final class PostureCore: @unchecked Sendable {
         recorder?.stop()
     }
 
-    /// Calibrating, or a baseline without shoulders (calibrated while the body pose found none): the body
-    /// measures alone have nothing to compare with, so the face request runs on every frame.
+    /// Calibration, a face-only baseline, or a body baseline whose Forward head ratio is capped by face
+    /// growth needs the face on every frame. A body-only baseline still uses fallback face detection.
     static func needsFaceOnEveryFrame(calibrating: Bool, baseline: PostureBaseline?) -> Bool {
-        calibrating || (baseline.map { $0.metrics[.shoulderWidth] == nil } ?? false)
+        if calibrating { return true }
+        guard let metrics = baseline?.metrics else { return false }
+        if metrics[.shoulderWidth] == nil { return true }
+        let hasForwardRatio = metrics[.eyeSpanRatio] != nil || metrics[.faceWidthRatio] != nil
+        return hasForwardRatio && (metrics[.faceWidth] ?? 0) > 0
     }
 
     func ingest(_ sample: PoseSample) {

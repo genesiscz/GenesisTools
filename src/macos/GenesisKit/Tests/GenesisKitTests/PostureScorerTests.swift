@@ -133,6 +133,47 @@ final class PostureScorerTests: XCTestCase {
         XCTAssertEqual(scorer.score(forward, against: base).worst, .forwardHead)
     }
 
+    /// A face-aware baseline requires current face evidence even when eyes and shoulders still form a
+    /// ratio. Detection dropout, including a majority of the smoothing window, cannot lift that requirement.
+    func testAMissingFaceCannotBypassForwardHeadCorroboration() throws {
+        var upright = postureSample()
+        upright.face = PoseFace(box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.2), confidence: 0.9)
+        let base = try XCTUnwrap(PostureBaseline.calibrate(
+            upright: Array(repeating: PostureMetrics(sample: upright), count: 6)))
+        let scorer = PostureScorer(enabled: [.forwardHead])
+        let missing = postureSample(shoulderWidth: 0.25)
+        var faint = missing
+        faint.face = PoseFace(box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.2),
+                              confidence: PoseSample.minimumConfidence)
+        for sample in [missing, faint] {
+            let metrics = PostureMetrics(sample: sample)
+            XCTAssertNil(metrics[.faceWidth])
+            XCTAssertNil(PostureScorer.drift(.eyeSpanRatio, in: metrics, baseline: base.metrics),
+                         "the ratio needs face corroboration when the baseline supports it")
+            let score = scorer.score(metrics, against: base)
+            XCTAssertTrue(score.isEmpty, "missing evidence leaves Forward head unmeasured")
+            XCTAssertFalse(score.isBad, "a 60% ratio jump alone cannot trigger Forward head")
+            XCTAssertFalse(score.isClear, "unavailable evidence is not a measured clear posture")
+        }
+
+        var smoother = PostureSmoother()
+        _ = smoother.add(PostureMetrics(sample: upright), at: 0)
+        _ = smoother.add(PostureMetrics(sample: missing), at: 0.2)
+        let smoothed = smoother.add(PostureMetrics(sample: faint), at: 0.4)
+        XCTAssertNil(smoothed[.faceWidth], "the majority of the window has no usable face")
+        XCTAssertTrue(scorer.score(smoothed, against: base).isEmpty)
+
+        var recovered = missing
+        recovered.face = upright.face
+        XCTAssertTrue(scorer.score(PostureMetrics(sample: recovered), against: base).isClear)
+        recovered.face = PoseFace(box: CGRect(x: 0.375, y: 0.3, width: 0.25, height: 0.2), confidence: 0.9)
+        XCTAssertTrue(scorer.score(PostureMetrics(sample: recovered), against: base).isBad,
+                      "a growing face still corroborates Forward head")
+        let legacy = PostureBaseline(metrics: PostureMetrics(sample: postureSample()))
+        XCTAssertTrue(scorer.score(PostureMetrics(sample: missing), against: legacy).isBad,
+                      "a body-only baseline retains uncapped ratio scoring")
+    }
+
     /// eve on #529: calibration measured the forward-head span with the uncapped ratio, scoring with the ratio capped by
     /// face growth, so the slouch the user calibrated (face +10%, ratio +37.5%) scored about 0.005 instead of 1.
     func testACalibratedForwardHeadSlouchScoresAsTheFullSlouch() throws {

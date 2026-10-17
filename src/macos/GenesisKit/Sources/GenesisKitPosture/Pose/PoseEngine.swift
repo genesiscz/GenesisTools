@@ -26,15 +26,15 @@ public protocol FramePoseEngine: PoseEngine {
 /// the same frame when the body pose has no confident nose or misses a shoulder (Dorso's fallback,
 /// widened: every body measure needs both shoulders, so without one the face is all there is). `.always`
 /// runs both on every frame (calibration, so the baseline holds the face measures too, and a baseline
-/// that has only face measures).
+/// that uses face measures or face growth to corroborate Forward head).
 ///
 /// The 2D request often finds no body at all for a person sitting close to a laptop camera, while the 3D
 /// request (`VNDetectHumanBodyPose3DRequest`, macOS 14) finds the same person with every joint (real
 /// frames, 2026-10-14). The two place the shoulders differently (3D about a third narrower, at another
 /// tilt), so one reading never mixes them: with `body3D` on, the shoulders and the neck always come from
 /// 3D and the 2D ones are dropped. The 3D request costs about 80 ms of CPU against 7 ms for 2D plus face,
-/// so `.throttled` runs it at most once per `body3DInterval` and keeps its shoulders for up to two
-/// intervals; shoulders move slowly next to the onset delay. `.always` runs it on every frame
+/// so `.throttled` runs it at most once per `body3DInterval` and keeps projected candidates for up to two
+/// intervals, matching them to the current person on each frame. `.always` runs it on every frame
 /// (calibration, so every reading carries the shoulders).
 public final class VisionBodyPoseEngine: FramePoseEngine {
     public enum FaceDetection: Sendable {
@@ -63,7 +63,7 @@ public final class VisionBodyPoseEngine: FramePoseEngine {
     private let faceRequest: VNDetectFaceRectanglesRequest
     private let body3DRequest = VNDetectHumanBodyPose3DRequest()
     private var last3DAttempt: TimeInterval?
-    private var last3D: (time: TimeInterval, joints: [PoseJoint: PoseJointPoint])?
+    private var last3D: (time: TimeInterval, bodies: [VisionPose.Body3DCandidate])?
 
     public init(faceDetection: FaceDetection = .fallback, body3D: Body3D = .throttled, body3DInterval: TimeInterval = 4) {
         self.faceDetection = faceDetection
@@ -84,11 +84,12 @@ public final class VisionBodyPoseEngine: FramePoseEngine {
         } catch {
             return nil
         }
-        let current = VisionPose.joints(from: bodyRequest.results ?? [])
+        let current = VisionPose.joints(from: bodyRequest.results ?? [], aspect: frame.imageAspect)
         var joints = current
         var cachedShoulders = false
         if body3D != .never {
-            (joints, cachedShoulders) = withShoulders3D(current, handler: handler, time: frame.time)
+            (joints, cachedShoulders) = withShoulders3D(current, handler: handler, time: frame.time,
+                                                        aspect: frame.imageAspect)
         }
         var face: PoseFace?
         switch faceDetection {
@@ -101,18 +102,20 @@ public final class VisionBodyPoseEngine: FramePoseEngine {
         case .never:
             break
         }
+        if body3D != .never, face != nil {
+            (joints, cachedShoulders) = matchedShoulders3D(current, time: frame.time, aspect: frame.imageAspect,
+                                                           cached: cachedShoulders, face: face)
+        }
         joints = Self.trustedJoints(joints, current: current, cachedShoulders: cachedShoulders, face: face)
         return PoseSample(time: frame.time, engine: kind, joints: joints, face: face,
                           imageAspect: frame.imageAspect, lowLight: frame.isLowLight)
     }
 
-    /// The 2D joints with the shoulders and the neck replaced by the 3D request's (run now when due, else
-    /// the last result while it is fresh). Without a fresh 3D body the reading has no shoulders. `cached` is
-    /// true when the shoulders came from an earlier frame's 3D result.
+    /// Replaces 2D shoulders with a matching projected 3D candidate, refreshing the candidates when due.
+    /// Cached candidates are matched again against this frame's person, so switching heads cannot reuse
+    /// the previous person's shoulders. Without a match the reading has no shoulders.
     private func withShoulders3D(_ joints: [PoseJoint: PoseJointPoint], handler: VNImageRequestHandler,
-                                 time: TimeInterval) -> (joints: [PoseJoint: PoseJointPoint], cached: Bool) {
-        var head = joints
-        for joint in VisionPose.shoulderJoints { head[joint] = nil }
+                                 time: TimeInterval, aspect: Double) -> (joints: [PoseJoint: PoseJointPoint], cached: Bool) {
         let due: Bool
         switch body3D {
         case .never: return (joints, false)
@@ -122,11 +125,21 @@ public final class VisionBodyPoseEngine: FramePoseEngine {
         if due {
             last3DAttempt = time
             last3D = (try? handler.perform([body3DRequest])) != nil
-                ? VisionPose.shoulders3D(from: body3DRequest.results ?? [], matching: joints).map { (time, $0) }
+                ? (time, VisionPose.bodies3D(from: body3DRequest.results ?? []))
                 : nil
         }
-        guard let cached = last3D, abs(time - cached.time) <= body3DInterval * 2 else { return (head, false) }
-        return (head.merging(cached.joints) { _, new in new }, !due)
+        return matchedShoulders3D(joints, time: time, aspect: aspect, cached: !due, face: nil)
+    }
+
+    /// Matches the already-fetched candidates without another 3D request. After face detection this runs
+    /// again so a face-only frame can supply the anchor that the initial 2D matching lacked.
+    private func matchedShoulders3D(_ joints: [PoseJoint: PoseJointPoint], time: TimeInterval, aspect: Double,
+                                    cached: Bool, face: PoseFace?) -> (joints: [PoseJoint: PoseJointPoint], cached: Bool) {
+        var head = joints
+        for joint in VisionPose.shoulderJoints { head[joint] = nil }
+        guard let stored = last3D, abs(time - stored.time) <= body3DInterval * 2 else { return (head, false) }
+        let shoulders = VisionPose.shoulders3D(from: stored.bodies, matching: joints, aspect: aspect, cached: cached, face: face)
+        return (head.merging(shoulders) { _, new in new }, cached)
     }
 
     /// Whether this frame shows a person by itself: a confident 2D joint other than the shoulders and the neck
@@ -141,6 +154,7 @@ public final class VisionBodyPoseEngine: FramePoseEngine {
         return trusted
     }
 
+    /// Whether this frame independently detects a person, without relying on cached 3D joints.
     static func showsPerson(current: [PoseJoint: PoseJointPoint], face: PoseFace?) -> Bool {
         let own = current.contains { joint, point in
             !VisionPose.shoulderJoints.contains(joint) && point.confidence > PoseSample.minimumConfidence
@@ -192,6 +206,7 @@ enum VisionPose {
         (.rightEar, .rightEar), (.neck, .neck), (.leftShoulder, .leftShoulder), (.rightShoulder, .rightShoulder),
     ]
 
+    /// A background face request with the revision that supplies head pitch as well as roll and yaw.
     static func makeFaceRequest() -> VNDetectFaceRectanglesRequest {
         let request = VNDetectFaceRectanglesRequest()
         request.revision = VNDetectFaceRectanglesRequestRevision3
@@ -200,9 +215,9 @@ enum VisionPose {
     }
 
     /// The joints of the nearest person (`nearestPerson`), flipped from Vision's bottom-left origin to top-left.
-    /// Zero-confidence points are invalid and left out.
-    static func joints(from observations: [VNHumanBodyPoseObservation]) -> [PoseJoint: PoseJointPoint] {
-        let people = observations.compactMap { observation -> [PoseJoint: PoseJointPoint]? in
+    /// Zero-confidence points are invalid and left out. `aspect` is the frame's width over its height.
+    static func joints(from observations: [VNHumanBodyPoseObservation], aspect: Double) -> [PoseJoint: PoseJointPoint] {
+        let people: [[PoseJoint: PoseJointPoint]] = observations.compactMap { observation in
             guard let points = try? observation.recognizedPoints(.all) else { return nil }
             var joints: [PoseJoint: PoseJointPoint] = [:]
             for (name, joint) in jointNames {
@@ -212,20 +227,22 @@ enum VisionPose {
             }
             return joints
         }
-        return nearestPerson(people)
+        return nearestPerson(people, aspect: aspect)
     }
 
     /// The person closest to the camera: the one whose head looks largest. A low camera cuts the user's shoulders
     /// off while someone standing behind shows both, so ranking by shoulder width tracked the colleague for a whole
     /// debug recording (2026-10-15 14:58, Office). A person with no measurable head counts by an estimate from the
     /// shoulders, and a person with neither by the nose's confidence, below anyone with a size.
-    static func nearestPerson(_ people: [[PoseJoint: PoseJointPoint]]) -> [PoseJoint: PoseJointPoint] {
-        people.max { personScore($0) < personScore($1) } ?? [:]
+    /// Lengths are image heights, so a rolled head on a wide frame does not outrank a wider upright one.
+    static func nearestPerson(_ people: [[PoseJoint: PoseJointPoint]], aspect: Double = 1) -> [PoseJoint: PoseJointPoint] {
+        people.max { personScore($0, aspect: aspect) < personScore($1, aspect: aspect) } ?? [:]
     }
 
-    static func personScore(_ joints: [PoseJoint: PoseJointPoint]) -> Double {
-        if let head = headSize(joints) { return 1 + head }
-        if let span = shoulderSpan(joints) { return 1 + span * headPerShoulder }
+    /// Comparable apparent size, falling back to nose confidence only when neither head nor shoulders has a span.
+    static func personScore(_ joints: [PoseJoint: PoseJointPoint], aspect: Double = 1) -> Double {
+        if let head = headSize(joints, aspect: aspect) { return 1 + head }
+        if let span = shoulderSpan(joints, aspect: aspect) { return 1 + span * headPerShoulder }
         return joints[.nose]?.confidence ?? 0
     }
 
@@ -233,23 +250,39 @@ enum VisionPose {
     /// head (about 0.45 for an adult facing the camera).
     static let headPerShoulder = 0.45
 
-    /// The head's width in the image: ear to ear, else eye to eye doubled (the eyes sit about half as far apart).
-    static func headSize(_ joints: [PoseJoint: PoseJointPoint]) -> Double? {
+    /// Width over height. A non-positive value stands in for 4:3, as a sample's aspect does.
+    static func aspectScale(_ aspect: Double) -> Double {
+        aspect > 0 ? aspect : 4.0 / 3.0
+    }
+
+    /// The distance between two joints in image heights. Normalized x is a fraction of the width, so it is
+    /// scaled by the aspect, the same way `PostureMetrics` scales a shoulder line.
+    static func lengthInImageHeights(_ left: PoseJointPoint, _ right: PoseJointPoint, aspect: Double) -> Double {
+        let scale = aspectScale(aspect)
+        return hypot((left.x - right.x) * scale, left.y - right.y)
+    }
+
+    /// The head's width in image heights: ear to ear, else eye to eye doubled (the eyes sit about half as far
+    /// apart). The default aspect is a square image, where a normalized length is already a fraction of the height.
+    static func headSize(_ joints: [PoseJoint: PoseJointPoint], aspect: Double = 1) -> Double? {
         let minimum = PoseSample.minimumConfidence
-        if let left = joints[.leftEar], let right = joints[.rightEar], left.confidence > minimum, right.confidence > minimum {
-            return hypot(left.x - right.x, left.y - right.y)
+        if let left = joints[.leftEar], let right = joints[.rightEar],
+           left.confidence > minimum, right.confidence > minimum {
+            return lengthInImageHeights(left, right, aspect: aspect)
         }
-        if let left = joints[.leftEye], let right = joints[.rightEye], left.confidence > minimum, right.confidence > minimum {
-            return 2 * hypot(left.x - right.x, left.y - right.y)
+        if let left = joints[.leftEye], let right = joints[.rightEye],
+           left.confidence > minimum, right.confidence > minimum {
+            return 2 * lengthInImageHeights(left, right, aspect: aspect)
         }
         return nil
     }
 
-    static func shoulderSpan(_ joints: [PoseJoint: PoseJointPoint]) -> Double? {
+    /// Shoulder width in image heights, available only when both joints clear the confidence gate.
+    static func shoulderSpan(_ joints: [PoseJoint: PoseJointPoint], aspect: Double = 1) -> Double? {
         let minimum = PoseSample.minimumConfidence
         guard let left = joints[.leftShoulder], let right = joints[.rightShoulder],
               left.confidence > minimum, right.confidence > minimum else { return nil }
-        return hypot(left.x - right.x, left.y - right.y)
+        return lengthInImageHeights(left, right, aspect: aspect)
     }
 
     /// One 3D body already projected into the image (top-left). Tests build these; Vision observations cannot.
@@ -258,14 +291,17 @@ enum VisionPose {
         var left: PoseJointPoint
         var right: PoseJointPoint
         var neck: PoseJointPoint
+        /// `centerHead` projected into the image. Nil when the observation has no head joint.
+        var head: PoseJointPoint? = nil
     }
 
     /// The 3D body that belongs to the person `joints` already chose (`nearestPerson`).
-    /// With no confident 2D shoulders, the body under the chosen nose (the low-camera case: the user's shoulders
-    /// below the frame, someone else's above it), else the most confident 3D body (no 2D body at all).
+    /// With no confident 2D shoulders, the body whose projected head sits on the chosen nose (the low-camera
+    /// case: the user's shoulders are below the frame). With no nose, the most confident 3D body.
     /// A body whose shoulder midpoint sits farther than the 2D shoulder span is someone else and is left out:
     /// the same person's 3D shoulders are narrower, but they share the midpoint.
-    static func selectBody(_ bodies: [Body3DCandidate], matching joints: [PoseJoint: PoseJointPoint]) -> Body3DCandidate? {
+    static func selectBody(_ bodies: [Body3DCandidate], matching joints: [PoseJoint: PoseJointPoint],
+                           aspect: Double = 1) -> Body3DCandidate? {
         let minimum = PoseSample.minimumConfidence
         let eligible = bodies.filter { $0.confidence > minimum }
         guard !eligible.isEmpty else { return nil }
@@ -274,27 +310,16 @@ enum VisionPose {
             guard let nose = joints[.nose], nose.confidence > minimum else {
                 return eligible.max { $0.confidence < $1.confidence }
             }
-            // Under the head: the shoulders' midpoint below the nose and within a head and a half of it sideways.
-            let reach: Double = max(1.5 * (headSize(joints) ?? 0), 0.1)
-            var best: (body: Body3DCandidate, offset: Double)?
-            for body in eligible {
-                let midX: Double = (body.left.x + body.right.x) / 2
-                let midY: Double = (body.left.y + body.right.y) / 2
-                let offset: Double = abs(midX - nose.x)
-                guard offset <= reach, midY > nose.y else { continue }
-                if let current = best, current.offset <= offset { continue }
-                best = (body, offset)
-            }
-            return best?.body
+            return bodyForShoulderlessPerson(eligible, matching: joints, nose: nose, aspect: aspect)
         }
-        let anchorX = (left.x + right.x) / 2
-        let anchorY = (left.y + right.y) / 2
-        let span = hypot(left.x - right.x, left.y - right.y)
+        let anchor = PoseJointPoint(x: (left.x + right.x) / 2, y: (left.y + right.y) / 2, confidence: 1)
+        let span = lengthInImageHeights(left, right, aspect: aspect)
         guard span > 0 else { return eligible.max { $0.confidence < $1.confidence } }
         let ranked = eligible.map { body -> (body: Body3DCandidate, distance: Double) in
             let midX = (body.left.x + body.right.x) / 2
             let midY = (body.left.y + body.right.y) / 2
-            return (body, hypot(midX - anchorX, midY - anchorY))
+            let midpoint = PoseJointPoint(x: midX, y: midY, confidence: 1)
+            return (body, lengthInImageHeights(midpoint, anchor, aspect: aspect))
         }
         guard let nearest = ranked.min(by: { lhs, rhs in
             if lhs.distance == rhs.distance { return lhs.body.confidence > rhs.body.confidence }
@@ -302,6 +327,46 @@ enum VisionPose {
         }) else { return nil }
         guard nearest.distance <= span else { return nil }
         return nearest.body
+    }
+
+    /// Shoulders for a person the 2D request saw without them. The 3D body's projected head has to sit on
+    /// that person's nose. Ranking shoulder midpoints by horizontal offset took a colleague standing in
+    /// line with the user (review of #529): both bodies were under the nose, and the smaller x won.
+    static func bodyForShoulderlessPerson(_ bodies: [Body3DCandidate], matching joints: [PoseJoint: PoseJointPoint],
+                                          nose: PoseJointPoint, aspect: Double) -> Body3DCandidate? {
+        let scale = aspectScale(aspect)
+        let headWidth = headSize(joints, aspect: aspect) ?? 0
+        // Head width is an image height. The sideways gate is a normalized x distance, so divide it back.
+        let reach = max(1.5 * headWidth / scale, 0.1)
+        if bodies.contains(where: { $0.head != nil }) {
+            let limit = max(headWidth, 0.08)
+            let ranked = bodies.compactMap { body -> (body: Body3DCandidate, distance: Double)? in
+                guard let head = body.head else { return nil }
+                let midY = (body.left.y + body.right.y) / 2
+                guard midY > nose.y else { return nil }
+                return (body, lengthInImageHeights(head, nose, aspect: scale))
+            }.sorted { lhs, rhs in
+                if lhs.distance == rhs.distance { return lhs.body.confidence > rhs.body.confidence }
+                return lhs.distance < rhs.distance
+            }
+            let inside = ranked.filter { $0.distance <= limit }
+            guard let nearest = inside.first else { return nil }
+            if inside.count > 1 {
+                let second = inside[1].distance
+                // A second head almost as close belongs to someone else. Leave both out.
+                let ambiguous = nearest.distance == 0 ? second <= 0 : second < nearest.distance * 2
+                if ambiguous { return nil }
+            }
+            return nearest.body
+        }
+        let under = bodies.filter { body in
+            let midX = (body.left.x + body.right.x) / 2
+            let midY = (body.left.y + body.right.y) / 2
+            return abs(midX - nose.x) <= reach && midY > nose.y
+        }
+        // One body under the nose is this person. Two can be told apart only by x, which is the mix-up.
+        guard under.count == 1 else { return nil }
+        return under[0]
     }
 
     /// The face that belongs with `anchor` (the selected person's nose). Without an anchor, the largest face
@@ -322,23 +387,44 @@ enum VisionPose {
         return nearest.face
     }
 
-    /// The shoulders and the neck (centre shoulder) of the 3D body that matches `joints`, projected into the
-    /// image and flipped to top-left. The 3D joints have no confidence of their own: each takes the body's.
-    static func shoulders3D(from observations: [VNHumanBodyPose3DObservation],
-                            matching joints: [PoseJoint: PoseJointPoint]) -> [PoseJoint: PoseJointPoint]? {
+    /// Projects all 3D bodies into the top-left image coordinates so later frames can match them again.
+    /// The 3D joints have no confidence of their own: each takes the body's.
+    static func bodies3D(from observations: [VNHumanBodyPose3DObservation]) -> [Body3DCandidate] {
         var bodies: [Body3DCandidate] = []
         for body in observations {
             guard let left = try? body.pointInImage(.leftShoulder),
                   let right = try? body.pointInImage(.rightShoulder),
                   let neck = try? body.pointInImage(.centerShoulder) else { continue }
             let confidence = Double(body.confidence)
+            let head = (try? body.pointInImage(.centerHead)).map { point in
+                PoseJointPoint(x: Double(point.location.x), y: 1 - Double(point.location.y), confidence: confidence)
+            }
             bodies.append(Body3DCandidate(
                 confidence: confidence,
                 left: PoseJointPoint(x: Double(left.location.x), y: 1 - Double(left.location.y), confidence: confidence),
                 right: PoseJointPoint(x: Double(right.location.x), y: 1 - Double(right.location.y), confidence: confidence),
-                neck: PoseJointPoint(x: Double(neck.location.x), y: 1 - Double(neck.location.y), confidence: confidence)))
+                neck: PoseJointPoint(x: Double(neck.location.x), y: 1 - Double(neck.location.y), confidence: confidence),
+                head: head))
         }
-        guard let chosen = selectBody(bodies, matching: joints) else { return nil }
+        return bodies
+    }
+
+    /// Shoulders for the current person, or an empty map when no body matches. With no 2D anchor, a
+    /// confident current face supplies its centre and width for head matching. Cached candidates require
+    /// one of these anchors: body confidence alone cannot identify a person across frames.
+    static func shoulders3D(from bodies: [Body3DCandidate], matching joints: [PoseJoint: PoseJointPoint],
+                            aspect: Double, cached: Bool = false, face: PoseFace? = nil) -> [PoseJoint: PoseJointPoint] {
+        var anchor = joints
+        let hasNose = (joints[.nose]?.confidence ?? 0) > PoseSample.minimumConfidence
+        let hasShoulders = (shoulderSpan(joints, aspect: aspect) ?? 0) > 0
+        if !hasNose, !hasShoulders, let face, face.confidence > PoseSample.minimumConfidence,
+           face.box.width > 0.01, face.box.height > 0.01 {
+            anchor[.nose] = PoseJointPoint(x: face.box.midX, y: face.box.midY, confidence: face.confidence)
+            anchor[.leftEar] = PoseJointPoint(x: face.box.minX, y: face.box.midY, confidence: face.confidence)
+            anchor[.rightEar] = PoseJointPoint(x: face.box.maxX, y: face.box.midY, confidence: face.confidence)
+        }
+        if cached, (anchor[.nose]?.confidence ?? 0) <= PoseSample.minimumConfidence, !hasShoulders { return [:] }
+        guard let chosen = selectBody(bodies, matching: anchor, aspect: aspect) else { return [:] }
         return [.leftShoulder: chosen.left, .rightShoulder: chosen.right, .neck: chosen.neck]
     }
 
