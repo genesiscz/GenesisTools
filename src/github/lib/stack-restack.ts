@@ -118,7 +118,7 @@ export function gitAuthEnv(token: string | undefined): Record<string, string> | 
     };
 }
 
-function gitAt(cwd: string, token?: string): Executor {
+export function gitAt(cwd: string, token?: string): Executor {
     return new Executor({
         prefix: "git",
         cwd,
@@ -126,7 +126,7 @@ function gitAt(cwd: string, token?: string): Executor {
         verbose: false,
         debug: false,
         label: "git-restack",
-        env: gitAuthEnv(token),
+        env: { ...gitAuthEnv(token), GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "" },
     });
 }
 
@@ -135,9 +135,17 @@ function gitAt(cwd: string, token?: string): Executor {
  * A cold fetch of both tips' full history timed out at 300 s on a slow link (2026-10-14, #505); with the alternate
  * the same fetch took under a second and 4 KB.
  */
-async function localObjectStore(): Promise<string | undefined> {
-    const result = await gitAt(process.cwd()).exec(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
-    return result.success && result.stdout ? join(result.stdout.trim(), "objects") : undefined;
+export async function localObjectStore(cwd: string = process.cwd()): Promise<string | undefined> {
+    const result = await gitAt(cwd).exec(["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    if (!result.success || !result.stdout.trim()) {
+        logger.debug(
+            { cwd, exitCode: result.exitCode, stderr: result.stderr },
+            "local Git object store unavailable; fetching without an alternate"
+        );
+        return undefined;
+    }
+
+    return join(result.stdout.trim(), "objects");
 }
 
 async function gitOrThrow(g: Executor, args: string[], label: string, timeout = 120_000): Promise<string> {

@@ -389,15 +389,25 @@ async function pruneCaches(opts: {
           ? [opts.project]
           : fail("cache prune needs --project <name> or --all", `${CMD} cache prune --all`);
     const results: (PruneResult & { project: string })[] = [];
+    const failures: { project: string; error: string }[] = [];
     for (const project of projects) {
-        results.push({ project, ...(await new SourcemapCache(project).prune({ maxAgeDays })) });
+        try {
+            results.push({ project, ...(await new SourcemapCache(project).prune({ maxAgeDays })) });
+        } catch (error) {
+            logger.warn({ error, project }, "could not prune sourcemaps cache");
+            failures.push({ project, error: error instanceof Error ? error.message : String(error) });
+        }
+    }
+
+    if (failures.length > 0) {
+        process.exitCode = 1;
     }
 
     const items = results.flatMap((result) => result.removed.map((item) => ({ project: result.project, ...item })));
     const freed = items.reduce((sum, item) => sum + item.bytes, 0);
     const onDisk = items.reduce((sum, item) => sum + item.diskBytes, 0);
     if (opts.json) {
-        out.result({ projects: results, freedBytes: freed, diskBytes: onDisk });
+        out.result({ projects: results, failures, freedBytes: freed, diskBytes: onDisk });
         return;
     }
 
@@ -419,6 +429,9 @@ async function pruneCaches(opts: {
         for (const kept of result.kept) {
             out.println(pc.yellow(`⚠ ${result.project}: kept ${kept.worktree}: ${kept.detail ?? kept.outcome}`));
         }
+    }
+    for (const failure of failures) {
+        out.log.error(`could not prune ${failure.project}: ${failure.error}`);
     }
 }
 

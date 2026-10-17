@@ -76,15 +76,21 @@ async function developerToolsFinding(analyzerId: string): Promise<Finding | null
         id: "sec-developer-tools",
         analyzerId,
         title: `Developer Tools for ${name}: ${allowed ? "on" : "off"}`,
-        detail: allowed
-            ? `${name} is on the Developer Tools list: programs it starts skip the per-launch Gatekeeper scan (a new entry counts once ${name} restarts).`
-            : `macOS scans every new program ${name} starts before it runs, so each build or test run waits on syspolicyd, ` +
-              "and several at once can pin it at 100%. Add the app in System Settings > Privacy & Security > " +
-              `Developer Tools, then restart ${name}.`,
+        detail: developerToolsDetail(name, allowed),
         severity: allowed ? "safe" : "cautious",
         actions: [],
         metadata: { check: "Developer Tools", passing: allowed, app: host, bundleId },
     };
+}
+
+export function developerToolsDetail(name: string, allowed: boolean): string {
+    const tradeoff = "This reduces macOS protection; grant Developer Tools access only to a host you trust.";
+    return allowed
+        ? `${name} is on the Developer Tools list: programs it starts skip the per-launch Gatekeeper scan ` +
+              `(a new entry counts once ${name} restarts). ${tradeoff}`
+        : `macOS scans every new program ${name} starts before it runs, so builds and tests can wait on syspolicyd. ` +
+              `${tradeoff} If you trust ${name}, add it in System Settings > Privacy & Security > Developer Tools, ` +
+              `then restart ${name}.`;
 }
 
 /**

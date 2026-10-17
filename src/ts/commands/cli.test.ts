@@ -207,3 +207,50 @@ describe("sourcemap build interruption", () => {
         });
     }
 });
+
+describe("sourcemap cache prune --all", () => {
+    for (const json of [false, true]) {
+        test(`reports successes and failures without aborting later projects (${json ? "JSON" : "text"})`, () => {
+            const script = `
+                import { mock } from "bun:test";
+                import { Command } from "commander";
+                const cache = await import("@genesiscz/utils/ts/sourcemaps/cache");
+                mock.module("@genesiscz/utils/ts/sourcemaps/cache", () => ({
+                    ...cache,
+                    cacheProjects: async () => ["first", "broken", "last"],
+                    SourcemapCache: class {
+                        constructor(project) { this.project = project; }
+                        async prune() {
+                            if (this.project === "broken") throw new Error("fixture prune failed");
+                            return { removed: [{ name: "old", reason: "unused", bytes: 10, diskBytes: 10 }], kept: [] };
+                        }
+                    },
+                }));
+                const { registerSourcemapsCommands } = await import(${SafeJSON.stringify(join(import.meta.dir, "sourcemaps.ts"))});
+                const program = new Command();
+                registerSourcemapsCommands(program);
+                await program.parseAsync(["bun", "ts", "sourcemaps", "cache", "prune", "--all", ...${SafeJSON.stringify(json ? ["--json"] : [])}]);
+            `;
+            const result = Bun.spawnSync(["bun", "-e", script], {
+                env: process.env,
+                stdout: "pipe",
+                stderr: "pipe",
+                timeout: 5000,
+            });
+            const stdout = new TextDecoder().decode(result.stdout);
+            const stderr = new TextDecoder().decode(result.stderr);
+            expect(result.exitCode).toBe(1);
+            if (json) {
+                expect(SafeJSON.parse(stdout)).toMatchObject({
+                    projects: [{ project: "first" }, { project: "last" }],
+                    failures: [{ project: "broken", error: "fixture prune failed" }],
+                    freedBytes: 20,
+                });
+            } else {
+                expect(stdout).toContain("first");
+                expect(stdout).toContain("last");
+                expect(stderr).toContain("could not prune broken: fixture prune failed");
+            }
+        });
+    }
+});

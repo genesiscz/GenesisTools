@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { rm } from "node:fs/promises";
 import {
     developerToolStatus,
+    developerToolsDetail,
     hostAppBundle,
     isDeveloperToolAllowed,
     SecurityAnalyzer,
@@ -11,6 +12,16 @@ import { analysisDirFor, cacheFilePath } from "@app/doctor/lib/paths";
 import type { AnalyzerContext, Finding } from "@app/doctor/lib/types";
 
 describe("Developer Tools check", () => {
+    it("discloses reduced protection and restricts advice to trusted hosts in both states", () => {
+        for (const allowed of [false, true]) {
+            const detail = developerToolsDetail("Fixture", allowed);
+            expect(detail).toContain("reduces macOS protection");
+            expect(detail).toContain("only to a host you trust");
+        }
+        expect(developerToolsDetail("Fixture", false)).toContain("If you trust Fixture");
+        expect(developerToolsDetail("Fixture", true)).toContain("skip the per-launch Gatekeeper scan");
+    });
+
     it("keeps partial TCC reads unknown unless a readable database proves a grant", () => {
         const grant = [{ client: "com.example.host", auth_value: 2 }];
         expect(developerToolStatus([null, []], "com.example.host")).toBeNull();

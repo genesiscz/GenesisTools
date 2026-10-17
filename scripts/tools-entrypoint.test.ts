@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { skipWorktreeInstall } from "@genesiscz/utils/cli/worktree-install";
 
 /**
  * Guards the `tools` dispatcher at the repo root.
@@ -114,5 +115,51 @@ describe("native widget dispatcher", () => {
         });
         expect(invalid.status).toBe(1);
         expect(invalid.stderr).toContain("--fps");
+    });
+});
+
+describe("linked worktree automatic installation", () => {
+    it("reads the marker once and distinguishes linked and main checkouts", () => {
+        for (const linked of [true, false]) {
+            let reads = 0;
+            expect(
+                skipWorktreeInstall({
+                    workspaceRoot: ROOT,
+                    stat: () => {
+                        reads++;
+                        return { isFile: () => linked };
+                    },
+                })
+            ).toBe(linked);
+            expect(reads).toBe(1);
+        }
+    });
+    it("allows only missing-marker errors and propagates access failures", () => {
+        for (const code of ["ENOENT", "ENOTDIR", "EACCES", "EPERM"]) {
+            const error = Object.assign(new Error(code), { code });
+            const check = () =>
+                skipWorktreeInstall({
+                    workspaceRoot: ROOT,
+                    stat: () => {
+                        throw error;
+                    },
+                });
+            if (code === "ENOENT" || code === "ENOTDIR") {
+                expect(check()).toBe(false);
+            } else {
+                expect(check).toThrow(error);
+            }
+        }
+    });
+    it("honors explicit auto-install without inspecting the marker", () => {
+        expect(
+            skipWorktreeInstall({
+                workspaceRoot: ROOT,
+                autoInstall: "1",
+                stat: () => {
+                    throw new Error("must not inspect the marker");
+                },
+            })
+        ).toBe(false);
     });
 });

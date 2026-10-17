@@ -1,5 +1,17 @@
-import { describe, expect, test } from "bun:test";
-import { createNoopStackRestack, gitAuthEnv, pickOldBase, unknownBaseRefusal } from "./stack-restack";
+import { describe, expect, spyOn, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
+import {
+    createNoopStackRestack,
+    gitAt,
+    gitAuthEnv,
+    localObjectStore,
+    pickOldBase,
+    unknownBaseRefusal,
+} from "./stack-restack";
 
 describe("pickOldBase", () => {
     const inHistory = (shas: string[]) => async (sha: string) => shas.includes(sha);
@@ -59,5 +71,41 @@ describe("gitAuthEnv", () => {
             "x-access-token:tok-123"
         );
         expect(gitAuthEnv(undefined)).toBeUndefined();
+    });
+});
+
+describe("restack subprocess behavior", () => {
+    test("disables terminal and askpass prompts with and without a token", async () => {
+        await env.testing.withOverrides({ GIT_TERMINAL_PROMPT: "1", GIT_ASKPASS: "/fixture/askpass" }, async () => {
+            for (const token of [undefined, "fixture-token"]) {
+                const result = await gitAt(process.cwd(), token).exec([
+                    "-c",
+                    `alias.probe=!printf '%s|%s' "$GIT_TERMINAL_PROMPT" "$GIT_ASKPASS"`,
+                    "probe",
+                ]);
+                expect(result.success).toBe(true);
+                expect(result.stdout.trim()).toBe("0|");
+            }
+        });
+    });
+
+    test("logs an unavailable object store and preserves the successful alternate", async () => {
+        const cwd = mkdtempSync(join(tmpdir(), "restack-no-git-"));
+        const debug = spyOn(logger, "debug");
+        try {
+            expect(await localObjectStore(cwd)).toBeUndefined();
+            expect(debug).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    cwd,
+                    exitCode: expect.any(Number),
+                    stderr: expect.stringContaining("not a git repository"),
+                }),
+                "local Git object store unavailable; fetching without an alternate"
+            );
+        } finally {
+            debug.mockRestore();
+            rmSync(cwd, { recursive: true, force: true });
+        }
+        expect(await localObjectStore()).toMatch(/[/\\]objects$/);
     });
 });
