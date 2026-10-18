@@ -498,7 +498,8 @@ async function narrowByRebuilds(context: {
     }
 
     options.onEvent?.({ type: "candidates", commits: candidates.map((candidate) => candidate.commit) });
-    const keys = new Set(differing.map((chunk) => chunk.key));
+    // With nothing differing, an empty key set would score no chunk at all and a perfect match would read as 0.
+    const keys = differing.length > 0 ? new Set(differing.map((chunk) => chunk.key)) : undefined;
     const scored: CandidateScore[] = [];
     for (const candidate of candidates) {
         if (options.signal?.aborted) {
