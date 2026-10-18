@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, setSystemTime, spyOn } from "bun:test";
 import { out } from "@genesiscz/utils/logger";
 import type { TableSelectOptions } from "@genesiscz/utils/prompts/clack/table-select";
 import { stripAnsi } from "@genesiscz/utils/string";
@@ -75,7 +75,17 @@ mock.module("./status", () => ({
 
 const { printTeamsList, renderTeamsTree, runTeamsInteractive } = await import("./ui");
 
-const NOW = Date.now();
+// A fixed clock: the age labels read Date.now() on every render, so a module-load timestamp would turn "30s"
+// into "31s" whenever a second passes before the assertion.
+const NOW = new Date("2026-10-18T12:00:00Z").getTime();
+
+beforeEach(() => {
+    setSystemTime(new Date(NOW));
+});
+
+afterEach(() => {
+    setSystemTime();
+});
 
 function live(pid: number, extra: Partial<LiveTeammateProcess> = {}): LiveTeammateProcess {
     return { pid, cmdline: "claude --agent-id x", agentId: "x", agentName: "x", teamName: "t", ...extra };
