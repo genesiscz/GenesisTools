@@ -447,10 +447,15 @@ function formatPRMarkdown(data: PRData, options: FormatOptions): string {
         }
     }
 
-    // Insert after the first metadata block (before Index)
+    // Insert after the first metadata block: before the Index, or before the description when noIndex drops it
     const indexPoint = output.indexOf("\n## Index");
     if (indexPoint > 0) {
         output = output.slice(0, indexPoint) + prInfo.join("\n") + output.slice(indexPoint);
+    } else {
+        const descriptionPoint = output.indexOf("\n---\n\n## Description");
+        if (descriptionPoint > 0) {
+            output = `${output.slice(0, descriptionPoint)}${prInfo.join("\n")}\n${output.slice(descriptionPoint)}`;
+        }
     }
 
     // Add review threads (GraphQL, threaded) if present
@@ -467,7 +472,7 @@ function formatPRMarkdown(data: PRData, options: FormatOptions): string {
         let reviewMd = formatReviewMarkdown(reviewData, true);
         // Demote H1 to H2 when embedding inside the full PR output
         if (reviewMd.startsWith("# ")) {
-            reviewMd = `#${reviewMd.slice(1)}`;
+            reviewMd = `#${reviewMd}`;
         }
 
         // Insert before Statistics
@@ -502,10 +507,11 @@ function formatPRMarkdown(data: PRData, options: FormatOptions): string {
             reviewSection.push("");
         }
 
-        // Insert before Statistics
+        // Insert before Statistics, or before the footer when there are no statistics
         const statsPoint = output.lastIndexOf("\n---\n\n## Statistics");
-        if (statsPoint > 0) {
-            output = output.slice(0, statsPoint) + reviewSection.join("\n") + output.slice(statsPoint);
+        const insertPoint = statsPoint > 0 ? statsPoint : output.lastIndexOf("\n---\n_Fetched");
+        if (insertPoint > 0) {
+            output = output.slice(0, insertPoint) + reviewSection.join("\n") + output.slice(insertPoint);
         }
     }
 
