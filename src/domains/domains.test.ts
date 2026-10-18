@@ -2,9 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { fetchLanding, type LandingNetwork, parkingServiceFor } from "./lib/aftermarket";
 import { mergeVerdicts } from "./lib/check";
 import { parseDomain, seedWords } from "./lib/domain";
-import { type HttpResponse, isPublicAddress, pickPublicAddress } from "./lib/http";
+import { type HttpResponse, isPublicAddress, pickPublicAddress, request } from "./lib/http";
 import { interpretWhois, whoisFields } from "./lib/providers/whois";
 import { pronounceability, scoreCandidate } from "./lib/score";
+import { effectivePrice, withinBudget } from "./lib/search";
 import { blend, dropVowels, shortForms } from "./lib/suggest/basic";
 import { findHacks, hackSources } from "./lib/suggest/hacks";
 import { findVibeHits } from "./lib/vibe";
@@ -343,5 +344,76 @@ describe("fetchLanding", () => {
         const loop = network({ "https://93.184.216.34/": "https://a.example/" });
         await expect(fetchLanding("https://a.example/", loop.net)).rejects.toThrow("redirects");
         expect(loop.sent).toHaveLength(6);
+    });
+});
+
+describe("search price ceiling", () => {
+    const at = (domain: string, registration?: number) => ({
+        domain,
+        provider: "rdap",
+        verdicts: [],
+        checkedAt: "2026-10-18T00:00:00Z",
+        status: "available" as const,
+        ...(registration === undefined
+            ? {}
+            : { price: { registration, renewal: registration, currency: "USD", provider: "vercel" } }),
+    });
+    const estimates = new Map([["cz", { registration: 9, renewal: 9, currency: "USD", provider: "porkbun" }]]);
+
+    it("prices an unquoted name by its TLD list price", () => {
+        expect(effectivePrice(at("genesis.cz"), estimates)?.registration).toBe(9);
+        expect(effectivePrice(at("genesis.cz", 25), estimates)?.registration).toBe(25);
+        expect(effectivePrice(at("genesis.xyz"), estimates)).toBeUndefined();
+    });
+
+    it("keeps a name under the ceiling and drops one with no price at all", () => {
+        expect(withinBudget(at("genesis.cz"), estimates, 10)).toBe(true);
+        expect(withinBudget(at("genesis.cz"), estimates, 5)).toBe(false);
+        expect(withinBudget(at("genesis.cz", 25), estimates, 10)).toBe(false);
+        expect(withinBudget(at("genesis.xyz"), estimates, 1000)).toBe(false);
+        expect(withinBudget(at("genesis.xyz"), estimates)).toBe(true);
+    });
+});
+
+describe("request maxBytes", () => {
+    it("reads only the first bytes of a large body and never reads a manual redirect's body", async () => {
+        let cancelled = false;
+        const server = Bun.serve({
+            port: 0,
+            fetch(req) {
+                if (new URL(req.url).pathname === "/redirect") {
+                    return new Response("x".repeat(10_000), { status: 302, headers: { location: "/" } });
+                }
+
+                // An endless stream: the test only finishes if the reader stops and cancels it.
+                const stream = new ReadableStream({
+                    pull(controller) {
+                        controller.enqueue(new TextEncoder().encode("é".repeat(1000)));
+                    },
+                    cancel() {
+                        cancelled = true;
+                    },
+                });
+                return new Response(stream);
+            },
+        });
+
+        try {
+            const page = await request(`http://127.0.0.1:${server.port}/`, { maxBytes: 4001 });
+            // 2 bytes per "é": 4001 bytes are 2000 whole characters and half of one, dropped by the decoder.
+            expect(page.text.startsWith("é".repeat(2000))).toBe(true);
+            expect(page.text.length).toBeLessThanOrEqual(2001);
+            await Bun.sleep(20);
+            expect(cancelled).toBe(true);
+
+            const hop = await request(`http://127.0.0.1:${server.port}/redirect`, {
+                redirect: "manual",
+                maxBytes: 4001,
+            });
+            expect(hop.status).toBe(302);
+            expect(hop.text).toBe("");
+        } finally {
+            server.stop(true);
+        }
     });
 });

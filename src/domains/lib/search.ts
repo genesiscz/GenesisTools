@@ -77,6 +77,21 @@ async function checkRound({
 
 const isFree = (entry: Checked) => entry.result.status === "available";
 
+/** The registrar's quote, else the TLD list price as an estimate, else undefined. */
+export function effectivePrice(result: CheckResult, estimates: Map<string, DomainPrice>): DomainPrice | undefined {
+    return result.price ?? estimates.get(tldOf(result.domain));
+}
+
+/** No ceiling keeps everything; a ceiling keeps only names with a known price at or under it. */
+export function withinBudget(result: CheckResult, estimates: Map<string, DomainPrice>, maxPrice?: number): boolean {
+    if (maxPrice === undefined) {
+        return true;
+    }
+
+    const price = effectivePrice(result, estimates)?.registration;
+    return price !== undefined && price <= maxPrice;
+}
+
 /** TLD list prices for the given names, one lookup per TLD; a failed lookup leaves the TLD out. */
 async function listPrices(domains: string[]): Promise<Map<string, DomainPrice>> {
     const prices = new Map<string, DomainPrice>();
@@ -139,14 +154,8 @@ export async function searchDomains(options: SearchOptions): Promise<SearchOutco
     const estimates = await listPrices(
         matching.filter(({ result }) => !result.price).map(({ result }) => result.domain)
     );
-    const priceOf = (result: CheckResult) => result.price ?? estimates.get(tldOf(result.domain)) ?? undefined;
-    const kept =
-        options.maxPrice === undefined
-            ? matching
-            : matching.filter(({ result }) => {
-                  const price = priceOf(result)?.registration;
-                  return price !== undefined && price <= (options.maxPrice ?? 0);
-              });
+    const priceOf = (result: CheckResult) => effectivePrice(result, estimates);
+    const kept = matching.filter(({ result }) => withinBudget(result, estimates, options.maxPrice));
 
     const languages = options.vibeLanguages;
     const hits = await Promise.all(
