@@ -255,16 +255,12 @@ export async function runTeamsInteractive(opts: { all?: boolean; account?: strin
             continue;
         }
 
-        const stay = await runTeamDetail(teamPick, opts.account);
-        if (stay === "quit") {
-            return;
-        }
-
+        await runTeamDetail(teamPick, opts.account);
         out.println("");
     }
 }
 
-async function runTeamDetail(teamName: string, accountFlag?: string): Promise<"back" | "quit" | "refresh"> {
+async function runTeamDetail(teamName: string, accountFlag?: string): Promise<void> {
     // Single-team refresh only — never re-scan every project (was ~8s).
     const fresh = prof.measure("ui-discover-team", () => discoverTeam(teamName));
     if (prof.enabled) {
@@ -273,7 +269,7 @@ async function runTeamDetail(teamName: string, accountFlag?: string): Promise<"b
 
     if (!fresh) {
         out.println(pc.red(`Team ${teamName} not found.`));
-        return "back";
+        return;
     }
 
     out.println("");
@@ -288,7 +284,7 @@ async function runTeamDetail(teamName: string, accountFlag?: string): Promise<"b
 
     if (fresh.teammates.length === 0) {
         out.println(pc.dim("No teammates on this team."));
-        return "back";
+        return;
     }
 
     const matePick = await tableSelect({
@@ -326,15 +322,15 @@ async function runTeamDetail(teamName: string, accountFlag?: string): Promise<"b
     });
 
     if (!matePick || matePick === "__back__") {
-        return "back";
+        return;
     }
 
     const teammate = fresh.teammates.find((t) => t.member.name === matePick);
     if (!teammate) {
-        return "back";
+        return;
     }
 
-    return runTeammateActions(fresh, teammate, accountFlag);
+    await runTeammateActions(fresh, teammate, accountFlag);
 }
 
 function buildTeammateDetail(team: TeamView, t: TeamMemberView): string[] {
@@ -446,11 +442,7 @@ function splitActionLabel(teammate: TeamMemberView): string {
     return pc.cyan("Split lead tmux pane + launch with OAuth");
 }
 
-async function runTeammateActions(
-    team: TeamView,
-    teammate: TeamMemberView,
-    accountFlag?: string
-): Promise<"back" | "quit" | "refresh"> {
+async function runTeammateActions(team: TeamView, teammate: TeamMemberView, accountFlag?: string): Promise<void> {
     const freshTeam = discoverTeam(team.teamName) ?? team;
     const freshMate = freshTeam.teammates.find((m) => m.member.name === teammate.member.name) ?? teammate;
     const account = await resolveAccountForUi(freshTeam, accountFlag);
@@ -507,7 +499,7 @@ async function runTeammateActions(
     });
 
     if (!action || action === "back") {
-        return "back";
+        return;
     }
 
     if (action === "print") {
@@ -515,12 +507,12 @@ async function runTeammateActions(
         out.println(pc.bold("Command:"));
         out.println(cmd);
         out.println("");
-        return "back";
+        return;
     }
 
     if (action === "focus" && !freshMate.live && !isLiveSidechain(freshMate.transcript)) {
         out.println(pc.yellow("Teammate is not running. Use split or attach."));
-        return "back";
+        return;
     }
 
     try {
@@ -549,6 +541,4 @@ async function runTeammateActions(
     } catch (error) {
         out.println(pc.red(error instanceof Error ? error.message : String(error)));
     }
-
-    return "back";
 }
