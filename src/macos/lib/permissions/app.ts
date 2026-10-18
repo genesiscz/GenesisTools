@@ -43,6 +43,15 @@ import {
     ensureClickyLibrary,
     unpackClickyLibrary,
 } from "../clicky-library";
+import {
+    bundleStepsFor,
+    installedParts,
+    type PartsChoice,
+    partForFace,
+    partsEnvValue,
+    partsForBuild,
+    scratchName,
+} from "./parts";
 import { captureRelaunch, linkRelayAmong, type RelaunchCapture, runRelaunch } from "./relaunch";
 import { createSwiftProgressReporter } from "./swift-progress";
 
@@ -50,7 +59,12 @@ export const APP_SOURCE_DIR = resolve(import.meta.dirname, "../../GenesisTools")
 /** GenesisKit's markdown renderer (markdown-it, highlight.js, mermaid); the viewer reads Contents/Resources/webview first. */
 const MARKDOWN_WEBVIEW_SOURCE = resolve(APP_SOURCE_DIR, "../GenesisKit/Sources/GenesisKit/Markdown/Resources/webview");
 /** The app build's own SwiftPM scratch folder, apart from `.build/debug` (tests, benches) so the two never rebuild each other. */
-const APP_SCRATCH_PATH = join(APP_SOURCE_DIR, ".build", "opt");
+const APP_MODULE_CACHE_PATH = join(APP_SOURCE_DIR, ".build", "module-cache");
+
+/** One SwiftPM scratch folder per parts set (parts.ts `scratchName`): `.build/opt` for every part. */
+function appScratchPath(parts: readonly string[]): string {
+    return join(APP_SOURCE_DIR, ".build", scratchName(parts));
+}
 export const APP_TOOLS_PATH = resolve(APP_SOURCE_DIR, "../../../tools");
 /** The shared SwiftUI package the app links (src/macos/GenesisKit), so an edit there marks the build stale too. */
 const SOURCE_ROOTS = [
@@ -94,6 +108,8 @@ export interface AppManifest extends AppSourceInfo {
     sourceToolsPath?: string;
     signedWith: string;
     teamId?: string;
+    /** The optional parts this build links (parts.ts). Absent in builds from before parts existed: every part. */
+    parts?: string[];
 }
 
 export interface SignatureInfo {
@@ -112,6 +128,8 @@ export interface AppStatus {
     signature?: SignatureInfo;
     /** sources changed since the last build */
     stale: boolean;
+    /** The optional parts the installed build links (parts.ts `installedParts`); empty when nothing is installed. */
+    parts: string[];
     /** ad-hoc signatures change on every build, so TCC forgets the grants each time */
     identityStable: boolean;
 }
@@ -170,11 +188,14 @@ const STREAMING_BUILD_TIMEOUT_MS = 15 * 60_000;
 export async function runStreaming({
     cmd,
     cwd,
+    environment,
     onLine,
     timeoutMs = STREAMING_BUILD_TIMEOUT_MS,
 }: {
     cmd: string[];
     cwd?: string;
+    /** The whole child environment; default: this process's. */
+    environment?: Record<string, string | undefined>;
     onLine: (line: string) => void;
     timeoutMs?: number;
 }): Promise<{ code: number; stdout: string; stderr: string }> {
@@ -184,6 +205,7 @@ export async function runStreaming({
     const result = await boundedCommand({
         command: cmd,
         cwd,
+        environment,
         timeoutMs,
         maxBufferBytes: 64 * 1024 * 1024,
         onStdout: stdout.write,
@@ -399,6 +421,7 @@ export function appStatus(): AppStatus {
         manifest,
         signature,
         stale,
+        parts: installedParts(manifest),
         identityStable: signature !== undefined && !signature.adhoc,
     };
 }
@@ -460,6 +483,11 @@ export interface BuildAppOptions {
     onProgress?: (message: string) => void;
     /** false leaves the reaped faces (settings, hub, review, widget, Clicky) closed (`--no-relaunch`); default true. */
     relaunch?: boolean;
+    /**
+     * Which optional parts to build (parts.ts). Default: the parts already installed, the host alone on a fresh
+     * install. `add` puts parts on top of those (a face launcher such as `tools hub`); `exactly` replaces them.
+     */
+    parts?: Omit<PartsChoice, "installed">;
 }
 
 export async function buildApp(options?: BuildAppOptions): Promise<BuildResult> {
@@ -564,13 +592,19 @@ async function buildAppSteps(
     // SwiftPM's cached build manifest kept the old file list of the GenesisKit path dependency: three merges that
     // added Swift files (2026-10-10) failed with "cannot find type" on the first build and passed on the second. A
     // changed list of Swift files rebuilds the manifest once; a build with the same files keeps the cache.
-    const fileListMarker = join(APP_SCRATCH_PATH, "genesis-swift-files.sha256");
+    // The parts already installed, plus what the caller adds (parts.ts). Each set builds in its own scratch folder,
+    // and Package.swift links the part targets `GENESIS_APP_PARTS` names. `--manifest-cache local` keeps the
+    // evaluated manifest inside that folder, so a manifest read for one set never answers for another.
+    const parts = partsForBuild({ installed: installedParts(readManifest()), ...options?.parts });
+    const scratchPath = appScratchPath(parts);
+    const partsLabel = parts.length > 0 ? `parts ${parts.join(", ")}` : "host only";
+    const fileListMarker = join(scratchPath, "genesis-swift-files.sha256");
     const fileList = swiftFileListHash();
     const fileListChanged = !existsSync(fileListMarker) || readFileSync(fileListMarker, "utf8") !== fileList;
     step(
         fileListChanged
-            ? "swift build (optimized; Swift files added or removed, fresh build manifest)"
-            : "swift build (optimized, incremental)"
+            ? `swift build (optimized, ${partsLabel}; Swift files added or removed, fresh build manifest)`
+            : `swift build (optimized, ${partsLabel}, incremental)`
     );
     const reportProgress = options?.onProgress ? createSwiftProgressReporter(options.onProgress, 1000) : () => {};
     const build = await runStreaming({
@@ -581,11 +615,34 @@ async function buildAppSteps(
             "debug",
             "-Xswiftc",
             "-O",
+            // One module cache for every parts set, outside the scratch folders: the SDK's clang modules are built
+            // once, so a first build of another set does not rebuild them (host only: 12.2 s cold without, 8.7 s
+            // with, measured 2026-10-18 for .claude/plans/2026-10-17-FastPermissionsBuild.md).
+            "-Xswiftc",
+            "-module-cache-path",
+            "-Xswiftc",
+            APP_MODULE_CACHE_PATH,
             "--scratch-path",
-            APP_SCRATCH_PATH,
+            scratchPath,
+            // Only the app and what it links: a plain `swift build` compiles every target, unlinked parts included.
+            "--product",
+            GENESIS_APP_NAME,
+            "--manifest-cache",
+            "local",
             ...(fileListChanged ? ["--disable-build-manifest-caching"] : []),
+            // A host-only build declares no external package (GENESIS_KIT_BASE_ONLY below). Resolving would rewrite
+            // the shared Package.resolved without its pins (it deleted the file, 2026-10-18), and the next full build
+            // would write it back: never let a host-only build touch it.
+            ...(parts.length === 0 ? ["--disable-automatic-resolution"] : []),
         ],
         cwd: APP_SOURCE_DIR,
+        // A host-only build also tells ../GenesisKit to declare only its base library (GENESIS_KIT_BASE_ONLY), so
+        // SwiftPM resolves none of the markdown packages the host never compiles.
+        environment: {
+            ...env.getProcessEnv(),
+            GENESIS_APP_PARTS: partsEnvValue(parts),
+            GENESIS_KIT_BASE_ONLY: parts.length === 0 ? "1" : undefined,
+        },
         onLine: reportProgress,
     });
 
@@ -595,7 +652,7 @@ async function buildAppSteps(
 
     writeFileSync(fileListMarker, fileList);
 
-    const builtBinary = join(APP_SCRATCH_PATH, "debug", GENESIS_APP_NAME);
+    const builtBinary = join(scratchPath, "debug", GENESIS_APP_NAME);
 
     if (!existsSync(builtBinary)) {
         throw new Error(`swift build produced no binary at ${builtBinary}`);
@@ -636,6 +693,7 @@ async function buildAppSteps(
             iconPath,
             step,
             relaunch,
+            parts,
         });
     } finally {
         // Every failure between here and the swap (codesign, verify, rename) used to leave a
@@ -976,10 +1034,12 @@ interface StageAndInstallOptions {
     step: (message: string) => void;
     /** Reopen the long-lived faces the reap kills, from the new bundle (relaunch.ts). */
     relaunch: boolean;
+    /** The optional parts the binary links (parts.ts); their bundle steps run, the others are skipped. */
+    parts: readonly string[];
 }
 
 async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildResult> {
-    const { appDir, bundlePath, staging, contents, builtBinary, plist, iconPath, step, relaunch } = options;
+    const { appDir, bundlePath, staging, contents, builtBinary, plist, iconPath, step, relaunch, parts } = options;
     await Bun.write(join(contents, "MacOS", GENESIS_APP_NAME), Bun.file(builtBinary));
     run(["chmod", "755", join(contents, "MacOS", GENESIS_APP_NAME)]);
     await Bun.write(join(contents, "PkgInfo"), "APPL????");
@@ -991,10 +1051,20 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         await Bun.write(join(contents, "Resources", `${ICON_NAME}.icns`), Bun.file(iconPath));
     }
 
-    await buildDiffViewer(contents, step);
-    step("copy markdown webview");
-    cpSync(MARKDOWN_WEBVIEW_SOURCE, join(contents, "Resources", "webview"), { recursive: true });
-    await bundleClickyLibrary({ contents, step });
+    const bundleSteps = bundleStepsFor(parts);
+
+    if (bundleSteps.has("diff-viewer")) {
+        await buildDiffViewer(contents, step);
+    }
+
+    if (bundleSteps.has("markdown-webview")) {
+        step("copy markdown webview");
+        cpSync(MARKDOWN_WEBVIEW_SOURCE, join(contents, "Resources", "webview"), { recursive: true });
+    }
+
+    if (bundleSteps.has("clicky-library")) {
+        await bundleClickyLibrary({ contents, step });
+    }
 
     const stagedBundle = join(staging, `${GENESIS_APP_NAME}.app`);
     const identity = pickCodesignIdentity(
@@ -1031,6 +1101,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         sourceToolsPath: APP_TOOLS_PATH,
         signedWith: signature.authority,
         teamId: signature.teamId,
+        parts: [...parts],
     };
     await Bun.write(join(staging, "manifest.json"), `${SafeJSON.stringify(manifest, null, 2)}\n`);
 
@@ -1089,7 +1160,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     await packRetiredBundles(retiredRootFor(appDir));
 
     step("reap stale app-face processes");
-    await reapStaleAppFaces(step, relaunch);
+    await reapStaleAppFaces({ step, relaunch, parts });
 
     logger.info({ bundlePath, signedWith: signature.authority }, "GenesisTools.app built");
 
@@ -1410,7 +1481,16 @@ export function staleAppFacePids(processes: Pick<ProcessEntry, "pid" | "command"
  * new bundle with the argv they had, behind the front app (relaunch.ts), unless `relaunch` is false
  * (`tools macos permissions build --no-relaunch`).
  */
-async function reapStaleAppFaces(step: (message: string) => void, relaunch: boolean): Promise<void> {
+async function reapStaleAppFaces({
+    step,
+    relaunch,
+    parts,
+}: {
+    step: (message: string) => void;
+    relaunch: boolean;
+    /** The parts the new bundle links: a reaped face of another part does not come back (it could not run). */
+    parts: readonly string[];
+}): Promise<void> {
     const launcher = genesisAppLauncherPath();
     const listing = readAppFaceProcesses();
     if (listing.length === 0) {
@@ -1449,7 +1529,11 @@ async function reapStaleAppFaces(step: (message: string) => void, relaunch: bool
         await killStaleFaces(stale, launcher, step);
     } finally {
         if (relaunch) {
-            runRelaunch(reopen, step);
+            const steps = reopen.steps.filter((face) => {
+                const part = partForFace(face.argv[0] ?? "");
+                return part === undefined || parts.includes(part);
+            });
+            runRelaunch({ ...reopen, steps }, step);
         }
     }
 }

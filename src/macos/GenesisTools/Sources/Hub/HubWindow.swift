@@ -21,7 +21,7 @@ import SwiftUI
 // (the review window, "Send to agent" aimed at this session) and its open decisions.
 
 /// The `--hub` arguments. A launch while a hub runs hands the same list to that hub
-/// (Hub/HubSingleInstance.swift), so both paths parse it here.
+/// (App/HubSingleInstance.swift), so both paths parse it here.
 struct HubRequest {
     var snapshotPath: String?
     var benchPath: String?

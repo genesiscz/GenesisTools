@@ -21,7 +21,9 @@ public protocol GenesisKitHost: AnyObject {
     var perf: PerfConfiguration { get }
     /// The transcript's markdown (replies, prompt parts) in the app's own renderer; nil draws inline
     /// markdown in one `Text`.
+#if !GENESIS_KIT_BASE_ONLY
     func transcriptMarkdown(_ text: String, style: TranscriptMarkdownStyle) -> AnyView?
+#endif
     /// What a NEW process of this app reads for `kind`. macOS caches Input Monitoring and Screen Recording per
     /// process, so a grant given while this one runs shows only in a new one. nil when the app has no probe.
     func freshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus?
@@ -31,7 +33,9 @@ public protocol GenesisKitHost: AnyObject {
     /// The vault path the app's config names, which gives "Open in Obsidian" its vault name.
     var markdownConfiguredVault: String? { get }
     /// `[[` and `#` completion values from the app's vault index; nil when it has none.
+#if !GENESIS_KIT_BASE_ONLY
     func markdownCompletions(_ request: MarkdownCompletion.Request) -> [String]?
+#endif
     /// Property keys and their values as JSON for the Properties block; nil when there is no vault index.
     func markdownPropertyVocabularyJSON() -> String?
     /// The bundle id the viewer offers, once, as the default app for the file types it reads; nil never offers.
@@ -42,7 +46,9 @@ public protocol GenesisKitHost: AnyObject {
     /// screen. The default does nothing, and the view's own find keys still work.
     @MainActor func registerNativeFind(_ view: NSView, scope: String, onFind: @escaping () -> Void)
     /// The git and `tools` data the git components read (`GenesisKitGT.provider`); nil uses the CLI provider.
+#if !GENESIS_KIT_BASE_ONLY
     var gtProvider: GenesisKitGTProvider? { get }
+#endif
     /// Where the user's keyboard shortcuts are saved, one `<library>.json` per keymap (`KeymapStore.standard`); nil
     /// keeps them in `~/Library/Application Support/GenesisKit/Keymaps`.
     var keymapDirectory: URL? { get }
@@ -54,16 +60,22 @@ public extension GenesisKitHost {
     func openTerminal(folder: String) {}
     func findText(_ text: String, field: String) -> AnyView? { nil }
     var perf: PerfConfiguration { .fallback }
+#if !GENESIS_KIT_BASE_ONLY
     func transcriptMarkdown(_ text: String, style: TranscriptMarkdownStyle) -> AnyView? { nil }
+#endif
     func freshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus? { nil }
     var markdownVaultRoot: String? { nil }
     var markdownConfiguredVault: String? { nil }
+#if !GENESIS_KIT_BASE_ONLY
     func markdownCompletions(_ request: MarkdownCompletion.Request) -> [String]? { nil }
+#endif
     func markdownPropertyVocabularyJSON() -> String? { nil }
     var markdownDefaultAppBundleID: String? { nil }
     var toolsBinaryPath: String? { nil }
     @MainActor func registerNativeFind(_ view: NSView, scope: String, onFind: @escaping () -> Void) {}
+#if !GENESIS_KIT_BASE_ONLY
     var gtProvider: GenesisKitGTProvider? { nil }
+#endif
     var keymapDirectory: URL? { nil }
 }
 

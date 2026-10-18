@@ -100,6 +100,14 @@ if firstArgument == "--default-browser" {
     runDefaultBrowser(Array(arguments.dropFirst()))
 }
 
+// GenesisTools --parts: the optional parts this build has, one id per line (src/macos/lib/permissions/parts.ts).
+if firstArgument == "--parts" {
+    for id in AppParts.linked {
+        print(id)
+    }
+    exit(0)
+}
+
 // GenesisTools --rpc '<json>' (or --rpc - to read stdin): run one request as this bundle, then
 // exit. The reply is one JSON line on stdout. This is the door a unix socket would replace without
 // changing the envelope, so it stays the single entry point for anything the CLI wants done under

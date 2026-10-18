@@ -45,6 +45,11 @@ enum AppDock {
     /// no new one could be started, so a caller that would quit can show something else instead.
     @discardableResult
     static func showHub(_ hubWindow: NSWindow?) -> Bool {
+        // A build without the hub part (App/MissingParts.swift): the caller shows its own window instead.
+        guard AppParts.hasHub else {
+            HubPerf.log("dock: this build has no hub part")
+            return false
+        }
         if let hubWindow {
             _ = reopenHub(hubWindow)
         } else if HubSingleInstance.isRunningElsewhere {

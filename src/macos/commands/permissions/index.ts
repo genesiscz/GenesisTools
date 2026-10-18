@@ -11,11 +11,19 @@ import {
     genesisAppLauncherPath,
 } from "@genesiscz/utils/macos/genesis-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
+import * as p from "@genesiscz/utils/prompts/p";
 import { truncateDisplay } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import { buildApp, describeSource } from "../../lib/permissions/app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "../../lib/permissions/kinds";
 import type { LocalNetworkAnswer, OldBuild } from "../../lib/permissions/local-network";
+import {
+    ALL_PART_IDS,
+    APP_PARTS,
+    normalizeParts,
+    PARTS_FLAG_VALUES,
+    parsePartsFlag,
+} from "../../lib/permissions/parts";
 import { type PermissionsReport, permissionsReport, SETTINGS_PANES, settingsUrl } from "../../lib/permissions/report";
 import { createBuildProgressDisplay } from "../../lib/permissions/swift-progress";
 
@@ -103,6 +111,13 @@ function printReport(report: PermissionsReport): void {
             11
         );
         ui.kv("source", describeSource(report.app.manifest) ?? "unknown (built before the commit was recorded)", 11);
+        ui.kv(
+            "parts",
+            report.app.parts.length > 0
+                ? report.app.parts.join(", ")
+                : `host only (${toolCommand("hub")} adds the hub)`,
+            11
+        );
     } else {
         ui.err(`not built (${report.app.bundlePath})`);
     }
@@ -210,7 +225,23 @@ export function registerPermissionsCommand(program: Command): void {
         .command("build")
         .description("Build, sign and install ~/Applications/GenesisTools.app (Swift toolchain required)")
         .option("--no-relaunch", "Leave the settings, hub, review, widget and Clicky faces closed after the reap")
-        .action(async (options: { relaunch: boolean }) => {
+        .option(
+            "--parts [ids]",
+            `Build exactly these optional parts, comma-separated: ${PARTS_FLAG_VALUES.join(", ")} (default: the installed ones)`
+        )
+        .option(
+            "--add-part [ids]",
+            `Add optional parts to the installed ones, comma-separated: ${ALL_PART_IDS.join(", ")}`
+        )
+        .action(async (options: { relaunch: boolean; parts?: string | true; addPart?: string | true }) => {
+            const exactly = await partsOption(options.parts, "--parts", PARTS_FLAG_VALUES);
+            const add = await partsOption(options.addPart, "--add-part", ALL_PART_IDS);
+
+            if (exactly === null || add === null) {
+                process.exitCode = 1;
+                return;
+            }
+
             const progress = createBuildProgressDisplay({
                 step: (message) => ui.info(message),
                 spinner: () => out.spinner(),
@@ -219,9 +250,11 @@ export function registerPermissionsCommand(program: Command): void {
                 onStep: progress.onStep,
                 onProgress: progress.onProgress,
                 relaunch: options.relaunch,
+                parts: { exactly, add },
             }).finally(progress.finish);
             ui.ok(`${result.bundlePath}`);
             ui.kv("signed", result.signature.adhoc ? "ad-hoc" : result.signature.authority, 8);
+            ui.kv("parts", result.manifest.parts?.length ? result.manifest.parts.join(", ") : "host only", 8);
 
             if (result.signature.adhoc) {
                 ui.warn(
@@ -418,4 +451,41 @@ export function registerPermissionsCommand(program: Command): void {
         });
 
     program.addCommand(permissions);
+}
+
+/**
+ * `--parts` / `--add-part`: undefined when not given, the part ids when given a value, a picker on a TTY for the bare
+ * flag, and null (with the possible values printed) for a bare flag without a TTY or an unknown part.
+ */
+async function partsOption(
+    value: string | true | undefined,
+    flag: string,
+    values: readonly string[]
+): Promise<string[] | undefined | null> {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    if (value === true) {
+        if (!isInteractive()) {
+            out.print(suggestEnumFlag("tools macos permissions build", flag, values));
+            return null;
+        }
+
+        const picked = await p.multiselect({
+            message: flag === "--parts" ? "Which optional parts should the app have?" : "Which parts should it add?",
+            options: APP_PARTS.map((part) => ({ value: part.id, label: part.id, hint: part.summary })),
+            required: false,
+        });
+
+        return p.isCancel(picked) ? null : normalizeParts(picked.map(String));
+    }
+
+    try {
+        return parsePartsFlag(value);
+    } catch (error) {
+        ui.err(error instanceof Error ? error.message : String(error));
+        out.print(suggestEnumFlag("tools macos permissions build", flag, values));
+        return null;
+    }
 }

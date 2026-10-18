@@ -59,6 +59,27 @@ GenesisKit). Never `.buttonStyle(.borderless)` on something clickable.
 
 **Every button that shows only an icon has a tooltip.** Check before you finish: `rg -n 'Image\(systemName' Sources | rg -v 'IconButton|instantTooltip'` and look at each hit.
 
+## Host and optional parts
+
+The app is one module: a host plus optional parts (request of 2026-10-18). The host is the launcher, `--rpc`, the
+permission faces, vault approval, notifications, the microphone, the link router and the settings window. A part is the
+folders and files it already has, listed in `allParts` in Package.swift: `hub` (Hub/, Review/), `widget`
+(WidgetWindow.swift), `clicky` (Clicky/, ClickyEntry.swift, Settings/; needs the hub), `markdown` (Markdown/).
+App/NativeFlowRuntime.swift and App/PartLaunch.swift (`WidgetLaunch`, `ClickyLaunch`) are built whenever the hub, the
+widget or Clicky is.
+
+- `GENESIS_APP_PARTS` picks the parts; unset is every part, so a plain `swift build`, `swift test` and an IDE see the
+  whole app. An unbuilt part's paths are excluded from the module, so nothing needs `package` or `public` access.
+  `src/macos/lib/permissions/parts.ts` is the TypeScript table; a build makes the installed parts (the host alone on a
+  fresh install), and `tools hub` adds the hub. Each parts set has its own `.build/opt-<ids>`.
+- A host-only build also sets `GENESIS_KIT_BASE_ONLY=1`: GenesisKit's manifest then compiles only the kit files the
+  host uses (`baseSources`), with no external package. A kit file the host starts to use goes into that list.
+- `App/MissingParts.swift` stands in for each unbuilt part (`#if !GENESIS_PART_<ID>`): its face prints the
+  `tools macos permissions build --add-part <id>` command and exits 69. Host code that offers a part checks
+  `AppParts.linked` (the dock's hub item, the settings window's Open Hub button). Host code never names a type that
+  lives only in a part: build `GENESIS_APP_PARTS= GENESIS_KIT_BASE_ONLY=1` after a host change to prove it.
+- A new part: one row in `allParts`, one block in MissingParts.swift, one row in parts.ts.
+
 ## 🛑 Every title bar zooms on a double-click and drags on empty chrome
 
 Martin, 2026-09-28: "the top of the window is not clickable to fill in the whole display.. this keeps reoccuring in
@@ -247,7 +268,7 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
   find) and draws a SwiftUI sheet, which an off-screen parent gets as an unattached `SheetPresentationWindow`.
   A snapshot taken before a search or load finished shows its empty state: read `app-perf.log` for the span.
   One hub runs at a time: a second `GenesisTools --hub …` hands its flags to the running hub and exits
-  (Hub/HubSingleInstance.swift: the hub holds a `flock` on `~/.genesis-tools/hub/hub.lock`, dropped by the kernel on exit).
+  (App/HubSingleInstance.swift: the hub holds a `flock` on `~/.genesis-tools/hub/hub.lock`, dropped by the kernel on exit).
 - A rebuild never deletes the replaced bundle: it moves to `~/.genesis-tools/app/retired.noindex/<ms>/`. After the
   install window the newest two retired bundles and every one a running process executes stay folders; other idle
   ones are packed into `<ms>.zst` (tar inside zstd, `tools compress unpack` restores one), at most 5 packed copies

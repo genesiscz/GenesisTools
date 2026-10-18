@@ -176,6 +176,10 @@ export function buildReason({ staleOk = false }: { staleOk?: boolean } = {}): st
         return "GenesisTools.app is older than its Swift sources";
     }
 
+    if (!status.parts.includes("hub")) {
+        return "GenesisTools.app was built without the hub part";
+    }
+
     const hub = hubStatus();
     return hub.available ? undefined : hub.reason;
 }
@@ -196,7 +200,8 @@ export async function openHub(options: OpenHubOptions): Promise<OpenHubResult> {
 
         options.onStep?.(`${reason}: building it (about a minute on a cold build)`);
         logger.info({ reason }, "hub open: building GenesisTools.app");
-        await buildApp({ onStep: options.onStep, onProgress: options.onProgress });
+        // The installed parts plus the hub (src/macos/lib/permissions/parts.ts): a host-only install gains it here.
+        await buildApp({ onStep: options.onStep, onProgress: options.onProgress, parts: { add: ["hub"] } });
         built = true;
     }
 

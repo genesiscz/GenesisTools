@@ -28,6 +28,7 @@
  */
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { appStatus } from "@app/macos/lib/permissions/app";
 import { nativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 
 const DOMAIN = "com.genesiscz.genesistools";
@@ -122,6 +123,14 @@ if (verb === "on" || verb === "off") {
 } else if (verb === "start") {
     if (!enabled()) {
         console.error("Staging faces are off. Run: bun scripts/native/staging.ts on");
+        process.exit(1);
+    }
+
+    // The widget is an optional part of the app (src/macos/lib/permissions/parts.ts); a host-only build has none.
+    if (!appStatus().parts.includes("widget")) {
+        console.error(
+            "The installed GenesisTools.app has no widget part. Run: tools macos permissions build --add-part widget,clicky"
+        );
         process.exit(1);
     }
 

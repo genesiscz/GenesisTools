@@ -110,8 +110,8 @@ enum LinkRelay {
     /// Unreachable in practice; keeps the face running when it cannot run itself again.
     private static func runOn(_ arguments: [String]) -> Never {
         switch arguments.first {
-        case "--hub": runHub(Array(arguments.dropFirst()))
-        case "--review": runReview(Array(arguments.dropFirst()))
+        case "--hub" where AppParts.hasHub: runHub(Array(arguments.dropFirst()))
+        case "--review" where AppParts.hasHub: runReview(Array(arguments.dropFirst()))
         default: runWindowApp(showWindowImmediately: true)
         }
     }

@@ -1062,7 +1062,7 @@ final class ReviewModel: ObservableObject {
     }
 
     /// The hub, at this PR and the file on screen: a second `--hub` hands its flags to the running hub
-    /// and exits (Hub/HubSingleInstance.swift). Not a `genesis-tools://` link: Launch Services may hand
+    /// and exits (App/HubSingleInstance.swift). Not a `genesis-tools://` link: Launch Services may hand
     /// that to this very process, which has no hub.
     func showInHub() {
         guard let info = pr?.payload?.pr, let executable = Bundle.main.executableURL else { return }

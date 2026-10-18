@@ -30,6 +30,12 @@ core helpers through `package` access, not `public`. `KitModuleBoundaryTests` in
 or imports `GenesisKitPosture` or `GenesisKitDisk`, or when a type of any optional library is declared in the core
 again. Genesis lists each library it uses and imports it where it is used.
 
+**Base-only build.** `GENESIS_KIT_BASE_ONLY=1` (set by a GenesisTools.app build with no optional part) makes the
+manifest declare only `GenesisKit`, compiled from `baseSources` in Package.swift: permissions, perf, the `tools`
+bridge, the path controls, motion, tooltips and hover styles, the window title bar. It needs no external package. The
+module keeps its name, so the host imports it as always; `#if GENESIS_KIT_BASE_ONLY` hides the `GenesisKitHost` members
+that name markdown or git types. A file a base file starts to use goes into `baseSources`, or the host build fails.
+
 The fixtures product, `GenesisKitFixtures` (`Sources/GenesisKitFixtures/`), is for test targets only: the one copy
 of the `tools` disk fixtures, read with `KitFixture.url(_:)`, `data(_:)` and `string(_:)` by file name
 (`contract-doctor-act.ndjson`).

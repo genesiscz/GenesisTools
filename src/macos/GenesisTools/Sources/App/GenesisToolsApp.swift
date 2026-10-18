@@ -206,14 +206,17 @@ struct RootView: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            HStack {
-                Spacer()
-                Button {
-                    MainActor.assumeIsolated { _ = AppDock.showHub(nil) }
-                } label: {
-                    Label("Open Hub", systemImage: "rectangle.3.group")
+            // A build without the hub part (App/MissingParts.swift) has no hub to open.
+            if AppParts.hasHub {
+                HStack {
+                    Spacer()
+                    Button {
+                        MainActor.assumeIsolated { _ = AppDock.showHub(nil) }
+                    } label: {
+                        Label("Open Hub", systemImage: "rectangle.3.group")
+                    }
+                    .help("Sessions, agents, PRs and worktrees in the hub window")
                 }
-                .help("Sessions, agents, PRs and worktrees in the hub window")
             }
             tabs
         }
