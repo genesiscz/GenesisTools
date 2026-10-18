@@ -9,7 +9,7 @@ import { effectivePrice, withinBudget } from "./lib/search";
 import { blend, dropVowels, shortForms } from "./lib/suggest/basic";
 import { findHacks, hackSources } from "./lib/suggest/hacks";
 import { findVibeHits } from "./lib/vibe";
-import { changeReasons } from "./lib/watch";
+import { applyObservations, changeReasons, type WatchChange } from "./lib/watch";
 
 describe("parseDomain", () => {
     it("splits label and TLD, folding case, scheme, path and www", () => {
@@ -203,6 +203,20 @@ describe("WHOIS parsing", () => {
         expect(interpretWhois(EU_FREE)).toBe("available");
         expect(interpretWhois(EU_TAKEN)).toBe("taken");
         expect(interpretWhois('No match for "X.COM".')).toBe("available");
+    });
+
+    it("reads a refusal as throttled even when it says no information is available", () => {
+        expect(interpretWhois("Query limit exceeded; no information available; try again later\n")).toBe("throttled");
+    });
+
+    it("ignores throttle words in the terms of use after the answer", () => {
+        const terms = "Terms of Use: Queries are throttled. If too many queries are received, try again later.\r\n";
+        expect(interpretWhois(`Domain not found.\r\n>>> Last update of WHOIS database <<<\r\n\r\n${terms}`)).toBe(
+            "available"
+        );
+        expect(interpretWhois(`Domain Name: x.io\r\nRegistrar: Example Inc.\r\n>>> Last update <<<\r\n${terms}`)).toBe(
+            "taken"
+        );
     });
 
     it("treats a throttle reply as throttled, not available", () => {
@@ -449,5 +463,43 @@ describe("request maxBytes", () => {
         } finally {
             server.stop(true);
         }
+    });
+});
+
+describe("mergeVerdicts precedence", () => {
+    it("lets a registry block beat an available answer", () => {
+        const merged = mergeVerdicts("x.com", [
+            { provider: "rdap", status: "available" },
+            { provider: "whois", status: "reserved" },
+        ]);
+        expect(merged.status).toBe("reserved");
+    });
+});
+
+describe("watch applyObservations", () => {
+    const result = (status: "taken" | "available", checkedAt: string) => ({
+        domain: "x.com",
+        provider: "rdap",
+        verdicts: [],
+        checkedAt,
+        status,
+    });
+    const change = (addedAt: string, status: "taken" | "available", checkedAt: string): WatchChange => ({
+        entry: { domain: "x.com", addedAt },
+        result: result(status, checkedAt),
+        reasons: [],
+    });
+
+    it("keeps the newer refresh when an older one finishes last", () => {
+        const watch = [{ domain: "x.com", addedAt: "a" }];
+        applyObservations(watch, [change("a", "available", "2026-10-18T10:05:00Z")], "2026-10-18T10:04:00Z");
+        applyObservations(watch, [change("a", "taken", "2026-10-18T10:06:00Z")], "2026-10-18T10:00:00Z");
+        expect(watch[0]).toMatchObject({ lastStatus: "available", observedAt: "2026-10-18T10:04:00Z" });
+    });
+
+    it("skips an entry that was removed and added again during the refresh", () => {
+        const watch = [{ domain: "x.com", addedAt: "b" }];
+        applyObservations(watch, [change("a", "taken", "2026-10-18T10:05:00Z")], "2026-10-18T10:04:00Z");
+        expect(watch[0]).toEqual({ domain: "x.com", addedAt: "b" });
     });
 });

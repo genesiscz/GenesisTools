@@ -10,6 +10,8 @@ export interface WatchEntry {
     note?: string;
     lastStatus?: DomainStatus;
     lastCheckedAt?: string;
+    /** When the refresh that wrote the last state started; an older refresh never overwrites it. */
+    observedAt?: string;
     expiresAt?: string;
     price?: number;
 }
@@ -109,10 +111,43 @@ export function changeReasons({
     return [...new Set(reasons)];
 }
 
+/**
+ * Store what one refresh saw. It skips an entry that a refresh started later already wrote (two refreshes
+ * overlapping, the older finishing last) and an entry removed and added again since this refresh read it.
+ */
+export function applyObservations(watch: WatchEntry[], changes: WatchChange[], observedAt: string): void {
+    for (const change of changes) {
+        const stored = watch.find((entry) => entry.domain === change.entry.domain);
+        if (!stored || stored.addedAt !== change.entry.addedAt || (stored.observedAt ?? "") > observedAt) {
+            continue;
+        }
+
+        const { status, checkedAt, expiresAt, price } = change.result;
+        stored.lastCheckedAt = checkedAt;
+        stored.observedAt = observedAt;
+        if (status === "unknown") {
+            continue;
+        }
+
+        stored.lastStatus = status;
+        if (expiresAt) {
+            stored.expiresAt = expiresAt;
+        } else if (status === "available" || status === "premium") {
+            // A registrable name has no expiry; the old one belonged to the previous owner.
+            stored.expiresAt = undefined;
+        }
+
+        if (price) {
+            stored.price = price.registration;
+        }
+    }
+}
+
 /** Re-check every watched name (fresh, with RDAP details), store the new state, return what changed. */
 export async function refreshWatch({ expiryWarnDays = 45 }: { expiryWarnDays?: number } = {}): Promise<WatchChange[]> {
     const entries = await listWatch();
     const now = new Date();
+    const observedAt = now.toISOString();
     const { results } = await checkDomains(
         entries.map((entry) => entry.domain),
         { fresh: true, details: true }
@@ -133,32 +168,9 @@ export async function refreshWatch({ expiryWarnDays = 45 }: { expiryWarnDays?: n
         });
     }
 
-    await storage.atomicConfigUpdate<DomainsConfig>((config) => {
-        for (const change of changes) {
-            const stored = config.watch?.find((entry) => entry.domain === change.entry.domain);
-            if (!stored) {
-                continue;
-            }
-
-            const { status, checkedAt, expiresAt, price } = change.result;
-            stored.lastCheckedAt = checkedAt;
-            if (status === "unknown") {
-                continue;
-            }
-
-            stored.lastStatus = status;
-            if (expiresAt) {
-                stored.expiresAt = expiresAt;
-            } else if (status === "available" || status === "premium") {
-                // A registrable name has no expiry; the old one belonged to the previous owner.
-                stored.expiresAt = undefined;
-            }
-
-            if (price) {
-                stored.price = price.registration;
-            }
-        }
-    });
+    await storage.atomicConfigUpdate<DomainsConfig>((config) =>
+        applyObservations(config.watch ?? [], changes, observedAt)
+    );
     logger.debug({ checked: changes.length }, "domains: watch check stored");
     return changes;
 }

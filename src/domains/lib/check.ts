@@ -48,7 +48,8 @@ export function mergeVerdicts(domain: string, verdicts: ProviderVerdict[]): Chec
         return { ...base, provider: taken.provider, status: "taken", detail: taken.detail };
     }
 
-    for (const status of ["premium", "available", "reserved"] as const) {
+    // A registry block is positive evidence, like a registration: it beats "available" and "premium".
+    for (const status of ["reserved", "premium", "available"] as const) {
         const match = verdicts.find((v) => v.status === status);
         if (match) {
             const priced = match.price ? match : verdicts.find((v) => v.price);
