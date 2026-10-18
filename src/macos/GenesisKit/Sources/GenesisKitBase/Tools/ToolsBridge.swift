@@ -43,11 +43,14 @@ public struct ToolsBridge: Sendable {
     /// GENESIS_TOOLS_APP_BUNDLE_ID and GENESIS_TOOLS_APP_INODE pass through: they name the responsible
     /// process this one runs under (set by the GenesisTools launcher, or by a GenesisTools.app face that
     /// checked it with the kernel), so `tools` skips both launcher stages when that is already GenesisTools.
+    /// GENESIS_TOOLS_HOME and GENESIS_TOOLS_DAEMON_DIR pass through too: a process started against a sandbox home
+    /// must not let its `tools` children read or change the real user's data (src/utils/storage/root.ts).
     public static let envAllowlist: Set<String> = [
         "HOME", "PATH", "SHELL", "LANG", "USER", "LOGNAME", "TERM",
         "SSH_AUTH_SOCK", "GITHUB_TOKEN", "ANTHROPIC_API_KEY", "TZ",
         "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
         "PROFILE", "GENESIS_TOOLS_APP_BUNDLE_ID", "GENESIS_TOOLS_APP_INODE", "GENESIS_TOOLS_NO_APP",
+        "GENESIS_TOOLS_HOME", "GENESIS_TOOLS_DAEMON_DIR",
         ToolsCallTrace.environmentKey,
     ]
 

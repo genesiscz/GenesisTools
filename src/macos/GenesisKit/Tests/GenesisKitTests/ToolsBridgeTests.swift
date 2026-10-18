@@ -200,6 +200,16 @@ final class ToolsBridgeTests: XCTestCase {
         XCTAssertNil(scrubbed["GENESIS_TOOLS_APP_STAGE"])
     }
 
+    /// A sandboxed caller's storage overrides reach `tools`, so a daemon page in a test home never edits the real one.
+    func testEnvAllowlistKeepsTheStorageOverrides() {
+        let scrubbed = ToolsBridge.scrubbedEnvironment(from: [
+            "GENESIS_TOOLS_HOME": "/fixture/home",
+            "GENESIS_TOOLS_DAEMON_DIR": "/fixture/home/daemon",
+        ])
+        XCTAssertEqual(scrubbed["GENESIS_TOOLS_HOME"], "/fixture/home")
+        XCTAssertEqual(scrubbed["GENESIS_TOOLS_DAEMON_DIR"], "/fixture/home/daemon")
+    }
+
     func testRunRereadsResolvedBinaryPath() async throws {
         let fm = FileManager.default
         let dir = fm.temporaryDirectory.appendingPathComponent(
