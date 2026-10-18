@@ -1,4 +1,4 @@
-# Commits that only move code or change access marks: git blame skips them (git config blame.ignoreRevsFile .git-blame-ignore-revs; GitHub reads this file by itself).
+# Commits that move code, restructure package or build targets, or change access marks: git blame skips them (git config blame.ignoreRevsFile .git-blame-ignore-revs; GitHub reads this file by itself). New lines those commits added are still blamed on them.
 # Each SHA carries its subject: a rebase that rewrites the SHAs needs this list rebuilt from the subjects.
 
 # feat(GenesisKit): GenesisKitBase, a small library without external packages that a host-only app build links alone
