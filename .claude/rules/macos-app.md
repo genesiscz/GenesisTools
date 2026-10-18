@@ -47,7 +47,9 @@ links (`Parts.swift`) and calls `runHost()`.
   (the host alone on a fresh install), and `tools hub` adds the hub. Each parts set has its own `.build/opt-<ids>`.
 - The host starts a part's face only through `AppParts` (Host/AppParts.swift); a face whose part is not linked prints
   the `tools macos permissions build --add-part <id>` command and exits 69. Never call a part's `run…` from the host.
-- A host symbol a part uses is `package`; a part's `run…` entry point is `package` for the executable.
+- A host symbol a part uses is `package`; a part's `run…` entry point and plug-in are `package` for the executable.
+  Everything else stays internal: mark `package` only what another module uses, which the build names when it is
+  missing. The tests use `@testable import`, so they need no mark.
 - A new part: one target in Package.swift, one block in `Sources/GenesisTools/Parts.swift`, one row in parts.ts. A part
   with settings pages adds its plug-in in Parts.swift and `requires: ["features"]` in both tables (a build makes the
   window with it; `requires` never adds a code link).
