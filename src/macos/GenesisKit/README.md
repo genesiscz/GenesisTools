@@ -20,8 +20,9 @@ the libraries it imports, so an optional part costs an app nothing until it uses
   `PathKind`, `PathDisplay`), `Tools/` (`ToolsBridge`, the server client), `Style/` (motion, `RowButton`, `Plural`,
   `KitPalette`, and `KitHost`: the `GenesisKitBaseHost` protocol and the class-name lookup), `Window/`
   (`WindowTitlebar`, `SingleInstance`). No external package. `GenesisKit` re-exports it, so an app that imports
-  `GenesisKit` never names it. A host-only GenesisTools build links only this (12 s cold instead of 83 s, 2026-10-18),
-  with `GENESIS_KIT_BASE_ONLY=1` so this package declares nothing else (Package.swift). A file moves here only when
+  `GenesisKit` never names it. It is ready for a host-only GenesisTools build to link alone, with
+  `GENESIS_KIT_BASE_ONLY=1` so this package declares nothing else (Package.swift); the app's own split and the build
+  that sets the variable are separate changes (#545, #546), and until then every GenesisTools build links `GenesisKit`. A file moves here only when
   the host needs it and it needs nothing outside this library; `GenesisKit`'s files reach its helpers through `package`.
 - `GenesisKit` (`Sources/GenesisKit/`): what both apps use, including `Alerts/` (`AlertPolicy`, the channels and the
   channel matrix row), `System/` (`ActivityGate`, `ScreenCaptureDetector`) and `ChartColor`. Every GenesisTools part
