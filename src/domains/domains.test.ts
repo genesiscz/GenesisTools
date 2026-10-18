@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fetchLanding, type LandingNetwork, parkingServiceFor } from "./lib/aftermarket";
+import { fetchLanding, type LandingNetwork, marketplaceForUrl, parkingServiceFor } from "./lib/aftermarket";
 import { mergeVerdicts } from "./lib/check";
 import { parseDomain, seedWords } from "./lib/domain";
 import { type HttpResponse, isPublicAddress, pickPublicAddress, request } from "./lib/http";
@@ -158,6 +158,15 @@ describe("parkingServiceFor", () => {
         expect(parkingServiceFor(["NS1.SEDOPARKING.COM."])).toBe("Sedo");
         expect(parkingServiceFor(["ns1.notsedoparking.com"])).toBeUndefined();
     });
+
+    it("finds a marketplace by the final URL's host, never by a substring or on the marketplace itself", () => {
+        expect(marketplaceForUrl("https://www.afternic.com/forsale/x.com", "x.com")).toBe("Afternic");
+        expect(marketplaceForUrl("https://sedo.com/search/details/?domain=x.com", "x.com")).toBe("Sedo");
+        expect(marketplaceForUrl("https://sedo.com/", "x.com")).toBeUndefined();
+        expect(marketplaceForUrl("https://hefty.com/", "hefty.com")).toBeUndefined();
+        expect(marketplaceForUrl("https://blog.example/?ref=afternic.com", "blog.example")).toBeUndefined();
+        expect(marketplaceForUrl("https://www.hugedomains.com/", "hugedomains.com")).toBeUndefined();
+    });
 });
 
 describe("findVibeHits", () => {
@@ -171,6 +180,13 @@ describe("findVibeHits", () => {
         expect(findVibeHits("class", lists)).toEqual([]);
         expect(findVibeHits("assets", lists)).toEqual([]);
         expect(findVibeHits("ass", lists)).toEqual([{ languages: ["en"], word: "ass", position: "whole" }]);
+    });
+
+    it("ignores a word inside an innocent one, but not beside it", () => {
+        const en = { en: ["anal", "crap", "shit"] };
+        expect(findVibeHits("dataanalytics", en)).toEqual([]);
+        expect(findVibeHits("canal", en)).toEqual([]);
+        expect(findVibeHits("scrapshit", en).map((hit) => hit.word)).toEqual(["shit"]);
     });
 
     it("folds diacritics before matching", () => {
@@ -241,6 +257,17 @@ describe("watch changeReasons", () => {
         expect(reasons).toEqual([]);
     });
 
+    it("keeps warning about a saved expiry while the name stays registered", () => {
+        const entry = { domain: "x.com", addedAt: "", lastStatus: "taken" as const, expiresAt: "2026-11-01T12:00:00Z" };
+        expect(changeReasons({ entry, result: { ...base, status: "taken" }, now, expiryWarnDays: 45 })).toEqual([
+            "expires in 15 days",
+        ]);
+        expect(changeReasons({ entry, result: { ...base, status: "available" }, now, expiryWarnDays: 45 })).toEqual([
+            "taken -> available",
+            "now available",
+        ]);
+    });
+
     it("warns about a close expiry and stays quiet otherwise", () => {
         const soon = changeReasons({
             entry: { domain: "x.com", addedAt: "", lastStatus: "taken" },
@@ -277,6 +304,12 @@ describe("isPublicAddress", () => {
         ]) {
             expect(isPublicAddress(address)).toBe(false);
         }
+    });
+
+    it("judges a NAT64 address by the IPv4 address inside it", () => {
+        expect(isPublicAddress("64:ff9b::a00:1")).toBe(false);
+        expect(isPublicAddress("64:ff9b::10.0.0.1")).toBe(false);
+        expect(isPublicAddress("64:ff9b::808:808")).toBe(true);
     });
 
     it("accepts public addresses", () => {

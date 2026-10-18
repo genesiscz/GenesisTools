@@ -83,8 +83,8 @@ export function createWatchCommand(): Command {
         .option("--changed", "show only names with something to report")
         .option("--json", "print JSON to stdout")
         .action(async (opts) => {
-            const expiryWarnDays = Number.parseInt(opts.expiryDays, 10);
-            if (!Number.isInteger(expiryWarnDays) || expiryWarnDays < 0) {
+            const expiryWarnDays = Number(opts.expiryDays);
+            if (!/^\d+$/.test(String(opts.expiryDays))) {
                 out.log.error(`--expiry-days needs a whole number of days, got "${opts.expiryDays}"`);
                 process.exitCode = 1;
                 return;

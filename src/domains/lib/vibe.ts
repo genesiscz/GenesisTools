@@ -93,21 +93,46 @@ function sharedWordList(language: string): Promise<string[]> {
  * Pure matcher. Words of 4+ letters match anywhere; 3-letter words only as the whole label, because
  * short words hide inside innocent ones ("ass" in "class", "assist", "bass").
  */
+/** Innocent words that contain a listed word; a match inside one of them does not count. */
+const INNOCENT = [
+    "analy",
+    "banal",
+    "canal",
+    "scrap",
+    "grape",
+    "drape",
+    "therapist",
+    "dickens",
+    "scunthorpe",
+    "janus",
+    "cockpit",
+    "cocktail",
+    "peacock",
+    "hancock",
+    "basement",
+    "spice",
+    "spicy",
+    "button",
+    "buttress",
+];
+
 export function findVibeHits(label: string, lists: Record<string, string[]>): VibeHit[] {
     const folded = fold(label);
+    // Innocent words are blanked out with a non-letter, so a word can match beside them but not inside them.
+    const masked = INNOCENT.reduce((text, safe) => text.replaceAll(safe, "_".repeat(safe.length)), folded);
     const hits = new Map<string, VibeHit>();
     for (const [language, words] of Object.entries(lists)) {
         for (const word of words) {
-            if (word.length < 3 || !folded.includes(word)) {
+            if (word.length < 3 || !masked.includes(word)) {
                 continue;
             }
 
             const position =
                 folded === word
                     ? "whole"
-                    : folded.startsWith(word)
+                    : masked.startsWith(word)
                       ? "start"
-                      : folded.endsWith(word)
+                      : masked.endsWith(word)
                         ? "end"
                         : "inside";
             if (word.length === 3 && position !== "whole") {

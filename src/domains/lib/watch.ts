@@ -90,8 +90,12 @@ export function changeReasons({
         reasons.push("now available");
     }
 
-    if (result.expiresAt) {
-        const days = Math.floor((Date.parse(result.expiresAt) - now.getTime()) / DAY_MS);
+    // A check without registration details keeps the saved expiry while the name is still registered.
+    const registered = (status?: DomainStatus) => status === "taken" || status === "for-sale";
+    const stillRegistered = registered(result.status) || (result.status === "unknown" && registered(entry.lastStatus));
+    const expiresAt = result.expiresAt ?? (stillRegistered ? entry.expiresAt : undefined);
+    if (expiresAt) {
+        const days = Math.floor((Date.parse(expiresAt) - now.getTime()) / DAY_MS);
         if (days <= expiryWarnDays) {
             reasons.push(days < 0 ? `expired ${-days} days ago` : `expires in ${days} days`);
         }

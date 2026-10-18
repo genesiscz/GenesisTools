@@ -76,6 +76,7 @@ async function checkRound({
 }
 
 const isFree = (entry: Checked) => entry.result.status === "available";
+const UNREGISTRABLE = new Set<DomainStatus>(["taken", "for-sale", "reserved"]);
 
 /** The registrar's quote, else the TLD list price as an estimate, else undefined. */
 export function effectivePrice(result: CheckResult, estimates: Map<string, DomainPrice>): DomainPrice | undefined {
@@ -131,7 +132,10 @@ export async function searchDomains(options: SearchOptions): Promise<SearchOutco
                     ? {
                           suggestors: ["ai"],
                           extraSuggestors: [],
-                          avoid: checked.filter((entry) => !isFree(entry)).map((entry) => entry.candidate.domain),
+                          // Only names nobody can register: premium is buyable and unknown may be free.
+                          avoid: checked
+                              .filter(({ result }) => UNREGISTRABLE.has(result.status))
+                              .map((entry) => entry.candidate.domain),
                           liked: free.slice(0, 12).map((entry) => entry.candidate.domain),
                       }
                     : {}),

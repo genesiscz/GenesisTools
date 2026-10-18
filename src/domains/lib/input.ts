@@ -1,6 +1,6 @@
 import { fstatSync } from "node:fs";
 import { parseVariadic } from "@genesiscz/utils/cli";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 
 const STDIN_DEADLINE_MS = 10_000;
 
@@ -9,7 +9,8 @@ function stdinHasInput(): boolean {
     try {
         const stat = fstatSync(0);
         return stat.isFIFO() || stat.isFile();
-    } catch {
+    } catch (error) {
+        logger.debug({ error }, "domains: cannot stat stdin");
         return false;
     }
 }

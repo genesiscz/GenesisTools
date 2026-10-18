@@ -56,7 +56,7 @@ The default chain stops at the first decisive answer:
 3. **RDAP** (`rdap`): the registry's own answer, via the IANA bootstrap (cached a day).
 4. **WHOIS** (`whois`): port 43 for TLDs without RDAP (.io, .eu, .me, .gg, .co ...), server found through whois.iana.org. A reply reads as taken only when it carries registration lines (registrar, creation date, nameservers); an empty, refused or unrecognized reply is unknown.
 
-Each stage runs over the whole batch, so 150 names cost one DNS lookup each and a single Vercel request. A "taken" from any provider beats an "available" from another. `search` and `hack` cache decisive results for 6 hours; `check`, `price` and `info` read that cache but never write it. `--fresh` skips the cache.
+Each stage runs over the whole batch, so 150 names cost one DNS lookup each and a single Vercel request. A "taken" from any provider beats an "available" from another. `search` and `hack` cache decisive results for 6 hours; `check` and `price` read that cache but never write it, and `info` always checks live. `--fresh` skips the cache.
 
 ## Providers
 
