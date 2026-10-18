@@ -33,6 +33,11 @@ if firstArgument == "--local-network-rules" {
     runLocalNetworkRules()
 }
 
+// A face of a part this build does not have says so first, before the staging gate below would only say "staging".
+if let part = AppParts.part(forFace: firstArgument), !AppParts.linked.contains(part) {
+    AppParts.missing(part, face: firstArgument)
+}
+
 // The widget and Clicky are in staging: the Preview bundles run them, and the normal app only after
 // `bun scripts/native/staging.ts on` on this machine (NativeStaging), so a normal install or `tools update` never does.
 if NativeStaging.refuses(arguments, facesEnabled: NativeStaging.facesEnabled) {

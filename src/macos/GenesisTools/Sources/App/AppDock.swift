@@ -79,6 +79,8 @@ final class AppDockTarget: NSObject {
     weak var hubWindow: NSWindow?
 
     @objc func showHub(_ sender: Any?) {
+        // A build without the hub: the alert names the command that adds it (App/MissingParts.swift).
+        guard AppParts.canLaunch(face: "--hub") else { return }
         AppDock.showHub(hubWindow)
     }
 }

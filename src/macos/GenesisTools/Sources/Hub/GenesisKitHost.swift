@@ -45,41 +45,14 @@ final class GenesisKitHostAdapter: NSObject, GenesisKitHost {
         await probeFreshPermissionStatus(kind)
     }
 
-    /// `OBSIDIAN_VAULT_PATH`, else the vault the plugins config names (`obsidian.vaultRoot` in
-    /// ~/.genesis-tools/plugins/config.json, the one the wrap-up skill writes to).
-    var markdownVaultRoot: String? {
-        if let path = ProcessInfo.processInfo.environment["OBSIDIAN_VAULT_PATH"], !path.isEmpty {
-            return path
-        }
-        let config = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/plugins/config.json")
-        guard let data = try? Data(contentsOf: config),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let root = (object["obsidian"] as? [String: Any])?["vaultRoot"] as? String, !root.isEmpty
-        else { return nil }
-        return (root as NSString).expandingTildeInPath
-    }
+    // The settings every build shares (App/HostKitSettings.swift).
+    var markdownVaultRoot: String? { HostKitSettings.markdownVaultRoot }
 
-    /// On by default: the app always ships as a release build (`bun run app`), and the hub's loads
-    /// must be measured on every run. `scripts/perf-report.ts` reads `app-perf.log`.
-    var perf: PerfConfiguration {
-        PerfConfiguration(
-            environmentKey: "GENESIS_TOOLS_PERF",
-            enabledByDefault: true,
-            subsystem: "com.genesiscz.genesistools",
-            logDirectory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/logs"),
-            fileName: "app-perf.log",
-            appName: "GenesisTools",
-            alertBundlePrefix: "com.genesiscz.genesistools",
-            spanPrefix: "hub"
-        )
-    }
+    var perf: PerfConfiguration { HostKitSettings.perf }
 
     var gtProvider: GenesisKitGTProvider? { HubGTProvider() }
 
-    /// The user's own keys, one file per library (`hub.json`, `markdown.json`).
-    var keymapDirectory: URL? {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/keymaps", isDirectory: true)
-    }
+    var keymapDirectory: URL? { HostKitSettings.keymapDirectory }
 }
 
 /// GenesisKit's git and agent data through the hub's resident `tools` server (`ToolsCLIRunner`), which answers

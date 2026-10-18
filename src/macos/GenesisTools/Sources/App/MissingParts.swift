@@ -82,18 +82,12 @@ final class GenesisKitHostAdapter: NSObject, GenesisKitHost {
         await probeFreshPermissionStatus(kind)
     }
 
-    var perf: PerfConfiguration {
-        PerfConfiguration(
-            environmentKey: "GENESIS_TOOLS_PERF",
-            enabledByDefault: true,
-            subsystem: "com.genesiscz.genesistools",
-            logDirectory: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools/logs"),
-            fileName: "app-perf.log",
-            appName: "GenesisTools",
-            alertBundlePrefix: "com.genesiscz.genesistools",
-            spanPrefix: "hub"
-        )
-    }
+    var perf: PerfConfiguration { HostKitSettings.perf }
+
+    // A markdown-only build has this adapter too: the viewer keeps the vault and the saved shortcuts.
+    var markdownVaultRoot: String? { HostKitSettings.markdownVaultRoot }
+
+    var keymapDirectory: URL? { HostKitSettings.keymapDirectory }
 }
 #endif
 
