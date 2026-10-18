@@ -1,4 +1,4 @@
-import { env } from "@genesiscz/utils/env";
+import { isOptIn } from "@genesiscz/utils/env/env-core";
 
 /**
  * Centralized test skip gates.
@@ -35,9 +35,9 @@ import { env } from "@genesiscz/utils/env";
  * (RUN_NETWORK_TESTS, RUN_LIVE, …) so existing CI/local muscle memory holds.
  */
 
+/** The one on/off rule for every gate, shared with `env.test.shouldRunE2E()` and `shouldRunIntegration()`. */
 function flag(name: string): boolean {
-    const v = env.get(name);
-    return v != null && v !== "" && v !== "0" && v.toLowerCase() !== "false";
+    return isOptIn(name);
 }
 
 export const isWindows = process.platform === "win32";

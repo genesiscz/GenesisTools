@@ -159,7 +159,8 @@ function describeGates(): { enabled: string[]; disabled: string[] } {
     const disabled: string[] = [];
 
     for (const [gate, variable] of Object.entries(GATE_ENV_VARS)) {
-        const value = process.env[variable];
+        // The same rule as isOptIn in src/utils/env/env-core.ts, which this runner cannot import.
+        const value = process.env[variable]?.trim();
         const on = value != null && value !== "" && value !== "0" && value.toLowerCase() !== "false";
         (on ? enabled : disabled).push(gate);
     }

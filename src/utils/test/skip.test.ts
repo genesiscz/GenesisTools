@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { describeGates, GATE_ENV_VARS, optIn } from "./skip";
 
 describe("test gate harness", () => {
@@ -33,4 +34,22 @@ describe("test gate harness", () => {
 
         expect(Object.fromEntries(runnerGates)).toEqual(GATE_ENV_VARS);
     });
+});
+
+test("a gate reads its variable with the same rule as env.test, so a padded 0 is off in both", () => {
+    const probe = `import { optIn } from ${SafeJSON.stringify(join(import.meta.dir, "skip.ts"))};
+import { env } from "@genesiscz/utils/env";
+console.log([optIn.e2e, env.test.shouldRunE2E(), optIn.integration, env.test.shouldRunIntegration()].join(","));`;
+    const run = (value: string) =>
+        Bun.spawnSync([process.execPath, "-e", probe], {
+            cwd: join(import.meta.dir, "../../.."),
+            env: { ...process.env, RUN_E2E: value, RUN_INTEGRATION: value },
+            stdout: "pipe",
+            stderr: "pipe",
+        })
+            .stdout.toString()
+            .trim();
+
+    expect(run(" 0")).toBe("false,false,false,false");
+    expect(run(" 1 ")).toBe("true,true,true,true");
 });
