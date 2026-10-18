@@ -12,7 +12,8 @@ describe.skipIf(skip.darwinkit)("darwinkit TTS commands", () => {
         });
     });
 
-    describe("speak", () => {
+    // speak plays out of the speakers: it needs the audio-device opt-in as well as darwinkit.
+    describe.skipIf(skip.audioDevice)("speak", () => {
         it("speaks text and returns confirmation", async () => {
             const result = await runDarwinKit("speak", "test");
             expect(result.spoken).toBe(true);

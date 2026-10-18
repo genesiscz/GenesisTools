@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { skip } from "@genesiscz/utils/test/skip";
 import { AIXAITextToSpeechProvider } from "./AIXAITextToSpeechProvider";
 
 describe("AIXAITextToSpeechProvider", () => {
@@ -33,7 +34,7 @@ describe("AIXAITextToSpeechProvider", () => {
 
     // Live integration: hits the real xAI voices endpoint when X_AI_API_KEY is set.
     // Uses forceFreshVoices: true to bypass the 7-day Storage cache.
-    test.skipIf(!env.x.getApiKey())(
+    test.skipIf(skip.realApis || !env.x.getApiKey())(
         "listVoices() returns voices from real /v1/tts/voices endpoint (requires X_AI_API_KEY)",
         async () => {
             const provider = new AIXAITextToSpeechProvider({ forceFreshVoices: true });
@@ -54,29 +55,32 @@ describe("AIXAITextToSpeechProvider", () => {
         }
     );
 
-    test.skipIf(!env.x.getApiKey())("listVoices() second call hits cache (requires X_AI_API_KEY)", async () => {
-        // First call (cached, possibly fresh) — just to seed the cache.
-        const seed = new AIXAITextToSpeechProvider();
-        await seed.listVoices();
+    test.skipIf(skip.realApis || !env.x.getApiKey())(
+        "listVoices() second call hits cache (requires X_AI_API_KEY)",
+        async () => {
+            // First call (cached, possibly fresh) — just to seed the cache.
+            const seed = new AIXAITextToSpeechProvider();
+            await seed.listVoices();
 
-        // Stub fetch — if the cache is honored, fetch should NOT be called.
-        const originalFetch = globalThis.fetch;
-        let fetchCalled = false;
-        // @ts-expect-error -- fetch stub for test
-        globalThis.fetch = async (...args) => {
-            fetchCalled = true;
-            return originalFetch(...args);
-        };
+            // Stub fetch — if the cache is honored, fetch should NOT be called.
+            const originalFetch = globalThis.fetch;
+            let fetchCalled = false;
+            // @ts-expect-error -- fetch stub for test
+            globalThis.fetch = async (...args) => {
+                fetchCalled = true;
+                return originalFetch(...args);
+            };
 
-        try {
-            const cached = new AIXAITextToSpeechProvider();
-            const voices = await cached.listVoices();
-            expect(voices.length).toBeGreaterThan(0);
-            expect(fetchCalled).toBe(false);
-        } finally {
-            globalThis.fetch = originalFetch;
+            try {
+                const cached = new AIXAITextToSpeechProvider();
+                const voices = await cached.listVoices();
+                expect(voices.length).toBeGreaterThan(0);
+                expect(fetchCalled).toBe(false);
+            } finally {
+                globalThis.fetch = originalFetch;
+            }
         }
-    });
+    );
 });
 
 type Listener = (ev: unknown) => void;

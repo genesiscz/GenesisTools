@@ -3,13 +3,15 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { optIn } from "@genesiscz/utils/test/skip";
 
 // These tests spawn `tools` against the REAL mail index (read-only), so the sandbox home the test
 // preload sets must not leak into the child: with it, the index is "missing" and every search silently
 // takes the Spotlight fallback. Gate: RUN_E2E=1 RUN_MAIL_INFRA=1.
 const INDEX_DB = join(homedir(), ".genesis-tools/indexer/macos-mail/index.db");
 const TOOLS_BIN = join(import.meta.dir, "../../../../tools");
-const CAN_RUN = process.platform === "darwin" && existsSync(INDEX_DB) && existsSync(TOOLS_BIN);
+const CAN_RUN =
+    optIn.e2e && optIn.mailInfra && process.platform === "darwin" && existsSync(INDEX_DB) && existsSync(TOOLS_BIN);
 const { GENESIS_TOOLS_HOME: _sandboxHome, ...REAL_HOME_ENV } = process.env;
 
 describe("tools macos mail search --mode auto (e2e)", () => {
