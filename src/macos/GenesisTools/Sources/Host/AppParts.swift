@@ -37,12 +37,29 @@ package enum AppParts {
         faces[flag] != nil
     }
 
-    /// Before a window starts the face `flag` in a new process: true when this build has it, else an alert with the
-    /// command that adds its part. A child that exits 69 on its own would be unseen: its stderr is discarded.
+    /// Before a window starts the face `flag` in a new process: true when this build has it and staging lets it run,
+    /// else an alert that names the fix. A child that exits on its own (69 for a missing part, 64 at the staging gate)
+    /// would be unseen: its stderr is discarded.
     @MainActor
     package static func canLaunch(face flag: String) -> Bool {
-        guard let part = partOfFace[flag], !has(face: flag) else { return true }
-        return requirePart(part, for: "launch \(flag)")
+        if let part = partOfFace[flag], !has(face: flag) {
+            return requirePart(part, for: "launch \(flag)")
+        }
+
+        guard let refusal = stagingRefusal(face: flag, facesEnabled: NativeStaging.facesEnabled) else { return true }
+        HubPerf.log("launch \(flag): \(refusal)")
+        let alert = NSAlert()
+        alert.messageText = refusal
+        alert.informativeText = "Turn the staged faces on for this Mac with: bun scripts/native/staging.ts on"
+        alert.runModal()
+        return false
+    }
+
+    /// The alert title when the staging gate would refuse a plain launch of `flag` (HostMain refuses it with exit 64),
+    /// or nil when the face may start.
+    package static func stagingRefusal(face flag: String, facesEnabled: Bool) -> String? {
+        guard NativeStaging.refuses([flag], facesEnabled: facesEnabled) else { return nil }
+        return NativeStaging.settingsFaces.contains(flag) ? "Settings are in staging" : "The widget is in staging"
     }
 
     /// Before a click opens something of `part` that has no face of its own (Clicky's settings pages): true when this

@@ -59,6 +59,11 @@ final class FaceMarkerTests: XCTestCase {
         XCTAssertFalse(NativeStaging.refuses(["--features", "--page", "general", "--headless"], facesEnabled: false))
         XCTAssertTrue(NativeStaging.refuses(["--widget", "--headless"], facesEnabled: false))
         XCTAssertFalse(NativeStaging.refuses(["--widget"], facesEnabled: true))
+        // A window that starts a staged face says so instead of starting a child that exits at the gate unseen.
+        XCTAssertEqual(AppParts.stagingRefusal(face: "--features", facesEnabled: false), "Settings are in staging")
+        XCTAssertEqual(AppParts.stagingRefusal(face: "--widget", facesEnabled: false), "The widget is in staging")
+        XCTAssertNil(AppParts.stagingRefusal(face: "--features", facesEnabled: true))
+        XCTAssertNil(AppParts.stagingRefusal(face: "--hub", facesEnabled: false))
         XCTAssertFalse(NativeStaging.refuses(["--hub", "--snapshot", "/tmp/fixture.png"], facesEnabled: false))
         XCTAssertFalse(NativeStaging.refuses([], facesEnabled: false))
     }
