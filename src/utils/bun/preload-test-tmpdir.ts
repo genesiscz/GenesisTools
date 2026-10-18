@@ -1,5 +1,5 @@
 import { afterAll } from "bun:test";
-import { mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -73,6 +73,30 @@ env.testing.set("GENESIS_TEST_TMP_ROOT", root);
 env.testing.set("TMUX_TMPDIR", root);
 env.testing.unset("TMUX");
 
+/**
+ * The server on this run's private socket outlives the run: the dashboard's tmux code sets `exit-empty off`
+ * (`ensureTmuxServerPersists` in src/utils/tmux/sessions.ts), and removing the folder only unlinks the socket. So
+ * it is stopped by its exact socket path, which lies inside this root and can never name the user's server.
+ */
+const stopPrivateTmuxServer = (): void => {
+    const uid = process.getuid?.();
+    const tmux = Bun.which("tmux");
+    const socket = join(root, `tmux-${uid}`, "default");
+
+    if (uid === undefined || !tmux || !existsSync(socket)) {
+        return;
+    }
+
+    const result = Bun.spawnSync([tmux, "-S", socket, "kill-server"], {
+        stdio: ["ignore", "ignore", "pipe"],
+        timeout: 2_000,
+    });
+
+    if (result.exitCode !== 0) {
+        process.stderr.write(`[test] tmux kill-server on ${socket} exited ${result.exitCode}: ${result.stderr}\n`);
+    }
+};
+
 const sweepStale = (): void => {
     let names: string[];
     try {
@@ -112,6 +136,7 @@ const sweepStale = (): void => {
 };
 
 afterAll(() => {
+    stopPrivateTmuxServer();
     rmSync(root, { recursive: true, force: true });
     sweepStale();
 });
