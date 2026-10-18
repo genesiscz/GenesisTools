@@ -169,7 +169,7 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
 
 /// The widget face's single-instance lock. Close-on-exec, so a face it launches (Hub, Clicky) never inherits the
 /// descriptor and keeps the lock held after the widget dies, which would make every later --widget exit at once.
-package func openWidgetInstanceLock(in base: URL) -> Int32 {
+func openWidgetInstanceLock(in base: URL) -> Int32 {
     open(base.appendingPathComponent("widget-instance.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
 }
 

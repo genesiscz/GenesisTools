@@ -2,10 +2,10 @@ import Foundation
 import GenesisKit
 
 @MainActor
-package enum NativeFlowRuntime {
+enum NativeFlowRuntime {
     private static var preview: FlowFocusRuntime?
 
-    package static func resolve(stateRoot: String?) throws -> FlowFocusRuntime {
+    static func resolve(stateRoot: String?) throws -> FlowFocusRuntime {
         guard NativePreview.enabled else { return .shared }
         guard let stateRoot, !stateRoot.isEmpty else {
             throw ToolsBridgeError.refused("Preview requires an isolated Widget state root before starting Flow.")
