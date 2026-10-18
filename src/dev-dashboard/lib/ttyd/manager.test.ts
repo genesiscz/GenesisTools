@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
+import { userInfo } from "node:os";
+import { join } from "node:path";
 import {
     argvTargetsTmux,
     claudeTopicForPane,
@@ -11,6 +13,7 @@ import {
     ttydLabel,
 } from "@app/dev-dashboard/lib/ttyd/manager";
 import type { TtydSession } from "@app/dev-dashboard/lib/ttyd/types";
+import { env } from "@genesiscz/utils/env";
 import { renameTmuxSession, sessionExists } from "@genesiscz/utils/tmux/sessions";
 
 // The spawn/kill/list cases launch real ttyd + tmux processes. Skip them when
@@ -62,6 +65,28 @@ describe.skipIf(!hasTtydDeps)("ttyd manager", () => {
             const { killTmuxSession } = await import("@genesiscz/utils/tmux/sessions");
             killTmuxSession(session.tmuxSessionName);
         }
+    });
+
+    // A tmux started from a test once founded the USER's server and froze the test environment into every
+    // dashboard terminal (2026-10-17). The tmpdir preload gives each run its own TMUX_TMPDIR; this pins that
+    // ttyd's tmux lands there. `has-session -S` only reads: it never starts a server on either socket.
+    test("the tmux session lives on this run's private socket, never on the user's default server", async () => {
+        const session = await spawnTtyd({ command: "/bin/sh", cwd: process.cwd() });
+        const socketName = `tmux-${userInfo().uid}/default`;
+        const privateDir = env.get("TMUX_TMPDIR");
+        const hasSession = (socket: string) =>
+            Bun.spawnSync(
+                ["/opt/homebrew/bin/tmux", "-S", socket, "has-session", "-t", session.tmuxSessionName ?? ""],
+                {
+                    env: process.env,
+                    stdio: ["ignore", "ignore", "ignore"],
+                }
+            ).exitCode;
+
+        expect(privateDir).toBeTruthy();
+        expect(privateDir?.startsWith("/tmp") && !privateDir.includes("gt-test")).toBe(false);
+        expect(hasSession(join(privateDir ?? "", socketName))).toBe(0);
+        expect(hasSession(join("/private/tmp", socketName))).not.toBe(0);
     });
 
     test("killTtyd on unknown id returns false", async () => {
