@@ -17,8 +17,14 @@ function swapStreams(sinks: CapturedOutput): () => void {
     const realStderr = process.stderr.write.bind(process.stderr);
     const collector =
         (key: keyof CapturedOutput) =>
-        (chunk: string | Uint8Array, callback?: WriteCallback): boolean => {
+        (
+            chunk: string | Uint8Array,
+            encodingOrCallback?: BufferEncoding | WriteCallback,
+            maybeCallback?: WriteCallback
+        ): boolean => {
             sinks[key] += typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+            // Both forms of Writable.write: (chunk, callback) and (chunk, encoding, callback).
+            const callback = typeof encodingOrCallback === "function" ? encodingOrCallback : maybeCallback;
 
             if (typeof callback === "function") {
                 callback(null);

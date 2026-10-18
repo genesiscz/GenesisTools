@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { captureOutput } from "./capture-out";
 import { describeGates, GATE_ENV_VARS, optIn } from "./skip";
 
 describe("test gate harness", () => {
@@ -52,4 +53,16 @@ console.log([optIn.e2e, env.test.shouldRunE2E(), optIn.integration, env.test.sho
 
     expect(run(" 0")).toBe("false,false,false,false");
     expect(run(" 1 ")).toBe("true,true,true,true");
+});
+
+test("captureOutput collects both write forms and settles the callback of each", async () => {
+    const settled: string[] = [];
+    const captured = await captureOutput(() => {
+        process.stdout.write("two ", () => settled.push("two-argument"));
+        process.stdout.write("three", "utf8", () => settled.push("three-argument"));
+        process.stderr.write(new TextEncoder().encode("bytes"));
+    });
+
+    expect(captured).toEqual({ stdout: "two three", stderr: "bytes" });
+    expect(settled).toEqual(["two-argument", "three-argument"]);
 });
