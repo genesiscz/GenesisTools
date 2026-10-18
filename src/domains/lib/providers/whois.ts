@@ -27,6 +27,23 @@ const NOT_FOUND_PATTERNS = [
 /** Replies that mean "ask again later", which must never read as "available". */
 const THROTTLE_PATTERNS = [/limit exceeded/i, /too many (queries|requests)/i, /try again later/i, /quota/i];
 
+/** The registry blocks the name: nobody can register it at a registrar. */
+const RESERVED_PATTERNS = [
+    /reserved (by|for) the registry/i,
+    /^[ \t]*status:[ \t]*(reserved|not allowed|blocked)\b/im,
+    /(this|the) (domain|name)( name)? (is|has been) reserved/i,
+];
+
+/** Lines only a registered name's record carries. Without one, the reply proves nothing. */
+const REGISTERED_PATTERNS = [
+    /^[ \t]*registrar(?: name)?:/im,
+    /^[ \t]*registry domain id:/im,
+    /^[ \t]*(?:creation date|created|registered|registration date|registered on):[ \t]*\S/im,
+    /^[ \t]*(?:registry expiry date|expir\w* date|expire[sd]?|paid-till):[ \t]*\S/im,
+    /^[ \t]*(?:name server|nserver|nameservers?):[ \t]*\S/im,
+    /^[ \t]*status:[ \t]*(?:connect|registered|active|ok|client\w*|server\w*|locked)\b/im,
+];
+
 /** Some registries need a flag before the name to return the plain record. */
 const QUERY_FORMAT: Record<string, (domain: string) => string> = {
     de: (domain) => `-T dn,ace ${domain}`,
@@ -45,20 +62,56 @@ export function whoisQuery(server: string, query: string): Promise<string> {
     });
 }
 
-/** The registry WHOIS host for a TLD, from IANA's own WHOIS (`whois:` line), cached for a week. */
-export async function whoisServerFor(tld: string): Promise<string | null> {
-    const servers = (await storage.getCacheFile<Record<string, string | null>>("whois/servers.json", "7 days")) ?? {};
+const SERVERS_CACHE = "whois/servers.json";
+const SERVERS_TTL = "7 days";
+const serverLookups = new Map<string, Promise<string | null>>();
+let serverWrites: Promise<void> = Promise.resolve();
+
+function readServers(): Promise<Record<string, string | null>> {
+    return storage
+        .getCacheFile<Record<string, string | null>>(SERVERS_CACHE, SERVERS_TTL)
+        .then((servers) => servers ?? {});
+}
+
+/** Writes run one at a time, each on a fresh read, so two TLDs resolved together both stay cached. */
+function storeServer(tld: string, server: string | null): Promise<void> {
+    const write = serverWrites.then(async () => {
+        const servers = await readServers();
+        servers[tld] = server;
+        await storage.putCacheFile(SERVERS_CACHE, servers, SERVERS_TTL);
+    });
+    serverWrites = write.catch(() => undefined);
+    return write;
+}
+
+async function lookupWhoisServer(tld: string): Promise<string | null> {
+    const servers = await readServers();
     if (tld in servers) {
         return servers[tld];
     }
 
     const reply = await whoisQuery(IANA_WHOIS, tld);
+    // No "domain:" record means IANA did not answer for this TLD (an error or a cut reply): do not cache that.
+    if (!/^domain:/im.test(reply)) {
+        throw new Error(`whois.iana.org returned no record for .${tld}`);
+    }
+
     const host = reply.match(/^whois:[ \t]*(\S+)/im)?.[1]?.toLowerCase();
     const server = host?.includes(".") ? host : null;
-    servers[tld] = server;
-    await storage.putCacheFile("whois/servers.json", servers, "7 days");
+    await storeServer(tld, server);
     logger.debug({ tld, server }, "domains: WHOIS server resolved");
     return server;
+}
+
+/** The registry WHOIS host for a TLD, from IANA's own WHOIS (`whois:` line), cached for a week. */
+export function whoisServerFor(tld: string): Promise<string | null> {
+    let lookup = serverLookups.get(tld);
+    if (!lookup) {
+        lookup = lookupWhoisServer(tld).finally(() => serverLookups.delete(tld));
+        serverLookups.set(tld, lookup);
+    }
+
+    return lookup;
 }
 
 function stripComments(reply: string): string {
@@ -68,20 +121,25 @@ function stripComments(reply: string): string {
         .join("\n");
 }
 
-export type WhoisVerdict = "available" | "taken" | "throttled";
+export type WhoisVerdict = "available" | "taken" | "reserved" | "throttled" | "unknown";
 
 export function interpretWhois(reply: string): WhoisVerdict {
-    if (THROTTLE_PATTERNS.some((pattern) => pattern.test(reply)) && reply.length < 600) {
-        return "throttled";
-    }
-
     // Only the head, without comment banners: long legal text can say "not found" in another sense.
     const head = stripComments(reply).slice(0, 1500);
+    if (RESERVED_PATTERNS.some((pattern) => pattern.test(head))) {
+        return "reserved";
+    }
+
     if (NOT_FOUND_PATTERNS.some((pattern) => pattern.test(head))) {
         return "available";
     }
 
-    return "taken";
+    if (REGISTERED_PATTERNS.some((pattern) => pattern.test(head))) {
+        return "taken";
+    }
+
+    // An empty close, an access-denied banner or a rate-limit notice proves nothing either way.
+    return THROTTLE_PATTERNS.some((pattern) => pattern.test(reply)) ? "throttled" : "unknown";
 }
 
 /** Fields worth showing from a raw record; each registry formats them differently. */
@@ -145,6 +203,15 @@ export const whoisProvider: DomainProvider = {
         const verdict = interpretWhois(reply);
         if (verdict === "throttled") {
             return { provider: "whois", status: "unknown", detail: `${server} rate limited` };
+        }
+
+        if (verdict === "unknown") {
+            const said = stripComments(reply).trim().split("\n")[0]?.slice(0, 80);
+            return { provider: "whois", status: "unknown", detail: `${server}: ${said || "empty reply"}` };
+        }
+
+        if (verdict === "reserved") {
+            return { provider: "whois", status: "reserved", detail: `${server}: reserved by the registry` };
         }
 
         if (verdict === "available") {
