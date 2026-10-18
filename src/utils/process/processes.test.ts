@@ -973,14 +973,16 @@ describe.skipIf(process.platform === "win32")("the readers against this machine"
         "cpu: a process idle at first and busy now shows busy, as ps -o %cpu= shows it",
         async () => {
             // The running bun, not a new executable: a fresh file per run is what crashed syspolicyd on 2026-10-14.
-            const child = Bun.spawn([process.execPath, "-e", "setTimeout(() => { for (;;) {} }, 3000)"], {
+            const child = Bun.spawn([process.execPath, "-e", "setTimeout(() => { for (;;) {} }, 1000)"], {
                 stdout: "ignore",
                 stderr: "ignore",
                 env: process.env,
             });
 
             try {
-                await Bun.sleep(6_000);
+                // One second idle, one busy: measured 2026-10-18, ps already shows 94-98% then against a 50%
+                // lifetime average (ratio 1.92-1.95), the same margin the 3 s + 3 s window gave.
+                await Bun.sleep(2_000);
                 const ours = readCpuPercents([child.pid]).get(child.pid) ?? 0;
                 const fromPs = Number(
                     Bun.spawnSync(["ps", "-o", "pcpu=", "-p", String(child.pid)], { env: process.env })
