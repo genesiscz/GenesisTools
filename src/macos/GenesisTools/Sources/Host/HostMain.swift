@@ -38,6 +38,11 @@ package func runHost() -> Never {
         runLocalNetworkRules()
     }
 
+    // A face of a part this build does not link says so first, before the staging gate would only say "staging".
+    if AppParts.partOfFace[firstArgument] != nil, !AppParts.has(face: firstArgument) {
+        AppParts.run(face: firstArgument, Array(arguments.dropFirst()))
+    }
+
     // The widget and Clicky are in staging: the Preview bundles run them, and the normal app only after
     // `bun scripts/native/staging.ts on` on this machine (NativeStaging), so a normal install or `tools update` never does.
     if NativeStaging.refuses(arguments, facesEnabled: NativeStaging.facesEnabled) {
@@ -100,7 +105,9 @@ package func runHost() -> Never {
 
     // GenesisTools --parts: the optional parts this build links, one id per line (src/macos/lib/permissions/parts.ts).
     if firstArgument == "--parts" {
-        print(AppParts.linked.joined(separator: "\n"))
+        for id in AppParts.linked {
+            print(id)
+        }
         exit(0)
     }
 
