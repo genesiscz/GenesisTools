@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// The optional parts of GenesisTools.app (Package.swift; `src/macos/lib/permissions/parts.ts` on the TypeScript
@@ -32,6 +33,19 @@ package enum AppParts {
     /// True when this build can start the face `flag` (`--hub`, `--widget`, ...).
     package static func has(face flag: String) -> Bool {
         faces[flag] != nil
+    }
+
+    /// Before a window starts the face `flag` in a new process: true when this build has it, else an alert with the
+    /// command that adds its part. A child that exits 69 on its own would be unseen: its stderr is discarded.
+    @MainActor
+    package static func canLaunch(face flag: String) -> Bool {
+        guard let part = partOfFace[flag], !has(face: flag) else { return true }
+        HubPerf.log("launch \(flag): this build has no \(part) part")
+        let alert = NSAlert()
+        alert.messageText = "This GenesisTools build has no \(part) part"
+        alert.informativeText = "Add it with: tools macos permissions build --add-part \(part)"
+        alert.runModal()
+        return false
     }
 
     /// The parts this build links, sorted, for `--version` and the build manifest check.

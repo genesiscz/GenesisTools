@@ -5,7 +5,7 @@ import AppKit
 @MainActor
 package enum ClickyLaunch {
     package static func openSettings(pageID: String? = nil) {
-        guard let executable = Bundle.main.executableURL else { return }
+        guard AppParts.canLaunch(face: "--clicky"), let executable = Bundle.main.executableURL else { return }
         do {
             let child = Process()
             child.executableURL = executable

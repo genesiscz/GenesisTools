@@ -9,7 +9,7 @@ package enum WidgetLaunch {
     package static let ensureRunningFlag = "--ensure-running"
     package static func ensureRunning() { start(["--widget", ensureRunningFlag]) }
     package static func start(_ arguments: [String] = ["--widget", "--settings"]) {
-        guard let executable = Bundle.main.executableURL else { return }
+        guard AppParts.canLaunch(face: arguments.first ?? ""), let executable = Bundle.main.executableURL else { return }
         do {
             let child = Process()
             child.executableURL = executable
@@ -27,6 +27,7 @@ package enum WidgetLaunch {
         }
     }
     package static func pin(session: String, provider: String) {
+        guard AppParts.canLaunch(face: "--widget") else { return }
         Task {
             do {
                 let root = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsWidgetStateRoot") as? String
