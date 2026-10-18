@@ -201,7 +201,7 @@ async function renderVerboseSession(
     const c = options.colors;
 
     const records = await extractTailRecords(session.filePath, 100);
-    const displayable = records.filter((r) => r.type === "user" || r.type === "assistant" || r.type === "subagent");
+    const displayable = records.filter(isDisplayable);
     const lastRecords = displayable.slice(-8);
 
     const lines: string[] = [];
@@ -293,6 +293,12 @@ async function extractSessionPreview(filePath: string): Promise<SessionPreview> 
         lastUserMessage,
         assistantExcerpts: assistantExcerpts.slice(-5),
     };
+}
+
+/** The shorthand `A` assistant record is not in `ConversationMessage`, but the formatter prints it. */
+function isDisplayable(record: ConversationMessage): boolean {
+    const type: string = record.type;
+    return type === "user" || type === "assistant" || type === "A" || type === "subagent";
 }
 
 async function extractTailRecords(filePath: string, count: number): Promise<ConversationMessage[]> {
