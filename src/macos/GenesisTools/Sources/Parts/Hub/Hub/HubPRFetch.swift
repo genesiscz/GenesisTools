@@ -5,23 +5,23 @@ import SwiftUI
 // checkout and no change to a branch, tag or working tree, and the diff is a range there.
 
 /// What `tools hub pr fetch <root>#<n> --json` answers.
-package struct HubPRFetch: Decodable, Equatable {
-    package let repoRoot: String
-    package let number: Int
+struct HubPRFetch: Decodable, Equatable {
+    let repoRoot: String
+    let number: Int
     /// The host's ref: `refs/pull/<n>/head` or `refs/merge-requests/<iid>/head`.
-    package let sourceRef: String
+    let sourceRef: String
     /// Where the head is now: `refs/genesis/pr/<n>/head`.
-    package let headRef: String
-    package let head: String
+    let headRef: String
+    let head: String
     /// A commit here to diff from: the recorded base, else the fetched target branch's tip.
-    package let base: String?
-    package let mergeBase: String?
+    let base: String?
+    let mergeBase: String?
     /// False when nothing went over the network (the head was already here).
-    package let fetched: Bool
-    package let warnings: [String]
+    let fetched: Bool
+    let warnings: [String]
 }
 
-package enum PRFetchState: Equatable {
+enum PRFetchState: Equatable {
     case fetching
     case fetched(HubPRFetch)
     /// The sentence the PR header shows beside Retry.
@@ -30,16 +30,16 @@ package enum PRFetchState: Equatable {
 
 /// One fetch per PR head: `forHead` is the head the PR list named when it ran. The same head never
 /// fetches twice in a run, a failed one included (Retry asks again); a push fetches again.
-package struct PRFetchEntry: Equatable {
-    package let forHead: String?
-    package var state: PRFetchState
+struct PRFetchEntry: Equatable {
+    let forHead: String?
+    var state: PRFetchState
 }
 
-package enum PRFetch {
+enum PRFetch {
     /// Two fetches of 40 s at most (the head, then the target branch), plus the tool's own start.
-    package static let timeout: TimeInterval = 100
+    static let timeout: TimeInterval = 100
 
-    package static func arguments(_ pr: HubPR, root: String, base: String?) -> [String] {
+    static func arguments(_ pr: HubPR, root: String, base: String?) -> [String] {
         var args = ["hub", "pr", "fetch", "\(root)#\(pr.number)", "--json"]
         if let kind = pr.origin?.kind, kind == "github" || kind == "gitlab" {
             args += ["--provider", kind]
@@ -62,7 +62,7 @@ package enum PRFetch {
     }
 
     /// Blocks until the tool exits: call it from a detached task, never from a view body.
-    package static func run(_ args: [String]) -> PRFetchState {
+    static func run(_ args: [String]) -> PRFetchState {
         let capture: ProcessCapture
         do {
             capture = try ToolsCLIRunner.capture(args, timeout: timeout)
@@ -76,7 +76,7 @@ package enum PRFetch {
     }
 
     /// The verb prints `{ error, code }` on failure (src/hub/index.ts `prVerb`); the code picks the lead.
-    package static func sentence(stdout: Data, stderr: Data, status: Int32) -> String {
+    static func sentence(stdout: Data, stderr: Data, status: Int32) -> String {
         if let failure = try? JSONDecoder().decode(Failure.self, from: stdout) {
             switch failure.code {
             case "auth": return "Sign-in needed to fetch the PR head: \(failure.error)"
@@ -91,12 +91,12 @@ package enum PRFetch {
 }
 
 /// The PR header's word on a diff that is not there yet: fetching, or why not with Retry.
-package struct PRFetchStatus: View {
-    package let pr: HubPR
-    package let state: PRFetchState
-    package let retry: () -> Void
+struct PRFetchStatus: View {
+    let pr: HubPR
+    let state: PRFetchState
+    let retry: () -> Void
 
-    package var body: some View {
+    var body: some View {
         switch state {
         case .fetching:
             HStack(spacing: 6) {

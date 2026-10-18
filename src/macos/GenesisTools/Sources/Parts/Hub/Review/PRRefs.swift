@@ -8,7 +8,7 @@ import SwiftUI
 /// project, and `group/project!12` / `owner/repo#12` to one of another project. Code spans, fenced
 /// blocks, links and bare URLs stay as they are. The result is still markdown, for the threads list
 /// (`MarkdownContentView`) and the diff cards (`RenderedLiveThread.Note.display`).
-package enum PRRefLinker {
+enum PRRefLinker {
     private final class Box: NSObject {
         let value: String
         init(_ value: String) { self.value = value }
@@ -29,7 +29,7 @@ package enum PRRefLinker {
             + "|(?<![\\w/.#!@-])([0-9a-f]{7,40})(?![\\w/-])")
 
     /// Cached per project and text: a row's body runs on every re-measure.
-    package static func linkify(_ markdown: String, forge: ForgeWeb?) -> String {
+    static func linkify(_ markdown: String, forge: ForgeWeb?) -> String {
         guard let forge, !markdown.isEmpty else { return markdown }
         let key = "\(forge.project)\u{0}\(markdown)" as NSString
         if let hit = cache.object(forKey: key) {
@@ -113,16 +113,16 @@ package enum PRRefLinker {
 // MARK: - A thread's file at the PR's head
 
 /// Where a thread's file is in the PR's newest commit.
-package enum PathAtHead: Equatable {
+enum PathAtHead: Equatable {
     case present
     case removed
     case renamed(to: String)
 }
 
-package enum PRHeadPresence {
+enum PRHeadPresence {
     /// `paths`: the threads' files; `present`: those `git ls-tree` found at the head; `renames`: old
     /// path → new path between the commit on screen and the head.
-    package static func decide(paths: [String], present: Set<String>, renames: [String: String]) -> [String: PathAtHead] {
+    static func decide(paths: [String], present: Set<String>, renames: [String: String]) -> [String: PathAtHead] {
         var result: [String: PathAtHead] = [:]
         for path in paths {
             if present.contains(path) {
@@ -137,7 +137,7 @@ package enum PRHeadPresence {
     }
 
     /// `git diff --name-status -M` lines: `R087<TAB>old<TAB>new`; every other status is skipped.
-    package static func renames(_ nameStatus: String) -> [String: String] {
+    static func renames(_ nameStatus: String) -> [String: String] {
         var result: [String: String] = [:]
         for line in nameStatus.split(separator: "\n") {
             let parts = line.split(separator: "\t", omittingEmptySubsequences: false)
@@ -152,27 +152,27 @@ package enum PRHeadPresence {
 /// paths, off the main thread, kept for the process. A head that is not in the repository gives no
 /// answer, and the list then says nothing extra.
 @MainActor
-package final class PRHeadFiles: ObservableObject {
-    package static let shared = PRHeadFiles()
+final class PRHeadFiles: ObservableObject {
+    static let shared = PRHeadFiles()
 
     @Published package private(set) var results: [String: [String: PathAtHead]] = [:]
     private var started: Set<String> = []
     private let readGit: @Sendable (String, [String]) -> String?
 
-    package init(readGit: (@Sendable (String, [String]) -> String?)? = nil) {
+    init(readGit: (@Sendable (String, [String]) -> String?)? = nil) {
         self.readGit = readGit ?? { repo, args in Self.git(repo, args) }
     }
 
-    package nonisolated static func key(repo: String, head: String, shown: String? = nil, paths: [String]) -> String {
+    nonisolated static func key(repo: String, head: String, shown: String? = nil, paths: [String]) -> String {
         "\(repo)\u{0}\(head)\u{0}\(shown ?? "")\u{0}\(paths.sorted().joined(separator: "\u{1}"))"
     }
 
-    package func status(repo: String, head: String, shown: String? = nil, paths: [String]) -> [String: PathAtHead]? {
+    func status(repo: String, head: String, shown: String? = nil, paths: [String]) -> [String: PathAtHead]? {
         results[Self.key(repo: repo, head: head, shown: shown, paths: paths)]
     }
 
     @discardableResult
-    package func load(repo: String, head: String, shown: String?, paths: [String]) -> Task<Void, Never>? {
+    func load(repo: String, head: String, shown: String?, paths: [String]) -> Task<Void, Never>? {
         let key = Self.key(repo: repo, head: head, shown: shown, paths: paths)
         guard !paths.isEmpty, results[key] == nil, !started.contains(key) else { return nil }
         started.insert(key)
@@ -226,17 +226,17 @@ package final class PRHeadFiles: ObservableObject {
 
 /// What a click on a PR/MR link does: a small menu with the host's page, the hub at that PR, and its
 /// review in a window of its own. Every other link opens in the browser.
-package enum PRRefMenu {
-    package struct Target: Equatable {
-        package let url: String
-        package let number: Int
-        package let gitlab: Bool
+enum PRRefMenu {
+    struct Target: Equatable {
+        let url: String
+        let number: Int
+        let gitlab: Bool
 
-        package var label: String { gitlab ? "!\(number)" : "#\(number)" }
+        var label: String { gitlab ? "!\(number)" : "#\(number)" }
     }
 
     /// `…/-/merge_requests/12` or `…/pull/12`, nothing after the number but a fragment or query.
-    package static func target(_ url: URL) -> Target? {
+    static func target(_ url: URL) -> Target? {
         let path = url.path
         let patterns: [(String, Bool)] = [("/-/merge_requests/(\\d+)/?$", true), ("/pull/(\\d+)/?$", false)]
         for (pattern, gitlab) in patterns {
@@ -253,7 +253,7 @@ package enum PRRefMenu {
 
     /// A link from a comment: a PR/MR asks where to open it, anything else opens in the browser.
     @MainActor
-    package static func open(_ url: URL, model: ReviewModel) {
+    static func open(_ url: URL, model: ReviewModel) {
         if let sha = CommitMenu.sha(url) {
             CommitMenu.open(url, sha: sha, model: model)
             return
@@ -274,7 +274,7 @@ package enum PRRefMenu {
 
     /// The running hub at that PR; a second hub hands its flags to the running one.
     @MainActor
-    package static func openInHub(_ target: Target, model: ReviewModel) {
+    static func openInHub(_ target: Target, model: ReviewModel) {
         launch(["--hub", "--pr", target.url], model: model)
     }
 
@@ -282,7 +282,7 @@ package enum PRRefMenu {
     /// and head from `tools hub pr threads`, the head fetched into this repository first when it is not
     /// here. A PR of another project, or a fetch that fails, opens in the hub instead.
     @MainActor
-    package static func openInReview(_ target: Target, model: ReviewModel) {
+    static func openInReview(_ target: Target, model: ReviewModel) {
         let repo = model.repo.path
         let ownProject = model.pr?.payload?.pr
         model.notice = "Opening \(target.label) in a review window…"
@@ -366,18 +366,18 @@ package enum PRRefMenu {
 /// commit (`DiffScope.commit`), or a review window of its own. The review entries need the commit in
 /// this repository: it is looked up first, fetched by id from origin when it is not here (GitLab and
 /// GitHub serve any commit of the project by id), and the entries are off, saying why, when neither works.
-package enum CommitMenu {
-    package struct Item: Equatable {
-        package enum Action: Equatable { case host, thisReview, newWindow }
+enum CommitMenu {
+    struct Item: Equatable {
+        enum Action: Equatable { case host, thisReview, newWindow }
 
-        package let action: Action
-        package let title: String
-        package let enabled: Bool
-        package let tooltip: String?
+        let action: Action
+        let title: String
+        let enabled: Bool
+        let tooltip: String?
     }
 
     /// The commit a link points at: `…/-/commit/<sha>` (GitLab) or `…/commit/<sha>` (GitHub).
-    package static func sha(_ url: URL) -> String? {
+    static func sha(_ url: URL) -> String? {
         let path = url.path
         guard let regex = try? NSRegularExpression(pattern: "/commit/([0-9a-fA-F]{7,40})/?$"),
               let match = regex.firstMatch(in: path, range: NSRange(location: 0, length: (path as NSString).length)) else { return nil }
@@ -385,7 +385,7 @@ package enum CommitMenu {
     }
 
     /// `missing`: why the commit is not in this repository (nil: it is), which turns the review entries off.
-    package static func items(short: String, gitlab: Bool, missing: String?) -> [Item] {
+    static func items(short: String, gitlab: Bool, missing: String?) -> [Item] {
         let off = missing.map { "\($0) The diff needs the commit in this repository." }
         return [
             Item(action: .host, title: "Open \(short) on \(gitlab ? "GitLab" : "GitHub")", enabled: true, tooltip: nil),
@@ -397,14 +397,14 @@ package enum CommitMenu {
     }
 
     /// The commit as this repository knows it, after one fetch by id when it is not here.
-    package struct Lookup: Equatable {
-        package var full: String?
-        package var subject: String = ""
-        package var missing: String?
+    struct Lookup: Equatable {
+        var full: String?
+        var subject: String = ""
+        var missing: String?
     }
 
     @MainActor
-    package static func open(_ url: URL, sha: String, model: ReviewModel) {
+    static func open(_ url: URL, sha: String, model: ReviewModel) {
         let at = NSEvent.mouseLocation
         let repo = model.repo.path
         let short = String(sha.prefix(10))
@@ -462,7 +462,7 @@ package enum CommitMenu {
 
     /// A review window on one commit. `--commit`, not `<sha>^..<sha>`: a root commit has no parent, and
     /// the commit scope diffs it against the empty tree.
-    package static func newWindowArguments(repo: String, sha: String, subject: String) -> [String] {
+    static func newWindowArguments(repo: String, sha: String, subject: String) -> [String] {
         ["--review", "--repo", repo, "--commit", sha, "--label", subject]
     }
 

@@ -5,7 +5,7 @@ import GenesisKit
 /// recent turns changed lie in each. A session often starts in the main checkout and works in a linked
 /// worktree, and the Changes and Files tabs kept showing the main checkout, which held none of its work
 /// (2026-10-16).
-package enum WorktreeActivity {
+enum WorktreeActivity {
     /// `/private/tmp/x` and `/tmp/x` name one folder; git lists the first, a tool call records the second.
     private static func normalized(_ path: String) -> String {
         var clean = URL(fileURLWithPath: path).standardizedFileURL.path
@@ -25,7 +25,7 @@ package enum WorktreeActivity {
     }
 
     /// Files per checkout path; a checkout the session did not touch is absent.
-    package static func counts(files: [String], worktrees: [RepoWorktree]) -> [String: Int] {
+    static func counts(files: [String], worktrees: [RepoWorktree]) -> [String: Int] {
         let trees = worktrees.map { (path: $0.path, root: normalized($0.path)) }
         var counts: [String: Int] = [:]
         for file in files {
@@ -36,7 +36,7 @@ package enum WorktreeActivity {
 
     /// The checkout with the most changed files; ties keep git's worktree order. The provider merges files by
     /// path, so their array order carries no recency. nil when none lies in a checkout.
-    package static func recommended(files: [String], worktrees: [RepoWorktree]) -> String? {
+    static func recommended(files: [String], worktrees: [RepoWorktree]) -> String? {
         let counts = counts(files: files, worktrees: worktrees)
         guard let most = counts.values.max() else { return nil }
         return worktrees.first { counts[$0.path] == most }?.path
@@ -44,7 +44,7 @@ package enum WorktreeActivity {
 
     /// The Worktree menu's order: the checkouts the session changed files in first (most files first), the rest as
     /// `git worktree list` gave them.
-    package static func ordered(_ worktrees: [RepoWorktree], counts: [String: Int]) -> [RepoWorktree] {
+    static func ordered(_ worktrees: [RepoWorktree], counts: [String: Int]) -> [RepoWorktree] {
         worktrees.enumerated()
             .sorted { lhs, rhs in
                 let (left, right) = (counts[lhs.element.path] ?? 0, counts[rhs.element.path] ?? 0)
@@ -55,7 +55,7 @@ package enum WorktreeActivity {
 
     /// The menu title of one checkout: its own title, how many files this session changed there, and a star on the
     /// recommended one when the session changed files in more than one.
-    package static func title(of tree: RepoWorktree, files: Int, recommended: Bool) -> String {
+    static func title(of tree: RepoWorktree, files: Int, recommended: Bool) -> String {
         var title = tree.title
         if files > 0 { title += "  ·  \(files) \(files == 1 ? "file" : "files") by this session" }
         return recommended ? "★ " + title : title
@@ -72,7 +72,7 @@ package enum WorktreeActivity {
 
     /// The files the session's recent turns changed. The last 5 turns first: where it works now is
     /// what matters. When none of those lies in a checkout of this repository, the last 50.
-    package static func changedFiles(session: String, worktrees: [RepoWorktree]) -> [String] {
+    static func changedFiles(session: String, worktrees: [RepoWorktree]) -> [String] {
         let key = CacheKey(session: session, roots: Array(Set(worktrees.map { normalized($0.path) })).sorted())
         cacheLock.lock()
         let cached = cache[key]
@@ -99,7 +99,7 @@ package enum WorktreeActivity {
 extension ReviewModel {
     /// Reads where the session worked. The window opens on the checkout it worked in most, unless somebody picked
     /// one: a repository with a single checkout, or a window without a session, never asks.
-    package func refreshWorktreeActivity(load: @escaping @Sendable (String, [RepoWorktree]) -> [String] = { WorktreeActivity.changedFiles(session: $0, worktrees: $1) }) {
+    func refreshWorktreeActivity(load: @escaping @Sendable (String, [RepoWorktree]) -> [String] = { WorktreeActivity.changedFiles(session: $0, worktrees: $1) }) {
         guard let session, worktrees.count > 1, !activityRequested else { return }
         activityRequested = true
         let trees = worktrees

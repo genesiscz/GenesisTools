@@ -22,87 +22,87 @@ import SwiftUI
 
 /// The `--hub` arguments. A launch while a hub runs hands the same list to that hub
 /// (Hub/HubSingleInstance.swift), so both paths parse it here.
-package struct HubRequest {
-    package var snapshotPath: String?
-    package var benchPath: String?
-    package var session: String?
+struct HubRequest {
+    var snapshotPath: String?
+    var benchPath: String?
+    var session: String?
     /// With `--session`: this sub-agent, teammate or worker of it opens in the Agents mode (`--agent <id|name>`).
-    package var agent: String?
-    package var pr: HubPRRef?
+    var agent: String?
+    var pr: HubPRRef?
     /// With `--pr`: this repo-relative file opens in that PR's review (`--reveal <path>`, the browser
     /// extension's "Open in GenesisTools" on a diff file).
-    package var reveal: String?
+    var reveal: String?
     /// `--commit <sha>` (7 to 40 hex characters, a prefix of the full sha): with `--pr`, that commit is
     /// selected in the PR's review; without it, with `--repo`, it opens in the Worktrees mode's diff.
-    package var commit: String?
+    var commit: String?
     /// With `--commit` and no `--pr`: the commit's project, a checkout path or its forge path
     /// (`owner/repo`, `group/sub/app`), `--repo`.
-    package var repo: String?
-    package var tab: HubTab?
-    package var mode: HubMode?
-    package var panes: [HubTab]?
-    package var width: CGFloat?
-    package var height: CGFloat?
+    var repo: String?
+    var tab: HubTab?
+    var mode: HubMode?
+    var panes: [HubTab]?
+    var width: CGFloat?
+    var height: CGFloat?
     /// A snapshot shows the diff split or unified (`--style`), whatever the live window uses.
-    package var style: DiffViewOptions.Style?
-    package var glass: Bool?
+    var style: DiffViewOptions.Style?
+    var glass: Bool?
     /// A snapshot opens this file of the diff (repo-relative path) before it captures.
-    package var file: String?
+    var file: String?
     /// The session list's filter (which also searches history), `--filter <text>`.
-    package var filter: String?
+    var filter: String?
     /// Opens the command palette with this text, `--palette <text>`.
-    package var palette: String?
+    var palette: String?
     /// Opens find in files with this query, `--find <text>`.
-    package var find: String?
+    var find: String?
     /// Opens the session's transcript with this search applied (whole session), `--transcript-query`.
-    package var transcriptQuery: String?
+    var transcriptQuery: String?
     /// Opens the transcript search over every session with this text (`--session-search [text]`) and
     /// the Today digest (`--digest`), Hub/HubDaily.swift.
-    package var sessionSearch: String?
-    package var digest = false
+    var sessionSearch: String?
+    var digest = false
     /// Opens the notification rules panel (`--rules`, Hub/HubRules.swift).
-    package var rules = false
+    var rules = false
     /// Opens the ⌘⇧P prompt picker (`--prompts`, Hub/HubPrompts.swift) and the handoff composer for
     /// the `--session` session (`--handoff`, Hub/HubHandoffComposer.swift).
-    package var prompts = false
-    package var handoff = false
-    package var widgetDestination: String?
-    package var widgetContext: String?
-    package var widgetCwd: String?
-    package var widgetProvider: String?
+    var prompts = false
+    var handoff = false
+    var widgetDestination: String?
+    var widgetContext: String?
+    var widgetCwd: String?
+    var widgetProvider: String?
     /// Selects this worktree path in the Worktrees mode, or the cleanup panel (`--worktree cleanup`).
-    package var worktree: String?
+    var worktree: String?
     /// Inbox mode: opens the resume dialog (`--inbox-resume <id>`) or the session info popover
     /// (`--inbox-info <id>`) for this session (id or prefix) once the list has loaded; for snapshots.
-    package var inboxResume: String?
-    package var inboxInfo: String?
+    var inboxResume: String?
+    var inboxInfo: String?
     /// Inbox mode: selects and scrolls to this card, a decision or todo (`--decision d_3_<session>`) or
     /// a pending form (`--question ask_…`). A question banner's click sends it (src/question/lib/hub-link.ts).
-    package var inboxItem: String?
+    var inboxItem: String?
     /// Activity: runs this row's action once the feed holds it (`--timeline-open <event id>`, with
     /// `--timeline-action diff` for a review comment's "Open in the diff"), else the row's click.
-    package var timelineOpen: String?
-    package var timelineAction: String?
+    var timelineOpen: String?
+    var timelineAction: String?
     /// `--set <key>=<true|false>`: a setting of the scratch copy a scripted run starts from (the PR
     /// threads list open: `--set review.prThreads.open=true`). Never written to the live settings.
-    package var settings: [String: Bool] = [:]
+    var settings: [String: Bool] = [:]
     /// `--set <key>=<text>` for any other value (`--set hub.timeline.range=last30`).
-    package var textSettings: [String: String] = [:]
+    var textSettings: [String: String] = [:]
     /// `--menu "<Menu>/<Item>"`: runs that menu bar item once the hub has settled, as a click would
     /// (`--menu "Go/Pull Request…"` opens the palette with "pr " typed). Verifies the menu in a snapshot.
-    package var menu: String?
-    package var activate = true
+    var menu: String?
+    var activate = true
 
     /// The file `--reveal` names, in the PR `--pr` names.
-    package var prReveal: PRReveal? {
+    var prReveal: PRReveal? {
         guard let pr, let reveal, !reveal.isEmpty else { return nil }
         return PRReveal(ref: pr, path: reveal, threadID: nil)
     }
 
     /// Off screen, never active, on scratch settings.
-    package var isScripted: Bool { snapshotPath != nil || benchPath != nil }
+    var isScripted: Bool { snapshotPath != nil || benchPath != nil }
 
-    package init(_ args: [String]) {
+    init(_ args: [String]) {
         var index = 0
         while index < args.count {
             let value = index + 1 < args.count ? args[index + 1] : nil
@@ -177,10 +177,10 @@ package struct HubRequest {
     }
 
     /// The flags a link may carry (Host/HubLink.swift).
-    package static var linkKeys: Set<String> { HubLink.linkKeys }
+    static var linkKeys: Set<String> { HubLink.linkKeys }
 
     /// `genesis-tools://hub?…` as `--hub` arguments (Host/HubLink.swift).
-    package static func arguments(fromLink raw: String) -> [String]? {
+    static func arguments(fromLink raw: String) -> [String]? {
         HubLink.arguments(fromLink: raw)
     }
 }
@@ -414,10 +414,10 @@ private final class HubAppDelegate: NSObject, NSApplicationDelegate {
 
 /// What the left column lists: agent sessions, the worktrees (branches) they worked in, PRs, the
 /// sessions waiting for an answer (Hub/HubInbox.swift), or today's activity (Hub/HubTimeline.swift).
-package enum HubMode: String, CaseIterable {
+enum HubMode: String, CaseIterable {
     case sessions, worktrees, prs, inbox, timeline, agents
 
-    package var title: String {
+    var title: String {
         switch self {
         case .sessions: return "Sessions"
         case .worktrees: return "Worktrees"
@@ -429,7 +429,7 @@ package enum HubMode: String, CaseIterable {
     }
 
     /// The mode switch's tooltip for one segment; `waiting` is the Inbox's count of answers due.
-    package func tooltip(waiting: Int) -> String {
+    func tooltip(waiting: Int) -> String {
         switch self {
         case .sessions: return "Sessions: every agent session of the last days, with its transcript, changes and files"
         case .worktrees: return "Worktrees: the branches the sessions work in, with their diffs"
@@ -441,10 +441,10 @@ package enum HubMode: String, CaseIterable {
     }
 }
 
-package enum HubTab: String, CaseIterable {
+enum HubTab: String, CaseIterable {
     case transcript, changes, files, decisions
 
-    package var title: String {
+    var title: String {
         switch self {
         case .transcript: return "Transcript"
         case .changes: return "Changes"
@@ -454,7 +454,7 @@ package enum HubTab: String, CaseIterable {
     }
 
     /// Narrower than this, a pane's own content clips (the transcript list, the diff with its file list).
-    package var minPaneWidth: CGFloat {
+    var minPaneWidth: CGFloat {
         switch self {
         // The session screen's own column minimum: at 420 its search and filter rows overflowed
         // and were cut off at both edges.
@@ -467,11 +467,11 @@ package enum HubTab: String, CaseIterable {
 
     /// The Files list stops growing: three short names took a third of a 1028 pt window, and the diff beside
     /// it cut its lines at about 530 pt (H18). The other panes take the rest.
-    package var maxPaneWidth: CGFloat {
+    var maxPaneWidth: CGFloat {
         self == .files ? 380 : .infinity
     }
 
-    package var idealPaneWidth: CGFloat {
+    var idealPaneWidth: CGFloat {
         switch self {
         case .transcript: return 640
         case .changes: return 700
@@ -480,7 +480,7 @@ package enum HubTab: String, CaseIterable {
         }
     }
 
-    package var symbol: String {
+    var symbol: String {
         switch self {
         case .transcript: return "text.bubble"
         case .changes: return "plusminus"
@@ -492,34 +492,34 @@ package enum HubTab: String, CaseIterable {
 
 // MARK: - Model
 
-package final class HubModel: ObservableObject {
-    package static let recentHours = 72
-    package static let pageSize = 80
+final class HubModel: ObservableObject {
+    static let recentHours = 72
+    static let pageSize = 80
 
-    @Published package var sessions: [HubSession] = [] {
+    @Published var sessions: [HubSession] = [] {
         didSet {
             worktreeSessions = nil
             sessionSearchText = Dictionary(sessions.map { ($0.id, Self.searchText($0)) }, uniquingKeysWith: { first, _ in first })
         }
     }
     private var sessionSearchText: [String: String] = [:]
-    @Published package var loadingSessions = false
+    @Published var loadingSessions = false
     /// The list on screen is the last run's, from disk, and the fresh one is loading (Hub/HubSWR.swift).
     @Published package private(set) var showingCachedSessions = false
     /// Sessions the last refresh added or moved; their rows flash once.
     @Published package private(set) var changedSessions = Set<String>()
-    @Published package var error: String?
+    @Published var error: String?
     /// The sidebar's filter text, which every mode's list applies.
-    @Published package var filter = "" {
+    @Published var filter = "" {
         didSet {
             if filter != oldValue {
                 MainActor.assumeIsolated { HubMainBusy.measure("filter.\(mode.rawValue)") }
             }
         }
     }
-    @Published package var selectedID: String?
+    @Published var selectedID: String?
     /// The pane that was asked for last (`--tab`, "Open diff"); it is always among `panes`.
-    @Published package var tab: HubTab {
+    @Published var tab: HubTab {
         didSet {
             if !panes.contains(tab) {
                 panes = tabOrder.filter { panes.contains($0) || $0 == tab }
@@ -527,7 +527,7 @@ package final class HubModel: ObservableObject {
         }
     }
     /// The panes shown side by side (transcript, changes, decisions), saved between launches.
-    @Published package var panes: [HubTab] = (HubDefaults.store.stringArray(forKey: "hub.panes") ?? ["transcript"]).compactMap(HubTab.init(rawValue:)) {
+    @Published var panes: [HubTab] = (HubDefaults.store.stringArray(forKey: "hub.panes") ?? ["transcript"]).compactMap(HubTab.init(rawValue:)) {
         didSet {
             HubDefaults.store.set(panes.map(\.rawValue), forKey: "hub.panes")
             // The header's totals chip shows once the transcript pane closes; `select` skipped its list.
@@ -540,7 +540,7 @@ package final class HubModel: ObservableObject {
     /// in `SessionDetailView`). Independent of `HubTab.allCases`' declaration order once the
     /// user has dragged anything. A case added after someone already saved an order (`.files`,
     /// here) is appended rather than dropped.
-    @Published package var tabOrder: [HubTab] = {
+    @Published var tabOrder: [HubTab] = {
         let saved = (HubDefaults.store.stringArray(forKey: "hub.tabOrder") ?? []).compactMap(HubTab.init(rawValue:))
         return saved + HubTab.allCases.filter { !saved.contains($0) }
     }() {
@@ -548,13 +548,13 @@ package final class HubModel: ObservableObject {
     }
 
     /// A pane button dropped on another: the two trade places, and the open panes follow the order.
-    package func swapTabs(_ dragged: HubTab, _ target: HubTab) {
+    func swapTabs(_ dragged: HubTab, _ target: HubTab) {
         guard dragged != target, let from = tabOrder.firstIndex(of: dragged), let to = tabOrder.firstIndex(of: target) else { return }
         tabOrder.swapAt(from, to)
     }
 
     /// Show or hide a pane; at least one stays. `only` shows just this one (option-click).
-    package func togglePane(_ pane: HubTab, only: Bool = false) {
+    func togglePane(_ pane: HubTab, only: Bool = false) {
         if only {
             panes = [pane]
         } else if panes.contains(pane) {
@@ -570,20 +570,20 @@ package final class HubModel: ObservableObject {
             tab = pane
         }
     }
-    @Published package var transcript: [TranscriptItem] = []
-    @Published package var transcriptLimit = HubModel.pageSize
-    @Published package var transcriptTruncated = false
-    @Published package var transcriptTotals: String?
-    @Published package var transcriptEnded: String?
-    @Published package var loadingTranscript = false
-    @Published package var transcriptError: String?
-    @Published package var expandedTools: Set<String> = []
-    @Published package var decisions: [InboxItem] = []
+    @Published var transcript: [TranscriptItem] = []
+    @Published var transcriptLimit = HubModel.pageSize
+    @Published var transcriptTruncated = false
+    @Published var transcriptTotals: String?
+    @Published var transcriptEnded: String?
+    @Published var loadingTranscript = false
+    @Published var transcriptError: String?
+    @Published var expandedTools: Set<String> = []
+    @Published var decisions: [InboxItem] = []
     /// `tools question inbox --session` is running for the selected session (Hub/HubDecisionsSource.swift).
-    @Published package var loadingDecisions = false
+    @Published var loadingDecisions = false
     /// Bumped per decisions load: only the newest one may publish (Hub/HubDecisionsSource.swift).
-    package var decisionsRequest = 0
-    @Published package var review: ReviewModel? {
+    var decisionsRequest = 0
+    @Published var review: ReviewModel? {
         // A worktree or a timeline commit that replaces the session's review makes the next click on that
         // session set it up again, or the Changes pane kept the worktree's or the commit's diff.
         didSet {
@@ -594,20 +594,20 @@ package final class HubModel: ObservableObject {
     }
     /// The review `select` built for the selected session.
     private weak var sessionReview: ReviewModel?
-    @Published package var mode = HubMode.sessions
-    @Published package var worktrees: [HubWorktree] = [] {
+    @Published var mode = HubMode.sessions
+    @Published var worktrees: [HubWorktree] = [] {
         didSet { worktreeSessions = nil }
     }
     /// Sessions per worktree path, built once per change of `sessions` or `worktrees`; rows read it
     /// on every body pass, and the raw match is sessions × worktrees per row.
     private var worktreeSessions: [String: [HubSession]]?
-    @Published package var loadingWorktrees = false
-    @Published package var selectedWorktree: String?
-    @Published package var notice: String?
+    @Published var loadingWorktrees = false
+    @Published var selectedWorktree: String?
+    @Published var notice: String?
     /// Only the latest commit lookup may navigate, and any later selection invalidates it.
-    package var commitLinkRequest = UUID()
+    var commitLinkRequest = UUID()
     /// ⌘⇧F / palette "grep": the find-in-files panel is open with this query ("" = empty field).
-    @Published package var findQuery: String? {
+    @Published var findQuery: String? {
         didSet {
             if findQuery == nil {
                 findRoot = nil
@@ -615,11 +615,11 @@ package final class HubModel: ObservableObject {
         }
     }
     /// The project folder a palette "<project> grep" named; it replaces `findRoots` until the panel closes.
-    @Published package var findRoot: String?
+    @Published var findRoot: String?
     /// `--palette <text>`: the root view opens the palette with this text, then clears it.
-    @Published package var paletteRequest: String?
+    @Published var paletteRequest: String?
     /// `--transcript-query <text>`: the transcript opens with this search applied.
-    @Published package var transcriptQuery: String?
+    @Published var transcriptQuery: String?
 
     /// Folders added in Files for the selected session ("Add folder"), each with its own changes.
     @Published package private(set) var extraFolders: [String] = []
@@ -628,18 +628,18 @@ package final class HubModel: ObservableObject {
     /// Which roots Changes shows (the session's folder and added ones); empty = only the session's.
     @Published package private(set) var changesRoots: Set<String> = []
 
-    package var onSettled: (() -> Void)?
-    package var initialMode = HubMode.sessions
+    var onSettled: (() -> Void)?
+    var initialMode = HubMode.sessions
     private let wantedSession: String?
     private var transcriptGeneration = 0
     private var sessionsGeneration = 0
     private var didSettleLaunch = false
     private var settlingLaunch = false
-    package var readSessions: (Int) async throws -> [HubSession] = { try await HubSource.sessions(hours: $0) }
-    package var readSessionCache: (Int) async -> [HubSession]? = { await HubSessionListCache.read(hours: $0) }
-    package var writeSessionCache: ([HubSession], Int) -> Void = { HubSessionListCache.write($0, hours: $1) }
-    package var readTranscript: (HubSession, Int) async throws -> TranscriptEnvelope = { try await HubSource.transcript($0, limit: $1) }
-    package var readDecisions: (String) throws -> SessionDecisionsEnvelope = {
+    var readSessions: (Int) async throws -> [HubSession] = { try await HubSource.sessions(hours: $0) }
+    var readSessionCache: (Int) async -> [HubSession]? = { await HubSessionListCache.read(hours: $0) }
+    var writeSessionCache: ([HubSession], Int) -> Void = { HubSessionListCache.write($0, hours: $1) }
+    var readTranscript: (HubSession, Int) async throws -> TranscriptEnvelope = { try await HubSource.transcript($0, limit: $1) }
+    var readDecisions: (String) throws -> SessionDecisionsEnvelope = {
         try JSONDecoder().decode(SessionDecisionsEnvelope.self, from: ToolsCLIRunner.run(["question", "inbox", "--session", $0, "--json"]))
     }
     /// The session `select` last set up (review, decisions, folders).
@@ -647,7 +647,7 @@ package final class HubModel: ObservableObject {
     private var firstPageObserver: NSObjectProtocol?
 
     /// PRs mode state (`tools hub pr list/show`). Main-actor: created on the main thread in `runHub`.
-    package let prs: PRsModel
+    let prs: PRsModel
 
     /// Back and forward (Hub/HubNavigation.swift). Taken from the published selection itself, so
     /// every path that changes it (rows, the palette, a handed-over `--session`, "Open") is recorded.
@@ -657,13 +657,13 @@ package final class HubModel: ObservableObject {
     private var navRestoring = false
 
     /// Inbox mode state (`tools question inbox`), Hub/HubInbox.swift.
-    package let inbox: HubInboxModel
+    let inbox: HubInboxModel
     /// Today mode state (`tools hub timeline`), Hub/HubTimeline.swift.
-    package let timeline: HubTimelineModel
+    let timeline: HubTimelineModel
     /// Agents mode state (`tools hub agents`), Hub/HubAgents.swift.
-    package let agents: HubAgentsModel
+    let agents: HubAgentsModel
 
-    package init(wantedSession: String?, tab: HubTab) {
+    init(wantedSession: String?, tab: HubTab) {
         prs = MainActor.assumeIsolated { PRsModel() }
         inbox = MainActor.assumeIsolated { HubInboxModel() }
         timeline = MainActor.assumeIsolated { HubTimelineModel() }
@@ -718,7 +718,7 @@ package final class HubModel: ObservableObject {
     }
 
     @MainActor
-    package var navEntry: HubNavEntry {
+    var navEntry: HubNavEntry {
         switch mode {
         case .sessions: return HubNavEntry(mode: .sessions, selection: selectedID)
         case .worktrees: return HubNavEntry(mode: .worktrees, selection: selectedWorktree)
@@ -731,22 +731,22 @@ package final class HubModel: ObservableObject {
     }
 
     /// The selection of a mode entry that shows its whole list (Inbox, Today).
-    package static let wholeList = "*"
+    static let wholeList = "*"
 
     /// Seeds the back stack. A mode switch would load a list; the keymap test does not.
-    package func replaceHistory(_ history: HubNavHistory) {
+    func replaceHistory(_ history: HubNavHistory) {
         self.history = history
     }
 
     @MainActor
-    package func goBack() {
+    func goBack() {
         if let entry = history.goBack() {
             restore(entry)
         }
     }
 
     @MainActor
-    package func goForward() {
+    func goForward() {
         if let entry = history.goForward() {
             restore(entry)
         }
@@ -794,7 +794,7 @@ package final class HubModel: ObservableObject {
 
     /// What a history entry shows, for the arrows' tooltips.
     @MainActor
-    package func navTitle(_ entry: HubNavEntry) -> String {
+    func navTitle(_ entry: HubNavEntry) -> String {
         guard let id = entry.selection else { return entry.mode.title }
         let name: String
         switch entry.mode {
@@ -816,7 +816,7 @@ package final class HubModel: ObservableObject {
         return name.count > 70 ? String(name.prefix(69)) + "…" : name
     }
 
-    package var selected: HubSession? {
+    var selected: HubSession? {
         sessions.first { $0.id == selectedID } ?? leadOutsideList.flatMap { $0.id == selectedID ? $0 : nil }
     }
 
@@ -825,24 +825,24 @@ package final class HubModel: ObservableObject {
 
     /// The Agents mode's detail: its lead session becomes the selected one, so the Changes, Files and
     /// Decisions panes (and "Open diff") work on it exactly as in Sessions mode.
-    package func selectLead(_ session: HubSession) {
+    func selectLead(_ session: HubSession) {
         // Replaced on every pick, so no stale snapshot of an earlier lead outlives the next one.
         leadOutsideList = sessions.contains(where: { $0.id == session.id }) ? nil : session
         select(session.id)
     }
 
-    package var filtered: [HubSession] {
+    var filtered: [HubSession] {
         let needle = filter.trimmed.lowercased()
         guard !needle.isEmpty else { return sessions }
         return sessions.filter { sessionSearchText[$0.id]?.contains(needle) == true }
     }
 
-    package static func searchText(_ row: HubSession) -> String {
+    static func searchText(_ row: HubSession) -> String {
         [row.displayTitle, row.project ?? "", row.account ?? "", row.provider, row.sessionId, row.cwd]
             .joined(separator: " ").lowercased()
     }
 
-    package static func timeGroups(_ rows: [HubSession], now: Date) -> [(title: String, rows: [HubSession], managed: Bool)] {
+    static func timeGroups(_ rows: [HubSession], now: Date) -> [(title: String, rows: [HubSession], managed: Bool)] {
         var live: [HubSession] = [], today: [HubSession] = [], earlier: [HubSession] = []
         let calendar = Calendar.current
         for row in rows {
@@ -853,7 +853,7 @@ package final class HubModel: ObservableObject {
         return [("Live", live, false), ("Today", today, false), ("Earlier", earlier, false)].filter { !$0.1.isEmpty }
     }
 
-    package func setMode(_ next: HubMode) {
+    func setMode(_ next: HubMode) {
         didSettleLaunch = true
         // A switch costs the renders after it: the old mode's views go and the new mode's arrive.
         MainActor.assumeIsolated { HubMainBusy.measure("mode.\(next.rawValue)") }
@@ -922,7 +922,7 @@ package final class HubModel: ObservableObject {
         }
     }
 
-    package func sessions(for worktree: HubWorktree) -> [HubSession] {
+    func sessions(for worktree: HubWorktree) -> [HubSession] {
         if worktreeSessions == nil {
             worktreeSessions = HubPerf.measure("worktrees.map", "\(sessions.count) sessions \(worktrees.count) worktrees") {
                 WorktreeDiscovery.sessionsByWorktree(sessions, worktrees: worktrees)
@@ -931,12 +931,12 @@ package final class HubModel: ObservableObject {
         return worktreeSessions?[worktree.path] ?? []
     }
 
-    package func sessionCount(for worktree: HubWorktree) -> Int {
+    func sessionCount(for worktree: HubWorktree) -> Int {
         sessions(for: worktree).count
     }
 
     /// Discovery's default selection is initialization, not a later navigation by the reader.
-    package func selectDefaultWorktree(_ rows: [HubWorktree]) {
+    func selectDefaultWorktree(_ rows: [HubWorktree]) {
         guard selectedWorktree == nil,
               let busiest = rows.max(by: { sessionCount(for: $0) < sessionCount(for: $1) }) else { return }
         let wasSettling = settlingLaunch
@@ -945,7 +945,7 @@ package final class HubModel: ObservableObject {
         selectWorktree(busiest)
     }
 
-    package func selectWorktree(_ worktree: HubWorktree) {
+    func selectWorktree(_ worktree: HubWorktree) {
         selectedWorktree = worktree.path
         notice = nil
         if review?.home.path != worktree.path {
@@ -961,7 +961,7 @@ package final class HubModel: ObservableObject {
     /// `--repo` + `--commit` link. The checkout is selected before the mode opens, so a first walk of
     /// the worktrees includes it; a launch that has not settled yet opens the mode when it settles.
     @MainActor
-    package func showCommit(repo: String, sha: String, title: String) {
+    func showCommit(repo: String, sha: String, title: String) {
         cancelSessionNavigation()
         commitLinkRequest = UUID()
         selectedWorktree = repo
@@ -977,7 +977,7 @@ package final class HubModel: ObservableObject {
     }
 
     /// A transcript tool row's "Open diff": the Changes tab, scrolled to that file.
-    package func showChange(path: String, line: Int?) {
+    func showChange(path: String, line: Int?) {
         tab = .changes
         guard let review else {
             notice = "This session's folder is not on this Mac."
@@ -987,12 +987,12 @@ package final class HubModel: ObservableObject {
         review.reveal(path: path)
     }
 
-    package func openSession(_ session: HubSession) {
+    func openSession(_ session: HubSession) {
         mode = .sessions
         select(session.id)
     }
 
-    package func resume(_ session: HubSession) -> String {
+    func resume(_ session: HubSession) -> String {
         guard let command = AgentLauncher.resumeCommand(for: session) else {
             return "No resume command for \(session.provider)."
         }
@@ -1001,13 +1001,13 @@ package final class HubModel: ObservableObject {
             ?? "Resuming \(session.displayTitle) in a new cmux workspace."
     }
 
-    package func newSession(in worktree: HubWorktree) -> String {
+    func newSession(in worktree: HubWorktree) -> String {
         AgentLauncher.openInTerminal(name: worktree.branch, cwd: worktree.path, command: ["tools", "claude", "run"])
             ?? "Started a new Claude session in \(worktree.name)."
     }
 
     @MainActor
-    package func exportWorktree(_ worktree: HubWorktree) async -> String {
+    func exportWorktree(_ worktree: HubWorktree) async -> String {
         let files = (review?.files ?? []).map { ["path": $0.path, "status": $0.status.rawValue, "added": $0.additions, "removed": $0.deletions] as [String: Any] }
         let touching = sessions(for: worktree).map {
             ["provider": $0.provider, "title": $0.displayTitle, "account": $0.account ?? "", "last activity": HubFormat.ago($0.lastActivity), "id": $0.sessionId] as [String: Any]
@@ -1021,7 +1021,7 @@ package final class HubModel: ObservableObject {
     }
 
     @MainActor
-    package func exportSession(_ session: HubSession) async -> String {
+    func exportSession(_ session: HubSession) async -> String {
         // With the transcript pane open, `select` fetched no list: the export reads its recent turns now.
         let owned = session.id == selectedID
         var capturedTranscript = owned ? transcript : []
@@ -1053,7 +1053,7 @@ package final class HubModel: ObservableObject {
         return await HubMarkdownExport.export(title: session.displayTitle, payload: payload, fileStem: "session-\(session.sessionId.prefix(8))")
     }
 
-    package func loadSessions() {
+    func loadSessions() {
         sessionsGeneration += 1
         let generation = sessionsGeneration
         loadingSessions = true
@@ -1112,11 +1112,11 @@ package final class HubModel: ObservableObject {
     }
 
     /// How far back a session asked for by id is looked for when the list's window does not hold it.
-    package static let olderSessionHours = 24 * 30
+    static let olderSessionHours = 24 * 30
     private var olderSessionRequest = 0
 
     /// New navigation supersedes both the older-session lookup and a session waiting on the recent list.
-    package func cancelSessionNavigation() {
+    func cancelSessionNavigation() {
         olderSessionRequest += 1
         pendingSession = nil
     }
@@ -1126,7 +1126,7 @@ package final class HubModel: ObservableObject {
     /// the list and opens. Not found, it says so. It used to open the newest session instead, saying
     /// nothing (`settle`: a launch that must still settle on something).
     @MainActor
-    package func openOlderSession(_ wanted: String, settle: Bool) {
+    func openOlderSession(_ wanted: String, settle: Bool) {
         HubPerf.log("sessions.older \(wanted.prefix(8))")
         olderSessionRequest += 1
         let request = olderSessionRequest
@@ -1166,7 +1166,7 @@ package final class HubModel: ObservableObject {
     /// An empty list waits for the full discovery (`setMode(.worktrees)` runs it only while the list is empty), so a
     /// link must not fill it with one repository first; the discovery's own completion passes `intoEmptyList`.
     @MainActor
-    package func addWorktreesIfMissing(_ path: String, intoEmptyList: Bool = false) {
+    func addWorktreesIfMissing(_ path: String, intoEmptyList: Bool = false) {
         guard intoEmptyList || !worktrees.isEmpty, !worktrees.contains(where: { $0.path == path }),
               FileManager.default.fileExists(atPath: path) else { return }
         DispatchQueue.global(qos: .userInitiated).async {
@@ -1268,7 +1268,7 @@ package final class HubModel: ObservableObject {
 
     /// The PR list of every session project, once: the PRs mode and the palette's "pr" both read it.
     @MainActor
-    package func loadPRsIfNeeded() {
+    func loadPRsIfNeeded() {
         // Project discovery does not depend on the session roots: with none, no list load would start it.
         prs.loadProjectsIfNeeded()
         if prs.loading { return }
@@ -1302,7 +1302,7 @@ package final class HubModel: ObservableObject {
 
     /// What the command palette can name: projects, sessions, PRs and worktrees the hub already knows.
     @MainActor
-    package var paletteContext: HubPaletteContext {
+    var paletteContext: HubPaletteContext {
         HubPaletteContext(
             projects: HubPaletteEngine.projects(sessions: sessions, worktrees: worktrees),
             sessions: sessions,
@@ -1318,7 +1318,7 @@ package final class HubModel: ObservableObject {
     /// A history hit: the session in the list, or, when it is older than the list's window, a row made
     /// from the hit and added to the list.
     @MainActor
-    package func openHistory(_ hit: HubHistoryHit) {
+    func openHistory(_ hit: HubHistoryHit) {
         HubPerf.log("history.open \(hit.sessionId.prefix(8))")
         if let known = sessions.first(where: { $0.sessionId == hit.sessionId }) {
             select(known.id)
@@ -1346,7 +1346,7 @@ package final class HubModel: ObservableObject {
     /// Where ⌘⇧F searches: the selected session's project (or worktree, or PR checkout) and the
     /// folders added in Files.
     @MainActor
-    package var findRoots: [String] {
+    var findRoots: [String] {
         if let findRoot {
             return [findRoot]
         }
@@ -1365,7 +1365,7 @@ package final class HubModel: ObservableObject {
 
     /// Runs one palette command with the hub's own methods (the same ones its buttons use).
     @MainActor
-    package func runPalette(_ action: HubPaletteAction, toggleGlass: () -> Void) {
+    func runPalette(_ action: HubPaletteAction, toggleGlass: () -> Void) {
         switch action {
         case .openPR(let ref):
             setMode(.prs)
@@ -1430,7 +1430,7 @@ package final class HubModel: ObservableObject {
     }
 
     /// `--filter`, `--palette`, `--find`: the list filter and the two overlays, first launch or later.
-    package func applyOverlays(_ request: HubRequest) {
+    func applyOverlays(_ request: HubRequest) {
         if let mode = request.widgetDestination, ["new", "resume"].contains(mode) {
             MainActor.assumeIsolated {
                 HubWidgetDestinationStore.shared.request = HubWidgetDestinationRequest(
@@ -1497,7 +1497,7 @@ package final class HubModel: ObservableObject {
     }
 
     /// A later `GenesisTools --hub …` handed to this hub: the same flags as a first launch.
-    package func apply(_ request: HubRequest) {
+    func apply(_ request: HubRequest) {
         if request.session != nil || request.mode != nil || request.agent != nil || request.worktree != nil
             || request.pr != nil || request.commit != nil {
             commitLinkRequest = UUID()
@@ -1545,7 +1545,7 @@ package final class HubModel: ObservableObject {
         }
     }
 
-    package func select(_ id: String) {
+    func select(_ id: String) {
         // Again for the same session only after a failed load: the transcript list stays empty while the
         // transcript pane is open, so it can no longer tell whether this session was set up.
         guard id != selectedSetUp || transcriptError != nil else { return }
@@ -1630,11 +1630,11 @@ package final class HubModel: ObservableObject {
     }
 
     /// Whether an added folder can show changes (it is inside a git repository).
-    package func isGitFolder(_ folder: String) -> Bool {
+    func isGitFolder(_ folder: String) -> Bool {
         folder == review?.repo.path || folderRepos[folder] != nil
     }
 
-    package func addFolder(_ path: String) {
+    func addFolder(_ path: String) {
         guard !extraFolders.contains(path), path != review?.repo.path else { return }
         extraFolders.append(path)
         folderRepos[path] = Self.gitRoot(of: path)
@@ -1643,7 +1643,7 @@ package final class HubModel: ObservableObject {
         syncChangesRoots()
     }
 
-    package func removeFolder(_ path: String) {
+    func removeFolder(_ path: String) {
         extraFolders.removeAll { $0 == path }
         folderRepos[path] = nil
         changesRoots.remove(path)
@@ -1680,13 +1680,13 @@ package final class HubModel: ObservableObject {
     private static let noRoots = "-"
 
     /// Whether Changes shows this root. Nothing chosen yet = only the session's own folder.
-    package func showsChanges(of root: String) -> Bool {
+    func showsChanges(of root: String) -> Bool {
         changesRoots.isEmpty ? root == review?.repo.path : changesRoots.contains(root)
     }
 
     /// Show or hide one root's changes; the first choice starts from the implicit default, so ticking
     /// an added folder keeps the session's folder shown.
-    package func setChangesRoot(_ root: String, shown: Bool) {
+    func setChangesRoot(_ root: String, shown: Bool) {
         var current = changesRoots
         if current.isEmpty, let main = review?.repo.path {
             current = [main]
@@ -1702,7 +1702,7 @@ package final class HubModel: ObservableObject {
         syncChangesRoots()
     }
 
-    package func loadTranscript(older: Bool) {
+    func loadTranscript(older: Bool) {
         guard let session = selected else { return }
         transcriptGeneration += 1
         let generation = transcriptGeneration
@@ -1752,8 +1752,8 @@ private struct HubPaletteHost: View {
     }
 }
 
-package struct HubRootView: View {
-    @ObservedObject package var model: HubModel
+struct HubRootView: View {
+    @ObservedObject var model: HubModel
 
     /// The open screen in words: mode, what is selected, and the session panes.
     private var perfArea: String {
@@ -1801,7 +1801,7 @@ package struct HubRootView: View {
         return visible.reduce(0) { $0 + $1.minPaneWidth } + CGFloat(visible.count - 1)
     }
 
-    package var body: some View {
+    var body: some View {
         // The session list gets what the panes leave; with no room left it folds to a rail you can
         // still see (and open as a drawer), instead of pushing the panes out of the window.
         let sidebarRoom = width - mainMinWidth - 1
@@ -1910,7 +1910,7 @@ extension HubModel {
     /// cleanup and a session without Changes have none, and their snapshots used to wait out the whole 30 s for a
     /// review that never loads (35 to 44 s per run, inventory H24, 2026-10-10).
     @MainActor
-    package var snapshotShowsDiff: Bool {
+    var snapshotShowsDiff: Bool {
         switch mode {
         case .prs: return true
         case .inbox, .timeline: return false
@@ -1923,7 +1923,7 @@ extension HubModel {
     /// The main view on screen has a `TitlebarHeader`, so its first row belongs in the title bar; an
     /// empty state ("Pick a PR or MR") has none. Follows the branches of `HubRootView.body`.
     @MainActor
-    package var showsTitlebarHeader: Bool {
+    var showsTitlebarHeader: Bool {
         switch mode {
         case .prs: return prs.selected != nil
         case .inbox, .timeline: return true
@@ -1937,12 +1937,12 @@ extension HubModel {
 }
 
 /// Hands the view's window to `apply` on every update (glass, minimum size). Reading state only.
-package struct HubWindowReader: NSViewRepresentable {
-    package let apply: (NSWindow) -> Void
+struct HubWindowReader: NSViewRepresentable {
+    let apply: (NSWindow) -> Void
 
-    package func makeNSView(context: Context) -> NSView { NSView() }
+    func makeNSView(context: Context) -> NSView { NSView() }
 
-    package func updateNSView(_ view: NSView, context: Context) {
+    func updateNSView(_ view: NSView, context: Context) {
         let apply = apply
         DispatchQueue.main.async {
             if let window = view.window { apply(window) }
@@ -1951,10 +1951,10 @@ package struct HubWindowReader: NSViewRepresentable {
 }
 
 /// How the session list is grouped. Project groups can be pinned, folded and reordered.
-package enum SessionGrouping: String, CaseIterable {
+enum SessionGrouping: String, CaseIterable {
     case time, project, harness, projectHarness
 
-    package var title: String {
+    var title: String {
         switch self {
         case .time: return "By activity"
         case .project: return "By project"
@@ -2360,12 +2360,12 @@ private struct SessionRowView: View {
 /// The one session screen of Sessions and Agents mode: the transcript, Changes, Files and Decisions panes
 /// on the selected session. The Agents mode passes `agent`: the transcript pane then shows that agent's
 /// own file and the header its facts, while the other panes stay the lead session's.
-package struct SessionDetailView: View {
-    @ObservedObject package var model: HubModel
+struct SessionDetailView: View {
+    @ObservedObject var model: HubModel
     @ObservedObject private var repos = RepoFactsStore.shared
     @ObservedObject private var stuck = HubStuckStore.shared
-    package let session: HubSession
-    package var agent: AgentPaneContext?
+    let session: HubSession
+    var agent: AgentPaneContext?
     /// How many of the open panes fit side by side; nil until measured (then all are shown).
     @State private var fitting: Int?
     /// A pane that did not fit, shown as a drawer over the others from its rail.
@@ -2373,7 +2373,7 @@ package struct SessionDetailView: View {
 
     /// The open panes, in order, that fit into `width` at their minimums; the rest become rails.
     /// The first pane always shows, however narrow the window.
-    package static func fittingCount(_ panes: [HubTab], width: CGFloat) -> Int {
+    static func fittingCount(_ panes: [HubTab], width: CGFloat) -> Int {
         guard width > 0 else { return panes.count }
         var used: CGFloat = 0
         var count = 0
@@ -2387,7 +2387,7 @@ package struct SessionDetailView: View {
         return count
     }
 
-    package var body: some View {
+    var body: some View {
         let _ = RenderProbe.hit("session.detail.body")
         let visible = model.tabOrder.filter { model.panes.contains($0) }
         let shown = Array(visible.prefix(fitting ?? visible.count))
@@ -2639,7 +2639,7 @@ package struct SessionDetailView: View {
 // MARK: - Pane toggle
 
 /// A pane button's count: none for a pane that never has one, a placeholder while there is no count.
-package enum PaneBadge: Equatable {
+enum PaneBadge: Equatable {
     case none
     case pending
     case count(Int)

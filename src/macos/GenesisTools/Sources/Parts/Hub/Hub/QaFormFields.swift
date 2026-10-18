@@ -4,19 +4,19 @@ import Foundation
 /// (`sanitizeFileTags`/`sanitizeImages`, `src/question/lib/pending/form.ts`, and the caps in
 /// `src/question/lib/pending/types.ts`). Kept here, pure and testable, so the Hub's file-tag field
 /// and image picker can give inline feedback instead of only finding out from a rejected submit.
-package enum QaFormFields {
+enum QaFormFields {
     /// `MAX_IMAGES_PER_ANSWER` (`src/question/lib/pending/types.ts`).
-    package static let maxImagesPerAnswer = 4
+    static let maxImagesPerAnswer = 4
     /// `MAX_IMAGE_BASE64_CHARS` (2,000,000) expressed as raw bytes: base64 inflates 3 bytes to 4
     /// chars, so this is the largest PNG the server will keep once encoded.
-    package static let maxImageBytes = 1_500_000
+    static let maxImageBytes = 1_500_000
     /// `MAX_FILE_TAGS_PER_ANSWER` (`src/question/lib/pending/types.ts`).
-    package static let maxFileTagsPerAnswer = 20
+    static let maxFileTagsPerAnswer = 20
 
     /// Splits a manual `@file` field the way the dashboard does (`splitTags`,
     /// `QaPendingCard.tsx`): space or comma separated, a leading `@` stripped, blanks dropped.
     /// A double-quoted run stays one tag, so a browsed `src/My File.swift` is not split in two.
-    package static func splitFileTags(_ raw: String) -> [String] {
+    static func splitFileTags(_ raw: String) -> [String] {
         var tokens: [String] = []
         var current = ""
         var quoted = false
@@ -38,7 +38,7 @@ package enum QaFormFields {
     }
 
     /// A picked path as one token `splitFileTags` reads back whole: quoted when it holds a separator.
-    package static func fileTagToken(_ path: String) -> String {
+    static func fileTagToken(_ path: String) -> String {
         path.contains(where: { $0 == " " || $0 == "," || $0.isNewline }) ? "\"\(path)\"" : path
     }
 
@@ -46,7 +46,7 @@ package enum QaFormFields {
     /// outside it (`sanitizeFileTags` also refuses this server-side, but a browse picker that
     /// lets you choose an out-of-bounds file and only finds out on submit is a worse experience
     /// than refusing at the picker).
-    package static func relativeFileTag(_ path: String, cwd: String) -> String? {
+    static func relativeFileTag(_ path: String, cwd: String) -> String? {
         let root = (cwd as NSString).standardizingPath
         let full = (path as NSString).standardizingPath
 

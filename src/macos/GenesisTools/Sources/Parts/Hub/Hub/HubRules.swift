@@ -6,61 +6,61 @@ import SwiftUI
 // evaluated by the `hub-pr-notify` daemon tick (no timer in the hub), so they notify while the hub is
 // closed too. "Test" runs `tools hub rules test`: what would notify now, nothing posted or saved.
 
-package struct HubRule: Decodable, Equatable, Identifiable, Sendable {
-    package let id: String
-    package let kind: String
-    package let enabled: Bool
-    package let label: String?
-    package let minutes: Double?
-    package let percent: Double?
-    package let project: String?
-    package let match: String?
+struct HubRule: Decodable, Equatable, Identifiable, Sendable {
+    let id: String
+    let kind: String
+    let enabled: Bool
+    let label: String?
+    let minutes: Double?
+    let percent: Double?
+    let project: String?
+    let match: String?
 }
 
-package struct HubRulesList: Decodable, Equatable, Sendable {
-    package let rules: [HubRule]
-    package let labels: [String: String]
+struct HubRulesList: Decodable, Equatable, Sendable {
+    let rules: [HubRule]
+    let labels: [String: String]
 }
 
-package struct HubRuleReport: Decodable, Equatable, Identifiable, Sendable {
-    package let id: String
-    package let label: String
-    package let enabled: Bool
-    package let problem: String?
-    package let matches: Int
-    package let fired: Int
-    package let seeded: Bool
-    package let note: String?
+struct HubRuleReport: Decodable, Equatable, Identifiable, Sendable {
+    let id: String
+    let label: String
+    let enabled: Bool
+    let problem: String?
+    let matches: Int
+    let fired: Int
+    let seeded: Bool
+    let note: String?
 }
 
-package struct HubRuleFiring: Decodable, Equatable, Hashable, Identifiable, Sendable {
-    package let ruleId: String
+struct HubRuleFiring: Decodable, Equatable, Hashable, Identifiable, Sendable {
+    let ruleId: String
     /// What the rule fired on (a session at its last activity, a decision, a PR head): unique per rule, where
     /// two idle sessions of one project can share every visible field.
-    package let key: String
-    package let title: String
-    package let subtitle: String
-    package let message: String
+    let key: String
+    let title: String
+    let subtitle: String
+    let message: String
 
-    package var id: String { "\(ruleId)|\(key)" }
+    var id: String { "\(ruleId)|\(key)" }
 }
 
 /// `tools hub config get --json`: hub-wide settings (src/hub/commands/config.ts).
-package struct HubConfigValues: Decodable, Equatable, Sendable {
-    package let prLookupCacheSeconds: Int
+struct HubConfigValues: Decodable, Equatable, Sendable {
+    let prLookupCacheSeconds: Int
 }
 
-package struct HubRulesRun: Decodable, Equatable, Sendable {
-    package let skipped: String?
-    package let reports: [HubRuleReport]
-    package let firings: [HubRuleFiring]
+struct HubRulesRun: Decodable, Equatable, Sendable {
+    let skipped: String?
+    let reports: [HubRuleReport]
+    let firings: [HubRuleFiring]
 }
 
 /// The rule kinds the panel offers and the argv of `tools hub rules add` for a filled form.
-package enum HubRuleKind: String, CaseIterable, Sendable {
+enum HubRuleKind: String, CaseIterable, Sendable {
     case idle, decision, ciFailed, context
 
-    package var title: String {
+    var title: String {
         switch self {
         case .idle: return "Session idle"
         case .decision: return "New decision"
@@ -69,7 +69,7 @@ package enum HubRuleKind: String, CaseIterable, Sendable {
         }
     }
 
-    package var threshold: (label: String, flag: String, placeholder: String)? {
+    var threshold: (label: String, flag: String, placeholder: String)? {
         switch self {
         case .idle: return ("minutes", "--minutes", "30")
         case .context: return ("percent", "--percent", "80")
@@ -78,10 +78,10 @@ package enum HubRuleKind: String, CaseIterable, Sendable {
     }
 
     /// `--project` scopes sessions; a PR rule filters by `owner/repo#number` with `--match`.
-    package var scopeFlag: String { self == .ciFailed ? "--match" : "--project" }
-    package var scopePlaceholder: String { self == .ciFailed ? "PR filter (repo#42)" : "Project (optional)" }
+    var scopeFlag: String { self == .ciFailed ? "--match" : "--project" }
+    var scopePlaceholder: String { self == .ciFailed ? "PR filter (repo#42)" : "Project (optional)" }
 
-    package static func addArgs(kind: HubRuleKind, threshold: String, scope: String, label: String) -> [String]? {
+    static func addArgs(kind: HubRuleKind, threshold: String, scope: String, label: String) -> [String]? {
         var args = ["rules", "add", "--kind", kind.rawValue, "--json"]
         if let field = kind.threshold {
             guard let value = Double(threshold.trimmingCharacters(in: .whitespaces)), value > 0 else { return nil }
@@ -100,15 +100,15 @@ package enum HubRuleKind: String, CaseIterable, Sendable {
 }
 
 @MainActor
-package final class HubRulesModel: ObservableObject {
+final class HubRulesModel: ObservableObject {
     @Published package private(set) var list: HubRulesList?
     @Published package private(set) var test: HubRulesRun?
     @Published package private(set) var busy = false
-    @Published package var notice: String?
+    @Published var notice: String?
     /// The PR lookup cache setting shown in the same panel (the hub has no other settings view).
-    @Published package var prCacheSeconds = ""
+    @Published var prCacheSeconds = ""
 
-    package func load() {
+    func load() {
         Task { await reload() }
         Task {
             if let values = try? await HubDailyCLI.decode(HubConfigValues.self, ["config", "get", "--json"], span: "hub.config.get") {
@@ -118,13 +118,13 @@ package final class HubRulesModel: ObservableObject {
     }
 
     /// "off", "30 seconds", "5 minutes": the PR lookup cache menu's words.
-    package static func cacheLabel(_ seconds: Int) -> String {
+    static func cacheLabel(_ seconds: Int) -> String {
         if seconds == 0 { return "off" }
         if seconds % 60 == 0 { return Plural.count(seconds / 60, "minute") }
         return Plural.count(seconds, "second")
     }
 
-    package func savePrCache() {
+    func savePrCache() {
         guard let seconds = Int(prCacheSeconds.trimmingCharacters(in: .whitespaces)), seconds >= 0 else {
             notice = "Failed: the PR lookup cache takes whole seconds, 0 or more."
             return
@@ -164,7 +164,7 @@ package final class HubRulesModel: ObservableObject {
         }
     }
 
-    package func add(kind: HubRuleKind, threshold: String, scope: String, label: String) -> Bool {
+    func add(kind: HubRuleKind, threshold: String, scope: String, label: String) -> Bool {
         guard let args = HubRuleKind.addArgs(kind: kind, threshold: threshold, scope: scope, label: label) else {
             notice = "\(kind.title) needs a positive \(kind.threshold?.label ?? "value")."
             return false
@@ -173,15 +173,15 @@ package final class HubRulesModel: ObservableObject {
         return true
     }
 
-    package func toggle(_ rule: HubRule) {
+    func toggle(_ rule: HubRule) {
         write(["rules", "set", rule.id, "--enabled", rule.enabled ? "off" : "on"], done: rule.enabled ? "Rule off." : "Rule on.")
     }
 
-    package func remove(_ rule: HubRule) {
+    func remove(_ rule: HubRule) {
         write(["rules", "rm", rule.id], done: "Rule removed.")
     }
 
-    package func runTest() {
+    func runTest() {
         busy = true
         Task {
             do {
@@ -194,15 +194,15 @@ package final class HubRulesModel: ObservableObject {
     }
 }
 
-package struct HubRulesPanel: View {
-    package let close: () -> Void
+struct HubRulesPanel: View {
+    let close: () -> Void
     @StateObject private var model = HubRulesModel()
     @State private var kind: HubRuleKind = .idle
     @State private var threshold = ""
     @State private var scope = ""
     @State private var label = ""
 
-    package var body: some View {
+    var body: some View {
         HubDailyCard(width: 640, close: close) {
             HStack(spacing: 8) {
                 Image(systemName: "bell.badge").foregroundColor(Color.jarvisTeal)

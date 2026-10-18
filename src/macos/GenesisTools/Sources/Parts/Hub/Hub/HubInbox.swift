@@ -10,24 +10,24 @@ import UniformTypeIdentifiers
 
 // MARK: - Data (`tools question inbox --json`)
 
-package struct InboxChoice: Decodable, Hashable {
-    package let id: String
-    package let label: String
+struct InboxChoice: Decodable, Hashable {
+    let id: String
+    let label: String
     /// Why this option, when the reply gives a reason.
-    package let rationale: String?
-    package let recommended: Bool?
+    let rationale: String?
+    let recommended: Bool?
 }
 
 /// Where the last send took a decision's answer (`delivery` on the stored row).
-package struct InboxDeliveryRecord: Decodable, Hashable {
-    package let route: String
-    package let target: String?
+struct InboxDeliveryRecord: Decodable, Hashable {
+    let route: String
+    let target: String?
     /// A one-sentence reason a queued send delivered nothing. New rows store it here; older rows put
     /// the raw dump in `target`, which the TS side reads through the same rules (`inboxDelivery`).
-    package let error: String?
+    let error: String?
     /// The raw dump behind an old row's sentence, shown behind Details only.
-    package let raw: String?
-    package let at: String
+    let raw: String?
+    let at: String
 
     private static let clock: DateFormatter = {
         let formatter = DateFormatter()
@@ -42,7 +42,7 @@ package struct InboxDeliveryRecord: Decodable, Hashable {
 
     /// "sent 22:31 to cmux pane work · agent", "steered 22:31 into codex worker w1", "queued 22:31: why".
     /// New rows store `cmux · …` and `codex worker …`; older rows stored the bare pane or worker name.
-    package var line: String {
+    var line: String {
         let time = HubFormat.date(at).map { Self.clock.string(from: $0) } ?? ""
         switch route {
         case "cmux":
@@ -59,33 +59,33 @@ package struct InboxDeliveryRecord: Decodable, Hashable {
         }
     }
 
-    package var isQueued: Bool { route == "queued" }
+    var isQueued: Bool { route == "queued" }
 }
 
-package struct InboxRef: Decodable, Hashable {
-    package let path: String
-    package let line: Int?
-    package let endLine: Int?
+struct InboxRef: Decodable, Hashable {
+    let path: String
+    let line: Int?
+    let endLine: Int?
     /// The file the path names (the loader tries the session's folder, its checkout and the main checkout,
     /// then a unique suffix match); null when it could not be located.
-    package let absolute: String?
+    let absolute: String?
     /// The real lines read from disk by the loader; null when the file could not be read.
-    package let excerpt: String?
+    let excerpt: String?
     /// The 1-based line the excerpt starts at.
-    package let startLine: Int?
+    let startLine: Int?
     /// For syntax highlighting.
-    package let language: String?
-    package let missing: Bool?
+    let language: String?
+    let missing: Bool?
     /// The folders a relative path was looked up in.
-    package let searched: [String]?
+    let searched: [String]?
     /// Files the path matched by suffix: more than one means it is ambiguous.
-    package let matches: Int?
+    let matches: Int?
 
-    package var hasContent: Bool { (excerpt?.isEmpty == false) || missing == true }
+    var hasContent: Bool { (excerpt?.isEmpty == false) || missing == true }
 
     /// Why a missing ref has no lines, in the words the card shows: what was searched and where. Never
     /// "file not found" for a file that exists elsewhere (H5).
-    package var unresolvedNote: (label: String, detail: String) {
+    var unresolvedNote: (label: String, detail: String) {
         let folders = (searched ?? []).map { ($0 as NSString).lastPathComponent }
         let unique = folders.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
         if let matches, matches > 1 {
@@ -101,61 +101,61 @@ package struct InboxRef: Decodable, Hashable {
     }
 }
 
-package struct InboxQuestion: Decodable, Hashable {
-    package let itemId: String
-    package let prompt: String
-    package let choices: [InboxChoice]
-    package let multiple: Bool
-    package let freeText: Bool
-    package let required: Bool
+struct InboxQuestion: Decodable, Hashable {
+    let itemId: String
+    let prompt: String
+    let choices: [InboxChoice]
+    let multiple: Bool
+    let freeText: Bool
+    let required: Bool
     /// Whether this item accepts an `@file` tag (`AskItem.allowFileTags`, `src/question/lib/inbox/build.ts`).
-    package let fileTags: Bool
+    let fileTags: Bool
     /// Whether this item accepts a pasted/attached image (`AskItem.allowImagePaste`).
-    package let imagePaste: Bool
+    let imagePaste: Bool
 }
 
 /// One thing a session waits on: a decision (`number`, `choices`) or a question form (`questions`).
-package struct InboxItem: Decodable, Identifiable, Hashable {
-    package let kind: String
-    package let id: String
-    package let at: String
-    package let status: String
-    package let number: Int?
-    package let title: String?
-    package let prompt: String?
-    package let choices: [InboxChoice]?
-    package let recommended: String?
-    package let blocking: Bool?
-    package let option: String?
-    package let answer: String?
+struct InboxItem: Decodable, Identifiable, Hashable {
+    let kind: String
+    let id: String
+    let at: String
+    let status: String
+    let number: Int?
+    let title: String?
+    let prompt: String?
+    let choices: [InboxChoice]?
+    let recommended: String?
+    let blocking: Bool?
+    let option: String?
+    let answer: String?
     /// A decision: `transcript` or `store`. A form: who posted it.
-    package let source: String?
-    package let questions: [InboxQuestion]?
+    let source: String?
+    let questions: [InboxQuestion]?
     /// A form's resolved cwd (`AskForm.cwd`): `@file` tags and the file-browse picker both root
     /// here. Null for a decision.
-    package let cwd: String?
+    let cwd: String?
     /// The reply text that leads to this decision (the findings), markdown.
-    package let context: String?
+    let context: String?
     /// Text under the options about this decision.
-    package let notes: String?
+    let notes: String?
     /// A posted decision's extras (null for one read from the transcript).
-    package let proposal: String?
-    package let reasoning: String?
-    package let confidence: String?
-    package let excerpt: String?
-    package let refs: [InboxRef]?
+    let proposal: String?
+    let reasoning: String?
+    let confidence: String?
+    let excerpt: String?
+    let refs: [InboxRef]?
     /// The user's unsent pick (letters) and note.
-    package let draftOption: String?
-    package let draft: String?
-    package let delivery: InboxDeliveryRecord?
+    let draftOption: String?
+    let draft: String?
+    let delivery: InboxDeliveryRecord?
 
-    package var isForm: Bool { kind == "form" }
-    package var isOpen: Bool { status == "waiting" || status == "drafted" }
-    package var date: Date? { HubFormat.date(at) }
+    var isForm: Bool { kind == "form" }
+    var isOpen: Bool { status == "waiting" || status == "drafted" }
+    var date: Date? { HubFormat.date(at) }
     /// The excerpt cards to draw: refs the loader could read, or that name a missing file.
-    package var excerptRefs: [InboxRef] { (refs ?? []).filter(\.hasContent) }
+    var excerptRefs: [InboxRef] { (refs ?? []).filter(\.hasContent) }
     /// The text ⌘F searches for this item: question, context, notes, options with reasons, ref paths.
-    package var searchText: String {
+    var searchText: String {
         var parts = [title ?? "", prompt ?? "", context ?? "", notes ?? "", answer ?? "", draft ?? ""]
         for choice in choices ?? [] {
             parts.append("\(choice.id)) \(choice.label) \(choice.rationale ?? "")")
@@ -174,7 +174,7 @@ package struct InboxItem: Decodable, Identifiable, Hashable {
 extension InboxItem {
     /// What ⌘F searches in a card, in drawing order, under the keys the card draws each text with
     /// (`FindText(_, field:)` and `.findField`). Styled texts are given as their shown characters.
-    package var findFields: [PanelFindField] {
+    var findFields: [PanelFindField] {
         var fields = [PanelFindField("title", title ?? prompt ?? "")]
         if let context, !context.isEmpty {
             fields.append(PanelFindField("context", context, markdown: true))
@@ -211,52 +211,52 @@ extension InboxItem {
 }
 
 /// The last reply of a session, when its decisions come from the transcript.
-package struct InboxReply: Decodable, Hashable {
-    package let at: String?
-    package let markdown: String
+struct InboxReply: Decodable, Hashable {
+    let at: String?
+    let markdown: String
     /// The user prompt that led to it: the first line, and the whole text.
-    package let ask: String?
-    package let askFull: String?
-    package let turnIndex: Int?
+    let ask: String?
+    let askFull: String?
+    let turnIndex: Int?
 }
 
-package struct InboxSession: Decodable, Identifiable, Hashable {
-    package let sessionId: String?
-    package let provider: String?
-    package let title: String?
-    package let project: String?
-    package let cwd: String?
-    package let branch: String?
-    package let account: String?
-    package let lastAt: String
-    package let waiting: Int
-    package let drafted: Int?
+struct InboxSession: Decodable, Identifiable, Hashable {
+    let sessionId: String?
+    let provider: String?
+    let title: String?
+    let project: String?
+    let cwd: String?
+    let branch: String?
+    let account: String?
+    let lastAt: String
+    let waiting: Int
+    let drafted: Int?
     /// Answered decisions no send delivered yet; they ride the session's next prompt.
-    package let queued: Int?
+    let queued: Int?
     /// Quiet for three days (the widget's rule, `INBOX_STALE_MS` in src/question/lib/inbox/build.ts): still
     /// listed and answerable, but its items no longer count as waiting.
-    package let stale: Bool?
-    package let reply: InboxReply?
-    package let items: [InboxItem]
+    let stale: Bool?
+    let reply: InboxReply?
+    let items: [InboxItem]
 
     /// Listed only for its queued answers: nothing here waits for the user.
-    package var isQueuedOnly: Bool { waiting == 0 && (queued ?? 0) > 0 }
-    package var isStale: Bool { stale ?? false }
+    var isQueuedOnly: Bool { waiting == 0 && (queued ?? 0) > 0 }
+    var isStale: Bool { stale ?? false }
     /// What this session adds to the "waiting" badges: nothing once it is quiet for three days.
-    package var countedWaiting: Int { isStale ? 0 : waiting }
+    var countedWaiting: Int { isStale ? 0 : waiting }
 
-    package var id: String { sessionId ?? "form:\(cwd ?? "")" }
-    package var date: Date? { HubFormat.date(lastAt) }
+    var id: String { sessionId ?? "form:\(cwd ?? "")" }
+    var date: Date? { HubFormat.date(lastAt) }
     /// Decisions with an unsent pick or note, ready for the session's Send.
-    package var draftedItems: [InboxItem] {
+    var draftedItems: [InboxItem] {
         items.filter { $0.kind == "decision" && $0.isOpen && ($0.draftOption?.isEmpty == false || $0.draft?.trimmed.isEmpty == false) }
     }
-    package var searchText: String {
+    var searchText: String {
         ([displayTitle, projectName, branch ?? "", account ?? "", sessionId ?? "", reply?.ask ?? ""]
             + items.map(\.searchText)).joined(separator: " ")
     }
     /// The session header row's fields for ⌘F (row id `session:<id>`), as the header draws them.
-    package var findFields: [PanelFindField] {
+    var findFields: [PanelFindField] {
         [
             PanelFindField("title", displayTitle),
             PanelFindField("project", projectName),
@@ -264,42 +264,42 @@ package struct InboxSession: Decodable, Identifiable, Hashable {
         ]
     }
 
-    package var displayTitle: String {
+    var displayTitle: String {
         if let title, !title.trimmed.isEmpty { return title }
         if let sessionId { return "Session \(sessionId.prefix(8))" }
         return "Questions without a session"
     }
 
-    package var projectName: String {
+    var projectName: String {
         if let project, !project.isEmpty { return project }
         return cwd.map { ($0 as NSString).lastPathComponent } ?? "No folder"
     }
 }
 
-package struct InboxEnvelope: Decodable {
-    package let sessions: [InboxSession]
-    package let elapsedMs: Int?
+struct InboxEnvelope: Decodable {
+    let sessions: [InboxSession]
+    let elapsedMs: Int?
 }
 
 /// What `tools question inbox send|answer` printed: the delivery, or `{ error }`.
-package struct InboxDelivery: Decodable, Equatable {
-    package let text: String?
-    package let channel: String?
-    package let delivered: Bool?
+struct InboxDelivery: Decodable, Equatable {
+    let text: String?
+    let channel: String?
+    let delivered: Bool?
     /// A short human place the answers went (`cmux · agents-window · pane 1`). Never an error dump.
-    package let target: String?
+    let target: String?
     /// One sentence saying why nothing was delivered.
-    package let error: String?
+    let error: String?
     /// The raw tool output behind the sentence, shown only behind a Details disclosure.
-    package let raw: String?
+    let raw: String?
     /// The form path uses `detail` for its note.
-    package let detail: String?
+    let detail: String?
 
-    package static func failure(_ message: String) -> InboxDelivery {
+    static func failure(_ message: String) -> InboxDelivery {
         InboxDelivery(text: nil, channel: nil, delivered: false, target: nil, error: message, raw: nil, detail: nil)
     }
 
-    package var summary: String {
+    var summary: String {
         if let error { return error }
         switch channel {
         case "cmux": return "Sent to \(target ?? "the session's cmux pane")"
@@ -312,24 +312,24 @@ package struct InboxDelivery: Decodable, Equatable {
         }
     }
 
-    package var isError: Bool { error != nil }
-    package var isQueued: Bool { error == nil && delivered != true }
+    var isError: Bool { error != nil }
+    var isQueued: Bool { error == nil && delivered != true }
 }
 
 /// `tools question inbox target --json`: where a session's answers would go right now, and whether
 /// a queued answer would ever leave on its own (the UserPromptSubmit hook).
-package struct InboxTargetResolution: Decodable, Equatable {
-    package let kind: String
-    package let label: String?
-    package let reason: String?
-    package let worker: String?
-    package let queueHookOn: Bool?
+struct InboxTargetResolution: Decodable, Equatable {
+    let kind: String
+    let label: String?
+    let reason: String?
+    let worker: String?
+    let queueHookOn: Bool?
 }
 
-package enum InboxSort: String, CaseIterable {
+enum InboxSort: String, CaseIterable {
     case recent, oldest, project, count
 
-    package var title: String {
+    var title: String {
         switch self {
         case .recent: return "Most recent first"
         case .oldest: return "Least recent first"
@@ -339,7 +339,7 @@ package enum InboxSort: String, CaseIterable {
     }
 
     /// The rows the filter text matches (title, project, branch, account, question, context, options), in this order.
-    package func apply(_ sessions: [InboxSession], filter: String) -> [InboxSession] {
+    func apply(_ sessions: [InboxSession], filter: String) -> [InboxSession] {
         let needle = filter.trimmed.lowercased()
         let rows = needle.isEmpty ? sessions : sessions.filter { $0.searchText.lowercased().contains(needle) }
         switch self {
@@ -359,15 +359,15 @@ package enum InboxSort: String, CaseIterable {
 // MARK: - Model
 
 @MainActor
-package final class HubInboxModel: ObservableObject {
+final class HubInboxModel: ObservableObject {
     @Published package private(set) var sessions: [InboxSession] = []
     /// A notification's target that is not waiting any more: said once, instead of the click doing nothing.
-    @Published package var revealMissing: String?
+    @Published var revealMissing: String?
     @Published package private(set) var loading = false
     @Published package private(set) var loadedAt: Date?
     @Published package private(set) var error: String?
     /// The session the sidebar picked; the main list scrolls to it.
-    @Published package var selectedID: String?
+    @Published var selectedID: String?
     /// Each answered item's delivery, by item id, until the next answer to it.
     @Published package private(set) var deliveries: [String: InboxDelivery] = [:]
     @Published package private(set) var sending: Set<String> = []
@@ -387,37 +387,37 @@ package final class HubInboxModel: ObservableObject {
     /// The last Send result per session id (where the answers went, or why nothing did).
     @Published package private(set) var sessionResults: [String: InboxDelivery] = [:]
     /// Set when a Send found no live target: the view shows the resume dialog for this session.
-    @Published package var resumeFor: InboxSession?
+    @Published var resumeFor: InboxSession?
     /// The session whose info popover is open (`--inbox-info <id>` opens it in a scripted run).
-    @Published package var infoFor: String?
+    @Published var infoFor: String?
     /// Whether a queued answer would ever leave on its own, from the last target resolution.
     @Published package private(set) var queueHookOn = false
     /// Bumped after every draft, dismiss or send has written the store: the Decisions pane reloads on it.
     @Published package private(set) var writeGeneration = 0
     /// The card a `--decision` / `--question` launch asked for (a banner click): outlined and scrolled to.
-    @Published package var focusedItemID: String?
+    @Published var focusedItemID: String?
     /// Bumped per reveal, so a second click on the same banner scrolls back to the card.
     @Published package private(set) var focusRequest = 0
     /// `--inbox-resume <id>` / `--inbox-info <id>` / `--decision <id>` / `--question <id>`: opened once the
     /// list has loaded, then cleared.
-    package enum Reveal {
+    enum Reveal {
         case resume(String)
         case info(String)
         case item(String)
     }
-    package var reveal: Reveal?
+    var reveal: Reveal?
     /// Called once after the next load (a snapshot run waits for it).
-    package var onLoaded: (() -> Void)?
+    var onLoaded: (() -> Void)?
 
     /// The badge count (mode switch, header): items of sessions that moved in the last three days.
-    package var waitingCount: Int { sessions.reduce(0) { $0 + $1.countedWaiting } }
+    var waitingCount: Int { sessions.reduce(0) { $0 + $1.countedWaiting } }
 
-    package func sorted(_ sort: InboxSort, filter: String) -> [InboxSession] {
+    func sorted(_ sort: InboxSort, filter: String) -> [InboxSession] {
         sort.apply(sessions, filter: filter)
     }
 
     /// Reloads unless a load finished in the last `maxAge` seconds.
-    package func loadIfStale(maxAge: TimeInterval = 20) {
+    func loadIfStale(maxAge: TimeInterval = 20) {
         if let loadedAt, Date().timeIntervalSince(loadedAt) < maxAge {
             finishLoad()
             return
@@ -425,7 +425,7 @@ package final class HubInboxModel: ObservableObject {
         load()
     }
 
-    package func load() {
+    func load() {
         guard !loading else {
             // The running load may have read the store before a write landed: read it once more.
             reloadPending = true
@@ -504,7 +504,7 @@ package final class HubInboxModel: ObservableObject {
 
     /// Marks (or clears) a decision's pick and note. Nothing is sent: this is the pick-then-send model.
     /// Pass the whole letters string (`"a"`, `"ac"`, or `""` to clear the pick); `text` is the note.
-    package func draft(_ item: InboxItem, in session: InboxSession, option: String?, text: String?) {
+    func draft(_ item: InboxItem, in session: InboxSession, option: String?, text: String?) {
         guard let sessionId = session.sessionId, let number = item.number else { return }
         var args = ["question", "inbox", "draft", "--session", sessionId, "--decision", String(number)]
         if let option { args += ["--option", option] }
@@ -515,7 +515,7 @@ package final class HubInboxModel: ObservableObject {
     }
 
     /// Drops a decision that no longer matters, without sending anything.
-    package func dismiss(_ item: InboxItem, in session: InboxSession) {
+    func dismiss(_ item: InboxItem, in session: InboxSession) {
         guard let sessionId = session.sessionId, let number = item.number else { return }
         write(["question", "inbox", "dismiss", "--session", sessionId, "--decision", String(number)], item: item)
     }
@@ -567,7 +567,7 @@ package final class HubInboxModel: ObservableObject {
 
     /// A note-only draft (`--text`, no `--option`) that waits behind a pick keeps that pick's letters:
     /// it replaces the queued pick, and the running pick may still fail. A dismiss never gets letters.
-    package nonisolated static func keepingPick(_ args: [String], from earlier: [String]?) -> [String] {
+    nonisolated static func keepingPick(_ args: [String], from earlier: [String]?) -> [String] {
         guard args.count > 2, args[2] == "draft", !args.contains("--option"),
               let earlier, earlier.count > 2, earlier[2] == "draft",
               let at = earlier.firstIndex(of: "--option"), at + 1 < earlier.count
@@ -577,7 +577,7 @@ package final class HubInboxModel: ObservableObject {
 
     /// Resolves where a session's answers would go right now (a live cmux pane, a codex worker, or
     /// nothing), off the main thread, then sends. No live target opens the resume dialog instead.
-    package func sendSession(_ session: InboxSession) {
+    func sendSession(_ session: InboxSession) {
         guard let sessionId = session.sessionId, !sendingSessions.contains(sessionId) else { return }
         sendingSessions.insert(sessionId)
         sessionResults[sessionId] = nil
@@ -600,7 +600,7 @@ package final class HubInboxModel: ObservableObject {
 
     /// What a Send or a resume leads to. The decisions are pure (`sendStep`, `resumeStep`) so tests
     /// pin them; `run` carries one out.
-    package enum SendStep: Equatable {
+    enum SendStep: Equatable {
         /// Type the answers into the live target (`resumeTarget`: the pane a resume opened).
         case deliver(resumeTarget: String?)
         /// Nothing is open: ask where to resume. Never queue silently.
@@ -613,12 +613,12 @@ package final class HubInboxModel: ObservableObject {
 
     /// Whether "Keep queued" can deliver, from this lookup only: a failed lookup establishes nothing,
     /// so it can never inherit the last session's answer.
-    package nonisolated static func queueHook(from resolved: Result<InboxTargetResolution, Error>) -> Bool {
+    nonisolated static func queueHook(from resolved: Result<InboxTargetResolution, Error>) -> Bool {
         guard case .success(let target) = resolved else { return false }
         return target.queueHookOn ?? false
     }
 
-    package nonisolated static func sendStep(_ resolved: Result<InboxTargetResolution, Error>) -> SendStep {
+    nonisolated static func sendStep(_ resolved: Result<InboxTargetResolution, Error>) -> SendStep {
         switch resolved {
         case .failure(let error):
             return .report("Nothing was sent: finding where the answers go failed (\(error))")
@@ -628,7 +628,7 @@ package final class HubInboxModel: ObservableObject {
     }
 
     /// Only a session that did resume gets the answers; a failed resume sends nothing and says why.
-    package nonisolated static func resumeStep(_ outcome: LaunchOutcome) -> SendStep {
+    nonisolated static func resumeStep(_ outcome: LaunchOutcome) -> SendStep {
         switch outcome {
         case .cancelled: return .nothing
         case .launched(let label): return .deliver(resumeTarget: "resumed — \(label)")
@@ -636,7 +636,7 @@ package final class HubInboxModel: ObservableObject {
         }
     }
 
-    package func run(_ step: SendStep, for session: InboxSession) {
+    func run(_ step: SendStep, for session: InboxSession) {
         guard let sessionId = session.sessionId else { return }
         switch step {
         case .deliver(let resumeTarget):
@@ -656,7 +656,7 @@ package final class HubInboxModel: ObservableObject {
 
     /// Sends the drafted answers of a session as one message. `resumeTarget` names the place the
     /// resume dialog reopened it: the send then waits for that pane to be live and types into it.
-    package func deliverSession(_ session: InboxSession, resumeTarget: String?) {
+    func deliverSession(_ session: InboxSession, resumeTarget: String?) {
         guard let sessionId = session.sessionId else { return }
         sendingSessions.insert(sessionId)
         var args = ["question", "inbox", "send", "--session", sessionId]
@@ -693,7 +693,7 @@ package final class HubInboxModel: ObservableObject {
     /// has to cross argv as base64 (`kern.argmax` on this Mac is 1 MB; one image alone can carry
     /// `MAX_IMAGE_BASE64_CHARS`, 2 MB, of it). `tools question inbox answer` reads each file in
     /// place (`src/question/lib/pending/form.ts` `attachImageFiles`).
-    package func answerForm(
+    func answerForm(
         _ item: InboxItem,
         choices: [String: Set<String>],
         texts: [String: String],
@@ -723,7 +723,7 @@ package final class HubInboxModel: ObservableObject {
     /// (`src/question/lib/pending/form.ts`) reads each file in place. `imagePaths`/`fileTags`
     /// iterate a `Dictionary`, so a test should compare the decoded `--answers` JSON and a SET
     /// of `--image` specs, not raw argv equality.
-    package nonisolated static func formAnswerArgs(
+    nonisolated static func formAnswerArgs(
         formId: String,
         questions: [InboxQuestion],
         choices: [String: Set<String>],
@@ -794,7 +794,7 @@ package final class HubInboxModel: ObservableObject {
     }
 
     /// Brings the session's cmux pane forward through its own agent's resolver (`tools <agent> cmux focus`).
-    package func focusPane(_ session: InboxSession, notice: @escaping (String) -> Void) {
+    func focusPane(_ session: InboxSession, notice: @escaping (String) -> Void) {
         guard let sessionId = session.sessionId else { return }
         let tool = cmuxTool(provider: session.provider)
         DispatchQueue.global(qos: .userInitiated).async {
@@ -811,16 +811,16 @@ package final class HubInboxModel: ObservableObject {
 
 // MARK: - Sidebar
 
-package struct InboxListView: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var inbox: HubInboxModel
+struct InboxListView: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
     /// Sessions quiet for three days fold under one row; a pick of one of them (a link) opens the fold.
     @State private var showOlder = false
 
     private var sort: InboxSort { InboxSort(rawValue: sortKey) ?? .recent }
 
-    package var body: some View {
+    var body: some View {
         let rows = inbox.sorted(sort, filter: model.filter)
         VStack(spacing: 0) {
             HStack(spacing: 6) {
@@ -949,18 +949,18 @@ private struct InboxSessionRow: View {
     }
 }
 
-package enum InboxStyle {
-    package static let accent = Color(red: 1, green: 0.63, blue: 0.12)
+enum InboxStyle {
+    static let accent = Color(red: 1, green: 0.63, blue: 0.12)
 }
 
 // MARK: - Main
 
-package struct InboxMain: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var inbox: HubInboxModel
+struct InboxMain: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
 
-    package var body: some View {
+    var body: some View {
         let rows = inbox.sorted(InboxSort(rawValue: sortKey) ?? .recent, filter: model.filter)
         VStack(spacing: 0) {
             header(rows)
@@ -1030,7 +1030,7 @@ package struct InboxMain: View {
 
     /// "3 waiting in 2 sessions · 1 queued": what waits for the user, in how many sessions, and how
     /// many answers only wait for their session's next prompt.
-    package static func summary(_ rows: [InboxSession]) -> String {
+    static func summary(_ rows: [InboxSession]) -> String {
         let waiting = rows.reduce(0) { $0 + $1.countedWaiting }
         let sessions = rows.filter { $0.countedWaiting > 0 }.count
         let older = rows.filter { $0.isStale && $0.waiting > 0 }.count
@@ -1180,17 +1180,17 @@ private struct InboxSessionSection: View {
 /// One session's Send: "Send N answers to <session>", the exact message under it, then where it went
 /// (or why it did not, with Resume elsewhere). Shared by the Inbox section and the Decisions pane, so
 /// both send the same way: every marked answer as one message through `tools question inbox send`.
-package struct InboxSendBar: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var inbox: HubInboxModel
-    package let session: InboxSession
+struct InboxSendBar: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var inbox: HubInboxModel
+    let session: InboxSession
 
     private var drafted: [InboxItem] { session.draftedItems }
     private var sending: Bool { session.sessionId.map { inbox.sendingSessions.contains($0) } ?? false }
     private var result: InboxDelivery? { session.sessionId.flatMap { inbox.sessionResults[$0] } }
 
     /// The message the Send button will type, previewed under it.
-    package static func preview(_ drafted: [InboxItem]) -> String {
+    static func preview(_ drafted: [InboxItem]) -> String {
         drafted.compactMap { item -> String? in
             guard let number = item.number else { return nil }
             let letters = (item.draftOption ?? "").map { "\($0)) " }.joined()
@@ -1203,7 +1203,7 @@ package struct InboxSendBar: View {
         }.joined(separator: "\n")
     }
 
-    package var body: some View {
+    var body: some View {
         if !drafted.isEmpty || result != nil || sending {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
@@ -1257,11 +1257,11 @@ package struct InboxSendBar: View {
 
 /// A delivery under a Send: what reached the agent, or a one-sentence reason nothing did. A failure
 /// never shows a green check, and the raw tool output hides behind a Details disclosure.
-package struct InboxDeliveryLine: View {
-    package let delivery: InboxDelivery
+struct InboxDeliveryLine: View {
+    let delivery: InboxDelivery
     @State private var showsDetails = false
 
-    package var body: some View {
+    var body: some View {
         let color = delivery.isError ? ReviewPalette.removed : delivery.isQueued ? ReviewPalette.modified : ReviewPalette.added
         HStack(alignment: .top, spacing: 7) {
             Image(systemName: delivery.isError ? "exclamationmark.triangle.fill" : delivery.isQueued ? "tray.and.arrow.down" : "checkmark.circle.fill")
@@ -1289,11 +1289,11 @@ package struct InboxDeliveryLine: View {
 /// One decision, with the context that led to it: the findings, the code it points at, each option
 /// with its reason and a Recommended badge. A click MARKS an option (⌘-click adds a second); the
 /// session's Send delivers every mark at once. Nothing is sent on a click.
-package struct InboxDecisionCard: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var inbox: HubInboxModel
-    package let session: InboxSession
-    package let item: InboxItem
+struct InboxDecisionCard: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var inbox: HubInboxModel
+    let session: InboxSession
+    let item: InboxItem
     @State private var note = ""
     @State private var noteSeeded = false
     @State private var showContext = false
@@ -1315,7 +1315,7 @@ package struct InboxDecisionCard: View {
         showContext || (highlight?.current?.row == item.id && highlight?.current?.field == "context")
     }
 
-    package static func confidenceColor(_ level: String) -> Color {
+    static func confidenceColor(_ level: String) -> Color {
         switch level.lowercased() {
         case "high": return ReviewPalette.added
         case "low": return ReviewPalette.removed
@@ -1328,7 +1328,7 @@ package struct InboxDecisionCard: View {
         return (item.prompt ?? "").split(separator: "\n").first.map(String.init) ?? "DECISION \(item.number ?? 0)"
     }
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             headerRow
             if let ask = session.reply?.ask, !ask.isEmpty, item.source == "transcript" {
@@ -1631,7 +1631,7 @@ package struct InboxDecisionCard: View {
     }
 
     /// Toggles one letter in a pick string. Plain click replaces the set; ⌘-click adds or removes.
-    package static func toggled(_ current: String, _ id: String, add: Bool) -> String {
+    static func toggled(_ current: String, _ id: String, add: Bool) -> String {
         var set = Set(current.map(String.init))
         if add {
             if set.contains(id) { set.remove(id) } else { set.insert(id) }
@@ -1724,7 +1724,7 @@ private struct InboxReplySheet: View {
 
 /// A HubSession for the terminal and resume actions: the row from the hub's list when it has one,
 /// else a stand-in built from what the inbox knows (an older session missing from the list).
-package func inboxHubSession(_ session: InboxSession, in model: HubModel) -> HubSession? {
+func inboxHubSession(_ session: InboxSession, in model: HubModel) -> HubSession? {
     guard let sessionId = session.sessionId else { return nil }
     if let row = model.sessions.first(where: { $0.sessionId == sessionId }) {
         return row
@@ -1880,13 +1880,13 @@ private struct SessionInfoPopover: View {
 
 /// R4: "This session is not open anywhere. Where should it resume?" Reuses the LaunchPicker in resume
 /// mode; once it reopens the session, the answers are queued and ride its first prompt.
-package struct InboxResumeSheet: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var inbox: HubInboxModel
-    package let session: InboxSession
+struct InboxResumeSheet: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var inbox: HubInboxModel
+    let session: InboxSession
     @Environment(\.dismiss) private var dismiss
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("This session is not open anywhere")
                 .font(.system(size: 13, weight: .semibold))
@@ -2304,7 +2304,7 @@ private struct InboxFormCard: View {
 }
 
 /// Bold, code and links in a prompt; anything that is not valid markdown stays plain text.
-package func inlineMarkdown(_ text: String) -> AttributedString {
+func inlineMarkdown(_ text: String) -> AttributedString {
     (try? AttributedString(markdown: text, options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
         ?? AttributedString(text)
 }

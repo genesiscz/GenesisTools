@@ -8,115 +8,115 @@ import SwiftUI
 
 // MARK: - Payload
 
-package struct InsightTotals: Decodable, Equatable {
-    package var inputTokens = 0
-    package var outputTokens = 0
-    package var cacheReadTokens = 0
-    package var cacheWriteTokens = 0
-    package var reasoningTokens = 0
-    package var modelCalls = 0
-    package var costUsd: Double?
+struct InsightTotals: Decodable, Equatable {
+    var inputTokens = 0
+    var outputTokens = 0
+    var cacheReadTokens = 0
+    var cacheWriteTokens = 0
+    var reasoningTokens = 0
+    var modelCalls = 0
+    var costUsd: Double?
 }
 
 /// One prompt and the work until the next one (`TurnCost` in src/hub/lib/insights/types.ts).
-package struct InsightTurn: Decodable, Equatable, Identifiable {
-    package let number: Int
-    package let index: Int
-    package let turnId: String
-    package let label: String
-    package let at: String?
-    package let durationMs: Double?
-    package let inputTokens: Int
-    package let outputTokens: Int
-    package let cacheReadTokens: Int
-    package let cacheWriteTokens: Int
-    package let reasoningTokens: Int
-    package let modelCalls: Int
-    package let costUsd: Double?
-    package let models: [String]
-    package let toolCount: Int
-    package let errorCount: Int
+struct InsightTurn: Decodable, Equatable, Identifiable {
+    let number: Int
+    let index: Int
+    let turnId: String
+    let label: String
+    let at: String?
+    let durationMs: Double?
+    let inputTokens: Int
+    let outputTokens: Int
+    let cacheReadTokens: Int
+    let cacheWriteTokens: Int
+    let reasoningTokens: Int
+    let modelCalls: Int
+    let costUsd: Double?
+    let models: [String]
+    let toolCount: Int
+    let errorCount: Int
     /// The context window after the prompt (its last call's prompt size); nil from an older cached answer.
-    package let contextTokens: Int?
-    package let rank: Int?
+    let contextTokens: Int?
+    let rank: Int?
 
-    package var id: String { turnId }
+    var id: String { turnId }
     /// Tokens billed near the input rate or above; cache reads cost a tenth and would flatten every bar.
-    package var billableTokens: Int { inputTokens + cacheWriteTokens + outputTokens }
+    var billableTokens: Int { inputTokens + cacheWriteTokens + outputTokens }
     /// The transcript row the jump lands on: the prompt, or the list top for work before the first prompt.
-    package var rowId: String { number > 0 ? "p-\(turnId)" : "top" }
-    package var title: String { number > 0 ? "#\(number) \(label)" : label }
+    var rowId: String { number > 0 ? "p-\(turnId)" : "top" }
+    var title: String { number > 0 ? "#\(number) \(label)" : label }
 }
 
-package struct InsightTool: Decodable, Equatable, Identifiable {
-    package let name: String
-    package let count: Int
-    package let failures: Int
-    package let failureRate: Double
-    package let totalMs: Double
-    package let slowestMs: Double?
-    package let slowestToolId: String?
-    package let slowestTurnIndex: Int?
-    package let timing: String
+struct InsightTool: Decodable, Equatable, Identifiable {
+    let name: String
+    let count: Int
+    let failures: Int
+    let failureRate: Double
+    let totalMs: Double
+    let slowestMs: Double?
+    let slowestToolId: String?
+    let slowestTurnIndex: Int?
+    let timing: String
 
-    package var id: String { name }
-    package var displayName: String { TranscriptDocument.displayName(name) }
+    var id: String { name }
+    var displayName: String { TranscriptDocument.displayName(name) }
 }
 
 /// `StuckVerdict` in src/hub/lib/insights/types.ts.
-package struct StuckVerdict: Decodable, Equatable {
-    package let kind: String
-    package let tool: String
-    package let argument: String
-    package let detail: String
-    package let since: String?
-    package let elapsedMs: Double?
-    package let count: Int
-    package let failures: Int
-    package let turnIndex: Int
-    package let toolId: String
+struct StuckVerdict: Decodable, Equatable {
+    let kind: String
+    let tool: String
+    let argument: String
+    let detail: String
+    let since: String?
+    let elapsedMs: Double?
+    let count: Int
+    let failures: Int
+    let turnIndex: Int
+    let toolId: String
 
-    package var isLoop: Bool { kind == "repeat-loop" }
-    package var badge: String { isLoop ? "loop" : "stuck" }
-    package var color: Color { isLoop ? SessionPalette.red : SessionPalette.orange }
+    var isLoop: Bool { kind == "repeat-loop" }
+    var badge: String { isLoop ? "loop" : "stuck" }
+    var color: Color { isLoop ? SessionPalette.red : SessionPalette.orange }
     /// The header line: what, then the call itself.
-    package var line: String {
+    var line: String {
         let call = argument.isEmpty ? "" : ": \(argument)"
         return "\(isLoop ? "Looping" : "Stuck")? \(detail)\(call)"
     }
 }
 
-package struct StuckThresholds: Decodable, Equatable {
-    package let toolMinutes: Int
-    package let repeats: Int
-    package let maxAgeHours: Int
-    package let activeMinutes: Int
+struct StuckThresholds: Decodable, Equatable {
+    let toolMinutes: Int
+    let repeats: Int
+    let maxAgeHours: Int
+    let activeMinutes: Int
 }
 
-package struct SessionInsightsPayload: Decodable, Equatable {
-    package let sessionId: String
-    package let provider: String
-    package let turnCount: Int
-    package let priced: Bool
-    package let pricingNote: String
-    package let totals: InsightTotals
-    package let turns: [InsightTurn]
-    package let tools: [InsightTool]
-    package let stuck: StuckVerdict?
-    package let thresholds: StuckThresholds
+struct SessionInsightsPayload: Decodable, Equatable {
+    let sessionId: String
+    let provider: String
+    let turnCount: Int
+    let priced: Bool
+    let pricingNote: String
+    let totals: InsightTotals
+    let turns: [InsightTurn]
+    let tools: [InsightTool]
+    let stuck: StuckVerdict?
+    let thresholds: StuckThresholds
 
-    package var ranked: [InsightTurn] { turns.filter { $0.rank != nil }.sorted { ($0.rank ?? 0) < ($1.rank ?? 0) } }
+    var ranked: [InsightTurn] { turns.filter { $0.rank != nil }.sorted { ($0.rank ?? 0) < ($1.rank ?? 0) } }
     /// Prompts only, for the handoff composer's range pickers.
-    package var prompts: [InsightTurn] { turns.filter { $0.number > 0 } }
+    var prompts: [InsightTurn] { turns.filter { $0.number > 0 } }
 }
 
-package enum HubInsights {
-    package static func decode(_ data: Data) throws -> SessionInsightsPayload {
+enum HubInsights {
+    static func decode(_ data: Data) throws -> SessionInsightsPayload {
         try JSONDecoder().decode(SessionInsightsPayload.self, from: MonitorJSON.dataByDroppingPreamble(data))
     }
 
     /// Blocking (a `tools` run; a cache hit is ~0.4 s, a large session's first run a few seconds): off the main thread.
-    package static func load(sessionId: String) throws -> SessionInsightsPayload {
+    static func load(sessionId: String) throws -> SessionInsightsPayload {
         // The cache key names the transcript's size and mtime, so a week-old entry is still exact.
         let data = try ToolsCLIRunner.run(["hub", "insights", sessionId, "--json", "--max-cache-age", "604800"])
         let payload = try decode(data)
@@ -125,10 +125,10 @@ package enum HubInsights {
     }
 
     /// The session's last answer, kept by `load` (Hub/HubSWR.swift): shown while the fresh one loads.
-    package static let cache = HubSWR.cache("insights")
+    static let cache = HubSWR.cache("insights")
 
     /// Blocking (a file read): off the main thread.
-    package static func cached(sessionId: String) -> SessionInsightsPayload? {
+    static func cached(sessionId: String) -> SessionInsightsPayload? {
         guard let data = cache.readData(key: sessionId) else { return nil }
         do {
             return try decode(data)
@@ -147,20 +147,20 @@ package enum HubInsights {
 /// Loads one session's insights, off the main thread. A live session re-reads at most once per
 /// `minInterval`: the session file grows with every tail event, and each growth is a cache miss.
 @MainActor
-package final class SessionInsightsModel: ObservableObject {
+final class SessionInsightsModel: ObservableObject {
     @Published package private(set) var payload: SessionInsightsPayload?
     @Published package private(set) var error: String?
     @Published package private(set) var loading = false
     /// The payload on screen is the last run's, from disk, and the fresh one is still loading.
     @Published package private(set) var showingCache = false
 
-    package static let minInterval: TimeInterval = 90
+    static let minInterval: TimeInterval = 90
     private var sessionId = ""
     private var lastLoad = Date.distantPast
     private var again = false
     private var scheduled: Task<Void, Never>?
 
-    package func open(_ id: String) async {
+    func open(_ id: String) async {
         scheduled?.cancel()
         scheduled = nil
         if id != sessionId {
@@ -172,7 +172,7 @@ package final class SessionInsightsModel: ObservableObject {
     }
 
     /// The transcript grew: reload now, or once the interval since the last load has passed.
-    package func grew() {
+    func grew() {
         guard !sessionId.isEmpty else { return }
         if loading {
             again = true
@@ -239,14 +239,14 @@ package final class SessionInsightsModel: ObservableObject {
 
 // MARK: - Formatting
 
-package enum InsightFormat {
-    package static func duration(ms: Double?) -> String {
+enum InsightFormat {
+    static func duration(ms: Double?) -> String {
         guard let ms else { return "—" }
         return SessionFormat.duration(ms / 1000)
     }
 
     /// One unit, for the sidebar's narrow table: "42s", "7m", "1.5h", "3d". Tooltips keep `duration`.
-    package static func compactDuration(ms: Double?) -> String {
+    static func compactDuration(ms: Double?) -> String {
         guard let ms else { return "—" }
         let seconds = ms / 1000
         if seconds < 1 { return "<1s" }
@@ -256,17 +256,17 @@ package enum InsightFormat {
         return "\(Int(seconds / 86_400))d"
     }
 
-    package static func usd(_ value: Double?) -> String {
+    static func usd(_ value: Double?) -> String {
         guard let value else { return "—" }
         return value < 0.01 && value > 0 ? "<$0.01" : SessionFormat.usd(value)
     }
 
-    package static func percent(_ rate: Double) -> String {
+    static func percent(_ rate: Double) -> String {
         rate <= 0 ? "0%" : rate < 0.01 ? "<1%" : "\(Int((rate * 100).rounded()))%"
     }
 
     /// `#942 fix the export · $18.33 · in 1.2K · cache 3.4M · out 12K · 14 tools, 2 failed · 12m`
-    package static func summary(_ turn: InsightTurn, priced: Bool) -> String {
+    static func summary(_ turn: InsightTurn, priced: Bool) -> String {
         var parts = [turn.title]
         if priced || turn.costUsd != nil { parts.append(usd(turn.costUsd)) }
         if turn.inputTokens > 0 { parts.append("in \(SessionFormat.tokens(turn.inputTokens))") }
@@ -285,34 +285,34 @@ package enum InsightFormat {
 // MARK: - Chart buckets
 
 /// One bar: a prompt, or several consecutive prompts when the session has more than fit.
-package struct InsightBar {
-    package let turns: ArraySlice<InsightTurn>
-    package let cost: Double
-    package let input: Int
-    package let cacheWrite: Int
-    package let output: Int
-    package let cacheRead: Int
+struct InsightBar {
+    let turns: ArraySlice<InsightTurn>
+    let cost: Double
+    let input: Int
+    let cacheWrite: Int
+    let output: Int
+    let cacheRead: Int
     /// The bar's most expensive prompt: what a click jumps to and the hover line names.
-    package let lead: InsightTurn
+    let lead: InsightTurn
     /// The best rank inside the bar, for its marker.
-    package let rank: Int?
+    let rank: Int?
     /// The context window at the bar's last prompt that recorded one; 0 when none did (not measured).
-    package let context: Int
+    let context: Int
     /// The prompt `context` comes from: what the context chart's hover names and its click opens.
-    package let contextTurn: InsightTurn?
+    let contextTurn: InsightTurn?
     /// The context fell by a third or more at one of the bar's prompts, measured from the prompt before
     /// it, in this bar or the last measured one before it (a compaction the bar's last value would hide).
-    package let compactedInside: Bool
+    let compactedInside: Bool
 
-    package var billable: Int { input + cacheWrite + output }
+    var billable: Int { input + cacheWrite + output }
 
     /// A fall of a third or more from `previous` to `next`.
-    package static func isCompaction(from previous: Int, to next: Int) -> Bool {
+    static func isCompaction(from previous: Int, to next: Int) -> Bool {
         previous > 0 && next > 0 && Double(next) < Double(previous) * 0.67
     }
 
     /// At most `maxBars` bars, consecutive prompts summed when there are more. Empty for no turns.
-    package static func bucket(_ turns: [InsightTurn], maxBars: Int, priced: Bool) -> [InsightBar] {
+    static func bucket(_ turns: [InsightTurn], maxBars: Int, priced: Bool) -> [InsightBar] {
         guard !turns.isEmpty, maxBars > 0 else { return [] }
         let size = Int((Double(turns.count) / Double(maxBars)).rounded(.up))
         // The last measurement before each bar: a fall into a bar's first prompt is its compaction too.
@@ -343,7 +343,7 @@ package struct InsightBar {
     }
 
     /// The bar under `x` in a chart `width` wide, or nil outside it.
-    package static func index(at x: CGFloat, width: CGFloat, count: Int) -> Int? {
+    static func index(at x: CGFloat, width: CGFloat, count: Int) -> Int? {
         guard count > 0, width > 0, x >= 0, x < width else { return nil }
         return min(count - 1, Int(x / (width / CGFloat(count))))
     }
@@ -353,15 +353,15 @@ package struct InsightBar {
 
 /// The sidebar's insights: cost timeline, tools, handoff. Loads when the sidebar shows, reloads
 /// (throttled) as the transcript grows.
-package struct SessionInsightsSection: View {
-    package let session: HubSession
+struct SessionInsightsSection: View {
+    let session: HubSession
     /// The session's turn count as the transcript knows it; a change means the file grew.
-    package let turnCount: Int
+    let turnCount: Int
     @StateObject private var model = SessionInsightsModel()
     @ObservedObject private var filters = TranscriptFilters.shared
     @State private var composer: HandoffComposerRequest?
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             if let payload = model.payload {
                 TurnCostTimelineSection(payload: payload, onJump: jump, onHandoff: { turn in
@@ -420,18 +420,18 @@ package struct SessionInsightsSection: View {
 /// Per-prompt bars (cost when every call is priced, tokens otherwise) with the most expensive
 /// prompts marked. One Canvas, one hover handler and one tap handler: no view per bar, so a session
 /// with hundreds of prompts costs one layer.
-package struct TurnCostTimelineSection: View {
-    package let payload: SessionInsightsPayload
-    package let onJump: (InsightTurn) -> Void
-    package let onHandoff: (InsightTurn) -> Void
+struct TurnCostTimelineSection: View {
+    let payload: SessionInsightsPayload
+    let onJump: (InsightTurn) -> Void
+    let onHandoff: (InsightTurn) -> Void
 
     @AppStorage("hub.insights.metric", store: HubDefaults.store) private var metricRaw = "cost"
     @State private var hovered: Int?
     /// The chart's drawn width, for mapping a pointer position to a bar.
     @State private var chartWidth: CGFloat = 272
 
-    package static let chartHeight: CGFloat = 64
-    package static let maxBars = 90
+    static let chartHeight: CGFloat = 64
+    static let maxBars = 90
 
     private var showsCost: Bool { payload.priced && metricRaw == "cost" }
     /// The context window after each prompt, as a line: it climbs through the session and falls at a compaction.
@@ -441,7 +441,7 @@ package struct TurnCostTimelineSection: View {
     private var hasContext: Bool { payload.turns.contains { ($0.contextTokens ?? 0) > 0 } }
     private var metricLabel: String { showsContext ? "Context" : showsCost ? "Cost" : "Tokens" }
 
-    package var body: some View {
+    var body: some View {
         let bars = InsightBar.bucket(payload.turns, maxBars: Self.maxBars, priced: payload.priced)
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
@@ -642,17 +642,17 @@ package struct TurnCostTimelineSection: View {
 
 /// Tools used in the session: calls, failure rate, total and slowest time. A click filters the
 /// transcript to that tool's calls; a second click (or the toolbar chip) clears it.
-package struct ToolAnalyticsSection: View {
-    package let tools: [InsightTool]
-    package let active: String?
-    package let onFilter: (String) -> Void
-    package let onSlowest: (InsightTool) -> Void
+struct ToolAnalyticsSection: View {
+    let tools: [InsightTool]
+    let active: String?
+    let onFilter: (String) -> Void
+    let onSlowest: (InsightTool) -> Void
 
     @State private var showAll = false
     @GenReduceMotion private var reduceMotion
     private static let limit = 8
 
-    package var body: some View {
+    var body: some View {
         let shown = showAll ? tools : Array(tools.prefix(Self.limit))
         VStack(alignment: .leading, spacing: 1) {
             HStack(spacing: 6) {

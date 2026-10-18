@@ -6,36 +6,36 @@ import SwiftUI
 // (branch), with the sessions that touched it. From a worktree you see its changes (default scope:
 // the whole branch) and can resume one of its sessions or start a new one in cmux.
 
-package struct HubWorktree: Identifiable, Hashable, Codable {
-    package var id: String { path }
-    package var path: String
+struct HubWorktree: Identifiable, Hashable, Codable {
+    var id: String { path }
+    var path: String
     /// The folder name of the repository, for display. Two unrelated clones can share it.
-    package var repo: String
+    var repo: String
     /// The repository's absolute common git dir: one per repository, shared by all its worktrees.
-    package var commonDir: String
-    package var branch: String
-    package var isMain: Bool
+    var commonDir: String
+    var branch: String
+    var isMain: Bool
 
-    package var name: String { (path as NSString).lastPathComponent }
+    var name: String { (path as NSString).lastPathComponent }
 }
 
-package enum WorktreeDiscovery {
+enum WorktreeDiscovery {
     /// The last discovery (Hub/HubSWR.swift): the Worktrees mode paints it while `discover` runs again.
     /// Blocking file reads and writes: off the main thread.
     private static let cache = HubSWR.cache("worktrees")
 
-    package static func cached() -> [HubWorktree]? {
+    static func cached() -> [HubWorktree]? {
         // A worktree removed since then is not painted, even for the moment until the fresh list lands.
         cache.read([HubWorktree].self, key: "all")?.filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    package static func save(_ worktrees: [HubWorktree]) {
+    static func save(_ worktrees: [HubWorktree]) {
         cache.write(worktrees, key: "all")
     }
 
     /// One `git worktree list` per repository, found from the distinct session folders and `extra`
     /// folders (a worktree a link names).
-    package static func discover(sessions: [HubSession], extra: [String] = []) -> [HubWorktree] {
+    static func discover(sessions: [HubSession], extra: [String] = []) -> [HubWorktree] {
         var seenCommonDirs = Set<String>()
         var worktrees: [HubWorktree] = []
         for cwd in Set(sessions.map(\.cwd)).union(extra) where !cwd.isEmpty && FileManager.default.fileExists(atPath: cwd) {
@@ -70,7 +70,7 @@ package enum WorktreeDiscovery {
     /// worktree containing its folder (worktrees nest under the main checkout), and also every
     /// worktree of the same repository that has the branch the transcript recorded: work on a branch
     /// often starts in the main checkout before the branch gets its own worktree.
-    package static func sessionsByWorktree(_ sessions: [HubSession], worktrees: [HubWorktree]) -> [String: [HubSession]] {
+    static func sessionsByWorktree(_ sessions: [HubSession], worktrees: [HubWorktree]) -> [String: [HubSession]] {
         // Keyed on the common git dir, not the folder name: two unrelated clones called `app` on the
         // same branch would otherwise share each other's sessions.
         var byBranch: [String: [HubWorktree]] = [:]
@@ -98,7 +98,7 @@ package enum WorktreeDiscovery {
     }
 
     /// `git -C cwd args`'s stdout, nil when it fails. Blocks, so off the main thread.
-    package static func git(_ cwd: String, _ args: [String]) -> String? {
+    static func git(_ cwd: String, _ args: [String]) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.arguments = ["-C", cwd] + args
@@ -118,8 +118,8 @@ package enum WorktreeDiscovery {
 
 // MARK: - Launching sessions in cmux
 
-package enum AgentLauncher {
-    package static func resumeCommand(for session: HubSession) -> [String]? {
+enum AgentLauncher {
+    static func resumeCommand(for session: HubSession) -> [String]? {
         switch session.provider {
         case "claude": return ["tools", "claude", "resume", session.sessionId]
         case "codex": return ["codex", "resume", session.sessionId]
@@ -130,7 +130,7 @@ package enum AgentLauncher {
 
     /// Runs `command` in `cwd` in a new workspace of the current terminal host (cmux today, see
     /// `TerminalHosts`). Blocking: it spawns the host's CLI.
-    package static func openInTerminal(name: String, cwd: String, command: [String]) -> String? {
+    static func openInTerminal(name: String, cwd: String, command: [String]) -> String? {
         TerminalHosts.current.open(.command(command, cwd: cwd, name: name), at: .newWorkspace(window: nil))
     }
 }
@@ -140,11 +140,11 @@ package enum AgentLauncher {
 /// "Copy as Markdown": the view's data as JSON through `tools json2md`, so every report in the hub
 /// (session, worktree, decisions, review comments) is rendered by the one markdown renderer the
 /// CLI and the agents use. The result goes to the clipboard and to a file opened in Genesis Markdown.
-package enum HubMarkdownExport {
+enum HubMarkdownExport {
     /// The files and the `tools json2md` run (up to 60 s) happen off the main actor, so the hub keeps
     /// drawing; only the pasteboard and the open call come back to it.
     @MainActor
-    package static func export(title: String, payload: [String: Any], fileStem: String) async -> String {
+    static func export(title: String, payload: [String: Any], fileStem: String) async -> String {
         guard JSONSerialization.isValidJSONObject(payload),
               let json = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         else { return "Could not build the JSON for json2md." }
@@ -174,8 +174,8 @@ package enum HubMarkdownExport {
 
 /// Synchronous `tools` runner (argv, no shell) for small one-shot calls from button actions.
 /// A child still running after `runCapturing`'s 60 s default is killed, and the call throws.
-package enum ToolsCLIRunner {
-    package static func run(_ args: [String]) throws -> Data {
+enum ToolsCLIRunner {
+    static func run(_ args: [String]) throws -> Data {
         let result = try capture(args)
         if result.status != 0 {
             let message = String(decoding: result.stderr, as: UTF8.self)
@@ -187,7 +187,7 @@ package enum ToolsCLIRunner {
 
     /// The exit status and both streams, for verbs that print a JSON error on stdout when they
     /// fail (`tools hub pr … --json` prints `{error, code}` and exits 1).
-    package static func capture(_ args: [String], timeout: TimeInterval = 60) throws -> ProcessCapture {
+    static func capture(_ args: [String], timeout: TimeInterval = 60) throws -> ProcessCapture {
         // The resident hub server first (src/hub/server): no process when it has a door for this argv.
         // Its span is `srv.…`, so app-perf.log shows which path answered.
         let traceId = ToolsCallTrace.newId()
@@ -239,8 +239,8 @@ package enum ToolsCLIRunner {
 
 // MARK: - Views
 
-package struct WorktreeListView: View {
-    @ObservedObject package var model: HubModel
+struct WorktreeListView: View {
+    @ObservedObject var model: HubModel
     @StateObject private var prefs = GroupPrefs(key: "worktrees.repos")
 
     private var groups: [(repo: String, rows: [HubWorktree])] {
@@ -250,7 +250,7 @@ package struct WorktreeListView: View {
         return prefs.sorted(Array(grouped.keys)).map { ($0, grouped[$0] ?? []) }
     }
 
-    package var body: some View {
+    var body: some View {
         let groups = groups
         ScrollViewReader { proxy in
             ScrollView {
@@ -334,14 +334,14 @@ package struct WorktreeListView: View {
     }
 }
 
-package struct WorktreeDetailView: View {
-    @ObservedObject package var model: HubModel
+struct WorktreeDetailView: View {
+    @ObservedObject var model: HubModel
     @ObservedObject private var repos = RepoFactsStore.shared
-    package let worktree: HubWorktree
+    let worktree: HubWorktree
     @State private var launchingNew = false
     @State private var resuming: HubSession?
 
-    package var body: some View {
+    var body: some View {
         let touching = model.sessions(for: worktree)
         let facts = repos.facts(for: worktree.path, pr: true)
         VStack(spacing: 0) {

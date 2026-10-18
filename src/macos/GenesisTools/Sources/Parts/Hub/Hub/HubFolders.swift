@@ -10,10 +10,10 @@ import SwiftUI
 // changed files or the folders themselves: every file under the session's folder and each added one
 // (Martin, 2026-10-02: "No changed files … I should be able to swap … to the files of the selected folders").
 
-package struct HubFilesPane: View {
-    @ObservedObject package var model: HubModel
+struct HubFilesPane: View {
+    @ObservedObject var model: HubModel
 
-    package var body: some View {
+    var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 Text("Files").font(.system(size: 11.5, weight: .semibold)).foregroundColor(ReviewPalette.dim)
@@ -36,23 +36,23 @@ package struct HubFilesPane: View {
 }
 
 /// What the file list shows: the review's changed files, or the folders' own files.
-package enum HubFileListMode: String {
+enum HubFileListMode: String {
     case changed, folders
 
-    package static let key = "hub.files.mode"
+    static let key = "hub.files.mode"
 }
 
 /// The hub's file list: "Changed" / "Folders" chips and the add-folder button over the list they pick.
-package struct HubFileList: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var review: ReviewModel
+struct HubFileList: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var review: ReviewModel
     @AppStorage(HubFileListMode.key, store: HubDefaults.store) private var mode = HubFileListMode.changed.rawValue
     // Here, not in `HubFolderTrees`: that view leaves while Changed shows, and its open folders with it.
     @StateObject private var trees = HubFolderTreeStore()
 
     private var showsFolders: Bool { mode == HubFileListMode.folders.rawValue }
 
-    package var body: some View {
+    var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 6) {
                 FilterChip(title: "Changed", isOn: !showsFolders, tint: ReviewPalette.renamed) {
@@ -96,15 +96,15 @@ package struct HubFileList: View {
 
 /// One folder tree per root (GenesisKit `FileTreeView`), the session's folder first. A file with a change
 /// opens in the diff while Changes is open; any other file opens in Cursor.
-package struct HubFolderTrees: View {
-    package let roots: [String]
-    @ObservedObject package var review: ReviewModel
-    @ObservedObject package var trees: HubFolderTreeStore
-    package let changesShown: Bool
+struct HubFolderTrees: View {
+    let roots: [String]
+    @ObservedObject var review: ReviewModel
+    @ObservedObject var trees: HubFolderTreeStore
+    let changesShown: Bool
     @State private var selected: String?
     @GenReduceMotion private var reduceMotion
 
-    package var body: some View {
+    var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 ForEach(roots, id: \.self) { root in
@@ -155,11 +155,11 @@ package struct HubFolderTrees: View {
 
 /// The trees, kept while the list stays: switching back to Folders keeps what was open.
 @MainActor
-package final class HubFolderTreeStore: ObservableObject {
+final class HubFolderTreeStore: ObservableObject {
     private var models: [String: FileTreeModel] = [:]
     @Published package private(set) var folded = Set<String>()
 
-    package func model(for root: String) -> FileTreeModel {
+    func model(for root: String) -> FileTreeModel {
         if let model = models[root] {
             return model
         }
@@ -171,7 +171,7 @@ package final class HubFolderTreeStore: ObservableObject {
         return model
     }
 
-    package func toggleFold(_ root: String) {
+    func toggleFold(_ root: String) {
         if folded.remove(root) == nil {
             folded.insert(root)
         }
@@ -211,10 +211,10 @@ private struct HubFolderTreeHeader: View {
     }
 }
 
-package struct HubChangesPane: View {
-    @ObservedObject package var model: HubModel
+struct HubChangesPane: View {
+    @ObservedObject var model: HubModel
 
-    package var body: some View {
+    var body: some View {
         VStack(spacing: 0) {
             if !model.extraFolders.isEmpty {
                 rootChips

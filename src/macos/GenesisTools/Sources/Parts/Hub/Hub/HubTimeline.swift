@@ -10,78 +10,78 @@ import SwiftUI
 
 // MARK: - Data
 
-package struct TimelinePRRef: Decodable, Hashable {
-    package let ref: String
-    package let number: Int
-    package let url: String
+struct TimelinePRRef: Decodable, Hashable {
+    let ref: String
+    let number: Int
+    let url: String
 }
 
-package struct TimelineEvent: Decodable, Identifiable, Hashable {
-    package let id: String
-    package let kind: String
-    package let at: String
-    package let title: String
-    package let detail: String?
-    package let project: String?
-    package let repo: String?
-    package let sessionId: String?
-    package let provider: String?
-    package let sha: String?
-    package let branch: String?
-    package let author: String?
-    package let pr: TimelinePRRef?
-    package let url: String?
+struct TimelineEvent: Decodable, Identifiable, Hashable {
+    let id: String
+    let kind: String
+    let at: String
+    let title: String
+    let detail: String?
+    let project: String?
+    let repo: String?
+    let sessionId: String?
+    let provider: String?
+    let sha: String?
+    let branch: String?
+    let author: String?
+    let pr: TimelinePRRef?
+    let url: String?
     /// Mine: a session, my commit, a push, my PR, my comment, a decision I answer.
-    package let mine: Bool?
+    let mine: Bool?
     /// Waits for me: an open decision, failed CI on my PR, a thread on my PR whose last word is not mine.
-    package let needsMe: Bool?
+    let needsMe: Bool?
     /// A push's old tip (all zeros for a new branch).
-    package let fromSha: String?
+    let fromSha: String?
     /// A session's folder.
-    package let cwd: String?
+    let cwd: String?
     /// PR: OPEN, MERGED, CLOSED. CI: failed, success. Decision: its state. Thread: open, resolved.
-    package let state: String?
+    let state: String?
     /// The PR's current CI status on a PR event.
-    package let ci: String?
-    package let threadId: String?
-    package let path: String?
-    package let line: Int?
+    let ci: String?
+    let threadId: String?
+    let path: String?
+    let line: Int?
 
-    package var date: Date? { HubFormat.date(at) }
-    package var timelineKind: TimelineKind { TimelineKind(rawValue: kind) ?? .session }
-    package var shortSha: String? { sha.map { String($0.prefix(8)) } }
-    package var isMine: Bool { mine ?? false }
-    package var waitsForMe: Bool { needsMe ?? false }
+    var date: Date? { HubFormat.date(at) }
+    var timelineKind: TimelineKind { TimelineKind(rawValue: kind) ?? .session }
+    var shortSha: String? { sha.map { String($0.prefix(8)) } }
+    var isMine: Bool { mine ?? false }
+    var waitsForMe: Bool { needsMe ?? false }
 
     /// What the sidebar filter searches: every label a row shows, lowercased.
-    package var searchText: String {
+    var searchText: String {
         [title, detail ?? "", project ?? "", branch ?? "", author ?? "", shortSha ?? "", pr?.ref ?? "", timelineKind.title, state ?? ""]
             .joined(separator: " ")
             .lowercased()
     }
 }
 
-package struct TimelineEnvelope: Decodable {
-    package let since: String
-    package let until: String?
-    package let before: String?
-    package let events: [TimelineEvent]
-    package let repos: [String]
-    package let warnings: [String]
-    package let elapsedMs: Int
-    package let cached: Bool
-    package let hasMore: Bool?
-    package let nextBefore: String?
-    package let truncated: [String]?
+struct TimelineEnvelope: Decodable {
+    let since: String
+    let until: String?
+    let before: String?
+    let events: [TimelineEvent]
+    let repos: [String]
+    let warnings: [String]
+    let elapsedMs: Int
+    let cached: Bool
+    let hasMore: Bool?
+    let nextBefore: String?
+    let truncated: [String]?
 }
 
 /// The kinds the TS side emits, in the order the sidebar lists them.
-package enum TimelineKind: String, CaseIterable {
+enum TimelineKind: String, CaseIterable {
     case sessionStart = "session.start"
     case session = "session.turn"
     case commit, push, pr, thread, decision, ci
 
-    package var title: String {
+    var title: String {
         switch self {
         case .sessionStart: return "Sessions started"
         case .session: return "Last turns"
@@ -94,7 +94,7 @@ package enum TimelineKind: String, CaseIterable {
         }
     }
 
-    package var symbol: String {
+    var symbol: String {
         switch self {
         case .sessionStart: return "play.circle"
         case .session: return "text.bubble"
@@ -107,7 +107,7 @@ package enum TimelineKind: String, CaseIterable {
         }
     }
 
-    package var color: Color {
+    var color: Color {
         switch self {
         case .sessionStart, .session: return Color(red: 0.85, green: 0.6, blue: 0.95)
         case .commit: return ReviewPalette.added
@@ -120,7 +120,7 @@ package enum TimelineKind: String, CaseIterable {
     }
 
     /// The `tools hub timeline detail --kind` the row's detail loads with.
-    package var detailKind: String {
+    var detailKind: String {
         switch self {
         case .sessionStart, .session: return "session"
         default: return rawValue
@@ -130,14 +130,14 @@ package enum TimelineKind: String, CaseIterable {
 
 /// The time range the feed covers. "Since last visit" starts where the last run of the hub last
 /// looked at the feed; a custom range takes two dates from the sidebar.
-package enum TimelineRange: String, CaseIterable {
+enum TimelineRange: String, CaseIterable {
     case lastHour, last24h, today, yesterday, last7, last30, sinceLastVisit, custom
 
     /// Without a saved choice: a rolling day, so just after midnight the feed is not nearly empty
     /// (`TIMELINE_DEFAULT_RANGE` in src/hub/lib/timeline.ts).
-    package static let fallback: TimelineRange = .last24h
+    static let fallback: TimelineRange = .last24h
 
-    package var title: String {
+    var title: String {
         switch self {
         case .lastHour: return "Last hour"
         case .last24h: return "Last 24 hours"
@@ -151,7 +151,7 @@ package enum TimelineRange: String, CaseIterable {
     }
 
     /// The range in local time; a missing last visit falls back to the last 24 hours.
-    package func interval(now: Date = Date(), lastVisit: Date?, customFrom: Date, customTo: Date, calendar: Calendar = .current) -> DateInterval {
+    func interval(now: Date = Date(), lastVisit: Date?, customFrom: Date, customTo: Date, calendar: Calendar = .current) -> DateInterval {
         let today = calendar.startOfDay(for: now)
         switch self {
         case .lastHour:
@@ -180,10 +180,10 @@ package enum TimelineRange: String, CaseIterable {
     }
 }
 
-package enum TimelineAuthor: String, CaseIterable {
+enum TimelineAuthor: String, CaseIterable {
     case all, me, others
 
-    package var title: String {
+    var title: String {
         switch self {
         case .all: return "Everyone"
         case .me: return "Me"
@@ -195,10 +195,10 @@ package enum TimelineAuthor: String, CaseIterable {
 // MARK: - Model
 
 @MainActor
-package final class HubTimelineModel: ObservableObject {
-    package static let pageSize = 200
+final class HubTimelineModel: ObservableObject {
+    static let pageSize = 200
     /// More changed rows than this land without the slide (see `apply`).
-    package static let animatedChangeLimit = 8
+    static let animatedChangeLimit = 8
 
     @Published package private(set) var events: [TimelineEvent] = []
     @Published package private(set) var since: Date?
@@ -223,20 +223,20 @@ package final class HubTimelineModel: ObservableObject {
     private static let cache = HubSWR.cache("timeline")
 
     /// The sidebar's project filter; nil = every project.
-    @Published package var project: String? = HubDefaults.store.string(forKey: "hub.timeline.project") {
+    @Published var project: String? = HubDefaults.store.string(forKey: "hub.timeline.project") {
         didSet {
             HubDefaults.store.set(project, forKey: "hub.timeline.project")
             HubMainBusy.measure("timeline.filter.project")
         }
     }
     /// Hidden kinds: a client-side switch over the loaded page, so a toggle never reloads.
-    @Published package var hidden: Set<String> = Set(HubDefaults.store.stringArray(forKey: "hub.timeline.hidden") ?? []) {
+    @Published var hidden: Set<String> = Set(HubDefaults.store.stringArray(forKey: "hub.timeline.hidden") ?? []) {
         didSet {
             HubDefaults.store.set(Array(hidden), forKey: "hub.timeline.hidden")
             HubMainBusy.measure("timeline.filter.kinds")
         }
     }
-    @Published package var range: TimelineRange = TimelineRange(rawValue: HubDefaults.store.string(forKey: "hub.timeline.range") ?? "") ?? .fallback {
+    @Published var range: TimelineRange = TimelineRange(rawValue: HubDefaults.store.string(forKey: "hub.timeline.range") ?? "") ?? .fallback {
         didSet {
             HubDefaults.store.set(range.rawValue, forKey: "hub.timeline.range")
             if range != oldValue {
@@ -245,20 +245,20 @@ package final class HubTimelineModel: ObservableObject {
             }
         }
     }
-    @Published package var customFrom: Date = HubDefaults.store.object(forKey: "hub.timeline.customFrom") as? Date ?? Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date() {
+    @Published var customFrom: Date = HubDefaults.store.object(forKey: "hub.timeline.customFrom") as? Date ?? Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date() {
         didSet {
             HubDefaults.store.set(customFrom, forKey: "hub.timeline.customFrom")
             if range == .custom { load(fresh: false) }
         }
     }
-    @Published package var customTo: Date = HubDefaults.store.object(forKey: "hub.timeline.customTo") as? Date ?? Date() {
+    @Published var customTo: Date = HubDefaults.store.object(forKey: "hub.timeline.customTo") as? Date ?? Date() {
         didSet {
             HubDefaults.store.set(customTo, forKey: "hub.timeline.customTo")
             if range == .custom { load(fresh: false) }
         }
     }
     /// Author and "needs me" shape the page itself (a page of mine is a full page), so they reload.
-    @Published package var author: TimelineAuthor = TimelineAuthor(rawValue: HubDefaults.store.string(forKey: "hub.timeline.author") ?? "") ?? .all {
+    @Published var author: TimelineAuthor = TimelineAuthor(rawValue: HubDefaults.store.string(forKey: "hub.timeline.author") ?? "") ?? .all {
         didSet {
             HubDefaults.store.set(author.rawValue, forKey: "hub.timeline.author")
             if author != oldValue {
@@ -267,7 +267,7 @@ package final class HubTimelineModel: ObservableObject {
             }
         }
     }
-    @Published package var needsMe: Bool = HubDefaults.store.bool(forKey: "hub.timeline.needsMe") {
+    @Published var needsMe: Bool = HubDefaults.store.bool(forKey: "hub.timeline.needsMe") {
         didSet {
             HubDefaults.store.set(needsMe, forKey: "hub.timeline.needsMe")
             if needsMe != oldValue {
@@ -288,13 +288,13 @@ package final class HubTimelineModel: ObservableObject {
     @Published package private(set) var spend: [String: HubSpend.Estimate?] = [:]
 
     /// When the feed was last looked at in an earlier run of the hub: the start of "since my last visit".
-    package let lastVisit: Date? = HubDefaults.store.object(forKey: "hub.timeline.lastVisit") as? Date
-    package var onLoaded: (() -> Void)?
+    let lastVisit: Date? = HubDefaults.store.object(forKey: "hub.timeline.lastVisit") as? Date
+    var onLoaded: (() -> Void)?
     /// `--timeline-open`: the event a loaded page opens once, with `opener` (HubModel.openTimelineRequest).
-    package var openRequest: String?
-    package var opener: ((TimelineEvent) -> Void)?
+    var openRequest: String?
+    var opener: ((TimelineEvent) -> Void)?
 
-    package func runOpenRequest() {
+    func runOpenRequest() {
         guard let id = openRequest else { return }
         openRequest = nil
         guard let event = events.first(where: { $0.id == id }) else {
@@ -308,12 +308,12 @@ package final class HubTimelineModel: ObservableObject {
     private var generation = 0
     private var threadStores: [String: PRThreadsStore] = [:]
 
-    package var interval: DateInterval {
+    var interval: DateInterval {
         range.interval(lastVisit: lastVisit, customFrom: customFrom, customTo: customTo)
     }
 
     /// The rows the list shows: hidden kinds, the project and the sidebar filter text.
-    package func shown(filter: String) -> [TimelineEvent] {
+    func shown(filter: String) -> [TimelineEvent] {
         let needle = filter.trimmed.lowercased()
         return events.filter { event in
             !hidden.contains(event.kind)
@@ -322,27 +322,27 @@ package final class HubTimelineModel: ObservableObject {
         }
     }
 
-    package func count(_ kind: TimelineKind) -> Int {
+    func count(_ kind: TimelineKind) -> Int {
         events.filter { $0.kind == kind.rawValue && (project == nil || $0.project == project) }.count
     }
 
     /// A count over the loaded pages: "154+" while older pages of the range exist, so a page size never
     /// reads as a total (H7: "200 events", "Every project 200" were the page size).
-    package func pageCount(_ count: Int) -> String {
+    func pageCount(_ count: Int) -> String {
         Self.pageCount(count, hasMore: hasMore)
     }
 
-    package nonisolated static func pageCount(_ count: Int, hasMore: Bool) -> String {
+    nonisolated static func pageCount(_ count: Int, hasMore: Bool) -> String {
         hasMore && count > 0 ? "\(count)+" : "\(count)"
     }
 
-    package var projects: [(name: String, count: Int)] {
+    var projects: [(name: String, count: Int)] {
         let grouped = Dictionary(grouping: events.compactMap(\.project), by: { $0 })
         return grouped.map { ($0.key, $0.value.count) }.sorted { $0.count == $1.count ? $0.name < $1.name : $0.count > $1.count }
     }
 
     /// `tools hub timeline` arguments for one page of the current range and filters.
-    package nonisolated static func arguments(interval: DateInterval, before: String?, limit: Int, author: TimelineAuthor, needsMe: Bool, fresh: Bool) -> [String] {
+    nonisolated static func arguments(interval: DateInterval, before: String?, limit: Int, author: TimelineAuthor, needsMe: Bool, fresh: Bool) -> [String] {
         var args = ["hub", "timeline", "--json", "--since", HubFormat.iso.string(from: interval.start), "--until", HubFormat.iso.string(from: interval.end), "--limit", "\(limit)"]
         if let before { args += ["--before", before] }
         if author != .all { args += ["--author", author.rawValue] }
@@ -352,7 +352,7 @@ package final class HubTimelineModel: ObservableObject {
         return args
     }
 
-    package func loadIfStale() {
+    func loadIfStale() {
         if let loadedAt, Date().timeIntervalSince(loadedAt) < 60 {
             let done = onLoaded
             onLoaded = nil
@@ -363,7 +363,7 @@ package final class HubTimelineModel: ObservableObject {
     }
 
     /// The live page of the range. `fresh` skips the TS side's page cache (the PR list keeps its five minutes).
-    package func load(fresh: Bool) {
+    func load(fresh: Bool) {
         generation += 1
         let mine = generation
         // An older page still on its way belongs to the old generation and is dropped on arrival.
@@ -462,7 +462,7 @@ package final class HubTimelineModel: ObservableObject {
 
     /// The events of a page that belong to the range on screen. The disk cache is keyed by the range's
     /// name, so "last 24 hours" from a run three days ago paints rows that are no longer in it.
-    package nonisolated static func inRange(_ events: [TimelineEvent], interval: DateInterval) -> [TimelineEvent] {
+    nonisolated static func inRange(_ events: [TimelineEvent], interval: DateInterval) -> [TimelineEvent] {
         events.filter { event in
             guard let date = event.date else { return true }
             return date >= interval.start
@@ -470,7 +470,7 @@ package final class HubTimelineModel: ObservableObject {
     }
 
     /// The next older page of the same range; rows already shown (a boundary shared by two pages) are skipped.
-    package func loadOlder() {
+    func loadOlder() {
         guard hasMore, let cursor = nextBefore, !loadingOlder, !loading else { return }
         let mine = generation
         loadingOlder = true
@@ -502,10 +502,10 @@ package final class HubTimelineModel: ObservableObject {
 
     // MARK: Details
 
-    package func isExpanded(_ event: TimelineEvent) -> Bool { expanded.contains(event.id) }
+    func isExpanded(_ event: TimelineEvent) -> Bool { expanded.contains(event.id) }
 
     /// Folds a row open (loading its detail once) or closed, in one `GenMotion` animation.
-    package func toggle(_ event: TimelineEvent) {
+    func toggle(_ event: TimelineEvent) {
         if expanded.contains(event.id) {
             GenMotion.perform(expanding: false, reduceMotion: HubReduceMotion.isOn) {
                 _ = expanded.remove(event.id)
@@ -524,7 +524,7 @@ package final class HubTimelineModel: ObservableObject {
     }
 
     /// `tools hub timeline detail` arguments for a row; the period is the feed's range.
-    package func detailArguments(for event: TimelineEvent, fresh: Bool, file: String? = nil) -> [String] {
+    func detailArguments(for event: TimelineEvent, fresh: Bool, file: String? = nil) -> [String] {
         var args = ["hub", "timeline", "detail", "--json", "--kind", event.timelineKind.detailKind, "--id", event.id]
         if let repo = event.repo { args += ["--repo", repo] }
         if let url = event.url ?? event.pr?.url, event.timelineKind == .pr || event.timelineKind == .ci || event.timelineKind == .thread {
@@ -542,7 +542,7 @@ package final class HubTimelineModel: ObservableObject {
         return args
     }
 
-    package func loadDetail(_ event: TimelineEvent, fresh: Bool = false) {
+    func loadDetail(_ event: TimelineEvent, fresh: Bool = false) {
         guard !loadingDetails.contains(event.id) else { return }
         loadingDetails.insert(event.id)
         detailErrors[event.id] = nil
@@ -568,10 +568,10 @@ package final class HubTimelineModel: ObservableObject {
         }
     }
 
-    package static func diffKey(sha: String, path: String) -> String { "\(sha)\0\(path)" }
+    static func diffKey(sha: String, path: String) -> String { "\(sha)\0\(path)" }
 
     /// One file of a commit, on demand (the detail lists the files; the diff is a second, cached call).
-    package func loadFileDiff(_ event: TimelineEvent, path: String) {
+    func loadFileDiff(_ event: TimelineEvent, path: String) {
         guard let sha = event.sha else { return }
         let key = Self.diffKey(sha: sha, path: path)
         if fileDiffs[key] != nil {
@@ -623,7 +623,7 @@ package final class HubTimelineModel: ObservableObject {
 
     // MARK: Review threads (the Review path: PRThreadsStore + PRCommand, never a second route)
 
-    package func threadStore(for url: String) -> PRThreadsStore {
+    func threadStore(for url: String) -> PRThreadsStore {
         if let store = threadStores[url] { return store }
         let store = PRThreadsStore(target: .ref(url))
         threadStores[url] = store
@@ -634,26 +634,26 @@ package final class HubTimelineModel: ObservableObject {
 // MARK: - Actions
 
 /// One action a row offers: an icon button on the right and the same entry in the context menu.
-package struct TimelineAction: Identifiable {
-    package enum Run {
+struct TimelineAction: Identifiable {
+    enum Run {
         case perform(() -> Void)
         /// Needs a popover anchored to the row (a launch picker, a reply box).
         case popover(TimelinePopover)
     }
 
-    package let id: String
-    package let symbol: String
-    package let title: String
-    package var disabled = false
-    package let run: Run
+    let id: String
+    let symbol: String
+    let title: String
+    var disabled = false
+    let run: Run
 }
 
-package enum TimelinePopover: Identifiable {
+enum TimelinePopover: Identifiable {
     case resume(HubSession)
     case newAgent(cwd: String, name: String, prompt: String)
     case reply(TimelineEvent)
 
-    package var id: String {
+    var id: String {
         switch self {
         case .resume(let session): return "resume:\(session.id)"
         case .newAgent(_, let name, _): return "agent:\(name)"
@@ -662,13 +662,13 @@ package enum TimelinePopover: Identifiable {
     }
 }
 
-package enum TimelinePrompts {
+enum TimelinePrompts {
     /// The first message of a review session for a PR: the same words the PRs mode uses, by URL.
-    package static func reviewPR(_ url: String) -> String {
+    static func reviewPR(_ url: String) -> String {
         "Review \(url) with the genesis-tools:review-proposal skill: read the diff and its existing review threads, decide a verdict, draft comments anchored to the changed lines, and push the proposal with `tools hub proposal push` so it shows in the GenesisTools hub. Do not post, approve or merge anything on the PR."
     }
 
-    package static func reviewCommit(sha: String, repo: String) -> String {
+    static func reviewCommit(sha: String, repo: String) -> String {
         "Review commit \(sha) in \(repo) with the genesis-tools:review-proposal skill: read `git show \(sha)`, decide a verdict, draft comments anchored to the changed lines, and push the proposal with `tools hub proposal push` so it shows in the GenesisTools hub. Do not post anything on a PR and do not change the branch."
     }
 }
@@ -676,7 +676,7 @@ package enum TimelinePrompts {
 extension HubModel {
     /// A timeline row's click: the session, the commit in its repository's diff, the PR, or the decision's session.
     @MainActor
-    package func openTimelineEvent(_ event: TimelineEvent) {
+    func openTimelineEvent(_ event: TimelineEvent) {
         HubPerf.log("timeline.open \(event.kind) \(event.id.prefix(40))")
         switch event.timelineKind {
         case .session, .sessionStart:
@@ -693,7 +693,7 @@ extension HubModel {
 
     /// A commit of the row's repository in the worktrees mode's in-app diff.
     @MainActor
-    package func showTimelineCommit(_ event: TimelineEvent, sha: String?, title: String) {
+    func showTimelineCommit(_ event: TimelineEvent, sha: String?, title: String) {
         guard let repo = event.repo, let sha, FileManager.default.fileExists(atPath: repo) else {
             notice = "This repository is not on this Mac."
             return
@@ -704,7 +704,7 @@ extension HubModel {
     /// The row's session: the hub's row when it is in the list, else one built from the row (an
     /// older session the list no longer holds; the transcript loads by id all the same).
     @MainActor
-    package func timelineSession(_ event: TimelineEvent) -> HubSession? {
+    func timelineSession(_ event: TimelineEvent) -> HubSession? {
         guard let id = event.sessionId else { return nil }
         if let known = sessions.first(where: { $0.sessionId == id }) { return known }
         let folder = event.cwd ?? ""
@@ -723,7 +723,7 @@ extension HubModel {
     }
 
     @MainActor
-    package func openTimelineSession(_ event: TimelineEvent, transcriptQuery query: String? = nil) {
+    func openTimelineSession(_ event: TimelineEvent, transcriptQuery query: String? = nil) {
         guard let session = timelineSession(event) else {
             notice = "This row names no session."
             return
@@ -741,7 +741,7 @@ extension HubModel {
     /// holds the event, one of its row's actions runs (the ids `timelineActions` gives, "diff" for a
     /// review comment's "Open in the diff"), else the row's own click.
     @MainActor
-    package func openTimelineRequest(_ id: String, action: String?) {
+    func openTimelineRequest(_ id: String, action: String?) {
         timeline.openRequest = id
         timeline.opener = { [weak self] event in
             guard let self else { return }
@@ -762,7 +762,7 @@ extension HubModel {
     /// The row's PR in the PRs mode. With `path`, the PR's review opens at that file and the row's
     /// thread once it is built (the list, a head fetch for a PR without a worktree, the diff load).
     @MainActor
-    package func openTimelinePR(_ event: TimelineEvent, reveal path: String? = nil) {
+    func openTimelinePR(_ event: TimelineEvent, reveal path: String? = nil) {
         guard let ref = event.pr.flatMap({ pr in HubPRRef(pr.ref)?.withPage(pr.url) }) else {
             notice = "This row names no PR."
             return
@@ -773,7 +773,7 @@ extension HubModel {
 
     /// Focuses the cmux pane of a session, off the main thread; the notice says what happened.
     @MainActor
-    package func focusTimelinePane(_ event: TimelineEvent) {
+    func focusTimelinePane(_ event: TimelineEvent) {
         guard let id = event.sessionId else { return }
         let provider = event.provider
         DispatchQueue.global(qos: .userInitiated).async {
@@ -786,7 +786,7 @@ extension HubModel {
 
     /// The host page of a commit, push (compare) or PR, from the repository's origin facts.
     @MainActor
-    package func timelineHostURL(_ event: TimelineEvent, compare: Bool = false) -> URL? {
+    func timelineHostURL(_ event: TimelineEvent, compare: Bool = false) -> URL? {
         if let url = event.url.flatMap(URL.init(string:)), event.timelineKind != .push, event.timelineKind != .commit {
             return url
         }
@@ -799,7 +799,7 @@ extension HubModel {
 
     /// The actions a row offers, in the order they sit on the right; the context menu lists the same.
     @MainActor
-    package func timelineActions(for event: TimelineEvent, timeline: HubTimelineModel) -> [TimelineAction] {
+    func timelineActions(for event: TimelineEvent, timeline: HubTimelineModel) -> [TimelineAction] {
         var actions: [TimelineAction] = []
         func add(_ id: String, _ symbol: String, _ title: String, disabled: Bool = false, _ perform: @escaping () -> Void) {
             actions.append(TimelineAction(id: id, symbol: symbol, title: title, disabled: disabled, run: .perform(perform)))
@@ -898,11 +898,11 @@ extension HubModel {
 
 // MARK: - Sidebar
 
-package struct TimelineListView: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var timeline: HubTimelineModel
+struct TimelineListView: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var timeline: HubTimelineModel
 
-    package var body: some View {
+    var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 2) {
                 sectionTitle("Range")
@@ -1050,15 +1050,15 @@ package struct TimelineListView: View {
 // MARK: - Main
 
 /// One hour of a day in the feed.
-package struct TimelineHour: Identifiable {
-    package let hour: Date
-    package let events: [TimelineEvent]
+struct TimelineHour: Identifiable {
+    let hour: Date
+    let events: [TimelineEvent]
     /// Not the bare date: the midnight hour starts at its day's own start, and with one id for the
     /// day's section and its "00:00" group the lazy list drew that hour's header blank.
-    package var id: String { "hour:\(hour.timeIntervalSince1970)" }
+    var id: String { "hour:\(hour.timeIntervalSince1970)" }
 
     /// The hour an event is grouped under (its local hour's start).
-    package static func start(of date: Date, calendar: Calendar = .current) -> Date {
+    static func start(of date: Date, calendar: Calendar = .current) -> Date {
         calendar.dateInterval(of: .hour, for: date)?.start ?? date
     }
 }
@@ -1070,20 +1070,20 @@ extension TimelineEvent {
     /// evaluated the row again. A session's "last turn" and a PR's "updated" keep their id and move on every refresh,
     /// and the cached page paints before the fresh one, so after each load such rows showed their old time and
     /// "1h ago" under the right hour ("22:07 say hi" under 23:00, H27, 2026-10-10).
-    package var rowID: String {
+    var rowID: String {
         let hour = date.map { TimelineHour.start(of: $0).timeIntervalSince1970 } ?? 0
         return "\(hour)|\(id)"
     }
 }
 
 /// The feed grouped by day, then by hour inside a day.
-package struct TimelineDay: Identifiable {
-    package let day: Date
-    package let hours: [TimelineHour]
-    package var id: String { "day:\(day.timeIntervalSince1970)" }
-    package var count: Int { hours.reduce(0) { $0 + $1.events.count } }
+struct TimelineDay: Identifiable {
+    let day: Date
+    let hours: [TimelineHour]
+    var id: String { "day:\(day.timeIntervalSince1970)" }
+    var count: Int { hours.reduce(0) { $0 + $1.events.count } }
 
-    package static func group(_ events: [TimelineEvent], calendar: Calendar = .current) -> [TimelineDay] {
+    static func group(_ events: [TimelineEvent], calendar: Calendar = .current) -> [TimelineDay] {
         let byDay = Dictionary(grouping: events) { event in
             event.date.map { calendar.startOfDay(for: $0) } ?? .distantPast
         }
@@ -1096,7 +1096,7 @@ package struct TimelineDay: Identifiable {
     }
 
     /// "Today", "Yesterday", else the full date.
-    package func title(now: Date = Date(), calendar: Calendar = .current) -> String {
+    func title(now: Date = Date(), calendar: Calendar = .current) -> String {
         if calendar.isDate(day, inSameDayAs: now) { return "Today" }
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: now)), calendar.isDate(day, inSameDayAs: yesterday) {
             return "Yesterday"
@@ -1105,24 +1105,24 @@ package struct TimelineDay: Identifiable {
     }
 }
 
-package struct TimelineMain: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var timeline: HubTimelineModel
+struct TimelineMain: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var timeline: HubTimelineModel
     /// The rows' branch and author links; read here, so a landing fact redraws only its repository's rows.
     @ObservedObject private var repos = RepoFactsStore.shared
     @State private var find = PanelFindModel(scope: "timeline", title: "Activity")
     /// Below this width a row drops its branch label: squeezed, it drew as one letter ("f") beside
     /// the title (snapshot at 1000 pt, 2026-09-25). One geometry read for the list, not one per row.
     @State private var compact = false
-    package static let compactWidth: CGFloat = 1180
+    static let compactWidth: CGFloat = 1180
 
-    package static let hourFormat: DateFormatter = {
+    static let hourFormat: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:00"
         return formatter
     }()
 
-    package static let dayFormat: DateFormatter = {
+    static let dayFormat: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .full
         return formatter
@@ -1136,7 +1136,7 @@ package struct TimelineMain: View {
         return formatter
     }()
 
-    package var body: some View {
+    var body: some View {
         let events = timeline.shown(filter: model.filter)
         let days = TimelineDay.group(events)
         VStack(spacing: 0) {
@@ -1323,17 +1323,17 @@ package struct TimelineMain: View {
 /// accessibility client running (the live hub always has one), SwiftUI walks every responder of the
 /// window for each accessibility node a redraw touches; one filter click redrew every realized row
 /// and cost 1.6 s of main thread (`--bench` `activity` with `GENESIS_HUB_BENCH_AX=1`, 2026-09-25).
-package struct TimelineRowView: View {
-    package let model: HubModel
-    package let timeline: HubTimelineModel
-    package let event: TimelineEvent
+struct TimelineRowView: View {
+    let model: HubModel
+    let timeline: HubTimelineModel
+    let event: TimelineEvent
     /// A narrow list (`TimelineMain.compactWidth`): the branch label is left out.
-    package var compact = false
-    package let expanded: Bool
+    var compact = false
+    let expanded: Bool
     /// The project filter is this row's project.
-    package let projectPicked: Bool
+    let projectPicked: Bool
     /// The repository's web pages (`RepoFactsStore`), for the branch and author links.
-    package let forge: ForgeWeb?
+    let forge: ForgeWeb?
     @State private var popover: TimelinePopover?
     @State private var hovering = false
 
@@ -1345,7 +1345,7 @@ package struct TimelineRowView: View {
 
     /// What ⌘F searches in a row: the texts the row shows, under the keys its FindTexts use, plus
     /// the texts of its folded-open detail while it is open (nothing of a closed one).
-    package static func searchable(_ event: TimelineEvent, detail: TimelineDetail?, compact: Bool = false) -> PanelFindRow {
+    static func searchable(_ event: TimelineEvent, detail: TimelineDetail?, compact: Bool = false) -> PanelFindRow {
         // In drawing order; the branch shows on every kind but a push (its title already names it),
         // and on no row of a compact list.
         let own = [
@@ -1376,7 +1376,7 @@ package struct TimelineRowView: View {
     /// 1.5 s with every row live, 0.1 s with only the hovered one (`--bench` `activity`, AX client on).
     private var live: Bool { hovering || expanded || popover != nil }
 
-    package var body: some View {
+    var body: some View {
         let kind = event.timelineKind
         let actions = model.timelineActions(for: event, timeline: timeline)
         let live = live
@@ -1644,13 +1644,13 @@ private extension View {
 }
 
 /// A reply to a review thread, through the Review path (PRThreadsStore → `tools hub pr reply`).
-package struct TimelineReplyForm: View {
-    package let event: TimelineEvent
-    @ObservedObject package var timeline: HubTimelineModel
-    package let done: (String?) -> Void
+struct TimelineReplyForm: View {
+    let event: TimelineEvent
+    @ObservedObject var timeline: HubTimelineModel
+    let done: (String?) -> Void
     @State private var text = ""
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Reply on \(event.pr?.ref ?? "the PR") · \(event.path ?? ""):\(event.line.map(String.init) ?? "")")
                 .font(.system(size: 12, weight: .semibold))

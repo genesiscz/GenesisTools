@@ -4,41 +4,41 @@ import Foundation
 /// The review window's last answers, in GenesisKit's `DiskCache` under `~/.genesis-tools/review/cache/`.
 /// Each view paints the cached answer at once, marks it as refreshing and always loads again behind it.
 /// Every read here decodes JSON, so it runs off the main thread.
-package enum ReviewCache {
-    package static let threads = DiskCache(folder: "review", namespace: "threads")
-    package static let diffs = DiskCache(folder: "review", namespace: "diff")
-    package static let blame = DiskCache(folder: "review", namespace: "blame")
-    package static let sessions = DiskCache(folder: "review", namespace: "session")
+enum ReviewCache {
+    static let threads = DiskCache(folder: "review", namespace: "threads")
+    static let diffs = DiskCache(folder: "review", namespace: "diff")
+    static let blame = DiskCache(folder: "review", namespace: "blame")
+    static let sessions = DiskCache(folder: "review", namespace: "session")
     /// Diff snapshots are written here in load order, so an older load never overwrites a newer one.
-    package static let writer = DispatchQueue(label: "review.cache.writer", qos: .utility)
+    static let writer = DispatchQueue(label: "review.cache.writer", qos: .utility)
 
     /// A diff whose JSON is larger keeps its file list and counts only: decoding many MB before the first
     /// paint costs more than it saves, and the fresh load brings the contents a moment later.
-    package static let maxDiffBytes = 5_000_000
+    static let maxDiffBytes = 5_000_000
     /// What a file stripped of its contents shows until the fresh load replaces it.
-    package static let strippedNote = "Loading this file's diff…"
+    static let strippedNote = "Loading this file's diff…"
 
     // MARK: PR threads
 
     /// The raw `tools hub pr threads --json` answer, per PR (its URL or `--repo` path).
-    package static func threadsKey(_ target: PRTarget) -> String {
+    static func threadsKey(_ target: PRTarget) -> String {
         target.argv.joined(separator: " ")
     }
 
     // MARK: Diff snapshots
 
-    package struct Diff: Codable, Equatable {
+    struct Diff: Codable, Equatable {
         /// The exact scope it answers (`scopeKey`); a slot holds one at a time.
-        package let scope: String
-        package let branch: String
-        package let base: String?
-        package let files: [DiffFile]
+        let scope: String
+        let branch: String
+        let base: String?
+        let files: [DiffFile]
         /// The contents were dropped for size (`maxDiffBytes`).
-        package let stripped: Bool
+        let stripped: Bool
     }
 
     /// The exact scope a snapshot answers. A turns scope belongs to its session.
-    package static func scopeKey(_ scope: DiffScope, session: String?) -> String {
+    static func scopeKey(_ scope: DiffScope, session: String?) -> String {
         switch scope {
         case .lastTurns(let count): return "lastTurns:\(count):\(session ?? "-")"
         case .uncommitted: return "uncommitted"
@@ -53,7 +53,7 @@ package enum ReviewCache {
 
     /// The file a snapshot lives in: one per repository and scope, where a commit shares one slot and a
     /// range has one per label (per PR), so the files of old shas do not pile up.
-    package static func diffSlot(repo: String, scope: DiffScope, session: String?) -> String {
+    static func diffSlot(repo: String, scope: DiffScope, session: String?) -> String {
         switch scope {
         case .commit: return "\(repo)|commit"
         case .range(_, _, let label, _): return "\(repo)|range:\(label)"
@@ -62,14 +62,14 @@ package enum ReviewCache {
         }
     }
 
-    package static func readDiff(repo: String, scope: DiffScope, session: String?) -> Diff? {
+    static func readDiff(repo: String, scope: DiffScope, session: String?) -> Diff? {
         guard let diff = diffs.read(Diff.self, key: diffSlot(repo: repo, scope: scope, session: session)),
               diff.scope == scopeKey(scope, session: session) else { return nil }
         return diff
     }
 
     /// Encodes `snapshot` for its slot; the contents go when the whole would pass `maxDiffBytes`.
-    package static func encodeDiff(_ snapshot: GitWorkingTreeSource.Snapshot, scope: DiffScope, session: String?) -> Data? {
+    static func encodeDiff(_ snapshot: GitWorkingTreeSource.Snapshot, scope: DiffScope, session: String?) -> Data? {
         let key = scopeKey(scope, session: session)
         var contentBytes = 0
         for file in snapshot.files {
@@ -91,7 +91,7 @@ package enum ReviewCache {
         return try? JSONEncoder().encode(Diff(scope: key, branch: snapshot.branch, base: snapshot.base, files: files, stripped: true))
     }
 
-    package static func writeDiff(_ snapshot: GitWorkingTreeSource.Snapshot, repo: String, scope: DiffScope, session: String?) {
+    static func writeDiff(_ snapshot: GitWorkingTreeSource.Snapshot, repo: String, scope: DiffScope, session: String?) {
         guard let data = encodeDiff(snapshot, scope: scope, session: session) else { return }
         diffs.writeData(data, key: diffSlot(repo: repo, scope: scope, session: session))
     }
@@ -99,25 +99,25 @@ package enum ReviewCache {
     // MARK: Agent blame
 
     /// One file's blame, valid only while the file's text still hashes to `sha`.
-    package struct Blame: Codable, Equatable {
-        package let sha: String
-        package let sources: [AgentBlameSource]
+    struct Blame: Codable, Equatable {
+        let sha: String
+        let sources: [AgentBlameSource]
         /// `[startLine, endLine, index into sources]`.
-        package let ranges: [[Int]]
+        let ranges: [[Int]]
     }
 
-    package static func sha256(_ data: Data) -> String {
+    static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// The hash of a file's text on disk now: what `tools agents blame` numbers its lines on.
-    package static func contentHash(repo: String, path: String) -> String? {
+    static func contentHash(repo: String, path: String) -> String? {
         (try? Data(contentsOf: URL(fileURLWithPath: repo).appendingPathComponent(path))).map(sha256)
     }
 
     /// The cached blame of `paths` whose text on disk still has the cached hash, as one result, and the
     /// paths left to ask `tools` (with the hash each had now).
-    package static func readBlame(repo: String, paths: [String], in cache: DiskCache = blame) -> (found: AgentBlameResult, missing: [String], hashes: [String: String]) {
+    static func readBlame(repo: String, paths: [String], in cache: DiskCache = blame) -> (found: AgentBlameResult, missing: [String], hashes: [String: String]) {
         var sources: [AgentBlameSource] = []
         var files: [AgentBlameFile] = []
         var missing: [String] = []
@@ -138,7 +138,7 @@ package enum ReviewCache {
 
     /// Stores each asked path's blame under the hash its text had before the call (a file with no agent
     /// lines stores an empty list, so its next hover is answered from here too).
-    package static func writeBlame(_ result: AgentBlameResult, repo: String, asked: [String], hashes: [String: String], in cache: DiskCache = blame) {
+    static func writeBlame(_ result: AgentBlameResult, repo: String, asked: [String], hashes: [String: String], in cache: DiskCache = blame) {
         let byPath = Dictionary(result.files.map { ($0.path, $0.ranges) }, uniquingKeysWith: { first, _ in first })
         for path in asked {
             guard let hash = hashes[path], hash == contentHash(repo: repo, path: path) else { continue }
@@ -152,7 +152,7 @@ package enum ReviewCache {
     }
 
     /// Two answers as one: `second`'s ranges point past `first`'s sources.
-    package static func combine(_ first: AgentBlameResult, _ second: AgentBlameResult) -> AgentBlameResult {
+    static func combine(_ first: AgentBlameResult, _ second: AgentBlameResult) -> AgentBlameResult {
         let offset = first.sources.count
         let moved = second.files.map { file in
             AgentBlameFile(path: file.path, ranges: file.ranges.map { $0.count == 3 ? [$0[0], $0[1], $0[2] + offset] : $0 })

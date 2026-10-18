@@ -6,27 +6,27 @@ import SwiftUI
 // list does not already show appear under "History". A hit older than the list's window becomes a row
 // on the spot, so it opens like any other session.
 
-package struct HubHistoryHit: Decodable, Identifiable, Equatable {
-    package let kind: String?
-    package let sessionId: String
-    package let title: String?
-    package let cwd: String?
-    package let project: String?
-    package let gitBranch: String?
-    package let mtime: String?
-    package let matchedText: String?
+struct HubHistoryHit: Decodable, Identifiable, Equatable {
+    let kind: String?
+    let sessionId: String
+    let title: String?
+    let cwd: String?
+    let project: String?
+    let gitBranch: String?
+    let mtime: String?
+    let matchedText: String?
 
-    package var id: String { sessionId }
+    var id: String { sessionId }
 
-    package var when: Date? { HubFormat.date(mtime) }
+    var when: Date? { HubFormat.date(mtime) }
 
     /// The first non-empty line of the match, for one row.
-    package var snippet: String? {
+    var snippet: String? {
         matchedText?.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
     }
 
     /// A list row for a session older than the list's window (only what the history search knows).
-    package var sessionRow: HubSession {
+    var sessionRow: HubSession {
         let folder = cwd ?? ""
         return HubSession(
             provider: kind ?? HubSession.claudeProvider,
@@ -44,7 +44,7 @@ package struct HubHistoryHit: Decodable, Identifiable, Equatable {
 }
 
 @MainActor
-package final class HubHistoryModel: ObservableObject {
+final class HubHistoryModel: ObservableObject {
     @Published package private(set) var hits: [HubHistoryHit] = []
     @Published package private(set) var running = false
     @Published package private(set) var query = ""
@@ -55,7 +55,7 @@ package final class HubHistoryModel: ObservableObject {
     private var inFlight = false
     private var pending: String?
 
-    package func search(_ text: String) {
+    func search(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         guard trimmed.count >= 3 else {
             clear()
@@ -107,7 +107,7 @@ package final class HubHistoryModel: ObservableObject {
         }
     }
 
-    package func clear() {
+    func clear() {
         generation += 1
         pending = nil
         hits = []
@@ -117,13 +117,13 @@ package final class HubHistoryModel: ObservableObject {
     }
 }
 
-package struct HubHistorySection: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var history: HubHistoryModel
+struct HubHistorySection: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var history: HubHistoryModel
     /// Sessions the list already shows for this filter: not repeated here.
-    package let shown: Set<String>
+    let shown: Set<String>
 
-    package var body: some View {
+    var body: some View {
         let hits = history.hits.filter { !shown.contains($0.sessionId) }
         if history.running || !hits.isEmpty || history.error != nil {
             Section {

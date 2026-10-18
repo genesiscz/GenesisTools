@@ -7,105 +7,105 @@ import SwiftUI
 // the main checkout after `tools hub pr fetch`, Hub/HubPRFetch.swift), the sessions that worked on the
 // branch, and start or resume one there.
 
-package struct HubPR: Decodable, Identifiable, Equatable {
-    package struct Origin: Decodable, Equatable {
-        package let kind: String?
-        package let host: String?
-        package let web: String?
+struct HubPR: Decodable, Identifiable, Equatable {
+    struct Origin: Decodable, Equatable {
+        let kind: String?
+        let host: String?
+        let web: String?
     }
 
     /// An agent's stored review proposal for the PR (`tools hub proposal push`), matched by `tools`.
-    package struct Proposal: Decodable, Equatable {
-        package let path: String
-        package let decision: String
-        package let drafts: Int
-        package let pending: Int
+    struct Proposal: Decodable, Equatable {
+        let path: String
+        let decision: String
+        let drafts: Int
+        let pending: Int
         /// Stamped by every agent push (`tools hub proposal push`), never by a decision in the window.
-        package let updatedAt: String?
-        package let threads: Int?
-        package let openThreads: Int?
+        let updatedAt: String?
+        let threads: Int?
+        let openThreads: Int?
     }
 
-    package let repo: String
-    package let repoRoot: String?
-    package let origin: Origin?
-    package let number: Int
-    package let title: String
-    package let state: String
-    package let draft: Bool
-    package let author: String?
-    package let headBranch: String
-    package let baseBranch: String
-    package let url: String
-    package let createdAt: String?
-    package let updatedAt: String?
-    package let labels: [String]
-    package let reviewers: [String]
-    package let reviewDecision: String?
-    package let approvals: Int?
-    package let ci: String?
-    package let comments: Int?
-    package let headSha: String?
+    let repo: String
+    let repoRoot: String?
+    let origin: Origin?
+    let number: Int
+    let title: String
+    let state: String
+    let draft: Bool
+    let author: String?
+    let headBranch: String
+    let baseBranch: String
+    let url: String
+    let createdAt: String?
+    let updatedAt: String?
+    let labels: [String]
+    let reviewers: [String]
+    let reviewDecision: String?
+    let approvals: Int?
+    let ci: String?
+    let comments: Int?
+    let headSha: String?
     /// The head branch lives in a fork; `headRepo` is its `owner/repo` when the host named it.
-    package let crossRepository: Bool?
-    package let headRepo: String?
+    let crossRepository: Bool?
+    let headRepo: String?
     fileprivate(set) var localWorktree: String?
-    package let isMine: Bool?
-    package let proposal: Proposal?
+    let isMine: Bool?
+    let proposal: Proposal?
 
     /// The PR's web URL: unique across hosts and projects, where `repo` is only the folder's basename
     /// (`org-a/service#12` and `org-b/service#12` both read `service#12`).
-    package var id: String { url.isEmpty ? "\(project)#\(number)" : url }
+    var id: String { url.isEmpty ? "\(project)#\(number)" : url }
     /// The project the PR belongs to (the same key `tools hub pr list` groups checkouts by); `repo` is
     /// only its display name.
-    package var project: String { origin?.web ?? repoRoot ?? repo }
-    package var isGitLab: Bool { origin?.kind == "gitlab" }
-    package var label: String { isGitLab ? "!\(number)" : "#\(number)" }
-    package var updated: Date? { HubFormat.date(updatedAt) }
+    var project: String { origin?.web ?? repoRoot ?? repo }
+    var isGitLab: Bool { origin?.kind == "gitlab" }
+    var label: String { isGitLab ? "!\(number)" : "#\(number)" }
+    var updated: Date? { HubFormat.date(updatedAt) }
     /// Which stored proposal the embedded review shows. The path is fixed per PR, so a second "Review
     /// with agent" run on the same PR changes only the push stamp.
-    package var proposalStamp: String? { proposal.map { "\($0.path)@\($0.updatedAt ?? "")" } }
+    var proposalStamp: String? { proposal.map { "\($0.path)@\($0.updatedAt ?? "")" } }
 }
 
 /// `--pr 42`, `--pr '#42'`, `--pr group/app#42`, `--pr app!12`: a PR number, optionally with the
 /// project it belongs to. Numbers repeat across projects, so a bare one can be ambiguous.
-package struct HubPRRef: Equatable {
-    package let project: String?
-    package let number: Int
+struct HubPRRef: Equatable {
+    let project: String?
+    let number: Int
     /// The PR's page when the ref came from one (the browser extension, a link): `tools hub pr show`
     /// takes it as is, so a PR of a project outside the list still opens.
-    package var pageURL: String?
+    var pageURL: String?
 
-    package init(project: String?, number: Int, pageURL: String? = nil) {
+    init(project: String?, number: Int, pageURL: String? = nil) {
         self.project = project
         self.number = number
         self.pageURL = pageURL
     }
 
     /// `group/app!7`: a GitLab merge request, whose page needs a host only its checkout knows.
-    package var isMergeRequest = false
+    var isMergeRequest = false
 
     /// What `tools hub pr show` can fetch with no local checkout: the page, else a GitHub
     /// `owner/repo` PR. Never for a merge request: a github.com guess opened another project or
     /// failed with a host error that hid the real cause.
-    package var showURL: String? {
+    var showURL: String? {
         if let pageURL { return pageURL }
         guard !isMergeRequest, let project, project.split(separator: "/").count == 2 else { return nil }
         return "https://github.com/\(project)/pull/\(number)"
     }
 
     /// The forge host of the page this ref came from; nil for a path-only ref.
-    package var host: String? { pageURL.flatMap { URL(string: $0)?.host?.lowercased() } }
+    var host: String? { pageURL.flatMap { URL(string: $0)?.host?.lowercased() } }
 
     /// The same ref with the PR's page attached, when the caller holds it (Activity rows do).
-    package func withPage(_ url: String?) -> HubPRRef {
+    func withPage(_ url: String?) -> HubPRRef {
         guard let url, !url.isEmpty else { return self }
         var copy = self
         copy.pageURL = url
         return copy
     }
 
-    package init?(_ raw: String) {
+    init?(_ raw: String) {
         let text = raw.trimmingCharacters(in: .whitespaces)
         if let page = Self.fromPageURL(text) {
             self = page
@@ -141,7 +141,7 @@ package struct HubPRRef: Equatable {
 
     /// The project matches the folder name (`app`), the web path (`group/app`) or the whole key, in any
     /// letter case: GitHub and GitLab paths are case-insensitive, and a typed or lowercased URL is common.
-    package func matches(_ pr: HubPR) -> Bool {
+    func matches(_ pr: HubPR) -> Bool {
         guard pr.number == number else { return false }
         // Two clones of `team/app` on different forges share a path: the page's host tells them apart.
         if let host, let rowHost = pr.origin?.host?.lowercased(), host != rowHost { return false }
@@ -151,67 +151,67 @@ package struct HubPRRef: Equatable {
         return pr.repo.lowercased() == wanted || key == wanted || key.hasSuffix("/" + wanted)
     }
 
-    package var label: String { project.map { "\($0)#\(number)" } ?? "#\(number)" }
+    var label: String { project.map { "\($0)#\(number)" } ?? "#\(number)" }
 }
 
 /// A forge project with a checkout under the repo roots (`tools hub pr projects`).
-package struct HubPRProject: Decodable, Equatable, Identifiable {
-    package let project: String
-    package let repo: String
-    package let root: String
-    package let kind: String
-    package var id: String { project }
+struct HubPRProject: Decodable, Equatable, Identifiable {
+    let project: String
+    let repo: String
+    let root: String
+    let kind: String
+    var id: String { project }
 }
 
 /// A file, and optionally the PR thread on it, to open in one PR's review (Activity's "Open in the diff").
-package struct PRReveal: Equatable {
-    package let ref: HubPRRef
-    package let path: String
-    package let threadID: String?
+struct PRReveal: Equatable {
+    let ref: HubPRRef
+    let path: String
+    let threadID: String?
 }
 
-package struct HubPRDetail: Decodable, Equatable {
-    package struct Commit: Decodable, Equatable, Identifiable {
-        package let sha: String
-        package let title: String
-        package let author: String?
+struct HubPRDetail: Decodable, Equatable {
+    struct Commit: Decodable, Equatable, Identifiable {
+        let sha: String
+        let title: String
+        let author: String?
         /// The host login when the commit is linked to an account (GitHub only); `author` may be a git name.
-        package let authorLogin: String?
-        package let date: String?
+        let authorLogin: String?
+        let date: String?
         /// The message below the title line.
-        package let body: String?
-        package var id: String { sha }
-        package var when: Date? { HubFormat.date(date) }
+        let body: String?
+        var id: String { sha }
+        var when: Date? { HubFormat.date(date) }
     }
 
-    package struct Check: Decodable, Equatable, Identifiable {
-        package let name: String
-        package let status: String?
-        package let url: String?
-        package var id: String { name + (url ?? "") }
+    struct Check: Decodable, Equatable, Identifiable {
+        let name: String
+        let status: String?
+        let url: String?
+        var id: String { name + (url ?? "") }
     }
 
-    package struct WebUrls: Decodable, Equatable {
-        package let pr: String?
-        package let files: String?
-        package let commits: String?
-        package let checks: String?
+    struct WebUrls: Decodable, Equatable {
+        let pr: String?
+        let files: String?
+        let commits: String?
+        let checks: String?
     }
 
-    package let body: String?
+    let body: String?
     /// The head this detail describes; a newer one than the list's row means a push since the list.
-    package let headSha: String?
-    package let commits: [Commit]?
-    package let changedFiles: Int?
-    package let additions: Int?
-    package let deletions: Int?
-    package let baseSha: String?
-    package let mergeable: String?
-    package let checks: [Check]?
-    package let webUrls: WebUrls?
-    package let localWorktree: String?
+    let headSha: String?
+    let commits: [Commit]?
+    let changedFiles: Int?
+    let additions: Int?
+    let deletions: Int?
+    let baseSha: String?
+    let mergeable: String?
+    let checks: [Check]?
+    let webUrls: WebUrls?
+    let localWorktree: String?
     /// Names in the body that are branches of the local checkout (`tools hub pr show`).
-    package let branchMentions: [String]?
+    let branchMentions: [String]?
 }
 
 private struct HubPRList: Decodable {
@@ -242,13 +242,13 @@ private struct HubPRList: Decodable {
 }
 
 @MainActor
-package final class PRsModel: ObservableObject {
+final class PRsModel: ObservableObject {
     @Published package private(set) var prs: [HubPR] = []
     @Published package private(set) var errors: [String] = []
     @Published package private(set) var loading = false
-    @Published package var selectedID: String?
+    @Published var selectedID: String?
     @Published package private(set) var details: [String: HubPRDetail] = [:]
-    @Published package var review: ReviewModel?
+    @Published var review: ReviewModel?
     /// The PR the embedded review shows. Several PRs can share one worktree, so the path alone
     /// cannot tell whether the review must be rebuilt.
     private var reviewPRID: String?
@@ -259,22 +259,22 @@ package final class PRsModel: ObservableObject {
     /// PRs whose branch has no local worktree: their head fetched into the main checkout, by PR id.
     @Published package private(set) var fetches: [String: PRFetchEntry] = [:]
     // Published and saved by hand: `@AppStorage` inside an ObservableObject never publishes.
-    @Published package var state = HubDefaults.store.string(forKey: "hub.prs.state") ?? "open" {
+    @Published var state = HubDefaults.store.string(forKey: "hub.prs.state") ?? "open" {
         didSet {
             HubDefaults.store.set(state, forKey: "hub.prs.state")
             HubMainBusy.measure("prs.filter.state")
         }
     }
-    @Published package var mineOnly = HubDefaults.store.bool(forKey: "hub.prs.mine") {
+    @Published var mineOnly = HubDefaults.store.bool(forKey: "hub.prs.mine") {
         didSet {
             HubDefaults.store.set(mineOnly, forKey: "hub.prs.mine")
             HubMainBusy.measure("prs.filter.mine")
         }
     }
     /// Called once after a list load (the `--snapshot` launch waits on it).
-    package var onLoaded: (() -> Void)?
+    var onLoaded: (() -> Void)?
     /// `--pr <ref>` (snapshots, links): select this PR once the list loads instead of the newest.
-    package var wanted: HubPRRef?
+    var wanted: HubPRRef?
     /// A file to open in one PR's review once that review exists (`request(_:reveal:)`).
     package private(set) var pendingReveal: PRReveal?
     /// A commit to select in one PR's review once the review and the PR's commits are in (`request(_:commit:)`).
@@ -283,16 +283,16 @@ package final class PRsModel: ObservableObject {
     @Published package private(set) var commitScroll: PRCommitScroll?
     /// What a link asked of a PR and could not get (its commit is not in the PR), in that PR's header until
     /// dismissed or another PR opens. Not in `errors`: every list load replaces those.
-    @Published package var notice: PRNotice?
+    @Published var notice: PRNotice?
     /// Set by the command palette's "review" and cleared by the PR detail that opens "Review with
     /// agent". A flag, not a counter: the palette can switch modes, so the detail may mount after it.
-    @Published package var reviewRequested = false
+    @Published var reviewRequested = false
     /// The agent sessions that touched each PR (`tools hub pr sessions`), loaded once its detail is in.
-    package let sessions = PRSessionsStore()
+    let sessions = PRSessionsStore()
     private var paths: [String] = []
     /// A load asked for while one ran (the state picker changed mid-load). It runs when that one ends.
     private var reloadPending = false
-    package static let pageSize = 40
+    static let pageSize = 40
     /// PRs per project the list asks for; "Load more" adds a page.
     @Published package private(set) var limit = PRsModel.pageSize
     /// Projects whose last answer was a full page, so the forge may hold more: each gets its own
@@ -343,17 +343,17 @@ package final class PRsModel: ObservableObject {
     /// "Mine"): the open one stays in the rows when a list answers without it.
     private var directIDs: Set<String> = []
 
-    package var selected: HubPR? { prs.first { $0.id == selectedID } }
+    var selected: HubPR? { prs.first { $0.id == selectedID } }
 
     /// Starred projects (the PR list's pins) are asked for on every load, beside the session projects.
-    package static var starred: [String] { HubDefaults.store.stringArray(forKey: "groups.prs.repos.pinned") ?? [] }
+    static var starred: [String] { HubDefaults.store.stringArray(forKey: "groups.prs.repos.pinned") ?? [] }
 
     private func listPaths(_ sessionPaths: [String]) -> [String] {
         let starredRoots = Self.starred.compactMap { key in allProjects.first { $0.project == key }?.root }
         return Array(Set(sessionPaths + starredRoots + extraRoots.values)).sorted()
     }
 
-    package func load(paths sessionPaths: [String]) {
+    func load(paths sessionPaths: [String]) {
         self.paths = sessionPaths
         guard !loading else {
             reloadPending = true
@@ -484,7 +484,7 @@ package final class PRsModel: ObservableObject {
     /// (and a thread on it) in that PR's review once the review exists: after the list, the head fetch
     /// of a PR without a worktree, and the diff load, so one click is enough. `commit` (a sha or a prefix
     /// of 7 or more hex characters) selects that commit of the PR the same way (`pickPendingCommit`).
-    package func request(_ ref: HubPRRef, reveal: PRReveal? = nil, commit: String? = nil) {
+    func request(_ ref: HubPRRef, reveal: PRReveal? = nil, commit: String? = nil) {
         notice = nil
         pendingReveal = reveal
         pendingCommit = nil
@@ -648,7 +648,7 @@ package final class PRsModel: ObservableObject {
     }
 
     /// A repeated link reveals the diff and scrolls again even when its commit is already selected.
-    package func showLinkedCommit(_ commit: HubPRDetail.Commit, prID: String, review: ReviewModel) {
+    func showLinkedCommit(_ commit: HubPRDetail.Commit, prID: String, review: ReviewModel) {
         // What a click on the row does (`PRCommitsSection`): the diff beside it, the commits section open.
         HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
         HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
@@ -658,7 +658,7 @@ package final class PRsModel: ObservableObject {
     }
 
     /// A settled miss replaces any previously selected commit with the whole PR before saying so.
-    package func showMissingCommit(_ pending: PRCommitPick, in shown: HubPR, review: ReviewModel) {
+    func showMissingCommit(_ pending: PRCommitPick, in shown: HubPR, review: ReviewModel) {
         pendingCommit = nil
         review.setScope(Self.scope(shown, detail: details[shown.id], fetch: fetchedHead(shown)))
         HubPerf.log("prs.commit \(shown.label) \(pending.sha) not among its commits")
@@ -666,7 +666,7 @@ package final class PRsModel: ObservableObject {
     }
 
     /// The overview scrolled to `scroll`; a later appearance of the PR does not scroll again.
-    package func commitScrolled(_ scroll: PRCommitScroll) {
+    func commitScrolled(_ scroll: PRCommitScroll) {
         if commitScroll == scroll {
             commitScroll = nil
         }
@@ -696,20 +696,20 @@ package final class PRsModel: ObservableObject {
         return true
     }
 
-    package func reload() {
+    func reload() {
         let current = paths
         load(paths: current)
     }
 
     /// Every forge project cloned under the repo roots (`tools hub pr projects`); blocks, so off the main thread.
-    package nonisolated static func fetchProjects() throws -> [HubPRProject] {
+    nonisolated static func fetchProjects() throws -> [HubPRProject] {
         struct Answer: Decodable { let projects: [HubPRProject] }
         return try JSONDecoder().decode(Answer.self, from: ToolsCLIRunner.run(["hub", "pr", "projects"])).projects
     }
 
     /// The checkout of the project whose web path is `project` (`owner/repo`, `group/sub/app`, or its page URL),
     /// whatever the host and the letter case.
-    package nonisolated static func projectRoot(_ project: String, in projects: [HubPRProject]) -> String? {
+    nonisolated static func projectRoot(_ project: String, in projects: [HubPRProject]) -> String? {
         var wanted = project.trimmingCharacters(in: CharacterSet(charactersIn: "/ ")).lowercased()
         if wanted.hasSuffix(".git") {
             wanted.removeLast(4)
@@ -722,7 +722,7 @@ package final class PRsModel: ObservableObject {
     }
 
     /// The project list for "More projects" and the stars, once per hub run.
-    package func loadProjectsIfNeeded() {
+    func loadProjectsIfNeeded() {
         guard !projectsRequested else { return }
         projectsRequested = true
         Task {
@@ -748,13 +748,13 @@ package final class PRsModel: ObservableObject {
     /// What one project asks the forge for: its own pages so far, never fewer rows than the list already
     /// holds for it (the list restores its cached limit, which the old global "Load more" raised), plus
     /// a page when `more`. A smaller ask would replace the project's rows with a shorter page.
-    package static func projectLimit(own: Int?, listed: Int, more: Bool) -> Int {
+    static func projectLimit(own: Int?, listed: Int, more: Bool) -> Int {
         max(own ?? pageSize, listed) + (more ? pageSize : 0)
     }
 
     /// One project's PRs, on its own: opened from "More projects", or one more page of it. Its rows
     /// replace that project's rows; every other project's stay as they are.
-    package func loadProject(_ project: HubPRProject, more: Bool = false) {
+    func loadProject(_ project: HubPRProject, more: Bool = false) {
         guard !projectLoading.contains(project.project) else { return }
         let limit = Self.projectLimit(own: projectLimits[project.project], listed: self.limit, more: more)
         projectLimits[project.project] = limit
@@ -811,17 +811,17 @@ package final class PRsModel: ObservableObject {
         }
     }
 
-    package func dismissError(_ text: String) {
+    func dismissError(_ text: String) {
         errors.removeAll { $0 == text }
     }
 
     /// A project opened from "More projects" (not a session project, not starred) leaves the list
     /// again; it stayed until the hub quit.
-    package func isRemovable(_ key: String) -> Bool {
+    func isRemovable(_ key: String) -> Bool {
         extraRoots[key] != nil && !Self.starred.contains(key)
     }
 
-    package func removeProject(_ key: String) {
+    func removeProject(_ key: String) {
         extraRoots[key] = nil
         projectLimits[key] = nil
         fullProjects.remove(key)
@@ -831,7 +831,7 @@ package final class PRsModel: ObservableObject {
     }
 
     /// One more page of the project a group shows.
-    package func loadMore(project key: String) {
+    func loadMore(project key: String) {
         if let project = allProjects.first(where: { $0.project == key }) {
             loadProject(project, more: true)
             return
@@ -844,14 +844,14 @@ package final class PRsModel: ObservableObject {
 
     /// Refreshes a list older than `age` seconds: the hub coming back to the PRs mode shows what it
     /// has and asks the forge again.
-    package func refreshIfStale(age: TimeInterval = 60) {
+    func refreshIfStale(age: TimeInterval = 60) {
         guard !loading, let lastLoad, Date().timeIntervalSince(lastLoad) > age else { return }
         reload()
     }
 
     /// The sidebar filter as a forge search, after the typing pauses. The rows on screen filter at
     /// once; this finds the PRs past the loaded pages (an older MR by its id or author).
-    package func search(_ filter: String) {
+    func search(_ filter: String) {
         let next = filter.trimmed
         // Cancelled first: typing back to the applied query must also drop the search still waiting.
         searchTask?.cancel()
@@ -942,7 +942,7 @@ package final class PRsModel: ObservableObject {
 
     /// The review on screen in its own window (`GenesisTools --review`): the same folder, commit range,
     /// live threads and proposal. The hub keeps its own copy.
-    package func openInReviewWindow(_ pr: HubPR) {
+    func openInReviewWindow(_ pr: HubPR) {
         guard let review, let executable = Bundle.main.executableURL else { return }
         var args = ["--review", "--repo", review.repo.path]
         if case .ref(let ref) = Self.threadsTarget(pr, path: review.repo.path) {
@@ -971,7 +971,7 @@ package final class PRsModel: ObservableObject {
 
     /// Back or Forward to a PR that left the list (merged, closed, another state picked): nothing is
     /// shown under its id, so the detail and the history agree instead of the last PR staying on screen.
-    package func showUnavailable(_ id: String) {
+    func showUnavailable(_ id: String) {
         pendingReveal = nil
         pendingCommit = nil
         selectedID = id
@@ -993,7 +993,7 @@ package final class PRsModel: ObservableObject {
     }
 
     /// What the PR header shows while the diff of a PR without a worktree is not there.
-    package func fetchState(_ pr: HubPR) -> PRFetchState? {
+    func fetchState(_ pr: HubPR) -> PRFetchState? {
         guard pr.localWorktree == nil, let entry = fetches[pr.id], entry.forHead == pr.headSha else { return nil }
         return entry.state
     }
@@ -1030,7 +1030,7 @@ package final class PRsModel: ObservableObject {
     }
 
     /// The header's Retry after a failed fetch.
-    package func retryFetch(_ pr: HubPR) {
+    func retryFetch(_ pr: HubPR) {
         guard pr.localWorktree == nil, let root = pr.repoRoot else { return }
         fetchHead(pr, root: root)
     }
@@ -1039,7 +1039,7 @@ package final class PRsModel: ObservableObject {
     /// for a PR without a worktree, its head fetch all start at once and in parallel; the agent
     /// sessions follow the fresh detail. `opened`: a click, a link or the extension asked for it, so the
     /// detail is asked again even within the 15 s a list refresh re-selecting it waits.
-    package func select(_ pr: HubPR, opened: Bool = false) {
+    func select(_ pr: HubPR, opened: Bool = false) {
         if let notice, !notice.ref.matches(pr) {
             self.notice = nil
         }
@@ -1071,14 +1071,14 @@ package final class PRsModel: ObservableObject {
 
     /// Whether a `hub pr show` answer may move the row to its head. Only when the row still shows the head the
     /// request started from: a list that installed a newer head meanwhile is never rolled back by an older answer.
-    package nonisolated static func showMovesHead(started: String?, current: String?, shown: String?) -> Bool {
+    nonisolated static func showMovesHead(started: String?, current: String?, shown: String?) -> Bool {
         guard let shown, shown != current else { return false }
         return current == started
     }
 
     /// Whether a `hub pr show` answer is older than the row: the list moved the head while it ran, and the
     /// answer names a head other than the one on screen now.
-    package nonisolated static func showIsStale(started: String?, current: String?, shown: String?) -> Bool {
+    nonisolated static func showIsStale(started: String?, current: String?, shown: String?) -> Bool {
         current != started && shown != nil && shown != current
     }
 
@@ -1103,7 +1103,7 @@ package final class PRsModel: ObservableObject {
         }
     }
 
-    package static func threadsTarget(_ pr: HubPR, path: String) -> PRTarget {
+    static func threadsTarget(_ pr: HubPR, path: String) -> PRTarget {
         .ref(pr.url.isEmpty ? "\(path)#\(pr.number)" : pr.url)
     }
 
@@ -1203,7 +1203,7 @@ package final class PRsModel: ObservableObject {
 
     /// Selects the PR `id` names when the list has it (a `#n` link in a description); false otherwise.
     @discardableResult
-    package func open(id: String) -> Bool {
+    func open(id: String) -> Bool {
         guard let pr = prs.first(where: { $0.id == id }) else { return false }
         select(pr, opened: true)
         return true
@@ -1211,7 +1211,7 @@ package final class PRsModel: ObservableObject {
 
     /// The embedded diff shows one commit of the open PR; false while the PR has no diff.
     @discardableResult
-    package func showCommit(_ commit: HubPRDetail.Commit) -> Bool {
+    func showCommit(_ commit: HubPRDetail.Commit) -> Bool {
         guard let review, !commit.sha.isEmpty else { return false }
         // The reader picked one: a link's commit still waiting must not take the diff back.
         pendingCommit = nil
@@ -1220,7 +1220,7 @@ package final class PRsModel: ObservableObject {
     }
 
     /// Back from one commit to the whole PR.
-    package func showWholePR() {
+    func showWholePR() {
         pendingCommit = nil
         guard let pr = selected else { return }
         review?.setScope(Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)))
@@ -1230,7 +1230,7 @@ package final class PRsModel: ObservableObject {
     /// base commit the host recorded wins over `origin/<base>`, which can be stale or gone: a merged
     /// PR showed +50473 lines against an old `origin/` ref where the host shows +1895. A fetched head
     /// (no worktree) names the head the host has, and a base commit the fetch made sure is here.
-    package static func scope(_ pr: HubPR, detail: HubPRDetail?, fetch: HubPRFetch? = nil) -> DiffScope {
+    static func scope(_ pr: HubPR, detail: HubPRDetail?, fetch: HubPRFetch? = nil) -> DiffScope {
         // The PR header right above names the head branch; the diff's own label only needs the base.
         let label = "\(pr.label) vs \(pr.baseBranch)"
         let head = fetch?.head ?? pr.headSha ?? "HEAD"
@@ -1244,9 +1244,9 @@ package final class PRsModel: ObservableObject {
 
 // MARK: - Sidebar list
 
-package struct PRListView: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var prs: PRsModel
+struct PRListView: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var prs: PRsModel
     @StateObject private var prefs = GroupPrefs(key: "prs.repos")
     @ObservedObject private var readiness = PRReadinessStore.shared
     @GenReduceMotion private var reduceMotion
@@ -1293,7 +1293,7 @@ package struct PRListView: View {
         return prefs.sorted(Array(grouped.keys), label: { titles[$0] ?? $0 }).map { ($0, titles[$0] ?? $0, grouped[$0] ?? []) }
     }
 
-    package var body: some View {
+    var body: some View {
         let groups = groups
         VStack(spacing: 0) {
             // One row when the sidebar is wide enough; two below that. At about 215 pt the single row
@@ -1554,14 +1554,14 @@ package struct PRListView: View {
 /// dot. One pass per width over the children's ideal sizes. A `ViewThatFits` of three whole lines
 /// measured every variant of every visible row on each step of a sidebar drag: busy p50 about 45 ms
 /// per step (`--bench`, 2026-09-30).
-package struct PRMetaLineLayout: Layout {
-    package static let spacing: CGFloat = 5
-    package static let authorMinWidth: CGFloat = 48
+struct PRMetaLineLayout: Layout {
+    static let spacing: CGFloat = 5
+    static let authorMinWidth: CGFloat = 48
     /// The least room between the age and the badges.
-    package static let badgeGap: CGFloat = 4
+    static let badgeGap: CGFloat = 4
 
     /// Width of the label, author, dot, age and badges; 0 hides the author and its dot.
-    package static func widths(ideal: [CGFloat], width: CGFloat?) -> [CGFloat] {
+    static func widths(ideal: [CGFloat], width: CGFloat?) -> [CGFloat] {
         guard ideal.count == 5 else { return ideal }
         let (label, author, dot, age, badges) = (ideal[0], ideal[1], ideal[2], ideal[3], ideal[4])
         let bare = label + spacing + age + badgeGap + badges
@@ -1582,13 +1582,13 @@ package struct PRMetaLineLayout: Layout {
         return shown.reduce(0) { $0 + $1.element } + CGFloat(max(0, shown.count - 2)) * spacing + badgeGap
     }
 
-    package func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let widths = plan(proposal, subviews)
         let height = zip(subviews, widths).map { $0.sizeThatFits(ProposedViewSize(width: $1, height: nil)).height }.max() ?? 0
         return CGSize(width: proposal.width ?? Self.naturalWidth(widths), height: height)
     }
 
-    package func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         let widths = plan(ProposedViewSize(width: bounds.width, height: proposal.height), subviews)
         var x = bounds.minX
         for (index, subview) in subviews.enumerated() {
@@ -1606,10 +1606,10 @@ package struct PRMetaLineLayout: Layout {
     }
 }
 
-package struct PRStateIcon: View {
-    package let pr: HubPR
+struct PRStateIcon: View {
+    let pr: HubPR
 
-    package var body: some View {
+    var body: some View {
         let tone = PRStateTone(pr: pr)
         Image(systemName: tone.symbol)
             .font(.system(size: 12, weight: .semibold))
@@ -1620,11 +1620,11 @@ package struct PRStateIcon: View {
 }
 
 /// "Merged into develop" as a pill in the state's own color; a label that names no state stays grey.
-package struct PRLabelPill: View {
-    package let pr: HubPR
-    package let label: String
+struct PRLabelPill: View {
+    let pr: HubPR
+    let label: String
 
-    package var body: some View {
+    var body: some View {
         let tone = PRStateTone(label: label)
         ExternalLink(
             text: label,
@@ -1640,12 +1640,12 @@ package struct PRLabelPill: View {
     }
 }
 
-package struct CIBadge: View {
-    package let ci: String?
+struct CIBadge: View {
+    let ci: String?
     /// The checks page; the badge opens it when set.
-    package var url: URL?
+    var url: URL?
 
-    package var body: some View {
+    var body: some View {
         if let ci {
             let (symbol, color): (String, Color) = {
                 switch ci {
@@ -1672,11 +1672,11 @@ package struct CIBadge: View {
 }
 
 /// The main area in PRs mode; observes `PRsModel` so a selection redraws it.
-package struct PRsMain: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var prs: PRsModel
+struct PRsMain: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var prs: PRsModel
 
-    package var body: some View {
+    var body: some View {
         if let pr = prs.selected {
             PRDetailView(model: model, prs: prs, pr: pr)
                 .id(pr.id)
@@ -1694,10 +1694,10 @@ package struct PRsMain: View {
 
 // MARK: - Detail
 
-package struct PRDetailView: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var prs: PRsModel
-    package let pr: HubPR
+struct PRDetailView: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var prs: PRsModel
+    let pr: HubPR
     @AppStorage("hub.prs.showDiff") private var showDiff = true
     // Folded sections, one key each so every PR opens the same way.
     @AppStorage("hub.prs.fold.description") private var foldDescription = false
@@ -1711,7 +1711,7 @@ package struct PRDetailView: View {
 
     /// The first message of a review session. Only the PR's URL comes from outside, and it came from
     /// `tools hub pr list`, not from a page; the agent pushes a proposal and never posts.
-    package static func reviewPrompt(_ pr: HubPR) -> String {
+    static func reviewPrompt(_ pr: HubPR) -> String {
         "Review \(pr.url) with the genesis-tools:review-proposal skill: read the diff and its existing review threads, decide a verdict, draft comments anchored to the changed lines, and push the proposal with `tools hub proposal push` so it shows in the GenesisTools hub. Do not post, approve or merge anything on the PR."
     }
 
@@ -1721,7 +1721,7 @@ package struct PRDetailView: View {
     private static let overviewFraction: CGFloat = 0.6
     private static let overviewMinWidth: CGFloat = 320
 
-    package var body: some View {
+    var body: some View {
         VStack(spacing: 0) {
             header
             if showDiff, let review = prs.review {
@@ -2104,10 +2104,10 @@ package struct PRDetailView: View {
 /// Linked PR descriptions by PR, body and link context. The linker runs its regexes over every line,
 /// and the overview's body runs on every step of a sidebar drag (`sample`, 2026-09-30).
 @MainActor
-package enum PRDescriptionCache {
+enum PRDescriptionCache {
     private static var linked: [String: String] = [:]
 
-    package static func linked(key: String, make: () -> String) -> String {
+    static func linked(key: String, make: () -> String) -> String {
         if let known = linked[key] { return known }
         if linked.count >= 64 { linked.removeAll() }
         let value = make()
@@ -2117,17 +2117,17 @@ package enum PRDescriptionCache {
 }
 
 /// A section of the PR overview whose title folds it; the fold is saved by the caller.
-package struct PRSection<Content: View>: View {
-    package let title: String
-    package var count: Int?
-    @Binding package var folded: Bool
+struct PRSection<Content: View>: View {
+    let title: String
+    var count: Int?
+    @Binding var folded: Bool
     /// The rows join the overview's lazy stack instead of one block: rows off screen are never made.
-    package var flat = false
-    package var trailing: AnyView?
-    @ViewBuilder package let content: () -> Content
+    var flat = false
+    var trailing: AnyView?
+    @ViewBuilder let content: () -> Content
     @GenReduceMotion private var reduceMotion
 
-    package init(title: String, count: Int? = nil, folded: Binding<Bool>, flat: Bool = false, trailing: AnyView? = nil,
+    init(title: String, count: Int? = nil, folded: Binding<Bool>, flat: Bool = false, trailing: AnyView? = nil,
          @ViewBuilder content: @escaping () -> Content) {
         self.title = title
         self.count = count
@@ -2137,7 +2137,7 @@ package struct PRSection<Content: View>: View {
         self.content = content
     }
 
-    package var body: some View {
+    var body: some View {
         if flat {
             header.padding(.bottom, folded ? 16 : 8)
             if !folded {
@@ -2212,20 +2212,20 @@ private struct PRCommitScrollTarget: ViewModifier {
 
 /// The PR's commits, newest first. A click shows that commit in the diff beside it; "Whole PR"
 /// goes back to the PR's range.
-package struct PRCommitsSection: View {
-    @ObservedObject package var prs: PRsModel
-    @ObservedObject package var review: ReviewModel
-    package let pr: HubPR
-    package let commits: [HubPRDetail.Commit]
-    @Binding package var folded: Bool
-    package let revealDiff: () -> Void
+struct PRCommitsSection: View {
+    @ObservedObject var prs: PRsModel
+    @ObservedObject var review: ReviewModel
+    let pr: HubPR
+    let commits: [HubPRDetail.Commit]
+    @Binding var folded: Bool
+    let revealDiff: () -> Void
 
     private var shownSha: String? {
         if case .commit(let sha, _) = review.scope { return sha }
         return nil
     }
 
-    package var body: some View {
+    var body: some View {
         let shown = shownSha
         PRSection(title: "Commits", count: commits.count, folded: $folded, flat: true, trailing: shown == nil ? nil : AnyView(
             Button("Whole PR") { prs.showWholePR() }
@@ -2245,22 +2245,22 @@ package struct PRCommitsSection: View {
 
 /// One commit: short sha, title, author, age. The row shows it in the hub (or opens it on the host
 /// when there is no local checkout); ↗ and the context menu open the host page.
-package struct PRCommitRow: View {
-    package let pr: HubPR
-    package let commit: HubPRDetail.Commit
-    package let selected: Bool
-    package let inApp: Bool
+struct PRCommitRow: View {
+    let pr: HubPR
+    let commit: HubPRDetail.Commit
+    let selected: Bool
+    let inApp: Bool
     /// Off when every commit has one author: the same name on each row took the room the subject needed
     /// ("fix(widget): the roster cac…" beside the same login twenty times, H16).
-    package var showsAuthor = true
-    package let action: () -> Void
+    var showsAuthor = true
+    let action: () -> Void
 
     /// More than one author among the commits: only then does a row name its author.
-    package static func showsAuthors(_ commits: [HubPRDetail.Commit]) -> Bool {
+    static func showsAuthors(_ commits: [HubPRDetail.Commit]) -> Bool {
         Set(commits.compactMap(\.author)).count > 1
     }
 
-    package var body: some View {
+    var body: some View {
         let hostURL = pr.commitURL(commit.sha)
         HStack(spacing: 4) {
             HStack(spacing: 8) {
@@ -2316,7 +2316,7 @@ package struct PRCommitRow: View {
     }
 
     /// What ⌘F searches in a commit row, under the keys its FindTexts use.
-    package static func searchable(_ commit: HubPRDetail.Commit, showsAuthor: Bool = true) -> PanelFindRow {
+    static func searchable(_ commit: HubPRDetail.Commit, showsAuthor: Bool = true) -> PanelFindRow {
         PanelFindRow(id: commit.sha, fields: [
             PanelFindField("sha", String(commit.sha.prefix(8))),
             PanelFindField("title", commit.title),
@@ -2340,12 +2340,12 @@ package struct PRCommitRow: View {
 
 /// Every agent session that touched the PR. The hub's own recent rows show at once; `tools hub pr
 /// sessions` adds older ones and the commit and file evidence when it answers.
-package struct PRSessionsSection: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var prs: PRsModel
-    @ObservedObject package var store: PRSessionsStore
-    package let pr: HubPR
-    @Binding package var folded: Bool
+struct PRSessionsSection: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var prs: PRsModel
+    @ObservedObject var store: PRSessionsStore
+    let pr: HubPR
+    @Binding var folded: Bool
 
     fileprivate struct Row: Identifiable {
         let session: HubSession
@@ -2386,7 +2386,7 @@ package struct PRSessionsSection: View {
         return rows
     }
 
-    package var body: some View {
+    var body: some View {
         let rows = rows
         let loading = store.loading.contains(pr.id)
         PRSection(title: "Sessions", count: rows.count, folded: $folded, trailing: AnyView(

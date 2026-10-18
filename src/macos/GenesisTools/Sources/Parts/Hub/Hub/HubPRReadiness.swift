@@ -8,35 +8,35 @@ import SwiftUI
 // 10 minutes old) without calling the forge, so a reload costs one `tools` process, not a GraphQL
 // query per PR.
 
-package struct PRReadiness: Codable, Equatable {
-    package struct AuthorCount: Codable, Equatable {
-        package let author: String
-        package let count: Int
+struct PRReadiness: Codable, Equatable {
+    struct AuthorCount: Codable, Equatable {
+        let author: String
+        let count: Int
     }
 
-    package let url: String
-    package let headSha: String?
-    package let state: String
-    package let draft: Bool
-    package let ci: String?
-    package let unresolved: Int
-    package let unresolvedBy: [AuthorCount]
-    package let outdatedUnresolved: Int
-    package let lastReviewAt: String?
-    package let lastReviewBy: String?
-    package let lastPushAt: String?
-    package let reviewedHead: Bool?
-    package let staleReviewers: [String]
+    let url: String
+    let headSha: String?
+    let state: String
+    let draft: Bool
+    let ci: String?
+    let unresolved: Int
+    let unresolvedBy: [AuthorCount]
+    let outdatedUnresolved: Int
+    let lastReviewAt: String?
+    let lastReviewBy: String?
+    let lastPushAt: String?
+    let reviewedHead: Bool?
+    let staleReviewers: [String]
     /// ready, waiting, blocked or closed.
-    package let verdict: String
-    package let reasons: [String]
-    package let summary: String
-    package let fetchedAt: String
-    package let cached: Bool
+    let verdict: String
+    let reasons: [String]
+    let summary: String
+    let fetchedAt: String
+    let cached: Bool
 
     /// The badge's tooltip: the verdict as its title, then every reason and who still owes a re-review
     /// as bullets. A ready PR has no reasons; its summary's facts ("CI green, no open threads") stand in.
-    package var tooltip: TooltipContent {
+    var tooltip: TooltipContent {
         let title: String
         var bullets = reasons
         switch verdict {
@@ -60,18 +60,18 @@ package struct PRReadiness: Codable, Equatable {
     }
 }
 
-package struct PRReadinessOutcome: Decodable {
-    package let input: String
-    package let readiness: PRReadiness?
-    package let error: String?
+struct PRReadinessOutcome: Decodable {
+    let input: String
+    let readiness: PRReadiness?
+    let error: String?
 }
 
-package enum PRReadinessQuery {
+enum PRReadinessQuery {
     /// URLs per `tools` call: each call works four PRs at a time, and a call reports as one batch.
-    package static let batch = 12
+    static let batch = 12
 
     /// `<url>@<head>` for every open PR with a URL: the head lets the tools side answer from its cache.
-    package static func inputs(_ prs: [HubPR]) -> [String] {
+    static func inputs(_ prs: [HubPR]) -> [String] {
         prs.filter { $0.state.uppercased() == "OPEN" && !$0.url.isEmpty }.map { pr in
             pr.headSha.map { "\(pr.url)@\($0)" } ?? pr.url
         }
@@ -79,8 +79,8 @@ package enum PRReadinessQuery {
 }
 
 @MainActor
-package final class PRReadinessStore: ObservableObject {
-    package static let shared = PRReadinessStore()
+final class PRReadinessStore: ObservableObject {
+    static let shared = PRReadinessStore()
 
     /// By PR URL (`HubPR.url`).
     @Published package private(set) var byURL: [String: PRReadiness] = [:]
@@ -90,7 +90,7 @@ package final class PRReadinessStore: ObservableObject {
     private var cachePaint: Task<Void, Never>?
     nonisolated private static let cache = HubSWR.cache("pr-readiness")
 
-    package func readiness(for pr: HubPR) -> PRReadiness? {
+    func readiness(for pr: HubPR) -> PRReadiness? {
         guard let found = byURL[pr.url] else { return nil }
         // A push since the answer: the old verdict would lie, so the badge waits for the new one.
         if let head = pr.headSha, let known = found.headSha, head != known { return nil }
@@ -101,7 +101,7 @@ package final class PRReadinessStore: ObservableObject {
     /// used to wait for the first fresh list, so the rows and the PR header had no badge for as long as the
     /// forge took (`hub.prs.list` 8.6 s for ten projects, 2026-10-10 21:21). `readiness(for:)` still drops a
     /// verdict whose head is not the PR's head now. Not animated: a first paint of every row at once.
-    package func paintCached() {
+    func paintCached() {
         guard cachePaint == nil, byURL.isEmpty else { return }
         cachePaint = Task {
             guard let cached = await Self.cache.load([String: PRReadiness].self, key: "all"), byURL.isEmpty, !cached.isEmpty else { return }
@@ -111,7 +111,7 @@ package final class PRReadinessStore: ObservableObject {
     }
 
     /// After each PR list load. A load that lands while one runs is kept and runs next.
-    package func refresh(_ prs: [HubPR]) {
+    func refresh(_ prs: [HubPR]) {
         let inputs = PRReadinessQuery.inputs(prs)
         guard !inputs.isEmpty else { return }
         guard !loading else {
@@ -172,11 +172,11 @@ package final class PRReadinessStore: ObservableObject {
 
 /// The PR detail header's verdict with its first reason in words; it observes the store itself, so the
 /// header does not re-render for other PRs' answers.
-package struct PRReadinessHeaderChip: View {
-    package let pr: HubPR
+struct PRReadinessHeaderChip: View {
+    let pr: HubPR
     @ObservedObject private var store = PRReadinessStore.shared
 
-    package var body: some View {
+    var body: some View {
         if let readiness = store.readiness(for: pr), readiness.verdict != "closed" {
             HStack(spacing: 6) {
                 // The verdict word: the reason beside it already says "4 unresolved threads".
@@ -193,12 +193,12 @@ package struct PRReadinessHeaderChip: View {
 }
 
 /// A PR row's readiness chip: a value, drawn with a tooltip that holds every reason.
-package struct PRReadinessBadge: View {
-    package let readiness: PRReadiness?
+struct PRReadinessBadge: View {
+    let readiness: PRReadiness?
     /// "blocked" instead of "4 open", where the reason is shown beside it.
-    package var verdictWord = false
+    var verdictWord = false
 
-    package var body: some View {
+    var body: some View {
         if let readiness, readiness.verdict != "closed" {
             let (symbol, color, text) = Self.look(readiness, verdictWord: verdictWord)
             Label(text, systemImage: symbol)
@@ -211,7 +211,7 @@ package struct PRReadinessBadge: View {
         }
     }
 
-    package static func look(_ readiness: PRReadiness, verdictWord: Bool = false) -> (String, Color, String) {
+    static func look(_ readiness: PRReadiness, verdictWord: Bool = false) -> (String, Color, String) {
         switch readiness.verdict {
         case "ready":
             return ("checkmark.seal.fill", ReviewPalette.added, "ready")

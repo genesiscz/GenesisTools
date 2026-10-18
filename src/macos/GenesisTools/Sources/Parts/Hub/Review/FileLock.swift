@@ -4,13 +4,13 @@ import Foundation
 /// and holding the owner's pid. The TypeScript side reads a bare pid as a valid owner, and either side
 /// takes over a lock whose owner has died. Hold it around a read-modify-write of a file the CLI also
 /// writes, so neither side overwrites the other's change.
-package enum FileLock {
-    package struct Timeout: Error, CustomStringConvertible {
-        package let path: String
-        package var description: String { "could not lock \(path): another writer held it for 5 s" }
+enum FileLock {
+    struct Timeout: Error, CustomStringConvertible {
+        let path: String
+        var description: String { "could not lock \(path): another writer held it for 5 s" }
     }
 
-    package static func withLock<T>(_ file: URL, timeout: TimeInterval = 5, _ body: () throws -> T) throws -> T {
+    static func withLock<T>(_ file: URL, timeout: TimeInterval = 5, _ body: () throws -> T) throws -> T {
         let lock = file.path + ".lock"
         let deadline = Date().addingTimeInterval(timeout)
         while !acquire(lock) {

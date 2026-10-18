@@ -7,16 +7,16 @@ import Foundation
 // and /qa share one store and one behavior.
 
 /// `tools question inbox --session <id> --json`.
-package struct SessionDecisionsEnvelope: Decodable {
-    package let sessionId: String
-    package let decisions: [InboxItem]
+struct SessionDecisionsEnvelope: Decodable {
+    let sessionId: String
+    let decisions: [InboxItem]
 }
 
 extension HubModel {
     /// Reads the session's decisions off the main thread. Only the newest load publishes: every pick
     /// starts one for the same session, and an older reply arriving last would show the older pick.
     /// The newest one always stops the spinner, even when its session is no longer selected.
-    package func loadDecisions(for sessionId: String) {
+    func loadDecisions(for sessionId: String) {
         loadingDecisions = true
         decisionsRequest += 1
         let request = decisionsRequest

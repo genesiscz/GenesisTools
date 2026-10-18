@@ -7,24 +7,24 @@ import Foundation
 // A review of one repository has one root with no prefix, and its paths read as they always did.
 
 /// One repository of a review, with its last load.
-package struct ReviewRoot: Equatable {
+struct ReviewRoot: Equatable {
     /// The folder as the hub stores it: the session's own folder, or one added in Files.
-    package let folder: String
+    let folder: String
     /// The git repository that holds `folder`; nil when the folder is not inside one.
-    package var repo: URL?
+    var repo: URL?
     /// Whether Changes shows this root. An unticked root keeps its folder row and loads nothing.
-    package var shown = true
+    var shown = true
     /// An added folder: its row offers Remove. The session's own folder cannot be removed.
-    package var removable = false
+    var removable = false
     /// The top-level folder name in the tree and in the diff's file headers; "" for a single root.
-    package var prefix = ""
+    var prefix = ""
     /// Repo-relative files of the last load (ids and paths without the prefix).
-    package var files: [DiffFile] = []
-    package var branch = ""
+    var files: [DiffFile] = []
+    var branch = ""
     /// Why this root has no files: a failed load, or a folder outside git. Shown on its folder row.
-    package var error: String?
+    var error: String?
 
-    package init(folder: String, repo: URL?, shown: Bool = true, removable: Bool = false) {
+    init(folder: String, repo: URL?, shown: Bool = true, removable: Bool = false) {
         self.folder = folder
         self.repo = repo
         self.shown = shown
@@ -32,22 +32,22 @@ package struct ReviewRoot: Equatable {
     }
 
     /// The tree's row id for this root's folder.
-    package var rowID: String { "dir:\(prefix)" }
+    var rowID: String { "dir:\(prefix)" }
 
     /// A repo-relative id or path as the merged diff names it.
-    package func global(_ local: String) -> String {
+    func global(_ local: String) -> String {
         prefix.isEmpty ? local : "\(prefix)/\(local)"
     }
 
     /// The repo-relative part of a merged id or path; nil when it is not under this root.
-    package func local(_ global: String) -> String? {
+    func local(_ global: String) -> String? {
         guard !prefix.isEmpty else { return global }
         let head = prefix + "/"
         return global.hasPrefix(head) ? String(global.dropFirst(head.count)) : nil
     }
 
     /// A file of this root as the merged diff shows it.
-    package func prefixed(_ file: DiffFile) -> DiffFile {
+    func prefixed(_ file: DiffFile) -> DiffFile {
         guard !prefix.isEmpty else { return file }
         var copy = file
         copy.id = global(file.id)
@@ -57,21 +57,21 @@ package struct ReviewRoot: Equatable {
     }
 
     /// The same roots, ignoring what the last load found: a change here needs a new load.
-    package func sameSetup(as other: ReviewRoot) -> Bool {
+    func sameSetup(as other: ReviewRoot) -> Bool {
         folder == other.folder && repo?.path == other.repo?.path && shown == other.shown && removable == other.removable && prefix == other.prefix
     }
 }
 
 /// What a root's folder row can ask of the hub: tick or untick the root, or remove an added folder.
-package struct ReviewRootActions {
-    package var setShown: (_ folder: String, _ shown: Bool) -> Void
-    package var remove: (_ folder: String) -> Void
+struct ReviewRootActions {
+    var setShown: (_ folder: String, _ shown: Bool) -> Void
+    var remove: (_ folder: String) -> Void
 }
 
-package enum ReviewRoots {
+enum ReviewRoots {
     /// Unique top-level names for these repository paths: the folder name, and where two share it the
     /// parent's name in brackets ("notes (work)"). Never a slash, so the name is one folder of the tree.
-    package static func prefixes(for paths: [String]) -> [String] {
+    static func prefixes(for paths: [String]) -> [String] {
         let names = paths.map { ($0 as NSString).lastPathComponent }
         var result: [String] = []
         for (index, path) in paths.enumerated() {
@@ -92,12 +92,12 @@ package enum ReviewRoots {
     }
 
     /// Every shown root's files as one list, in root order, each under its root's prefix.
-    package static func merge(_ roots: [ReviewRoot]) -> [DiffFile] {
+    static func merge(_ roots: [ReviewRoot]) -> [DiffFile] {
         roots.filter(\.shown).flatMap { root in root.files.map(root.prefixed) }
     }
 
     /// The root a merged file id or path belongs to.
-    package static func index(of global: String, in roots: [ReviewRoot]) -> Int? {
+    static func index(of global: String, in roots: [ReviewRoot]) -> Int? {
         if roots.count == 1 {
             return 0
         }
@@ -107,7 +107,7 @@ package enum ReviewRoots {
 
     /// A path as the merged diff names it: an absolute path inside a root (the deepest repository that
     /// holds it), else a path relative to the first root.
-    package static func global(path: String, in roots: [ReviewRoot]) -> String {
+    static func global(path: String, in roots: [ReviewRoot]) -> String {
         guard path.hasPrefix("/") else {
             return roots.first?.global(path) ?? path
         }

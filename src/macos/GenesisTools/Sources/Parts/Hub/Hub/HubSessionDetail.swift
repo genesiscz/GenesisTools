@@ -10,55 +10,55 @@ import SwiftUI
 /// screen: in the Agents mode each list refresh with new counts re-ran the open lead's transcript list
 /// (`hub.agents.refresh.render`, 124 ms of main thread on average, 2026-10-10). The callbacks act on the hub
 /// model and on this session, so comparing the session and the options is enough.
-package struct HubTranscriptPane: View, Equatable {
-    package let session: HubSession
-    package var onShowChange: ((String, Int?) -> Void)?
-    package var onOpenSubagent: ((SessionSubagent) -> Void)?
-    package var showsSidebar = true
-    package var transcriptQuery: String?
-    package var agentChild = false
+struct HubTranscriptPane: View, Equatable {
+    let session: HubSession
+    var onShowChange: ((String, Int?) -> Void)?
+    var onOpenSubagent: ((SessionSubagent) -> Void)?
+    var showsSidebar = true
+    var transcriptQuery: String?
+    var agentChild = false
 
     /// The closures are left out, so a pane that compares equal keeps the closures it was first given. A caller may
     /// therefore capture only references that never change (the hub model) and values compared here (`session`):
     /// a closure that captured anything else, such as the selected tab, would act on its first value without a sign.
-    package static func == (left: HubTranscriptPane, right: HubTranscriptPane) -> Bool {
+    static func == (left: HubTranscriptPane, right: HubTranscriptPane) -> Bool {
         left.session == right.session && left.showsSidebar == right.showsSidebar
             && left.transcriptQuery == right.transcriptQuery && left.agentChild == right.agentChild
     }
 
-    package var body: some View {
+    var body: some View {
         HubSessionDetailHost(session: session, onShowChange: onShowChange, onOpenSubagent: onOpenSubagent,
                              showsSidebar: showsSidebar, transcriptQuery: transcriptQuery, agentChild: agentChild)
     }
 }
 
-package struct HubSessionDetailHost: View {
-    package let session: HubSession
+struct HubSessionDetailHost: View {
+    let session: HubSession
     /// A tool row's "Open diff": absolute path and line of the change.
-    package var onShowChange: ((String, Int?) -> Void)?
+    var onShowChange: ((String, Int?) -> Void)?
     /// A sidebar sub-agent row: the hub opens it in the Agents mode.
-    package var onOpenSubagent: ((SessionSubagent) -> Void)?
+    var onOpenSubagent: ((SessionSubagent) -> Void)?
     /// False in a multi-pane layout: the screen's own sidebar starts folded to leave room.
-    package var showsSidebar = true
+    var showsSidebar = true
     /// Opens with this transcript search applied (`--transcript-query`, snapshots and links).
-    package var transcriptQuery: String?
+    var transcriptQuery: String?
     /// A sub-agent or worker opened from the Agents mode (Hub/HubAgents.swift): `session.sessionId` is the
     /// transcript's query for `tools ai sessions tail` (its file or worker name), not a session of its own,
     /// so the per-session extras (spend, sub-agent list, terminal, insights, resume) stay off.
-    package var agentChild = false
+    var agentChild = false
     /// Paging (GenesisKit `TranscriptPaging`): 150 turns per earlier page, a first page of 12 (viewport
     /// first). `GENESIS_HUB_FIRST_PAGE=150` restores the old one-shot window, for A/B measurements.
     package static let pageSize = TranscriptPaging.pageSize
-    package static let firstPage = TranscriptPaging.firstPage
+    static let firstPage = TranscriptPaging.firstPage
     /// With `GENESIS_HUB_FILL=1` only: the rest of the window arrives in chunks of this many turns while
     /// the reader is idle. Off by default: each prepend made the List measure every row again, 1 to 3.6 s
     /// of main thread per step on a big session (6 steps, app-perf.log 2026-10-01 01:10), which read as
     /// "lags hard every few seconds" and a scroll jump under "Loading earlier turns…". Earlier turns
     /// now come only from the reader's "Load earlier turns".
-    package static let fillChunk = 24
-    package static let autoFill = ProcessInfo.processInfo.environment["GENESIS_HUB_FILL"] == "1"
+    static let fillChunk = 24
+    static let autoFill = ProcessInfo.processInfo.environment["GENESIS_HUB_FILL"] == "1"
     /// Posted when a window's first page has loaded or failed: a `--snapshot` or `--bench` run starts then.
-    package static let firstPageDone = Notification.Name("hub.transcript.firstPageDone")
+    static let firstPageDone = Notification.Name("hub.transcript.firstPageDone")
 
     @State private var nativeLog: SessionNativeLog?
     @State private var nativeSummary: SessionNativeSummary?
@@ -81,7 +81,7 @@ package struct HubSessionDetailHost: View {
     /// A live window grows by every followed turn. Past this, while the reader is at the end, the oldest turns go
     /// (back to `pageSize`; "Load earlier turns" brings them back). A 336-turn window made one scroll re-measure all
     /// of its rows: a 5.7 s main-thread stall, 41% in AppKit keeping the top row stable (2026-10-07).
-    package static let liveWindowLimit = TranscriptPaging.pageSize * 2
+    static let liveWindowLimit = TranscriptPaging.pageSize * 2
     @State private var document = TranscriptDocument.empty
     @State private var digest = SessionActivityDigest.empty
     @State private var loadState: TranscriptLoadState = .loading
@@ -117,7 +117,7 @@ package struct HubSessionDetailHost: View {
     @State private var subagents: [SessionSubagent]?
     @State private var subagentsReadAt = Date.distantPast
 
-    package var body: some View {
+    var body: some View {
         let _ = RenderProbe.hit("session.host.body")
         SessionDetailScreen(
             info: info,
@@ -317,14 +317,14 @@ package struct HubSessionDetailHost: View {
         return info
     }
 
-    package static func branch(of cwd: String) -> String? {
+    static func branch(of cwd: String) -> String? {
         SessionGitBranch.read(cwd: cwd)
     }
 
     /// The branch the session ran on: the folder's branch while it runs there now, else the branch its
     /// transcript recorded (`gitBranch` from `tools ai usage sessions`). An old session no longer
     /// shows whatever the folder has checked out today, nor that branch's PR.
-    package static func branch(of session: HubSession) -> String? {
+    static func branch(of session: HubSession) -> String? {
         let recorded = session.gitBranch.flatMap { $0.isEmpty ? nil : $0 }
         guard !session.cwd.isEmpty else { return recorded }
         if session.isLive || recorded == nil {
@@ -336,7 +336,7 @@ package struct HubSessionDetailHost: View {
 
     /// The web page of `branch` in the session folder's repository, which need not be the branch
     /// checked out there now.
-    package static func branchURL(_ branch: String, facts: RepoFacts?) -> URL? {
+    static func branchURL(_ branch: String, facts: RepoFacts?) -> URL? {
         guard let facts else { return nil }
         if facts.branch == branch {
             return facts.branchURL
@@ -744,7 +744,7 @@ package struct HubSessionDetailHost: View {
         }
     }
 
-    package static func searchTurns(earlier: [TranscriptTurn], window: [TranscriptTurn], start: Int) -> [TranscriptTurn] {
+    static func searchTurns(earlier: [TranscriptTurn], window: [TranscriptTurn], start: Int) -> [TranscriptTurn] {
         earlier.filter { ($0.index ?? Int.max) < start } + window.enumerated().map { offset, turn in
             var copy = turn
             copy.index = start + offset
@@ -753,7 +753,7 @@ package struct HubSessionDetailHost: View {
     }
 
     /// What a transcript.open line names: the session and the rows by kind, with the text a row lays out.
-    package static func shape(_ document: TranscriptDocument, session: String) -> String {
+    static func shape(_ document: TranscriptDocument, session: String) -> String {
         var counts: [String: Int] = [:]
         var chars = 0
         var rows = 0
@@ -823,15 +823,15 @@ package struct HubSessionDetailHost: View {
 /// transcript has a follow, so most sessions have no entry and keep the list's own live rule. Published only
 /// when a session's coarse state flips (a turn starts or ends), not on every tool call.
 @MainActor
-package final class HubLiveActivityStore: ObservableObject {
-    package enum Work: Equatable {
+final class HubLiveActivityStore: ObservableObject {
+    enum Work: Equatable {
         case working, waiting
     }
 
-    package static let shared = HubLiveActivityStore()
+    static let shared = HubLiveActivityStore()
     @Published package private(set) var work: [String: Work] = [:]
 
-    package func set(_ activity: TranscriptLiveActivity?, for sessionId: String) {
+    func set(_ activity: TranscriptLiveActivity?, for sessionId: String) {
         // A stalled think is not work: the row keeps the list's own live rule.
         let next: Work? = if activity?.isWorking == true {
             .working
@@ -846,7 +846,7 @@ package final class HubLiveActivityStore: ObservableObject {
 }
 
 /// `tools ai sessions subagents --json`: every sub-agent of a Claude session and whether it still works.
-package enum HubSubagents {
+enum HubSubagents {
     private struct Envelope: Decodable {
         struct Agent: Decodable {
             let id: String
@@ -863,7 +863,7 @@ package enum HubSubagents {
     }
 
     /// Blocking: call off the main thread. nil when the read failed (the digest's rows stay).
-    package static func list(sessionId: String) -> [SessionSubagent]? {
+    static func list(sessionId: String) -> [SessionSubagent]? {
         do {
             let rows = try decode(ToolsCLIRunner.run(["ai", "sessions", "subagents", sessionId, "--json"]))
             let running = rows.filter { $0.state == .running }.count
@@ -876,7 +876,7 @@ package enum HubSubagents {
     }
 
     /// The command's stdout as rows (src/utils/ai/transcripts/subagents.ts).
-    package static func decode(_ data: Data) throws -> [SessionSubagent] {
+    static func decode(_ data: Data) throws -> [SessionSubagent] {
         try JSONDecoder().decode(Envelope.self, from: MonitorJSON.dataByDroppingPreamble(data)).subagents.map(row)
     }
 
@@ -901,25 +901,25 @@ package enum HubSubagents {
 }
 
 /// The `tools ai sessions grep` / `tail --turns` doors behind the transcript's whole-session ⌘F.
-package enum HubSessionSearch {
+enum HubSessionSearch {
     /// Earlier turns merged into one search view at most (the latest ones win).
-    package static let maxEarlier = 150
+    static let maxEarlier = 150
 
-    package struct Hits: Decodable {
-        package let total: Int
-        package let turns: [Int]
-        package let truncated: Bool
+    struct Hits: Decodable {
+        let total: Int
+        let turns: [Int]
+        let truncated: Bool
     }
 
     /// Blocking: call off the main thread.
-    package static func grep(sessionId: String, query: String) throws -> Hits {
+    static func grep(sessionId: String, query: String) throws -> Hits {
         // `--` first: a query such as "-v" is the text to find, not an option (commander refuses it).
         let data = try ToolsCLIRunner.run(["ai", "sessions", "grep", "--json", "--limit", "500", "--", sessionId, query])
         return try JSONDecoder().decode(Hits.self, from: MonitorJSON.dataByDroppingPreamble(data))
     }
 
     /// Blocking: call off the main thread. The turns carry their session-wide `index`.
-    package static func turns(sessionId: String, indices: [Int]) throws -> [TranscriptTurn] {
+    static func turns(sessionId: String, indices: [Int]) throws -> [TranscriptTurn] {
         guard !indices.isEmpty else { return [] }
         let list = indices.map(String.init).joined(separator: ",")
         let data = try ToolsCLIRunner.run(["ai", "sessions", "tail", sessionId, "--json", "--turns", list])

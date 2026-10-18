@@ -5,9 +5,9 @@ import SwiftUI
 // pick-then-send behavior, one store (R2): a pick made here shows in the Inbox and in /qa, and the
 // other way round. ⌘F: the shared panel find (Hub/HubPanelFind.swift).
 
-package struct DecisionsView: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var inbox: HubInboxModel
+struct DecisionsView: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.decisions.filter") private var filter = "open"
     @State private var find = PanelFindModel(scope: "decisions", title: "the decisions")
 
@@ -47,7 +47,7 @@ package struct DecisionsView: View {
         )
     }
 
-    package var body: some View {
+    var body: some View {
         // The find bar is its own row, not a top inset over the scroll view: selectable text drew
         // through the inset's background.
         VStack(spacing: 0) {

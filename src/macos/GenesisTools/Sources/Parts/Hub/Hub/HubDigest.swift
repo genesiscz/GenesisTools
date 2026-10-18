@@ -7,100 +7,100 @@ import SwiftUI
 // (Hub/HubRules.swift). "Export to vault" writes the markdown note with `--export` into the folder
 // kept in the hub config (`tools hub digest config --folder`), asked for once with a folder picker.
 
-package struct HubDigest: Decodable, Equatable, Sendable {
-    package struct Session: Decodable, Equatable, Identifiable, Sendable {
-        package let sessionId: String
-        package let provider: String?
-        package let title: String
-        package let project: String?
-        package let cwd: String?
-        package let branch: String?
-        package let startedAt: String?
-        package let lastAt: String
-        package let commits: Int
-        package var id: String { sessionId }
+struct HubDigest: Decodable, Equatable, Sendable {
+    struct Session: Decodable, Equatable, Identifiable, Sendable {
+        let sessionId: String
+        let provider: String?
+        let title: String
+        let project: String?
+        let cwd: String?
+        let branch: String?
+        let startedAt: String?
+        let lastAt: String
+        let commits: Int
+        var id: String { sessionId }
     }
 
-    package struct Commit: Decodable, Equatable, Identifiable, Sendable {
-        package let sha: String
-        package let subject: String
-        package let at: String
-        package let project: String?
-        package let repo: String?
-        package let sessionId: String?
-        package var id: String { sha }
+    struct Commit: Decodable, Equatable, Identifiable, Sendable {
+        let sha: String
+        let subject: String
+        let at: String
+        let project: String?
+        let repo: String?
+        let sessionId: String?
+        var id: String { sha }
     }
 
-    package struct RepoFiles: Decodable, Equatable, Identifiable, Sendable {
-        package struct Path: Decodable, Equatable, Hashable, Sendable {
-            package let path: String
-            package let added: Int
-            package let removed: Int
+    struct RepoFiles: Decodable, Equatable, Identifiable, Sendable {
+        struct Path: Decodable, Equatable, Hashable, Sendable {
+            let path: String
+            let added: Int
+            let removed: Int
         }
 
-        package let repo: String
-        package let project: String
-        package let files: Int
-        package let added: Int
-        package let removed: Int
-        package let paths: [Path]
-        package var id: String { repo }
+        let repo: String
+        let project: String
+        let files: Int
+        let added: Int
+        let removed: Int
+        let paths: [Path]
+        var id: String { repo }
     }
 
-    package struct Files: Decodable, Equatable, Sendable {
-        package let total: Int
-        package let added: Int
-        package let removed: Int
-        package let repos: [RepoFiles]
+    struct Files: Decodable, Equatable, Sendable {
+        let total: Int
+        let added: Int
+        let removed: Int
+        let repos: [RepoFiles]
     }
 
-    package struct Pr: Decodable, Equatable, Identifiable, Sendable {
-        package let ref: String
-        package let title: String
-        package let url: String?
-        package let at: String
-        package var id: String { "\(ref)@\(at)" }
+    struct Pr: Decodable, Equatable, Identifiable, Sendable {
+        let ref: String
+        let title: String
+        let url: String?
+        let at: String
+        var id: String { "\(ref)@\(at)" }
     }
 
-    package struct Prs: Decodable, Equatable, Sendable {
-        package let opened: [Pr]
-        package let merged: [Pr]
+    struct Prs: Decodable, Equatable, Sendable {
+        let opened: [Pr]
+        let merged: [Pr]
     }
 
-    package struct Decision: Decodable, Equatable, Identifiable, Sendable {
-        package let id: String
-        package let number: Int
-        package let title: String
-        package let state: String
-        package let sessionId: String
-        package let project: String?
-        package let at: String
-        package let answer: String?
+    struct Decision: Decodable, Equatable, Identifiable, Sendable {
+        let id: String
+        let number: Int
+        let title: String
+        let state: String
+        let sessionId: String
+        let project: String?
+        let at: String
+        let answer: String?
     }
 
-    package struct Decisions: Decodable, Equatable, Sendable {
-        package let posted: [Decision]
-        package let answered: [Decision]
+    struct Decisions: Decodable, Equatable, Sendable {
+        let posted: [Decision]
+        let answered: [Decision]
     }
 
-    package struct Ci: Decodable, Equatable, Sendable {
-        package let failed: Int
-        package let passed: Int
+    struct Ci: Decodable, Equatable, Sendable {
+        let failed: Int
+        let passed: Int
     }
 
-    package let date: String
-    package let sessions: [Session]
-    package let commits: [Commit]
-    package let files: Files
-    package let prs: Prs
-    package let decisions: Decisions
-    package let ci: Ci
-    package let pushes: Int
-    package let warnings: [String]
-    package let exported: String?
+    let date: String
+    let sessions: [Session]
+    let commits: [Commit]
+    let files: Files
+    let prs: Prs
+    let decisions: Decisions
+    let ci: Ci
+    let pushes: Int
+    let warnings: [String]
+    let exported: String?
 
     /// "7 sessions · 12 commits · 31 files · 2 PRs opened · 3 decisions": the header line.
-    package var summary: String {
+    var summary: String {
         [
             Plural.count(sessions.count, "session"),
             Plural.count(commits.count, "commit"),
@@ -111,27 +111,27 @@ package struct HubDigest: Decodable, Equatable, Sendable {
     }
 }
 
-package struct HubDigestConfig: Decodable, Equatable, Sendable {
-    package let folder: String?
+struct HubDigestConfig: Decodable, Equatable, Sendable {
+    let folder: String?
 }
 
-package enum HubDigestDay {
-    package static let format: DateFormatter = {
+enum HubDigestDay {
+    static let format: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
 
-    package static func string(_ date: Date) -> String { format.string(from: date) }
+    static func string(_ date: Date) -> String { format.string(from: date) }
 
     /// The day before or after `day` (YYYY-MM-DD); never past today.
-    package static func step(_ day: String, by offset: Int, today: Date = Date()) -> String {
+    static func step(_ day: String, by offset: Int, today: Date = Date()) -> String {
         guard let date = format.date(from: day), let next = Calendar.current.date(byAdding: .day, value: offset, to: date) else { return day }
         return next > today ? string(today) : string(next)
     }
 
-    package static func title(_ day: String, today: Date = Date()) -> String {
+    static func title(_ day: String, today: Date = Date()) -> String {
         if day == string(today) { return "Today" }
         if let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: today), day == string(yesterday) { return "Yesterday" }
         guard let date = format.date(from: day) else { return day }
@@ -143,16 +143,16 @@ package enum HubDigestDay {
 }
 
 @MainActor
-package final class HubDigestModel: ObservableObject {
-    @Published package var day = HubDigestDay.string(Date())
+final class HubDigestModel: ObservableObject {
+    @Published var day = HubDigestDay.string(Date())
     @Published package private(set) var digest: HubDigest?
     @Published package private(set) var loading = false
     @Published package private(set) var error: String?
-    @Published package var notice: String?
+    @Published var notice: String?
     @Published package private(set) var exporting = false
     private var generation = 0
 
-    package func load() {
+    func load() {
         generation += 1
         let token = generation
         loading = true
@@ -172,13 +172,13 @@ package final class HubDigestModel: ObservableObject {
         }
     }
 
-    package func step(_ offset: Int) {
+    func step(_ offset: Int) {
         day = HubDigestDay.step(day, by: offset)
         load()
     }
 
     /// Writes the note into the configured folder; with none yet, asks for one first and saves it.
-    package func export() {
+    func export() {
         guard !exporting else { return }
         exporting = true
         let day = day
@@ -202,7 +202,7 @@ package final class HubDigestModel: ObservableObject {
         }
     }
 
-    package func changeFolder() {
+    func changeFolder() {
         guard let picked = Self.pickFolder() else { return }
         Task {
             do {
@@ -226,12 +226,12 @@ package final class HubDigestModel: ObservableObject {
     }
 }
 
-package struct HubDigestPanel: View {
-    @ObservedObject package var hub: HubModel
-    package let close: () -> Void
+struct HubDigestPanel: View {
+    @ObservedObject var hub: HubModel
+    let close: () -> Void
     @StateObject private var model = HubDigestModel()
 
-    package var body: some View {
+    var body: some View {
         HubDailyCard(width: 860, close: close) {
             header
                 .padding(12)

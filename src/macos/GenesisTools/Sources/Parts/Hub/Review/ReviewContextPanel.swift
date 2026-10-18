@@ -5,21 +5,21 @@ import SwiftUI
 /// (`ReviewContextPanel.collapsedKey` is registered as true), and nothing in it exists until the
 /// reader opens it: `ResizableSidePanel` builds its content only while open, and only the chosen
 /// tab's view is built, so the transcript's store and its `tools` calls start on the first open.
-package enum ReviewContextPanel {
-    package static let key = "review.context"
-    package static let collapsedKey = "panel.\(key).collapsed"
+enum ReviewContextPanel {
+    static let key = "review.context"
+    static let collapsedKey = "panel.\(key).collapsed"
 
     /// Folded until the reader opens it once; from then on the saved state wins.
-    package static func registerDefaults() {
+    static func registerDefaults() {
         HubDefaults.store.register(defaults: [collapsedKey: true])
     }
 
-    package enum Tab: String, CaseIterable, Identifiable {
+    enum Tab: String, CaseIterable, Identifiable {
         case commits, threads, session
 
-        package var id: String { rawValue }
+        var id: String { rawValue }
 
-        package var title: String {
+        var title: String {
             switch self {
             case .commits: return "Commits"
             case .threads: return "Threads"
@@ -27,7 +27,7 @@ package enum ReviewContextPanel {
             }
         }
 
-        package var tooltip: String {
+        var tooltip: String {
             switch self {
             case .commits: return "The branch's commits: pick one to see only its changes"
             case .threads: return "Every review thread of the PR/MR, the outdated ones included"
@@ -38,7 +38,7 @@ package enum ReviewContextPanel {
 
     /// The tabs this review has: threads need a PR/MR, the transcript a session.
     @MainActor
-    package static func tabs(model: ReviewModel) -> [Tab] {
+    static func tabs(model: ReviewModel) -> [Tab] {
         Tab.allCases.filter { tab in
             switch tab {
             case .commits: return true
@@ -49,11 +49,11 @@ package enum ReviewContextPanel {
     }
 }
 
-package struct ReviewContextPanelView: View {
-    @ObservedObject package var model: ReviewModel
+struct ReviewContextPanelView: View {
+    @ObservedObject var model: ReviewModel
     @AppStorage("review.context.tab", store: HubDefaults.store) private var saved = ReviewContextPanel.Tab.threads.rawValue
 
-    package var body: some View {
+    var body: some View {
         let tabs = ReviewContextPanel.tabs(model: model)
         let tab = ReviewContextPanel.Tab(rawValue: saved).flatMap { tabs.contains($0) ? $0 : nil } ?? tabs.last ?? .commits
         VStack(spacing: 0) {

@@ -6,11 +6,11 @@ import SwiftUI
 private let pushOrange = Color(red: 1.0, green: 0.63, blue: 0.12)
 
 /// The header's sign of a newer push: one click moves the diff to it.
-package struct ReloadPill: View {
-    package let news: PRPushNews
-    package let reload: () -> Void
+struct ReloadPill: View {
+    let news: PRPushNews
+    let reload: () -> Void
 
-    package var body: some View {
+    var body: some View {
         Button(action: reload) {
             Label("Reload", systemImage: "arrow.clockwise")
                 .font(.system(size: 11.5, weight: .semibold))
@@ -26,11 +26,11 @@ package struct ReloadPill: View {
 }
 
 /// Above the diff: who pushed, what the new commits are, and the two ways to look at them.
-package struct PushNewsBanner: View {
-    @ObservedObject package var model: ReviewModel
-    package let news: PRPushNews
+struct PushNewsBanner: View {
+    @ObservedObject var model: ReviewModel
+    let news: PRPushNews
 
-    package var body: some View {
+    var body: some View {
         HStack(alignment: .top, spacing: 10) {
             PushAvatar(author: news.newest.pushedBy)
             VStack(alignment: .leading, spacing: 5) {
@@ -100,11 +100,11 @@ package struct PushNewsBanner: View {
 }
 
 /// The pusher's picture, or their initial while it loads or when the host will not give it.
-package struct PushAvatar: View {
-    package let author: PRVersion.Author?
-    package var size: CGFloat = 26
+struct PushAvatar: View {
+    let author: PRVersion.Author?
+    var size: CGFloat = 26
 
-    package var body: some View {
+    var body: some View {
         UserAvatar(url: author?.avatarUrl, username: author?.username ?? "?", size: size, tint: pushOrange.opacity(0.85))
             .instantTooltip(author.map { "\($0.name) (@\($0.username))" } ?? "The host did not say who pushed")
     }
@@ -112,16 +112,16 @@ package struct PushAvatar: View {
 
 /// Two pushes to compare. Each row is one push (GitLab's diff versions, GitHub's force pushes and
 /// head), newest first; the diff then shows only what changed between them, a rebase left out.
-package struct ComparePushesSheet: View {
-    @ObservedObject package var model: ReviewModel
-    @ObservedObject package var store: PRVersionsStore
+struct ComparePushesSheet: View {
+    @ObservedObject var model: ReviewModel
+    @ObservedObject var store: PRVersionsStore
     @Environment(\.dismiss) private var dismiss
     @State private var fromID: String?
     @State private var toID: String?
 
     private var versions: [PRVersion] { store.payload?.versions ?? [] }
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Compare pushes")

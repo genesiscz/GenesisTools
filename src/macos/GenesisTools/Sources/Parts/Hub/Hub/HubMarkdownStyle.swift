@@ -7,7 +7,7 @@ import SwiftUI
 extension MarkdownStyle {
     /// Light text on the dark panels, compact semibold headings, code that wraps with no language line,
     /// every block selectable, the HTML review bots write cleaned, `[[x]]` left as text.
-    package static let hub = MarkdownStyle().with {
+    static let hub = MarkdownStyle().with {
         $0.textColor = .white.opacity(0.92)
         $0.secondaryColor = .white.opacity(0.55)
         $0.mutedColor = .white.opacity(0.35)

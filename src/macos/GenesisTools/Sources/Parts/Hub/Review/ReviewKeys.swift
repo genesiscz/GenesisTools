@@ -7,34 +7,34 @@ import Foundation
 /// What a `--snapshot` run does before it captures, so the keys and the Fix selection can be checked
 /// without a screen: `--select-open <n>`, `--step-threads <n>` (j), `--reply` (r), `--keys` (?), `--fix-form`,
 /// `--loading`.
-package struct ReviewSnapshotDemo {
-    package var keys = false
-    package var selectOpen = 0
-    package var steps = 0
-    package var reply = false
+struct ReviewSnapshotDemo {
+    var keys = false
+    var selectOpen = 0
+    var steps = 0
+    var reply = false
     /// `--toggle`: x on the marked thread (it joins the Fix selection).
-    package var toggle = false
-    package var fixForm = false
+    var toggle = false
+    var fixForm = false
     /// `--agent-send`: the header's "Send N…" form, open, with its message preview.
-    package var agentSend = false
+    var agentSend = false
     /// `--drag-context <dx> [--drag-scroll <y>]`: the Context panel's edge dragged by dx and released, the threads
     /// list scrolled to y first; logs the list's top row and the diff's scroll before and after the release.
-    package var dragContext: CGFloat?
-    package var dragScroll: CGFloat = 0
+    var dragContext: CGFloat?
+    var dragScroll: CGFloat = 0
     /// `--blame <path>:<line>`: that line's agent blame tip, as a hover would show it.
-    package var blame: (path: String, line: Int)?
+    var blame: (path: String, line: Int)?
     /// `--loading`: the header as it looks while the diff loads (the spinner beside the totals).
-    package var loading = false
+    var loading = false
 
     private var needsPR: Bool { keys || selectOpen > 0 || steps > 0 || reply || toggle || fixForm || agentSend }
 
-    package static func blameTarget(_ value: String?) -> (path: String, line: Int)? {
+    static func blameTarget(_ value: String?) -> (path: String, line: Int)? {
         guard let value, let colon = value.lastIndex(of: ":"), let line = Int(value[value.index(after: colon)...]) else { return nil }
         return (String(value[..<colon]), line)
     }
 
     /// Waits for the PR threads (a half-second check, 20 s at most), acts, then calls `done`.
-    package func apply(to model: ReviewModel, waited: Double = 0, done: @escaping () -> Void) {
+    func apply(to model: ReviewModel, waited: Double = 0, done: @escaping () -> Void) {
         // A push notice the snapshot should show arrives with the versions answer, after the threads.
         if model.versions?.loading == true, waited < 20 {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
@@ -101,9 +101,9 @@ package struct ReviewSnapshotDemo {
     }
 }
 
-package enum ReviewKeyNav {
+enum ReviewKeyNav {
     /// The live PR thread cards in the order the diff shows them: file by file, then by line.
-    package static func threadCards(_ comments: [RenderedComment], files: [DiffFile]) -> [RenderedComment] {
+    static func threadCards(_ comments: [RenderedComment], files: [DiffFile]) -> [RenderedComment] {
         let order = Dictionary(files.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         return comments
             .filter { $0.kind == "thread" && $0.live != nil }
@@ -111,7 +111,7 @@ package enum ReviewKeyNav {
     }
 
     /// The agent's proposal draft cards in the order the diff shows them.
-    package static func draftCards(_ comments: [RenderedComment], files: [DiffFile]) -> [RenderedComment] {
+    static func draftCards(_ comments: [RenderedComment], files: [DiffFile]) -> [RenderedComment] {
         let order = Dictionary(files.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         return comments
             .filter { $0.kind == "draft" }
@@ -120,7 +120,7 @@ package enum ReviewKeyNav {
 
     /// The card j / k lands on. From no card, j starts at the first card in or after the selected file
     /// and k at the last card before or in it; both wrap around at the ends.
-    package static func step(_ cards: [RenderedComment], from current: String?, by delta: Int, files: [DiffFile], selectedFile: String?) -> String? {
+    static func step(_ cards: [RenderedComment], from current: String?, by delta: Int, files: [DiffFile], selectedFile: String?) -> String? {
         guard !cards.isEmpty else { return nil }
         if let current, let index = cards.firstIndex(where: { $0.id == current }) {
             return cards[(index + delta % cards.count + cards.count) % cards.count].id
@@ -135,7 +135,7 @@ package enum ReviewKeyNav {
     }
 
     /// n / p: the next or previous file, stopping at the ends.
-    package static func stepFile(_ files: [DiffFile], from selected: String?, by delta: Int) -> String? {
+    static func stepFile(_ files: [DiffFile], from selected: String?, by delta: Int) -> String? {
         guard !files.isEmpty else { return nil }
         let index = selected.flatMap { id in files.firstIndex { $0.id == id } }
         guard let index else { return files[delta > 0 ? 0 : files.count - 1].id }
@@ -143,7 +143,7 @@ package enum ReviewKeyNav {
     }
 
     /// `live:<id>` and a proposal's `thread:<id>` name the same PR thread.
-    package static func threadID(ofCard id: String) -> String {
+    static func threadID(ofCard id: String) -> String {
         for prefix in ["live:", "thread:"] where id.hasPrefix(prefix) {
             return String(id.dropFirst(prefix.count))
         }
@@ -152,9 +152,9 @@ package enum ReviewKeyNav {
 }
 
 extension ReviewSnapshotDemo {
-    package enum DragReadiness { case waiting, ready, timedOut }
+    enum DragReadiness { case waiting, ready, timedOut }
 
-    package static func dragReadiness(settled: Bool, hasAnchor: Bool, waited: Double) -> DragReadiness {
+    static func dragReadiness(settled: Bool, hasAnchor: Bool, waited: Double) -> DragReadiness {
         if settled && hasAnchor { return .ready }
         return waited >= 20 ? .timedOut : .waiting
     }

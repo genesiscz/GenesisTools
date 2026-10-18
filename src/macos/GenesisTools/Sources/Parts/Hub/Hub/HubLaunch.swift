@@ -6,12 +6,12 @@ import SwiftUI
 // (GenesisKit: `CmuxTree`, `CmuxTarget`, `CmuxTargetPicker`, `CmuxSessionPanel`).
 
 /// What to open.
-package enum TerminalLaunch {
+enum TerminalLaunch {
     case resume(HubSession)
     case command([String], cwd: String, name: String)
 }
 
-package protocol TerminalHost: Sendable {
+protocol TerminalHost: Sendable {
     var name: String { get }
     var isAvailable: Bool { get }
     /// Blocking (spawns `tools`): call off the main thread.
@@ -26,21 +26,21 @@ package protocol TerminalHost: Sendable {
 
 /// A caller that knows no provider (the review window's session) goes through Claude's resolver.
 extension TerminalHost {
-    package func focus(sessionId: String) -> String? { focus(sessionId: sessionId, provider: nil) }
-    package func send(sessionId: String, text: String) -> String? { send(sessionId: sessionId, provider: nil, text: text) }
+    func focus(sessionId: String) -> String? { focus(sessionId: sessionId, provider: nil) }
+    func send(sessionId: String, text: String) -> String? { send(sessionId: sessionId, provider: nil, text: text) }
 }
 
 /// The `tools <agent>` that owns a session's cmux resolver: `tools codex cmux` and `tools grok cmux` know
 /// their own history (Grok has no journal and its own fallback); anything else goes through Claude's.
-package func cmuxTool(provider: String?) -> String {
+func cmuxTool(provider: String?) -> String {
     switch provider {
     case "codex", "grok": return provider ?? "claude"
     default: return "claude"
     }
 }
 
-package enum TerminalHosts {
-    package static let current: TerminalHost = CmuxHost()
+enum TerminalHosts {
+    static let current: TerminalHost = CmuxHost()
 }
 
 // MARK: - cmux driver
@@ -49,18 +49,18 @@ package enum TerminalHosts {
 /// `tools claude cmux open-session`, focus through `tools claude cmux focus`. Other agents and plain
 /// commands are typed into a new or existing surface with the cmux CLI until `tools cmux launch`
 /// (handoff h_s8belp3o) covers every agent.
-package struct CmuxHost: TerminalHost {
-    package let name = "cmux"
+struct CmuxHost: TerminalHost {
+    let name = "cmux"
 
-    package var isAvailable: Bool { Self.binary != nil }
+    var isAvailable: Bool { Self.binary != nil }
 
-    package static var binary: String? {
+    static var binary: String? {
         ["/Applications/cmux.app/Contents/Resources/bin/cmux", "~/.local/bin/cmux", "/usr/local/bin/cmux", "/opt/homebrew/bin/cmux"]
             .map { ($0 as NSString).expandingTildeInPath }
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    package func tree() -> CmuxTree? {
+    func tree() -> CmuxTree? {
         let span = HubPerf.begin("cmux.tree")
         defer { span.end() }
         do {
@@ -74,7 +74,7 @@ package struct CmuxHost: TerminalHost {
         }
     }
 
-    package func focus(sessionId: String, provider: String?) -> String? {
+    func focus(sessionId: String, provider: String?) -> String? {
         do {
             let capture = try ToolsCLIRunner.capture([cmuxTool(provider: provider), "cmux", "focus", sessionId, "--first", "--json"])
             return Self.focusFailure(status: capture.status, stdout: capture.stdout, stderr: capture.stderr)
@@ -85,7 +85,7 @@ package struct CmuxHost: TerminalHost {
 
     /// What `tools claude cmux focus --json` said, in words: nil when it focused. A recorded tab that
     /// was closed answers `gone`; before, the hub and Genesis showed cmux's raw "[socket] RPC error".
-    package static func focusFailure(status: Int32, stdout: Data, stderr: Data) -> String? {
+    static func focusFailure(status: Int32, stdout: Data, stderr: Data) -> String? {
         guard status != 0 else { return nil }
         struct Opaque: Decodable {
             init(from decoder: Decoder) throws {}
@@ -107,9 +107,9 @@ package struct CmuxHost: TerminalHost {
         return said.map { String($0) } ?? "tools claude cmux focus exited \(status)"
     }
 
-    package static let paneGone = "That cmux pane is gone. Choose a pane to resume the session in."
+    static let paneGone = "That cmux pane is gone. Choose a pane to resume the session in."
 
-    package func send(sessionId: String, provider: String?, text: String) -> String? {
+    func send(sessionId: String, provider: String?, text: String) -> String? {
         do {
             // After `--`: a line that starts with a hyphen ("- fix this") is text, not an unknown option.
             _ = try ToolsCLIRunner.run([cmuxTool(provider: provider), "cmux", "send", "--first", "--", sessionId, text])
@@ -119,7 +119,7 @@ package struct CmuxHost: TerminalHost {
         }
     }
 
-    package func open(_ launch: TerminalLaunch, at target: CmuxTarget) -> String? {
+    func open(_ launch: TerminalLaunch, at target: CmuxTarget) -> String? {
         let span = HubPerf.begin("cmux.open", target.label)
         defer { span.end() }
         switch launch {
@@ -190,7 +190,7 @@ package struct CmuxHost: TerminalHost {
     }
 
     @discardableResult
-    package static func cmux(_ args: [String]) -> (ok: Bool, out: String) {
+    static func cmux(_ args: [String]) -> (ok: Bool, out: String) {
         guard let binary else { return (false, "cmux is not installed") }
         let span = HubPerf.begin("cmux.\(args.first ?? "")")
         defer { span.end() }
@@ -210,16 +210,16 @@ package struct CmuxHost: TerminalHost {
 // MARK: - Loading the tree off the main thread
 
 @MainActor
-package final class TerminalTreeModel: ObservableObject {
+final class TerminalTreeModel: ObservableObject {
     @Published package private(set) var tree: CmuxTree?
     @Published package private(set) var loading = false
-    package let host: TerminalHost
+    let host: TerminalHost
 
-    package init(host: TerminalHost = TerminalHosts.current) {
+    init(host: TerminalHost = TerminalHosts.current) {
         self.host = host
     }
 
-    package func load() {
+    func load() {
         guard !loading else { return }
         loading = true
         let host = host
@@ -232,23 +232,23 @@ package final class TerminalTreeModel: ObservableObject {
 }
 
 /// The Tree / Layout choice every hub picker shares (and `LaunchPicker` reads to size its popover).
-package enum HubCmuxPicker {
-    package static let modeKey = "hub.terminal.pickerMode"
+enum HubCmuxPicker {
+    static let modeKey = "hub.terminal.pickerMode"
 }
 
 // MARK: - Session sidebar section
 
 /// The Genesis "Cmux" sidebar block for the hub: where the session is, focus it, resume it in its
 /// last pane, or pick any pane (tree or layout).
-package struct SessionTerminalSection: View {
-    package let session: HubSession
+struct SessionTerminalSection: View {
+    let session: HubSession
     @StateObject private var model = TerminalTreeModel()
     // `--set hub.session.cmuxTargetsOpen=true`: a snapshot with the target tree open.
     @State private var choosing = HubDefaults.store.bool(forKey: "hub.session.cmuxTargetsOpen")
     @State private var busy = false
     @State private var notice: CmuxSessionPanel.Notice?
 
-    package var body: some View {
+    var body: some View {
         let cmux = session.cmux
         CmuxSessionPanel(
             sessionId: session.sessionId,
@@ -292,12 +292,12 @@ package struct SessionTerminalSection: View {
 
 // MARK: - New session / resume sheet
 
-package enum AgentHarness: String, CaseIterable {
+enum AgentHarness: String, CaseIterable {
     case claude, codex, grok
 
-    package var title: String { rawValue.capitalized }
+    var title: String { rawValue.capitalized }
 
-    package func newCommand(account: String, prompt: String? = nil) -> [String] {
+    func newCommand(account: String, prompt: String? = nil) -> [String] {
         let first = prompt.map { [$0] } ?? []
         switch self {
         case .claude:
@@ -311,7 +311,7 @@ package enum AgentHarness: String, CaseIterable {
 
 /// How a `LaunchPicker` ended. Callers act on the case, never on the wording: a resume that failed
 /// must not look like one that worked.
-package enum LaunchOutcome: Equatable {
+enum LaunchOutcome: Equatable {
     case cancelled
     /// The session started or resumed; the label names it ("Resume: fix the cart").
     case launched(String)
@@ -319,7 +319,7 @@ package enum LaunchOutcome: Equatable {
     case failed(String)
 
     /// The line a caller shows; nil for Cancel.
-    package var notice: String? {
+    var notice: String? {
         switch self {
         case .cancelled: return nil
         case .launched(let text), .failed(let text): return text
@@ -329,15 +329,15 @@ package enum LaunchOutcome: Equatable {
 
 /// The popover behind "New session here" and "Resume". Shows the command, the folder and the target
 /// before anything runs.
-package struct LaunchPicker: View {
-    package enum Mode {
+struct LaunchPicker: View {
+    enum Mode {
         /// `prompt`: the agent's first message, passed on its command line after the command.
         case new(cwd: String, name: String, prompt: String? = nil)
         case resume(HubSession)
     }
 
-    package let mode: Mode
-    package let done: (LaunchOutcome) -> Void
+    let mode: Mode
+    let done: (LaunchOutcome) -> Void
 
     @State private var harness = AgentHarness.claude
     @AppStorage("hub.launch.account") private var account = ""
@@ -348,8 +348,8 @@ package struct LaunchPicker: View {
     @State private var targetsHeight: CGFloat = 0
 
     /// The popover's width: the tree fits the narrow one; the layout gets room to draw real panes.
-    package static let narrowWidth: CGFloat = 460
-    package static let wideWidth: CGFloat = 800
+    static let narrowWidth: CGFloat = 460
+    static let wideWidth: CGFloat = 800
     private var wide: Bool { pickerMode == "layout" }
 
     private var cwd: String {
@@ -373,7 +373,7 @@ package struct LaunchPicker: View {
         }
     }
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
             if case .new = mode {

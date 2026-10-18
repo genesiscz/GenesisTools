@@ -8,8 +8,8 @@ import AppKit
 /// A scripted run (`--snapshot`, `--bench`) never watches: its window is alpha 0 and reads as covered, and it
 /// must load exactly as a visible hub does.
 @MainActor
-package final class HubVisibility {
-    package static let shared = HubVisibility()
+final class HubVisibility {
+    static let shared = HubVisibility()
 
     package private(set) var visible = true
     private var observer: NSObjectProtocol?
@@ -23,14 +23,14 @@ package final class HubVisibility {
     private var listeners: [Listener] = []
 
     /// Stored listeners; one whose owner went is dropped at the next registration or change.
-    package var listenerCount: Int {
+    var listenerCount: Int {
         listeners.count
     }
     private var waiters: [UUID: CheckedContinuation<Void, Never>] = [:]
 
     /// Follows `window` from now on; called once, for the live hub's window. The state it has now counts too: a hub
     /// opened behind other windows (`--no-activate`) posts no change until it is uncovered, and polled meanwhile.
-    package func watch(_ window: NSWindow) {
+    func watch(_ window: NSWindow) {
         observer = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self, weak window] _ in
             MainActor.assumeIsolated {
                 guard let window else { return }
@@ -41,7 +41,7 @@ package final class HubVisibility {
     }
 
     /// `listener` hears every change, with the new value, for as long as `owner` lives.
-    package func onChange<Owner: AnyObject>(_ owner: Owner, _ listener: @escaping (Owner, Bool) -> Void) {
+    func onChange<Owner: AnyObject>(_ owner: Owner, _ listener: @escaping (Owner, Bool) -> Void) {
         listeners.removeAll { $0.owner == nil }
         listeners.append(Listener(owner: owner) { [weak owner] visible in
             if let owner {
@@ -52,7 +52,7 @@ package final class HubVisibility {
 
     /// Returns at once while the window can be seen, else as soon as it can again, or when the task is
     /// cancelled. A poll loop calls it before each round.
-    package func untilVisible() async {
+    func untilVisible() async {
         guard !visible else { return }
         let id = UUID()
         await withTaskCancellationHandler {
@@ -73,7 +73,7 @@ package final class HubVisibility {
     }
 
     /// Tests and the occlusion observer.
-    package func set(_ next: Bool) {
+    func set(_ next: Bool) {
         guard next != visible else { return }
         visible = next
         HubPerf.log("hub.visible \(next ? "shown" : "hidden"): polls \(next ? "resume" : "pause")")

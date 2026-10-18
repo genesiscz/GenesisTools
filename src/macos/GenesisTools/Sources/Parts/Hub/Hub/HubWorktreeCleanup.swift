@@ -10,24 +10,24 @@ import SwiftUI
 // list. Removal re-checks every row and runs plain `git worktree remove` (never --force); the
 // branch stays.
 
-package enum WorktreeCleanup {
+enum WorktreeCleanup {
     /// The Worktrees mode's selection that shows this panel instead of one worktree.
-    package static let selectionID = "::cleanup"
-    package static let showBlockedKey = "hub.worktreeCleanup.showBlocked"
+    static let selectionID = "::cleanup"
+    static let showBlockedKey = "hub.worktreeCleanup.showBlocked"
 
     /// The list's arguments for the repositories and the age rule.
-    package static func listArgs(repos: [String], olderThanDays: Int) -> [String] {
+    static func listArgs(repos: [String], olderThanDays: Int) -> [String] {
         ["hub", "worktrees", "list"] + repos + (olderThanDays > 0 ? ["--older-than", String(olderThanDays)] : []) + ["--json"]
     }
 
     /// Every restore command of a move, one per line, for the clipboard.
-    package static func restoreScript(_ outcomes: [MoveAsideOutcome]) -> String {
+    static func restoreScript(_ outcomes: [MoveAsideOutcome]) -> String {
         outcomes.compactMap(\.restore).joined(separator: "\n")
     }
 
     /// `--worktree <path>`, `--worktree cleanup`, or `--worktree cleanup-blocked` (the panel with
     /// "Show blocked" on) into the Worktrees mode's selection.
-    package static func selection(for flag: String) -> String {
+    static func selection(for flag: String) -> String {
         switch flag {
         case "cleanup":
             return selectionID
@@ -40,40 +40,40 @@ package enum WorktreeCleanup {
     }
 }
 
-package struct CleanupBlocker: Codable, Hashable {
-    package let kind: String
-    package let text: String
+struct CleanupBlocker: Codable, Hashable {
+    let kind: String
+    let text: String
 }
 
-package struct CleanupRow: Codable, Identifiable, Hashable {
-    package let path: String
-    package let repoRoot: String
-    package let repo: String
-    package let branch: String?
-    package let head: String
-    package let verdict: String?
-    package let how: String?
-    package let base: String?
-    package let ignored: [String]
-    package let removable: Bool
-    package let blockers: [CleanupBlocker]
+struct CleanupRow: Codable, Identifiable, Hashable {
+    let path: String
+    let repoRoot: String
+    let repo: String
+    let branch: String?
+    let head: String
+    let verdict: String?
+    let how: String?
+    let base: String?
+    let ignored: [String]
+    let removable: Bool
+    let blockers: [CleanupBlocker]
     /// Epoch ms.
-    package let lastActivityAt: Double?
+    let lastActivityAt: Double?
     /// Epoch ms of the HEAD commit.
-    package let lastCommitAt: Double?
-    package let changedCount: Int?
-    package let untrackedCount: Int?
+    let lastCommitAt: Double?
+    let changedCount: Int?
+    let untrackedCount: Int?
 
-    package var id: String { path }
-    package var name: String { (path as NSString).lastPathComponent }
-    package var title: String { branch ?? "detached \(head.prefix(9))" }
-    package var lastActivity: Date? { lastActivityAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
-    package var lastCommit: Date? { lastCommitAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
+    var id: String { path }
+    var name: String { (path as NSString).lastPathComponent }
+    var title: String { branch ?? "detached \(head.prefix(9))" }
+    var lastActivity: Date? { lastActivityAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
+    var lastCommit: Date? { lastCommitAt.map { Date(timeIntervalSince1970: $0 / 1000) } }
     /// Uncommitted and untracked entries together: what a removal would lose.
-    package var dirtyCount: Int { (changedCount ?? 0) + (untrackedCount ?? 0) }
+    var dirtyCount: Int { (changedCount ?? 0) + (untrackedCount ?? 0) }
 
     /// How the branch reached the base, in words.
-    package var mergedHow: String {
+    var mergedHow: String {
         switch (verdict, how) {
         case ("EMPTY", _): return "no commits of its own"
         case (_, "ancestor"): return "merged"
@@ -87,42 +87,42 @@ package struct CleanupRow: Codable, Identifiable, Hashable {
     }
 }
 
-package struct CleanupReport: Codable {
-    package let rows: [CleanupRow]
-    package let warnings: [String]
-    package let elapsedMs: Int
+struct CleanupReport: Codable {
+    let rows: [CleanupRow]
+    let warnings: [String]
+    let elapsedMs: Int
 }
 
-package struct CleanupSize: Codable {
-    package let path: String
-    package let bytes: Double
-    package let freeableBytes: Double?
-    package let elapsedMs: Int
-    package let error: String?
+struct CleanupSize: Codable {
+    let path: String
+    let bytes: Double
+    let freeableBytes: Double?
+    let elapsedMs: Int
+    let error: String?
 }
 
-package struct CleanupOutcome: Decodable {
-    package let path: String
-    package let removed: Bool
-    package let reasons: [String]
-    package let branch: String?
+struct CleanupOutcome: Decodable {
+    let path: String
+    let removed: Bool
+    let reasons: [String]
+    let branch: String?
 }
 
 /// `tools hub worktrees move-aside --json`: where each worktree went and the command that puts it back.
-package struct MoveAsideOutcome: Decodable, Hashable {
-    package let path: String
-    package let moved: Bool
-    package let to: String?
-    package let restore: String?
-    package let reasons: [String]
-    package let branch: String?
+struct MoveAsideOutcome: Decodable, Hashable {
+    let path: String
+    let moved: Bool
+    let to: String?
+    let restore: String?
+    let reasons: [String]
+    let branch: String?
     /// The move worked but its journal line did not: the restore command is the only record.
-    package let journalError: String?
+    let journalError: String?
 }
 
 @MainActor
-package final class WorktreeCleanupStore: ObservableObject {
-    package static let shared = WorktreeCleanupStore()
+final class WorktreeCleanupStore: ObservableObject {
+    static let shared = WorktreeCleanupStore()
 
     @Published package private(set) var rows: [CleanupRow] = []
     @Published package private(set) var loading = false
@@ -131,21 +131,21 @@ package final class WorktreeCleanupStore: ObservableObject {
     @Published package private(set) var sizes: [String: CleanupSize] = [:]
     @Published package private(set) var sizing = Set<String>()
     @Published package private(set) var removing: (done: Int, total: Int)?
-    @Published package var selected = Set<String>()
-    @Published package var notice: (text: String, isError: Bool)?
+    @Published var selected = Set<String>()
+    @Published var notice: (text: String, isError: Bool)?
     @Published package private(set) var moving: (done: Int, total: Int)?
     /// The last move-aside's outcomes: the bar under the header offers their restore commands.
-    @Published package var lastMoved: [MoveAsideOutcome] = []
+    @Published var lastMoved: [MoveAsideOutcome] = []
     /// `--older-than <days>`: only worktrees idle at least this long are removable; 0 turns the rule off. Settings →
     /// Hub → Panes edits the same value (`HubPreferences.cleanupIdleDays`); a change there reaches this store's views
     /// through `preferenceChanges`.
-    package var olderThanDays: Int {
+    var olderThanDays: Int {
         get { HubDefaults.preferences.cleanupIdleDays }
         set { HubDefaults.preferences.cleanupIdleDays = newValue }
     }
     private var preferenceChanges: AnyCancellable?
 
-    package init() {
+    init() {
         preferenceChanges = HubDefaults.preferences.$cleanupIdleDays.dropFirst().removeDuplicates()
             .sink { [weak self] _ in self?.objectWillChange.send() }
     }
@@ -170,12 +170,12 @@ package final class WorktreeCleanupStore: ObservableObject {
     private static let scanCache = HubSWR.cache("worktree-cleanup")
     private static let sizeCache = HubSWR.cache("worktree-size")
 
-    package var removable: [CleanupRow] { rows.filter(\.removable) }
+    var removable: [CleanupRow] { rows.filter(\.removable) }
 
     /// A size belongs to one worktree at one HEAD: after a checkout the old size is a miss.
     nonisolated private static func sizeKey(_ row: CleanupRow) -> String { "\(row.path)@\(row.head)" }
 
-    package func load(repos: [String], force: Bool = false) {
+    func load(repos: [String], force: Bool = false) {
         let repos = repos.sorted()
         guard !repos.isEmpty, force || repos != loadedRepos else { return }
         guard !loading else {
@@ -262,7 +262,7 @@ package final class WorktreeCleanupStore: ObservableObject {
         }
     }
 
-    package func queueSizes(_ paths: [String]) {
+    func queueSizes(_ paths: [String]) {
         sizeQueue += paths.filter { !measured.contains($0) && !sizing.contains($0) && !sizeQueue.contains($0) }
         guard sizingTask == nil else { return }
         sizingTask = Task {
@@ -306,7 +306,7 @@ package final class WorktreeCleanupStore: ObservableObject {
 
     /// Removes in small batches through `tools hub worktrees remove --yes` (the CLI re-checks each
     /// row first and never forces). Returns the removed paths.
-    package func remove(_ paths: [String]) async -> [String] {
+    func remove(_ paths: [String]) async -> [String] {
         guard removing == nil, !paths.isEmpty else { return [] }
         removing = (0, paths.count)
         var removed: [String] = []
@@ -355,7 +355,7 @@ package final class WorktreeCleanupStore: ObservableObject {
 
     /// Moves in small batches through `tools hub worktrees move-aside --yes` (the CLI re-checks each row
     /// and runs `git worktree move` into the day's /tmp folder: nothing is deleted). Returns the moved paths.
-    package func moveAside(_ paths: [String]) async -> [String] {
+    func moveAside(_ paths: [String]) async -> [String] {
         guard moving == nil, removing == nil, !paths.isEmpty else { return [] }
         moving = (0, paths.count)
         var outcomes: [MoveAsideOutcome] = []
@@ -403,14 +403,14 @@ package final class WorktreeCleanupStore: ObservableObject {
     }
 }
 
-package enum CleanupFormat {
-    package static func bytes(_ value: Double) -> String {
+enum CleanupFormat {
+    static func bytes(_ value: Double) -> String {
         ByteFormat.file(Int64(value))
     }
 }
 
-package struct WorktreeCleanupView: View {
-    @ObservedObject package var model: HubModel
+struct WorktreeCleanupView: View {
+    @ObservedObject var model: HubModel
     @ObservedObject private var store = WorktreeCleanupStore.shared
     @AppStorage(WorktreeCleanup.showBlockedKey) private var showBlocked = false
     @GenReduceMotion private var reduceMotion
@@ -425,7 +425,7 @@ package struct WorktreeCleanupView: View {
         return Array(Set(mains)).sorted()
     }
 
-    package var body: some View {
+    var body: some View {
         let shown = store.rows.filter { showBlocked || $0.removable }
         VStack(spacing: 0) {
             header
@@ -837,7 +837,7 @@ package struct WorktreeCleanupView: View {
     }
 
     /// What ⌘F searches in a row: the texts the row shows, under the keys its FindTexts use.
-    package static func searchable(_ row: CleanupRow) -> PanelFindRow {
+    static func searchable(_ row: CleanupRow) -> PanelFindRow {
         PanelFindRow(id: row.path, fields: [
             PanelFindField("title", row.title),
             PanelFindField("merged", row.mergedHow),
@@ -876,11 +876,11 @@ package struct WorktreeCleanupView: View {
 }
 
 /// The Worktrees list's first row: opens the cleanup panel, with the removable count once known.
-package struct WorktreeCleanupEntry: View {
-    @ObservedObject package var model: HubModel
+struct WorktreeCleanupEntry: View {
+    @ObservedObject var model: HubModel
     @ObservedObject private var store = WorktreeCleanupStore.shared
 
-    package var body: some View {
+    var body: some View {
         let selected = model.selectedWorktree == WorktreeCleanup.selectionID
         HStack(spacing: 8) {
             Image(systemName: "trash")

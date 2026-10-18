@@ -36,8 +36,8 @@ open class HubKitAdapter: HostKitAdapter, GenesisKitHost {
 
 /// GenesisKit's git and agent data through the hub's resident `tools` server (`ToolsCLIRunner`), which answers
 /// an agents query without starting bun again.
-package final class HubGTProvider: GenesisKitGTCLIProvider {
-    package override func tools(_ arguments: [String]) throws -> Data {
+final class HubGTProvider: GenesisKitGTCLIProvider {
+    override func tools(_ arguments: [String]) throws -> Data {
         try ToolsCLIRunner.run(arguments)
     }
 }

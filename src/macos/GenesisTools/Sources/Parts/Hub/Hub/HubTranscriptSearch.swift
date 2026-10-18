@@ -6,48 +6,48 @@ import SwiftUI
 // their matching snippets; a click opens the session with its transcript searched for the same text,
 // which scrolls to the first matching turn. ⌘⇧F stays find in files (Hub/HubFind.swift).
 
-package struct HubSearchSnippet: Decodable, Equatable, Hashable, Sendable {
-    package let role: String
-    package let text: String
-    package let line: Int
-    package let timestamp: String?
-    package let tool: String?
+struct HubSearchSnippet: Decodable, Equatable, Hashable, Sendable {
+    let role: String
+    let text: String
+    let line: Int
+    let timestamp: String?
+    let tool: String?
 }
 
-package struct HubSearchHit: Decodable, Equatable, Identifiable, Sendable {
-    package let provider: String
-    package let sessionId: String
-    package let title: String
-    package let project: String?
-    package let cwd: String
-    package let gitBranch: String?
-    package let mtime: String
-    package let account: String?
-    package let matchCount: Int
-    package let snippets: [HubSearchSnippet]
+struct HubSearchHit: Decodable, Equatable, Identifiable, Sendable {
+    let provider: String
+    let sessionId: String
+    let title: String
+    let project: String?
+    let cwd: String
+    let gitBranch: String?
+    let mtime: String
+    let account: String?
+    let matchCount: Int
+    let snippets: [HubSearchSnippet]
 
-    package var id: String { "\(provider):\(sessionId)" }
-    package var when: Date? { HubFormat.date(mtime) }
+    var id: String { "\(provider):\(sessionId)" }
+    var when: Date? { HubFormat.date(mtime) }
 }
 
-package struct HubSearchProviderReport: Decodable, Equatable, Sendable {
-    package let hits: Int
-    package let ms: Int
-    package let error: String?
+struct HubSearchProviderReport: Decodable, Equatable, Sendable {
+    let hits: Int
+    let ms: Int
+    let error: String?
 }
 
-package struct HubSearchResult: Decodable, Equatable, Sendable {
-    package let query: String
-    package let results: [HubSearchHit]
-    package let providers: [String: HubSearchProviderReport]
-    package let elapsedMs: Int
+struct HubSearchResult: Decodable, Equatable, Sendable {
+    let query: String
+    let results: [HubSearchHit]
+    let providers: [String: HubSearchProviderReport]
+    let elapsedMs: Int
 }
 
 /// The date presets of the panel, as `--since` values.
-package enum HubSearchRange: String, CaseIterable, Sendable {
+enum HubSearchRange: String, CaseIterable, Sendable {
     case today, week, month, all
 
-    package var title: String {
+    var title: String {
         switch self {
         case .today: return "Today"
         case .week: return "7 days"
@@ -56,7 +56,7 @@ package enum HubSearchRange: String, CaseIterable, Sendable {
         }
     }
 
-    package var since: String? {
+    var since: String? {
         switch self {
         case .today: return "today"
         case .week: return "7 days ago"
@@ -66,11 +66,11 @@ package enum HubSearchRange: String, CaseIterable, Sendable {
     }
 }
 
-package enum HubSearchArgs {
-    package static let providers = ["claude", "codex", "grok"]
+enum HubSearchArgs {
+    static let providers = ["claude", "codex", "grok"]
 
     /// The `tools hub search` argv for the panel's state: every filter goes into the query.
-    package static func build(query: String, providers: Set<String>, project: String, range: HubSearchRange, limit: Int = 40) -> [String] {
+    static func build(query: String, providers: Set<String>, project: String, range: HubSearchRange, limit: Int = 40) -> [String] {
         var args = ["search", query, "--json", "--limit", String(limit)]
         let picked = Self.providers.filter { providers.contains($0) }
         if !picked.isEmpty, picked.count < Self.providers.count {
@@ -88,22 +88,22 @@ package enum HubSearchArgs {
 }
 
 @MainActor
-package final class HubTranscriptSearchModel: ObservableObject {
-    @Published package var query = ""
-    @Published package var providers: Set<String> = Set(HubSearchArgs.providers)
-    @Published package var project = ""
-    @Published package var range: HubSearchRange = .month
+final class HubTranscriptSearchModel: ObservableObject {
+    @Published var query = ""
+    @Published var providers: Set<String> = Set(HubSearchArgs.providers)
+    @Published var project = ""
+    @Published var range: HubSearchRange = .month
     @Published package private(set) var result: HubSearchResult?
     @Published package private(set) var running = false
     @Published package private(set) var error: String?
     private var generation = 0
     /// Sessions asked for; "Search more" raises it. A full page said nothing about the sessions past it.
     @Published package private(set) var limit = HubTranscriptSearchModel.pageSize
-    package static let pageSize = 40
-    package static let maxLimit = 200
-    package var mayHaveMore: Bool { (result?.results.count ?? 0) >= limit && limit < Self.maxLimit }
+    static let pageSize = 40
+    static let maxLimit = 200
+    var mayHaveMore: Bool { (result?.results.count ?? 0) >= limit && limit < Self.maxLimit }
 
-    package func searchMore() {
+    func searchMore() {
         limit = min(Self.maxLimit, limit + Self.pageSize)
         search(keepLimit: true)
     }
@@ -112,7 +112,7 @@ package final class HubTranscriptSearchModel: ObservableObject {
     private var inFlight = false
     private var pending: [String]?
 
-    package func search(keepLimit: Bool = false) {
+    func search(keepLimit: Bool = false) {
         if !keepLimit {
             limit = Self.pageSize
         }
@@ -164,7 +164,7 @@ package final class HubTranscriptSearchModel: ObservableObject {
         }
     }
 
-    package var summary: String {
+    var summary: String {
         guard let result else { return "" }
         return mayHaveMore ? "\(result.summary) · the first \(limit), more may match" : result.summary
     }
@@ -172,7 +172,7 @@ package final class HubTranscriptSearchModel: ObservableObject {
 
 extension HubSearchResult {
     /// "12 sessions · claude 8, codex 3, grok 1 · 4.2 s", with a failed provider named.
-    package var summary: String {
+    var summary: String {
         let parts = HubSearchArgs.providers.compactMap { name -> String? in
             guard let report = providers[name] else { return nil }
             // The sessions shown per provider, so the parts add up to the total; `hits` counted raw hits
@@ -184,14 +184,14 @@ extension HubSearchResult {
     }
 }
 
-package struct HubTranscriptSearchPanel: View {
-    @ObservedObject package var hub: HubModel
-    package let seed: String
-    package let close: () -> Void
+struct HubTranscriptSearchPanel: View {
+    @ObservedObject var hub: HubModel
+    let seed: String
+    let close: () -> Void
     @StateObject private var search = HubTranscriptSearchModel()
     @FocusState private var focused: Bool
 
-    package var body: some View {
+    var body: some View {
         HubDailyCard(width: 820, close: close) {
             HStack(spacing: 8) {
                 Image(systemName: "text.bubble").foregroundColor(Color.jarvisTeal)

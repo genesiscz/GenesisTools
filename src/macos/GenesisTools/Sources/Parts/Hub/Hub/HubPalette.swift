@@ -10,17 +10,17 @@ import SwiftUI
 
 // MARK: - Engine
 
-package struct HubPaletteProject: Hashable {
-    package let name: String
-    package let path: String
+struct HubPaletteProject: Hashable {
+    let name: String
+    let path: String
 
     /// `other` is this folder or inside it. A plain prefix would also take `/src/app-web` for `/src/app`.
-    package func contains(_ other: String) -> Bool {
+    func contains(_ other: String) -> Bool {
         other == path || other.hasPrefix(path.hasSuffix("/") ? path : path + "/")
     }
 }
 
-package enum HubPaletteAction: Equatable {
+enum HubPaletteAction: Equatable {
     case openPR(HubPRRef)
     case selectSession(String)
     case selectWorktree(String)
@@ -38,48 +38,48 @@ package enum HubPaletteAction: Equatable {
     case setLook(HubLookChoice)
 }
 
-package struct HubPaletteSuggestion: Identifiable, Equatable {
-    package let id: String
-    package let title: String
-    package var subtitle: String?
-    package var symbol: String
+struct HubPaletteSuggestion: Identifiable, Equatable {
+    let id: String
+    let title: String
+    var subtitle: String?
+    var symbol: String
     /// What Tab puts in the field (a completed project, keyword or id).
-    package var completion: String?
+    var completion: String?
     /// Nil for a row that only completes (a project to pick when the word was ambiguous).
-    package var action: HubPaletteAction?
+    var action: HubPaletteAction?
 }
 
-package struct HubPaletteContext {
-    package var projects: [HubPaletteProject] = []
-    package var sessions: [HubSession] = []
-    package var prs: [HubPR] = []
+struct HubPaletteContext {
+    var projects: [HubPaletteProject] = []
+    var sessions: [HubSession] = []
+    var prs: [HubPR] = []
     /// The PR list finished loading: an empty `prs` is then "no open PR", not "still loading".
-    package var prsLoaded = false
-    package var worktrees: [HubWorktree] = []
+    var prsLoaded = false
+    var worktrees: [HubWorktree] = []
     /// The folder the palette acts on when no project is typed (the selected session's project).
-    package var currentPath: String?
+    var currentPath: String?
     /// The hub's Hub style: "glass" is listed and runs. In the Native style it is not listed, and typed it says why.
-    package var glassAvailable = true
+    var glassAvailable = true
     /// The look the hub shows now: "look" marks it.
-    package var look: HubLookChoice = .hub
+    var look: HubLookChoice = .hub
 
     /// Changes when anything the rows are built from changes.
-    package var signature: String {
+    var signature: String {
         "\(projects.count)|\(sessions.count)|\(prs.count)|\(prsLoaded)|\(worktrees.count)|\(currentPath ?? "")|\(glassAvailable)|\(look.id)"
     }
 }
 
-package enum HubPaletteEngine {
-    package struct Keyword {
-        package let word: String
-        package let aliases: [String]
-        package let summary: String
-        package let symbol: String
+enum HubPaletteEngine {
+    struct Keyword {
+        let word: String
+        let aliases: [String]
+        let summary: String
+        let symbol: String
         /// Needs a project (typed, or the current one) to act on.
-        package let usesProject: Bool
+        let usesProject: Bool
 
         /// The row and the Go menu: the shortcut is the one in force.
-        @MainActor package var liveSummary: String {
+        @MainActor var liveSummary: String {
             switch word {
             case "grep":
                 return "Find in files (\(HubKeymap.label("hub.find.files"))): grep <text>"
@@ -92,7 +92,7 @@ package enum HubPaletteEngine {
     }
 
     /// The commands, in the order an empty palette lists them.
-    package static let keywords: [Keyword] = [
+    static let keywords: [Keyword] = [
         Keyword(word: "pr", aliases: ["mr"], summary: "Open a pull or merge request: <project> pr <number>", symbol: "arrow.triangle.pull", usesProject: true),
         Keyword(word: "session", aliases: ["s"], summary: "Open a session: <project> session <words>", symbol: "bubble.left.and.text.bubble.right", usesProject: true),
         Keyword(word: "worktree", aliases: ["branch", "wt"], summary: "Open a worktree: <project> worktree <branch>", symbol: "arrow.triangle.branch", usesProject: true),
@@ -109,14 +109,14 @@ package enum HubPaletteEngine {
         Keyword(word: "look", aliases: ["theme", "style"], summary: "Switch the look: look hub, or a theme such as glass, graphite, midnight, dusk", symbol: "paintpalette", usesProject: false),
     ]
 
-    package static func keyword(_ word: String) -> Keyword? {
+    static func keyword(_ word: String) -> Keyword? {
         let lower = word.lowercased()
         return keywords.first { $0.word == lower || $0.aliases.contains(lower) }
     }
 
     /// How well `query` names `name`; nil when it does not. Exact > prefix > initials > substring >
     /// letters in order. "gt" matches GenesisTools by its initials.
-    package static func projectScore(_ query: String, _ name: String) -> Int? {
+    static func projectScore(_ query: String, _ name: String) -> Int? {
         let q = query.lowercased()
         let n = name.lowercased()
         guard !q.isEmpty else { return nil }
@@ -134,7 +134,7 @@ package enum HubPaletteEngine {
 
     /// First letters of the words in a name: a capital after a lower-case letter, a run of digits, and
     /// anything after a separator start a word; an acronym ("UI") is one word.
-    package static func initialsOf(_ name: String) -> String {
+    static func initialsOf(_ name: String) -> String {
         var result = ""
         var previous: Character?
         for character in name {
@@ -167,7 +167,7 @@ package enum HubPaletteEngine {
     }
 
     /// Projects ranked for a word, and whether the best score is shared (then the user picks).
-    package static func projects(for word: String, in context: HubPaletteContext) -> (ranked: [HubPaletteProject], ambiguous: Bool) {
+    static func projects(for word: String, in context: HubPaletteContext) -> (ranked: [HubPaletteProject], ambiguous: Bool) {
         let scored = context.projects.compactMap { project in projectScore(word, project.name).map { (project, $0) } }
             .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.name < $1.0.name }
         guard let best = scored.first?.1 else { return ([], false) }
@@ -175,7 +175,7 @@ package enum HubPaletteEngine {
         return (scored.map(\.0), top.count > 1)
     }
 
-    package static func suggestions(for input: String, context: HubPaletteContext, limit: Int = 12) -> [HubPaletteSuggestion] {
+    static func suggestions(for input: String, context: HubPaletteContext, limit: Int = 12) -> [HubPaletteSuggestion] {
         let tokens = input.split(whereSeparator: \.isWhitespace).map(String.init)
         let endsWithSpace = input.last?.isWhitespace == true
         let listed = Self.keywords.filter { $0.word != "glass" || context.glassAvailable }
@@ -336,7 +336,7 @@ package enum HubPaletteEngine {
     }
 
     /// One project per repository name, from the sessions' folders and the discovered worktrees.
-    package static func projects(sessions: [HubSession], worktrees: [HubWorktree]) -> [HubPaletteProject] {
+    static func projects(sessions: [HubSession], worktrees: [HubWorktree]) -> [HubPaletteProject] {
         var byName: [String: String] = [:]
         for worktree in worktrees where worktree.isMain || byName[worktree.repo] == nil {
             byName[worktree.repo] = worktree.path
@@ -355,11 +355,11 @@ package enum HubPaletteEngine {
 // MARK: - View
 
 
-package struct HubPaletteView: View {
-    @Binding package var isPresented: Bool
-    package let context: HubPaletteContext
-    package var initialQuery = ""
-    package let run: (HubPaletteAction) -> Void
+struct HubPaletteView: View {
+    @Binding var isPresented: Bool
+    let context: HubPaletteContext
+    var initialQuery = ""
+    let run: (HubPaletteAction) -> Void
 
     @State private var query = ""
     @State private var rows: [HubPaletteSuggestion] = []
@@ -367,7 +367,7 @@ package struct HubPaletteView: View {
 
     @FocusState private var focused: Bool
 
-    package var body: some View {
+    var body: some View {
         ZStack(alignment: .top) {
             Color.black.opacity(0.45)
                 .ignoresSafeArea()

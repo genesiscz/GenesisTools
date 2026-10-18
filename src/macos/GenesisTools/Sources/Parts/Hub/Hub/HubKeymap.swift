@@ -12,34 +12,34 @@ import AppKit
 import SwiftUI
 
 @MainActor
-package enum HubKeymap {
+enum HubKeymap {
     /// The keys in force: the library plus the user's own keys (`~/.genesis-tools/keymaps/hub.json`).
     package static let shared = Keymap(library: library)
 
     /// The command palette's scope: its keys work while the palette is open.
-    package static let paletteScope: KeymapScope = "hub.palette"
+    static let paletteScope: KeymapScope = "hub.palette"
     /// Panel find, shared by the hub and the review window. Narrower than the window, so ⇧⌘G can also be Glass.
-    package static let findScope: KeymapScope = "hub.find"
+    static let findScope: KeymapScope = "hub.find"
 
-    package static let commandPalette = "hub.find.palette"
-    package static let promptLibrary = "hub.file.prompts"
-    package static let glass = "hub.view.glass"
-    package static let promptSend = "hub.prompts.send"
-    package static let paletteUp = "hub.palette.up"
-    package static let paletteDown = "hub.palette.down"
-    package static let paletteComplete = "hub.palette.complete"
-    package static let paletteClose = "hub.palette.close"
-    package static let findOpen = "hub.find.open"
-    package static let findNext = "hub.find.next"
-    package static let findPrevious = "hub.find.previous"
-    package static let findClose = "hub.find.close"
+    static let commandPalette = "hub.find.palette"
+    static let promptLibrary = "hub.file.prompts"
+    static let glass = "hub.view.glass"
+    static let promptSend = "hub.prompts.send"
+    static let paletteUp = "hub.palette.up"
+    static let paletteDown = "hub.palette.down"
+    static let paletteComplete = "hub.palette.complete"
+    static let paletteClose = "hub.palette.close"
+    static let findOpen = "hub.find.open"
+    static let findNext = "hub.find.next"
+    static let findPrevious = "hub.find.previous"
+    static let findClose = "hub.find.close"
 
     /// Hidden buttons used to take these even when the menu item was greyed out. The key still does.
     private static let liveWhenGreyed: Set<String> = [
         glass, promptLibrary, "hub.find.files", "hub.find.transcripts", "hub.view.digest", "hub.go.back", "hub.go.forward",
     ]
 
-    package static let library = KeymapLibrary(id: "hub", title: "GenesisTools Hub", commands: appCommands + windowCommands)
+    static let library = KeymapLibrary(id: "hub", title: "GenesisTools Hub", commands: appCommands + windowCommands)
 
     /// Quit, Hide, Close and the edit keys: the menu bar has them, and the conflict check has to know.
     private static let appCommands: [KeymapCommand] = [
@@ -156,7 +156,7 @@ package enum HubKeymap {
     ]
 
     /// The palette move for a key position, if it is one of the four the field monitor handles.
-    package static func paletteMove(forKeyCode code: UInt16) -> String? {
+    static func paletteMove(forKeyCode code: UInt16) -> String? {
         let moves: Set<String> = [paletteUp, paletteDown, paletteComplete, paletteClose]
         return library.commands.first { command in
             moves.contains(command.id) && command.defaults.contains { chord in
@@ -168,7 +168,7 @@ package enum HubKeymap {
 
     /// The hub window's commands, held for as long as the window lives. The command palette toggles from the
     /// root view (its open flag is view state); Send Prompt is on the Send button, only while that button is up.
-    package static func registerWindowCommands(
+    static func registerWindowCommands(
         model: HubModel, window: NSWindow, keymap: Keymap = shared, dispatcher: KeymapDispatcher = .shared
     ) -> [KeymapRegistration] {
         HubMenuCommands.windowCommands.compactMap { command in
@@ -193,7 +193,7 @@ package enum HubKeymap {
 
     /// ⌘W for one window. The review window holds this; an app-wide registration would also close that window
     /// while the Keyboard Shortcuts panel or Settings is key.
-    package static func registerCloseWindow(
+    static func registerCloseWindow(
         _ window: NSWindow, keymap: Keymap = shared, dispatcher: KeymapDispatcher = .shared
     ) -> KeymapRegistration {
         dispatcher.register("hub.window.close", in: keymap, window: window) { [weak window] in
@@ -202,31 +202,31 @@ package enum HubKeymap {
     }
 
     /// Gives the item the command's key and keeps it current. The item's identifier is the command id.
-    package static func bind(_ item: NSMenuItem, to id: String, keymap: Keymap = shared) {
+    static func bind(_ item: NSMenuItem, to id: String, keymap: Keymap = shared) {
         item.identifier = NSUserInterfaceItemIdentifier(id)
         keymap.bind(item, to: id)
     }
 
     /// "Back (⌘[)" with the key in force, or "Back (⌘Ú)" on a Czech keyboard.
-    package static func hint(_ title: String, _ id: String) -> String { shared.hint(title, id) }
+    static func hint(_ title: String, _ id: String) -> String { shared.hint(title, id) }
 
     /// "⌘K", or "" when the command has no key.
-    package static func label(_ id: String) -> String { shared.label(for: id) ?? "" }
+    static func label(_ id: String) -> String { shared.label(for: id) ?? "" }
 
     /// Tests replace this. Production steps an open find bar.
-    package static var redirectGlassToPreviousMatch: (NSWindow?) -> Bool = { window in
+    static var redirectGlassToPreviousMatch: (NSWindow?) -> Bool = { window in
         PanelFindRouter.shared.takesPreviousMatch(in: window)
     }
 
     /// True when this press is Previous Match and an open find bar took it. A Glass chord the user moved
     /// off that key returns false, so Glass still runs.
-    package static func glassPressStepsFind(_ press: KeyStroke, in keymap: Keymap, window: NSWindow?) -> Bool {
+    static func glassPressStepsFind(_ press: KeyStroke, in keymap: Keymap, window: NSWindow?) -> Bool {
         guard keymap.commands(for: press, in: [findScope]).contains(where: { $0.id == findPrevious }) else { return false }
         return redirectGlassToPreviousMatch(window)
     }
 
     /// Close Window and the panel find keys: what the review window's shortcut list shows of this library.
-    package static var reviewCommandIDs: Set<String> {
+    static var reviewCommandIDs: Set<String> {
         var ids: Set<String> = ["hub.window.close"]
         for command in library.commands where command.scope == findScope { ids.insert(command.id) }
         return ids
@@ -234,7 +234,7 @@ package enum HubKeymap {
 
     /// The hub lists its own keys and the session keys that window actually runs. The review window lists only
     /// the keys it runs: Close Window, panel find, and the session keys with Command on the prompts.
-    package static func shortcutPages(review: Bool) -> [KeymapPage] {
+    static func shortcutPages(review: Bool) -> [KeymapPage] {
         if review {
             return [
                 KeymapPage(shared, commandIDs: reviewCommandIDs),

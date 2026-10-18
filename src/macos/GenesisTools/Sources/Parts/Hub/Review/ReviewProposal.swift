@@ -2,49 +2,49 @@ import Foundation
 
 /// The window's side of `src/hub/lib/proposal.ts`. Read and written through JSONSerialization so
 /// a write-back (status, edited text) keeps every field the TypeScript side knows and this does not.
-package final class ProposalDocument {
-    package struct Draft {
-        package var id: String
-        package var path: String
-        package var side: DiffSide
-        package var line: Int
-        package var startLine: Int
-        package var severity: String
-        package var body: String
-        package var editedBody: String?
-        package var status: String
-        package var verdict: String
-        package var proof: String?
-        package var confidence: Int?
-        package var reasoning: String?
+final class ProposalDocument {
+    struct Draft {
+        var id: String
+        var path: String
+        var side: DiffSide
+        var line: Int
+        var startLine: Int
+        var severity: String
+        var body: String
+        var editedBody: String?
+        var status: String
+        var verdict: String
+        var proof: String?
+        var confidence: Int?
+        var reasoning: String?
     }
 
     /// A thread that already exists on the PR, with the agent's read of it when it gave one.
-    package struct Thread {
-        package var id: String
-        package var path: String
-        package var line: Int
-        package var author: String
-        package var body: String
-        package var noteCount: Int
-        package var resolved: Bool
-        package var verdict: String?
-        package var proof: String?
-        package var suggestedReply: String?
-        package var editedReply: String?
-        package var replyStatus: String?
-        package var confidence: Int?
-        package var reasoning: String?
-        package var fix: String?
+    struct Thread {
+        var id: String
+        var path: String
+        var line: Int
+        var author: String
+        var body: String
+        var noteCount: Int
+        var resolved: Bool
+        var verdict: String?
+        var proof: String?
+        var suggestedReply: String?
+        var editedReply: String?
+        var replyStatus: String?
+        var confidence: Int?
+        var reasoning: String?
+        var fix: String?
 
         /// The reply as it would be sent now: Martin's wording when he changed it, else the agent's.
-        package var reply: String? { editedReply ?? suggestedReply }
+        var reply: String? { editedReply ?? suggestedReply }
     }
 
-    package let url: URL
+    let url: URL
     private var root: [String: Any]
 
-    package init(url: URL) throws {
+    init(url: URL) throws {
         self.url = url
         root = try Self.read(url)
     }
@@ -57,23 +57,23 @@ package final class ProposalDocument {
         return object
     }
 
-    package var baseSha: String { root["baseSha"] as? String ?? "" }
-    package var headSha: String { root["headSha"] as? String ?? "" }
-    package var repoPath: String? { root["repoPath"] as? String }
-    package var number: Int { root["number"] as? Int ?? 0 }
-    package var provider: String { root["provider"] as? String ?? "" }
-    package var title: String { root["title"] as? String ?? (root["project"] as? String ?? "") }
-    package var url_: String? { root["url"] as? String }
+    var baseSha: String { root["baseSha"] as? String ?? "" }
+    var headSha: String { root["headSha"] as? String ?? "" }
+    var repoPath: String? { root["repoPath"] as? String }
+    var number: Int { root["number"] as? Int ?? 0 }
+    var provider: String { root["provider"] as? String ?? "" }
+    var title: String { root["title"] as? String ?? (root["project"] as? String ?? "") }
+    var url_: String? { root["url"] as? String }
 
     private var verdict: [String: Any] { root["verdict"] as? [String: Any] ?? [:] }
-    package var decision: String { verdict["decision"] as? String ?? "comment" }
-    package var summary: String { verdict["summary"] as? String ?? "" }
-    package var confidence: Int? { verdict["confidence"] as? Int }
-    package var agent: String { (root["author"] as? [String: Any])?["agent"] as? String ?? "agent" }
+    var decision: String { verdict["decision"] as? String ?? "comment" }
+    var summary: String { verdict["summary"] as? String ?? "" }
+    var confidence: Int? { verdict["confidence"] as? Int }
+    var agent: String { (root["author"] as? [String: Any])?["agent"] as? String ?? "agent" }
 
-    package var label: String { "\(provider == "gitlab" ? "!" : "#")\(number)" }
+    var label: String { "\(provider == "gitlab" ? "!" : "#")\(number)" }
 
-    package var drafts: [Draft] {
+    var drafts: [Draft] {
         (root["drafts"] as? [[String: Any]] ?? []).compactMap { raw in
             guard let id = raw["id"] as? String, let path = raw["path"] as? String, let line = raw["line"] as? Int else { return nil }
             let meta = raw["meta"] as? [String: Any] ?? [:]
@@ -97,7 +97,7 @@ package final class ProposalDocument {
 
     /// Threads without a file and line (a top-level note) have no place on the diff; the banner
     /// counts them instead.
-    package var threads: [Thread] {
+    var threads: [Thread] {
         (root["threads"] as? [[String: Any]] ?? []).compactMap { raw in
             guard let id = raw["threadId"] as? String else { return nil }
             return Thread(
@@ -120,14 +120,14 @@ package final class ProposalDocument {
         }
     }
 
-    package var host: String { root["host"] as? String ?? "" }
-    package var project: String { root["project"] as? String ?? "" }
+    var host: String { root["host"] as? String ?? "" }
+    var project: String { root["project"] as? String ?? "" }
 
-    package var identity: PRIdentity { PRIdentity(provider: provider, host: host, project: project, number: number) }
+    var identity: PRIdentity { PRIdentity(provider: provider, host: host, project: project, number: number) }
 
     /// How `tools hub pr` finds this proposal's PR: its URL, else `<repoPath>#<n>` (the review
     /// worktree is often detached, so its branch cannot name the PR).
-    package var prTarget: PRTarget? {
+    var prTarget: PRTarget? {
         if let url = url_, !url.isEmpty {
             return .ref(url)
         }
@@ -141,7 +141,7 @@ package final class ProposalDocument {
 
     /// The window's reply to an existing thread: reworded text, and where it went.
     /// Under the same lock as `update(draftID:)` and `tools hub proposal push`.
-    package func update(threadID: String, editedReply: String? = nil, replyStatus: String? = nil, providerId: String? = nil) throws {
+    func update(threadID: String, editedReply: String? = nil, replyStatus: String? = nil, providerId: String? = nil) throws {
         try FileLock.withLock(url) {
             root = try Self.read(url)
             guard var threads = root["threads"] as? [[String: Any]],
@@ -167,7 +167,7 @@ package final class ProposalDocument {
     /// accept / reject / restore / edit: the decisions that belong to the window, never to the agent.
     /// Re-reads the file first, under the lock `tools hub proposal push` also takes: the agent may have
     /// pushed new drafts since the window loaded it, and must not push while this write is in flight.
-    package func update(draftID: String, status: String, editedBody: String? = nil, providerId: String? = nil) throws {
+    func update(draftID: String, status: String, editedBody: String? = nil, providerId: String? = nil) throws {
         try FileLock.withLock(url) {
             root = try Self.read(url)
             guard var drafts = root["drafts"] as? [[String: Any]],
@@ -186,7 +186,7 @@ package final class ProposalDocument {
         }
     }
 
-    package func reconcileSubmitted(pr: PRIdentity, ids: Set<String>) throws {
+    func reconcileSubmitted(pr: PRIdentity, ids: Set<String>) throws {
         guard identity == pr, !ids.isEmpty else { return }
         try FileLock.withLock(url) {
             root = try Self.read(url)
@@ -208,16 +208,16 @@ package final class ProposalDocument {
     }
 
     /// The draft's own thread on the PR, when the agent wrote it as a reply instead of a new thread.
-    package func replyToThread(draftID: String) -> String? {
+    func replyToThread(draftID: String) -> String? {
         (root["drafts"] as? [[String: Any]])?.first { $0["id"] as? String == draftID }?["replyToThread"] as? String
     }
 
-    package func permitsDraftSend(displayedHead: String, pr: PRIdentity?) -> Bool {
+    func permitsDraftSend(displayedHead: String, pr: PRIdentity?) -> Bool {
         !headSha.isEmpty && headSha == displayedHead && identity == pr
     }
 
     /// `shownHead` / `prHead` as in `PRThreadRendering.belongs`.
-    package func rendered(for files: [DiffFile], liveThreads: [PRThread]? = nil, shownHead: String? = nil, prHead: String? = nil) -> [RenderedComment] {
+    func rendered(for files: [DiffFile], liveThreads: [PRThread]? = nil, shownHead: String? = nil, prHead: String? = nil) -> [RenderedComment] {
         renderedThreads(for: files, liveThreads: liveThreads, shownHead: shownHead, prHead: prHead) + renderedDrafts(for: files)
     }
 
@@ -295,7 +295,7 @@ package final class ProposalDocument {
     }
 
     /// Drafts whose file is not in the diff (wrong path, or outside base..head): shown in the banner.
-    package func unplaced(in files: [DiffFile]) -> Int {
+    func unplaced(in files: [DiffFile]) -> Int {
         drafts.filter { draft in !files.contains { $0.path == draft.path } }.count
     }
 }

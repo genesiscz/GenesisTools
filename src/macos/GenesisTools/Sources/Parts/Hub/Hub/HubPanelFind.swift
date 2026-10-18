@@ -22,43 +22,43 @@ import SwiftUI
 
 // MARK: - Matching (pure, off the main thread)
 
-package struct PanelFindField: Sendable, Equatable {
-    package let key: String
-    package let text: String
+struct PanelFindField: Sendable, Equatable {
+    let key: String
+    let text: String
     /// Matched block by block, as `MarkdownContentView` draws it (each match names its block).
-    package var markdown = false
+    var markdown = false
 
-    package init(_ key: String, _ text: String, markdown: Bool = false) {
+    init(_ key: String, _ text: String, markdown: Bool = false) {
         self.key = key
         self.text = text
         self.markdown = markdown
     }
 }
 
-package struct PanelFindRow: Sendable, Equatable {
-    package let id: String
-    package let fields: [PanelFindField]
+struct PanelFindRow: Sendable, Equatable {
+    let id: String
+    let fields: [PanelFindField]
     /// The lazy stack element that holds this row when the row is nested inside one (an Inbox
     /// session section): the bar scrolls there first, so a row that was never drawn gets drawn.
-    package var container: String?
+    var container: String?
 
-    package init(id: String, fields: [PanelFindField], container: String? = nil) {
+    init(id: String, fields: [PanelFindField], container: String? = nil) {
         self.id = id
         self.fields = fields.filter { !$0.text.isEmpty }
         self.container = container
     }
 }
 
-package struct PanelFindMatch: Sendable, Hashable {
-    package let row: String
-    package let field: String
+struct PanelFindMatch: Sendable, Hashable {
+    let row: String
+    let field: String
     /// The paragraph of a markdown field; nil for plain text.
-    package var block: Int?
+    var block: Int?
     /// Which occurrence inside that field (or block), from 0.
-    package let occurrence: Int
-    package var container: String?
+    let occurrence: Int
+    var container: String?
 
-    package init(row: String, field: String, block: Int? = nil, occurrence: Int, container: String? = nil) {
+    init(row: String, field: String, block: Int? = nil, occurrence: Int, container: String? = nil) {
         self.row = row
         self.field = field
         self.block = block
@@ -68,16 +68,16 @@ package struct PanelFindMatch: Sendable, Hashable {
 
     /// The field's (or markdown paragraph's) own scroll anchor: a tall row scrolls to the text that
     /// matched, not to its middle.
-    package var anchor: String { PanelFind.anchorID(row: row, field: field, block: block) }
+    var anchor: String { PanelFind.anchorID(row: row, field: field, block: block) }
 }
 
-package enum PanelFind {
+enum PanelFind {
     /// Off: ignores case and accents ("cafe" finds "Café"). On: exact.
-    package nonisolated static func options(caseSensitive: Bool) -> String.CompareOptions {
+    nonisolated static func options(caseSensitive: Bool) -> String.CompareOptions {
         caseSensitive ? [] : [.caseInsensitive, .diacriticInsensitive]
     }
 
-    package nonisolated static func ranges(of query: String, in text: String, caseSensitive: Bool) -> [Range<String.Index>] {
+    nonisolated static func ranges(of query: String, in text: String, caseSensitive: Bool) -> [Range<String.Index>] {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty, !text.isEmpty else { return [] }
         let options = options(caseSensitive: caseSensitive)
         var found: [Range<String.Index>] = []
@@ -91,7 +91,7 @@ package enum PanelFind {
     }
 
     /// Every occurrence in every field, in row order, then field order, then text order.
-    package nonisolated static func matches(of query: String, in rows: [PanelFindRow], caseSensitive: Bool) -> [PanelFindMatch] {
+    nonisolated static func matches(of query: String, in rows: [PanelFindRow], caseSensitive: Bool) -> [PanelFindMatch] {
         guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
         var out: [PanelFindMatch] = []
         for row in rows {
@@ -111,7 +111,7 @@ package enum PanelFind {
     }
 
     /// Next or previous, wrapping at both ends. With no current match, forward starts at the first.
-    package nonisolated static func step(_ current: Int?, count: Int, forward: Bool) -> Int? {
+    nonisolated static func step(_ current: Int?, count: Int, forward: Bool) -> Int? {
         guard count > 0 else { return nil }
         guard let current, current < count else { return forward ? 0 : count - 1 }
         return forward ? (current + 1) % count : (current - 1 + count) % count
@@ -120,7 +120,7 @@ package enum PanelFind {
     /// The current match after the matches were computed again. `sameMatch` (the data changed):
     /// the same occurrence if it is still there. Otherwise, and when the query changed, the first
     /// match in the same row; else the first match (query) or the same position (data).
-    package nonisolated static func carry(_ previous: PanelFindMatch?, previousIndex: Int?, into matches: [PanelFindMatch], sameMatch: Bool) -> Int? {
+    nonisolated static func carry(_ previous: PanelFindMatch?, previousIndex: Int?, into matches: [PanelFindMatch], sameMatch: Bool) -> Int? {
         guard !matches.isEmpty else { return nil }
         if sameMatch, let previous, let same = matches.firstIndex(of: previous) {
             return same
@@ -131,7 +131,7 @@ package enum PanelFind {
         return sameMatch ? min(previousIndex ?? 0, matches.count - 1) : 0
     }
 
-    package nonisolated static func anchorID(row: String, field: String, block: Int?) -> String {
+    nonisolated static func anchorID(row: String, field: String, block: Int?) -> String {
         block.map { "\(row)|\(field)#\($0)" } ?? "\(row)|\(field)"
     }
 }
@@ -139,17 +139,17 @@ package enum PanelFind {
 // MARK: - Routing (pure)
 
 /// Which registered panel a find key belongs to. Rects are in window coordinates.
-package enum PanelFindRouting {
-    package struct Candidate: Equatable {
-        package let rect: CGRect
+enum PanelFindRouting {
+    struct Candidate: Equatable {
+        let rect: CGRect
         /// When a click last landed in it or its find opened.
-        package let activeAt: TimeInterval?
+        let activeAt: TimeInterval?
     }
 
     /// The panel of the last click; else the panel around the first responder (only when the
     /// responder is not larger than the panel: the window's own hosting view says nothing, the
     /// diff's web view is exactly its panel); else the one used last; else the largest.
-    package static func pick(_ candidates: [Candidate], click: CGPoint?, responder: CGRect?) -> Int? {
+    static func pick(_ candidates: [Candidate], click: CGPoint?, responder: CGRect?) -> Int? {
         guard !candidates.isEmpty else { return nil }
         func area(_ rect: CGRect) -> CGFloat { rect.width * rect.height }
         func innermost(_ inside: (CGRect) -> Bool) -> Int? {
@@ -177,15 +177,15 @@ package enum PanelFindRouting {
 // MARK: - Model
 
 @MainActor
-package final class PanelFindModel: ObservableObject {
-    package let scope: String
+final class PanelFindModel: ObservableObject {
+    let scope: String
     /// "Find in <title>" in the field.
-    package let title: String
+    let title: String
     @Published package private(set) var isOpen = false
-    @Published package var query = "" {
+    @Published var query = "" {
         didSet { if query != oldValue { search(sameMatch: false, reveal: true) } }
     }
-    @Published package var caseSensitive = false {
+    @Published var caseSensitive = false {
         didSet { if caseSensitive != oldValue { search(sameMatch: false, reveal: true) } }
     }
     @Published package private(set) var matches: [PanelFindMatch] = []
@@ -197,29 +197,29 @@ package final class PanelFindModel: ObservableObject {
     @Published package private(set) var revealToken = 0
 
     /// What the panel can search, set by `.panelFind` on every render (the latest data).
-    package var rows: () -> [PanelFindRow] = { [] }
+    var rows: () -> [PanelFindRow] = { [] }
     /// The bar's field has the keyboard (Esc then closes even though a text field is focused).
-    package var fieldFocused = false
+    var fieldFocused = false
     /// `--panel-find-next <n>`: the match to show once the first non-empty result lands.
-    package var stepsAfterSearch = 0
+    var stepsAfterSearch = 0
     private var generation = 0
 
-    package init(scope: String, title: String) {
+    init(scope: String, title: String) {
         self.scope = scope
         self.title = title
     }
 
-    package var current: PanelFindMatch? {
+    var current: PanelFindMatch? {
         guard let currentIndex, matches.indices.contains(currentIndex) else { return nil }
         return matches[currentIndex]
     }
 
-    package var highlight: PanelFindHighlight? {
+    var highlight: PanelFindHighlight? {
         guard isOpen, !query.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
         return PanelFindHighlight(query: query, caseSensitive: caseSensitive, current: current)
     }
 
-    package var countLabel: String {
+    var countLabel: String {
         if query.trimmingCharacters(in: .whitespaces).isEmpty { return "" }
         if searching && matches.isEmpty { return "…" }
         if matches.isEmpty { return "No matches" }
@@ -227,7 +227,7 @@ package final class PanelFindModel: ObservableObject {
     }
 
     /// ⌘F: opens the bar (or focuses it again with the text selected).
-    package func open(query text: String? = nil) {
+    func open(query text: String? = nil) {
         let wasOpen = isOpen
         isOpen = true
         focusToken += 1
@@ -239,7 +239,7 @@ package final class PanelFindModel: ObservableObject {
         HubPerf.log("find.panel.open \(scope)\(wasOpen ? " again" : "")")
     }
 
-    package func close() {
+    func close() {
         guard isOpen else { return }
         isOpen = false
         generation += 1
@@ -249,12 +249,12 @@ package final class PanelFindModel: ObservableObject {
         fieldFocused = false
     }
 
-    package func next() { move(forward: true) }
+    func next() { move(forward: true) }
 
-    package func previous() { move(forward: false) }
+    func previous() { move(forward: false) }
 
     /// The panel's data changed while the bar is open: same query, the current match kept.
-    package func refresh() {
+    func refresh() {
         search(sameMatch: true, reveal: false)
     }
 
@@ -312,25 +312,25 @@ package final class PanelFindModel: ObservableObject {
 // MARK: - Highlight
 
 /// What the rows of an open find draw: every match tinted, the current one solid.
-package struct PanelFindHighlight: Equatable {
-    package let query: String
-    package let caseSensitive: Bool
-    package let current: PanelFindMatch?
+struct PanelFindHighlight: Equatable {
+    let query: String
+    let caseSensitive: Bool
+    let current: PanelFindMatch?
 
-    package static let matchBackground = Color(red: 1, green: 0.85, blue: 0.25).opacity(0.32)
-    package static let currentBackground = Color(red: 1, green: 0.63, blue: 0.12)
+    static let matchBackground = Color(red: 1, green: 0.85, blue: 0.25).opacity(0.32)
+    static let currentBackground = Color(red: 1, green: 0.63, blue: 0.12)
 
-    package func isCurrentRow(_ row: String?) -> Bool {
+    func isCurrentRow(_ row: String?) -> Bool {
         row != nil && current?.row == row
     }
 
     /// Characters kept before the current match when a one-line text starts with "…" instead.
-    package static let singleLineLead = 12
+    static let singleLineLead = 12
 
     /// `text` with the matches marked; `row` and `field` say which occurrence is the current one.
     /// `singleLine`: the text is cut to one line, so when the current match sits past its start the
     /// text is shown from shortly before the match ("…" first), or the tail would hide it.
-    package func attributed(_ text: String, row: String?, field: String?, singleLine: Bool = false) -> AttributedString {
+    func attributed(_ text: String, row: String?, field: String?, singleLine: Bool = false) -> AttributedString {
         var shown = text
         var skipped = 0
         if singleLine, let occurrence = currentOccurrence(row: row, field: field, block: nil) {
@@ -346,7 +346,7 @@ package struct PanelFindHighlight: Equatable {
         return attributed
     }
 
-    package func currentOccurrence(row: String?, field: String?, block: Int?) -> Int? {
+    func currentOccurrence(row: String?, field: String?, block: Int?) -> Int? {
         guard row != nil, let current, current.row == row, current.field == field, current.block == block else { return nil }
         return current.occurrence
     }
@@ -354,7 +354,7 @@ package struct PanelFindHighlight: Equatable {
     /// The find's marks for a `MarkdownContentView` under `row` and `field`. Each unit the view draws
     /// (a paragraph, a heading, a list item, a table cell) is a block of `PanelFind.matches`, and its
     /// own scroll target while the row is known.
-    package func markdownMarks(row: String?, field: String) -> MarkdownFindMarks {
+    func markdownMarks(row: String?, field: String) -> MarkdownFindMarks {
         MarkdownFindMarks(
             id: MarkdownMarksKey(query: query, caseSensitive: caseSensitive, current: current, row: row, field: field),
             mark: { text, unit in mark(&text, row: row, field: field, block: unit) },
@@ -365,7 +365,7 @@ package struct PanelFindHighlight: Equatable {
     /// Marks the matches in already styled text (inline markdown). The ranges are found in the
     /// plain characters and walked once, so a long reply costs one pass.
     /// `skipped`: occurrences cut off before this text (a one-line text shown from its match).
-    package func mark(_ attributed: inout AttributedString, row: String?, field: String?, block: Int?, skipped: Int = 0) {
+    func mark(_ attributed: inout AttributedString, row: String?, field: String?, block: Int?, skipped: Int = 0) {
         let plain = String(attributed.characters)
         let ranges = PanelFind.ranges(of: query, in: plain, caseSensitive: caseSensitive)
         guard !ranges.isEmpty else { return }
@@ -413,52 +413,52 @@ private struct PanelFindModelKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    package var panelFindHighlight: PanelFindHighlight? {
+    var panelFindHighlight: PanelFindHighlight? {
         get { self[PanelFindHighlightKey.self] }
         set { self[PanelFindHighlightKey.self] = newValue }
     }
 
-    package var panelFindRow: String? {
+    var panelFindRow: String? {
         get { self[PanelFindRowKey.self] }
         set { self[PanelFindRowKey.self] = newValue }
     }
 
-    package var panelFindField: String? {
+    var panelFindField: String? {
         get { self[PanelFindFieldKey.self] }
         set { self[PanelFindFieldKey.self] = newValue }
     }
 
     /// The find of the enclosing `.panelFind`, for `PanelFindBarSlot`.
-    package var panelFindModel: PanelFindModel? {
+    var panelFindModel: PanelFindModel? {
         get { self[PanelFindModelKey.self] }
         set { self[PanelFindModelKey.self] = newValue }
     }
 }
 
 /// `Text(text)` that marks the matches of the open find. Outside a find it is plain `Text`.
-package struct FindText: View {
-    package let text: String
+struct FindText: View {
+    let text: String
     /// Styled text (inline markdown): matched on its shown characters, so its row field is
     /// `String(styled.characters)`.
     private let styled: AttributedString?
-    package let field: String
+    let field: String
     @Environment(\.panelFindHighlight) private var highlight
     @Environment(\.panelFindRow) private var row
     @Environment(\.lineLimit) private var lineLimit
 
-    package init(_ text: String, field: String) {
+    init(_ text: String, field: String) {
         self.text = text
         styled = nil
         self.field = field
     }
 
-    package init(_ styled: AttributedString, field: String) {
+    init(_ styled: AttributedString, field: String) {
         text = String(styled.characters)
         self.styled = styled
         self.field = field
     }
 
-    package var body: some View {
+    var body: some View {
         if let highlight, let row, highlight.currentOccurrence(row: row, field: field, block: nil) != nil {
             // The scroll target of the current match.
             current(highlight).id(PanelFind.anchorID(row: row, field: field, block: nil))
@@ -494,10 +494,10 @@ package struct FindText: View {
 
 /// The find bar of the enclosing `.panelFind`, for a panel whose find is wired from outside it
 /// (the Inbox): put it under the panel's header. Draws nothing outside a find or while closed.
-package struct PanelFindBarSlot: View {
+struct PanelFindBarSlot: View {
     @Environment(\.panelFindModel) private var find
 
-    package var body: some View {
+    var body: some View {
         if let find {
             PanelFindBar(find: find)
         }
@@ -528,31 +528,31 @@ private struct FindRowModifier: ViewModifier {
 extension View {
     /// A row of a find panel: its id (the same as in the panel's `rows`) is the scroll target, and
     /// the current match's row gets a ring.
-    package func findRow(_ id: String, cornerRadius: CGFloat = 7) -> some View {
+    func findRow(_ id: String, cornerRadius: CGFloat = 7) -> some View {
         modifier(FindRowModifier(id: id, cornerRadius: cornerRadius))
     }
 
     /// The field key of a `MarkdownContentView` (or any `FindText` that reads it) under a find row.
-    package func findField(_ key: String) -> some View {
+    func findField(_ key: String) -> some View {
         modifier(FindFieldModifier(key: key))
     }
 
     /// The panel's find: searches `rows()`, highlights, scrolls to the current match, and takes ⌘F
     /// while the keyboard is in this panel. `revision` changes when the rows' content changes.
-    package func panelFind<Revision: Equatable>(_ find: PanelFindModel, revision: Revision, onReveal: ((PanelFindMatch) -> Void)? = nil,
+    func panelFind<Revision: Equatable>(_ find: PanelFindModel, revision: Revision, onReveal: ((PanelFindMatch) -> Void)? = nil,
                                         rows: @escaping () -> [PanelFindRow]) -> some View {
         modifier(PanelFindHost(find: find, revision: revision, onReveal: onReveal, rows: rows))
     }
 
     /// A panel with a find of its own (the transcript's search, the diff's page find). A click in it
     /// keeps ⌘F there: `onFind` runs, or with nil the key goes on to the panel's own shortcut.
-    package func panelFindNative(_ scope: String, onFind: (() -> Void)? = nil) -> some View {
+    func panelFindNative(_ scope: String, onFind: (() -> Void)? = nil) -> some View {
         background(PanelFindAnchor(target: .native(scope: scope, onFind: onFind)))
     }
 
     /// An overlay that owns the keyboard while shown (find in files, the palette): no panel find
     /// key fires under it.
-    package func panelFindModal() -> some View {
+    func panelFindModal() -> some View {
         modifier(PanelFindModalModifier())
     }
 }
@@ -644,11 +644,11 @@ private func findKeyHint(_ title: String, _ id: String, also field: String) -> S
 // MARK: - Bar
 
 /// The find bar: put it under the panel's header. It draws nothing while the find is closed.
-package struct PanelFindBar: View {
-    @ObservedObject package var find: PanelFindModel
+struct PanelFindBar: View {
+    @ObservedObject var find: PanelFindModel
     @FocusState private var focused: Bool
 
-    package var body: some View {
+    var body: some View {
         if find.isOpen {
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass")
@@ -720,12 +720,12 @@ package struct PanelFindBar: View {
 
 // MARK: - Anchor and router
 
-package enum PanelFindTarget {
+enum PanelFindTarget {
     case panel(PanelFindModel)
     /// nil `onFind`: let the key through to the panel's own shortcut.
     case native(scope: String, onFind: (() -> Void)?)
 
-    package var scope: String {
+    var scope: String {
         switch self {
         case .panel(let find): return find.scope
         case .native(let scope, _): return scope
@@ -748,14 +748,14 @@ private struct PanelFindAnchor: NSViewRepresentable {
     }
 }
 
-package final class PanelFindAnchorView: NSView {
-    package var target: PanelFindTarget?
+final class PanelFindAnchorView: NSView {
+    var target: PanelFindTarget?
     /// When a click last landed in this panel or its find opened.
-    package var activeAt: TimeInterval?
+    var activeAt: TimeInterval?
 
-    package override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    package override func viewDidMoveToWindow() {
+    override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         MainActor.assumeIsolated {
             if window == nil {
@@ -766,7 +766,7 @@ package final class PanelFindAnchorView: NSView {
         }
     }
 
-    package override func isAccessibilityElement() -> Bool { false }
+    override func isAccessibilityElement() -> Bool { false }
 }
 
 /// One key monitor for every panel find in the process. The keys are `HubKeymap`'s find commands.
@@ -774,8 +774,8 @@ package final class PanelFindAnchorView: NSView {
 /// (else Previous stays Glass); Close Find closes it unless another text field has the keyboard.
 /// A key the panels do not take goes on untouched.
 @MainActor
-package final class PanelFindRouter {
-    package static let shared = PanelFindRouter()
+final class PanelFindRouter {
+    static let shared = PanelFindRouter()
 
     private let anchors = NSHashTable<PanelFindAnchorView>.weakObjects()
     private var keyMonitor: Any?
@@ -795,14 +795,14 @@ package final class PanelFindRouter {
     }
 
     /// An AppKit view with its own find (the diff's web view): `onFind` runs when ⌘F belongs to it.
-    package func registerNative(_ view: NSView, scope: String, onFind: @escaping () -> Void) {
+    func registerNative(_ view: NSView, scope: String, onFind: @escaping () -> Void) {
         let anchor = PanelFindAnchorView(frame: view.bounds)
         anchor.autoresizingMask = [.width, .height]
         anchor.target = .native(scope: scope, onFind: onFind)
         view.addSubview(anchor)
     }
 
-    package func register(_ anchor: PanelFindAnchorView) {
+    func register(_ anchor: PanelFindAnchorView) {
         anchors.add(anchor)
         install()
         if let request = pending, anchor.target?.scope == request.scope, case .panel(let find) = anchor.target {
@@ -818,16 +818,16 @@ package final class PanelFindRouter {
         }
     }
 
-    package func unregister(_ anchor: PanelFindAnchorView) {
+    func unregister(_ anchor: PanelFindAnchorView) {
         anchors.remove(anchor)
     }
 
-    package func modalShown(_ shown: Bool) {
+    func modalShown(_ shown: Bool) {
         modals = max(0, modals + (shown ? 1 : -1))
     }
 
     /// `scope:text` from `--panel-find`.
-    package func request(_ spec: String, steps: Int = 0) {
+    func request(_ spec: String, steps: Int = 0) {
         let parts = spec.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2 else { return }
         let scope = String(parts[0])
@@ -919,7 +919,7 @@ package final class PanelFindRouter {
     }
 
     /// ⇧⌘G steps to the previous match while a find bar in this window is open. Glass asks before it toggles.
-    package func takesPreviousMatch(in window: NSWindow?) -> Bool {
+    func takesPreviousMatch(in window: NSWindow?) -> Bool {
         guard let window else { return false }
         return step(in: window, forward: false)
     }

@@ -5,13 +5,13 @@ import SwiftUI
 // `InboxItem.findFields` / `InboxSession.findFields`, and InboxMain holds a `PanelFindBarSlot()`
 // under its header; this view adds the find itself over the sessions InboxMain shows.
 
-package struct InboxFindHost: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var inbox: HubInboxModel
+struct InboxFindHost: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
     @State private var find = PanelFindModel(scope: "inbox", title: "the inbox")
 
-    package var body: some View {
+    var body: some View {
         // The same sessions, order and sidebar filter as InboxMain, so no hit points at a hidden card:
         // InboxMain shows the queued-only sessions after the others, under their own heading.
         let sorted = inbox.sorted(InboxSort(rawValue: sortKey) ?? .recent, filter: model.filter)

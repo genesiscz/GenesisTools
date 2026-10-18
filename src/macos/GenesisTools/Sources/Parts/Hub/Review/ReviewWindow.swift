@@ -220,17 +220,17 @@ private final class ReviewAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-package enum ReviewPalette {
-    package static let background = NSColor(srgbRed: 0.075, green: 0.075, blue: 0.08, alpha: 1)
-    package static let sidebar = Color(nsColor: NSColor(srgbRed: 0.095, green: 0.095, blue: 0.1, alpha: 1))
-    package static let hairline = Color.white.opacity(0.08)
-    package static let added = Color(red: 0.36, green: 0.80, blue: 0.47)
-    package static let removed = Color(red: 0.96, green: 0.38, blue: 0.40)
-    package static let modified = Color(red: 0.98, green: 0.66, blue: 0.25)
-    package static let renamed = Color(red: 0.45, green: 0.62, blue: 0.98)
-    package static let dim = Color.white.opacity(0.5)
+enum ReviewPalette {
+    static let background = NSColor(srgbRed: 0.075, green: 0.075, blue: 0.08, alpha: 1)
+    static let sidebar = Color(nsColor: NSColor(srgbRed: 0.095, green: 0.095, blue: 0.1, alpha: 1))
+    static let hairline = Color.white.opacity(0.08)
+    static let added = Color(red: 0.36, green: 0.80, blue: 0.47)
+    static let removed = Color(red: 0.96, green: 0.38, blue: 0.40)
+    static let modified = Color(red: 0.98, green: 0.66, blue: 0.25)
+    static let renamed = Color(red: 0.45, green: 0.62, blue: 0.98)
+    static let dim = Color.white.opacity(0.5)
 
-    package static func color(_ status: DiffFile.Status) -> Color {
+    static func color(_ status: DiffFile.Status) -> Color {
         switch status {
         case .added: return added
         case .deleted: return removed
@@ -242,43 +242,43 @@ package enum ReviewPalette {
 
 // MARK: - Model
 
-package final class ReviewModel: ObservableObject {
+final class ReviewModel: ObservableObject {
     package private(set) var repo: URL
     /// The folder the review was made for (a session's folder). `repo` moves on with the Worktree choice
     /// or to the git root; this does not, so the hub can tell its own review from one for another folder.
-    package let home: URL
+    let home: URL
     /// Told the checkout the Worktree choice picked: the hub keeps it per session.
-    package var onWorktreeChange: ((URL) -> Void)?
+    var onWorktreeChange: ((URL) -> Void)?
     private let makeRenderer: () -> DiffRenderer
     private var builtRenderer: DiffRenderer?
     package private(set) var comments: ReviewCommentStore
     private var repositoryLayouts: [String: ReviewRepositoryLayout] = [:]
     private var displayedHead: String?
     /// The agent session this review is for; "Send to agent" types into its cmux pane.
-    package let session: String?
-    package var onFirstRender: (() -> Void)?
+    let session: String?
+    var onFirstRender: (() -> Void)?
 
-    @Published package var branch = ""
-    @Published package var base: String?
-    @Published package var scope = DiffScope.uncommitted {
+    @Published var branch = ""
+    @Published var base: String?
+    @Published var scope = DiffScope.uncommitted {
         didSet { if scope != oldValue { displayedHead = nil } }
     }
-    @Published package var commits: [RepoCommit] = []
+    @Published var commits: [RepoCommit] = []
     /// The checkouts of this repository, for the Worktree choice (filled by each load of the primary root).
-    @Published package var worktrees: [RepoWorktree] = []
+    @Published var worktrees: [RepoWorktree] = []
     /// Files this session's recent turns changed in each checkout (keyed by checkout path), for the Worktree choice.
-    @Published package var worktreeActivity: [String: Int] = [:]
+    @Published var worktreeActivity: [String: Int] = [:]
     /// The checkout the session worked in most; the window opens on it unless somebody picked one.
-    @Published package var recommendedWorktree: String?
+    @Published var recommendedWorktree: String?
     /// True once somebody picked a checkout, or a saved pick came back: the window never moves on its own after that.
-    @Published package var worktreeChosen = false
-    package var activityRequested = false
+    @Published var worktreeChosen = false
+    var activityRequested = false
     /// Branches the Base choice offers, newest first.
-    @Published package var baseCandidates: [String] = []
+    @Published var baseCandidates: [String] = []
     /// The base picked in the menu; nil follows the PR's target, else the repository's default branch.
-    @Published package var chosenBase: String?
+    @Published var chosenBase: String?
     /// An agent's review proposal shown on this diff (drafts + meta), when opened with --proposal.
-    @Published package var proposal: ProposalDocument?
+    @Published var proposal: ProposalDocument?
     /// The PR/MR this diff belongs to, with its live review threads; nil for a plain working-tree diff.
     @Published package private(set) var pr: PRThreadsStore?
     /// The PR's pushes (`tools hub pr versions`): loaded when the threads name a head the diff does not
@@ -287,39 +287,39 @@ package final class ReviewModel: ObservableObject {
     /// A push after the diff on screen: the notice above the diff and the orange Reload in the header.
     @Published package private(set) var pushNews: PRPushNews?
     /// The newest head whose notice the reader closed: the Reload stays, the notice does not come back.
-    @Published package var dismissedNewsHead: String?
-    @Published package var showsComparePicker = false
+    @Published var dismissedNewsHead: String?
+    @Published var showsComparePicker = false
     /// Inside the hub the header is not next to the traffic lights, so it needs no leading inset.
-    package var embedded = false
+    var embedded = false
     /// Set when no checkout on disk holds the diff's head (a PR without a worktree, its head fetched
     /// into `repo`): this repository's files open on the host at that head (Review/ReviewRemoteHead.swift).
-    package var remoteHead: ReviewRemoteHead?
-    @Published package var files: [DiffFile] = []
+    var remoteHead: ReviewRemoteHead?
+    @Published var files: [DiffFile] = []
     /// The file list's filter text; the list's rows are rebuilt from it in the view.
-    @Published package var filter = "" {
+    @Published var filter = "" {
         didSet {
             if filter != oldValue {
                 MainActor.assumeIsolated { HubMainBusy.measure("review.files.filter") }
             }
         }
     }
-    @Published package var selectedID: String?
-    @Published package var options: DiffViewOptions
-    @Published package var error: String?
-    @Published package var loading = false
-    @Published package var lastLoaded: Date?
-    @Published package var commentCount = 0
-    @Published package var unsentCount = 0
-    @Published package var notice: String?
+    @Published var selectedID: String?
+    @Published var options: DiffViewOptions
+    @Published var error: String?
+    @Published var loading = false
+    @Published var lastLoaded: Date?
+    @Published var commentCount = 0
+    @Published var unsentCount = 0
+    @Published var notice: String?
     /// The Files list as a tree or flat. Its click measures itself (`review.files.tree`, at the toggle): measured
     /// here, every launch's session-state restore logged the whole launch as the tree's cost ("897 ms of 600 ms",
     /// six at a time from parallel snapshot runs, 2026-10-10).
-    @Published package var treeMode = true
-    @Published package var collapsed: Set<String> = []
+    @Published var treeMode = true
+    @Published var collapsed: Set<String> = []
     /// Set only when the diff moves to a file on its own (a find match), so a click in the list never scrolls the list.
-    @Published package var sidebarScrollTarget: String?
+    @Published var sidebarScrollTarget: String?
     /// PR thread ids picked for "Fix threads": the cards' Fix checkboxes, the threads list, and x.
-    @Published package var selectedThreads: Set<String> = [] {
+    @Published var selectedThreads: Set<String> = [] {
         didSet {
             if selectedThreads != oldValue {
                 renderer.setThreadSelection(selectedThreads.sorted())
@@ -329,12 +329,12 @@ package final class ReviewModel: ObservableObject {
     /// The thread card j / k moved to; r, e and x act on it.
     @Published package private(set) var focusedCard: String?
     /// Bumped by s and f: the PR bar opens Submit review / Fix threads (each still asks first).
-    @Published package var submitRequests = 0
-    @Published package var fixRequests = 0
+    @Published var submitRequests = 0
+    @Published var fixRequests = 0
     /// A `--snapshot --fix-form` run shows the Fix form under the PR bar instead of in a popover.
-    @Published package var showsFixFormInline = false
+    @Published var showsFixFormInline = false
     /// A `--snapshot --agent-send` run: the "Send N…" form under the PR bar, as its popover would show it.
-    @Published package var showsAgentSendInline = false
+    @Published var showsAgentSendInline = false
     /// The live thread cards on the diff in page order, for j / k.
     private var threadCards: [RenderedComment] = []
     /// `tools agents blame` for the files hovered so far: the page's hover tips, and "Open the turn".
@@ -349,7 +349,7 @@ package final class ReviewModel: ObservableObject {
     /// the session's ticked folders, and then every file sits under its root's folder name.
     @Published package private(set) var roots: [ReviewRoot]
     /// The Files tree's root rows: tick or untick a root, or remove an added folder. Set by the hub.
-    package var rootActions: ReviewRootActions?
+    var rootActions: ReviewRootActions?
     /// Comments of the other roots, each anchored in its own repository (`comments` is `repo`'s).
     private var rootComments: [String: ReviewCommentStore] = [:]
 
@@ -363,7 +363,7 @@ package final class ReviewModel: ObservableObject {
     @Published package private(set) var cachedFolders: Set<String> = []
     /// Root folders that have a fresh answer for this scope: a cached snapshot never replaces one.
     private var freshFolders: Set<String> = []
-    package var showingCache: Bool { !cachedFolders.isEmpty }
+    var showingCache: Bool { !cachedFolders.isEmpty }
     private var rendered = false
     /// A file asked for by `reveal(path:)` before the diff had it.
     package private(set) var pendingRevealPath: String?
@@ -376,13 +376,13 @@ package final class ReviewModel: ObservableObject {
     /// The proposal whose first open draft was already brought into view, so a reload never jumps again.
     private var revealedProposal: String?
     /// True when the window restored a saved scroll place: the page returns there, so no first-draft jump.
-    package var resumesSavedPlace = false
+    var resumesSavedPlace = false
     /// When the last file set went to the renderer; `.rendered` closes the span.
     private var renderStart: CFAbsoluteTime?
     private let createdAt = CFAbsoluteTimeGetCurrent()
     private var commentsObserver: NSObjectProtocol?
 
-    package init(repo: URL, options: DiffViewOptions, session: String? = nil, renderer: @autoclosure @escaping () -> DiffRenderer = MainActor.assumeIsolated { PierreWebDiffRenderer.make() }) {
+    init(repo: URL, options: DiffViewOptions, session: String? = nil, renderer: @autoclosure @escaping () -> DiffRenderer = MainActor.assumeIsolated { PierreWebDiffRenderer.make() }) {
         self.repo = repo
         home = repo
         self.options = options
@@ -406,7 +406,7 @@ package final class ReviewModel: ObservableObject {
     /// Built on first use, not in `init`: the hub makes a review for every session it selects, even
     /// with only the transcript open, and the first WKWebView of a process also starts WebKit's
     /// content process (636 ms on the main thread per select, hang stacks of 2026-09-28).
-    package var renderer: DiffRenderer {
+    var renderer: DiffRenderer {
         if let builtRenderer {
             return builtRenderer
         }
@@ -420,7 +420,7 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// What an empty diff says: a turns scope waits for the next turn instead of calling itself clean.
-    package var emptyMessage: String {
+    var emptyMessage: String {
         switch scope {
         case .lastTurns(let count):
             return count == 1
@@ -431,23 +431,23 @@ package final class ReviewModel: ObservableObject {
         }
     }
 
-    package var totals: (additions: Int, deletions: Int) {
+    var totals: (additions: Int, deletions: Int) {
         files.reduce((0, 0)) { ($0.0 + $1.additions, $0.1 + $1.deletions) }
     }
 
-    package var filteredFiles: [DiffFile] {
+    var filteredFiles: [DiffFile] {
         let needle = filter.trimmed.lowercased()
         guard !needle.isEmpty else { return files }
         return files.filter { $0.path.lowercased().contains(needle) }
     }
 
-    package var selectedIndex: Int? {
+    var selectedIndex: Int? {
         files.firstIndex { $0.id == selectedID }
     }
 
     /// Starts loading and watching. Idempotent; the view calls it on appear and `stop()` on
     /// disappear, so a hidden review (a hub tab not shown) neither watches nor reloads.
-    package func start() {
+    func start() {
         guard !started else { return }
         started = true
         reload()
@@ -457,7 +457,7 @@ package final class ReviewModel: ObservableObject {
         watchRoots()
     }
 
-    package func stop() {
+    func stop() {
         started = false
         watchers = []
     }
@@ -480,7 +480,7 @@ package final class ReviewModel: ObservableObject {
     /// The hub's roots for this diff: this repository first, then the session's added folders. The
     /// same roots again changes nothing; otherwise the tree and the diff change at once (an unticked
     /// root's files go) and the shown roots load again.
-    package func setRoots(_ wanted: [ReviewRoot]) {
+    func setRoots(_ wanted: [ReviewRoot]) {
         var next = wanted.isEmpty ? [ReviewRoot(folder: repo.path, repo: repo)] : wanted
         let names = ReviewRoots.prefixes(for: next.map { $0.repo?.path ?? $0.folder })
         for index in next.indices {
@@ -545,7 +545,7 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// A merged file id's root, and the file as its repository names it.
-    package func locate(fileID: String) -> (root: ReviewRoot, file: DiffFile)? {
+    func locate(fileID: String) -> (root: ReviewRoot, file: DiffFile)? {
         guard let index = ReviewRoots.index(of: fileID, in: roots), let local = roots[index].local(fileID),
               let file = roots[index].files.first(where: { $0.id == local }) else { return nil }
         return (roots[index], file)
@@ -553,7 +553,7 @@ package final class ReviewModel: ObservableObject {
 
     /// The file on disk: its root's repository plus its repo-relative path. Nil for this repository's
     /// files under `remoteHead`: the copy on disk belongs to another branch.
-    package func absolutePath(of file: DiffFile) -> String? {
+    func absolutePath(of file: DiffFile) -> String? {
         guard let found = locate(fileID: file.id), let root = found.root.repo else { return nil }
         if remoteHead != nil, root.path == repo.path { return nil }
         return root.appendingPathComponent(found.file.path).path
@@ -561,37 +561,37 @@ package final class ReviewModel: ObservableObject {
 
     /// The host's copy of this repository's file at the commit on screen (`remoteHead` for a scope that
     /// pins none), at a line when given; nil without a remote head.
-    package func hostURL(of fileID: String, line: Int? = nil) -> URL? {
+    func hostURL(of fileID: String, line: Int? = nil) -> URL? {
         guard let remoteHead, let found = locate(fileID: fileID), found.root.repo?.path == repo.path else { return nil }
         return remoteHead.hostURL(found.file.path, line, at: hostRevision)
     }
 
     /// The commit the host links of this repository's files open: the diff's pinned head, else the remote head's.
-    package var hostRevision: String? {
+    var hostRevision: String? {
         scope.pinnedHead ?? remoteHead?.sha
     }
 
     /// The repo-relative path of a merged file, for PR threads (which name paths in this repository).
-    package func repoPath(of fileID: String?) -> String? {
+    func repoPath(of fileID: String?) -> String? {
         fileID.flatMap { locate(fileID: $0) }.map(\.file.path)
     }
 
     /// A file by an absolute path inside any root, or by a path relative to this repository.
-    package func file(atPath path: String) -> DiffFile? {
+    func file(atPath path: String) -> DiffFile? {
         let normalized = path.hasPrefix("/") ? URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path : path
         let wanted = ReviewRoots.global(path: normalized, in: roots)
         return files.first { $0.path == wanted || $0.oldPath == wanted }
     }
 
     /// The diff belongs to this PR/MR: its live threads load now (or on `start`) and sit on their lines.
-    package func attachPR(_ target: PRTarget) {
+    func attachPR(_ target: PRTarget) {
         guard pr?.target != target else { return }
         attachPR(PRThreadsStore(target: target))
     }
 
     /// The same with a store whose load already runs: the hub starts a PR's threads with its detail,
     /// before the diff (and this model) exists, so the threads do not wait for the head fetch.
-    package func attachPR(_ store: PRThreadsStore) {
+    func attachPR(_ store: PRThreadsStore) {
         guard pr !== store else { return }
         store.onChange = { [weak self] in
             self?.pushComments()
@@ -627,7 +627,7 @@ package final class ReviewModel: ObservableObject {
     /// "#424" / "!12", from the proposal or the loaded threads.
     /// While the threads load, the number comes from the branch facts the header already fetched.
     /// Read on the main thread only (views, alerts), so the store read assumes the main actor.
-    package var prLabel: String {
+    var prLabel: String {
         if let label = proposal?.label ?? pr?.payload?.pr.identity.label {
             return label
         }
@@ -649,7 +649,7 @@ package final class ReviewModel: ObservableObject {
 
     /// Live threads sit on the lines of the PR's head, so they go on the diff only when it compares
     /// against a base (the PR's range, or the branch); the threads list shows them in every scope.
-    package var showsLiveThreadsInline: Bool {
+    var showsLiveThreadsInline: Bool {
         switch scope {
         case .branch, .range, .compare: return true
         default: return false
@@ -657,7 +657,7 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// Loads every shown root again (a new scope, new roots, the refresh button).
-    package func reload() {
+    func reload() {
         reload(folders: Set(roots.filter(\.shown).map(\.folder)))
     }
 
@@ -900,7 +900,7 @@ package final class ReviewModel: ObservableObject {
 
     /// Opens a file now or once the next load has it: an absolute path inside any root, or a path
     /// relative to this repository.
-    package func reveal(path: String) {
+    func reveal(path: String) {
         if let file = file(atPath: path) {
             select(file.id)
         } else {
@@ -915,7 +915,7 @@ package final class ReviewModel: ObservableObject {
 
     /// The file, then the PR thread's card on its line once the diff and the PR's threads are on the
     /// page (an outdated thread has no card: the file alone opens).
-    package func reveal(path: String, thread threadID: String?) {
+    func reveal(path: String, thread threadID: String?) {
         reveal(path: path)
         pendingThreadCard = threadID.map { PRThreadRendering.cardID(thread: $0) }
         focusPendingThread()
@@ -934,7 +934,7 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// Opens the draft's file and marks its card: the drafts list, the banner, a fresh proposal.
-    package func revealDraft(_ id: String) {
+    func revealDraft(_ id: String) {
         guard let draft = proposal?.drafts.first(where: { $0.id == id }) else { return }
         // An off-diff draft only says so: a pending reveal would open its file on some later load unasked.
         if !files.isEmpty, file(atPath: draft.path) == nil {
@@ -950,7 +950,7 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// The next undecided draft after the marked card, in diff order, wrapping around.
-    package func revealNextOpenDraft() {
+    func revealNextOpenDraft() {
         let open = draftCards.filter { $0.state == "proposed" }
         guard !open.isEmpty else {
             notice = "No undecided agent draft sits on this diff."
@@ -966,7 +966,7 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// Undecided drafts per repository path, for the file list's badges.
-    package var openDraftsByPath: [String: Int] {
+    var openDraftsByPath: [String: Int] {
         Dictionary(grouping: (proposal?.drafts ?? []).filter { $0.status == "proposed" }, by: \.path).mapValues(\.count)
     }
 
@@ -980,12 +980,12 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// The pending card, once the page has drawn the diff and holds that card; nil until then.
-    package static func cardToFocus(_ pending: String?, rendered: Bool, cards: [RenderedComment]) -> String? {
+    static func cardToFocus(_ pending: String?, rendered: Bool, cards: [RenderedComment]) -> String? {
         guard let pending, rendered, cards.contains(where: { $0.id == pending }) else { return nil }
         return pending
     }
 
-    package func select(_ id: String) {
+    func select(_ id: String) {
         selectedID = id
         if showsOneFile {
             pushToRenderer()
@@ -995,7 +995,7 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// Find in every file of the diff: the page searches its parsed diffs, not what is on screen.
-    package func find() {
+    func find() {
         renderer.find()
     }
 
@@ -1005,7 +1005,7 @@ package final class ReviewModel: ObservableObject {
     private var branchBaseTried: String?
 
     /// The threads name the PR's head; when the diff shows another one, ask the host what came.
-    package func checkForPush() {
+    func checkForPush() {
         // A Branch diff loaded before the PR was known compared against the guessed base (`origin/HEAD`).
         if case .branch = scope, chosenBase == nil, let ref = targetRef, base != ref, branchBaseTried != ref {
             branchBaseTried = ref
@@ -1019,7 +1019,7 @@ package final class ReviewModel: ObservableObject {
         versions?.load(forHead: head)
     }
 
-    package func updateNews() {
+    func updateNews() {
         guard let shown = scope.pinnedHead, let list = versions?.payload?.versions else {
             pushNews = nil
             return
@@ -1033,13 +1033,13 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// The PR's own diff, its base against its head (what the PR page shows), whatever scope is on screen.
-    package var prScope: DiffScope? {
+    var prScope: DiffScope? {
         guard let info = pr?.payload?.pr, let head = info.headSha, let base = info.baseSha else { return nil }
         return .range(base: base, head: head, label: "\(info.identity.label) \(info.title.prefix(40))", fallbackBase: targetRef)
     }
 
     /// The diff moves to the PR's newest push; the base follows the push's own (a rebase moves it).
-    package func reloadToNewest() {
+    func reloadToNewest() {
         guard let newest = pushNews?.newest, let updated = scope.reloading(to: newest) else { return }
         // A commit scope does not name the push's base, so the remote head moves here, not in `setScope`.
         remoteHead = remoteHead?.moved(to: newest.headSha, base: newest.baseSha)
@@ -1048,7 +1048,7 @@ package final class ReviewModel: ObservableObject {
 
     /// Only what the author changed between the push on screen and the newest one; a rebase between
     /// them is left out (Review/ReviewVersions.swift).
-    package func showChangesSinceShown() {
+    func showChangesSinceShown() {
         guard let news = pushNews, let shownHead = scope.pinnedHead else { return }
         var shownBase = news.shown?.baseSha
         if shownBase == nil, case .range(let base, _, _, _) = scope { shownBase = base }
@@ -1056,7 +1056,7 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// The compare diff between two ends; labelled by their short ids.
-    package func compare(from: CompareEnd, to: CompareEnd) {
+    func compare(from: CompareEnd, to: CompareEnd) {
         let label = "\(prLabel) \(from.head.prefix(7)) → \(to.head.prefix(7))"
         setScope(.compare(from: from, to: to, label: label, targetRef: targetRef))
     }
@@ -1064,7 +1064,7 @@ package final class ReviewModel: ObservableObject {
     /// The hub, at this PR and the file on screen: a second `--hub` hands its flags to the running hub
     /// and exits (Hub/HubSingleInstance.swift). Not a `genesis-tools://` link: Launch Services may hand
     /// that to this very process, which has no hub.
-    package func showInHub() {
+    func showInHub() {
         guard let info = pr?.payload?.pr, let executable = Bundle.main.executableURL else { return }
         var args = ["--hub", "--pr", info.webUrl ?? info.url]
         if let id = selectedID, let file = files.first(where: { $0.id == id }), !file.path.isEmpty {
@@ -1082,7 +1082,7 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// Compare against another base (nil: automatic). The Branch scope and the Committed list follow it.
-    package func setBase(_ ref: String?) {
+    func setBase(_ ref: String?) {
         guard ref != chosenBase else { return }
         HubPerf.log("review.base \(ref ?? "automatic")")
         chosenBase = ref
@@ -1093,7 +1093,7 @@ package final class ReviewModel: ObservableObject {
     /// scope stays; a commit is found in every checkout, since they share one object store.
     /// `chosen` is false only for the window's own move to the checkout the session worked in: that one is neither
     /// remembered as a pick nor does it stop the window from following the session later.
-    package func switchWorktree(to path: String, chosen: Bool = true) {
+    func switchWorktree(to path: String, chosen: Bool = true) {
         if chosen { worktreeChosen = true }
         let url = URL(fileURLWithPath: path).standardizedFileURL
         guard url.path != repo.path else {
@@ -1121,7 +1121,7 @@ package final class ReviewModel: ObservableObject {
         restartLoad()
     }
 
-    package func setScope(_ next: DiffScope) {
+    func setScope(_ next: DiffScope) {
         guard next != scope else { return }
         scope = next
         // A PR push on screen (Reload, a version, a compare) moves the commits list and the agent note with it.
@@ -1142,7 +1142,7 @@ package final class ReviewModel: ObservableObject {
         reload()
     }
 
-    package func setStyle(_ style: DiffViewOptions.Style) {
+    func setStyle(_ style: DiffViewOptions.Style) {
         options.diffStyle = style
         DiffViewOptions.remember(style)
         renderer.apply(options)
@@ -1151,7 +1151,7 @@ package final class ReviewModel: ObservableObject {
     /// The reader picked wrap or scroll (header button, menu): from then on the width no longer decides.
     private var wrapChosen = false
 
-    package func toggleWrap() {
+    func toggleWrap() {
         wrapChosen = true
         options.wrap.toggle()
         renderer.apply(options)
@@ -1159,21 +1159,21 @@ package final class ReviewModel: ObservableObject {
 
     /// A narrow diff wraps its long lines until the reader picks: in a 530 pt Changes pane beside the
     /// transcript and Files, scrolled lines ended at the pane edge with nothing to say they went on (H18).
-    package func fitWrap(narrow: Bool) {
+    func fitWrap(narrow: Bool) {
         guard !wrapChosen, options.wrap != narrow else { return }
         options.wrap = narrow
         HubPerf.log("review.wrap \(narrow ? "on" : "off") for the pane width")
         renderer.apply(options)
     }
 
-    package func stepFont(_ delta: Double) {
+    func stepFont(_ delta: Double) {
         options.fontSize = max(10, min(20, options.fontSize + delta))
         renderer.apply(options)
     }
 
     /// Render only the selected file. A `--snapshot --file` sets it: in a window nobody sees, WebKit
     /// paints no frame for a file that is only scrolled into view.
-    package var showsOneFile = false
+    var showsOneFile = false
 
     /// Every file goes to the renderer, however large the diff: it lays out only what is near the
     /// viewport. A new scope starts at the top; a refresh of the same diff keeps the scroll position.
@@ -1246,13 +1246,13 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// Every comment not yet with an agent (written, or queued): the header's "Send N…" takes them all.
-    package var pendingAgentIDs: [String] {
+    var pendingAgentIDs: [String] {
         pendingAgentItems.map(\.id)
     }
 
     /// The comments "Send N…" takes, as its list shows them: where each sits, the thread it answers,
     /// and its text.
-    package var pendingAgentItems: [AgentSendItem] {
+    var pendingAgentItems: [AgentSendItem] {
         commentRoots.flatMap { root, store in
             store.agentPending.map { comment in
                 AgentSendItem(id: comment.id, path: root.prefix.isEmpty ? comment.path : "\(root.prefix)/\(comment.path)",
@@ -1263,25 +1263,25 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// A comment's new text, from its card or from the send list: the same save, the PR draft synced.
-    package func editComment(_ id: String, body: String) {
+    func editComment(_ id: String, body: String) {
         commentOwner(id)?.store.edit(id: id, body: body)
         syncEditedDraft(id)
         pushComments()
     }
 
     /// "Remove from this send": the comment stays, local, out of every send until queued again.
-    package func holdFromAgent(_ id: String) {
+    func holdFromAgent(_ id: String) {
         commentOwner(id)?.store.holdFromAgent([id])
         pushComments()
     }
 
     /// Delete from the send list: the card's Delete (a PR draft it owns goes too).
-    package func deleteComment(_ id: String) {
+    func deleteComment(_ id: String) {
         deleteLocalComment(id)
     }
 
     /// The markdown the agent's file will hold for these comments (the outbox file, not written).
-    package func agentMessage(ids: [String]) -> String {
+    func agentMessage(ids: [String]) -> String {
         composeAgentMessage(ids).message
     }
 
@@ -1299,7 +1299,7 @@ package final class ReviewModel: ObservableObject {
 
     /// Where comments go: the window's own session, else the session last picked for this PR (or this
     /// repository when the diff is no PR). Nil: nobody, so a comment can only be queued.
-    package var agentTarget: AgentTarget? {
+    var agentTarget: AgentTarget? {
         if let session, AgentTarget.validID(session) {
             return AgentTarget(sessionId: session, provider: nil, name: "session \(session.prefix(8))")
         }
@@ -1307,11 +1307,11 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// The PR's URL, or the repository's path for a diff that is no PR: one remembered agent each.
-    package var agentTargetKey: String {
+    var agentTargetKey: String {
         pr?.payload?.pr.webUrl ?? pr?.payload?.pr.url ?? repo.path
     }
 
-    package func sendToAgent() {
+    func sendToAgent() {
         sendToAgent(ids: pendingAgentIDs)
     }
 
@@ -1319,7 +1319,7 @@ package final class ReviewModel: ObservableObject {
     /// window's session, or the one picked for this PR), one line naming the file is typed into that
     /// session's pane, and only then they read "Sent to <it>". With no target they are queued, which says
     /// what happened: written, nobody told. `afterSend` runs when a pane got them; `finished` always, once.
-    package func sendToAgent(ids: [String], to chosen: AgentTarget? = nil, afterSend: (() -> Void)? = nil, finished: (() -> Void)? = nil) {
+    func sendToAgent(ids: [String], to chosen: AgentTarget? = nil, afterSend: (() -> Void)? = nil, finished: (() -> Void)? = nil) {
         guard !ids.isEmpty else {
             notice = "No comments waiting for the agent."
             finished?()
@@ -1365,7 +1365,7 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// The explicit fallback: the comments copied to the clipboard and kept queued. Nothing was sent.
-    package func copyForAgent(ids: [String]) {
+    func copyForAgent(ids: [String]) {
         guard !ids.isEmpty, let written = writeOutbox(ids) else { return }
         for owner in written.owners {
             owner.store.markQueued(owner.ids)
@@ -1486,7 +1486,7 @@ package final class ReviewModel: ObservableObject {
     }
 
     /// A file's path actions: the file list's context menu and the diff header's right-click menu.
-    package func pathActions(of file: DiffFile) -> [ReviewPathAction] {
+    func pathActions(of file: DiffFile) -> [ReviewPathAction] {
         var actions: [ReviewPathAction] = []
         if let url = hostURL(of: file.id), let revision = hostRevision {
             actions.append(ReviewPathAction("Open on the host at \(revision.prefix(8))") { ExternalOpener.open(url) })
@@ -1534,7 +1534,7 @@ package final class ReviewModel: ObservableObject {
     // MARK: Agent blame
 
     /// A snapshot's `--blame <path>:<line>`: asks as a hover would; true once the answer is in.
-    package func requestBlame(path: String) -> Bool {
+    func requestBlame(path: String) -> Bool {
         guard let file = file(atPath: path) else { return false }
         if blame.loaded.contains(file.id) {
             return true
@@ -1543,7 +1543,7 @@ package final class ReviewModel: ObservableObject {
         return false
     }
 
-    package func showBlame(path: String, line: Int) {
+    func showBlame(path: String, line: Int) {
         if let file = file(atPath: path) {
             renderer.showBlame(fileID: file.id, line: line)
         }
@@ -1622,7 +1622,7 @@ package final class ReviewModel: ObservableObject {
 
     // MARK: Keys and the Fix selection
 
-    package func handleKey(_ key: ReviewKey) {
+    func handleKey(_ key: ReviewKey) {
         HubPerf.log("review.key \(key.rawValue)")
         switch key {
         case .nextThread: stepThread(1)
@@ -1695,7 +1695,7 @@ package final class ReviewModel: ObservableObject {
         return card
     }
 
-    package func toggleThreadSelection(_ id: String) {
+    func toggleThreadSelection(_ id: String) {
         if selectedThreads.contains(id) {
             selectedThreads.remove(id)
         } else {
@@ -1703,7 +1703,7 @@ package final class ReviewModel: ObservableObject {
         }
     }
 
-    package func clearThreadSelection() {
+    func clearThreadSelection() {
         selectedThreads = []
     }
 
@@ -1747,7 +1747,7 @@ package final class ReviewModel: ObservableObject {
 
     // MARK: Sending a suggestion
 
-    package enum SendTarget { case agent, prDraft, prComment }
+    enum SendTarget { case agent, prDraft, prComment }
 
     /// What one card would send: the text as worded now, where it sits, and the PR thread it answers.
     private struct Suggestion {
@@ -1805,7 +1805,7 @@ package final class ReviewModel: ObservableObject {
 
     /// One suggestion, as Martin worded it, to the agent (outbox + cmux), as a review draft on the PR, or
     /// published on the PR. Publishing asks first: a posted comment is visible to everyone at once.
-    package func send(_ id: String, to target: SendTarget) {
+    func send(_ id: String, to target: SendTarget) {
         guard let item = suggestion(for: id) else {
             notice = "Nothing to send: the suggestion is empty or its file is not in this diff."
             return
@@ -2036,12 +2036,12 @@ package final class ReviewModel: ObservableObject {
 
 // MARK: - Views
 
-package struct ReviewRootView: View {
-    @ObservedObject package var model: ReviewModel
+struct ReviewRootView: View {
+    @ObservedObject var model: ReviewModel
     /// False while the hub shows the same list as its own Files pane: one list, not two.
-    package var showsFileList = true
+    var showsFileList = true
     /// The hub's own list in the file panel (changed files or the folders, Hub/HubFolders.swift); nil: the changed files.
-    package var fileList: (() -> AnyView)? = nil
+    var fileList: (() -> AnyView)? = nil
     @State private var width: CGFloat = 0
     @State private var height: CGFloat = 0
 
@@ -2062,12 +2062,12 @@ package struct ReviewRootView: View {
     private static let contextFraction: CGFloat = 0.4
     private static let contextMinWidth: CGFloat = 320
     /// Below this width long diff lines wrap, unless the reader chose (`ReviewModel.fitWrap`).
-    package static let wrapBelow: CGFloat = 680
+    static let wrapBelow: CGFloat = 680
 
     private var showsContext: Bool { !model.embedded }
     private var contextSqueezed: Bool { width > 0 && width * Self.contextFraction < Self.contextMinWidth }
 
-    package var body: some View {
+    var body: some View {
         SideSplit(panelEdge: .leading, maxFraction: Self.contextFraction) {
             if showsContext {
                 ResizableSidePanel(key: ReviewContextPanel.key, edge: .leading, title: "Context", defaultWidth: 420,
@@ -2496,11 +2496,11 @@ private struct ScopeLink: View {
 /// Codex's review source menu: what the diff compares. Its label is the chip the markdown viewer's scope picker shows
 /// (GenesisKit `GitPickerChip`); "Pick a Commit…" opens the commit chooser (`gitCommitPopover`), with each commit's
 /// author, date and line counts, a filter and the keyboard.
-package struct ScopeMenu: View {
-    @ObservedObject package var model: ReviewModel
+struct ScopeMenu: View {
+    @ObservedObject var model: ReviewModel
     @State private var pickingCommit = false
 
-    package var body: some View {
+    var body: some View {
         // Its own width when that fits, so the totals sit beside it; it shrinks in a narrow pane instead
         // of pushing the header past both edges: a PR range label
         // ("feature/next…chore/abc-123456-repo-cleanup") is wider than the whole diff pane at 1000 pt.
@@ -2527,7 +2527,7 @@ package struct ScopeMenu: View {
 
     /// The scope choices at the moment of the click; `pickCommit` opens the commit chooser.
     @MainActor
-    package static func items(model: ReviewModel, pickCommit: @escaping () -> Void = {}) -> [MenuButtonItem] {
+    static func items(model: ReviewModel, pickCommit: @escaping () -> Void = {}) -> [MenuButtonItem] {
         // Always offered with a session: a turn without changes is an empty panel that the next turn
         // fills, not a greyed-out item.
         let turns = model.session != nil && model.remoteHead == nil
@@ -2734,17 +2734,17 @@ private struct ProposalBanner: View {
     }
 }
 
-package struct SidebarRow: Identifiable {
-    package enum Kind {
+struct SidebarRow: Identifiable {
+    enum Kind {
         /// A root's folder in a review of several repositories: its checkbox, remove and error live here.
         case root(index: Int, additions: Int, deletions: Int)
         case directory(name: String, additions: Int, deletions: Int)
         case file(DiffFile)
     }
 
-    package let id: String
-    package let depth: Int
-    package let kind: Kind
+    let id: String
+    let depth: Int
+    let kind: Kind
 }
 
 private final class TreeNode {
@@ -2766,7 +2766,7 @@ private final class TreeNode {
 /// single-child folders collapses into one row (`src/browser-router/lib`), like Codex's review pane.
 /// With several roots, each root is one top-level row in root order (never folded into its first
 /// folder), with its files under it; a root with no files keeps its row.
-package func sidebarRows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>, roots: [ReviewRoot] = []) -> [SidebarRow] {
+func sidebarRows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>, roots: [ReviewRoot] = []) -> [SidebarRow] {
     guard roots.count > 1 else {
         return sidebarRows(files, tree: tree, collapsed: collapsed, depth: 0, strip: "")
     }
@@ -2839,8 +2839,8 @@ private func sidebarRows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>
 }
 
 /// Not private: reused standalone as the hub's "Files" pane (`HubTab.files` in HubWindow.swift).
-package struct FileSidebar: View {
-    @ObservedObject package var model: ReviewModel
+struct FileSidebar: View {
+    @ObservedObject var model: ReviewModel
     @FocusState private var filterFocused: Bool
     @GenReduceMotion private var reduceMotion
 
@@ -2856,7 +2856,7 @@ package struct FileSidebar: View {
         }
     }
 
-    package var body: some View {
+    var body: some View {
         let rows = sidebarRows(model.filteredFiles, tree: model.treeMode && model.filter.isEmpty, collapsed: model.collapsed, roots: model.roots)
         let drafts = model.openDraftsByPath
         VStack(spacing: 0) {
@@ -2967,7 +2967,7 @@ package struct FileSidebar: View {
 /// The file list's width that shows every visible row whole: the widest of its rows as they draw
 /// (`FileRow`, `DirectoryRow`, `RootFolderRow`: indent, chevron or status dot, name, the +N −M
 /// counts, their paddings and HStack spacings), plus a legacy scroller when the system shows one.
-package enum FileListFit {
+enum FileListFit {
     private static let fileName = NSFont.systemFont(ofSize: 12.5)
     private static let folderName = NSFont.systemFont(ofSize: 11.5, weight: .medium)
     private static let rootName = NSFont.systemFont(ofSize: 12, weight: .semibold)
@@ -2978,7 +2978,7 @@ package enum FileListFit {
     private static let slack: CGFloat = 6
 
     @MainActor
-    package static func width(model: ReviewModel) -> CGFloat {
+    static func width(model: ReviewModel) -> CGFloat {
         let tree = model.treeMode && model.filter.isEmpty
         let rows = sidebarRows(model.filteredFiles, tree: tree, collapsed: model.collapsed, roots: model.roots)
         let widest = rows.map { rowWidth($0, tree: tree, roots: model.roots, hasRootActions: model.rootActions != nil) }.max() ?? 0
@@ -3016,13 +3016,13 @@ package enum FileListFit {
 }
 
 /// One entry of a file's path menu (`ReviewModel.pathActions`).
-package struct ReviewPathAction: Identifiable {
-    package let title: String
-    package let run: () -> Void
+struct ReviewPathAction: Identifiable {
+    let title: String
+    let run: () -> Void
 
-    package var id: String { title }
+    var id: String { title }
 
-    package init(_ title: String, _ run: @escaping () -> Void) {
+    init(_ title: String, _ run: @escaping () -> Void) {
         self.title = title
         self.run = run
     }
@@ -3323,8 +3323,8 @@ private final class RepoWatcher {
 
 /// Writes the window as a PNG without Screen Recording: the SwiftUI chrome through
 /// `cacheDisplay`, the web content through WKWebView's own snapshot, composited at its frame.
-package enum ReviewSnapshot {
-    package static func write(window: NSWindow, webView: WKWebView?, to path: String, done: @escaping () -> Void) {
+enum ReviewSnapshot {
+    static func write(window: NSWindow, webView: WKWebView?, to path: String, done: @escaping () -> Void) {
         guard let content = window.contentView else {
             done()
             return
@@ -3414,7 +3414,7 @@ package enum ReviewSnapshot {
 }
 
 /// The review's folder is gone from disk (deleted checkout or session folder).
-package struct MissingReviewFolder: Error, CustomStringConvertible {
-    package let path: String
-    package var description: String { "This folder no longer exists: \(path)" }
+struct MissingReviewFolder: Error, CustomStringConvertible {
+    let path: String
+    var description: String { "This folder no longer exists: \(path)" }
 }

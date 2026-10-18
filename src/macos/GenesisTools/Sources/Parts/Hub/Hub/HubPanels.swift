@@ -10,8 +10,8 @@ import SwiftUI
 /// for each new width. Heavy panes read this and keep the width they had when the drag began
 /// (`freezesWidthWhileResizing`), then lay out once when it ends.
 @MainActor
-package final class HubLiveResize: ObservableObject {
-    package static let shared = HubLiveResize()
+final class HubLiveResize: ObservableObject {
+    static let shared = HubLiveResize()
 
     @Published package private(set) var active = false
     /// Only a pane divider, or a side panel that lays out live (`ResizableSidePanel.holdsLayout` off), is
@@ -22,13 +22,13 @@ package final class HubLiveResize: ObservableObject {
     @Published package private(set) var sources: Set<String> = []
     private var observers: [NSObjectProtocol] = []
 
-    package func begin(_ source: String) {
+    func begin(_ source: String) {
         sources.insert(source)
         if !active { active = true }
         updateSplitOnly()
     }
 
-    package func end(_ source: String) {
+    func end(_ source: String) {
         sources.remove(source)
         if sources.isEmpty, active { active = false }
         updateSplitOnly()
@@ -41,7 +41,7 @@ package final class HubLiveResize: ObservableObject {
 
     /// The window's own live resize, and a pane divider dragged with the mouse (NSSplitView reports
     /// each step but no start or end, so the end is the mouse-up).
-    package func watch(_ window: NSWindow) {
+    func watch(_ window: NSWindow) {
         let center = NotificationCenter.default
         observers = [
             center.addObserver(forName: NSWindow.willStartLiveResizeNotification, object: window, queue: .main) { _ in
@@ -140,18 +140,18 @@ private struct FreezeWidthWhileResizing: ViewModifier {
 }
 
 extension View {
-    package func freezesWidthWhileResizing(heavy: Bool = true) -> some View { modifier(FreezeWidthWhileResizing(heavy: heavy)) }
+    func freezesWidthWhileResizing(heavy: Bool = true) -> some View { modifier(FreezeWidthWhileResizing(heavy: heavy)) }
 
     /// Holds only while the live side panel `key` drags; it moves with the panel's edge at once and
     /// reflows on release.
-    package func freezesWidthWhileDragging(panel key: String) -> some View {
+    func freezesWidthWhileDragging(panel key: String) -> some View {
         modifier(FreezeWidthWhileResizing(heavy: false, panel: key))
     }
 }
 
 // MARK: - Resizable side panel
 
-package enum SidePanelEdge { case leading, trailing }
+enum SidePanelEdge { case leading, trailing }
 
 /// A side panel you drag to any width. Released below `minWidth`, it collapses to a rail at the edge
 /// (the content dims while you drag past that point, so the collapse never surprises). The rail
@@ -169,27 +169,27 @@ package enum SidePanelEdge { case leading, trailing }
 /// `fitWidth` is the width the content asks to open at (the file list's widest row). The panel uses
 /// it, never narrower than `minWidth`, until the reader drags this panel in this window; from then on
 /// the dragged width stays, as for any other panel.
-package struct ResizableSidePanel<Content: View>: View {
-    package typealias Edge = SidePanelEdge
+struct ResizableSidePanel<Content: View>: View {
+    typealias Edge = SidePanelEdge
 
-    package let key: String
-    package let edge: Edge
-    package var title = "panel"
-    package var defaultWidth: CGFloat = 300
-    package var minWidth: CGFloat = 180
-    package var maxWidth: CGFloat = 900
-    package var autoCollapse = false
-    package var fitWidth: CGFloat?
-    package var holdsLayout = true
+    let key: String
+    let edge: Edge
+    var title = "panel"
+    var defaultWidth: CGFloat = 300
+    var minWidth: CGFloat = 180
+    var maxWidth: CGFloat = 900
+    var autoCollapse = false
+    var fitWidth: CGFloat?
+    var holdsLayout = true
     /// The panel's own content keeps the width the drag began with and lays out once, on release; the
     /// edge still moves with the pointer (the content is clipped, or the surface fills the rest). For
     /// content that re-wraps: the PR list's two-line titles and its toolbar re-laid out on every step,
     /// so the rows jumped under the pointer for the whole drag (2026-10-04).
-    package var holdsContent = false
+    var holdsContent = false
     /// Controls drawn in the folded rail under its title, live while the panel is folded: the hub's mode
     /// switch, so a narrow window still reaches every mode in one click (H13).
-    package var railAccessory: AnyView?
-    @ViewBuilder package let content: () -> Content
+    var railAccessory: AnyView?
+    @ViewBuilder let content: () -> Content
 
     @AppStorage private var width: Double
     @AppStorage private var collapsed: Bool
@@ -199,9 +199,9 @@ package struct ResizableSidePanel<Content: View>: View {
     @State private var hovering = false
     @State private var drawerOpen = false
 
-    package static var railWidth: CGFloat { 28 }
+    static var railWidth: CGFloat { 28 }
 
-    package init(key: String, edge: Edge, title: String = "panel", defaultWidth: CGFloat = 300, minWidth: CGFloat = 180,
+    init(key: String, edge: Edge, title: String = "panel", defaultWidth: CGFloat = 300, minWidth: CGFloat = 180,
          maxWidth: CGFloat = 900, autoCollapse: Bool = false, fitWidth: CGFloat? = nil, holdsLayout: Bool = true,
          holdsContent: Bool = false, railAccessory: AnyView? = nil, @ViewBuilder content: @escaping () -> Content) {
         self.key = key
@@ -252,7 +252,7 @@ package struct ResizableSidePanel<Content: View>: View {
         return (edge == .leading ? 1 : -1) * (shownWidth - slotWidth)
     }
 
-    package var body: some View {
+    var body: some View {
         HStack(spacing: 0) {
             if collapsed || autoCollapse {
                 if edge == .trailing { railLine }
@@ -466,22 +466,22 @@ package struct ResizableSidePanel<Content: View>: View {
 /// Side panels the reader resized in this process (one hub or review window each): they keep their
 /// dragged width instead of their content's fitted one (`ResizableSidePanel.fitWidth`).
 @MainActor
-package enum SidePanelSizing {
-    package static var resized = Set<String>()
+enum SidePanelSizing {
+    static var resized = Set<String>()
 }
 
 // MARK: - Pane rail
 
 /// A session pane with no room beside the others: the same rail a folded side panel shows, and a
 /// click opens the pane as a drawer over its neighbours (`SessionDetailView`).
-package struct PaneRail: View {
-    package static let width = ResizableSidePanel<EmptyView>.railWidth
+struct PaneRail: View {
+    static let width = ResizableSidePanel<EmptyView>.railWidth
 
-    package let tab: HubTab
-    package let open: Bool
-    package let action: () -> Void
+    let tab: HubTab
+    let open: Bool
+    let action: () -> Void
 
-    package var body: some View {
+    var body: some View {
         Button(action: action) {
             VStack(spacing: 10) {
                 Image(systemName: open ? "chevron.right" : tab.symbol)
@@ -510,10 +510,10 @@ package struct PaneRail: View {
 
 extension EnvironmentValues {
     /// On when the hub's glass mode is (`HubGlass`): surfaces let the blurred desktop through.
-    @Entry package var hubGlass = false
+    @Entry var hubGlass = false
 }
 
-package enum HubSurfaceLevel {
+enum HubSurfaceLevel {
     /// Sidebars, rails, headers: the most see-through.
     case chrome
     /// Content columns (diff, decisions): barely tinted, readability first.
@@ -528,7 +528,7 @@ package enum HubSurfaceLevel {
     case drawer
 
     /// The level's fill in the Native style.
-    package var native: NativePaneLevel {
+    var native: NativePaneLevel {
         switch self {
         case .chrome: return .chrome
         case .content: return .content
@@ -539,7 +539,7 @@ package enum HubSurfaceLevel {
 
 extension View {
     /// The background of a hub surface: opaque normally, translucent over the window blur in glass mode.
-    package func hubSurface(_ level: HubSurfaceLevel) -> some View {
+    func hubSurface(_ level: HubSurfaceLevel) -> some View {
         modifier(HubSurface(level: level))
     }
 }
@@ -594,12 +594,12 @@ private struct HubSurface: ViewModifier {
 /// The hub's glass mode (⌘⇧G, or the drop button by the mode picker): the window lets the blurred
 /// desktop through, sidebars and headers go translucent, content columns stay nearly opaque for
 /// reading, and on macOS 26 the floating controls get Liquid Glass. Persisted as `hub.glass`.
-package enum HubGlass {
+enum HubGlass {
     /// The window's content: the SwiftUI root inside a behind-window blur. The hosting view states
     /// no sizes of its own (`sizingOptions = []`): deriving min, max and intrinsic size re-measured
     /// the whole tree on every layout pass, a third of the main thread while resizing (sampled
     /// 2026-09-24). `HubRootView` sets the window's minimum explicitly instead.
-    package static func makeContentView<Root: View>(root: Root) -> NSView {
+    static func makeContentView<Root: View>(root: Root) -> NSView {
         let hosting = NSHostingView(rootView: root)
         hosting.sizingOptions = []
         hosting.translatesAutoresizingMaskIntoConstraints = false
@@ -619,7 +619,7 @@ package enum HubGlass {
 
     /// Idempotent: called on every root update, it changes the window only when the mode flips.
     @MainActor
-    package static func apply(to window: NSWindow, enabled: Bool) {
+    static func apply(to window: NSWindow, enabled: Bool) {
         guard let effect = window.contentView as? NSVisualEffectView else { return }
         let blending: NSVisualEffectView.BlendingMode = enabled ? .behindWindow : .withinWindow
         guard effect.blendingMode != blending || window.isOpaque == enabled else { return }
@@ -633,10 +633,10 @@ package enum HubGlass {
 
 /// The glass switch by the mode picker. The same switch as Settings → Hub → Appearance → Glass, and like it only for
 /// the Hub style: in the Native style it is unavailable and says why.
-package struct GlassToggle: View {
+struct GlassToggle: View {
     @ObservedObject private var preferences = HubDefaults.preferences
 
-    package var body: some View {
+    var body: some View {
         let native = preferences.style == .native
         let glass = preferences.glass && !native
         IconButton(
@@ -656,7 +656,7 @@ package struct GlassToggle: View {
 extension View {
     /// Liquid Glass on a floating control while glass mode is on (macOS 26+); a no-op otherwise.
     @ViewBuilder
-    package func hubLiquidGlass<S: Shape>(_ enabled: Bool, in shape: S) -> some View {
+    func hubLiquidGlass<S: Shape>(_ enabled: Bool, in shape: S) -> some View {
         if #available(macOS 26, *), enabled {
             glassEffect(.regular, in: shape)
         } else {
@@ -700,7 +700,7 @@ private struct HoverCursor: ViewModifier {
 }
 
 extension View {
-    package func hoverCursor(_ cursor: NSCursor) -> some View { modifier(HoverCursor(cursor: cursor)) }
+    func hoverCursor(_ cursor: NSCursor) -> some View { modifier(HoverCursor(cursor: cursor)) }
 }
 
 // MARK: - Pane divider grips
@@ -709,15 +709,15 @@ extension View {
 /// grip, a one-pixel target, and a cursor the neighbouring text and web views take over. This view lies
 /// over the split and gives each divider what the side panels have (`ResizableSidePanel.handle`): a
 /// 10 pt target, the resize cursor and the glowing grip, and it moves the divider itself.
-package struct PaneDividerGrips: NSViewRepresentable {
-    package func makeNSView(context: Context) -> PaneDividerGripView { PaneDividerGripView() }
-    package func updateNSView(_ view: PaneDividerGripView, context: Context) {}
+struct PaneDividerGrips: NSViewRepresentable {
+    func makeNSView(context: Context) -> PaneDividerGripView { PaneDividerGripView() }
+    func updateNSView(_ view: PaneDividerGripView, context: Context) {}
 }
 
 /// Lets every event through except within `reach` of a divider, and keeps no SwiftUI state, so hovering
 /// and dragging re-render nothing. A drag calls `setPosition(_:ofDividerAt:)`, which posts the same
 /// `willResizeSubviews` notification a divider drag does, so `HubLiveResize` holds the heavy panes.
-package final class PaneDividerGripView: NSView {
+final class PaneDividerGripView: NSView {
     private static let reach: CGFloat = 5
     private weak var split: NSSplitView?
     private var splitObserver: NSObjectProtocol?
@@ -726,13 +726,13 @@ package final class PaneDividerGripView: NSView {
     }
     private var drag: (index: Int, startX: CGFloat, startPosition: CGFloat)?
 
-    package override var isFlipped: Bool { true }
+    override var isFlipped: Bool { true }
 
     deinit {
         if let splitObserver { NotificationCenter.default.removeObserver(splitObserver) }
     }
 
-    package override func viewDidMoveToWindow() {
+    override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         split = nil
     }
@@ -787,32 +787,32 @@ package final class PaneDividerGripView: NSView {
         return nearest.offset
     }
 
-    package override func hitTest(_ point: NSPoint) -> NSView? {
+    override func hitTest(_ point: NSPoint) -> NSView? {
         let local = convert(point, from: superview)
         guard bounds.contains(local), divider(at: local) != nil else { return nil }
         return self
     }
 
-    package override func updateTrackingAreas() {
+    override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseMoved, .mouseEnteredAndExited, .cursorUpdate, .activeInKeyWindow, .inVisibleRect], owner: self))
     }
 
-    package override func resetCursorRects() {
+    override func resetCursorRects() {
         for x in dividerXs() {
             addCursorRect(NSRect(x: x - Self.reach, y: 0, width: Self.reach * 2, height: bounds.height), cursor: .resizeLeftRight)
         }
     }
 
-    package override func cursorUpdate(with event: NSEvent) {
+    override func cursorUpdate(with event: NSEvent) {
         if hot != nil || drag != nil { NSCursor.resizeLeftRight.set() } else { super.cursorUpdate(with: event) }
     }
 
-    package override func mouseMoved(with event: NSEvent) { track(event) }
-    package override func mouseEntered(with event: NSEvent) { track(event) }
+    override func mouseMoved(with event: NSEvent) { track(event) }
+    override func mouseEntered(with event: NSEvent) { track(event) }
 
-    package override func mouseExited(with event: NSEvent) {
+    override func mouseExited(with event: NSEvent) {
         if drag == nil { hot = nil }
     }
 
@@ -822,7 +822,7 @@ package final class PaneDividerGripView: NSView {
         if hot != nil { NSCursor.resizeLeftRight.set() }
     }
 
-    package override func mouseDown(with event: NSEvent) {
+    override func mouseDown(with event: NSEvent) {
         guard let index = divider(at: convert(event.locationInWindow, from: nil)), let split = resolvedSplit() else {
             super.mouseDown(with: event)
             return
@@ -832,21 +832,21 @@ package final class PaneDividerGripView: NSView {
         NSCursor.resizeLeftRight.set()
     }
 
-    package override func mouseDragged(with event: NSEvent) {
+    override func mouseDragged(with event: NSEvent) {
         guard let drag, let split = resolvedSplit() else { return }
         split.setPosition(drag.startPosition + event.locationInWindow.x - drag.startX, ofDividerAt: drag.index)
         NSCursor.resizeLeftRight.set()
         needsDisplay = true
     }
 
-    package override func mouseUp(with event: NSEvent) {
+    override func mouseUp(with event: NSEvent) {
         guard drag != nil else { return }
         drag = nil
         window?.invalidateCursorRects(for: self)
         track(event)
     }
 
-    package override func draw(_ dirtyRect: NSRect) {
+    override func draw(_ dirtyRect: NSRect) {
         guard let index = drag?.index ?? hot else { return }
         let xs = dividerXs()
         guard xs.indices.contains(index) else { return }

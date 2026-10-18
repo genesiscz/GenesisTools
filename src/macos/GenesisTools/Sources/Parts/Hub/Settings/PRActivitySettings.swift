@@ -8,10 +8,10 @@ import SwiftUI
 // the hub's PRs list), so the next tick uses a change without a daemon restart.
 
 @MainActor
-package enum PRActivitySettingsPages {
-    package static let pageID = "notifications.prActivity"
+enum PRActivitySettingsPages {
+    static let pageID = "notifications.prActivity"
 
-    package static func section() -> NativeSettingsSection {
+    static func section() -> NativeSettingsSection {
         NativeSettingsSection(
             id: "notifications", title: "Notifications",
             pages: [
@@ -33,10 +33,10 @@ private func cadenceTitle(_ minutes: Int) -> String {
 }
 
 @MainActor
-package struct PRActivitySettingsView: View {
-    @ObservedObject package var store: HubNotifyStore
+struct PRActivitySettingsView: View {
+    @ObservedObject var store: HubNotifyStore
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             if let status = store.status {
                 content(status)

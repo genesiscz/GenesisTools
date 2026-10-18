@@ -1,7 +1,7 @@
 import Foundation
 
-package enum ReviewOutbox {
-    package static func file(in directory: URL, now: Date = Date()) -> URL {
+enum ReviewOutbox {
+    static func file(in directory: URL, now: Date = Date()) -> URL {
         let stamp = ISO8601DateFormatter().string(from: now).replacingOccurrences(of: ":", with: "-")
         return directory.appendingPathComponent("\(stamp)-\(UUID().uuidString).md")
     }
@@ -11,44 +11,44 @@ package enum ReviewOutbox {
 /// repository) and may later become a GitHub / GitLab review draft or a posted comment
 /// (handoff h_3te8zv19). It is anchored to the TEXT of the commented lines, not only their numbers,
 /// so it survives reloads and edits above it, and goes `outdated` when that text is gone.
-package struct ReviewComment: Codable, Identifiable, Equatable {
+struct ReviewComment: Codable, Identifiable, Equatable {
     /// `queued`: written to the outbox for an agent, nobody told yet. `sent`: a session's pane got it
     /// (`deliveredTo` names it). A queued or sent comment can still become a PR draft or post.
-    package enum State: String, Codable {
+    enum State: String, Codable {
         case local, queued, sent, draft, posted
     }
 
-    package var id: String
-    package var path: String
-    package var side: DiffSide
-    package var startLine: Int
-    package var endLine: Int
-    package var body: String
-    package var createdAt: Date
-    package var updatedAt: Date
-    package var state: State
+    var id: String
+    var path: String
+    var side: DiffSide
+    var startLine: Int
+    var endLine: Int
+    var body: String
+    var createdAt: Date
+    var updatedAt: Date
+    var state: State
     /// The commented lines as they read when the comment was written.
-    package var anchor: [String]
+    var anchor: [String]
     /// Up to two lines above and below, used to pick the right copy when the anchor repeats.
-    package var before: [String]
-    package var after: [String]
-    package var outdated = false
-    package var sentAt: Date?
-    package var remoteDraftID: String?
-    package var remoteOwner: PRDraftOwnership?
+    var before: [String]
+    var after: [String]
+    var outdated = false
+    var sentAt: Date?
+    var remoteDraftID: String?
+    var remoteOwner: PRDraftOwnership?
     /// The PR thread this comment answers (a suggested reply that became mine): the diff shows it inside
     /// that thread's card, under its notes. Older comments named it in a footer of their text, an id prefix.
-    package var thread: String?
+    var thread: String?
     /// The session that got it: its title or short id, set only by a real delivery to its pane.
-    package var deliveredTo: String?
+    var deliveredTo: String?
     /// Taken out of the agent sends ("Remove from this send"); nil or false: the next send takes it.
-    package var heldFromAgent: Bool?
+    var heldFromAgent: Bool?
 
     private static let threadFooter = try? NSRegularExpression(pattern: "\\n*\\(A reply to PR thread ([0-9A-Za-z_-]+)(?: on [^)]*)?\\.\\)\\s*$")
 
     /// A comment saved before `thread` and `queued` existed: the footer becomes `thread`, and a "sent"
     /// that no session ever got (no `deliveredTo`) is what it really was, queued.
-    package func migrated() -> ReviewComment {
+    func migrated() -> ReviewComment {
         var copy = self
         if copy.state == .sent, copy.deliveredTo == nil {
             copy.state = .queued
@@ -64,18 +64,18 @@ package struct ReviewComment: Codable, Identifiable, Equatable {
 }
 
 /// `~/.genesis-tools/review/<repo key>/comments.json`, written atomically on every change.
-package final class ReviewCommentStore {
-    package let directory: URL
+final class ReviewCommentStore {
+    let directory: URL
     package private(set) var comments: [ReviewComment] = []
     /// Set when an unreadable comments.json could not be moved aside: saving would overwrite it.
     private var saveBlocked = false
     /// A `--snapshot` run renders and exits: it reads the comments and never writes them back (opening
     /// a review re-anchors every comment and saved the result into the user's real file, 2026-10-07).
-    package static var readOnly = false
+    static var readOnly = false
 
     private var file: URL { directory.appendingPathComponent("comments.json") }
 
-    package init(repo: URL, directory override: URL? = nil) {
+    init(repo: URL, directory override: URL? = nil) {
         let key = repo.path.map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
         directory = override ?? FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".genesis-tools/review", isDirectory: true)
@@ -86,7 +86,7 @@ package final class ReviewCommentStore {
     // MARK: edits
 
     @discardableResult
-    package func add(_ input: CommentInput, files: [DiffFile]) -> ReviewComment? {
+    func add(_ input: CommentInput, files: [DiffFile]) -> ReviewComment? {
         guard let file = files.first(where: { $0.id == input.fileID }) else { return nil }
         let lines = Self.lines(of: file, side: input.side)
         let start = max(1, min(input.startLine, input.endLine))
@@ -113,21 +113,21 @@ package final class ReviewCommentStore {
         return comment
     }
 
-    package func edit(id: String, body: String) {
+    func edit(id: String, body: String) {
         guard let index = comments.firstIndex(where: { $0.id == id }) else { return }
         comments[index].body = body
         comments[index].updatedAt = Date()
         save()
     }
 
-    package func delete(id: String) {
+    func delete(id: String) {
         comments.removeAll { $0.id == id }
         save()
     }
 
     /// Written for an agent, nobody told: only a comment that went nowhere yet moves to queued. Queuing
     /// it again takes it back into the next send.
-    package func markQueued(_ ids: [String]) {
+    func markQueued(_ ids: [String]) {
         for index in comments.indices where ids.contains(comments[index].id) {
             comments[index].heldFromAgent = nil
             if comments[index].state == .local {
@@ -139,7 +139,7 @@ package final class ReviewCommentStore {
 
     /// "Remove from this send": the comment stays mine, local, and no "Send N…" takes it until it is
     /// queued again from its card.
-    package func holdFromAgent(_ ids: [String]) {
+    func holdFromAgent(_ ids: [String]) {
         for index in comments.indices where ids.contains(comments[index].id) {
             comments[index].heldFromAgent = true
             if comments[index].state == .queued {
@@ -150,12 +150,12 @@ package final class ReviewCommentStore {
     }
 
     /// The comments the next send takes: written or queued for an agent, not held back, in file order.
-    package var agentPending: [ReviewComment] {
+    var agentPending: [ReviewComment] {
         comments.filter { ($0.state == .local || $0.state == .queued) && $0.heldFromAgent != true }
     }
 
     /// A session's pane got them: the only way a comment becomes "sent". A PR draft or post keeps its state.
-    package func markDelivered(_ ids: [String], to target: String, at now: Date = Date()) {
+    func markDelivered(_ ids: [String], to target: String, at now: Date = Date()) {
         for index in comments.indices where ids.contains(comments[index].id) {
             if [.local, .queued, .sent].contains(comments[index].state) {
                 comments[index].state = .sent
@@ -168,14 +168,14 @@ package final class ReviewCommentStore {
     }
 
     /// The thread a comment answers, set when a suggested reply becomes mine.
-    package func link(_ id: String, thread: String) {
+    func link(_ id: String, thread: String) {
         guard let index = comments.firstIndex(where: { $0.id == id }) else { return }
         comments[index].thread = thread
         save()
     }
 
     /// A comment that went to the PR: a pending review draft, or published.
-    package func mark(_ id: String, _ state: ReviewComment.State, remoteID: String? = nil, owner: PRDraftOwnership? = nil) {
+    func mark(_ id: String, _ state: ReviewComment.State, remoteID: String? = nil, owner: PRDraftOwnership? = nil) {
         guard let index = comments.firstIndex(where: { $0.id == id }) else { return }
         comments[index].state = state
         if let owner { comments[index].remoteOwner = owner }
@@ -186,7 +186,7 @@ package final class ReviewCommentStore {
         save()
     }
 
-    package func reconcileSubmitted(pr: PRIdentity, ids: Set<String>) {
+    func reconcileSubmitted(pr: PRIdentity, ids: Set<String>) {
         var changed = false
         for index in comments.indices {
             guard comments[index].state == .draft, let owner = comments[index].remoteOwner,
@@ -204,7 +204,7 @@ package final class ReviewCommentStore {
     /// any comment moved or changed outdated state. Comments on files that are not in the diff are
     /// left alone (the file may simply be clean now).
     @discardableResult
-    package func reanchor(files: [DiffFile]) -> Bool {
+    func reanchor(files: [DiffFile]) -> Bool {
         var changed = false
         let byPath = Self.filesByPath(files)
         var split: [String: [String]] = [:]
@@ -240,7 +240,7 @@ package final class ReviewCommentStore {
     }
 
     /// The copy of the anchor whose surroundings match best; ties go to the one nearest the old line.
-    package static func locate(_ comment: ReviewComment, in lines: [String]) -> Int? {
+    static func locate(_ comment: ReviewComment, in lines: [String]) -> Int? {
         let count = comment.anchor.count
         guard count > 0, lines.count >= count else { return nil }
 
@@ -270,7 +270,7 @@ package final class ReviewCommentStore {
         return result
     }
 
-    package static func lines(of file: DiffFile, side: DiffSide) -> [String] {
+    static func lines(of file: DiffFile, side: DiffSide) -> [String] {
         let text = (side == .additions ? file.newContents : file.oldContents) ?? ""
         var lines = text.components(separatedBy: "\n")
         if text.hasSuffix("\n") {
@@ -289,7 +289,7 @@ package final class ReviewCommentStore {
         return formatter
     }()
 
-    package func rendered(for files: [DiffFile], now: Date = Date()) -> [RenderedComment] {
+    func rendered(for files: [DiffFile], now: Date = Date()) -> [RenderedComment] {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         let byPath = Self.filesByPath(files)
@@ -316,7 +316,7 @@ package final class ReviewCommentStore {
     }
 
     /// One markdown message for the agent: every comment with the code it points at.
-    package func agentMessage(repo: URL, branch: String, files: [DiffFile], ids: [String]) -> String {
+    func agentMessage(repo: URL, branch: String, files: [DiffFile], ids: [String]) -> String {
         let selected = Set(ids)
         let byPath = Self.filesByPath(files)
         var split: [String: [String]] = [:]
@@ -422,10 +422,10 @@ package final class ReviewCommentStore {
         }
     }
     private let unwritten = Unwritten()
-    package static let writer = DispatchQueue(label: "review.comments.writer", qos: .utility)
+    static let writer = DispatchQueue(label: "review.comments.writer", qos: .utility)
     private static let registryLock = NSLock()
     private static let registry = NSHashTable<ReviewCommentStore>.weakObjects()
-    package static let changed = Notification.Name("ReviewCommentStore.changed")
+    static let changed = Notification.Name("ReviewCommentStore.changed")
     private var projection: [ReviewComment] = []
     private var pending: [Pending] = []
     package private(set) var saveError: String?
@@ -521,7 +521,7 @@ package final class ReviewCommentStore {
         }
     }
 
-    package func flush() async {
+    func flush() async {
         await withCheckedContinuation { continuation in
             Self.writer.async { DispatchQueue.main.async { continuation.resume() } }
         }

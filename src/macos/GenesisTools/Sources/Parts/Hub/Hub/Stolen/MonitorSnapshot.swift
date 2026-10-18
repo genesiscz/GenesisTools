@@ -127,7 +127,7 @@ public struct MonitorSessionRow: Equatable, Sendable, Codable, Identifiable {
 
     /// macOS hands out `/var/folders/...`, and `/tmp` is a symlink to
     /// `/private/tmp`, so a cwd can arrive spelled either way.
-    package static let oneShotPrefixes = ["/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/"]
+    static let oneShotPrefixes = ["/tmp/", "/private/tmp/", "/var/folders/", "/private/var/folders/"]
 
     /// Context size to display: the server value, else the legacy sum. nil when the
     /// provider reported no token counts at all.

@@ -8,12 +8,12 @@ import SwiftUI
 /// A live hub uses the standard domain. A `--snapshot` or `--bench` run works on a scratch copy of
 /// the hub's keys, so a scripted resize or pane change never rewrites the layout the live hub
 /// restores next time.
-package enum HubDefaults {
-    package static let scratchSuite = "com.genesiscz.genesistools.hub-scratch"
+enum HubDefaults {
+    static let scratchSuite = "com.genesiscz.genesistools.hub-scratch"
     package private(set) static var store: UserDefaults = .standard
     package private(set) static var isolated = false
 
-    package static func isolate() {
+    static func isolate() {
         guard !isolated, let scratch = UserDefaults(suiteName: scratchSuite) else { return }
         scratch.removePersistentDomain(forName: scratchSuite)
         // `featureSettings.appearance.`: General → Theme, which the hub's Native style follows
@@ -52,25 +52,25 @@ package enum HubDefaults {
 /// sleeps in between; `busy` is the step interval minus that spacing, so it holds SwiftUI's update,
 /// AppKit layout and drawing. Probes count how often a layout flips (the diff header between one
 /// and two rows, the root overflowing the window), which is what reads as flicker.
-package enum HubBench {
-    package static let panelDrag = Notification.Name("hub.bench.panelDrag")
+enum HubBench {
+    static let panelDrag = Notification.Name("hub.bench.panelDrag")
     /// A scripted click on a group header: the object is `GroupFold`.
-    package static let groupFold = Notification.Name("hub.bench.groupFold")
+    static let groupFold = Notification.Name("hub.bench.groupFold")
 
-    package struct GroupFold {
-        package let list: String
-        package let key: String
+    struct GroupFold {
+        let list: String
+        let key: String
     }
 
     /// A scripted drag for `ResizableSidePanel`: the `change` translations match a DragGesture's.
-    package enum DragPhase {
+    enum DragPhase {
         case change(CGFloat)
         case end
     }
 
-    package struct PanelDrag {
-        package let key: String
-        package let phase: DragPhase
+    struct PanelDrag {
+        let key: String
+        let phase: DragPhase
     }
 
     package private(set) static var active = false
@@ -78,7 +78,7 @@ package enum HubBench {
 
     /// A layout fact at this moment; consecutive equal values are folded, so the count of entries
     /// minus one is the number of flips.
-    package static func note(_ label: String, _ value: Int) {
+    static func note(_ label: String, _ value: Int) {
         guard active else { return }
         if probes[label]?.last != value {
             probes[label, default: []].append(value)
@@ -88,7 +88,7 @@ package enum HubBench {
     @MainActor private static var current: Runner?
 
     /// The table with the most rows under `view`: the transcript's List when a session is open.
-    package static func largestTable(in view: NSView?) -> NSTableView? {
+    static func largestTable(in view: NSView?) -> NSTableView? {
         guard let view else { return nil }
         var best = view as? NSTableView
         for child in view.subviews {
@@ -102,7 +102,7 @@ package enum HubBench {
     /// For a snapshot's log: the transcript's rows on screen (`drawn` leaves out its 1 pt markers)
     /// and in the list, so a padding change can be judged by how much of a session fits.
     @MainActor
-    package static func transcriptRowsLine(in window: NSWindow) -> String? {
+    static func transcriptRowsLine(in window: NSWindow) -> String? {
         guard let table = largestTable(in: window.contentView), table.numberOfRows > 0 else { return nil }
         let range = table.rows(in: table.visibleRect)
         let drawn = (range.location..<range.location + range.length).filter { table.rect(ofRow: $0).height > 2 }.count
@@ -110,7 +110,7 @@ package enum HubBench {
     }
 
     @MainActor
-    package static func run(window: NSWindow, model: HubModel, output: String) {
+    static func run(window: NSWindow, model: HubModel, output: String) {
         active = true
         probes = [:]
         let runner = Runner(window: window, output: output, model: model)
@@ -120,7 +120,7 @@ package enum HubBench {
 
     /// The watchdog's way out: write what was measured so far, marked partial.
     @MainActor
-    package static func finishEarly() -> Bool {
+    static func finishEarly() -> Bool {
         guard let current else { return false }
         current.finish(partial: true)
         return true
@@ -686,11 +686,11 @@ package enum HubBench {
 /// main thread, so the client runs there. Needs the Accessibility grant (a process started from a
 /// trusted terminal has it).
 @MainActor
-package enum HubBenchAccessibilityClient {
+enum HubBenchAccessibilityClient {
     private static var poll: Timer?
 
     /// Reads the tree and starts the focus poll; returns how many elements the read visited.
-    package static func start() -> Int {
+    static func start() -> Int {
         let app = AXUIElementCreateApplication(getpid())
         var count = 0
         func walk(_ element: AXUIElement, depth: Int) {
@@ -717,9 +717,9 @@ package enum HubBenchAccessibilityClient {
 /// A `--snapshot` waits until the diff it shows has loaded (a PR's review is rebuilt once its
 /// detail arrives), then opens `--file` when one was asked for, so the capture shows the lines
 /// that carry the comments instead of the first file of the diff.
-package enum HubSnapshotFocus {
+enum HubSnapshotFocus {
     @MainActor
-    package static func whenReady(review: @escaping @MainActor () -> ReviewModel?, file: String?, style: DiffViewOptions.Style? = nil,
+    static func whenReady(review: @escaping @MainActor () -> ReviewModel?, file: String?, style: DiffViewOptions.Style? = nil,
                           showsDiff: @escaping @MainActor () -> Bool = { true },
                           deadline: Date = Date().addingTimeInterval(30), then done: @escaping () -> Void) {
         var stableSince: Date?

@@ -6,29 +6,29 @@ import SwiftUI
 // the mouse's side buttons and a trackpad swipe all walk the same history (`HubModel.goBack`).
 
 /// One place in the hub: the mode and what it had selected.
-package struct HubNavEntry: Equatable {
-    package var mode: HubMode
+struct HubNavEntry: Equatable {
+    var mode: HubMode
     /// The session row id, worktree path or PR id the mode shows; nil while nothing is picked yet.
-    package var selection: String?
+    var selection: String?
 }
 
 /// A browser's history: `visit` pushes, `goBack` and `goForward` walk it. Pure, so tests drive it.
-package struct HubNavHistory: Equatable {
-    package static let limit = 100
+struct HubNavHistory: Equatable {
+    static let limit = 100
 
     package private(set) var back: [HubNavEntry] = []
     package private(set) var current: HubNavEntry?
     package private(set) var forward: [HubNavEntry] = []
 
-    package var canGoBack: Bool { !back.isEmpty }
-    package var canGoForward: Bool { !forward.isEmpty }
+    var canGoBack: Bool { !back.isEmpty }
+    var canGoForward: Bool { !forward.isEmpty }
 
     /// A new place. A new place after going back drops the forward entries, as a browser does.
     ///
     /// A place with nothing picked (the hub's first moment, a mode whose list still loads) is never
     /// kept: whatever follows replaces it. Otherwise every launch began with a dead "back" to an
     /// empty Sessions mode, and a quick look at a loading mode left a stop with nothing in it.
-    package mutating func visit(_ entry: HubNavEntry) {
+    mutating func visit(_ entry: HubNavEntry) {
         guard entry != current else { return }
         if let current, current.selection != nil {
             back.append(current)
@@ -44,7 +44,7 @@ package struct HubNavHistory: Equatable {
         current = entry
     }
 
-    package mutating func goBack() -> HubNavEntry? {
+    mutating func goBack() -> HubNavEntry? {
         guard let previous = back.popLast() else { return nil }
         if let current, current.selection != nil {
             forward.append(current)
@@ -53,7 +53,7 @@ package struct HubNavHistory: Equatable {
         return previous
     }
 
-    package mutating func goForward() -> HubNavEntry? {
+    mutating func goForward() -> HubNavEntry? {
         guard let next = forward.popLast() else { return nil }
         if let current, current.selection != nil {
             back.append(current)
@@ -66,11 +66,11 @@ package struct HubNavHistory: Equatable {
 // MARK: - Mouse buttons and swipes
 
 /// The mouse's back and forward buttons (buttons 3 and 4) and a trackpad swipe, in the hub window only.
-package enum HubNavInput {
+enum HubNavInput {
     @MainActor private static var monitor: Any?
 
     @MainActor
-    package static func install(window: NSWindow, model: HubModel) {
+    static func install(window: NSWindow, model: HubModel) {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.otherMouseDown, .swipe]) { [weak window, weak model] event in
             guard let model, event.window === window else { return event }
@@ -98,10 +98,10 @@ package enum HubNavInput {
 // MARK: - Buttons
 
 /// The back and forward arrows above the mode switch. The tooltip names where each one goes.
-package struct HubNavButtons: View {
-    @ObservedObject package var model: HubModel
+struct HubNavButtons: View {
+    @ObservedObject var model: HubModel
 
-    package var body: some View {
+    var body: some View {
         let history = model.history
         HStack(spacing: 4) {
             arrow("chevron.left", enabled: history.canGoBack,

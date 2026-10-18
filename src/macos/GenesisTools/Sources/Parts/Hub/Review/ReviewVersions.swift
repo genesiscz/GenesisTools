@@ -9,46 +9,46 @@ import Foundation
 // (`git merge-tree --merge-base`) and diffs that tree against the newer head: both sides then
 // share the same upstream, and only what the author changed between the pushes is left.
 
-package struct PRVersionsPayload: Decodable, Equatable {
-    package let versions: [PRVersion]
-    package let history: Bool
+struct PRVersionsPayload: Decodable, Equatable {
+    let versions: [PRVersion]
+    let history: Bool
 }
 
-package struct PRVersion: Decodable, Identifiable, Equatable {
-    package struct Author: Decodable, Equatable {
-        package let name: String
-        package let username: String
-        package let avatarUrl: String?
+struct PRVersion: Decodable, Identifiable, Equatable {
+    struct Author: Decodable, Equatable {
+        let name: String
+        let username: String
+        let avatarUrl: String?
     }
 
-    package struct Commit: Decodable, Equatable {
-        package let sha: String
-        package let title: String
-        package let author: String?
+    struct Commit: Decodable, Equatable {
+        let sha: String
+        let title: String
+        let author: String?
     }
 
-    package let id: String
-    package let headSha: String
-    package let baseSha: String?
-    package let createdAt: String?
-    package let pushedBy: Author?
-    package let commits: [Commit]
+    let id: String
+    let headSha: String
+    let baseSha: String?
+    let createdAt: String?
+    let pushedBy: Author?
+    let commits: [Commit]
 }
 
 /// What the pushes after the diff on screen brought, for the notice above the diff.
-package struct PRPushNews: Equatable {
-    package let newest: PRVersion
+struct PRPushNews: Equatable {
+    let newest: PRVersion
     /// The version whose head is on screen; nil when the host does not list it (a GitHub push without force).
-    package let shown: PRVersion?
+    let shown: PRVersion?
     /// Pushes after the one on screen, the newest included.
-    package let pushes: Int
+    let pushes: Int
     /// Commits of the newest version whose titles the version on screen does not have.
-    package let newCommits: [PRVersion.Commit]
+    let newCommits: [PRVersion.Commit]
     /// The newest version starts from another merge base: the branch was rebased.
-    package let rebased: Bool
+    let rebased: Bool
 
     /// nil when the newest version is the one on screen.
-    package static func between(shownHead: String, versions: [PRVersion]) -> PRPushNews? {
+    static func between(shownHead: String, versions: [PRVersion]) -> PRPushNews? {
         guard let newest = versions.first, !PRThreadRendering.sameCommit(newest.headSha, shownHead) else { return nil }
         let shownIndex = versions.firstIndex { PRThreadRendering.sameCommit($0.headSha, shownHead) }
         let shown = shownIndex.map { versions[$0] }
@@ -59,7 +59,7 @@ package struct PRPushNews: Equatable {
     }
 
     /// "qkfoltynmar pushed 6 new commits · 17:53"; the time is local.
-    package var headline: String {
+    var headline: String {
         let who = newest.pushedBy?.username ?? "Someone"
         let what: String
         if newCommits.isEmpty {
@@ -82,27 +82,27 @@ package struct PRPushNews: Equatable {
 
 /// `tools hub pr versions` for one PR, off the main thread. Loaded when the threads show a head
 /// other than the diff's, and when the Compare picker opens; no timer.
-package final class PRVersionsStore: ObservableObject {
-    package let target: PRTarget
+final class PRVersionsStore: ObservableObject {
+    let target: PRTarget
     @Published package private(set) var payload: PRVersionsPayload?
     @Published package private(set) var loading = false
     @Published package private(set) var error: String?
     /// The PR head the last load answered for, so one push is asked about once.
     package private(set) var loadedForHead: String?
     /// Called on the main thread after an answer lands.
-    package var onChange: (() -> Void)?
+    var onChange: (() -> Void)?
     private let loader: ([String]) throws -> PRVersionsPayload
     private var pendingLoad = false
     private var pendingHead: String?
 
-    package init(target: PRTarget, loader: @escaping ([String]) throws -> PRVersionsPayload = {
+    init(target: PRTarget, loader: @escaping ([String]) throws -> PRVersionsPayload = {
         try JSONDecoder().decode(PRVersionsPayload.self, from: PRCLI.run($0))
     }) {
         self.target = target
         self.loader = loader
     }
 
-    package func load(forHead head: String? = nil) {
+    func load(forHead head: String? = nil) {
         if loading {
             pendingLoad = true
             pendingHead = head
@@ -141,7 +141,7 @@ package final class PRVersionsStore: ObservableObject {
 }
 
 extension DiffScope {
-    package func reloading(to newest: PRVersion) -> DiffScope? {
+    func reloading(to newest: PRVersion) -> DiffScope? {
         switch self {
         case .range(let base, _, let label, let fallback):
             return .range(base: newest.baseSha ?? base, head: newest.headSha, label: label, fallbackBase: fallback)

@@ -7,32 +7,32 @@ import SwiftUI
 // the digest's refresh, at most every two minutes; no timer runs. Shown beside a session's account
 // (`HubForecastChip`) and as the Usage section of the Today digest (`HubForecastList`).
 
-package struct HubForecastWindow: Decodable, Equatable, Identifiable, Sendable {
-    package let bucket: String
-    package let kind: String
-    package let label: String
-    package let utilization: Double
-    package let resetsAt: String?
-    package let lastSampleAt: String
-    package let samples: Int
-    package let ratePctPerHour: Double?
-    package let basis: String?
-    package let exhaustAt: String?
-    package let minutesToExhaust: Int?
-    package let beforeReset: Bool
-    package let projectedAtReset: Double?
-    package let resetSinceSample: Bool
-    package let stale: Bool
+struct HubForecastWindow: Decodable, Equatable, Identifiable, Sendable {
+    let bucket: String
+    let kind: String
+    let label: String
+    let utilization: Double
+    let resetsAt: String?
+    let lastSampleAt: String
+    let samples: Int
+    let ratePctPerHour: Double?
+    let basis: String?
+    let exhaustAt: String?
+    let minutesToExhaust: Int?
+    let beforeReset: Bool
+    let projectedAtReset: Double?
+    let resetSinceSample: Bool
+    let stale: Bool
 
-    package var id: String { bucket }
+    var id: String { bucket }
 
     /// A window whose reset already passed says nothing about now.
-    package var isCurrent: Bool { !resetSinceSample }
+    var isCurrent: Bool { !resetSinceSample }
 
     /// "42% · out 16:20" / "42% · lasts" / "42%": the chip's words. A stale window says how old its number is:
     /// "100% as of 4 days ago". "100% · 4 days ago" read as "it hit 100% four days ago" (hub inventory H12).
     /// `now` is injectable: against the real clock a fixture's run-out time passed and the test flipped.
-    package func summary(now: Date = Date(), clock: (Date) -> String = HubForecastFormat.clock) -> String {
+    func summary(now: Date = Date(), clock: (Date) -> String = HubForecastFormat.clock) -> String {
         let used = "\(Int(utilization.rounded()))%"
         if stale, let sampled = HubFormat.date(lastSampleAt) {
             return "\(used) as of \(HubFormat.ago(sampled))"
@@ -48,7 +48,7 @@ package struct HubForecastWindow: Decodable, Equatable, Identifiable, Sendable {
     }
 
     /// One line for tooltips and the digest: used, rate, reset and the outlook.
-    package func detail(clock: (Date) -> String = HubForecastFormat.clock) -> String {
+    func detail(clock: (Date) -> String = HubForecastFormat.clock) -> String {
         var parts = ["\(label) \(Int(utilization.rounded()))% used"]
         if let rate = ratePctPerHour {
             parts.append(String(format: "%.1f%%/h (%@)", rate, basis ?? "rate"))
@@ -69,32 +69,32 @@ package struct HubForecastWindow: Decodable, Equatable, Identifiable, Sendable {
     }
 }
 
-package struct HubForecastAccount: Decodable, Equatable, Identifiable, Sendable {
-    package let provider: String
-    package let account: String
-    package let windows: [HubForecastWindow]
-    package let warning: String?
+struct HubForecastAccount: Decodable, Equatable, Identifiable, Sendable {
+    let provider: String
+    let account: String
+    let windows: [HubForecastWindow]
+    let warning: String?
 
-    package var id: String { "\(provider):\(account)" }
+    var id: String { "\(provider):\(account)" }
 
-    package var current: [HubForecastWindow] { windows.filter(\.isCurrent) }
+    var current: [HubForecastWindow] { windows.filter(\.isCurrent) }
 
     /// The window the chip shows: the one that runs out first before its reset, else the 5h, else the first current.
-    package var headline: HubForecastWindow? {
+    var headline: HubForecastWindow? {
         let current = current
         let early = current.filter(\.beforeReset).min { ($0.exhaustAt ?? "") < ($1.exhaustAt ?? "") }
         return early ?? current.first { $0.kind == "session" } ?? current.first
     }
 }
 
-package struct HubForecastResult: Decodable, Equatable, Sendable {
-    package let generatedAt: String
-    package let source: String?
-    package let accounts: [HubForecastAccount]
+struct HubForecastResult: Decodable, Equatable, Sendable {
+    let generatedAt: String
+    let source: String?
+    let accounts: [HubForecastAccount]
 }
 
-package enum HubForecastFormat {
-    package static func clock(_ date: Date) -> String {
+enum HubForecastFormat {
+    static func clock(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_GB")
         formatter.dateFormat = Calendar.current.isDateInToday(date) ? "HH:mm" : "EEE HH:mm"
@@ -103,8 +103,8 @@ package enum HubForecastFormat {
 }
 
 @MainActor
-package final class HubForecastStore: ObservableObject {
-    package static let shared = HubForecastStore()
+final class HubForecastStore: ObservableObject {
+    static let shared = HubForecastStore()
     package static let maxAge: TimeInterval = 120
 
     @Published package private(set) var accounts: [HubForecastAccount] = []
@@ -113,18 +113,18 @@ package final class HubForecastStore: ObservableObject {
     private var loadedAt: Date?
 
     /// The accounts named `name` (the session's pinned account), current windows only.
-    package func account(named name: String?) -> HubForecastAccount? {
+    func account(named name: String?) -> HubForecastAccount? {
         guard let name, !name.isEmpty else { return nil }
         return accounts.first { $0.account == name && !$0.current.isEmpty }
     }
 
-    package func loadIfStale(maxAge: TimeInterval = HubForecastStore.maxAge) {
+    func loadIfStale(maxAge: TimeInterval = HubForecastStore.maxAge) {
         guard !loading else { return }
         if let loadedAt, Date().timeIntervalSince(loadedAt) < maxAge { return }
         load()
     }
 
-    package func load() {
+    func load() {
         loading = true
         Task {
             do {
@@ -142,11 +142,11 @@ package final class HubForecastStore: ObservableObject {
 
 /// Beside a session's account in its header: the account's most urgent window, orange when it runs
 /// out before it resets. Nothing when the account has no recorded usage.
-package struct HubForecastChip: View {
-    package let account: String?
+struct HubForecastChip: View {
+    let account: String?
     @ObservedObject private var store = HubForecastStore.shared
 
-    package var body: some View {
+    var body: some View {
         if let entry = store.account(named: account), let window = entry.headline {
             HStack(spacing: 3) {
                 // A stale number gets a clock, not a gauge: it is an old reading, not a level now.
@@ -164,10 +164,10 @@ package struct HubForecastChip: View {
 
 /// A window's chip words on screen. A stale window's "as of 4d ago" keeps counting (`LiveAgo`);
 /// `summary()` formats it once, for tests and plain text.
-package struct HubForecastSummary: View {
-    package let window: HubForecastWindow
+struct HubForecastSummary: View {
+    let window: HubForecastWindow
 
-    package var body: some View {
+    var body: some View {
         if window.stale, let sampled = HubFormat.date(window.lastSampleAt) {
             LiveAgo(date: sampled, style: .brief) { "\(window.label) \(Int(window.utilization.rounded()))% as of \($0)" }
         } else {
@@ -177,10 +177,10 @@ package struct HubForecastSummary: View {
 }
 
 /// The digest's Usage section: every account with a current window, one row per window.
-package struct HubForecastList: View {
+struct HubForecastList: View {
     @ObservedObject private var store = HubForecastStore.shared
 
-    package var body: some View {
+    var body: some View {
         let accounts = store.accounts.filter { !$0.current.isEmpty }
         VStack(alignment: .leading, spacing: 4) {
             if let error = store.error {

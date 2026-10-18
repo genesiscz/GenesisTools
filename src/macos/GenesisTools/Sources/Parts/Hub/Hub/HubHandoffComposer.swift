@@ -10,15 +10,15 @@ import SwiftUI
 /// (`.hubHandoff(model:)`), so a hidden transcript pane or sidebar cannot swallow the request.
 /// `pending` is a session id or id prefix, resolved once the session list has it.
 @MainActor
-package final class HubHandoffRequests: ObservableObject {
-    package static let shared = HubHandoffRequests()
+final class HubHandoffRequests: ObservableObject {
+    static let shared = HubHandoffRequests()
     /// A request made before the first session list loaded (a fresh `tools hub --handoff`): it goes to
     /// the session that load selects, or is dropped when the load selects none.
-    package static let firstSelection = "::first-selection"
-    @Published package var pending: String?
+    static let firstSelection = "::first-selection"
+    @Published var pending: String?
 
     /// The session `pending` names, or nil while the list does not have it yet.
-    package func resolve(in sessions: [HubSession]) -> HubSession? {
+    func resolve(in sessions: [HubSession]) -> HubSession? {
         guard let pending, !pending.isEmpty, pending != Self.firstSelection else { return nil }
         return sessions.first { $0.id == pending || $0.sessionId.hasPrefix(pending) }
     }
@@ -66,23 +66,23 @@ private struct HubHandoffModifier: ViewModifier {
 }
 
 extension View {
-    package func hubHandoff(model: HubModel) -> some View {
+    func hubHandoff(model: HubModel) -> some View {
         modifier(HubHandoffModifier(model: model))
     }
 }
 
-package struct HandoffComposerRequest: Identifiable {
-    package let id = UUID()
-    package let session: HubSession
+struct HandoffComposerRequest: Identifiable {
+    let id = UUID()
+    let session: HubSession
     /// Prompts of the session, from its insights; empty until they load (the range picker then waits).
-    package let prompts: [InsightTurn]
+    let prompts: [InsightTurn]
     /// Open on a range starting at this "#N"; nil opens on the last prompts.
-    package let from: Int?
+    let from: Int?
     /// The session's branch, read on the main thread when the composer opens (a HEAD file read).
-    package let branch: String?
+    let branch: String?
 
     @MainActor
-    package init(session: HubSession, prompts: [InsightTurn], from: Int?) {
+    init(session: HubSession, prompts: [InsightTurn], from: Int?) {
         self.session = session
         self.prompts = prompts
         self.from = from
@@ -90,11 +90,11 @@ package struct HandoffComposerRequest: Identifiable {
     }
 }
 
-package enum HandoffRangeChoice: Equatable {
+enum HandoffRangeChoice: Equatable {
     case last(Int)
     case range(from: Int, to: Int)
 
-    package var arguments: [String] {
+    var arguments: [String] {
         switch self {
         case .last(let count): return ["--last", String(count)]
         case .range(let from, let to): return ["--from", String(min(from, to)), "--to", String(max(from, to))]
@@ -102,27 +102,27 @@ package enum HandoffRangeChoice: Equatable {
     }
 }
 
-package struct HandoffDraftPayload: Decodable, Equatable {
-    package struct Posted: Decodable, Equatable {
-        package let id: String
-        package let name: String?
-        package let paste: String
+struct HandoffDraftPayload: Decodable, Equatable {
+    struct Posted: Decodable, Equatable {
+        let id: String
+        let name: String?
+        let paste: String
     }
 
-    package let title: String
-    package let markdown: String
-    package let fromNumber: Int
-    package let toNumber: Int
-    package let promptCount: Int
-    package let openItems: [String]
-    package let savedTo: String?
-    package let posted: Posted?
+    let title: String
+    let markdown: String
+    let fromNumber: Int
+    let toNumber: Int
+    let promptCount: Int
+    let openItems: [String]
+    let savedTo: String?
+    let posted: Posted?
 }
 
-package enum HubHandoff {
+enum HubHandoff {
     /// `tools hub handoff` for this session and range. Free text rides as `--flag=value`, so a title
     /// that starts with `-` is still a value.
-    package static func arguments(session: HubSession, branch: String?, range: HandoffRangeChoice, extra: [String] = []) -> [String] {
+    static func arguments(session: HubSession, branch: String?, range: HandoffRangeChoice, extra: [String] = []) -> [String] {
         var args = ["hub", "handoff", session.sessionId, "--json"] + range.arguments
         args.append("--title=\(session.displayTitle)")
         if !session.cwd.isEmpty { args.append("--cwd=\(session.cwd)") }
@@ -131,24 +131,24 @@ package enum HubHandoff {
         return args + extra
     }
 
-    package static func decode(_ data: Data) throws -> HandoffDraftPayload {
+    static func decode(_ data: Data) throws -> HandoffDraftPayload {
         try JSONDecoder().decode(HandoffDraftPayload.self, from: MonitorJSON.dataByDroppingPreamble(data))
     }
 
     /// Blocking: a full transcript read, seconds for a large session. Off the main thread.
-    package static func run(_ request: HandoffComposerRequest, range: HandoffRangeChoice, extra: [String] = []) throws -> HandoffDraftPayload {
+    static func run(_ request: HandoffComposerRequest, range: HandoffRangeChoice, extra: [String] = []) throws -> HandoffDraftPayload {
         try decode(ToolsCLIRunner.run(arguments(session: request.session, branch: request.branch, range: range, extra: extra)))
     }
 }
 
 /// The sidebar's last row: open the composer, and the stuck thresholds beside it.
-package struct HandoffSidebarRow: View {
-    package let thresholds: StuckThresholds?
-    package let onCompose: () -> Void
+struct HandoffSidebarRow: View {
+    let thresholds: StuckThresholds?
+    let onCompose: () -> Void
     @ObservedObject private var stuck = HubStuckStore.shared
     @State private var notice: String?
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             SessionSectionTitle(title: "Handoff")
             Button(action: onCompose) {
@@ -180,9 +180,9 @@ package struct HandoffSidebarRow: View {
     }
 }
 
-package struct HandoffComposerSheet: View {
-    package let request: HandoffComposerRequest
-    package let onClose: () -> Void
+struct HandoffComposerSheet: View {
+    let request: HandoffComposerRequest
+    let onClose: () -> Void
 
     private enum Mode: String, Hashable {
         case last, range
@@ -202,7 +202,7 @@ package struct HandoffComposerSheet: View {
     @State private var noticeIsError = false
     @State private var confirmingPost = false
 
-    package init(request: HandoffComposerRequest, onClose: @escaping () -> Void) {
+    init(request: HandoffComposerRequest, onClose: @escaping () -> Void) {
         self.request = request
         self.onClose = onClose
         _prompts = State(initialValue: request.prompts)
@@ -217,7 +217,7 @@ package struct HandoffComposerSheet: View {
         mode == .last ? .last(lastCount) : .range(from: from, to: to)
     }
 
-    package var body: some View {
+    var body: some View {
         VStack(spacing: 0) {
             header
             Rectangle().fill(SessionPalette.hairline).frame(height: 1)

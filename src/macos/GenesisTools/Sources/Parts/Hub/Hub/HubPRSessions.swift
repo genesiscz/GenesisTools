@@ -6,43 +6,43 @@ import SwiftUI
 // branch a transcript recorded, commit and push output of the PR's commits, and change-log edits of
 // the PR's files, across Claude, Codex and Grok, older than the hub's session window too.
 
-package struct HubPRSessionMatch: Decodable, Identifiable, Equatable {
-    package let provider: String
-    package let sessionId: String
-    package let title: String?
-    package let cwd: String
-    package let project: String?
-    package let gitBranch: String?
-    package let mtime: String
-    package let reasons: [String]
-    package let files: [String]
-    package let fileCount: Int
-    package let commits: [String]
+struct HubPRSessionMatch: Decodable, Identifiable, Equatable {
+    let provider: String
+    let sessionId: String
+    let title: String?
+    let cwd: String
+    let project: String?
+    let gitBranch: String?
+    let mtime: String
+    let reasons: [String]
+    let files: [String]
+    let fileCount: Int
+    let commits: [String]
 
-    package var id: String { sessionId }
+    var id: String { sessionId }
 
     /// What opening it in the hub needs (the same row a history hit makes).
-    package var hit: HubHistoryHit {
+    var hit: HubHistoryHit {
         HubHistoryHit(kind: provider, sessionId: sessionId, title: title, cwd: cwd, project: project,
                       gitBranch: gitBranch, mtime: mtime, matchedText: nil)
     }
 }
 
-package struct HubPRSessions: Decodable, Equatable {
-    package let sessions: [HubPRSessionMatch]
-    package let warnings: [String]
-    package let elapsedMs: Int?
-    package let cached: Bool?
+struct HubPRSessions: Decodable, Equatable {
+    let sessions: [HubPRSessionMatch]
+    let warnings: [String]
+    let elapsedMs: Int?
+    let cached: Bool?
 }
 
 @MainActor
-package final class PRSessionsStore: ObservableObject {
+final class PRSessionsStore: ObservableObject {
     @Published package private(set) var results: [String: HubPRSessions] = [:]
     @Published package private(set) var loading: Set<String> = []
     @Published package private(set) var errors: [String: String] = [:]
 
     /// The argv for one PR, nil when the PR has no local checkout to search from.
-    package static func arguments(_ pr: HubPR, detail: HubPRDetail?, fresh: Bool) -> [String]? {
+    static func arguments(_ pr: HubPR, detail: HubPRDetail?, fresh: Bool) -> [String]? {
         guard let root = pr.repoRoot else { return nil }
         var args = ["hub", "pr", "sessions", "--repo", root, "--branch", pr.headBranch, "--json"]
         if let head = pr.headSha {
@@ -67,7 +67,7 @@ package final class PRSessionsStore: ObservableObject {
     private static let cache = HubSWR.cache("pr-sessions")
 
     /// Opening a PR shows its last known matches and asks again, at most once a minute.
-    package func load(_ pr: HubPR, detail: HubPRDetail?, fresh: Bool = false) {
+    func load(_ pr: HubPR, detail: HubPRDetail?, fresh: Bool = false) {
         let key = pr.id
         let recent = fetchedAt[key].map { Date().timeIntervalSince($0) < 60 } ?? false
         guard !loading.contains(key), fresh || !recent,
@@ -107,16 +107,16 @@ package final class PRSessionsStore: ObservableObject {
 }
 
 /// One session row: provider, title, age, why it matched, Open and Resume.
-package struct PRSessionRow: View {
-    @ObservedObject package var model: HubModel
-    package let session: HubSession
-    package let reasons: [String]
-    package var files: [String] = []
-    package var fileCount = 0
-    package var commits: [String] = []
+struct PRSessionRow: View {
+    @ObservedObject var model: HubModel
+    let session: HubSession
+    let reasons: [String]
+    var files: [String] = []
+    var fileCount = 0
+    var commits: [String] = []
     @State private var resuming = false
 
-    package var body: some View {
+    var body: some View {
         HStack(spacing: 8) {
             ProviderBadge(provider: session.provider, size: 16, tooltip: session.provider.capitalized)
             FindText(session.displayTitle, field: "title").font(.system(size: 12)).lineLimit(1).truncationMode(.tail)
@@ -148,7 +148,7 @@ package struct PRSessionRow: View {
         }
     }
 
-    package static let exact: DateFormatter = {
+    static let exact: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium
         formatter.timeStyle = .medium

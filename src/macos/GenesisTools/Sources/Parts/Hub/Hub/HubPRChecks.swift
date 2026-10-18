@@ -7,27 +7,27 @@ import SwiftUI
 // "Send to agent" hands the log to the session that owns the branch, through the same task path as
 // "Fix these threads" (`tools hub pr fix-check`, Review/FixThreads.swift).
 
-package struct HubCheckLog: Decodable, Equatable {
-    package struct Section: Decodable, Equatable, Identifiable {
-        package let name: String
-        package let url: String?
-        package let status: String?
-        package let lines: [String]
-        package let totalLines: Int
-        package var id: String { name }
+struct HubCheckLog: Decodable, Equatable {
+    struct Section: Decodable, Equatable, Identifiable {
+        let name: String
+        let url: String?
+        let status: String?
+        let lines: [String]
+        let totalLines: Int
+        var id: String { name }
     }
 
-    package let url: String
-    package let provider: String?
-    package let sections: [Section]
-    package let errors: [String]
-    package let final: Bool
-    package let cached: Bool
-    package let elapsedMs: Int
-    package let error: String?
+    let url: String
+    let provider: String?
+    let sections: [Section]
+    let errors: [String]
+    let final: Bool
+    let cached: Bool
+    let elapsedMs: Int
+    let error: String?
 
     /// Everything as plain text, for Copy.
-    package var plainText: String {
+    var plainText: String {
         var parts = errors.map { "error: \($0)" }
         for section in sections {
             parts.append("── \(section.name) ──")
@@ -39,11 +39,11 @@ package struct HubCheckLog: Decodable, Equatable {
 
 /// One failed section's lines as a single attributed text (one `Text`, not one view per line), with
 /// error and warning lines tinted. Built off the main thread when the log arrives.
-package struct CheckLogRender: Equatable {
-    package let log: HubCheckLog
-    package let sections: [String: AttributedString]
+struct CheckLogRender: Equatable {
+    let log: HubCheckLog
+    let sections: [String: AttributedString]
 
-    package static func build(_ log: HubCheckLog) -> CheckLogRender {
+    static func build(_ log: HubCheckLog) -> CheckLogRender {
         var sections: [String: AttributedString] = [:]
         for section in log.sections {
             var text = AttributedString()
@@ -64,8 +64,8 @@ package struct CheckLogRender: Equatable {
 }
 
 @MainActor
-package final class CheckLogStore: ObservableObject {
-    package static let shared = CheckLogStore()
+final class CheckLogStore: ObservableObject {
+    static let shared = CheckLogStore()
 
     @Published package private(set) var logs: [String: CheckLogRender] = [:]
     @Published package private(set) var loading: Set<String> = []
@@ -74,11 +74,11 @@ package final class CheckLogStore: ObservableObject {
     private static let cache = HubSWR.cache("check-log")
 
     /// The × on the failure pill: the next open asks again.
-    package func dismissFailure(_ url: String) {
+    func dismissFailure(_ url: String) {
         failures[url] = nil
     }
 
-    package func load(_ url: String, fresh: Bool = false) {
+    func load(_ url: String, fresh: Bool = false) {
         guard !loading.contains(url), fresh || logs[url] == nil else { return }
         loading.insert(url)
         failures[url] = nil
@@ -130,11 +130,11 @@ private func checkRank(_ status: String?) -> Int {
     }
 }
 
-package struct PRChecksSection: View {
-    @ObservedObject package var model: HubModel
-    package let pr: HubPR
-    package let checks: [HubPRDetail.Check]
-    @Binding package var folded: Bool
+struct PRChecksSection: View {
+    @ObservedObject var model: HubModel
+    let pr: HubPR
+    let checks: [HubPRDetail.Check]
+    @Binding var folded: Bool
     @ObservedObject private var store = CheckLogStore.shared
     @State private var expanded: Set<String> = []
     @State private var sending: HubPRDetail.Check?
@@ -144,7 +144,7 @@ package struct PRChecksSection: View {
 
     /// Failed first, then running, then the rest, each in the host's order (the overview's find
     /// reads the same order).
-    package static func sorted(_ checks: [HubPRDetail.Check]) -> [HubPRDetail.Check] {
+    static func sorted(_ checks: [HubPRDetail.Check]) -> [HubPRDetail.Check] {
         checks.enumerated()
             .sorted { (checkRank($0.element.status), $0.offset) < (checkRank($1.element.status), $1.offset) }
             .map(\.element)
@@ -158,14 +158,14 @@ package struct PRChecksSection: View {
 
     /// Scripted snapshots of the log panel fold the sections above Checks, so the lazy overview
     /// realizes it. Scratch store only (`HubDefaults.isolated`): the live layout is never touched.
-    package static func prepareSnapshot() {
+    static func prepareSnapshot() {
         guard snapshotOpensLogs else { return }
         for key in ["hub.prs.fold.description", "hub.prs.fold.sessions", "hub.prs.fold.commits"] {
             HubDefaults.store.set(true, forKey: key)
         }
     }
 
-    package var body: some View {
+    var body: some View {
         PRSection(title: "Checks", count: checks.count, folded: $folded, trailing: failedCount == 0 ? nil : AnyView(
             Text(verbatim: "\(failedCount) failed")
                 .font(.system(size: 11))
@@ -334,13 +334,13 @@ package struct PRChecksSection: View {
 
 /// "Send to agent" for one failed check: the shared task form (Review/FixThreads.swift) with the
 /// `tools hub pr fix-check` verb, which puts the failing log into the task file.
-package struct CheckSendForm: View {
-    @ObservedObject package var model: HubModel
-    package let pr: HubPR
-    package let check: HubPRDetail.Check
-    package let close: () -> Void
+struct CheckSendForm: View {
+    @ObservedObject var model: HubModel
+    let pr: HubPR
+    let check: HubPRDetail.Check
+    let close: () -> Void
 
-    package var body: some View {
+    var body: some View {
         let repo = pr.localWorktree ?? pr.repoRoot ?? ""
         let ref = pr.url.isEmpty ? "\(repo)#\(pr.number)" : pr.url
         PRTaskForm(

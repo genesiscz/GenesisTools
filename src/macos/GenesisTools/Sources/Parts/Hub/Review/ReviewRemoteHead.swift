@@ -4,30 +4,30 @@ import Foundation
 /// worktree, its head fetched into the main checkout (Hub/HubPRFetch.swift). The main checkout is on
 /// another branch, so its copy of a file is another version: file actions open the host's copy at the
 /// head, the working-tree scopes are off, and the commits list is the PR's.
-package struct ReviewRemoteHead {
+struct ReviewRemoteHead {
     /// The PR's head branch and the commit the diff shows.
-    package let branch: String
-    package let sha: String
+    let branch: String
+    let sha: String
     /// The PR's merge base; nil when the fetch found none.
-    package let base: String?
+    let base: String?
     /// The host's page of a repo-relative file at a commit, at a line when given.
-    package let blob: (_ sha: String, _ path: String, _ line: Int?) -> URL?
+    let blob: (_ sha: String, _ path: String, _ line: Int?) -> URL?
 
     /// The host's page of a repo-relative file at `revision` (default: `sha`), at a line when given.
-    package func hostURL(_ path: String, _ line: Int?, at revision: String? = nil) -> URL? {
+    func hostURL(_ path: String, _ line: Int?, at revision: String? = nil) -> URL? {
         blob(revision ?? sha, path, line)
     }
 
     /// The same PR at another push: a Reload to a newer push moves the links, the commits and the note.
     /// A push without a recorded base keeps this one's.
-    package func moved(to head: String, base newBase: String?) -> ReviewRemoteHead {
+    func moved(to head: String, base newBase: String?) -> ReviewRemoteHead {
         guard head != sha else { return self }
         return ReviewRemoteHead(branch: branch, sha: head, base: newBase ?? base, blob: blob)
     }
 
     /// The head a scope pinned to one of the PR's pushes shows: a range's head and base, a compare's new
     /// end. A single commit is one of the PR's commits, not a push, so the PR's commit list stays.
-    package func following(_ scope: DiffScope) -> ReviewRemoteHead {
+    func following(_ scope: DiffScope) -> ReviewRemoteHead {
         switch scope {
         case .range(let rangeBase, let head, _, _) where scope.pinnedHead != nil:
             return moved(to: head, base: rangeBase)
@@ -39,25 +39,25 @@ package struct ReviewRemoteHead {
     }
 
     /// `git log` arguments for the PR's own commits.
-    package var commitRange: [String] {
+    var commitRange: [String] {
         base.map { ["\($0)..\(sha)"] } ?? [sha]
     }
 
     /// What an agent message says instead of the main checkout's branch.
-    package var branchNote: String {
+    var branchNote: String {
         "\(branch) at \(sha.prefix(10)), not checked out in this folder"
     }
 }
 
 extension ReviewRemoteHead {
     /// A head whose files open on `forge` at `sha`.
-    package init(branch: String, sha: String, base: String?, forge: ForgeWeb?) {
+    init(branch: String, sha: String, base: String?, forge: ForgeWeb?) {
         self.init(branch: branch, sha: sha, base: base, blob: { commit, path, line in forge?.blob(commit, path: path, line: line) })
     }
 
     /// The flags a standalone review window (`runReview`) rebuilds this head from: the PR's checkout is on
     /// another branch there too, so its files must not open from disk.
-    package static func launchArguments(branch: String, sha: String, base: String?, forge: ForgeWeb?) -> [String] {
+    static func launchArguments(branch: String, sha: String, base: String?, forge: ForgeWeb?) -> [String] {
         var args = ["--remote-branch", branch, "--remote-sha", sha]
         if let base {
             args += ["--remote-base", base]
@@ -69,7 +69,7 @@ extension ReviewRemoteHead {
     }
 
     /// The head `launchArguments` named; nil without a branch and a sha.
-    package init?(launchArguments args: [String]) {
+    init?(launchArguments args: [String]) {
         var values: [String: String] = [:]
         var index = 0
         while index < args.count {
@@ -87,7 +87,7 @@ extension ReviewRemoteHead {
 
 extension DiffScope {
     /// The scope shows the working tree or the index, so it needs the checkout of the branch.
-    package var readsTheCheckout: Bool {
+    var readsTheCheckout: Bool {
         switch self {
         case .lastTurns, .uncommitted, .unstaged, .staged, .branch: return true
         case .commit, .range, .compare: return false

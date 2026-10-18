@@ -4,12 +4,12 @@ import SwiftUI
 /// PR's own threads, so a pushed review said "No open threads" while its drafts sat in another file of
 /// the diff with nothing pointing at them (2026-10-08, !7528). A row opens the draft's file and marks
 /// its card, the same way a PR thread row does.
-package struct AgentDraftsList: View {
-    @ObservedObject package var model: ReviewModel
+struct AgentDraftsList: View {
+    @ObservedObject var model: ReviewModel
     @AppStorage("review.agentDrafts.folded", store: HubDefaults.store) private var folded = false
     @GenReduceMotion private var reduceMotion
 
-    package var body: some View {
+    var body: some View {
         if let proposal = model.proposal {
             let drafts = proposal.drafts
             if !drafts.isEmpty {

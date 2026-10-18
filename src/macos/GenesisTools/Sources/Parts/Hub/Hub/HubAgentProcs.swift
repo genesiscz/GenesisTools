@@ -10,131 +10,131 @@ import SwiftUI
 // through `tools hub procs --stop <pid> --yes`: SIGTERM, SIGKILL after the grace period, by pid only,
 // and the CLI refuses the tree that runs the asking process.
 
-package enum AgentProcs {
+enum AgentProcs {
     /// The Sessions mode's selection that shows this pane instead of one session.
-    package static let selectionID = "::procs"
-    package static let refreshSeconds: UInt64 = 10
+    static let selectionID = "::procs"
+    static let refreshSeconds: UInt64 = 10
     /// SIGTERM's head start before SIGKILL, passed to every stop as `--grace`, so the texts that name it are right.
-    package static let graceSeconds = 5
+    static let graceSeconds = 5
 }
 
-package struct ProcEntry: Decodable, Hashable, Identifiable {
-    package let pid: Int
-    package let ppid: Int
-    package let depth: Int
-    package let kind: String
-    package let label: String
-    package let command: String
-    package let cpu: Double
-    package let rssKb: Double
-    package let energy: Double?
-    package let startedAt: String?
-    package let state: String
+struct ProcEntry: Decodable, Hashable, Identifiable {
+    let pid: Int
+    let ppid: Int
+    let depth: Int
+    let kind: String
+    let label: String
+    let command: String
+    let cpu: Double
+    let rssKb: Double
+    let energy: Double?
+    let startedAt: String?
+    let state: String
 
-    package var id: Int { pid }
+    var id: Int { pid }
 }
 
-package struct ProcSessionMatch: Decodable, Hashable {
-    package let provider: String
-    package let sessionId: String
-    package let title: String?
+struct ProcSessionMatch: Decodable, Hashable {
+    let provider: String
+    let sessionId: String
+    let title: String?
     /// Epoch ms.
-    package let lastActivityAt: Double?
+    let lastActivityAt: Double?
     /// argv, shell or cwd.
-    package let match: String
+    let match: String
 }
 
-package struct ProcGroup: Decodable, Hashable, Identifiable {
-    package struct Parent: Decodable, Hashable {
-        package let pid: Int
-        package let label: String?
-        package let alive: Bool
+struct ProcGroup: Decodable, Hashable, Identifiable {
+    struct Parent: Decodable, Hashable {
+        let pid: Int
+        let label: String?
+        let alive: Bool
     }
 
-    package struct Totals: Decodable, Hashable {
-        package let cpu: Double
-        package let rssKb: Double
-        package let energy: Double?
-        package let processes: Int
+    struct Totals: Decodable, Hashable {
+        let cpu: Double
+        let rssKb: Double
+        let energy: Double?
+        let processes: Int
     }
 
-    package let id: String
+    let id: String
     /// agent, wrapper or orphan.
-    package let kind: String
-    package let rootPid: Int
-    package let provider: String?
-    package let label: String
-    package let command: String
-    package let cwd: String?
-    package let startedAt: String?
-    package let ageMs: Double?
-    package let parent: Parent
-    package let wrapperPid: Int?
-    package let parentAgentPid: Int?
-    package let orphan: Bool
-    package let orphanReason: String?
-    package let launchdLabel: String?
-    package let idle: Bool
-    package let idleReason: String?
+    let kind: String
+    let rootPid: Int
+    let provider: String?
+    let label: String
+    let command: String
+    let cwd: String?
+    let startedAt: String?
+    let ageMs: Double?
+    let parent: Parent
+    let wrapperPid: Int?
+    let parentAgentPid: Int?
+    let orphan: Bool
+    let orphanReason: String?
+    let launchdLabel: String?
+    let idle: Bool
+    let idleReason: String?
     /// Stopped (`ps` state T) in its shell, apart from idle; optional so an older CLI's report still decodes.
-    package let suspended: Bool?
-    package let suspendedReason: String?
-    package let session: ProcSessionMatch?
-    package let own: Bool
-    package let totals: Totals
-    package let processes: [ProcEntry]
+    let suspended: Bool?
+    let suspendedReason: String?
+    let session: ProcSessionMatch?
+    let own: Bool
+    let totals: Totals
+    let processes: [ProcEntry]
 
-    package var started: Date? { HubFormat.date(startedAt) }
+    var started: Date? { HubFormat.date(startedAt) }
     /// A launchd job and the tree of the asking process cannot be stopped from here (the CLI refuses both).
     /// `launchdUnknown` (the report's, not this group's) adds a third refusal the CLI also enforces
     /// (`stop.ts`): a PPID-1 root with no confirmed launchd label MAY be a launchd job `launchctl list`
     /// itself failed to read, so it fails closed rather than offering a stop the CLI is going to refuse.
-    package func stoppable(launchdUnknown: Bool) -> Bool {
+    func stoppable(launchdUnknown: Bool) -> Bool {
         !own && launchdLabel == nil && !(launchdUnknown && parent.pid == 1)
     }
     /// Why it is flagged: orphan first, then suspended, then idle.
-    package var reason: String? { orphanReason ?? suspendedReason ?? idleReason }
-    package var title: String { session?.title.flatMap { $0.isEmpty ? nil : $0 } ?? label }
+    var reason: String? { orphanReason ?? suspendedReason ?? idleReason }
+    var title: String { session?.title.flatMap { $0.isEmpty ? nil : $0 } ?? label }
 }
 
-package struct ProcsReport: Decodable {
-    package struct Totals: Decodable {
-        package let groups: Int
-        package let orphans: Int
-        package let idle: Int
-        package let suspended: Int?
-        package let processes: Int
-        package let cpu: Double
-        package let rssKb: Double
+struct ProcsReport: Decodable {
+    struct Totals: Decodable {
+        let groups: Int
+        let orphans: Int
+        let idle: Int
+        let suspended: Int?
+        let processes: Int
+        let cpu: Double
+        let rssKb: Double
     }
 
-    package let groups: [ProcGroup]
-    package let totals: Totals
-    package let energy: Bool
+    let groups: [ProcGroup]
+    let totals: Totals
+    let energy: Bool
     /// `launchctl list` failed: no PPID-1 group can be confirmed as a launchd job or ruled out as one.
-    package let launchdUnknown: Bool
-    package let takenAt: String
-    package let elapsedMs: Int
-    package let warnings: [String]
+    let launchdUnknown: Bool
+    let takenAt: String
+    let elapsedMs: Int
+    let warnings: [String]
 }
 
-package struct ProcStopOutcome: Decodable {
-    package let pid: Int
-    package let label: String
-    package let pids: [Int]
-    package let stopped: Bool
-    package let signal: String?
-    package let survivors: [Int]
-    package let reason: String?
+struct ProcStopOutcome: Decodable {
+    let pid: Int
+    let label: String
+    let pids: [Int]
+    let stopped: Bool
+    let signal: String?
+    let survivors: [Int]
+    let reason: String?
 }
 
-package enum ProcsFormat {
-    package static func memory(_ kb: Double) -> String {
+enum ProcsFormat {
+    static func memory(_ kb: Double) -> String {
         ByteFormat.memory(Int64(kb * 1024))
     }
 
     /// `42m`, `5h 10m`, `6d 1h`: the same words as `tools hub procs`.
-    package static func age(_ ms: Double?) -> String {
+    static func age(_ ms: Double?) -> String {
         guard let ms else { return "—" }
         let minutes = Int(ms / 60_000)
         if minutes < 60 { return "\(minutes)m" }
@@ -142,7 +142,7 @@ package enum ProcsFormat {
         return hours < 48 ? "\(hours)h \(minutes % 60)m" : "\(hours / 24)d \(hours % 24)h"
     }
 
-    package static func summary(_ report: ProcsReport) -> String {
+    static func summary(_ report: ProcsReport) -> String {
         let totals = report.totals
         var text = "\(totals.groups) trees · \(totals.processes) processes · \(String(format: "%.1f", totals.cpu)) % CPU · \(memory(totals.rssKb))"
         if totals.orphans > 0 { text += " · \(totals.orphans) orphan\(totals.orphans == 1 ? "" : "s")" }
@@ -153,28 +153,28 @@ package enum ProcsFormat {
 }
 
 @MainActor
-package final class AgentProcsStore: ObservableObject {
-    package static let shared = AgentProcsStore()
+final class AgentProcsStore: ObservableObject {
+    static let shared = AgentProcsStore()
 
     @Published package private(set) var report: ProcsReport?
     @Published package private(set) var loading = false
     @Published package private(set) var stopping = Set<Int>()
-    @Published package var expanded = Set<String>()
-    @Published package var notice: (text: String, isError: Bool)?
+    @Published var expanded = Set<String>()
+    @Published var notice: (text: String, isError: Bool)?
     /// Settings → Hub → Panes edits the same value (`HubPreferences.processEnergy`); a change there reaches this
     /// store's views through `preferenceChanges`.
-    package var energy: Bool {
+    var energy: Bool {
         get { HubDefaults.preferences.processEnergy }
         set { HubDefaults.preferences.processEnergy = newValue }
     }
     private var preferenceChanges: AnyCancellable?
 
-    package init() {
+    init() {
         preferenceChanges = HubDefaults.preferences.$processEnergy.dropFirst().removeDuplicates()
             .sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
-    package var orphans: [ProcGroup] {
+    var orphans: [ProcGroup] {
         guard let report else { return [] }
         return report.groups.filter { $0.orphan && $0.stoppable(launchdUnknown: report.launchdUnknown) }
     }
@@ -182,7 +182,7 @@ package final class AgentProcsStore: ObservableObject {
     /// ends: the running one was built from the old arguments, or from the table before the stop.
     private var rerun = false
 
-    package func refresh() async {
+    func refresh() async {
         guard !loading else {
             rerun = true
             return
@@ -213,14 +213,14 @@ package final class AgentProcsStore: ObservableObject {
     }
 
     /// The Sessions list's entry shows the orphan count: one read when it first appears, no polling.
-    package func loadOnce() async {
+    func loadOnce() async {
         if report == nil {
             await refresh()
         }
     }
 
     /// Runs while the pane is on screen; SwiftUI cancels the `.task` that calls it when the pane goes.
-    package func poll() async {
+    func poll() async {
         while !Task.isCancelled {
             // A pane behind other windows asks nothing (Hub/HubVisibility.swift).
             await HubVisibility.shared.untilVisible()
@@ -232,7 +232,7 @@ package final class AgentProcsStore: ObservableObject {
 
     /// One `tools hub procs --stop <pid>` per tree, in turn; each re-reads the table and re-checks every
     /// pid's start time and command before a signal.
-    package func stop(_ groups: [ProcGroup]) async {
+    func stop(_ groups: [ProcGroup]) async {
         let pids = groups.map(\.rootPid).filter { !stopping.contains($0) }
         guard !pids.isEmpty else { return }
         stopping.formUnion(pids)
@@ -271,14 +271,14 @@ package final class AgentProcsStore: ObservableObject {
     }
 }
 
-package struct AgentProcsView: View {
-    @ObservedObject package var model: HubModel
+struct AgentProcsView: View {
+    @ObservedObject var model: HubModel
     @ObservedObject private var store = AgentProcsStore.shared
     @State private var pending: [ProcGroup]?
     @State private var find = PanelFindModel(scope: "procs", title: "the agent processes")
     @GenReduceMotion private var reduceMotion
 
-    package var body: some View {
+    var body: some View {
         let groups = store.report?.groups ?? []
         VStack(spacing: 0) {
             header
@@ -430,7 +430,7 @@ package struct AgentProcsView: View {
     }
 
     /// What ⌘F searches in a row: the texts the row shows, under the keys its FindTexts use.
-    package static func searchable(_ group: ProcGroup) -> PanelFindRow {
+    static func searchable(_ group: ProcGroup) -> PanelFindRow {
         PanelFindRow(id: group.id, fields: [
             PanelFindField("title", group.title),
             PanelFindField("label", group.label),
@@ -440,15 +440,15 @@ package struct AgentProcsView: View {
 }
 
 /// One tree: values only (no store, no model), and its buttons only while the pointer is on it.
-package struct AgentProcsRow: View {
-    package let group: ProcGroup
-    package let expanded: Bool
-    package let stopping: Bool
-    package let energy: Bool
-    package let launchdUnknown: Bool
-    package let toggle: () -> Void
-    package let reveal: () -> Void
-    package let stop: () -> Void
+struct AgentProcsRow: View {
+    let group: ProcGroup
+    let expanded: Bool
+    let stopping: Bool
+    let energy: Bool
+    let launchdUnknown: Bool
+    let toggle: () -> Void
+    let reveal: () -> Void
+    let stop: () -> Void
     @State private var hovering = false
 
     private var reallyStoppable: Bool { group.stoppable(launchdUnknown: launchdUnknown) }
@@ -467,7 +467,7 @@ package struct AgentProcsRow: View {
         return group.kind == "wrapper" ? "wrapper" : "live"
     }
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .top, spacing: 10) {
                 Circle().fill(tone).frame(width: 8, height: 8).padding(.top, 5)
@@ -604,11 +604,11 @@ package struct AgentProcsRow: View {
 }
 
 /// The Sessions list's first row: opens the process pane, with the orphan count once known.
-package struct AgentProcsEntry: View {
-    @ObservedObject package var model: HubModel
+struct AgentProcsEntry: View {
+    @ObservedObject var model: HubModel
     @ObservedObject private var store = AgentProcsStore.shared
 
-    package var body: some View {
+    var body: some View {
         let selected = model.selectedID == AgentProcs.selectionID
         let orphans = store.report?.totals.orphans ?? 0
         HStack(spacing: 8) {

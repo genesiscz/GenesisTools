@@ -4,9 +4,9 @@ import GenesisKit
 extension DiffViewOptions {
     /// The layout picked last in any review (its header button, the View menu): every new review window
     /// and hub review opens with it, after a relaunch too.
-    package static let styleKey = "review.diffStyle"
+    static let styleKey = "review.diffStyle"
 
-    package static func remembered(in store: UserDefaults = HubDefaults.store) -> DiffViewOptions {
+    static func remembered(in store: UserDefaults = HubDefaults.store) -> DiffViewOptions {
         var options = DiffViewOptions()
         if let saved = store.string(forKey: styleKey).flatMap(Style.init(rawValue:)) {
             options.diffStyle = saved
@@ -14,7 +14,7 @@ extension DiffViewOptions {
         return options
     }
 
-    package static func remember(_ style: Style, in store: UserDefaults = HubDefaults.store) {
+    static func remember(_ style: Style, in store: UserDefaults = HubDefaults.store) {
         store.set(style.rawValue, forKey: styleKey)
     }
 }
@@ -23,10 +23,10 @@ extension DiffViewOptions {
 /// card's send buttons once it went out, but a double click posts twice before the page redraws, and
 /// Swift ran both: two drafts on the PR, or two agent comments. Swift checks the states the page
 /// checks (main.ts `renderDraft`, `renderReply`, `renderComment`), plus a send still on its way.
-package enum SuggestionSendGate {
+enum SuggestionSendGate {
     /// `kind` is the card's kind ("draft", "thread", "local"); `state` is what the page reads: a
     /// draft's status, a thread reply's `replyStatus` (nil until sent), a local comment's state.
-    package static func refusal(kind: String, state: String?, toPR: Bool, inFlight: Bool, busy: String?) -> String? {
+    static func refusal(kind: String, state: String?, toPR: Bool, inFlight: Bool, busy: String?) -> String? {
         if inFlight {
             return "This suggestion is already on its way."
         }

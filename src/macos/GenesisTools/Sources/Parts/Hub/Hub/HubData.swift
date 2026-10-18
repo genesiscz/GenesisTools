@@ -5,18 +5,18 @@ import Foundation
 // ref, cache clock, tokens) and `tools ai sessions tail <id> --json` for transcripts of every
 // provider (TranscriptEnvelope, grouped by TranscriptTimeline). This file only adapts them.
 
-package typealias HubSession = MonitorSessionRow
+typealias HubSession = MonitorSessionRow
 
 extension MonitorSessionRow {
-    package var lastActivity: Date? {
+    var lastActivity: Date? {
         mtime > 0 ? Date(timeIntervalSince1970: mtime / 1000) : nil
     }
 
     /// A warm prompt cache means the agent talked to the model within its TTL: the best "someone
     /// is working here" signal the providers give us.
-    package var isLive: Bool { isLive(at: Date()) }
+    var isLive: Bool { isLive(at: Date()) }
 
-    package func isLive(at now: Date) -> Bool {
+    func isLive(at now: Date) -> Bool {
         if cacheStatus == .HOT {
             return true
         }
@@ -26,23 +26,23 @@ extension MonitorSessionRow {
     }
 }
 
-package enum HubSource {
+enum HubSource {
     /// The resident hub server (`tools hub serve`, src/hub/server): the hub asks it first and runs a `tools`
     /// process only when it cannot answer. Started on demand; `GENESIS_HUB_SERVER=0` turns it off.
-    package static let server: ToolsServerClient? = {
+    static let server: ToolsServerClient? = {
         guard !NativePreview.enabled, ProcessInfo.processInfo.environment["GENESIS_HUB_SERVER"] != "0" else { return nil }
         return ToolsServerClient(startServer: { HubServerStarter.start() })
     }()
 
-    package static let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath(), server: server)
+    static let bridge = ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath(), server: server)
 
-    package static func sessions(hours: Int) async throws -> [HubSession] {
+    static func sessions(hours: Int) async throws -> [HubSession] {
         let span = HubPerf.begin("sessions.list", "hours=\(hours)", awaits: true)
         defer { span.end() }
         return try await SessionListClient.fetch(using: bridge, hours: hours).rows
     }
 
-    package static func transcript(_ session: HubSession, limit: Int) async throws -> TranscriptEnvelope {
+    static func transcript(_ session: HubSession, limit: Int) async throws -> TranscriptEnvelope {
         let span = HubPerf.begin("transcript.fetch", "limit=\(limit)", awaits: true)
         defer { span.end() }
         return try await SessionTranscriptClient.fetch(using: bridge, sessionId: session.sessionId, limit: limit)
@@ -51,28 +51,28 @@ package enum HubSource {
 
 /// The last `tools ai usage sessions` list (Hub/HubSWR.swift): the hub paints it at launch, marked
 /// as refreshing, while the fresh list loads.
-package enum HubSessionListCache {
+enum HubSessionListCache {
     private static let cache = HubSWR.cache("sessions")
 
-    package static func read(hours: Int) async -> [HubSession]? {
+    static func read(hours: Int) async -> [HubSession]? {
         await cache.load([HubSession].self, key: "hours=\(hours)")
     }
 
-    package static func write(_ rows: [HubSession], hours: Int) {
+    static func write(_ rows: [HubSession], hours: Int) {
         Task.detached(priority: .utility) { cache.write(rows, key: "hours=\(hours)") }
     }
 }
 
-package enum HubFormat {
-    package static let iso: ISO8601DateFormatter = {
+enum HubFormat {
+    static let iso: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
 
-    package static let isoPlain = ISO8601DateFormatter()
+    static let isoPlain = ISO8601DateFormatter()
 
-    package static let relative: RelativeDateTimeFormatter = {
+    static let relative: RelativeDateTimeFormatter = {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         return formatter
@@ -80,7 +80,7 @@ package enum HubFormat {
 
     /// Formats against the moment it runs, so it goes stale on screen: a label is a `LiveAgo`
     /// (Hub/HubComponents.swift). This is for text that leaves the screen (an export, a copy).
-    package static func ago(_ date: Date?) -> String {
+    static func ago(_ date: Date?) -> String {
         guard let date else { return "" }
         return relative.localizedString(for: date, relativeTo: Date())
     }
@@ -88,7 +88,7 @@ package enum HubFormat {
     /// Parsed once per string. The Activity feed groups every event by day and hour on each body pass
     /// and its rows print each event's time, and the two parsers per call (fractional seconds, then
     /// plain) were 196 ms of main thread in a 35 s bench run over 70 events (2026-09-26 `sample`).
-    package static func date(_ iso: String?) -> Date? {
+    static func date(_ iso: String?) -> Date? {
         guard let iso else { return nil }
         let key = iso as NSString
         if let hit = parsed.object(forKey: key) {
@@ -120,13 +120,13 @@ package enum HubFormat {
 
 /// A session's price from `tools ai-spend session --id <id> --json`: list prices over every model
 /// call, subagents included. It is an estimate, and the UI says so; the session file has no price.
-package enum HubSpend {
-    package struct Estimate: Equatable, Sendable {
-        package let usd: Double
-        package let note: String
+enum HubSpend {
+    struct Estimate: Equatable, Sendable {
+        let usd: Double
+        let note: String
     }
 
-    package final class Cache: @unchecked Sendable {
+    final class Cache: @unchecked Sendable {
         private struct Entry {
             let revision: Double
             let expires: Date
@@ -136,17 +136,17 @@ package enum HubSpend {
         private let condition = NSCondition()
         private var entries: [String: Entry] = [:]
         private var pending = Set<String>()
-        package let ttl: TimeInterval
-        package init(ttl: TimeInterval = 30) { self.ttl = ttl }
+        let ttl: TimeInterval
+        init(ttl: TimeInterval = 30) { self.ttl = ttl }
 
-        package func cached(_ key: String) -> Estimate? {
+        func cached(_ key: String) -> Estimate? {
             condition.lock()
             defer { condition.unlock() }
             guard let entry = entries[key], entry.expires > Date() else { return nil }
             return entry.value
         }
 
-        package func fetch(key: String, revision: Double, force: Bool = false, now: () -> Date = Date.init, run: () throws -> Data) throws -> Estimate? {
+        func fetch(key: String, revision: Double, force: Bool = false, now: () -> Date = Date.init, run: () throws -> Data) throws -> Estimate? {
             condition.lock()
             let deadline = Date().addingTimeInterval(65)
             var waited = false
@@ -197,12 +197,12 @@ package enum HubSpend {
 
     private static func key(_ session: HubSession) -> String { session.provider + ":" + session.sessionId }
 
-    package static func cached(_ session: HubSession) -> Estimate? {
+    static func cached(_ session: HubSession) -> Estimate? {
         cache.cached(key(session))
     }
 
     /// `tools ai-spend session --json` stdout (src/ai-spend/lib/reports/session.ts); nil for no spend.
-    package static func estimate(from data: Data) -> Estimate? {
+    static func estimate(from data: Data) -> Estimate? {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let totals = object["totals"] as? [String: Any],
               let usd = totals["totalCost"] as? Double, usd > 0
@@ -218,7 +218,7 @@ package enum HubSpend {
     }
 
     /// Blocking (a `tools` run of several seconds): call it off the main thread only.
-    package static func fetch(_ session: HubSession, force: Bool = false) -> Estimate? {
+    static func fetch(_ session: HubSession, force: Bool = false) -> Estimate? {
         let since = Date(timeIntervalSince1970: session.mtime / 1000 - 14 * 86_400)
         let day = DateFormatter()
         day.locale = Locale(identifier: "en_US_POSIX")
@@ -238,8 +238,8 @@ package enum HubSpend {
 /// itself after 10 minutes with no connection, and restarts when its code changes (src/hub/server/server.ts).
 /// It runs through the same `tools` launcher chain as every per-call child, so its macOS privacy identity is
 /// GenesisTools.app, as before.
-package enum HubServerStarter {
-    package static func start() {
+enum HubServerStarter {
+    static func start() {
         let binary = HubSource.bridge.binaryPath
         guard ToolsBridge.isExecutableFile(binary) else { return }
 

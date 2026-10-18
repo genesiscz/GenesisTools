@@ -11,13 +11,13 @@ import AppKit
 /// do the same thing. The keys come from `HubKeymap`: the hub window's handler takes the key, and
 /// the menu item shows it and runs the action on a click.
 @MainActor
-package enum AppMainMenu {
+enum AppMainMenu {
     /// True after this process installed the hub menu. The review process installs with no hub, so a session
     /// hosted there keeps Command-R and Command on the keys right of P. Set only here: the session view is
     /// built from call sites this package does not own.
     package private(set) static var installedWithHub = false
 
-    package static func install(hub: HubModel? = nil, keymap: Keymap = HubKeymap.shared) {
+    static func install(hub: HubModel? = nil, keymap: Keymap = HubKeymap.shared) {
         installedWithHub = hub != nil
         let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? ProcessInfo.processInfo.processName
         let bar = NSMenu()
@@ -125,7 +125,7 @@ package enum AppMainMenu {
 
     /// Runs the item at `"<Menu>/<Item>"` (a submenu adds a level: "Go/Palette Command/…") as a click
     /// does (`GenesisTools --hub --menu …`). It runs even when the item is greyed out.
-    package static func perform(_ path: String) {
+    static func perform(_ path: String) {
         var menu = NSApp.mainMenu
         let parts = path.split(separator: "/").map(String.init)
         for (index, title) in parts.enumerated() {
@@ -145,22 +145,22 @@ package enum AppMainMenu {
 
 /// App-menu actions that are not the hub's.
 @MainActor
-package final class AppMenuTarget: NSObject {
-    package static let shared = AppMenuTarget()
+final class AppMenuTarget: NSObject {
+    static let shared = AppMenuTarget()
 
     /// The settings window with the pages of every part this build links (`GenesisTools --features`,
     /// Parts/Features/FeaturesEntry.swift).
-    @objc package func openSettings(_ sender: Any?) {
+    @objc func openSettings(_ sender: Any?) {
         FeatureSettingsLaunch.open()
     }
 
     /// The review window's keys live in the hub library: the shared menu, Close Window, and panel find.
-    @objc package func showKeyboardShortcuts(_ sender: Any?) {
+    @objc func showKeyboardShortcuts(_ sender: Any?) {
         KeymapHelpWindow.show(HubKeymap.shortcutPages(review: true))
     }
 
     /// The privacy grants window is its own face (`GenesisTools --window`, App/GenesisToolsApp.swift).
-    @objc package func openPermissions(_ sender: Any?) {
+    @objc func openPermissions(_ sender: Any?) {
         guard let executable = Bundle.main.executablePath else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
@@ -178,20 +178,20 @@ package final class AppMenuTarget: NSObject {
 /// One hub command in the menu bar: its title, the keymap command it shows, what it runs, and when
 /// it shows a check mark or is greyed out. Read when the menu opens (`validateMenuItem`), never on a timer.
 @MainActor
-package struct HubMenuCommand {
-    package var title: String
+struct HubMenuCommand {
+    var title: String
     /// A `HubKeymap` command id. Nil for a row that is not in the library (a look, a palette keyword).
-    package var id: String?
-    package var run: (HubModel) -> Void
-    package var checked: ((HubModel) -> Bool)?
-    package var enabled: ((HubModel) -> Bool)?
+    var id: String?
+    var run: (HubModel) -> Void
+    var checked: ((HubModel) -> Bool)?
+    var enabled: ((HubModel) -> Bool)?
     /// A separator before this command.
-    package var separated = false
+    var separated = false
 }
 
 @MainActor
-package enum HubMenuCommands {
-    package static let file: [HubMenuCommand] = [
+enum HubMenuCommands {
+    static let file: [HubMenuCommand] = [
         HubMenuCommand(title: "New Agent Session", id: "hub.file.newSession", run: { hub in
             if let path = hub.paletteContext.currentPath { hub.runPalette(.newSession(path), toggleGlass: toggleGlass) }
         }, enabled: { $0.paletteContext.currentPath != nil }),
@@ -206,14 +206,14 @@ package enum HubMenuCommands {
         }, enabled: { $0.paletteContext.currentPath != nil }),
     ]
 
-    package static let find: [HubMenuCommand] = [
+    static let find: [HubMenuCommand] = [
         HubMenuCommand(title: "Command Palette…", id: HubKeymap.commandPalette, run: { overlay($0, "--palette") }),
         HubMenuCommand(title: "Find in Files…", id: "hub.find.files", run: { $0.findQuery = $0.findQuery == nil ? "" : nil }),
         HubMenuCommand(title: "Search All Transcripts…", id: "hub.find.transcripts", run: { _ in HubDailyModel.shared.toggleSearch() }),
         HubMenuCommand(title: "Search Session History…", id: "hub.find.history", run: { palette($0, "history ") }),
     ]
 
-    package static let view: [HubMenuCommand] = HubMode.allCases.map { mode in
+    static let view: [HubMenuCommand] = HubMode.allCases.map { mode in
         HubMenuCommand(title: mode.title, id: "hub.view.mode.\(mode.rawValue)", run: { $0.runPalette(.setMode(mode), toggleGlass: toggleGlass) },
                        checked: { $0.mode == mode })
     } + HubTab.allCases.enumerated().map { index, pane in
@@ -242,7 +242,7 @@ package enum HubMenuCommands {
         HubMenuCommand(title: "Reload", id: "hub.view.reload", run: reload, enabled: { $0.mode != .worktrees }, separated: true),
     ]
 
-    package static let go: [HubMenuCommand] = [
+    static let go: [HubMenuCommand] = [
         HubMenuCommand(title: "Back", id: "hub.go.back", run: { $0.goBack() }, enabled: { $0.history.canGoBack }),
         HubMenuCommand(title: "Forward", id: "hub.go.forward", run: { $0.goForward() }, enabled: { $0.history.canGoForward }),
         HubMenuCommand(title: "Session…", id: "hub.go.session", run: { palette($0, "session ") }, separated: true),
@@ -253,7 +253,7 @@ package enum HubMenuCommands {
                        enabled: { $0.prs.selected != nil }, separated: true),
     ]
 
-    package static let help: [HubMenuCommand] = [
+    static let help: [HubMenuCommand] = [
         HubMenuCommand(title: "Keyboard Shortcuts", id: "hub.help.shortcuts", run: { _ in
             KeymapHelpWindow.show(HubKeymap.shortcutPages(review: false))
         }),
@@ -263,9 +263,9 @@ package enum HubMenuCommands {
     ]
 
     /// File, Find, View, Go and Help: the commands the hub window registers, besides the app menu.
-    package static var windowCommands: [HubMenuCommand] { file + find + view + go + help }
+    static var windowCommands: [HubMenuCommand] { file + find + view + go + help }
 
-    package static func menu(_ title: String, _ commands: [HubMenuCommand], hub: HubModel, keymap: Keymap = HubKeymap.shared, tail: [NSMenuItem] = []) -> NSMenu {
+    static func menu(_ title: String, _ commands: [HubMenuCommand], hub: HubModel, keymap: Keymap = HubKeymap.shared, tail: [NSMenuItem] = []) -> NSMenu {
         let menu = NSMenu(title: title)
         for item in items(commands, hub: hub, keymap: keymap) + tail {
             menu.addItem(item)
@@ -273,7 +273,7 @@ package enum HubMenuCommands {
         return menu
     }
 
-    package static func items(_ commands: [HubMenuCommand], hub: HubModel, keymap: Keymap = HubKeymap.shared) -> [NSMenuItem] {
+    static func items(_ commands: [HubMenuCommand], hub: HubModel, keymap: Keymap = HubKeymap.shared) -> [NSMenuItem] {
         HubMenuTarget.shared.hub = hub
         return commands.flatMap { command -> [NSMenuItem] in
             let item = NSMenuItem(title: command.title, action: #selector(HubMenuTarget.runCommand(_:)), keyEquivalent: "")
@@ -286,7 +286,7 @@ package enum HubMenuCommands {
 
     /// View → Look: the Hub look and one Native look per General theme, the current one checked. A Native look
     /// also sets General → Theme, and its item's tooltip says so.
-    package static func lookItem(hub: HubModel, keymap: Keymap = HubKeymap.shared) -> NSMenuItem {
+    static func lookItem(hub: HubModel, keymap: Keymap = HubKeymap.shared) -> NSMenuItem {
         let item = NSMenuItem(title: "Look", action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: "Look")
         for choice in HubLookChoice.allCases {
@@ -304,7 +304,7 @@ package enum HubMenuCommands {
 
     /// Every palette keyword as a menu item: it opens the palette with the keyword typed, so this
     /// list is the palette's own (`HubPaletteEngine.keywords`) and cannot drift from it.
-    package static func paletteCommandsItem(hub: HubModel, keymap: Keymap = HubKeymap.shared) -> NSMenuItem {
+    static func paletteCommandsItem(hub: HubModel, keymap: Keymap = HubKeymap.shared) -> NSMenuItem {
         let item = NSMenuItem(title: "Palette Command", action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: "Palette Command")
         for keyword in HubPaletteEngine.keywords {
@@ -316,7 +316,7 @@ package enum HubMenuCommands {
     }
 
     /// The main view's review: the PR's in PRs mode, the session's otherwise.
-    package static func review(of hub: HubModel) -> ReviewModel? {
+    static func review(of hub: HubModel) -> ReviewModel? {
         hub.mode == .prs ? hub.prs.review : hub.review
     }
 
@@ -360,19 +360,19 @@ private final class HubMenuCommandBox: NSObject {
 
 /// Runs a hub menu item and sets its check mark and enabled state as the menu opens.
 @MainActor
-package final class HubMenuTarget: NSObject, NSMenuItemValidation {
-    package static let shared = HubMenuTarget()
-    package weak var hub: HubModel?
+final class HubMenuTarget: NSObject, NSMenuItemValidation {
+    static let shared = HubMenuTarget()
+    weak var hub: HubModel?
 
     /// Not `perform(_:)`: that is NSObject's `performSelector:`, and AppKit then sent the menu item
     /// as a selector (unrecognized-selector crash on the first click).
-    @objc package func runCommand(_ sender: NSMenuItem) {
+    @objc func runCommand(_ sender: NSMenuItem) {
         guard let hub, let box = sender.representedObject as? HubMenuCommandBox else { return }
         HubPerf.log("menu: \(box.command.title)")
         box.command.run(hub)
     }
 
-    package func validateMenuItem(_ item: NSMenuItem) -> Bool {
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
         guard let hub, let box = item.representedObject as? HubMenuCommandBox else { return true }
         item.state = box.command.checked?(hub) == true ? .on : .off
         return box.command.enabled?(hub) ?? true
@@ -384,10 +384,10 @@ package final class HubMenuTarget: NSObject, NSMenuItemValidation {
 /// pasteboard when its web process answers, a moment later, so it looks three times, 0.1 s apart.
 /// Nothing to copy sends nothing and stays silent, where the missing menu used to beep.
 @MainActor
-package final class CopyWithFeedback: NSObject {
-    package static let shared = CopyWithFeedback()
+final class CopyWithFeedback: NSObject {
+    static let shared = CopyWithFeedback()
 
-    @objc package func copyWithFeedback(_ sender: Any?) {
+    @objc func copyWithFeedback(_ sender: Any?) {
         let before = NSPasteboard.general.changeCount
         guard NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: sender) else {
             HubPerf.log("copy ⌘C: nothing has the keyboard to copy from")

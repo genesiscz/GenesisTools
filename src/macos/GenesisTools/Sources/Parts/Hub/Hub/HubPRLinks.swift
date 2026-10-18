@@ -7,17 +7,17 @@ import SwiftUI
 // it for the browser.
 
 /// What the linker knows about the PR's project.
-package struct PRLinkContext {
-    package var forge: ForgeWeb?
+struct PRLinkContext {
+    var forge: ForgeWeb?
     /// Branch names known to exist: the hub list's head and base branches of this project, and the
     /// description's names that `tools hub pr show` found among the checkout's refs.
-    package var branches: Set<String> = []
+    var branches: Set<String> = []
     /// The hub's id of this project's PR/MR `n`, when the hub lists it.
-    package var inApp: (Int) -> String? = { _ in nil }
+    var inApp: (Int) -> String? = { _ in nil }
 
     /// `feat`, `fix`, … : the first segment of every known branch with a slash. A token with one of
     /// these prefixes follows the repository's branch naming even when no ref names it locally.
-    package var branchPrefixes: Set<String> {
+    var branchPrefixes: Set<String> {
         Set(branches.compactMap { name in
             let parts = name.split(separator: "/", maxSplits: 1)
             return parts.count == 2 ? String(parts[0]) : nil
@@ -25,11 +25,11 @@ package struct PRLinkContext {
     }
 }
 
-package enum PRDescriptionLinker {
+enum PRDescriptionLinker {
     /// `genesistools-hub://pr?id=<hub PR id>`: the description view opens these in the hub.
-    package static let scheme = "genesistools-hub"
+    static let scheme = "genesistools-hub"
 
-    package static func inAppURL(prID: String) -> URL? {
+    static func inAppURL(prID: String) -> URL? {
         var components = URLComponents()
         components.scheme = scheme
         components.host = "pr"
@@ -38,7 +38,7 @@ package enum PRDescriptionLinker {
     }
 
     /// The hub PR id of an `inAppURL`, nil for any other URL.
-    package static func prID(from url: URL) -> String? {
+    static func prID(from url: URL) -> String? {
         guard url.scheme == scheme, url.host == "pr" else { return nil }
         return URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "id" }?.value
     }
@@ -59,7 +59,7 @@ package enum PRDescriptionLinker {
 
     /// The markdown with references and branch names as links, and HTML comments (bot markers such
     /// as "This is an auto-generated comment") removed. Fenced code blocks stay as they are.
-    package static func linkify(_ markdown: String, context: PRLinkContext) -> String {
+    static func linkify(_ markdown: String, context: PRLinkContext) -> String {
         let stripped = replace(htmlComment, in: markdown) { _ in "" }
         var inFence = false
         return stripped.components(separatedBy: "\n").map { line in
@@ -137,7 +137,7 @@ package enum PRDescriptionLinker {
     /// A branch page for `name` when it is a known branch, or (outside a code span, and with a
     /// slash) when its first segment is one of the repository's branch prefixes. A slash-less name
     /// counts only in a code span: "develop" in a sentence is a verb.
-    package static func branchURL(_ name: String, context: PRLinkContext, codeSpan: Bool) -> URL? {
+    static func branchURL(_ name: String, context: PRLinkContext, codeSpan: Bool) -> URL? {
         guard let forge = context.forge, !name.isEmpty, !name.contains(" ") else { return nil }
         let known = context.branches.contains(name)
         let hasSlash = name.contains("/")
@@ -179,7 +179,7 @@ package enum PRDescriptionLinker {
 
 /// One look per PR/MR state, shared by the list icon, the header pill and state-like labels:
 /// open green, draft grey, merged purple, closed red.
-package enum PRStateTone: Equatable {
+enum PRStateTone: Equatable {
     case open
     case draft
     case merged
@@ -187,9 +187,9 @@ package enum PRStateTone: Equatable {
     /// A label that claims a state the PR has not reached ("NOT merged into develop").
     case pending
 
-    package static let mergedColor = Color(red: 0.66, green: 0.5, blue: 1)
+    static let mergedColor = Color(red: 0.66, green: 0.5, blue: 1)
 
-    package init(pr: HubPR) {
+    init(pr: HubPR) {
         if pr.draft {
             self = .draft
         } else {
@@ -202,7 +202,7 @@ package enum PRStateTone: Equatable {
     }
 
     /// The tone of a label that names a state, nil for any other label ("ui", "backend").
-    package init?(label: String) {
+    init?(label: String) {
         let text = label.lowercased()
         func has(_ pattern: String) -> Bool { text.range(of: pattern, options: .regularExpression) != nil }
         if has(#"\b(not|un)[\s-]*merged\b"#) {
@@ -220,7 +220,7 @@ package enum PRStateTone: Equatable {
         }
     }
 
-    package var color: Color {
+    var color: Color {
         switch self {
         case .open: return ReviewPalette.added
         case .draft: return ReviewPalette.dim
@@ -230,7 +230,7 @@ package enum PRStateTone: Equatable {
         }
     }
 
-    package var symbol: String {
+    var symbol: String {
         switch self {
         case .open: return "arrow.triangle.pull"
         case .draft: return "circle.dashed"
@@ -240,7 +240,7 @@ package enum PRStateTone: Equatable {
         }
     }
 
-    package var title: String {
+    var title: String {
         switch self {
         case .open: return "Open"
         case .draft: return "Draft"

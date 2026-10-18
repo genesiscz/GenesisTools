@@ -7,45 +7,45 @@ import SwiftUI
 // worked on the PR's branch (`tools hub pr sessions`) in "Send N…", and that pick is kept per PR.
 
 /// One session to send comments to.
-package struct AgentTarget: Equatable, Codable {
-    package let sessionId: String
+struct AgentTarget: Equatable, Codable {
+    let sessionId: String
     /// `claude`, `codex`, `grok`: picks the cmux resolver (`cmuxTool`); nil goes through Claude's.
-    package let provider: String?
+    let provider: String?
     /// What the card says it went to: the session's title, else its short id.
-    package let name: String
+    let name: String
 
     /// A session id the terminal host can be handed (no spaces, no shell syntax).
-    package static func validID(_ id: String) -> Bool {
+    static func validID(_ id: String) -> Bool {
         id.range(of: "^[A-Za-z0-9-]+$", options: .regularExpression) != nil
     }
 
-    package static func key(_ scope: String) -> String { "review.agentTarget.\(scope)" }
+    static func key(_ scope: String) -> String { "review.agentTarget.\(scope)" }
 
-    package static func remembered(for scope: String, in defaults: UserDefaults = HubDefaults.store) -> AgentTarget? {
+    static func remembered(for scope: String, in defaults: UserDefaults = HubDefaults.store) -> AgentTarget? {
         guard let data = defaults.data(forKey: key(scope)), let target = try? JSONDecoder().decode(AgentTarget.self, from: data),
               validID(target.sessionId) else { return nil }
         return target
     }
 
-    package func remember(for scope: String, in defaults: UserDefaults = HubDefaults.store) {
+    func remember(for scope: String, in defaults: UserDefaults = HubDefaults.store) {
         guard let data = try? JSONEncoder().encode(self) else { return }
         defaults.set(data, forKey: Self.key(scope))
     }
 }
 
 /// What one send did, and what the review window then says.
-package enum AgentDelivery: Equatable {
+enum AgentDelivery: Equatable {
     /// The pane got the line: the comments read "Sent to <name>".
     case sent(to: String)
     /// Written to the outbox, nobody told.
     case queued
 
-    package static func outcome(target: AgentTarget?, error: String?) -> AgentDelivery {
+    static func outcome(target: AgentTarget?, error: String?) -> AgentDelivery {
         guard let target, error == nil else { return .queued }
         return .sent(to: target.name)
     }
 
-    package static func notice(_ outcome: AgentDelivery, count: Int, host: String, error: String?) -> String {
+    static func notice(_ outcome: AgentDelivery, count: Int, host: String, error: String?) -> String {
         let what = count == 1 ? "1 comment" : "\(count) comments"
         switch outcome {
         case .sent(let to):
@@ -60,19 +60,19 @@ package enum AgentDelivery: Equatable {
 }
 
 /// One comment in the "Send N…" list.
-package struct AgentSendItem: Identifiable, Equatable {
-    package let id: String
-    package let path: String
-    package let startLine: Int
-    package let endLine: Int
+struct AgentSendItem: Identifiable, Equatable {
+    let id: String
+    let path: String
+    let startLine: Int
+    let endLine: Int
     /// The PR thread it answers, when it is a reply.
-    package let thread: String?
-    package let body: String
-    package let state: String
+    let thread: String?
+    let body: String
+    let state: String
 
-    package var lines: String { startLine == endLine ? "L\(startLine)" : "L\(startLine)–\(endLine)" }
+    var lines: String { startLine == endLine ? "L\(startLine)" : "L\(startLine)–\(endLine)" }
     /// "jest.config.js:L51–53", or "Reply to thread 28bdd247 · jest.config.js:L51–53".
-    package var place: String {
+    var place: String {
         let at = "\((path as NSString).lastPathComponent):\(lines)"
         return thread.map { "Reply to thread \($0.prefix(8)) · \(at)" } ?? at
     }
@@ -80,16 +80,16 @@ package struct AgentSendItem: Identifiable, Equatable {
 
 /// Which of the listed comments a send takes: all of them, minus the ones unticked. A comment that left
 /// the list (removed, deleted, sent) leaves the unticked set too, so a later one with its place is ticked.
-package enum AgentSendPlan {
-    package static func ids(_ items: [AgentSendItem], unticked: Set<String>) -> [String] {
+enum AgentSendPlan {
+    static func ids(_ items: [AgentSendItem], unticked: Set<String>) -> [String] {
         items.map(\.id).filter { !unticked.contains($0) }
     }
 
-    package static func pruned(_ unticked: Set<String>, to items: [AgentSendItem]) -> Set<String> {
+    static func pruned(_ unticked: Set<String>, to items: [AgentSendItem]) -> Set<String> {
         unticked.intersection(items.map(\.id))
     }
 
-    package static func sendTitle(_ count: Int) -> String {
+    static func sendTitle(_ count: Int) -> String {
         count == 0 ? "Send" : "Send \(count)"
     }
 }
@@ -98,10 +98,10 @@ package enum AgentSendPlan {
 /// out of the send, delete), the message the agent gets behind "Preview message", then the PR's sessions
 /// (the window's own first, the one picked last time for this PR preselected), Send, and the honest
 /// fallback "Copy, not sent".
-package struct AgentSendForm: View {
-    @ObservedObject package var model: ReviewModel
-    package var previewOpen = false
-    package let close: () -> Void
+struct AgentSendForm: View {
+    @ObservedObject var model: ReviewModel
+    var previewOpen = false
+    let close: () -> Void
     @State private var sessions: [HubPRSessionMatch] = []
     @State private var loading = true
     @State private var loadError: String?
@@ -114,7 +114,7 @@ package struct AgentSendForm: View {
     private var items: [AgentSendItem] { model.pendingAgentItems }
     private var chosen: [String] { AgentSendPlan.ids(items, unticked: unticked) }
 
-    package var body: some View {
+    var body: some View {
         let items = items
         let chosen = chosen
         VStack(alignment: .leading, spacing: 10) {
@@ -319,7 +319,7 @@ package struct AgentSendForm: View {
         }
     }
 
-    package static func title(_ session: HubPRSessionMatch) -> String {
+    static func title(_ session: HubPRSessionMatch) -> String {
         if let title = session.title, !title.isEmpty {
             return title
         }

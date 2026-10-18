@@ -6,68 +6,68 @@ import SwiftUI
 // while the hub is closed; this popover only reads `tools hub notify status --json` and writes
 // through `tools hub notify set`. Config file: ~/.genesis-tools/hub/notify.json.
 
-package struct HubNotifyStatus: Decodable, Equatable {
-    package struct Repo: Decodable, Equatable {
-        package let enabled: Bool
-        package let events: [String: Bool]?
+struct HubNotifyStatus: Decodable, Equatable {
+    struct Repo: Decodable, Equatable {
+        let enabled: Bool
+        let events: [String: Bool]?
         /// This repo's own cadence; nil follows `Config.intervalMinutes`.
-        package let intervalMinutes: Int?
+        let intervalMinutes: Int?
     }
 
-    package struct Config: Decodable, Equatable {
-        package let enabled: Bool
-        package let intervalMinutes: Int
-        package let onlyMine: Bool
-        package let events: [String: Bool]
-        package let repos: [String: Repo]
-        package let botLogins: [String]
+    struct Config: Decodable, Equatable {
+        let enabled: Bool
+        let intervalMinutes: Int
+        let onlyMine: Bool
+        let events: [String: Bool]
+        let repos: [String: Repo]
+        let botLogins: [String]
     }
 
-    package struct RepoState: Decodable, Equatable {
-        package let path: String?
-        package let failures: Int
-        package let nextAt: String?
-        package let lastOkAt: String?
-        package let lastError: String?
-        package let lastAttemptAt: String?
+    struct RepoState: Decodable, Equatable {
+        let path: String?
+        let failures: Int
+        let nextAt: String?
+        let lastOkAt: String?
+        let lastError: String?
+        let lastAttemptAt: String?
     }
 
-    package struct Event: Decodable, Equatable, Identifiable {
-        package let type: String
-        package let key: String
-        package let provider: String
-        package let project: String
-        package let number: Int
-        package let title: String
-        package let message: String
-        package let at: String
-        package let posted: Bool
-        package var id: String { "\(at) \(key) \(type)" }
-        package var ref: String { "\(project)\(provider == "gitlab" ? "!" : "#")\(number)" }
+    struct Event: Decodable, Equatable, Identifiable {
+        let type: String
+        let key: String
+        let provider: String
+        let project: String
+        let number: Int
+        let title: String
+        let message: String
+        let at: String
+        let posted: Bool
+        var id: String { "\(at) \(key) \(type)" }
+        var ref: String { "\(project)\(provider == "gitlab" ? "!" : "#")\(number)" }
     }
 
-    package let config: Config
-    package let configPath: String
-    package let lastPollAt: String?
-    package let repos: [String: RepoState]
-    package let recent: [Event]
-    package let requestsLastHour: Int
-    package let pollsLastHour: Int
-    package let daemonTask: Bool?
+    let config: Config
+    let configPath: String
+    let lastPollAt: String?
+    let repos: [String: RepoState]
+    let recent: [Event]
+    let requestsLastHour: Int
+    let pollsLastHour: Int
+    let daemonTask: Bool?
     /// The daemon task's schedule, and the one-minute tick it should have (`tools hub notify install`).
-    package let daemonTaskEvery: String?
-    package let daemonTaskWanted: String?
+    let daemonTaskEvery: String?
+    let daemonTaskWanted: String?
 
     /// `tools hub notify status --json` (src/hub/lib/notify-poll.ts `notifyStatus`).
-    package static func decode(_ data: Data) throws -> HubNotifyStatus {
+    static func decode(_ data: Data) throws -> HubNotifyStatus {
         try JSONDecoder().decode(HubNotifyStatus.self, from: data)
     }
 }
 
-package enum HubNotifyEvent: String, CaseIterable, Identifiable {
+enum HubNotifyEvent: String, CaseIterable, Identifiable {
     case thread, reviewRequested, ciFailed, ciPassed, botReview, merged
-    package var id: String { rawValue }
-    package var title: String {
+    var id: String { rawValue }
+    var title: String {
         switch self {
         case .thread: return "New review threads"
         case .reviewRequested: return "My review was requested"
@@ -80,12 +80,12 @@ package enum HubNotifyEvent: String, CaseIterable, Identifiable {
 }
 
 @MainActor
-package final class HubNotifyStore: ObservableObject {
-    package static let shared = HubNotifyStore()
+final class HubNotifyStore: ObservableObject {
+    static let shared = HubNotifyStore()
 
     @Published package private(set) var status: HubNotifyStatus?
     @Published package private(set) var busy = false
-    @Published package var message: String?
+    @Published var message: String?
     /// Runs in flight: `busy` holds until the last one ends, not the first.
     private var inFlight = 0 {
         didSet { busy = inFlight > 0 }
@@ -93,21 +93,21 @@ package final class HubNotifyStore: ObservableObject {
     /// Bumped per status read; an older read that ends after a newer one does not publish.
     private var statusGeneration = 0
 
-    package func load() {
+    func load() {
         run(["hub", "notify", "status", "--json"], label: "notify.status", decodesStatus: true)
     }
 
     /// One `tools hub notify set` change, then the status again.
-    package func set(_ flags: [String]) {
+    func set(_ flags: [String]) {
         run(["hub", "notify", "set"] + flags + ["--json"], label: "notify.set", reload: true)
     }
 
-    package func pollNow() {
+    func pollNow() {
         run(["hub", "notify", "poll", "--force", "--json"], label: "notify.poll", reload: true, summary: Self.pollSummary)
     }
 
     /// One line for `tools hub notify poll --json` (src/hub/lib/notify-poll.ts `PollReport`).
-    package nonisolated static func pollSummary(_ data: Data) -> String? {
+    nonisolated static func pollSummary(_ data: Data) -> String? {
         guard let report = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return "Reading the poll report failed"
         }
@@ -119,11 +119,11 @@ package final class HubNotifyStore: ObservableObject {
     }
 
     /// `tools hub notify install`: the one `hub-pr-notify` daemon task, ticking every minute.
-    package func installDaemonTask() {
+    func installDaemonTask() {
         run(["hub", "notify", "install"], label: "notify.install", reload: true) { _ in "The daemon task is installed; it ticks every minute" }
     }
 
-    package func sendTest(pr: String?) {
+    func sendTest(pr: String?) {
         run(["hub", "notify", "test"] + (pr.map { ["--pr", $0] } ?? []), label: "notify.test") { _ in "Test notification posted" }
     }
 
@@ -165,8 +165,8 @@ package final class HubNotifyStore: ObservableObject {
 }
 
 /// The bell: filled while notifications are on and at least one repo is watched.
-package struct HubNotifyButton: View {
-    @ObservedObject package var prs: PRsModel
+struct HubNotifyButton: View {
+    @ObservedObject var prs: PRsModel
     @ObservedObject private var store = HubNotifyStore.shared
     @State private var open = false
 
@@ -175,7 +175,7 @@ package struct HubNotifyButton: View {
         return config.enabled && config.repos.values.contains { $0.enabled }
     }
 
-    package var body: some View {
+    var body: some View {
         IconButton(systemName: active ? "bell.fill" : "bell", tooltip: "PR notifications: which events, which repos") { open.toggle() }
             .popover(isPresented: $open, arrowEdge: .bottom) {
                 HubNotifySettings(prs: prs, store: store)
@@ -184,9 +184,9 @@ package struct HubNotifyButton: View {
     }
 }
 
-package struct HubNotifySettings: View {
-    @ObservedObject package var prs: PRsModel
-    @ObservedObject package var store: HubNotifyStore
+struct HubNotifySettings: View {
+    @ObservedObject var prs: PRsModel
+    @ObservedObject var store: HubNotifyStore
     @State private var find = PanelFindModel(scope: "notify", title: "repos and recent events")
 
     /// The hub's projects (one checkout each) plus every configured repo, by path.
@@ -201,7 +201,7 @@ package struct HubNotifySettings: View {
         return seen.map { ($0.key, $0.value) }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             PanelFindBar(find: find)
             if let status = store.status {

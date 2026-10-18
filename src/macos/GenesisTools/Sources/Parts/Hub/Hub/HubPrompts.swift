@@ -8,12 +8,12 @@ import SwiftUI
 // again and types it into the session's cmux pane through `tools claude cmux send` (a multi-line text
 // goes into a file and a one-line pointer is typed). The preview here is only a preview.
 
-package enum PromptTemplate {
+enum PromptTemplate {
     // swiftlint:disable:next force_try
     private static let pattern = try! NSRegularExpression(pattern: "\\{\\{\\s*([A-Za-z_][\\w.-]*)\\s*\\}\\}")
 
     /// Each variable once, in the order it first appears (the same rule as `promptVariables`).
-    package static func variables(_ text: String) -> [String] {
+    static func variables(_ text: String) -> [String] {
         var names: [String] = []
         let range = NSRange(text.startIndex..., in: text)
         for match in pattern.matches(in: text, range: range) {
@@ -25,7 +25,7 @@ package enum PromptTemplate {
     }
 
     /// Every variable with a non-empty value filled; the rest stay as written.
-    package static func render(_ text: String, _ values: [String: String]) -> String {
+    static func render(_ text: String, _ values: [String: String]) -> String {
         var result = ""
         var cursor = text.startIndex
         let range = NSRange(text.startIndex..., in: text)
@@ -41,7 +41,7 @@ package enum PromptTemplate {
     }
 
     /// `--var k=v` pairs for the variables the prompt uses and the form filled.
-    package static func varArgs(_ variables: [String], _ values: [String: String]) -> [String] {
+    static func varArgs(_ variables: [String], _ values: [String: String]) -> [String] {
         variables.compactMap { name in
             guard let value = values[name]?.trimmed, !value.isEmpty else { return nil }
             return "--var=\(name)=\(value)"
@@ -49,53 +49,53 @@ package enum PromptTemplate {
     }
 }
 
-package struct HubPrompt: Decodable, Identifiable, Hashable {
-    package let name: String
-    package let text: String
-    package let description: String?
-    package let uses: Int
-    package let lastUsedAt: String?
-    package let createdAt: String
-    package let variables: [String]
+struct HubPrompt: Decodable, Identifiable, Hashable {
+    let name: String
+    let text: String
+    let description: String?
+    let uses: Int
+    let lastUsedAt: String?
+    let createdAt: String
+    let variables: [String]
     /// "file" when the send goes through a file (`deliveryMode` in src/hub/lib/prompts.ts); nil from an older CLI.
-    package let delivery: String?
+    let delivery: String?
 
-    package var id: String { name }
+    var id: String { name }
 }
 
-package struct PromptSendResult: Decodable {
-    package let name: String
-    package let session: String
-    package let text: String
-    package let typed: String
-    package let mode: String
-    package let file: String?
-    package let filled: [String]
-    package let sent: Bool
-    package let dryRun: Bool
+struct PromptSendResult: Decodable {
+    let name: String
+    let session: String
+    let text: String
+    let typed: String
+    let mode: String
+    let file: String?
+    let filled: [String]
+    let sent: Bool
+    let dryRun: Bool
 }
 
 /// `{error, code, missing}`: what every `tools hub prompts … --json` prints on a failure.
-package struct PromptCLIError: Decodable, Error, CustomStringConvertible {
-    package let error: String
-    package let code: String
-    package let missing: [String]?
+struct PromptCLIError: Decodable, Error, CustomStringConvertible {
+    let error: String
+    let code: String
+    let missing: [String]?
 
-    package var description: String { error }
+    var description: String { error }
 }
 
 /// What the picker fills variables from: the selected session and what the hub knows about it.
-package struct PromptContext: Equatable {
-    package var sessionId: String?
-    package var sessionTitle: String?
-    package var values: [String: String] = [:]
+struct PromptContext: Equatable {
+    var sessionId: String?
+    var sessionTitle: String?
+    var values: [String: String] = [:]
 }
 
 extension HubModel {
     /// The selected session's branch, its PR (from `RepoFactsStore`, fetched in the background), its
     /// folder and the file open in its diff.
     @MainActor
-    package var promptContext: PromptContext {
+    var promptContext: PromptContext {
         guard let session = selected else { return PromptContext() }
         var values: [String: String] = ["session": session.sessionId]
         if !session.cwd.isEmpty {
@@ -119,12 +119,12 @@ extension HubModel {
 }
 
 @MainActor
-package final class PromptLibraryStore: ObservableObject {
-    package static let shared = PromptLibraryStore()
+final class PromptLibraryStore: ObservableObject {
+    static let shared = PromptLibraryStore()
 
     @Published package private(set) var prompts: [HubPrompt] = []
     /// The ⌘⇧P picker is showing; shared so `tools hub --prompts` can open it too.
-    @Published package var pickerOpen = false
+    @Published var pickerOpen = false
     @Published package private(set) var loading = false
     @Published package private(set) var busy = false
 
@@ -139,7 +139,7 @@ package final class PromptLibraryStore: ObservableObject {
         return capture.stdout
     }
 
-    package func load() async {
+    func load() async {
         guard !loading else { return }
         loading = true
         let span = HubPerf.begin("prompts.list", awaits: true)
@@ -156,7 +156,7 @@ package final class PromptLibraryStore: ObservableObject {
         }
     }
 
-    package func send(_ prompt: HubPrompt, session: String, values: [String: String]) async -> Result<PromptSendResult, Error> {
+    func send(_ prompt: HubPrompt, session: String, values: [String: String]) async -> Result<PromptSendResult, Error> {
         busy = true
         defer { busy = false }
         let args = ["hub", "prompts", "send", prompt.name, "--session", session, "--json"] + PromptTemplate.varArgs(prompt.variables, values)
@@ -170,7 +170,7 @@ package final class PromptLibraryStore: ObservableObject {
     }
 
     /// The text goes after `--`, so a prompt that starts with a hyphen stays text.
-    package func add(name: String, text: String, description: String) async -> Error? {
+    func add(name: String, text: String, description: String) async -> Error? {
         busy = true
         defer { busy = false }
         let args = ["hub", "prompts", "add", "--json"] + (description.trimmed.isEmpty ? [] : ["--description", description]) + ["--", name, text]
@@ -186,7 +186,7 @@ package final class PromptLibraryStore: ObservableObject {
         return result
     }
 
-    package func remove(_ prompt: HubPrompt) async -> Error? {
+    func remove(_ prompt: HubPrompt) async -> Error? {
         let args = ["hub", "prompts", "remove", "--json", "--", prompt.name]
         let result = await Task.detached(priority: .userInitiated) { () -> Error? in
             do {
@@ -217,17 +217,17 @@ private struct HubPromptsModifier: ViewModifier {
 }
 
 extension View {
-    package func hubPrompts(model: HubModel) -> some View {
+    func hubPrompts(model: HubModel) -> some View {
         modifier(HubPromptsModifier(model: model))
     }
 }
 
-package struct PromptPickerView: View {
-    @Binding package var isPresented: Bool
-    package let context: PromptContext
+struct PromptPickerView: View {
+    @Binding var isPresented: Bool
+    let context: PromptContext
     /// A "Sent" outlives the picker only in the hub's own notice: the picker's local pill unmounts
     /// with the rest of this view the instant `isPresented` goes false.
-    package let sentNotice: (String) -> Void
+    let sentNotice: (String) -> Void
     @ObservedObject private var store = PromptLibraryStore.shared
     @State private var query = ""
     @State private var active = 0
@@ -246,7 +246,7 @@ package struct PromptPickerView: View {
         return store.prompts.filter { "\($0.name) \($0.description ?? "") \($0.text)".lowercased().contains(needle) }
     }
 
-    package var body: some View {
+    var body: some View {
         ZStack(alignment: .top) {
             Color.black.opacity(0.45)
                 .ignoresSafeArea()

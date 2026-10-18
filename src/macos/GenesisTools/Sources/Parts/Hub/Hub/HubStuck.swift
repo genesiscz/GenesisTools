@@ -5,34 +5,34 @@ import SwiftUI
 // verdicts come from `tools hub stuck --json --session …` (src/hub/lib/insights/stuck.ts), the same
 // command a terminal runs, polled while the session list shows live sessions.
 
-package struct StuckCheckEnvelope: Decodable {
-    package struct Session: Decodable {
-        package let sessionId: String
-        package let verdict: StuckVerdict?
-        package let error: String?
+struct StuckCheckEnvelope: Decodable {
+    struct Session: Decodable {
+        let sessionId: String
+        let verdict: StuckVerdict?
+        let error: String?
     }
 
-    package let thresholds: StuckThresholds
-    package let checked: Int
-    package let sessions: [Session]
+    let thresholds: StuckThresholds
+    let checked: Int
+    let sessions: [Session]
 }
 
-package enum HubStuck {
-    package static func decode(_ data: Data) throws -> StuckCheckEnvelope {
+enum HubStuck {
+    static func decode(_ data: Data) throws -> StuckCheckEnvelope {
         try JSONDecoder().decode(StuckCheckEnvelope.self, from: MonitorJSON.dataByDroppingPreamble(data))
     }
 
     /// Blocking: call off the main thread.
-    package static func check(_ sessionIds: [String]) throws -> StuckCheckEnvelope {
+    static func check(_ sessionIds: [String]) throws -> StuckCheckEnvelope {
         try decode(ToolsCLIRunner.run(arguments(sessionIds)))
     }
 
-    package static func arguments(_ sessionIds: [String]) -> [String] {
+    static func arguments(_ sessionIds: [String]) -> [String] {
         ["hub", "stuck", "check", "--json", "--session"] + sessionIds
     }
 
     /// `tools hub stuck config`: blocking, off the main thread.
-    package static func save(toolMinutes: Int? = nil, repeats: Int? = nil) throws {
+    static func save(toolMinutes: Int? = nil, repeats: Int? = nil) throws {
         var args = ["hub", "stuck", "config", "--json"]
         if let toolMinutes { args += ["--tool-minutes", String(toolMinutes)] }
         if let repeats { args += ["--repeats", String(repeats)] }
@@ -41,24 +41,24 @@ package enum HubStuck {
 
     /// The sessions worth watching: live now, or held by a cmux pane (a long tool call stops the file
     /// writes that `isLive` reads, the pane keeps holding the process).
-    package static func watched(_ sessions: [HubSession]) -> [String] {
+    static func watched(_ sessions: [HubSession]) -> [String] {
         sessions.filter { $0.isLive || $0.cmux != nil }.map(\.sessionId).sorted()
     }
 }
 
 @MainActor
-package final class HubStuckStore: ObservableObject {
-    package static let shared = HubStuckStore()
+final class HubStuckStore: ObservableObject {
+    static let shared = HubStuckStore()
     @Published package private(set) var verdicts: [String: StuckVerdict] = [:]
     @Published package private(set) var thresholds: StuckThresholds?
 
     /// Two minutes: the wait threshold is ten, and each poll reads every watched session's tail.
-    package static let interval: Duration = .seconds(120)
+    static let interval: Duration = .seconds(120)
     /// The ids the running `watch` polls, for a poll right after a threshold change.
     private var watchedIds: [String] = []
 
     /// Polls until cancelled (the session list's `.task` ends it when the watched set changes).
-    package func watch(_ sessionIds: [String]) async {
+    func watch(_ sessionIds: [String]) async {
         watchedIds = sessionIds
         while !Task.isCancelled {
             // Nobody sees the badges of a covered or minimized hub (Hub/HubVisibility.swift).
@@ -69,7 +69,7 @@ package final class HubStuckStore: ObservableObject {
         }
     }
 
-    package func refresh(_ sessionIds: [String]) async {
+    func refresh(_ sessionIds: [String]) async {
         guard !sessionIds.isEmpty else {
             if !verdicts.isEmpty { verdicts = [:] }
             return
@@ -92,13 +92,13 @@ package final class HubStuckStore: ObservableObject {
     }
 
     /// A verdict the session's insights brought (the open session, between polls).
-    package func apply(_ verdict: StuckVerdict?, sessionId: String) {
+    func apply(_ verdict: StuckVerdict?, sessionId: String) {
         guard verdicts[sessionId] != verdict else { return }
         verdicts[sessionId] = verdict
     }
 
     /// Saves a threshold and polls again, so the badges follow at once.
-    package func save(toolMinutes: Int? = nil, repeats: Int? = nil) async -> String? {
+    func save(toolMinutes: Int? = nil, repeats: Int? = nil) async -> String? {
         let result = await Task.detached(priority: .userInitiated) { Result { try HubStuck.save(toolMinutes: toolMinutes, repeats: repeats) } }.value
         if case .failure(let error) = result {
             return "Saving the thresholds failed: \(error.localizedDescription)"
@@ -110,20 +110,20 @@ package final class HubStuckStore: ObservableObject {
 }
 
 /// The session row's badge: `stuck` (orange) or `loop` (red), the verdict in its tooltip.
-package struct StuckBadge: View {
-    package let verdict: StuckVerdict
+struct StuckBadge: View {
+    let verdict: StuckVerdict
 
-    package var body: some View {
+    var body: some View {
         Badge(verdict.badge, color: verdict.color, look: .tone, tooltip: verdict.line)
     }
 }
 
 /// The thresholds as a pull-down: presets for the wait and the repeat count, saved through the CLI.
-package struct StuckThresholdsMenu: View {
-    package let thresholds: StuckThresholds?
-    package let onSave: (_ toolMinutes: Int?, _ repeats: Int?) -> Void
+struct StuckThresholdsMenu: View {
+    let thresholds: StuckThresholds?
+    let onSave: (_ toolMinutes: Int?, _ repeats: Int?) -> Void
 
-    package var body: some View {
+    var body: some View {
         MenuButton {
             let minutes = thresholds?.toolMinutes
             let repeats = thresholds?.repeats

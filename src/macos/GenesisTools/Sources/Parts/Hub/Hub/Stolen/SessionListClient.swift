@@ -49,7 +49,7 @@ public enum SessionListClient {
     }
 }
 
-package enum MonitorJSON {
+enum MonitorJSON {
     /// A `tools` child may print a banner, a warning or a `[profile:…]` line
     /// before its JSON. Strip whatever comes first and hand back the object.
     ///
@@ -61,7 +61,7 @@ package enum MonitorJSON {
     ///    reader got "the data couldn't be read" instead.
     ///  - throw away the output. The error now quotes what actually arrived,
     ///    which is the only thing that makes the banner actionable.
-    package static func dataByDroppingPreamble(_ data: Data) throws -> Data {
+    static func dataByDroppingPreamble(_ data: Data) throws -> Data {
         if (try? JSONSerialization.jsonObject(with: data)) != nil {
             return data
         }
@@ -89,7 +89,7 @@ package enum MonitorJSON {
     /// itself attached. `DecodingError.localizedDescription` alone is the
     /// useless "the data couldn't be read because it isn't in the correct
     /// format", which is what a reader saw in the Session Details banner.
-    package static func failureDetail(_ error: Error, stdout: String, stderr: String) -> String {
+    static func failureDetail(_ error: Error, stdout: String, stderr: String) -> String {
         var parts: [String] = []
         if let refused = error as? ToolsBridgeError, case .refused(let message) = refused {
             parts.append(message)
@@ -106,7 +106,7 @@ package enum MonitorJSON {
     }
 
     /// `DecodingError` says which key or type broke; keep that, drop the rest.
-    package static func describe(_ error: DecodingError) -> String {
+    static func describe(_ error: DecodingError) -> String {
         func path(_ context: DecodingError.Context) -> String {
             let keys = context.codingPath.map(\.stringValue).filter { !$0.isEmpty }
             return keys.isEmpty ? "the root" : keys.joined(separator: ".")
@@ -126,7 +126,7 @@ package enum MonitorJSON {
     }
 
     /// A short, single-line quote of the output for an error message.
-    package static func preview(_ text: String, limit: Int = 200) -> String {
+    static func preview(_ text: String, limit: Int = 200) -> String {
         let flat = text
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -135,7 +135,7 @@ package enum MonitorJSON {
         return flat.count <= limit ? flat : String(flat.prefix(limit)) + "…"
     }
 
-    package static func decodeScored(_ data: Data) throws -> ScoredUsageEnvelope {
+    static func decodeScored(_ data: Data) throws -> ScoredUsageEnvelope {
         let payload = try dataByDroppingPreamble(data)
         return try JSONDecoder().decode(ScoredUsageEnvelope.self, from: payload)
     }

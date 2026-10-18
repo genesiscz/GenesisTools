@@ -9,146 +9,146 @@ import SwiftUI
 
 // MARK: - Data
 
-package struct AgentNode: Codable, Equatable, Identifiable, Sendable {
-    package let id: String
-    package let harness: String
-    package let kind: String
-    package var name: String?
-    package var description: String?
-    package var agentType: String?
-    package var model: String?
-    package var account: String?
-    package let status: String
-    package var startedAt: String?
-    package var lastAt: String
-    package var toolCalls: Int?
-    package var unreadMail: Int?
-    package var team: String?
-    package var backendType: String?
-    package var filePath: String?
+struct AgentNode: Codable, Equatable, Identifiable, Sendable {
+    let id: String
+    let harness: String
+    let kind: String
+    var name: String?
+    var description: String?
+    var agentType: String?
+    var model: String?
+    var account: String?
+    let status: String
+    var startedAt: String?
+    var lastAt: String
+    var toolCalls: Int?
+    var unreadMail: Int?
+    var team: String?
+    var backendType: String?
+    var filePath: String?
     /// The whole prompt (up to 4000 chars): only in the one-agent answer, null in the list.
-    package var spawnPrompt: String?
+    var spawnPrompt: String?
     /// The list's 200-char preview, whitespace folded, `…` when cut.
-    package var spawnPromptPreview: String?
-    package var toolUseId: String?
-    package var spawnDepth: Int?
-    package var children: [AgentNode]?
+    var spawnPromptPreview: String?
+    var toolUseId: String?
+    var spawnDepth: Int?
+    var children: [AgentNode]?
 
-    package var title: String {
+    var title: String {
         if let name, !name.isEmpty { return name }
         if let description, !description.isEmpty { return description }
         return agentType ?? String(id.prefix(12))
     }
 
-    package var isRunning: Bool { status == "running" }
-    package var isTeammate: Bool { kind == "teammate" }
-    package var started: Date? { HubFormat.date(startedAt) }
-    package var last: Date? { HubFormat.date(lastAt) }
-    package var nested: [AgentNode] { children ?? [] }
+    var isRunning: Bool { status == "running" }
+    var isTeammate: Bool { kind == "teammate" }
+    var started: Date? { HubFormat.date(startedAt) }
+    var last: Date? { HubFormat.date(lastAt) }
+    var nested: [AgentNode] { children ?? [] }
 
     /// What `tools ai sessions tail` opens: the node's own file whenever the CLI gave one, so a codex
     /// and a grok worker that share a name never open each other's transcript; else the worker's name.
-    package var transcriptQuery: String? {
+    var transcriptQuery: String? {
         if let filePath, !filePath.isEmpty { return filePath }
         if harness == "claude" { return nil }
         return id.isEmpty ? nil : id
     }
 
     /// Every text the sidebar filter matches.
-    package var haystack: String {
+    var haystack: String {
         [name, description, agentType, model, account, id, harness, kind, status, team].compactMap { $0 }.joined(separator: " ").lowercased()
     }
 
     /// This node or one below it is running.
-    package var anyRunning: Bool { isRunning || nested.contains(where: \.anyRunning) }
+    var anyRunning: Bool { isRunning || nested.contains(where: \.anyRunning) }
 }
 
-package struct AgentParent: Codable, Equatable, Identifiable, Sendable {
-    package let sessionId: String
-    package let provider: String
-    package var title: String?
-    package var project: String?
-    package var cwd: String?
-    package var filePath: String?
-    package var model: String?
-    package var account: String?
-    package var startedAt: String?
-    package let lastAt: String
-    package var live: Bool?
+struct AgentParent: Codable, Equatable, Identifiable, Sendable {
+    let sessionId: String
+    let provider: String
+    var title: String?
+    var project: String?
+    var cwd: String?
+    var filePath: String?
+    var model: String?
+    var account: String?
+    var startedAt: String?
+    let lastAt: String
+    var live: Bool?
     /// A live agent process holds this session (an open tab or window), however long ago its transcript was
     /// written: a session waiting for its user writes nothing, so `live` alone called it gone (2026-10-16).
-    package var open: Bool?
-    package var children: [AgentNode]
+    var open: Bool?
+    var children: [AgentNode]
 
-    package var id: String { sessionId }
-    package var displayTitle: String {
+    var id: String { sessionId }
+    var displayTitle: String {
         let cleaned = TitleFormatter.cleanSessionTitle(title) ?? ""
         return cleaned.isEmpty ? String(sessionId.prefix(8)) : cleaned
     }
 
-    package var last: Date? { HubFormat.date(lastAt) }
-    package var isLive: Bool { (live ?? false) || children.contains(where: \.anyRunning) }
-    package var hasProcess: Bool { open ?? false }
-    package var runningCount: Int { AgentTree.flatten(children).filter(\.isRunning).count }
-    package var totalCount: Int { AgentTree.flatten(children).count }
+    var last: Date? { HubFormat.date(lastAt) }
+    var isLive: Bool { (live ?? false) || children.contains(where: \.anyRunning) }
+    var hasProcess: Bool { open ?? false }
+    var runningCount: Int { AgentTree.flatten(children).filter(\.isRunning).count }
+    var totalCount: Int { AgentTree.flatten(children).count }
 
     /// Where Claude Code writes this session's sub-agents: `<project>/<sessionId>/subagents/`.
-    package var sessionFolder: String? {
+    var sessionFolder: String? {
         guard provider == "claude", let filePath, filePath.hasSuffix(".jsonl") else { return nil }
         return (filePath as NSString).deletingPathExtension
     }
 }
 
-package struct AgentsEnvelope: Codable, Equatable, Sendable {
-    package var generatedAt: String?
-    package var parents: [AgentParent]
-    package var orphans: [AgentNode]?
+struct AgentsEnvelope: Codable, Equatable, Sendable {
+    var generatedAt: String?
+    var parents: [AgentParent]
+    var orphans: [AgentNode]?
 }
 
 /// `tools hub agents mail --session <p> --agent <c> --json`: a teammate's messages.
-package struct AgentMail: Codable, Equatable, Sendable {
-    package struct Message: Codable, Equatable, Sendable, Identifiable {
-        package var from: String?
-        package var to: String?
-        package var at: String?
-        package var text: String
+struct AgentMail: Codable, Equatable, Sendable {
+    struct Message: Codable, Equatable, Sendable, Identifiable {
+        var from: String?
+        var to: String?
+        var at: String?
+        var text: String
 
-        package var id: String { "\(from ?? "")>\(to ?? "")@\(at ?? "")#\(text.prefix(40))" }
-        package var date: Date? { HubFormat.date(at) }
+        var id: String { "\(from ?? "")>\(to ?? "")@\(at ?? "")#\(text.prefix(40))" }
+        var date: Date? { HubFormat.date(at) }
     }
 
-    package var received: [Message]
-    package var sent: [Message]
-    package var unread: [Message]
+    var received: [Message]
+    var sent: [Message]
+    var unread: [Message]
 
-    package var isEmpty: Bool { received.isEmpty && sent.isEmpty && unread.isEmpty }
+    var isEmpty: Bool { received.isEmpty && sent.isEmpty && unread.isEmpty }
 }
 
-package enum AgentTree {
-    package static func flatten(_ nodes: [AgentNode]) -> [AgentNode] {
+enum AgentTree {
+    static func flatten(_ nodes: [AgentNode]) -> [AgentNode] {
         nodes.flatMap { [$0] + flatten($0.nested) }
     }
 
     /// The key of one child in the list and in the navigation history: its parent session and its id.
-    package static func key(parent: String?, child: String) -> String {
+    static func key(parent: String?, child: String) -> String {
         "\(parent ?? "-")|\(child)"
     }
 
     /// The child id of a parent's "Main" row: the lead session itself.
-    package static let mainChild = "::main"
+    static let mainChild = "::main"
 
-    package static func mainKey(_ parent: String) -> String {
+    static func mainKey(_ parent: String) -> String {
         key(parent: parent, child: mainChild)
     }
 
-    package static func split(_ key: String) -> (parent: String?, child: String)? {
+    static func split(_ key: String) -> (parent: String?, child: String)? {
         let parts = key.split(separator: "|", maxSplits: 1).map(String.init)
         guard parts.count == 2 else { return nil }
         return (parts[0] == "-" ? nil : parts[0], parts[1])
     }
 
     /// `4m 12s`, `2h 05m`: how long a finished agent ran.
-    package static func duration(from start: Date?, to end: Date?) -> String? {
+    static func duration(from start: Date?, to end: Date?) -> String? {
         guard let start, let end, end >= start else { return nil }
         let seconds = Int(end.timeIntervalSince(start))
         if seconds < 60 { return "\(seconds)s" }
@@ -156,32 +156,32 @@ package enum AgentTree {
         return "\(seconds / 3600)h \(String(format: "%02d", (seconds % 3600) / 60))m"
     }
 
-    package static let clock: DateFormatter = {
+    static let clock: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         return formatter
     }()
 
-    package static let day: DateFormatter = {
+    static let day: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "d MMM"
         return formatter
     }()
 
-    package static func started(_ date: Date?) -> String? {
+    static func started(_ date: Date?) -> String? {
         guard let date else { return nil }
         return String((Calendar.current.isDateInToday(date) ? clock : day).string(from: date).prefix(Calendar.current.isDateInToday(date) ? 5 : 20))
     }
 }
 
 /// The `tools hub agents` doors. Blocking: call off the main thread.
-package enum AgentsSource {
+enum AgentsSource {
     /// `GENESIS_HUB_AGENTS_FIXTURE=<file>`: the list from a file of the contract's shape instead of the CLI.
-    package static let fixture = ProcessInfo.processInfo.environment["GENESIS_HUB_AGENTS_FIXTURE"]
+    static let fixture = ProcessInfo.processInfo.environment["GENESIS_HUB_AGENTS_FIXTURE"]
     /// The last whole list, painted when the mode opens while the CLI answers (Hub/HubSWR.swift).
-    package static let cache = HubSWR.cache("agents")
+    static let cache = HubSWR.cache("agents")
 
-    package static func list(session: String?) throws -> AgentsEnvelope {
+    static func list(session: String?) throws -> AgentsEnvelope {
         if let fixture {
             return try decode(Data(contentsOf: URL(fileURLWithPath: fixture)))
         }
@@ -191,7 +191,7 @@ package enum AgentsSource {
     }
 
     /// `tools hub agents --session <p> --agent <c> --json`: one agent with its whole spawn prompt.
-    package static func agent(parent: String?, child: String) throws -> AgentNode {
+    static func agent(parent: String?, child: String) throws -> AgentNode {
         struct Envelope: Decodable {
             let agent: AgentNode
         }
@@ -201,18 +201,18 @@ package enum AgentsSource {
     }
 
     /// Whole spawn prompts by agent key: a prompt never changes once the agent started.
-    package static let prompts = HubSWR.cache("agent-prompts")
+    static let prompts = HubSWR.cache("agent-prompts")
 
     /// One running agent's numbers from `tools hub agents counts` (a tail read of its own file only).
-    package struct Count: Decodable, Sendable {
-        package let id: String
-        package let toolCalls: Int?
-        package let lastAt: String
-        package let status: String
+    struct Count: Decodable, Sendable {
+        let id: String
+        let toolCalls: Int?
+        let lastAt: String
+        let status: String
     }
 
     /// `tools hub agents counts --session <p> --ids a,b --json`: about 0.1 s CPU against 0.42 s for the tree.
-    package static func counts(parent: String, ids: [String]) throws -> [Count] {
+    static func counts(parent: String, ids: [String]) throws -> [Count] {
         struct Envelope: Decodable {
             let agents: [Count]
         }
@@ -221,12 +221,12 @@ package enum AgentsSource {
         return try JSONDecoder().decode(Envelope.self, from: MonitorJSON.dataByDroppingPreamble(data)).agents
     }
 
-    package static func mail(parent: String, child: String) throws -> AgentMail {
+    static func mail(parent: String, child: String) throws -> AgentMail {
         let data = try run(["hub", "agents", "mail", "--session", parent, "--agent", child, "--json"])
         return try JSONDecoder().decode(AgentMail.self, from: MonitorJSON.dataByDroppingPreamble(data))
     }
 
-    package static func decode(_ data: Data) throws -> AgentsEnvelope {
+    static func decode(_ data: Data) throws -> AgentsEnvelope {
         try JSONDecoder().decode(AgentsEnvelope.self, from: MonitorJSON.dataByDroppingPreamble(data))
     }
 
@@ -242,19 +242,19 @@ package enum AgentsSource {
 }
 
 /// The folders the Agents mode watches and the files in them that matter.
-package enum AgentWatch {
+enum AgentWatch {
     /// The worker session folders under the same tools home the CLI uses (`GENESIS_TOOLS_HOME`, else
     /// the home directory: `SettingsModel.toolsHome`), mirroring `sessionsDir()` in the codex and grok
     /// worker-path modules.
-    package static let workerFolders: [String] = {
+    static let workerFolders: [String] = {
         let home = SettingsModel.toolsHome
         return ["\(home)/.genesis-tools/codex/sessions", "\(home)/.genesis-tools/grok/sessions"]
     }()
 
-    package static let teamsFolder = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude/teams"
+    static let teamsFolder = FileManager.default.homeDirectoryForCurrentUser.path + "/.claude/teams"
 
     /// Sub-agent transcripts and metas, team inboxes, worker metas and transcripts; nothing else.
-    package static func matters(_ path: String) -> Bool {
+    static func matters(_ path: String) -> Bool {
         if path.contains("/subagents/") || path.contains("/inboxes/") {
             return path.hasSuffix(".jsonl") || path.hasSuffix(".json")
         }
@@ -269,7 +269,7 @@ package enum AgentWatch {
 /// parents' session folders (their `subagents/`), their teams' inboxes and the codex and grok worker
 /// folders, and an event asks the CLI again for the parent it touched. No timer runs faster than 30 s.
 @MainActor
-package final class HubAgentsModel: ObservableObject {
+final class HubAgentsModel: ObservableObject {
     @Published package private(set) var parents: [AgentParent] = []
     @Published package private(set) var orphans: [AgentNode] = []
     /// Not published: no view shows them, and each refresh flipped `loading` twice, which re-rendered every
@@ -279,7 +279,7 @@ package final class HubAgentsModel: ObservableObject {
     @Published package private(set) var loaded = false
     @Published package private(set) var error: String?
     /// `AgentTree.key(parent:child:)` of the open child.
-    @Published package var selectedID: String? {
+    @Published var selectedID: String? {
         didSet {
             if selectedID != oldValue {
                 selectionChanged()
@@ -298,7 +298,7 @@ package final class HubAgentsModel: ObservableObject {
     /// and only then (a refresh or a click never scrolls).
     @Published package private(set) var revealRequest = 0
     /// The pointer is over the list: reorders wait (`StickyOrder` hold) until it leaves.
-    package var holdOrder = false {
+    var holdOrder = false {
         didSet {
             if oldValue, !holdOrder, orderHeld {
                 reorder()
@@ -313,10 +313,10 @@ package final class HubAgentsModel: ObservableObject {
     private var orphanOrder = StickyOrder<String>()
 
     /// A scripted run settles once the first fresh list is on screen (`--mode agents --snapshot`).
-    package var onLoaded: (() -> Void)?
+    var onLoaded: (() -> Void)?
     /// `tools hub agents --json [--session <p>]` and the last whole list on disk; tests replace both.
-    package var readList: @Sendable (String?) throws -> AgentsEnvelope = { try AgentsSource.list(session: $0) }
-    package var cache = AgentsSource.cache
+    var readList: @Sendable (String?) throws -> AgentsEnvelope = { try AgentsSource.list(session: $0) }
+    var cache = AgentsSource.cache
 
     private var index: [String: (parent: AgentParent?, node: AgentNode)] = [:]
     private var pendingRequest: (parent: String?, child: String)?
@@ -355,35 +355,35 @@ package final class HubAgentsModel: ObservableObject {
     private static let teamsFolder = AgentWatch.teamsFolder
 
     /// The parent whose Main row (the lead session) is open.
-    package var selectedMain: AgentParent? {
+    var selectedMain: AgentParent? {
         guard let id = selectedID, let key = AgentTree.split(id), key.child == AgentTree.mainChild, let parent = key.parent else { return nil }
         return parents.first { $0.sessionId == parent }
     }
 
     /// The parent of whatever is open: an agent's, or the Main row's.
-    package var selectedParent: AgentParent? {
+    var selectedParent: AgentParent? {
         selected?.parent ?? selectedMain
     }
 
     /// A parent row's title, the Main row, a child's breadcrumb, Return: the lead session in the detail.
-    package func openMain(_ parent: AgentParent) {
+    func openMain(_ parent: AgentParent) {
         HubMainBusy.measure("agents.openMain")
         foldOverride[parent.sessionId] = true
         selectedID = AgentTree.mainKey(parent.sessionId)
     }
 
     /// Left and Right on the list: fold or unfold the open row's parent.
-    package func foldSelection(open: Bool) {
+    func foldSelection(open: Bool) {
         guard let parent = selectedParent, isOpen(parent) != open else { return }
         foldOverride[parent.sessionId] = open
         rewatch()
     }
 
-    package var selected: (parent: AgentParent?, node: AgentNode)? {
+    var selected: (parent: AgentParent?, node: AgentNode)? {
         selectedID.flatMap { index[$0] }
     }
 
-    package func isOpen(_ parent: AgentParent) -> Bool {
+    func isOpen(_ parent: AgentParent) -> Bool {
         foldOverride[parent.sessionId] ?? defaultOpen(parent)
     }
 
@@ -391,35 +391,35 @@ package final class HubAgentsModel: ObservableObject {
         isLive(parent) || selected?.parent?.sessionId == parent.sessionId
     }
 
-    package func toggle(_ parent: AgentParent) {
+    func toggle(_ parent: AgentParent) {
         foldOverride[parent.sessionId] = !isOpen(parent)
         rewatch()
     }
 
     /// In the Live group: active now, or within two minutes of it, so a turn boundary does not move it.
-    package func isLive(_ parent: AgentParent) -> Bool {
+    func isLive(_ parent: AgentParent) -> Bool {
         parent.isLive || parentOrder.isActive(parent.sessionId)
     }
 
     /// In the Live group: active as above, or held by an open agent process. An open session that waits for its
     /// user is not active (the Active chip leaves it out) but it is not gone either.
-    package func isPresent(_ parent: AgentParent) -> Bool {
+    func isPresent(_ parent: AgentParent) -> Bool {
         isLive(parent) || parent.hasProcess
     }
 
     /// A child in its parent's sticky active bucket.
-    package func isActive(parent: String?, child: String) -> Bool {
+    func isActive(parent: String?, child: String) -> Bool {
         (parent.flatMap { childOrders[$0] } ?? orphanOrder).isActive(child)
     }
 
     /// The menu's Reload: ask the CLI again and sort the answer fresh.
-    package func reload() {
+    func reload() {
         resortNext = true
         refresh(sessions: nil)
     }
 
     /// A full re-sort (filter change, manual refresh), animated.
-    package func requestResort() {
+    func requestResort() {
         resortNext = true
         reorder()
     }
@@ -477,19 +477,19 @@ package final class HubAgentsModel: ObservableObject {
         return ids.compactMap { byId[$0] }
     }
 
-    package var anyRunning: Bool {
+    var anyRunning: Bool {
         parents.contains { $0.children.contains(where: \.anyRunning) } || orphans.contains(where: \.anyRunning)
     }
 
     // MARK: Activation
 
-    package init() {
+    init() {
         visible = HubVisibility.shared.visible
         HubVisibility.shared.onChange(self) { model, visible in model.visibilityChanged(visible) }
     }
 
     /// The mode came on screen: paint the last list, ask the CLI, watch the open parents.
-    package func activate() {
+    func activate() {
         guard !active else { return }
         active = true
         // Opening the mode is an explicit action: the first list sorts fresh.
@@ -538,7 +538,7 @@ package final class HubAgentsModel: ObservableObject {
     }
 
     /// The mode left the screen: no watcher, no refresh.
-    package func deactivate() {
+    func deactivate() {
         guard active else { return }
         active = false
         HubPerf.log("agents.deactivate")
@@ -568,7 +568,7 @@ package final class HubAgentsModel: ObservableObject {
     // MARK: Refresh
 
     /// Ask the CLI again: `sessions` nil is the whole list, else only those parents (`--session`).
-    package func refresh(sessions: Set<String>?, urgent: Bool = true) {
+    func refresh(sessions: Set<String>?, urgent: Bool = true) {
         queuedUrgent = queuedUrgent || urgent
         if let sessions, !queuedFull {
             queuedSessions.formUnion(sessions)
@@ -676,7 +676,7 @@ package final class HubAgentsModel: ObservableObject {
     /// HubBench `agents`: the list on screen lands again with one child's tool count and last activity moved,
     /// as the CLI's answer after a transcript grew. Even rounds move a child of the open parent, odd rounds a
     /// child of another parent.
-    package func benchRefresh(_ round: Int) {
+    func benchRefresh(_ round: Int) {
         let open = selectedParent?.sessionId
         let candidates = parents.indices.filter { !parents[$0].children.isEmpty }
         let pick = candidates.first { (parents[$0].sessionId == open) == round.isMultiple(of: 2) } ?? candidates.first
@@ -847,7 +847,7 @@ package final class HubAgentsModel: ObservableObject {
     // MARK: Selection, mail, deep links
 
     /// Back and forward: select and scroll the row into view.
-    package func select(parent: String?, child: String) {
+    func select(parent: String?, child: String) {
         selectedID = AgentTree.key(parent: parent, child: child)
         revealRequest += 1
     }
@@ -905,7 +905,7 @@ package final class HubAgentsModel: ObservableObject {
         }
     }
 
-    package func loadMail() {
+    func loadMail() {
         guard let current = selected, current.node.isTeammate, let parent = current.parent else { return }
         mailRequest += 1
         let request = mailRequest
@@ -936,7 +936,7 @@ package final class HubAgentsModel: ObservableObject {
 
     /// `--session <parent> --agent <child>`: selects that child once the list holds it. The child may be
     /// named by its id, its id's start, or its teammate name; the parent by its id or id's start.
-    package func request(parent: String?, child: String) {
+    func request(parent: String?, child: String) {
         pendingRequest = (parent, child)
         resolvePendingRequest(final: false)
     }
@@ -973,7 +973,7 @@ package final class HubAgentsModel: ObservableObject {
     /// by its id, then its Agent call's `toolUseId`, and only when neither names one, by its id's start,
     /// its teammate name or its key's end. The index is a dictionary, walked in no fixed order, so one
     /// pass over every rule could open a loose match while an exact one exists.
-    package static func requested(
+    static func requested(
         child: String,
         parent: String?,
         in index: [String: (parent: AgentParent?, node: AgentNode)]
@@ -989,7 +989,7 @@ package final class HubAgentsModel: ObservableObject {
     }
 
     /// The child's transcript as a session row for the shared session screen.
-    package static func transcriptRow(parent: AgentParent?, node: AgentNode) -> HubSession? {
+    static func transcriptRow(parent: AgentParent?, node: AgentNode) -> HubSession? {
         guard let query = node.transcriptQuery else { return nil }
         let millis = (node.last?.timeIntervalSince1970 ?? 0) * 1000
         return HubSession(
@@ -1030,10 +1030,10 @@ private enum AgentListItem: Identifiable {
 /// Which agents the list shows (the chips in the "Live" header). Active is the default: running
 /// agents, and ones that ran in the last two minutes (`StickyOrder`'s hold), so a turn boundary does
 /// not hide a row.
-package enum AgentStatusFilter: String, CaseIterable {
+enum AgentStatusFilter: String, CaseIterable {
     case all, active, idle, off
 
-    package var title: String {
+    var title: String {
         switch self {
         case .all: return "All"
         case .active: return "Active"
@@ -1042,7 +1042,7 @@ package enum AgentStatusFilter: String, CaseIterable {
         }
     }
 
-    package var tooltip: String {
+    var tooltip: String {
         switch self {
         case .all: return "Every agent"
         case .active: return "Running agents, and ones that ran in the last two minutes"
@@ -1052,9 +1052,9 @@ package enum AgentStatusFilter: String, CaseIterable {
     }
 }
 
-package struct AgentsListView: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var agents: HubAgentsModel
+struct AgentsListView: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var agents: HubAgentsModel
     @AppStorage("hub.agents.statusFilter") private var statusRaw = AgentStatusFilter.active.rawValue
     /// Parents whose finished children show beyond the first `shownPerParent`.
     @State private var expandedAll = Set<String>()
@@ -1150,7 +1150,7 @@ package struct AgentsListView: View {
         ].filter { !$0.1.isEmpty }
     }
 
-    package var body: some View {
+    var body: some View {
         let _ = RenderProbe.hit("agents.list.body")
         let sections = sections
         Group {
@@ -1349,7 +1349,7 @@ private struct AgentMainRow: View {
     }
 }
 
-package typealias AgentStatusStyle = AgentRosterStyle
+typealias AgentStatusStyle = AgentRosterStyle
 
 private struct AgentChildRow: View {
     let node: AgentNode
@@ -1375,11 +1375,11 @@ private struct AgentChildRow: View {
 
 // MARK: - Detail
 
-package struct AgentsMain: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var agents: HubAgentsModel
+struct AgentsMain: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var agents: HubAgentsModel
 
-    package var body: some View {
+    var body: some View {
         let _ = RenderProbe.hit("agents.main.body")
         if let selected = agents.selected, let parent = selected.parent {
             AgentLeadScreen(model: model, agents: agents, parent: parent, node: selected.node)
@@ -1409,18 +1409,18 @@ package struct AgentsMain: View {
 }
 
 /// What the Agents mode adds to the shared session screen: the open agent (nil for the lead's Main row).
-package struct AgentPaneContext {
-    package let agents: HubAgentsModel
-    package let parent: AgentParent
-    package let node: AgentNode?
+struct AgentPaneContext {
+    let agents: HubAgentsModel
+    let parent: AgentParent
+    let node: AgentNode?
 
     /// The transcript pane's row and identity: the agent's own file, or the lead session's.
     @MainActor
-    package var transcriptRow: HubSession? {
+    var transcriptRow: HubSession? {
         node.flatMap { HubAgentsModel.transcriptRow(parent: parent, node: $0) }
     }
 
-    package var key: String {
+    var key: String {
         node.map { AgentTree.key(parent: parent.sessionId, child: $0.id) } ?? AgentTree.mainKey(parent.sessionId)
     }
 }
@@ -1494,12 +1494,12 @@ private struct AgentDetailView: View {
 }
 
 /// The header's title for an open agent: the lead session as a way back, then the agent and its state.
-package struct AgentChildTitle: View {
-    @ObservedObject package var agents: HubAgentsModel
-    package let parent: AgentParent?
-    package let node: AgentNode
+struct AgentChildTitle: View {
+    @ObservedObject var agents: HubAgentsModel
+    let parent: AgentParent?
+    let node: AgentNode
 
-    package var body: some View {
+    var body: some View {
         if let parent {
             Button {
                 agents.openMain(parent)
@@ -1532,11 +1532,11 @@ package struct AgentChildTitle: View {
     }
 }
 
-package struct AgentCopyIdButton: View {
-    @ObservedObject package var model: HubModel
-    package let node: AgentNode
+struct AgentCopyIdButton: View {
+    @ObservedObject var model: HubModel
+    let node: AgentNode
 
-    package var body: some View {
+    var body: some View {
         IconButton(systemName: "number", tooltip: "Copy the agent id \(node.id)") {
             PathOpener.copy(node.id)
             model.notice = "Agent id copied"
@@ -1545,16 +1545,16 @@ package struct AgentCopyIdButton: View {
 }
 
 /// Under the header row for an open agent: its facts, spawn prompt and (a teammate's) team mail.
-package struct AgentChildDetails: View {
-    @ObservedObject package var agents: HubAgentsModel
-    package let parent: AgentParent?
-    package let node: AgentNode
+struct AgentChildDetails: View {
+    @ObservedObject var agents: HubAgentsModel
+    let parent: AgentParent?
+    let node: AgentNode
     /// Remembered, and settable in a snapshot (`--set hub.agents.promptOpen=true`).
     @AppStorage("hub.agents.promptOpen") private var promptOpen = false
     @State private var mailOpen = true
     @GenReduceMotion private var reduceMotion
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             facts
             if let prompt = shownPrompt, !prompt.isEmpty {
@@ -1719,7 +1719,7 @@ private struct AgentTranscriptPane: View, Equatable {
 extension HubAgentsModel {
     /// The lead session's row: the Sessions list's when it holds it (cmux pane, cache clock), else one
     /// built from the agents list (a session older than the list's window).
-    package static func leadRow(_ parent: AgentParent, in sessions: [HubSession]) -> HubSession {
+    static func leadRow(_ parent: AgentParent, in sessions: [HubSession]) -> HubSession {
         if let listed = sessions.first(where: { $0.sessionId == parent.sessionId }) {
             return listed
         }
@@ -1816,7 +1816,7 @@ private struct AgentMailRow: View {
 extension HubModel {
     /// A session sidebar's sub-agent row: the Agents mode at that agent (matched by its Agent call's id).
     @MainActor
-    package func openSubagent(sessionId: String, agentId: String) {
+    func openSubagent(sessionId: String, agentId: String) {
         HubPerf.log("agents.openSubagent \(sessionId.prefix(8)) \(agentId.prefix(16))")
         setMode(.agents)
         agents.request(parent: sessionId, child: agentId)
@@ -1824,7 +1824,7 @@ extension HubModel {
 
     /// The breadcrumb: the parent session in Sessions mode, when the session list holds it.
     @MainActor
-    package func openAgentParent(_ sessionId: String) {
+    func openAgentParent(_ sessionId: String) {
         guard let match = sessions.first(where: { $0.sessionId == sessionId }) else {
             notice = "Session \(sessionId.prefix(8)) is not in the session list (last \(Self.recentHours) hours)"
             return

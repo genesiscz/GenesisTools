@@ -8,26 +8,26 @@ import SwiftUI
 // `.hubDaily(model:)`, one line, so HubWindow.swift carries no state of theirs.
 
 @MainActor
-package final class HubDailyModel: ObservableObject {
-    package static let shared = HubDailyModel()
+final class HubDailyModel: ObservableObject {
+    static let shared = HubDailyModel()
 
     /// The transcript search panel is open, seeded with this text ("" = empty field).
-    @Published package var searchQuery: String?
-    @Published package var digestOpen = false
-    @Published package var rulesOpen = false
+    @Published var searchQuery: String?
+    @Published var digestOpen = false
+    @Published var rulesOpen = false
 
-    package func toggleSearch() {
+    func toggleSearch() {
         searchQuery = searchQuery == nil ? "" : nil
     }
 
-    package func toggleDigest() {
+    func toggleDigest() {
         digestOpen.toggle()
     }
 }
 
 /// `tools hub <args> --json` decoded off the main thread (a `tools` run is 0.1 s to several seconds).
-package enum HubDailyCLI {
-    package static func decode<T: Decodable & Sendable>(_ type: T.Type, _ args: [String], span name: String) async throws -> T {
+enum HubDailyCLI {
+    static func decode<T: Decodable & Sendable>(_ type: T.Type, _ args: [String], span name: String) async throws -> T {
         let span = HubPerf.begin(name, args.dropFirst().prefix(3).joined(separator: " "), awaits: true)
         do {
             let value = try await Task.detached(priority: .userInitiated) { () throws -> T in
@@ -44,7 +44,7 @@ package enum HubDailyCLI {
     }
 
     /// A `tools hub` write (rules add/set/rm, digest config) whose output is not needed.
-    package static func run(_ args: [String], span name: String) async throws {
+    static func run(_ args: [String], span name: String) async throws {
         let span = HubPerf.begin(name, args.prefix(2).joined(separator: " "), awaits: true)
         do {
             _ = try await Task.detached(priority: .userInitiated) { try ToolsCLIRunner.run(["hub"] + args) }.value
@@ -57,12 +57,12 @@ package enum HubDailyCLI {
 }
 
 /// The dimmed backdrop and the card every daily overlay draws in, like find in files.
-package struct HubDailyCard<Content: View>: View {
-    package let width: CGFloat
-    package let close: () -> Void
-    @ViewBuilder package let content: () -> Content
+struct HubDailyCard<Content: View>: View {
+    let width: CGFloat
+    let close: () -> Void
+    @ViewBuilder let content: () -> Content
 
-    package var body: some View {
+    var body: some View {
         ZStack(alignment: .top) {
             Color.black.opacity(0.45)
                 .ignoresSafeArea()
@@ -81,13 +81,13 @@ package struct HubDailyCard<Content: View>: View {
 }
 
 /// A small toggle chip (provider filters, range presets, rule kinds): a drawn button, never a Picker.
-package struct HubDailyChip: View {
-    package let title: String
-    package let on: Bool
-    package var tooltip: String?
-    package let action: () -> Void
+struct HubDailyChip: View {
+    let title: String
+    let on: Bool
+    var tooltip: String?
+    let action: () -> Void
 
-    package var body: some View {
+    var body: some View {
         Button(action: action) {
             Text(verbatim: title)
                 .font(.system(size: 11, weight: on ? .semibold : .regular))
@@ -130,7 +130,7 @@ private struct HubDailyOverlays: ViewModifier {
 
 extension View {
     /// ⌥⌘F transcript search, ⌥⌘D Today digest (with the usage forecast and the rules), for the hub root.
-    package func hubDaily(model: HubModel) -> some View {
+    func hubDaily(model: HubModel) -> some View {
         modifier(HubDailyOverlays(model: model))
     }
 }
@@ -140,7 +140,7 @@ extension HubModel {
     /// list's window, and runs the transcript's whole-session search for `query` (it jumps to the
     /// first matching turn).
     @MainActor
-    package func openDailySession(provider: String?, sessionId: String, title: String?, cwd: String?, project: String?, branch: String?, mtime: Date?, query: String?) {
+    func openDailySession(provider: String?, sessionId: String, title: String?, cwd: String?, project: String?, branch: String?, mtime: Date?, query: String?) {
         HubPerf.log("daily.open \(sessionId.prefix(8))")
         let session: HubSession
         if let known = sessions.first(where: { $0.sessionId == sessionId }) {

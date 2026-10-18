@@ -9,7 +9,7 @@ import SwiftUI
 
 extension PRCommand {
     /// `send: false` only writes the task file and returns the prompt (a new agent starts with it).
-    package static func fix(_ target: PRTarget, repo: String, threads: [String], session: String? = nil,
+    static func fix(_ target: PRTarget, repo: String, threads: [String], session: String? = nil,
                     send: Bool = true, dryRun: Bool = false) -> [String] {
         var args = ["hub", "pr", "fix", "--repo", repo]
         if case .ref(let ref) = target {
@@ -30,7 +30,7 @@ extension PRCommand {
 
     /// "Send to agent" on a failed check (`tools hub pr fix-check`): the same task path as `fix`, with
     /// the check's URL and name instead of thread ids. `target` is the PR's URL or `<repoPath>#<n>`.
-    package static func fixCheck(_ target: PRTarget, repo: String, checkURL: String, name: String, session: String? = nil,
+    static func fixCheck(_ target: PRTarget, repo: String, checkURL: String, name: String, session: String? = nil,
                          send: Bool = true, dryRun: Bool = false) -> [String] {
         var args = ["hub", "pr", "fix-check", "--check", checkURL, "--name", name, "--repo", repo]
         if case .ref(let ref) = target {
@@ -49,51 +49,51 @@ extension PRCommand {
     }
 }
 
-package struct FixOwner: Decodable, Identifiable, Equatable {
-    package let provider: String
-    package let sessionId: String
-    package let title: String?
-    package let cwd: String
-    package let mtime: String
-    package let reasons: [String]
+struct FixOwner: Decodable, Identifiable, Equatable {
+    let provider: String
+    let sessionId: String
+    let title: String?
+    let cwd: String
+    let mtime: String
+    let reasons: [String]
     /// cmux has its recorded pane open now.
-    package let live: Bool
+    let live: Bool
 
-    package var id: String { sessionId }
-    package var displayTitle: String { title?.isEmpty == false ? title ?? "" : URL(fileURLWithPath: cwd).lastPathComponent }
+    var id: String { sessionId }
+    var displayTitle: String { title?.isEmpty == false ? title ?? "" : URL(fileURLWithPath: cwd).lastPathComponent }
 }
 
-package struct FixThreadsResult: Decodable, Equatable {
-    package struct PR: Decodable, Equatable {
-        package let label: String
-        package let url: String
-        package let title: String
-        package let branch: String
+struct FixThreadsResult: Decodable, Equatable {
+    struct PR: Decodable, Equatable {
+        let label: String
+        let url: String
+        let title: String
+        let branch: String
     }
 
-    package struct Thread: Decodable, Equatable {
-        package let id: String
-        package let path: String
-        package let line: Int
+    struct Thread: Decodable, Equatable {
+        let id: String
+        let path: String
+        let line: Int
     }
 
-    package let pr: PR
-    package let threads: [Thread]
-    package let missing: [String]
-    package let file: String
-    package let written: Bool
-    package let prompt: String
-    package let owner: FixOwner?
-    package let candidates: [FixOwner]
-    package let sent: Bool
-    package let focused: Bool
-    package let error: String?
+    let pr: PR
+    let threads: [Thread]
+    let missing: [String]
+    let file: String
+    let written: Bool
+    let prompt: String
+    let owner: FixOwner?
+    let candidates: [FixOwner]
+    let sent: Bool
+    let focused: Bool
+    let error: String?
 }
 
-package enum FixThreadsCLI {
+enum FixThreadsCLI {
     /// Blocking: off the main thread only. A failed send still prints the result (with `error`) and
     /// exits 1, so stdout is read first; anything else is the verb's `{error, code}`.
-    package static func run(_ args: [String]) throws -> FixThreadsResult {
+    static func run(_ args: [String]) throws -> FixThreadsResult {
         let result = try ToolsCLIRunner.capture(args)
         if let decoded = try? JSONDecoder().decode(FixThreadsResult.self, from: result.stdout) {
             return decoded
@@ -106,23 +106,23 @@ package enum FixThreadsCLI {
     }
 
     /// Brings cmux forward on the pane a new agent opened in (its workspace was created focused).
-    package static func activateCmux() {
+    static func activateCmux() {
         NSRunningApplication.runningApplications(withBundleIdentifier: "com.cmuxterm.app").first?.activate()
     }
 }
 
 /// The popover behind "Fix N threads…": the threads, then the shared task form (the PR's sessions,
 /// best first, or a new agent). The plan comes from a dry run, so nothing is written before Send.
-package struct FixThreadsForm: View {
-    @ObservedObject package var model: ReviewModel
-    package let store: PRThreadsStore
-    package let close: () -> Void
+struct FixThreadsForm: View {
+    @ObservedObject var model: ReviewModel
+    let store: PRThreadsStore
+    let close: () -> Void
 
     private var threads: [PRThread] {
         (store.payload?.threads ?? []).filter { model.selectedThreads.contains($0.id) }
     }
 
-    package var body: some View {
+    var body: some View {
         let ids = threads.map(\.id)
         let count = ids.count
         PRTaskForm(
@@ -177,25 +177,25 @@ package struct FixThreadsForm: View {
 /// its `tools hub pr …` verb; the verb prints `FixThreadsResult`. A dry run lists where the task can
 /// go (the PR's sessions, open in cmux first, or a new agent); Send writes the task file and types one
 /// line naming it into that session, or starts a new agent with that line.
-package struct PRTaskForm<Summary: View>: View {
-    package let title: String
-    package let subtitle: String
+struct PRTaskForm<Summary: View>: View {
+    let title: String
+    let subtitle: String
     /// What the task carries, for the notices: "3 threads", "the CI / test log".
-    package let what: String
+    let what: String
     /// Where a new agent starts, and its name.
-    package let cwd: String
-    package let newAgentName: String
-    package let branch: String?
+    let cwd: String
+    let newAgentName: String
+    let branch: String?
     /// Said under the new-agent choice when `cwd` does not have the branch checked out.
-    package var newAgentNote: String?
+    var newAgentNote: String?
     /// HubPerf span prefix: `<area>.plan` and `<area>.send`.
-    package let perfArea: String
-    package var disabled = false
-    package let argv: (_ session: String?, _ send: Bool, _ dryRun: Bool) -> [String]
+    let perfArea: String
+    var disabled = false
+    let argv: (_ session: String?, _ send: Bool, _ dryRun: Bool) -> [String]
     /// The notice to show, and whether the task went out (a sent task or a started agent).
-    package let finished: (_ notice: String, _ ok: Bool) -> Void
-    package let close: () -> Void
-    @ViewBuilder package let summary: () -> Summary
+    let finished: (_ notice: String, _ ok: Bool) -> Void
+    let close: () -> Void
+    @ViewBuilder let summary: () -> Summary
 
     @State private var plan: FixThreadsResult?
     @State private var planError: String?
@@ -205,7 +205,7 @@ package struct PRTaskForm<Summary: View>: View {
 
     private static var newAgent: String { "new-agent" }
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(verbatim: title)
                 .font(.system(size: 13, weight: .semibold))

@@ -6,12 +6,12 @@ import Foundation
 
 // MARK: - Timeline model
 
-package enum TranscriptItem: Equatable, Identifiable {
+enum TranscriptItem: Equatable, Identifiable {
     case user(TranscriptTurn)
     case assistant(TranscriptTurn)
     case work(id: String, at: String?, tools: [TranscriptTool])
 
-    package var id: String {
+    var id: String {
         switch self {
         case .user(let turn): return "u-\(turn.id)"
         case .assistant(let turn): return "a-\(turn.id)"
@@ -20,12 +20,12 @@ package enum TranscriptItem: Equatable, Identifiable {
     }
 }
 
-package enum TranscriptTimeline {
+enum TranscriptTimeline {
     /// Flatten turns into timeline items, merging consecutive tool-bearing
     /// assistant messages into one work group (T3 "tool group" layer 2).
     /// Chronology inside one assistant message is text → tools, so a turn with
     /// both emits its text row first, then opens/extends the group.
-    package static func build(_ turns: [TranscriptTurn]) -> [TranscriptItem] {
+    static func build(_ turns: [TranscriptTurn]) -> [TranscriptItem] {
         var items: [TranscriptItem] = []
         var groupTools: [TranscriptTool] = []
         var groupId: String?
@@ -120,7 +120,7 @@ private enum ToolKind: CaseIterable {
 }
 
 // GenesisTools adaptation: internal (was private) so the hub's own work-group row can call it.
-package func summarizeGroup(_ tools: [TranscriptTool]) -> String {
+func summarizeGroup(_ tools: [TranscriptTool]) -> String {
     var counts: [ToolKind: Int] = [:]
     for tool in tools { counts[ToolKind.of(tool), default: 0] += 1 }
     // Stable order: taxonomy order, largest families first feel noisy — keep enum order.

@@ -1,19 +1,19 @@
 import AppKit
 import SwiftUI
 
-package struct HubWidgetDestinationRequest: Identifiable {
-    package let id = UUID()
-    package let mode: String
-    package let session: String?
-    package let provider: String?
-    package let context: String?
-    package let cwd: String?
+struct HubWidgetDestinationRequest: Identifiable {
+    let id = UUID()
+    let mode: String
+    let session: String?
+    let provider: String?
+    let context: String?
+    let cwd: String?
 }
 
 @MainActor
-package final class HubWidgetDestinationStore: ObservableObject {
-    package static let shared = HubWidgetDestinationStore()
-    @Published package var request: HubWidgetDestinationRequest?
+final class HubWidgetDestinationStore: ObservableObject {
+    static let shared = HubWidgetDestinationStore()
+    @Published var request: HubWidgetDestinationRequest?
 }
 
 private struct HubWidgetDestinationModifier: ViewModifier {
@@ -27,7 +27,7 @@ private struct HubWidgetDestinationModifier: ViewModifier {
 }
 
 extension View {
-    package func widgetDestination(model: HubModel) -> some View {
+    func widgetDestination(model: HubModel) -> some View {
         modifier(HubWidgetDestinationModifier(model: model))
     }
 }

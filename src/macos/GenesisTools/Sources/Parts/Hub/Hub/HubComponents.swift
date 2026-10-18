@@ -11,9 +11,9 @@ import UniformTypeIdentifiers
 
 // MARK: - External links
 
-package enum ExternalOpener {
+enum ExternalOpener {
     /// Opens web URLs in Brave (Martin's browser); other schemes go to their own app.
-    package static func open(_ url: URL) {
+    static func open(_ url: URL) {
         guard url.scheme == "http" || url.scheme == "https" else {
             NSWorkspace.shared.open(url)
             return
@@ -30,31 +30,31 @@ package enum ExternalOpener {
 
 /// Text that opens a web page, marked with the external-link glyph so it never looks like plain text.
 /// URLs come from `ForgeWeb` (Hub/HubForgeLinks.swift) or from `tools` JSON, never pasted per view.
-package struct ExternalLink: View {
-    package enum Glyph {
+struct ExternalLink: View {
+    enum Glyph {
         /// The ↗ glyph always shows: a link that stands on its own.
         case always
         /// Dense rows: the label keeps its look, and the glyph and an underline appear on hover.
         case onHover
     }
 
-    package let text: String
-    package let url: URL?
-    package var font: Font = .system(size: 12)
-    package var color: Color = ReviewPalette.dim
+    let text: String
+    let url: URL?
+    var font: Font = .system(size: 12)
+    var color: Color = ReviewPalette.dim
     /// An SF Symbol before the text (the person icon of an author).
-    package var icon: String?
-    package var glyph: Glyph = .always
+    var icon: String?
+    var glyph: Glyph = .always
     /// The tooltip; the URL itself when nil.
-    package var tooltip: String?
+    var tooltip: String?
     /// The key a panel find row lists this text under (a row with several links names each one).
-    package var findField = "link"
+    var findField = "link"
     /// False draws the same label with no button, hover or tooltip: a dense list's rows away from the
     /// pointer (`TimelineRowView`), where every control is a responder SwiftUI walks per update.
-    package var interactive = true
+    var interactive = true
     @State private var hovering = false
 
-    package var body: some View {
+    var body: some View {
         if let url, !interactive {
             HStack(spacing: 3) {
                 if let icon {
@@ -109,57 +109,57 @@ package struct ExternalLink: View {
 /// What `tools hub repo --json` says about a folder: checkout, branch, origin web pages, PR/MR.
 /// The TypeScript side owns remote parsing and host rules (src/review/lib/repo.ts,
 /// src/utils/git/origins/web.ts); Swift only reads the result.
-package struct RepoFacts: Codable, Equatable {
-    package struct Origin: Codable, Equatable {
-        package let url: String
-        package let host: String?
-        package let kind: String?
-        package let web: String?
+struct RepoFacts: Codable, Equatable {
+    struct Origin: Codable, Equatable {
+        let url: String
+        let host: String?
+        let kind: String?
+        let web: String?
     }
 
-    package struct PullRequest: Codable, Equatable {
-        package let number: Int
-        package let state: String
-        package let target: String
-        package let url: String
+    struct PullRequest: Codable, Equatable {
+        let number: Int
+        let state: String
+        let target: String
+        let url: String
 
         /// "PR !12" on GitLab, "PR #12" on GitHub, with the state when it is not open.
-        package func label(kind: String?) -> String {
+        func label(kind: String?) -> String {
             let number = kind == "gitlab" ? "MR !\(self.number)" : "PR #\(self.number)"
             return state == "OPEN" ? number : "\(number) (\(state.lowercased()))"
         }
     }
 
-    package let path: String
-    package let root: String?
-    package let repo: String?
-    package let branch: String?
-    package let head: String?
-    package let origin: Origin?
-    package let branchUrl: String?
-    package let headUrl: String?
-    package let pr: PullRequest?
-    package let prError: String?
+    let path: String
+    let root: String?
+    let repo: String?
+    let branch: String?
+    let head: String?
+    let origin: Origin?
+    let branchUrl: String?
+    let headUrl: String?
+    let pr: PullRequest?
+    let prError: String?
 
-    package var webURL: URL? { origin?.web.flatMap(URL.init(string:)) }
-    package var branchURL: URL? { branchUrl.flatMap(URL.init(string:)) }
-    package var prURL: URL? { pr.flatMap { URL(string: $0.url) } }
-    package var forge: ForgeWeb? { ForgeWeb(kind: origin?.kind, web: origin?.web) }
+    var webURL: URL? { origin?.web.flatMap(URL.init(string:)) }
+    var branchURL: URL? { branchUrl.flatMap(URL.init(string:)) }
+    var prURL: URL? { pr.flatMap { URL(string: $0.url) } }
+    var forge: ForgeWeb? { ForgeWeb(kind: origin?.kind, web: origin?.web) }
     /// The branch against its PR/MR's target; nil without a PR.
-    package var compareURL: URL? {
+    var compareURL: URL? {
         guard let pr, let branch else { return nil }
         return forge?.compare(base: pr.target, head: branch)
     }
 
     /// What the CLI answers for a folder that is no checkout: every field empty.
-    package static func none(_ path: String) -> RepoFacts {
+    static func none(_ path: String) -> RepoFacts {
         RepoFacts(path: path, root: nil, repo: nil, branch: nil, head: nil, origin: nil, branchUrl: nil, headUrl: nil, pr: nil, prError: nil)
     }
 
     /// Blocking: runs `tools`, so call it off the main thread only. A folder that is gone from disk (a deleted
     /// Copilot session-state checkout) is answered here: `tools hub repo` on one took 1.7 to 2.5 s under load
     /// (24 runs on 2026-10-10, inventory H20), to say what a `stat` says.
-    package static func fetch(_ paths: [String], pr: Bool, run: ([String]) throws -> Data = ToolsCLIRunner.run) -> [RepoFacts] {
+    static func fetch(_ paths: [String], pr: Bool, run: ([String]) throws -> Data = ToolsCLIRunner.run) -> [RepoFacts] {
         let present = paths.filter { FileManager.default.fileExists(atPath: $0) }
         let missing = paths.filter { !present.contains($0) }.map(none)
         if !missing.isEmpty {
@@ -188,8 +188,8 @@ package struct RepoFacts: Codable, Equatable {
 /// may be asked again after `retryAfter`, not at once: every body asks, and a broken `tools` would otherwise
 /// start on each render.
 @MainActor
-package final class RepoFactsStore: ObservableObject {
-    package static let shared = RepoFactsStore()
+final class RepoFactsStore: ObservableObject {
+    static let shared = RepoFactsStore()
 
     @Published package private(set) var byPath: [String: RepoFacts] = [:]
     private var requested = Set<String>()
@@ -198,15 +198,15 @@ package final class RepoFactsStore: ObservableObject {
     private var queuePR: [String] = []
     private var flushScheduled = false
     /// Tests set these three before the first read.
-    package var cache = HubSWR.cache("repo-facts")
-    package var fetch: ([String], Bool) -> [RepoFacts] = { RepoFacts.fetch($0, pr: $1) }
-    package var retryAfter: TimeInterval = 30
+    var cache = HubSWR.cache("repo-facts")
+    var fetch: ([String], Bool) -> [RepoFacts] = { RepoFacts.fetch($0, pr: $1) }
+    var retryAfter: TimeInterval = 30
     private static let cacheKey = "all"
     /// Folders whose facts on screen came from a fetch of this run, not the disk.
     private var fresh = Set<String>()
     private var saveScheduled = false
 
-    package init() {
+    init() {
         Task { [weak self] in
             guard let cache = self?.cache else { return }
             let span = HubPerf.begin("repoFacts.cache", awaits: true)
@@ -226,7 +226,7 @@ package final class RepoFactsStore: ObservableObject {
     }
 
     /// The cached facts, or nil until the batch that fetches them lands. `pr` adds the PR/MR lookup (gh / glab).
-    package func facts(for path: String, pr: Bool = false) -> RepoFacts? {
+    func facts(for path: String, pr: Bool = false) -> RepoFacts? {
         guard !path.isEmpty else { return nil }
         // A folder this run already found to be no checkout has no branch, so no PR either: no second
         // `tools hub repo --pr` for it on the next selection.
@@ -249,7 +249,7 @@ package final class RepoFactsStore: ObservableObject {
 
     /// Fetch again on the next read (after a checkout switch or a push). The folder is no longer known to be no
     /// checkout either, or the `fresh` shortcut in `facts(for:pr:)` would keep answering for it.
-    package func invalidate(_ path: String) {
+    func invalidate(_ path: String) {
         requested.remove(path)
         requestedPR.remove(path)
         fresh.remove(path)
@@ -333,10 +333,10 @@ package final class RepoFactsStore: ObservableObject {
 }
 
 /// "PR #12 ↗" / "MR !12 ↗" for the branch, from `RepoFacts`; nothing while unknown or when there is none.
-package struct PullRequestLink: View {
-    package let facts: RepoFacts?
+struct PullRequestLink: View {
+    let facts: RepoFacts?
 
-    package var body: some View {
+    var body: some View {
         if let facts, let pr = facts.pr {
             ExternalLink(text: pr.label(kind: facts.origin?.kind), url: facts.prURL, font: .system(size: 11.5, weight: .medium), color: Color(red: 0.62, green: 0.78, blue: 1))
                 .instantTooltip("\(pr.label(kind: facts.origin?.kind)) → \(pr.target): open in the browser")
@@ -350,10 +350,10 @@ package struct PullRequestLink: View {
 }
 
 /// "→ master" after a branch with a PR/MR: the host's compare view of the branch against the target.
-package struct CompareLink: View {
-    package let facts: RepoFacts?
+struct CompareLink: View {
+    let facts: RepoFacts?
 
-    package var body: some View {
+    var body: some View {
         if let facts, let pr = facts.pr, let branch = facts.branch, let url = facts.compareURL {
             ExternalLink(text: "→ \(pr.target)", url: url, font: .system(size: 11.5, design: .monospaced), glyph: .onHover, tooltip: "Compare \(pr.target)...\(branch)")
         }
@@ -365,15 +365,15 @@ package struct CompareLink: View {
 /// Two children: the main view and a `ResizableSidePanel` on `panelEdge`. The panel gets its ideal
 /// (saved) width, but never more than `maxFraction` of the width; the main view gets the rest.
 /// A plain HStack gives a fixed-width panel its full width first and squeezes the main view.
-package struct SideSplit: Layout {
-    package var panelEdge: SidePanelEdge
-    package var maxFraction: CGFloat = 0.4
+struct SideSplit: Layout {
+    var panelEdge: SidePanelEdge
+    var maxFraction: CGFloat = 0.4
 
-    package func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         proposal.replacingUnspecifiedDimensions()
     }
 
-    package func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
         guard subviews.count == 2 else {
             for subview in subviews {
                 subview.place(at: bounds.origin, proposal: ProposedViewSize(bounds.size))
@@ -399,22 +399,22 @@ package struct SideSplit: Layout {
 /// the title (`.titlebarRow()`, WindowTitlebar.swift), so the content starts right under the title bar;
 /// the row's empty part zooms and drags the window. `details` are the rows under it. Every hub mode
 /// used a 34 pt top padding here, which left an empty band under the title bar (Martin, 2026-09-28).
-package struct TitlebarHeader<Row: View, Details: View>: View {
-    package let row: Row
-    package let details: Details?
+struct TitlebarHeader<Row: View, Details: View>: View {
+    let row: Row
+    let details: Details?
 
-    package init(@ViewBuilder row: () -> Row, @ViewBuilder details: () -> Details) {
+    init(@ViewBuilder row: () -> Row, @ViewBuilder details: () -> Details) {
         self.row = row()
         self.details = details()
     }
 
     /// `details: nil` for a header that is only the title bar row at the moment.
-    package init(details: Details?, @ViewBuilder row: () -> Row) {
+    init(details: Details?, @ViewBuilder row: () -> Row) {
         self.row = row()
         self.details = details
     }
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             row
                 .padding(.leading, 18)
@@ -449,17 +449,17 @@ extension TitlebarHeader where Details == EmptyView {
 /// nothing on screen marked it. The row's group opens and the list scrolls to it once the row exists. The first
 /// reveal centres the row; later ones scroll only as far as needed, so a click on a row already on screen moves
 /// nothing. Rows carry their selection value as `.id(…)` inside the `ScrollViewReader`.
-package struct SidebarReveal: ViewModifier {
-    package let proxy: ScrollViewProxy
-    package let selection: String?
+struct SidebarReveal: ViewModifier {
+    let proxy: ScrollViewProxy
+    let selection: String?
     /// The selected row's group key, or nil while the list does not hold the row.
-    package let group: String?
+    let group: String?
     /// The list has loaded once: before that a missing row means "not here yet", not "nothing to reveal".
-    package let loaded: Bool
-    @ObservedObject package var prefs: GroupPrefs
+    let loaded: Bool
+    @ObservedObject var prefs: GroupPrefs
     @State private var revealedOnce = false
 
-    package func body(content: Content) -> some View {
+    func body(content: Content) -> some View {
         content.onChange(of: [selection ?? "", group ?? "", loaded ? "loaded" : ""], initial: true) { _, _ in reveal() }
     }
 
@@ -485,14 +485,14 @@ package struct SidebarReveal: ViewModifier {
 // MARK: - Group preferences (pin, collapse, order) for list sections
 
 /// Persisted per list: which groups are pinned (on top), collapsed, and their manual order.
-package final class GroupPrefs: ObservableObject {
+final class GroupPrefs: ObservableObject {
     /// Which list these are (`prs.repos`): a header dragged from one list never drops into another.
-    package let key: String
-    @Published package var pinned: [String] { didSet { save() } }
-    @Published package var collapsed: Set<String> { didSet { save() } }
-    @Published package var order: [String] { didSet { save() } }
+    let key: String
+    @Published var pinned: [String] { didSet { save() } }
+    @Published var collapsed: Set<String> { didSet { save() } }
+    @Published var order: [String] { didSet { save() } }
 
-    package init(key: String) {
+    init(key: String) {
         self.key = key
         let defaults = HubDefaults.store
         pinned = defaults.stringArray(forKey: "groups.\(key).pinned") ?? []
@@ -518,7 +518,7 @@ package final class GroupPrefs: ObservableObject {
 
     /// Pinned first (in pin order), then the manual order, then the rest alphabetically by `label`
     /// (for groups keyed by something other than their title), the key breaking a tie.
-    package func sorted(_ names: [String], label: (String) -> String = { $0 }) -> [String] {
+    func sorted(_ names: [String], label: (String) -> String = { $0 }) -> [String] {
         names.sorted { a, b in
             let pa = pinned.firstIndex(of: a), pb = pinned.firstIndex(of: b)
             if pa != nil || pb != nil { return (pa ?? .max) < (pb ?? .max) }
@@ -529,16 +529,16 @@ package final class GroupPrefs: ObservableObject {
         }
     }
 
-    package func togglePin(_ name: String) {
+    func togglePin(_ name: String) {
         if let index = pinned.firstIndex(of: name) { pinned.remove(at: index) } else { pinned.append(name) }
     }
 
-    package func toggleCollapsed(_ name: String) {
+    func toggleCollapsed(_ name: String) {
         MainActor.assumeIsolated { HubMainBusy.measure("groups.\(key).toggle") }
         if collapsed.contains(name) { collapsed.remove(name) } else { collapsed.insert(name) }
     }
 
-    package func move(_ name: String, by delta: Int, among names: [String]) {
+    func move(_ name: String, by delta: Int, among names: [String]) {
         var current = sorted(names).filter { !pinned.contains($0) }
         guard let index = current.firstIndex(of: name) else { return }
         let target = max(0, min(current.count - 1, index + delta))
@@ -551,7 +551,7 @@ package final class GroupPrefs: ObservableObject {
     /// order, the same order `move` and `sorted` use. It takes the target's side of the pin line, so
     /// a group dropped among the pinned ones is pinned and one dropped below them is not. Groups
     /// not shown right now (filtered out) keep their stored places behind the shown ones.
-    package func drop(_ name: String, on target: String, after: Bool, among names: [String]) {
+    func drop(_ name: String, on target: String, after: Bool, among names: [String]) {
         guard name != target, names.contains(name), names.contains(target) else { return }
         var shown = sorted(names).filter { $0 != name }
         guard let index = shown.firstIndex(of: target) else { return }
@@ -566,10 +566,10 @@ package final class GroupPrefs: ObservableObject {
 /// The group header being dragged, so a header under the pointer knows whether the drag comes from
 /// its own list. In-process only; the drop itself checks the dragged text too.
 @MainActor
-package enum GroupDrag {
-    package static var current: (list: String, key: String)?
+enum GroupDrag {
+    static var current: (list: String, key: String)?
 
-    package static func token(list: String, key: String) -> String { "genesistools-group\n\(list)\n\(key)" }
+    static func token(list: String, key: String) -> String { "genesistools-group\n\(list)\n\(key)" }
 }
 
 /// A header over which another header of the same list is dragged: a line above or below it shows
@@ -625,11 +625,11 @@ private struct GroupDropDelegate: DropDelegate {
 }
 
 /// Header of a fixed sidebar group ("Live", "Today", "Earlier"): title and count, pinned while its rows scroll.
-package struct PlainGroupHeader: View {
-    package let title: String
-    package let count: Int
+struct PlainGroupHeader: View {
+    let title: String
+    let count: Int
 
-    package var body: some View {
+    var body: some View {
         HStack {
             Text(title)
             Spacer()
@@ -644,30 +644,30 @@ package struct PlainGroupHeader: View {
 }
 
 /// Header of a collapsible, pinnable, movable group in a sidebar list.
-package struct GroupHeader: View {
-    package let title: String
-    package let count: Int
-    @ObservedObject package var prefs: GroupPrefs
-    package let allNames: [String]
+struct GroupHeader: View {
+    let title: String
+    let count: Int
+    @ObservedObject var prefs: GroupPrefs
+    let allNames: [String]
     /// The project's absolute path, when the group is a project: adds a copy button and menu item.
-    package var path: String?
+    var path: String?
     /// The group's identity in `prefs` and `allNames` when the title is not unique (two projects
     /// both named `service`); the title otherwise.
-    package var key: String?
+    var key: String?
     /// A star button instead of the pin glyph: the PR list's favourite projects, which load with
     /// every list. The same pin underneath, so the order and the menu stay one mechanism.
-    package var starred = false
+    var starred = false
     /// A hide button: the PR list's projects opened from "More projects" leave the list again.
-    package var remove: (() -> Void)?
+    var remove: (() -> Void)?
     /// The group holds one page of a longer list: the count reads "40+", never a total (H8).
-    package var more = false
+    var more = false
 
     /// Where a header dragged over this one would land (a line on that edge); nil when none is.
     @State private var dropEdge: VerticalEdge?
     @State private var height: CGFloat = 26
     @GenReduceMotion private var reduceMotion
 
-    package var body: some View {
+    var body: some View {
         let key = key ?? title
         let isCollapsed = prefs.collapsed.contains(key)
         let isPinned = prefs.pinned.contains(key)
@@ -764,11 +764,11 @@ package struct GroupHeader: View {
 /// move, when exactly one exists. Only a found checkout is cached, and only while it still is one: a miss
 /// is asked again, so a move still in progress is found once it lands. A folder that holds a repository
 /// is its own answer, also after a move was cached: a move undone wins over the cached one.
-package enum MovedCheckout {
+enum MovedCheckout {
     private static var cache: [String: String] = [:]
     private static let lock = NSLock()
 
-    package static func resolve(_ folder: String) -> String? {
+    static func resolve(_ folder: String) -> String? {
         if isRepository(projectRoot(of: folder)) {
             lock.lock()
             cache[folder] = nil
@@ -795,7 +795,7 @@ package enum MovedCheckout {
 
     /// A real repository: `.git` is a folder with `HEAD`, or a worktree's (or submodule's) pointer file
     /// whose `gitdir:` still holds a `HEAD`. A pointer left behind by a deleted main checkout is not one.
-    package static func isRepository(_ root: String) -> Bool {
+    static func isRepository(_ root: String) -> Bool {
         let git = (root as NSString).appendingPathComponent(".git")
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: git, isDirectory: &isDirectory) else { return false }
@@ -823,7 +823,7 @@ package enum MovedCheckout {
 }
 
 /// The repository root above a folder (the directory holding `.git`), else the folder itself.
-package func projectRoot(of cwd: String) -> String {
+func projectRoot(of cwd: String) -> String {
     var dir = URL(fileURLWithPath: cwd)
     while dir.path != "/" {
         if FileManager.default.fileExists(atPath: dir.appendingPathComponent(".git").path) {

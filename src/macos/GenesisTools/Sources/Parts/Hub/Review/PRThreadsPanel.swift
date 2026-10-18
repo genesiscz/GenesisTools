@@ -5,11 +5,11 @@ import SwiftUI
 /// away by default. The main path is the diff itself: each thread card there has Reply, Resolve and
 /// Edit / Delete on my drafts (web/diff-viewer/main.ts). The list also holds the outdated threads,
 /// which have no line in the diff.
-package struct PRReviewBar: View {
-    @ObservedObject package var model: ReviewModel
-    @ObservedObject package var store: PRThreadsStore
+struct PRReviewBar: View {
+    @ObservedObject var model: ReviewModel
+    @ObservedObject var store: PRThreadsStore
     /// The room the diff column has for the list; the diff under it keeps at least a few lines.
-    package var maxListHeight: CGFloat = 900
+    var maxListHeight: CGFloat = 900
     @AppStorage("review.prThreads.open", store: HubDefaults.store) private var open = false
     @AppStorage("review.prThreads.height", store: HubDefaults.store) private var listHeight = 260.0
     /// The standalone window's Context panel has a Threads tab: while it is open, a second list of the
@@ -24,9 +24,9 @@ package struct PRReviewBar: View {
     @State private var hovering = false
     @GestureState private var dragging = false
 
-    package static let minListHeight: CGFloat = 110
+    static let minListHeight: CGFloat = 110
 
-    package var body: some View {
+    var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 if let pr = store.pr, let forge = Forge(kind: pr.provider) {
@@ -278,7 +278,7 @@ package struct PRReviewBar: View {
     /// The bar's count, widest first. A narrow diff pane drops whole words before numbers, zero
     /// drafts go first of all, and a pending draft count stays to the last variant (Submit review
     /// sends them).
-    package static func summaryVariants(threads: Int, open: Int, drafts: Int) -> [String] {
+    static func summaryVariants(threads: Int, open: Int, drafts: Int) -> [String] {
         let draftText = drafts == 1 ? "1 draft" : "\(drafts) drafts"
         if drafts == 0 {
             return ["\(threads) threads · \(open) open", "\(open)/\(threads) open", "\(open) open"]
@@ -316,7 +316,7 @@ private struct PRBarLinks: View {
 }
 
 /// Where a thread stands against the diff on screen (`PRThreadRendering.belongs`).
-package enum PRThreadPlacement: Equatable {
+enum PRThreadPlacement: Equatable {
     /// On its line in this diff. `outdatedOnHost`: the host calls it outdated (a later push moved its
     /// lines), but the diff shows the commit it was written on, so here it is current.
     case onDiff(outdatedOnHost: Bool)
@@ -325,7 +325,7 @@ package enum PRThreadPlacement: Equatable {
     /// Current on the PR's newest commit, which this diff does not show.
     case newerHead
 
-    package static func of(_ thread: PRThread, shownHead: String?, prHead: String?) -> PRThreadPlacement {
+    static func of(_ thread: PRThread, shownHead: String?, prHead: String?) -> PRThreadPlacement {
         if PRThreadRendering.belongs(thread, shownHead: shownHead, prHead: prHead) {
             return .onDiff(outdatedOnHost: thread.outdated)
         }
@@ -333,7 +333,7 @@ package enum PRThreadPlacement: Equatable {
         return thread.outdated ? .outdated : .newerHead
     }
 
-    package var onDiff: Bool {
+    var onDiff: Bool {
         if case .onDiff = self {
             return true
         }
@@ -343,17 +343,17 @@ package enum PRThreadPlacement: Equatable {
 }
 
 /// The threads of one file, by line.
-package struct PRThreadFileGroup: Identifiable, Equatable {
-    package let path: String
-    package let threads: [PRThread]
+struct PRThreadFileGroup: Identifiable, Equatable {
+    let path: String
+    let threads: [PRThread]
 
-    package var id: String { path }
-    package var name: String { (path as NSString).lastPathComponent }
-    package var folder: String { (path as NSString).deletingLastPathComponent }
+    var id: String { path }
+    var name: String { (path as NSString).lastPathComponent }
+    var folder: String { (path as NSString).deletingLastPathComponent }
 
     /// Files in the diff's order (`order`: path → position), the others after them by path; each
     /// file's threads by line.
-    package static func groups(_ threads: [PRThread], order: [String: Int]) -> [PRThreadFileGroup] {
+    static func groups(_ threads: [PRThread], order: [String: Int]) -> [PRThreadFileGroup] {
         let byPath = Dictionary(grouping: threads, by: \.path)
         let paths = byPath.keys.sorted { a, b in
             let left = order[a] ?? Int.max
@@ -366,12 +366,12 @@ package struct PRThreadFileGroup: Identifiable, Equatable {
     }
 
     /// A folder that wraps at its slashes, never inside a folder name.
-    package static func wrappable(_ folder: String) -> String {
+    static func wrappable(_ folder: String) -> String {
         folder.replacingOccurrences(of: "/", with: "/\u{200B}")
     }
 
     /// "L12" or "L10–12".
-    package static func lineLabel(_ thread: PRThread) -> String {
+    static func lineLabel(_ thread: PRThread) -> String {
         if let start = thread.startLine, start != thread.line {
             return "L\(min(start, thread.line))–\(max(start, thread.line))"
         }
@@ -383,9 +383,9 @@ package struct PRThreadFileGroup: Identifiable, Equatable {
 /// Every thread of the PR, one group per file in the diff's order, each file's threads by line. A
 /// file's header shows its whole path (name, then the folder on wrapping dim lines); a click opens the
 /// file in the diff, a thread's line chip opens that thread's card.
-package struct PRThreadsList: View {
-    @ObservedObject package var model: ReviewModel
-    @ObservedObject package var store: PRThreadsStore
+struct PRThreadsList: View {
+    @ObservedObject var model: ReviewModel
+    @ObservedObject var store: PRThreadsStore
     @AppStorage("review.prThreads.thisFile", store: HubDefaults.store) private var onlyThisFile = false
     @AppStorage("review.prThreads.closed", store: HubDefaults.store) private var showClosed = false
     @State private var find = PanelFindModel(scope: "pr.threads", title: "the threads")
@@ -403,7 +403,7 @@ package struct PRThreadsList: View {
     @ObservedObject private var headFiles = PRHeadFiles.shared
     /// A narrow side panel (the review window's Context panel, 320 pt at its minimum): the toolbar
     /// takes two rows, so nothing runs past the panel's edge.
-    package var compact = false
+    var compact = false
 
     private var shownHead: String? { model.scope.pinnedHead ?? model.remoteHead?.sha }
 
@@ -457,7 +457,7 @@ package struct PRThreadsList: View {
         return ids
     }
 
-    package var body: some View {
+    var body: some View {
         let all = store.payload?.threads ?? []
         let placed = placements(all)
         let threads = visible(all, placed)
@@ -714,9 +714,9 @@ package struct PRThreadsList: View {
     }
 }
 
-package enum PRThreadFold {
+enum PRThreadFold {
     /// A note's first line of text, without markdown marks, for a folded thread.
-    package static func firstLine(_ markdown: String) -> String {
+    static func firstLine(_ markdown: String) -> String {
         let line = markdown.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }
             .first { !$0.isEmpty && !$0.hasPrefix("```") } ?? ""
         return line.replacingOccurrences(of: "[*_`>#]+", with: "", options: .regularExpression)
@@ -726,34 +726,34 @@ package enum PRThreadFold {
 
 /// The unsent reply and draft edit of each thread card. Folding a file removes its cards, and their own
 /// state goes with them; the list keeps this copy, so unfolding brings the text back.
-package final class PRThreadEditors {
-    package struct Editor: Equatable {
-        package var replying = false
-        package var replyText = ""
-        package var editingID: String?
-        package var editText = ""
+final class PRThreadEditors {
+    struct Editor: Equatable {
+        var replying = false
+        var replyText = ""
+        var editingID: String?
+        var editText = ""
 
         /// A composer or an edit is open: something to bring back.
-        package var isOpen: Bool { replying || editingID != nil }
+        var isOpen: Bool { replying || editingID != nil }
     }
 
     private var kept: [String: Editor] = [:]
 
-    package func keep(_ editor: Editor, for thread: String) {
+    func keep(_ editor: Editor, for thread: String) {
         kept[thread] = editor.isOpen ? editor : nil
     }
 
-    package func take(_ thread: String) -> Editor? {
+    func take(_ thread: String) -> Editor? {
         kept.removeValue(forKey: thread)
     }
 }
 
 /// Folded files and threads of the threads list, kept per PR in the hub's settings.
-package enum PRThreadFolds {
-    package static func filesKey(_ pr: String) -> String { "review.prThreads.foldedFiles.\(pr)" }
-    package static func threadsKey(_ pr: String) -> String { "review.prThreads.foldedThreads.\(pr)" }
+enum PRThreadFolds {
+    static func filesKey(_ pr: String) -> String { "review.prThreads.foldedFiles.\(pr)" }
+    static func threadsKey(_ pr: String) -> String { "review.prThreads.foldedThreads.\(pr)" }
 
-    package static func toggled(_ set: Set<String>, _ id: String) -> Set<String> {
+    static func toggled(_ set: Set<String>, _ id: String) -> Set<String> {
         set.contains(id) ? set.subtracting([id]) : set.union([id])
     }
 }
@@ -787,13 +787,13 @@ private struct PRFileRail: View {
 
 /// When a click on a thread card shows the thread in the diff: one click, no second click within the
 /// double-click time (that selects a word), and no text selected by it.
-package enum PRThreadCardClick {
-    package static func jumps(clickCount: Int, laterClick: Bool, selectedText: Bool) -> Bool {
+enum PRThreadCardClick {
+    static func jumps(clickCount: Int, laterClick: Bool, selectedText: Bool) -> Bool {
         clickCount <= 1 && !laterClick && !selectedText
     }
 
     /// A press and its release this close together are a click; farther apart they were a drag.
-    package static func isClick(down: CGPoint, up: CGPoint) -> Bool {
+    static func isClick(down: CGPoint, up: CGPoint) -> Bool {
         hypot(up.x - down.x, up.y - down.y) < 4
     }
 }
@@ -804,15 +804,15 @@ package enum PRThreadCardClick {
 /// see a click on it. Buttons keep their own action (SwiftUI gives them the tap), a link in the text
 /// keeps its own, a drag that selects text never jumps, and a double-click waits out its second click.
 @MainActor
-package final class PRCardClicks {
+final class PRCardClicks {
     /// Each card's frame in the window's content, top-left origin (SwiftUI's global space).
-    package var frames: [String: CGRect] = [:]
-    package var onJump: ((String) -> Void)?
+    var frames: [String: CGRect] = [:]
+    var onJump: ((String) -> Void)?
     private var token = 0
     private var monitor: Any?
     private var release: Timer?
 
-    package func clicked(_ id: String, clickCount: Int, text: NSTextView? = nil) {
+    func clicked(_ id: String, clickCount: Int, text: NSTextView? = nil) {
         token += 1
         let mine = token
         let wait = min(NSEvent.doubleClickInterval, 0.3)
@@ -830,7 +830,7 @@ package final class PRCardClicks {
         }
     }
 
-    package func start() {
+    func start() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] event in
             self?.handle(event)
@@ -838,7 +838,7 @@ package final class PRCardClicks {
         }
     }
 
-    package func stop() {
+    func stop() {
         if let monitor {
             NSEvent.removeMonitor(monitor)
         }
@@ -1408,8 +1408,8 @@ private struct PRThreadRow: View {
 
 /// The questions asked before a write that others see (a post) or that cannot be undone (a delete).
 /// The same alerts for the threads list and the diff's thread cards.
-package enum PRConfirm {
-    package static func post(_ text: String, on store: PRThreadsStore, where_: String) -> Bool {
+enum PRConfirm {
+    static func post(_ text: String, on store: PRThreadsStore, where_: String) -> Bool {
         let alert = NSAlert()
         alert.messageText = "Post on \(store.label) now?"
         alert.informativeText = "Everyone on the \(store.pr?.identity.isGitLab == true ? "merge request" : "pull request") sees it at once. \(where_)\n\n\(text.prefix(400))"
@@ -1418,7 +1418,7 @@ package enum PRConfirm {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
-    package static func deleteDraft(on store: PRThreadsStore) -> Bool {
+    static func deleteDraft(on store: PRThreadsStore) -> Bool {
         let alert = NSAlert()
         alert.messageText = "Delete this draft?"
         alert.informativeText = "It leaves your pending review on \(store.label). Nobody else saw it."
@@ -1530,22 +1530,22 @@ private struct SubmitReviewForm: View {
 /// row and its distance from the viewport's top are kept while the width is settled; when the rows
 /// report a new width, that row goes back to the same distance, once, after the one reflow.
 @MainActor
-package final class PRListAnchor {
+final class PRListAnchor {
     package static let space = "prThreads.content"
     /// The list on screen, for the `--drag-context` snapshot demo.
-    package static weak var current: PRListAnchor?
+    static weak var current: PRListAnchor?
 
     private weak var scrollView: NSScrollView?
     private var frames: [String: CGRect] = [:]
-    package func rowFrame(_ id: String) -> CGRect? { frames[id] }
+    func rowFrame(_ id: String) -> CGRect? { frames[id] }
     /// The row at the viewport's top and its y in the content, with the scroll offset it was read at.
     package private(set) var held: (id: String, contentY: CGFloat, offset: CGFloat)?
     private var restorePending = false
     private var observer: NSObjectProtocol?
 
-    package var offset: CGFloat { scrollView?.contentView.bounds.origin.y ?? 0 }
+    var offset: CGFloat { scrollView?.contentView.bounds.origin.y ?? 0 }
 
-    package func attach(_ scrollView: NSScrollView) {
+    func attach(_ scrollView: NSScrollView) {
         guard self.scrollView !== scrollView else { return }
         self.scrollView = scrollView
         Self.current = self
@@ -1569,7 +1569,7 @@ package final class PRListAnchor {
     }
 
     /// A row's frame in the content. A new width means the list re-wrapped: put the reader back.
-    package func update(_ id: String, _ frame: CGRect) {
+    func update(_ id: String, _ frame: CGRect) {
         let old = frames[id]
         frames[id] = frame
         if let old, abs(old.width - frame.width) > 0.5 {
@@ -1581,7 +1581,7 @@ package final class PRListAnchor {
         }
     }
 
-    package func remove(_ id: String) {
+    func remove(_ id: String) {
         frames[id] = nil
     }
 
@@ -1617,23 +1617,23 @@ package final class PRListAnchor {
     }
 
     /// The top row now and its y in the viewport: what the `--drag-context` demo logs before and after.
-    package func topRowLine() -> String {
+    func topRowLine() -> String {
         guard let found = PRListAnchorMath.topRow(frames, viewportTop: offset) else { return "none" }
         let clip = scrollView?.contentView.bounds ?? .zero
         return "\(found.id.prefix(16)) y=\(Int((found.frame.minY - offset).rounded())) x=\(Int(found.frame.minX)) w=\(Int(found.frame.width)) "
             + "(viewport x=\(Int(clip.minX)) w=\(Int(clip.width)), content w=\(Int(scrollView?.documentView?.frame.width ?? 0)))"
     }
 
-    package func scroll(to y: CGFloat) {
+    func scroll(to y: CGFloat) {
         guard let scrollView else { return }
         scrollView.contentView.scroll(to: NSPoint(x: 0, y: y))
         scrollView.reflectScrolledClipView(scrollView.contentView)
     }
 }
 
-package enum PRListAnchorMath {
+enum PRListAnchorMath {
     /// The row that holds the viewport's top line (or the first one below it).
-    package static func topRow(_ frames: [String: CGRect], viewportTop: CGFloat) -> (id: String, frame: CGRect)? {
+    static func topRow(_ frames: [String: CGRect], viewportTop: CGFloat) -> (id: String, frame: CGRect)? {
         frames.filter { $0.value.maxY > viewportTop + 1 }
             .min { ($0.value.minY, $0.key) < ($1.value.minY, $1.key) }
             .map { ($0.key, $0.value) }
@@ -1641,18 +1641,18 @@ package enum PRListAnchorMath {
 
     /// The scroll offset that puts the held row at the distance from the viewport's top it had, clamped
     /// to the content.
-    package static func offset(heldY: CGFloat, heldOffset: CGFloat, newY: CGFloat, contentHeight: CGFloat, viewportHeight: CGFloat) -> CGFloat {
+    static func offset(heldY: CGFloat, heldOffset: CGFloat, newY: CGFloat, contentHeight: CGFloat, viewportHeight: CGFloat) -> CGFloat {
         let wanted = heldOffset + (newY - heldY)
         return max(0, min(wanted, max(0, contentHeight - viewportHeight)))
     }
 }
 
 /// Reports each row's frame in the list's content to the anchor.
-package struct PRListAnchorRow: ViewModifier {
-    package let anchor: PRListAnchor
-    package let id: String
+struct PRListAnchorRow: ViewModifier {
+    let anchor: PRListAnchor
+    let id: String
 
-    package func body(content: Content) -> some View {
+    func body(content: Content) -> some View {
         content
             .onGeometryChange(for: CGRect.self, of: { $0.frame(in: .named(PRListAnchor.space)) }) { anchor.update(id, $0) }
             .onDisappear { anchor.remove(id) }
@@ -1660,29 +1660,29 @@ package struct PRListAnchorRow: ViewModifier {
 }
 
 /// Finds the NSScrollView a SwiftUI ScrollView is drawn in, once it is in a window.
-package struct PRScrollViewFinder: NSViewRepresentable {
-    package let found: (NSScrollView) -> Void
+struct PRScrollViewFinder: NSViewRepresentable {
+    let found: (NSScrollView) -> Void
 
-    package func makeNSView(context: Context) -> FinderView {
+    func makeNSView(context: Context) -> FinderView {
         let view = FinderView()
         view.found = found
         return view
     }
 
-    package func updateNSView(_ nsView: FinderView, context: Context) {
+    func updateNSView(_ nsView: FinderView, context: Context) {
         nsView.found = found
     }
 
     /// Whatever it is offered: an AppKit view without an intrinsic size answers with its current frame,
     /// which would hold the list at its old width after a drag.
-    package func sizeThatFits(_ proposal: ProposedViewSize, nsView: FinderView, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: FinderView, context: Context) -> CGSize? {
         CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
     }
 
-    package final class FinderView: NSView {
-        package var found: ((NSScrollView) -> Void)?
+    final class FinderView: NSView {
+        var found: ((NSScrollView) -> Void)?
 
-        package override func viewDidMoveToWindow() {
+        override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if let scrollView = enclosingScrollView {
                 found?(scrollView)
@@ -1693,12 +1693,12 @@ package struct PRScrollViewFinder: NSViewRepresentable {
 
 extension PRListAnchor {
     /// The held row (the one a width change keeps in place) and its y in the viewport now.
-    package func heldRowLine() -> (id: String, line: String)? {
+    func heldRowLine() -> (id: String, line: String)? {
         guard let held, let frame = rowFrame(held.id) else { return nil }
         return (held.id, "\(held.id.prefix(16)) y=\(Int((frame.minY - offset).rounded()))")
     }
 
-    package func rowLine(_ id: String) -> String {
+    func rowLine(_ id: String) -> String {
         guard let frame = rowFrame(id) else { return "\(id.prefix(16)) not on screen" }
         return "\(id.prefix(16)) y=\(Int((frame.minY - offset).rounded()))"
     }

@@ -7,206 +7,206 @@ import SwiftUI
 
 // MARK: - Shapes
 
-package struct TimelinePRSummary: Decodable, Hashable {
-    package let ref: String
-    package let url: String
-    package let title: String
-    package let state: String
+struct TimelinePRSummary: Decodable, Hashable {
+    let ref: String
+    let url: String
+    let title: String
+    let state: String
 }
 
-package struct TimelineSessionDetail: Decodable {
-    package struct Prompt: Decodable, Identifiable {
-        package let index: Int
-        package let at: String?
-        package let text: String
-        package var id: Int { index }
+struct TimelineSessionDetail: Decodable {
+    struct Prompt: Decodable, Identifiable {
+        let index: Int
+        let at: String?
+        let text: String
+        var id: Int { index }
     }
 
-    package struct Reply: Decodable {
-        package let at: String?
-        package let text: String
+    struct Reply: Decodable {
+        let at: String?
+        let text: String
     }
 
-    package struct File: Decodable, Identifiable {
-        package let path: String
-        package let via: String
-        package let edits: Int
-        package let agents: Int
-        package var id: String { path }
+    struct File: Decodable, Identifiable {
+        let path: String
+        let via: String
+        let edits: Int
+        let agents: Int
+        var id: String { path }
     }
 
-    package struct Subagent: Decodable, Identifiable {
-        package let id: String
-        package let name: String?
-        package let description: String?
-        package let agentType: String?
-        package let state: String
-        package let lastAt: String
+    struct Subagent: Decodable, Identifiable {
+        let id: String
+        let name: String?
+        let description: String?
+        let agentType: String?
+        let state: String
+        let lastAt: String
     }
 
-    package struct Tokens: Decodable {
-        package let calls: Int
-        package let input: Int
-        package let cacheRead: Int
-        package let output: Int
+    struct Tokens: Decodable {
+        let calls: Int
+        let input: Int
+        let cacheRead: Int
+        let output: Int
     }
 
-    package let sessionId: String
-    package let provider: String
-    package let filePath: String?
-    package let since: String
-    package let until: String
-    package let turns: Int
-    package let prompts: [Prompt]
-    package let promptsTotal: Int
-    package let lastReply: Reply?
-    package let files: [File]
-    package let filesTotal: Int
-    package let subagents: [Subagent]
-    package let tokens: Tokens
-    package let costUsd: Double?
-    package let warnings: [String]
+    let sessionId: String
+    let provider: String
+    let filePath: String?
+    let since: String
+    let until: String
+    let turns: Int
+    let prompts: [Prompt]
+    let promptsTotal: Int
+    let lastReply: Reply?
+    let files: [File]
+    let filesTotal: Int
+    let subagents: [Subagent]
+    let tokens: Tokens
+    let costUsd: Double?
+    let warnings: [String]
 }
 
-package struct TimelineFileDiff: Decodable {
-    package let path: String
-    package let text: String
-    package let truncated: Bool
+struct TimelineFileDiff: Decodable {
+    let path: String
+    let text: String
+    let truncated: Bool
 }
 
-package struct TimelineCommitDetail: Decodable {
-    package struct File: Decodable, Identifiable {
-        package let path: String
-        package let status: String
-        package let added: Int
-        package let removed: Int
-        package let binary: Bool
-        package var id: String { path }
+struct TimelineCommitDetail: Decodable {
+    struct File: Decodable, Identifiable {
+        let path: String
+        let status: String
+        let added: Int
+        let removed: Int
+        let binary: Bool
+        var id: String { path }
     }
 
-    package let sha: String
-    package let shortSha: String
-    package let subject: String
-    package let body: String
-    package let author: String
-    package let email: String
-    package let at: String
-    package let files: [File]
-    package let branches: [String]
-    package let branchesTruncated: Bool
-    package let prs: [TimelinePRSummary]
-    package let diff: TimelineFileDiff?
+    let sha: String
+    let shortSha: String
+    let subject: String
+    let body: String
+    let author: String
+    let email: String
+    let at: String
+    let files: [File]
+    let branches: [String]
+    let branchesTruncated: Bool
+    let prs: [TimelinePRSummary]
+    let diff: TimelineFileDiff?
 }
 
-package struct TimelinePushDetail: Decodable {
-    package struct Commit: Decodable, Identifiable {
-        package let sha: String
-        package let shortSha: String
-        package let subject: String
-        package let at: String
-        package let author: String
-        package var id: String { sha }
+struct TimelinePushDetail: Decodable {
+    struct Commit: Decodable, Identifiable {
+        let sha: String
+        let shortSha: String
+        let subject: String
+        let at: String
+        let author: String
+        var id: String { sha }
     }
 
-    package struct Remote: Decodable {
-        package let kind: String?
-        package let web: String?
+    struct Remote: Decodable {
+        let kind: String?
+        let web: String?
     }
 
-    package let branch: String
-    package let from: String
-    package let to: String
-    package let newBranch: Bool
-    package let commits: [Commit]
-    package let truncated: Bool
-    package let remote: Remote?
-    package let pr: TimelinePRSummary?
+    let branch: String
+    let from: String
+    let to: String
+    let newBranch: Bool
+    let commits: [Commit]
+    let truncated: Bool
+    let remote: Remote?
+    let pr: TimelinePRSummary?
 }
 
-package struct TimelinePRDetail: Decodable {
-    package struct Summary: Decodable {
-        package struct Check: Decodable, Identifiable {
-            package let name: String
-            package let status: String?
-            package let url: String?
-            package var id: String { name + (url ?? "") }
+struct TimelinePRDetail: Decodable {
+    struct Summary: Decodable {
+        struct Check: Decodable, Identifiable {
+            let name: String
+            let status: String?
+            let url: String?
+            var id: String { name + (url ?? "") }
         }
 
-        package struct WebUrls: Decodable {
-            package let pr: String?
-            package let files: String?
-            package let commits: String?
-            package let checks: String?
+        struct WebUrls: Decodable {
+            let pr: String?
+            let files: String?
+            let commits: String?
+            let checks: String?
         }
 
-        package let ref: String
-        package let url: String
-        package let title: String
-        package let state: String
-        package let draft: Bool
-        package let author: String?
-        package let headBranch: String
-        package let baseBranch: String
-        package let additions: Int?
-        package let deletions: Int?
-        package let changedFiles: Int?
-        package let mergeable: String?
-        package let reviewDecision: String?
-        package let approvals: Int?
-        package let ci: String?
-        package let checks: [Check]
-        package let webUrls: WebUrls?
-        package let localWorktree: String?
-        package let repoRoot: String?
+        let ref: String
+        let url: String
+        let title: String
+        let state: String
+        let draft: Bool
+        let author: String?
+        let headBranch: String
+        let baseBranch: String
+        let additions: Int?
+        let deletions: Int?
+        let changedFiles: Int?
+        let mergeable: String?
+        let reviewDecision: String?
+        let approvals: Int?
+        let ci: String?
+        let checks: [Check]
+        let webUrls: WebUrls?
+        let localWorktree: String?
+        let repoRoot: String?
     }
 
-    package struct Threads: Decodable {
-        package struct New: Decodable, Identifiable {
-            package let id: String
-            package let threadId: String
-            package let path: String
-            package let line: Int
-            package let author: String
-            package let title: String
-            package let at: String
-            package let resolved: Bool
+    struct Threads: Decodable {
+        struct New: Decodable, Identifiable {
+            let id: String
+            let threadId: String
+            let path: String
+            let line: Int
+            let author: String
+            let title: String
+            let at: String
+            let resolved: Bool
         }
 
-        package let total: Int
-        package let open: Int
-        package let newSince: [New]
+        let total: Int
+        let open: Int
+        let newSince: [New]
     }
 
-    package let pr: Summary
-    package let threads: Threads
-    package let warnings: [String]
+    let pr: Summary
+    let threads: Threads
+    let warnings: [String]
 }
 
-package struct TimelineThreadDetail: Decodable {
-    package let pr: TimelinePRSummary
-    package let viewer: String?
-    package let thread: PRThread
-    package let fetched: String
+struct TimelineThreadDetail: Decodable {
+    let pr: TimelinePRSummary
+    let viewer: String?
+    let thread: PRThread
+    let fetched: String
 }
 
-package struct TimelineDecisionDetail: Decodable {
-    package struct Record: Decodable {
-        package let id: String
-        package let sessionId: String
-        package let number: Int
-        package let prompt: String
-        package let options: [String]
-        package let state: String
-        package let title: String?
-        package let proposal: String?
-        package let recommended: String?
-        package let reasoning: String?
-        package let answer: String?
-        package let option: String?
-        package let excerpt: String?
+struct TimelineDecisionDetail: Decodable {
+    struct Record: Decodable {
+        let id: String
+        let sessionId: String
+        let number: Int
+        let prompt: String
+        let options: [String]
+        let state: String
+        let title: String?
+        let proposal: String?
+        let recommended: String?
+        let reasoning: String?
+        let answer: String?
+        let option: String?
+        let excerpt: String?
     }
 
-    package let record: Record
+    let record: Record
 }
 
 private struct TimelineDetailError: Decodable, Error, CustomStringConvertible {
@@ -214,7 +214,7 @@ private struct TimelineDetailError: Decodable, Error, CustomStringConvertible {
     var description: String { error }
 }
 
-package enum TimelineDetail {
+enum TimelineDetail {
     case session(TimelineSessionDetail)
     case commit(TimelineCommitDetail)
     case push(TimelinePushDetail)
@@ -227,7 +227,7 @@ package enum TimelineDetail {
     }
 
     /// The CLI's JSON: one shape per `kind`; `{ "error": … }` on stdout when the verb failed.
-    package static func decode(_ data: Data) throws -> TimelineDetail {
+    static func decode(_ data: Data) throws -> TimelineDetail {
         let decoder = JSONDecoder()
         if let failure = try? decoder.decode(TimelineDetailError.self, from: data) {
             throw failure
@@ -244,7 +244,7 @@ package enum TimelineDetail {
     }
 
     /// Blocking: runs `tools` and decodes; call off the main thread.
-    package static func load(_ args: [String]) throws -> TimelineDetail {
+    static func load(_ args: [String]) throws -> TimelineDetail {
         let capture = try ToolsCLIRunner.capture(args)
         if capture.status != 0, let failure = try? JSONDecoder().decode(TimelineDetailError.self, from: capture.stdout) {
             throw failure
@@ -259,12 +259,12 @@ package enum TimelineDetail {
 /// What ⌘F searches in a folded-open row: one field per detail text the pane draws, under the keys
 /// the pane's `FindText`s use (Hub/HubPanelFind.swift). A closed row contributes nothing, so no
 /// match points at hidden text.
-package enum TimelineDetailFind {
-    package static func agentLabel(_ agent: TimelineSessionDetail.Subagent) -> String {
+enum TimelineDetailFind {
+    static func agentLabel(_ agent: TimelineSessionDetail.Subagent) -> String {
         [agent.name, agent.description ?? agent.agentType].compactMap { $0 }.joined(separator: ": ")
     }
 
-    package static func fields(_ detail: TimelineDetail) -> [PanelFindField] {
+    static func fields(_ detail: TimelineDetail) -> [PanelFindField] {
         switch detail {
         case .session(let session):
             var fields = session.prompts.map { PanelFindField("prompt.\($0.index)", $0.text) }
@@ -301,12 +301,12 @@ package enum TimelineDetailFind {
 
 // MARK: - Views
 
-package struct TimelineDetailView: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var timeline: HubTimelineModel
-    package let event: TimelineEvent
+struct TimelineDetailView: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var timeline: HubTimelineModel
+    let event: TimelineEvent
 
-    package var body: some View {
+    var body: some View {
         Group {
             if let detail = timeline.details[event.id] {
                 content(detail)
@@ -373,13 +373,13 @@ private enum DetailFormat {
     }
 }
 
-package struct TimelineSessionDetailView: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var timeline: HubTimelineModel
-    package let event: TimelineEvent
-    package let detail: TimelineSessionDetail
+struct TimelineSessionDetailView: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var timeline: HubTimelineModel
+    let event: TimelineEvent
+    let detail: TimelineSessionDetail
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             DetailLine(kicker: "Period") {
                 Text(verbatim: "\(detail.turns) turns · \(detail.promptsTotal) prompts · \(detail.filesTotal) files · \(detail.subagents.count) sub-agents")
@@ -482,13 +482,13 @@ package struct TimelineSessionDetailView: View {
     }
 }
 
-package struct TimelineCommitDetailView: View {
-    @ObservedObject package var model: HubModel
-    @ObservedObject package var timeline: HubTimelineModel
-    package let event: TimelineEvent
-    package let detail: TimelineCommitDetail
+struct TimelineCommitDetailView: View {
+    @ObservedObject var model: HubModel
+    @ObservedObject var timeline: HubTimelineModel
+    let event: TimelineEvent
+    let detail: TimelineCommitDetail
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             DetailLine(kicker: "Commit") {
                 CopyChip(label: detail.shortSha, value: detail.sha, tooltip: "Copy \(detail.sha)")
@@ -600,12 +600,12 @@ package struct TimelineCommitDetailView: View {
     }
 }
 
-package struct TimelinePushDetailView: View {
-    @ObservedObject package var model: HubModel
-    package let event: TimelineEvent
-    package let detail: TimelinePushDetail
+struct TimelinePushDetailView: View {
+    @ObservedObject var model: HubModel
+    let event: TimelineEvent
+    let detail: TimelinePushDetail
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             DetailLine(kicker: "Push") {
                 Text(verbatim: detail.newBranch ? "new branch \(detail.branch) at \(detail.to.prefix(8))" : "\(detail.branch): \(detail.from.prefix(8))..\(detail.to.prefix(8))")
@@ -670,12 +670,12 @@ package struct TimelinePushDetailView: View {
     }
 }
 
-package struct TimelinePRDetailView: View {
-    @ObservedObject package var model: HubModel
-    package let event: TimelineEvent
-    package let detail: TimelinePRDetail
+struct TimelinePRDetailView: View {
+    @ObservedObject var model: HubModel
+    let event: TimelineEvent
+    let detail: TimelinePRDetail
 
-    package var body: some View {
+    var body: some View {
         let pr = detail.pr
         VStack(alignment: .leading, spacing: 6) {
             DetailLine(kicker: "PR") {
@@ -763,12 +763,12 @@ package struct TimelinePRDetailView: View {
     }
 }
 
-package struct TimelineThreadDetailView: View {
-    @ObservedObject package var model: HubModel
-    package let event: TimelineEvent
-    package let detail: TimelineThreadDetail
+struct TimelineThreadDetailView: View {
+    @ObservedObject var model: HubModel
+    let event: TimelineEvent
+    let detail: TimelineThreadDetail
 
-    package var body: some View {
+    var body: some View {
         let forge = event.repo.flatMap { RepoFactsStore.shared.facts(for: $0)?.forge }
         VStack(alignment: .leading, spacing: 6) {
             DetailLine(kicker: "Thread") {
@@ -813,10 +813,10 @@ package struct TimelineThreadDetailView: View {
     }
 }
 
-package struct TimelineDecisionDetailView: View {
-    package let detail: TimelineDecisionDetail
+struct TimelineDecisionDetailView: View {
+    let detail: TimelineDecisionDetail
 
-    package var body: some View {
+    var body: some View {
         let record = detail.record
         VStack(alignment: .leading, spacing: 6) {
             DetailLine(kicker: "Question") {

@@ -5,18 +5,18 @@ import SwiftUI
 // thread; hits stream in batches, capped at `maxHits`; a new query stops the running search. A hit
 // opens in the Changes pane when that file has changes there, otherwise in Cursor at its line.
 
-package struct HubFindHit: Identifiable, Hashable {
-    package let path: String
-    package let line: Int
-    package let text: String
-    package var id: String { "\(path):\(line)" }
+struct HubFindHit: Identifiable, Hashable {
+    let path: String
+    let line: Int
+    let text: String
+    var id: String { "\(path):\(line)" }
 }
 
 @MainActor
-package final class HubFindModel: ObservableObject {
+final class HubFindModel: ObservableObject {
     package static let maxHits = 1000
 
-    @Published package var query = ""
+    @Published var query = ""
     @Published package private(set) var hits: [HubFindHit] = []
     @Published package private(set) var running = false
     @Published package private(set) var truncated = false
@@ -30,7 +30,7 @@ package final class HubFindModel: ObservableObject {
     /// rg from Homebrew or /usr/local; nil sends the search through `grep -rn` instead.
     private static let rg: String? = ["/opt/homebrew/bin/rg", "/usr/local/bin/rg", "/usr/bin/rg"].first { FileManager.default.isExecutableFile(atPath: $0) }
 
-    package func search(roots: [String]) {
+    func search(roots: [String]) {
         stop()
         generation += 1
         let token = generation
@@ -121,7 +121,7 @@ package final class HubFindModel: ObservableObject {
         }
     }
 
-    package func stop() {
+    func stop() {
         if let process, process.isRunning {
             process.terminate()
         }
@@ -131,7 +131,7 @@ package final class HubFindModel: ObservableObject {
 
     /// Parses whole lines off the front of `buffer` until `room` hits are found; the unread rest (and a
     /// partial last line) stays in `buffer`. One removal per call, not one per line.
-    package nonisolated static func drain(_ buffer: inout Data, room: Int) -> [HubFindHit] {
+    nonisolated static func drain(_ buffer: inout Data, room: Int) -> [HubFindHit] {
         var hits: [HubFindHit] = []
         var start = buffer.startIndex
         while hits.count < room, let newline = buffer[start...].firstIndex(of: 0x0A) {
@@ -146,20 +146,20 @@ package final class HubFindModel: ObservableObject {
     }
 
     /// `path:line:text` (rg --no-heading, grep -n). A path with a colon is rare enough to accept.
-    package nonisolated static func parse(_ line: String) -> HubFindHit? {
+    nonisolated static func parse(_ line: String) -> HubFindHit? {
         let parts = line.split(separator: ":", maxSplits: 2, omittingEmptySubsequences: false)
         guard parts.count == 3, let number = Int(parts[1]) else { return nil }
         return HubFindHit(path: String(parts[0]), line: number, text: String(parts[2]).trimmingCharacters(in: .whitespaces))
     }
 }
 
-package struct HubFindPanel: View {
-    @ObservedObject package var hub: HubModel
-    package let roots: [String]
+struct HubFindPanel: View {
+    @ObservedObject var hub: HubModel
+    let roots: [String]
     @StateObject private var find = HubFindModel()
     @FocusState private var focused: Bool
 
-    package var body: some View {
+    var body: some View {
         ZStack(alignment: .top) {
             Color.black.opacity(0.45)
                 .ignoresSafeArea()
