@@ -49,6 +49,16 @@ enum AppParts {
         return false
     }
 
+    /// A part's face reached from a click (a `genesis-tools://hub` link), where nobody reads stderr: the same alert as
+    /// `canLaunch`, then the stderr line and exit 69.
+    @MainActor
+    static func alertMissing(face: String) -> Never {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        NSApp.activate(ignoringOtherApps: true)
+        _ = canLaunch(face: face)
+        missing(part(forFace: face) ?? face, face: face)
+    }
+
     /// A face of a part this build does not have: says how to add it, exits 69 (EX_UNAVAILABLE).
     static func missing(_ part: String, face: String) -> Never {
         let line = "GenesisTools was built without the \(part) part, which serves \(face). Add it with: tools macos permissions build --add-part \(part)\n"

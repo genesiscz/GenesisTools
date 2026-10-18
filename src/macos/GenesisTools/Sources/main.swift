@@ -84,6 +84,10 @@ if wantsWindow {
 if firstArgument.contains("://"), !firstArgument.hasPrefix("-") {
     // `genesis-tools://hub?…` opens a place in the hub (the running one takes it); every other link is routed.
     if let hubArgs = HubRequest.arguments(fromLink: firstArgument) {
+        // A link click starts this process in the background: without the hub, an alert names the command.
+        if !AppParts.hasHub {
+            MainActor.assumeIsolated { AppParts.alertMissing(face: "--hub") }
+        }
         runHub(hubArgs)
     }
     runBrowserLink(firstArgument)
