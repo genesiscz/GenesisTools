@@ -124,11 +124,14 @@ export function parsePartsFlag(value: string): string[] {
         .map((word) => word.trim())
         .filter(Boolean);
 
+    // Every other word is checked first, so `all,nope` is refused like `hub,nope` instead of building everything.
+    const parts = normalizeParts(words.filter((word) => word !== "host" && word !== "all"));
+
     if (words.includes("all")) {
         return [...ALL_PART_IDS].sort();
     }
 
-    return normalizeParts(words.filter((word) => word !== "host"));
+    return parts;
 }
 
 export function bundleStepsFor(parts: readonly string[]): Set<AppBundleStep> {
