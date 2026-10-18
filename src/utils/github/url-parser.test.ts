@@ -230,15 +230,15 @@ describe("detectRepoFromGit", () => {
 
     test("keeps the dots of a repository name, with and without .git, over SSH and HTTPS", async () => {
         for (const stdout of [
-            "git@github.com:vercel/next.js.git",
-            "git@github.com:vercel/next.js",
-            "https://github.com/vercel/next.js.git",
-            "https://github.com/vercel/next.js",
-            "https://github.com/vercel/next.js.git\n",
+            "git@github.com:acme/widgets.js.git",
+            "git@github.com:acme/widgets.js",
+            "https://github.com/acme/widgets.js.git",
+            "https://github.com/acme/widgets.js",
+            "https://github.com/acme/widgets.js.git\n",
         ]) {
             remoteAnswer = { success: true, stdout };
 
-            expect(await detectRepoFromGit()).toBe("vercel/next.js");
+            expect(await detectRepoFromGit()).toBe("acme/widgets.js");
         }
 
         remoteAnswer = { success: true, stdout: "https://github.com/acme/acme.github.io.git" };
