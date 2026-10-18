@@ -67,8 +67,17 @@ export async function suggest(options: SuggestOptions): Promise<Candidate[]> {
     const context = buildContext(options);
     const base = options.suggestors?.length
         ? options.suggestors.map(suggestorById)
-        : SUGGESTORS.filter((suggestor) => suggestor.defaultOn && !(options.offline && suggestor.online));
-    const chosen = [...new Set([...base, ...(options.extraSuggestors ?? []).map(suggestorById)])];
+        : SUGGESTORS.filter((suggestor) => suggestor.defaultOn);
+    const requested = [...new Set([...base, ...(options.extraSuggestors ?? []).map(suggestorById)])];
+    // --offline wins over --suggestors and --ai: nothing that needs the network runs, and the seed stays local.
+    const chosen = options.offline ? requested.filter((suggestor) => !suggestor.online) : requested;
+    const skipped = requested.filter((suggestor) => !chosen.includes(suggestor));
+    if (skipped.length) {
+        logger.warn(
+            { skipped: skipped.map((suggestor) => suggestor.id) },
+            "domains: --offline skips online suggestors"
+        );
+    }
 
     const batches = await Promise.all(
         chosen.map(async (suggestor) => {
