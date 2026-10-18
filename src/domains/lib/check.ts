@@ -5,6 +5,7 @@ import { dnsProvider } from "@app/domains/lib/providers/dns";
 import { rdapProvider } from "@app/domains/lib/providers/rdap";
 import { PROVIDERS, providerById } from "@app/domains/lib/providers/registry";
 import type { DomainProvider } from "@app/domains/lib/providers/types";
+import { whoisProvider } from "@app/domains/lib/providers/whois";
 import type { CheckResult, ParsedDomain, ProviderVerdict } from "@app/domains/lib/types";
 import { logger } from "@genesiscz/utils/logger";
 import pLimit from "p-limit";
@@ -102,7 +103,7 @@ type VerdictMap = Map<string, ProviderVerdict[]>;
  * 1. DNS for every name (a delegated name is taken; no API spent).
  * 2. Batch-capable priced providers (Vercel: 200 names per call, with the premium flag).
  * 3. Per-name providers (RDAP, then WHOIS) for whatever is still undecided.
- * 4. With `details`, RDAP for taken names, for registrar and expiry.
+ * 4. With `details`, RDAP (or WHOIS where the TLD has no RDAP) for taken names, for registrar and expiry.
  */
 async function smartStages(domains: ParsedDomain[], options: CheckOptions): Promise<VerdictMap> {
     const limit = pLimit(options.concurrency ?? 12);
@@ -152,7 +153,11 @@ async function smartStages(domains: ParsedDomain[], options: CheckOptions): Prom
             return list.some((v) => v.status === "taken") && !list.some((v) => v.expiresAt);
         });
         await Promise.all(
-            needsDetails.map((domain) => limit(async () => push(domain.domain, await ask(rdapProvider, domain))))
+            needsDetails.map((domain) =>
+                limit(async () =>
+                    push(domain.domain, (await ask(rdapProvider, domain)) ?? (await ask(whoisProvider, domain)))
+                )
+            )
         );
     }
 
