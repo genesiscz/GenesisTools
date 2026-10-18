@@ -22,12 +22,12 @@ package enum FeatureSettingsPlugins {
 
 /// The window and its own pages (General, Background, About); the host the plug-ins install into.
 @MainActor
-package final class FeatureSettingsShell: FeatureSettingsPluginHost {
-    package let mode: FeatureSettingsMode
-    package let defaults: UserDefaults
+final class FeatureSettingsShell: FeatureSettingsPluginHost {
+    let mode: FeatureSettingsMode
+    let defaults: UserDefaults
     /// The live window's shared instance; a snapshot's own, over `defaults`, so a plug-in that migrates appearance
     /// keys (Clicky, the widget) shows the result on every page and stores nothing.
-    package let appearance: NativeSettingsAppearance
+    let appearance: NativeSettingsAppearance
     /// A snapshot keeps no window frame and no selected page either.
     private lazy var window = FeatureSettingsWindowController(
         sections: [FeatureSettingsPages.general, DaemonSettingsPages.section()], defaults: defaults,
@@ -54,11 +54,11 @@ package final class FeatureSettingsShell: FeatureSettingsPluginHost {
     var ready: Bool { plugins.allSatisfy(\.settingsReady) }
 
     @discardableResult
-    package func register(section: NativeSettingsSection) -> Bool { window.register(section: section) }
+    func register(section: NativeSettingsSection) -> Bool { window.register(section: section) }
 
-    package func addAboutInfo(_ line: String) { aboutInfo.append(line) }
+    func addAboutInfo(_ line: String) { aboutInfo.append(line) }
 
-    package func showSettings(pageID: String?) { window.show(pageID: pageID) }
+    func showSettings(pageID: String?) { window.show(pageID: pageID) }
 
     func close() { window.close() }
 

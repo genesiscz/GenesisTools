@@ -8,33 +8,33 @@ import SwiftUI
 // write goes through `tools daemon config set <task> … --json`, so the running daemon reads it on its next tick and
 // it survives a daemon restart. Nothing here writes the config file itself.
 
-package struct DaemonTaskConfig: Decodable, Equatable, Identifiable {
-    package struct MissedRun: Decodable, Equatable {
-        package let mode: String
-        package let times: [String]?
+struct DaemonTaskConfig: Decodable, Equatable, Identifiable {
+    struct MissedRun: Decodable, Equatable {
+        let mode: String
+        let times: [String]?
     }
 
-    package let name: String
-    package let command: String
-    package let every: String
-    package let enabled: Bool
-    package let retries: Int
-    package let timeoutMs: Int
+    let name: String
+    let command: String
+    let every: String
+    let enabled: Bool
+    let retries: Int
+    let timeoutMs: Int
     /// "on", "off" or "failure" (the CLI prints true, false or "failure").
-    package let notify: String
-    package let priority: String
-    package let missedRun: MissedRun
-    package let schedule: String
-    package let description: String?
-    package var id: String { name }
+    let notify: String
+    let priority: String
+    let missedRun: MissedRun
+    let schedule: String
+    let description: String?
+    var id: String { name }
     /// "every day at 03:00": only these have missed runs.
-    package var isTimeOfDay: Bool { every.contains(" at ") }
+    var isTimeOfDay: Bool { every.contains(" at ") }
 
     private enum CodingKeys: String, CodingKey {
         case name, command, every, enabled, retries, timeoutMs, notify, priority, missedRun, schedule, description
     }
 
-    package init(from decoder: Decoder) throws {
+    init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
         command = try c.decode(String.self, forKey: .command)
@@ -54,84 +54,84 @@ package struct DaemonTaskConfig: Decodable, Equatable, Identifiable {
     }
 }
 
-package struct DaemonStatusPayload: Decodable, Equatable {
-    package struct Daemon: Decodable, Equatable {
-        package let installed: Bool
-        package let running: Bool
-        package let pid: Int?
-        package let foregroundPid: Int?
+struct DaemonStatusPayload: Decodable, Equatable {
+    struct Daemon: Decodable, Equatable {
+        let installed: Bool
+        let running: Bool
+        let pid: Int?
+        let foregroundPid: Int?
     }
 
-    package let daemon: Daemon
-    package let configPath: String
-    package let logsBaseDir: String
-    package var tasks: [DaemonTaskConfig]
+    let daemon: Daemon
+    let configPath: String
+    let logsBaseDir: String
+    var tasks: [DaemonTaskConfig]
 }
 
-package struct DaemonRun: Decodable, Equatable, Identifiable {
-    package let task: String
-    package let runId: String
-    package let attempt: Int
-    package let startedAt: String
+struct DaemonRun: Decodable, Equatable, Identifiable {
+    let task: String
+    let runId: String
+    let attempt: Int
+    let startedAt: String
     /// ok, failed, timedOut, killed or unfinished (no exit record yet: running now, or the daemon died).
-    package let status: String
-    package let exitCode: Int?
-    package let durationMs: Double?
-    package let logFile: String
-    package let reason: String?
-    package var id: String { runId }
+    let status: String
+    let exitCode: Int?
+    let durationMs: Double?
+    let logFile: String
+    let reason: String?
+    var id: String { runId }
 }
 
-package struct DaemonTaskStats: Decodable, Equatable {
-    package struct Bucket: Decodable, Equatable {
-        package let label: String
-        package let count: Int
+struct DaemonTaskStats: Decodable, Equatable {
+    struct Bucket: Decodable, Equatable {
+        let label: String
+        let count: Int
     }
 
-    package let task: String
-    package let runs: Int
-    package let ok: Int
-    package let failed: Int
-    package let timedOut: Int
-    package let killed: Int
-    package let unfinished: Int
-    package let failureRate: Double?
-    package let p50Ms: Double?
-    package let p90Ms: Double?
-    package let maxMs: Double?
-    package let histogram: [Bucket]
-    package let lastRun: DaemonRun?
-    package let recentRuns: [DaemonRun]
+    let task: String
+    let runs: Int
+    let ok: Int
+    let failed: Int
+    let timedOut: Int
+    let killed: Int
+    let unfinished: Int
+    let failureRate: Double?
+    let p50Ms: Double?
+    let p90Ms: Double?
+    let maxMs: Double?
+    let histogram: [Bucket]
+    let lastRun: DaemonRun?
+    let recentRuns: [DaemonRun]
 }
 
-package struct DaemonStatsPayload: Decodable, Equatable {
-    package struct Totals: Decodable, Equatable {
-        package let runs: Int
-        package let failed: Int
-        package let timedOut: Int
-        package let killed: Int
-        package let unfinished: Int
-        package let failureRate: Double?
+struct DaemonStatsPayload: Decodable, Equatable {
+    struct Totals: Decodable, Equatable {
+        let runs: Int
+        let failed: Int
+        let timedOut: Int
+        let killed: Int
+        let unfinished: Int
+        let failureRate: Double?
     }
 
-    package let version: Int
-    package let totals: Totals
-    package let tasks: [DaemonTaskStats]
+    let version: Int
+    let totals: Totals
+    let tasks: [DaemonTaskStats]
 }
 
-package struct DaemonRunOutput: Decodable, Equatable {
-    package struct Line: Decodable, Equatable {
-        package let type: String
-        package let ts: String?
-        package let data: String?
+struct DaemonRunOutput: Decodable, Equatable {
+    struct Line: Decodable, Equatable {
+        let type: String
+        let ts: String?
+        let data: String?
     }
 
-    package let lines: [Line]
+    let lines: [Line]
 }
 
 /// The daemon's numbers in the words `tools daemon stats` prints (src/utils/format.ts `formatDuration`, tiered).
-package enum DaemonFormat {
-    package static func duration(_ ms: Double?) -> String {
+enum DaemonFormat {
+    static func duration(_ ms: Double?) -> String {
         guard let ms else { return "—" }
         if ms < 1000 { return "\(Int(ms.rounded()))ms" }
         if ms < 60_000 { return String(format: "%.1fs", ms / 1000) }
@@ -139,12 +139,12 @@ package enum DaemonFormat {
         return "\(Int(ms / 3_600_000))h \(Int(ms.truncatingRemainder(dividingBy: 3_600_000) / 60_000))m"
     }
 
-    package static func percent(_ rate: Double?) -> String {
+    static func percent(_ rate: Double?) -> String {
         guard let rate else { return "—" }
         return String(format: "%.1f%%", rate * 100)
     }
 
-    package static func status(_ status: String) -> (label: String, color: Color) {
+    static func status(_ status: String) -> (label: String, color: Color) {
         switch status {
         case "ok": return ("ok", .green)
         case "failed": return ("failed", .red)
@@ -156,16 +156,16 @@ package enum DaemonFormat {
 }
 
 @MainActor
-package final class DaemonSettingsStore: ObservableObject {
-    package static let shared = DaemonSettingsStore()
+final class DaemonSettingsStore: ObservableObject {
+    static let shared = DaemonSettingsStore()
 
     @Published package private(set) var status: DaemonStatusPayload?
     @Published package private(set) var stats: DaemonStatsPayload?
     @Published package private(set) var loading = false
     @Published package private(set) var runningNow: Set<String> = []
     @Published package private(set) var outputs: [String: DaemonRunOutput] = [:]
-    @Published package var message: String?
-    @Published package var messageIsError = false
+    @Published var message: String?
+    @Published var messageIsError = false
     /// Bumped by every write; a load that started before a write does not replace the tasks the write returned.
     private var writeGeneration = 0
     private var loadGeneration = 0
@@ -198,7 +198,7 @@ package final class DaemonSettingsStore: ObservableObject {
         return lastLine.isEmpty ? "tools exited \(status)" : lastLine
     }
 
-    package func load() {
+    func load() {
         loadGeneration += 1
         let generation = loadGeneration
         let writesAtStart = writeGeneration
@@ -233,13 +233,13 @@ package final class DaemonSettingsStore: ObservableObject {
         }
     }
 
-    package func stats(for task: String) -> DaemonTaskStats? {
+    func stats(for task: String) -> DaemonTaskStats? {
         stats?.tasks.first { $0.task == task }
     }
 
     /// One `tools daemon config set <task> <flags> --json`. The switch moves at once; the CLI's answer (the stored
     /// task) replaces it, and a refused change puts the old value back and says why.
-    package func set(_ task: DaemonTaskConfig, _ flags: [String], optimistic: ((inout DaemonTaskConfig) -> Void)? = nil) {
+    func set(_ task: DaemonTaskConfig, _ flags: [String], optimistic: ((inout DaemonTaskConfig) -> Void)? = nil) {
         writeGeneration += 1
         let before = status
         if let optimistic, let index = status?.tasks.firstIndex(where: { $0.name == task.name }) {
@@ -261,7 +261,7 @@ package final class DaemonSettingsStore: ObservableObject {
         }
     }
 
-    package func runNow(_ task: DaemonTaskConfig) {
+    func runNow(_ task: DaemonTaskConfig) {
         guard !runningNow.contains(task.name) else { return }
         runningNow.insert(task.name)
         show("Running \(task.name) now…", error: false)
@@ -279,7 +279,7 @@ package final class DaemonSettingsStore: ObservableObject {
         }
     }
 
-    package func loadOutput(_ run: DaemonRun) {
+    func loadOutput(_ run: DaemonRun) {
         guard outputs[run.runId] == nil else { return }
         Task {
             switch await Self.cli(["daemon", "stats", "--view", "run", "--run", run.runId, "--task", run.task, "--json"]) {
@@ -301,16 +301,16 @@ package final class DaemonSettingsStore: ObservableObject {
     }
 }
 
-package struct DaemonSettingsError: Error, CustomStringConvertible {
-    package let text: String
-    package var description: String { text }
+struct DaemonSettingsError: Error, CustomStringConvertible {
+    let text: String
+    var description: String { text }
 }
 
 @MainActor
-package enum DaemonSettingsPages {
-    package static let pageID = "daemon"
+enum DaemonSettingsPages {
+    static let pageID = "daemon"
 
-    package static func section() -> NativeSettingsSection {
+    static func section() -> NativeSettingsSection {
         NativeSettingsSection(
             id: "background", title: "Background",
             pages: [
@@ -325,10 +325,10 @@ package enum DaemonSettingsPages {
 }
 
 @MainActor
-package struct DaemonSettingsView: View {
-    @ObservedObject package var store: DaemonSettingsStore
+struct DaemonSettingsView: View {
+    @ObservedObject var store: DaemonSettingsStore
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             overview
             if let message = store.message {
@@ -504,10 +504,10 @@ private struct DaemonHistogram: View {
     }
 }
 
-package enum DaemonMissedRun {
-    package static let modes = ["asap", "on-wake", "retry-at", "skip"]
+enum DaemonMissedRun {
+    static let modes = ["asap", "on-wake", "retry-at", "skip"]
 
-    package static func title(_ mode: String) -> String {
+    static func title(_ mode: String) -> String {
         switch mode {
         case "on-wake": return "At the first full wake"
         case "retry-at": return "At set times"
@@ -516,7 +516,7 @@ package enum DaemonMissedRun {
         }
     }
 
-    package static func detail(_ mode: String) -> String {
+    static func detail(_ mode: String) -> String {
         switch mode {
         case "on-wake": return "Waits until the Mac is fully awake (not a dark wake), then runs at low priority."
         case "retry-at": return "Runs at the first of these times still ahead today; a failed run tries the next one."
@@ -760,7 +760,7 @@ private struct DaemonRunList: View {
 
 extension DaemonTaskConfig {
     /// A copy with one field changed, for the optimistic state while `config set` runs.
-    package func with(
+    func with(
         enabled: Bool? = nil, timeoutMs: Int? = nil, priority: String? = nil, notify: String? = nil, retries: Int? = nil
     ) -> DaemonTaskConfig {
         DaemonTaskConfig(
