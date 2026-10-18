@@ -5,20 +5,32 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { PROFILER_SCOPE_NAMES } from "@genesiscz/utils/profile";
 import { stripAnsi } from "@genesiscz/utils/string";
+import { captureOut } from "@genesiscz/utils/test/capture-out";
 import { parsePositive, resolveEntries } from "../commands/imports";
 import { renderSymbol } from "../commands/skeleton";
 import { computeTotals } from "./analyze";
 import { attribute, isBarrel, nativeSignals } from "./attribute";
-import { findBarrelWaste } from "./barrels";
+import { type BarrelWaste, findBarrelWaste } from "./barrels";
 import { collectFiles } from "./collect";
-import { findCycles } from "./cycles";
+import { findCycles, type ImportCycle } from "./cycles";
 import { buildGraph, isLoadTimeEdge, isMeasuredEdge, labelFor, packageNameOf, postOrder, reachableFrom } from "./graph";
-import { findLazyCandidates } from "./lazy";
+import { findLazyCandidates, type LazyCandidate } from "./lazy";
 import type { WorkerSample } from "./measure";
 import { parseModule } from "./parse";
 import { fanInOf, packByBudget, rankFiles } from "./rank";
+import { fmtMs, renderAnalysis, renderBarrels, renderCycles, renderLazy } from "./render";
 import { exportedOnly, extractSkeleton, parseSource, type SkeletonSymbol } from "./skeleton";
 import { collectTypeNames, expandTypes } from "./type-expand";
+import type {
+    AnalysisResult,
+    AnalyzedModule,
+    Finding,
+    GraphEdge,
+    GraphNode,
+    ImportGraph,
+    ImportSite,
+    NodeKind,
+} from "./types";
 
 let root: string;
 
@@ -1110,5 +1122,599 @@ describe("fanInOf", () => {
         expect(fanIn.get("/r/c.ts")).toBe(2);
         expect(fanIn.get("/r/a.ts")).toBeUndefined();
         expect(fanIn.has("/elsewhere/x.ts")).toBe(false);
+    });
+});
+
+function graphNode(label: string, kind: NodeKind = "file"): GraphNode {
+    return { id: `/p/${label}`, path: `/p/${label}`, label, kind };
+}
+
+function graphEdge(from: GraphNode, to: GraphNode, line: number, site: Partial<ImportSite> = {}): GraphEdge {
+    return {
+        from: from.id,
+        to: to.id,
+        site: { specifier: to.label, kind: "static", typeOnly: false, names: [], locals: [], line, ...site },
+    };
+}
+
+function graphOf(options: {
+    nodes: GraphNode[];
+    edges: GraphEdge[];
+    includeDynamic?: boolean;
+    unresolved?: ImportGraph["unresolved"];
+}): ImportGraph {
+    const edges = new Map<string, GraphEdge[]>();
+
+    for (const edge of options.edges) {
+        edges.set(edge.from, [...(edges.get(edge.from) ?? []), edge]);
+    }
+
+    return {
+        root: "/p",
+        entry: options.nodes[0].id,
+        includeDynamic: options.includeDynamic ?? false,
+        nodes: new Map(options.nodes.map((node) => [node.id, node])),
+        edges,
+        unresolved: options.unresolved ?? [],
+    };
+}
+
+function analyzed(label: string, overrides: Partial<AnalyzedModule> = {}): AnalyzedModule {
+    return {
+        id: `/p/${label}`,
+        label,
+        kind: "file",
+        bytes: 100,
+        selfMs: 1,
+        totalMs: 1,
+        descendants: 0,
+        measured: true,
+        findings: [],
+        ...overrides,
+    };
+}
+
+function analysisOf(modules: AnalyzedModule[], overrides: Partial<AnalysisResult> = {}): AnalysisResult {
+    return {
+        entry: modules[0].label,
+        root: "/p",
+        runs: 3,
+        coldMs: 100,
+        sumSelfMs: 95,
+        modules,
+        edges: [],
+        unresolved: [],
+        workerStderr: "",
+        timedOut: false,
+        unmeasured: 0,
+        planned: modules.length,
+        ...overrides,
+    };
+}
+
+function findingOf(
+    kind: Finding["kind"],
+    severity: Finding["severity"],
+    summary: string,
+    details: string[] = []
+): Finding {
+    return { kind, severity, summary, details };
+}
+
+const RENDER_OPTIONS = { minMs: 0.5, depth: 4, top: 15, slowMs: 5 };
+
+/**
+ * entry.ts imports a.ts, b.ts, pkg:zod and tiny.ts; a.ts and b.ts both import c.ts, so c.ts is the shared
+ * subtree. `moduleOverrides` changes one module without rebuilding the graph.
+ */
+function treeScenario(moduleOverrides: Record<string, Partial<AnalyzedModule>> = {}) {
+    const entry = graphNode("entry.ts");
+    const a = graphNode("a.ts");
+    const b = graphNode("b.ts");
+    const c = graphNode("c.ts");
+    const zod = graphNode("pkg:zod", "package");
+    const tiny = graphNode("tiny.ts");
+    const graph = graphOf({
+        nodes: [entry, a, b, c, zod, tiny],
+        edges: [
+            graphEdge(entry, a, 1),
+            graphEdge(entry, b, 2),
+            graphEdge(entry, zod, 3),
+            graphEdge(entry, tiny, 4),
+            graphEdge(a, c, 1),
+            graphEdge(b, c, 1),
+        ],
+    });
+    const base: Record<string, Partial<AnalyzedModule>> = {
+        "entry.ts": { selfMs: 5, totalMs: 100, descendants: 5 },
+        "a.ts": { selfMs: 20, totalMs: 60, descendants: 1 },
+        "b.ts": { selfMs: 10, totalMs: 40, descendants: 1 },
+        "c.ts": { selfMs: 15, totalMs: 15 },
+        "pkg:zod": { selfMs: 8, totalMs: 8, kind: "package" },
+        "tiny.ts": { selfMs: 0.1, totalMs: 0.1 },
+    };
+    const modules = Object.entries(base).map(([label, values]) =>
+        analyzed(label, { ...values, ...moduleOverrides[label] })
+    );
+
+    return { graph, modules, result: analysisOf(modules, { sumSelfMs: 58.1 }) };
+}
+
+function treePart(text: string): string {
+    return text.slice(text.indexOf("Import tree"), text.indexOf("Heaviest modules"));
+}
+
+describe("fmtMs", () => {
+    it("keeps two decimals under 10 ms, one decimal under 100 ms and none above", () => {
+        expect(fmtMs(0.5)).toBe("0.50 ms");
+        expect(fmtMs(9.994)).toBe("9.99 ms");
+        expect(fmtMs(10)).toBe("10.0 ms");
+        expect(fmtMs(99.94)).toBe("99.9 ms");
+        expect(fmtMs(100)).toBe("100 ms");
+        expect(fmtMs(250.4)).toBe("250 ms");
+    });
+});
+
+describe("renderAnalysis", () => {
+    it("prints the cold import, the self-time sum, the module count and the run count under the entry", () => {
+        const { graph, result } = treeScenario();
+        const text = captureOut(() => renderAnalysis(result, { ...RENDER_OPTIONS, graph }));
+
+        expect(text).toContain("tools ts imports analyze");
+        expect(text).toContain("entry.ts");
+        expect(text).toContain(
+            "  cold import 100 ms   sum of self 58.1 ms   modules 6 (1 packages)   runs 3, min kept"
+        );
+    });
+
+    it("draws the tree hottest child first and names a subtree it already expanded instead of repeating it", () => {
+        const { graph, result } = treeScenario();
+        const text = captureOut(() => renderAnalysis(result, { ...RENDER_OPTIONS, graph }));
+
+        expect(treePart(text)).toMatch(
+            /entry\.ts\s+total\s+100 ms\s+self\s+5\.00 ms\n├─ a\.ts\s+total\s+60\.0 ms\s+self\s+20\.0 ms\n│ {2}└─ c\.ts\s+total\s+15\.0 ms\s+self\s+15\.0 ms\n├─ b\.ts\s+total\s+40\.0 ms\s+self\s+10\.0 ms\n│ {2}└─ \(shared, shown above: c\.ts\)\n└─ pkg:zod\s+total\s+8\.00 ms\s+self\s+8\.00 ms\n/
+        );
+    });
+
+    it("hides edges under --min-ms and says how many, and hides none at 0", () => {
+        const { graph, result } = treeScenario();
+        const hidden = captureOut(() => renderAnalysis(result, { ...RENDER_OPTIONS, graph }));
+        const all = captureOut(() => renderAnalysis(result, { ...RENDER_OPTIONS, minMs: 0, graph }));
+
+        expect(treePart(hidden)).not.toContain("tiny.ts");
+        expect(hidden).toContain("1 edges below 0.50 ms hidden (--min-ms 0 shows all)");
+        expect(treePart(all)).toContain("tiny.ts");
+        expect(all).not.toContain("hidden (--min-ms 0 shows all)");
+    });
+
+    it("stops the tree at --depth", () => {
+        const { graph, result } = treeScenario();
+        const text = captureOut(() => renderAnalysis(result, { ...RENDER_OPTIONS, depth: 1, graph }));
+        const tree = treePart(text);
+
+        expect(tree).toContain("├─ a.ts");
+        expect(tree).toContain("├─ b.ts");
+        expect(tree).not.toContain("c.ts");
+    });
+
+    it("prints the tree of a run that measured no time at all", () => {
+        const { graph, modules } = treeScenario();
+        const text = captureOut(() =>
+            renderAnalysis(analysisOf(modules, { coldMs: 0, sumSelfMs: 0 }), { ...RENDER_OPTIONS, graph })
+        );
+
+        expect(treePart(text)).toContain("├─ a.ts");
+        expect(text).toContain("cold import 0.00 ms");
+    });
+
+    it("leaves out an edge whose target was never measured, even with --min-ms 0", () => {
+        const entry = graphNode("entry.ts");
+        const ghost = graphNode("ghost.ts");
+        const graph = graphOf({ nodes: [entry, ghost], edges: [graphEdge(entry, ghost, 3)] });
+        const text = captureOut(() =>
+            renderAnalysis(analysisOf([analyzed("entry.ts", { totalMs: 5 })]), { ...RENDER_OPTIONS, minMs: 0, graph })
+        );
+
+        expect(treePart(text)).toContain("entry.ts");
+        expect(treePart(text)).not.toContain("ghost.ts");
+    });
+
+    it("marks a module inside an import cycle and explains the mark", () => {
+        const { graph, result } = treeScenario({
+            "a.ts": { cycle: { size: 2, paidBy: "a.ts" } },
+            "c.ts": { cycle: { size: 2, paidBy: "a.ts" } },
+        });
+        const text = captureOut(() => renderAnalysis(result, { ...RENDER_OPTIONS, graph }));
+
+        expect(treePart(text)).toMatch(/├─ a\.ts ⇄ {2}total/);
+        expect(treePart(text)).toMatch(/└─ c\.ts ⇄ {2}total/);
+        expect(text).toContain("⇄ marks a module inside an import cycle");
+        expect(text).toContain("(see `cycles`)");
+    });
+
+    it("prints no cycle legend when no module is in a cycle", () => {
+        const { graph, result } = treeScenario();
+        const text = captureOut(() => renderAnalysis(result, { ...RENDER_OPTIONS, graph }));
+
+        expect(text).not.toContain("⇄");
+    });
+
+    it("shows why a module failed to import on its tree row", () => {
+        const { graph, result } = treeScenario({ "b.ts": { importError: "Cannot find module 'left-pad'" } });
+        const text = captureOut(() => renderAnalysis(result, { ...RENDER_OPTIONS, graph }));
+
+        expect(treePart(text)).toMatch(/├─ b\.ts\s+total.*self.*Cannot find module 'left-pad'/);
+    });
+
+    it("lists dynamic imports that are not on the startup path, but not an awaited one", () => {
+        const entry = graphNode("entry.ts");
+        const lazy = graphNode("lazy.ts");
+        const awaited = graphNode("awaited.ts");
+        const graph = graphOf({
+            nodes: [entry, lazy, awaited],
+            edges: [
+                graphEdge(entry, lazy, 9, { kind: "dynamic" }),
+                graphEdge(entry, awaited, 10, { kind: "dynamic", awaited: true }),
+            ],
+        });
+        const result = analysisOf([analyzed("entry.ts", { totalMs: 10 }), analyzed("awaited.ts"), analyzed("lazy.ts")]);
+        const text = captureOut(() => renderAnalysis(result, { ...RENDER_OPTIONS, graph }));
+
+        expect(text).toContain("Dynamic imports, not on the startup path (1)");
+        expect(text).toContain("entry.ts:9 → lazy.ts");
+        expect(text).not.toContain("entry.ts:10");
+        expect(text).toContain("--include-dynamic walks and measures them too, marked (lazy) in the tree");
+    });
+
+    it("caps the dynamic import list at 12 and counts the rest", () => {
+        const entry = graphNode("entry.ts");
+        const targets = Array.from({ length: 14 }, (_, index) => graphNode(`lazy-${index}.ts`));
+        const graph = graphOf({
+            nodes: [entry, ...targets],
+            edges: targets.map((target, index) => graphEdge(entry, target, index + 1, { kind: "dynamic" })),
+        });
+        const text = captureOut(() =>
+            renderAnalysis(analysisOf([analyzed("entry.ts", { totalMs: 10 })]), { ...RENDER_OPTIONS, graph })
+        );
+
+        expect(text).toContain("Dynamic imports, not on the startup path (14)");
+        expect(text).toContain("entry.ts:12 → lazy-11.ts");
+        expect(text).not.toContain("lazy-12.ts");
+        expect(text).toContain("+2 more");
+    });
+
+    it("walks a dynamic import and marks it (lazy) when dynamic imports are included", () => {
+        const entry = graphNode("entry.ts");
+        const lazy = graphNode("lazy.ts");
+        const graph = graphOf({
+            nodes: [entry, lazy],
+            edges: [graphEdge(entry, lazy, 9, { kind: "dynamic" })],
+            includeDynamic: true,
+        });
+        const modules = [
+            analyzed("entry.ts", { totalMs: 40, selfMs: 5 }),
+            analyzed("lazy.ts", { selfMs: 30, totalMs: 30 }),
+        ];
+        const text = captureOut(() =>
+            renderAnalysis(analysisOf(modules, { coldMs: 100, sumSelfMs: 35 }), { ...RENDER_OPTIONS, graph })
+        );
+
+        expect(treePart(text)).toMatch(/└─ lazy\.ts \(lazy\)\s+total/);
+        expect(text).toContain("sum of self (lazy included)");
+        expect(text).not.toContain("Dynamic imports, not on the startup path");
+        expect(text).not.toContain("cold and sum-of-self differ");
+    });
+
+    it("warns when the cold import and the self-time sum differ by more than 15%, and not for a small gap", () => {
+        const { graph, result } = treeScenario();
+        const far = captureOut(() => renderAnalysis(result, { ...RENDER_OPTIONS, graph }));
+        const near = captureOut(() => renderAnalysis({ ...result, sumSelfMs: 90 }, { ...RENDER_OPTIONS, graph }));
+
+        expect(far).toContain("cold and sum-of-self differ by more than 15%");
+        expect(near).not.toContain("cold and sum-of-self differ");
+    });
+
+    it("lists the heaviest measured modules in order, capped at --top, with the kind of each", () => {
+        const entry = graphNode("entry.ts");
+        const graph = graphOf({ nodes: [entry], edges: [] });
+        const modules = [
+            analyzed("entry.ts", { selfMs: 40, totalMs: 90, descendants: 4 }),
+            analyzed("pkg:zod", { kind: "package", selfMs: 30, totalMs: 30 }),
+            analyzed("logo.svg", { kind: "asset", selfMs: 20, totalMs: 20 }),
+            analyzed("node:fs", { kind: "builtin", selfMs: 10, totalMs: 10 }),
+            analyzed("cut.ts", { selfMs: 5, totalMs: 5 }),
+            analyzed("unmeasured.ts", { measured: false }),
+        ];
+        const text = captureOut(() => renderAnalysis(analysisOf(modules), { ...RENDER_OPTIONS, top: 4, graph }));
+        const table = text.slice(text.indexOf("Heaviest modules by self time (top 4)"));
+
+        expect(text).toContain("modules 5 (1 packages)");
+        expect(table).toMatch(/entry\.ts\s+│\s+40\.0 ms\s+│\s+90\.0 ms\s+│\s+4\s+│\s+file\s+│/);
+        expect(table).toMatch(/pkg:zod\s+│\s+30\.0 ms\s+│\s+30\.0 ms\s+│\s+0\s+│\s+pkg\s+│/);
+        expect(table).toMatch(/logo\.svg\s+│.*│\s+asset\s+│/);
+        expect(table).toMatch(/node:fs\s+│.*│\s+builtin\s+│/);
+        expect(table).not.toContain("cut.ts");
+        expect(table).not.toContain("unmeasured.ts");
+    });
+
+    it("cuts a module label longer than 58 characters in the table", () => {
+        const label = `src/${"deeply-nested/".repeat(6)}module.ts`;
+        const graph = graphOf({ nodes: [graphNode("entry.ts")], edges: [] });
+        const text = captureOut(() =>
+            renderAnalysis(analysisOf([analyzed("entry.ts"), analyzed(label, { selfMs: 5 })]), {
+                ...RENDER_OPTIONS,
+                graph,
+            })
+        );
+
+        expect(label.length).toBeGreaterThan(58);
+        expect(text).toContain(`${label.slice(0, 57)}…`);
+    });
+
+    it("gives each kind of finding its own short reason in the table", () => {
+        const kinds: Array<[Finding["kind"], string]> = [
+            ["native-addon", "native addon"],
+            ["top-level-await", "top-level await"],
+            ["side-effects", "module-scope work"],
+            ["large-subtree", "7 modules under it"],
+            ["barrel", "barrel"],
+            ["exits-on-import", "exits on import"],
+            ["import-error", "import failed"],
+        ];
+        const modules = [
+            analyzed("entry.ts"),
+            ...kinds.map(([kind], index) =>
+                analyzed(`m${index}.ts`, {
+                    descendants: 7,
+                    findings: [findingOf(kind, "low", `summary ${kind}`)],
+                })
+            ),
+        ];
+        const graph = graphOf({ nodes: [graphNode("entry.ts")], edges: [] });
+        const text = captureOut(() => renderAnalysis(analysisOf(modules), { ...RENDER_OPTIONS, graph }));
+
+        kinds.forEach(([, reason], index) => {
+            expect(text).toMatch(new RegExp(`m${index}\\.ts\\s+│.*│\\s+${reason}\\s+│`));
+        });
+    });
+
+    it("tells the member that carried a cycle from the others, and counts further findings", () => {
+        const modules = [
+            analyzed("entry.ts"),
+            analyzed("paid.ts", {
+                cycle: { size: 2, paidBy: "paid.ts" },
+                findings: [findingOf("cycle", "low", "cycle")],
+            }),
+            analyzed("member.ts", {
+                cycle: { size: 2, paidBy: "paid.ts" },
+                findings: [
+                    findingOf("cycle", "low", "cycle"),
+                    findingOf("barrel", "low", "barrel"),
+                    findingOf("side-effects", "low", "work"),
+                ],
+            }),
+            analyzed("clean.ts"),
+        ];
+        const graph = graphOf({ nodes: [graphNode("entry.ts")], edges: [] });
+        const text = captureOut(() => renderAnalysis(analysisOf(modules), { ...RENDER_OPTIONS, graph }));
+
+        expect(text).toMatch(/paid\.ts\s+│.*│\s+carries an import cycle\s+│/);
+        expect(text).toMatch(/member\.ts\s+│.*│\s+in an import cycle \+2\s+│/);
+        expect(text).toMatch(/clean\.ts\s+│.*│\s+—\s+│/);
+    });
+
+    it("explains the entry and every slow or serious module, and skips a cheap one with only a low finding", () => {
+        const modules = [
+            analyzed("entry.ts", {
+                selfMs: 1,
+                totalMs: 50,
+                findings: [findingOf("large-subtree", "low", "entry pulls 9")],
+            }),
+            analyzed("slow.ts", {
+                selfMs: 12,
+                totalMs: 12,
+                findings: [findingOf("side-effects", "low", "runs work at import", ["slow.ts:4 setInterval(...)"])],
+            }),
+            analyzed("serious.ts", {
+                selfMs: 1,
+                findings: [
+                    findingOf("native-addon", "high", "loads a native addon"),
+                    findingOf("top-level-await", "medium", "awaits at module scope"),
+                ],
+            }),
+            analyzed("cheap.ts", { selfMs: 1, findings: [findingOf("barrel", "low", "cheap barrel finding")] }),
+            analyzed("none.ts", { selfMs: 50 }),
+        ];
+        const graph = graphOf({ nodes: [graphNode("entry.ts")], edges: [] });
+        const text = captureOut(() => renderAnalysis(analysisOf(modules), { ...RENDER_OPTIONS, graph }));
+        const why = text.slice(text.indexOf("\n  Why\n"));
+
+        expect(why).toContain("entry.ts  self 1.00 ms, total 50.0 ms");
+        expect(why).toMatch(/● +entry pulls 9/);
+        expect(why).toContain("slow.ts  self 12.0 ms, total 12.0 ms");
+        expect(why).toMatch(/● +runs work at import/);
+        expect(why).toContain("      slow.ts:4 setInterval(...)");
+        expect(why).toMatch(/● +loads a native addon/);
+        expect(why).toMatch(/● +awaits at module scope/);
+        expect(why).not.toContain("cheap barrel finding");
+        expect(why).not.toContain("none.ts");
+    });
+
+    it("has no Why section when no module has a finding worth a paragraph", () => {
+        const graph = graphOf({ nodes: [graphNode("entry.ts")], edges: [] });
+        const text = captureOut(() => renderAnalysis(analysisOf([analyzed("entry.ts")]), { ...RENDER_OPTIONS, graph }));
+
+        expect(text).not.toContain("\n  Why\n");
+    });
+
+    it("lists the first 10 unresolved specifiers and the total", () => {
+        const unresolved = Array.from({ length: 12 }, (_, index) => ({
+            from: "entry.ts",
+            specifier: `./missing-${index}`,
+            line: index + 1,
+        }));
+        const graph = graphOf({ nodes: [graphNode("entry.ts")], edges: [], unresolved });
+        const text = captureOut(() =>
+            renderAnalysis(analysisOf([analyzed("entry.ts")], { unresolved }), { ...RENDER_OPTIONS, graph })
+        );
+
+        expect(text).toContain("Unresolved specifiers (12)");
+        expect(text).toContain("entry.ts:10  ./missing-9");
+        expect(text).not.toContain("./missing-10");
+    });
+});
+
+describe("renderLazy", () => {
+    const candidate = (overrides: Partial<LazyCandidate> = {}): LazyCandidate => ({
+        importer: "src/cli.ts",
+        line: 12,
+        target: "src/heavy.ts",
+        locals: ["heavy"],
+        exclusiveModules: 6,
+        savingMs: 18.4,
+        caveats: [],
+        ...overrides,
+    });
+
+    it("says nothing saves enough when every candidate is under --min-ms", () => {
+        const text = captureOut(() => renderLazy([candidate({ savingMs: 0.2 })], "src/cli.ts", 0.5));
+
+        expect(text).toContain("tools ts imports lazy");
+        expect(text).toContain("no static import saves 0.50 ms or more when made lazy (--min-ms lowers the bar)");
+        expect(text).not.toContain("IMPORTER");
+    });
+
+    it("lists each candidate with the line, target, saving and module count, and explains how to read it", () => {
+        const text = captureOut(() => renderLazy([candidate()], "src/cli.ts", 0.5));
+
+        expect(text).toMatch(/src\/cli\.ts\s+│\s+12\s+│\s+src\/heavy\.ts\s+│\s+18\.4 ms\s+│\s+6\s+│\s+—\s+│/);
+        expect(text).toContain("How to read it");
+        expect(text).toContain("`await import()` at the use site");
+        expect(text).not.toContain("Caveats");
+    });
+
+    it("drops the candidates under --min-ms and keeps the rest", () => {
+        const text = captureOut(() =>
+            renderLazy(
+                [candidate({ target: "src/big.ts" }), candidate({ target: "src/small.ts", savingMs: 0.1 })],
+                "src/cli.ts",
+                0.5
+            )
+        );
+
+        expect(text).toContain("src/big.ts");
+        expect(text).not.toContain("src/small.ts");
+    });
+
+    it("counts the caveats of a candidate and prints at most 3 per target for the first 5 targets", () => {
+        const caveats = ["c1 timer", "c2 hook", "c3 assign", "c4 spawn"];
+        const many = Array.from({ length: 6 }, (_, index) =>
+            candidate({ target: `src/t${index}.ts`, caveats: index === 0 ? caveats : ["only"] })
+        );
+        const text = captureOut(() => renderLazy(many, "src/cli.ts", 0.5));
+        const detail = text.slice(text.indexOf("\n  Caveats\n"));
+
+        expect(text).toMatch(/src\/t0\.ts\s+│.*│\s+4 side effect\(s\)\s+│/);
+        expect(detail).toContain("src/t0.ts");
+        expect(detail).toContain("  c1 timer");
+        expect(detail).toContain("  c3 assign");
+        expect(detail).not.toContain("c4 spawn");
+        expect(detail).toContain("src/t4.ts");
+        expect(detail).not.toContain("src/t5.ts");
+    });
+});
+
+describe("renderBarrels", () => {
+    const waste = (overrides: Partial<BarrelWaste> = {}): BarrelWaste => ({
+        importer: "src/app.ts",
+        importerLine: 3,
+        barrel: "src/utils/index.ts",
+        used: ["join", "slug"],
+        usedTargets: ["src/utils/path.ts"],
+        unusedTargets: ["src/utils/ai.ts", "src/utils/db.ts"],
+        wastedModules: 9,
+        wastedMs: 31.2,
+        ...overrides,
+    });
+
+    it("says no barrel wastes enough when all are under --min-ms", () => {
+        const text = captureOut(() => renderBarrels([waste({ wastedMs: 0.1 })], "src/app.ts", 0.5));
+
+        expect(text).toContain("tools ts imports barrels");
+        expect(text).toContain("no barrel import wastes 0.50 ms or more on this startup path");
+        expect(text).not.toContain("BARREL");
+    });
+
+    it("tabulates the names used against the targets available, with the time and modules wasted", () => {
+        const text = captureOut(() => renderBarrels([waste()], "src/app.ts", 0.5));
+
+        expect(text).toMatch(
+            /src\/app\.ts\s+│\s+3\s+│\s+src\/utils\/index\.ts\s+│\s+1\s+│\s+3\s+│\s+31\.2 ms\s+│\s+9\s+│/
+        );
+        expect(text).toContain("src/app.ts:3 imports {join, slug} from src/utils/index.ts");
+        expect(text).toContain("needs  src/utils/path.ts");
+        expect(text).toContain("drags  src/utils/ai.ts, src/utils/db.ts");
+    });
+
+    it("names the barrel's own code as the need when no re-export target is used, and counts dragged targets past 6", () => {
+        const unusedTargets = Array.from({ length: 8 }, (_, index) => `u${index}.ts`);
+        const text = captureOut(() => renderBarrels([waste({ usedTargets: [], unusedTargets })], "src/app.ts", 0.5));
+
+        expect(text).toContain("needs  (the barrel's own code)");
+        expect(text).toContain("drags  u0.ts, u1.ts, u2.ts, u3.ts, u4.ts, u5.ts +2");
+        expect(text).not.toContain("u6.ts");
+    });
+
+    it("prints the detail of only the first 8 barrel imports", () => {
+        const many = Array.from({ length: 10 }, (_, index) => waste({ importer: `src/i${index}.ts` }));
+        const detail = captureOut(() => renderBarrels(many, "src/app.ts", 0.5));
+        const lines = detail.slice(detail.indexOf("\n  Detail\n"));
+
+        expect(lines).toContain("src/i7.ts:3 imports");
+        expect(lines).not.toContain("src/i8.ts:3 imports");
+    });
+});
+
+describe("renderCycles", () => {
+    const cycle = (overrides: Partial<ImportCycle> = {}): ImportCycle => ({
+        memberIds: ["/p/x.ts", "/p/y.ts"],
+        members: ["x.ts", "y.ts"],
+        edges: [
+            { from: "x.ts", to: "y.ts", line: 2 },
+            { from: "y.ts", to: "x.ts", line: 5 },
+        ],
+        selfMs: 12.5,
+        ...overrides,
+    });
+
+    it("reports a startup path with no cycle", () => {
+        const text = captureOut(() => renderCycles([], "entry.ts"));
+
+        expect(text).toContain("tools ts imports cycles");
+        expect(text).toContain("no import cycles on the startup path");
+        expect(text).not.toContain("MEMBERS");
+    });
+
+    it("lists each cycle with its size, self time and members, then the edges that close it", () => {
+        const text = captureOut(() => renderCycles([cycle()], "entry.ts"));
+
+        expect(text).toMatch(/2\s+│\s+12\.5 ms\s+│\s+x\.ts ⇄ y\.ts\s+│/);
+        expect(text).toContain("2 modules");
+        expect(text).toContain("  x.ts:2 → y.ts");
+        expect(text).toContain("  y.ts:5 → x.ts");
+    });
+
+    it("cuts a long member list at 90 characters, shows 12 edges per cycle and 10 cycles", () => {
+        const members = Array.from({ length: 30 }, (_, index) => `module-${index}.ts`);
+        const edges = Array.from({ length: 14 }, (_, index) => ({ from: `e${index}.ts`, to: "t.ts", line: index }));
+        const cycles = Array.from({ length: 11 }, (_, index) =>
+            cycle({ members: index === 0 ? members : [`a${index}.ts`, `b${index}.ts`], edges })
+        );
+        const text = captureOut(() => renderCycles(cycles, "entry.ts"));
+
+        expect(text).toContain(`${members.join(" ⇄ ").slice(0, 89)}…`);
+        expect(text).toContain("  e11.ts:11 → t.ts");
+        expect(text).not.toContain("e12.ts");
+        expect(text.match(/ modules\n/g)).toHaveLength(10);
     });
 });

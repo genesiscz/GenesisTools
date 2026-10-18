@@ -110,9 +110,7 @@ async function sessionsFor(input: string, options: SharedOptions, toolName: stri
 
     if (entries.length === 0) {
         out.error(`No entry found at ${input}. Pass a .ts file, a directory with an index.ts, or a tsconfig.json.`);
-        out.error(
-            suggestCommand(toolName, { replaceCommand: [...toolName.split(" ").slice(2), "src/notify/index.ts"] })
-        );
+        out.error(suggestCommand(toolName, { replaceCommand: ["src/notify/index.ts"] }));
         process.exitCode = 1;
         return [];
     }
