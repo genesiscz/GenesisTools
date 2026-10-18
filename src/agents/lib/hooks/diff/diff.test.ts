@@ -63,6 +63,7 @@ import {
     composePostDiff,
     type DiffDecision,
     flushDeferred,
+    modDrawsDiffs,
     noteFileToolInput,
     renamesIn,
     runDiffPost,
@@ -3769,6 +3770,37 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
             rmSync(join(repo, "big.ts"), { force: true });
             rmSync(path, { force: true });
         }
+    });
+
+    it("leaves a small diff to the full-diff mod: the note holds it and the message is empty", () => {
+        const current = begin({ command: "perl -pi -e 1 small.ts", toolUseId: `call-mod-${calls}` }, quiet);
+        writeFileSync(join(repo, "small.ts"), "one\ntwo\n");
+        const decision = runDiffPost({
+            payload: current,
+            config: { ...DEFAULT_HOOKS_CONFIG, diff: { ...quiet, fullDiff: "path" } },
+            drawnByMod: true,
+        });
+        const path = decision.stats?.fullDiff ?? "";
+
+        try {
+            expect(decision.decision).toBe("silent");
+            expect(decision.message).toBeUndefined();
+            expect(decision.files).toEqual([join(repo, "small.ts")]);
+            expect(readFileSync(path, "utf8")).toContain("+two");
+        } finally {
+            rmSync(join(repo, "small.ts"), { force: true });
+            rmSync(path, { force: true });
+        }
+    });
+
+    it("lets the mod draw only for Claude, with mods.fullDiff on, a note to read and the plugin enabled", () => {
+        const on = { ...DEFAULT_HOOKS_CONFIG, mods: { ...DEFAULT_HOOKS_CONFIG.mods, fullDiff: true } };
+
+        expect(modDrawsDiffs(on, "claude", () => true)).toBe(true);
+        expect(modDrawsDiffs(on, "claude", () => false)).toBe(false);
+        expect(modDrawsDiffs(on, "codex", () => true)).toBe(false);
+        expect(modDrawsDiffs({ ...on, mods: { ...on.mods, fullDiff: false } }, "claude", () => true)).toBe(false);
+        expect(modDrawsDiffs({ ...on, diff: { ...on.diff, fullDiff: "off" } }, "claude", () => true)).toBe(false);
     });
 
     it("renders a file once when the command names it through another path to the same folder", () => {

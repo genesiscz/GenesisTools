@@ -213,7 +213,11 @@ message cut lines, it draws the call's whole diff (the `hook-diffs/<call>.md` no
 diff element under the call's row, so the 10,000-character message limit no longer hides the rest. A running
 session needs `/reload-plugins`. `tools agents hooks mods` shows whether it is installed;
 `tools agents hooks config set mods.fullDiff false --write` turns it off without an uninstall (the mod reads
-the hooks file). It draws nothing while `diff.fullDiff` is `off`. The mod API is early access in Claude Code
+the hooks file). It draws nothing while `diff.fullDiff` is `off`. While the plugin is enabled in the user settings
+and `mods.fullDiff` is on, the diff hook prints no diff for Claude: it writes every diff to its note, and the mod
+draws it, so it is not drawn twice (Codex and Grok keep the hook's message). Each file has a `[-]` / `[+]` button
+that folds its diff to its name and back, and `[ files only ]` above them folds every file; a click on the diff
+itself still opens the group's calls. Its tests run with `claude plugin test plugins/genesis-tools-mods`. The mod API is early access in Claude Code
 (2.1.287 and later), so a release can change it; the mod then draws nothing and the hook message is unchanged.
 
 **The idle-compaction mod.** The same plugin compacts an idle Claude session 56 minutes after its last turn

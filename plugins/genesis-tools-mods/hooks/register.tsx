@@ -1,4 +1,6 @@
-import type { EngineInterface, Register, Timer } from "claude-code";
+import type { ElementTable, EngineInterface, Register, RenderElement, Timer } from "claude-code";
+import { atom, read, update } from "claude-code";
+import type { ClosedFiles } from "../types";
 import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice } from "./idle";
 import { type CallSection, fullDiffEnabled, sectionsOfCalls } from "./sections";
 
@@ -88,6 +90,85 @@ async function compactIfIdle($: EngineInterface): Promise<void> {
     }
 }
 
+/**
+ * The files whose diff is folded, each as `fileKey`: its row (a ToolGroup's `requestId`, or a call's
+ * `tool_use_id` in an expanded group), its call and its path. Session state, so a fold survives a redraw and
+ * a reload of the mod. The newest 500 are kept.
+ */
+const closed = atom({ plugin: "genesis-tools-mods", key: "closed" } as const, [] as ClosedFiles);
+
+function fileKey(row: string, section: CallSection): string {
+    return `${row}|${section.call}|${section.path}`;
+}
+
+/**
+ * The full diffs under a row. Each file has its own `[-]`/`[+]` Button that folds its diff to its name and
+ * back; the row's Button folds every file, or opens them all once every file is folded. A click elsewhere on the
+ * drawing reaches the engine's row, which opens the group's calls (the person's "expansion in expansion").
+ *
+ * The inner Box's `width="100%"` stretches the diffs to the transcript's width: without it they were as wide as
+ * the engine's row line, and the Code element wrapped them there. The width cannot sit on the outer Box: the
+ * engine refuses a tree that puts its own row under a Box with a `width` (seen live 2026-10-18).
+ */
+async function drawDiffs(
+    $: EngineInterface,
+    ui: ElementTable,
+    row: string,
+    sections: readonly CallSection[],
+    drawn: RenderElement
+): Promise<RenderElement> {
+    const { Box, Button, Code, Text } = ui;
+    const folded = new Set(await read($, closed));
+    const keys = sections.map((section) => fileKey(row, section));
+    const isAllFolded = keys.every((key) => folded.has(key));
+    const added = sections.reduce((sum, section) => sum + section.added, 0);
+    const removed = sections.reduce((sum, section) => sum + section.removed, 0);
+    const files = new Set(sections.map((section) => section.path)).size;
+    const setFolded = (targets: readonly string[], fold: boolean) => {
+        void update($, closed, (list) => {
+            const rest = list.filter((key) => !targets.includes(key));
+
+            return (fold ? [...rest, ...targets] : rest).slice(-500);
+        });
+    };
+
+    return (
+        <Box flexDirection="column">
+            {drawn}
+            <Box flexDirection="column" width="100%">
+                <Box flexDirection="row" gap={1}>
+                    <Button key={`${row}:fold`} dimColor onPress={() => setFolded(keys, !isAllFolded)}>
+                        {isAllFolded ? "show diff" : "files only"}
+                    </Button>
+                    <Text dimColor>
+                        {files} {files === 1 ? "file" : "files"}
+                    </Text>
+                    <Text color="diffAdded">+{added}</Text>
+                    <Text color="diffRemoved">-{removed}</Text>
+                </Box>
+                {sections.map((section) => {
+                    const key = fileKey(row, section);
+                    const isFolded = folded.has(key);
+
+                    return (
+                        <Box key={key} flexDirection="column">
+                            <Box flexDirection="row" gap={1}>
+                                <Button key={`${key}:fold`} plain dimColor onPress={() => setFolded([key], !isFolded)}>
+                                    {isFolded ? "[+]" : "[-]"}
+                                </Button>
+                                <Text dimColor={!isFolded}>{section.path}</Text>
+                                <Text color="diffAdded">+{section.added}</Text>
+                                <Text color="diffRemoved">-{section.removed}</Text>
+                            </Box>
+                            {isFolded ? null : <Code source={section.patch} format="diff" path={section.path} />}
+                        </Box>
+                    );
+                })}
+            </Box>
+        </Box>
+    );
+}
+
 export const register: Register = (on) => {
     on("turn.start", (_$, e, next) => {
         stopIdleTimer();
@@ -140,19 +221,7 @@ export const register: Register = (on) => {
             return drawn;
         }
 
-        const { Box, Code, Text } = $.ui.resolve(e);
-
-        return (
-            <Box flexDirection="column">
-                {drawn}
-                {sections.map((section) => (
-                    <Box key={`${section.call}:${section.path}`} flexDirection="column">
-                        <Text dimColor>{section.path}</Text>
-                        <Code source={section.patch} format="diff" path={section.path} />
-                    </Box>
-                ))}
-            </Box>
-        );
+        return drawDiffs($, $.ui.resolve(e), e.requestId, sections, drawn);
     });
 
     on("ui.render", { component: "ToolUse" }, async ($, e, next) => {
@@ -168,18 +237,6 @@ export const register: Register = (on) => {
             return drawn;
         }
 
-        const { Box, Code, Text } = $.ui.resolve(e);
-
-        return (
-            <Box flexDirection="column">
-                {drawn}
-                {sections.map((section) => (
-                    <Box key={section.path} flexDirection="column">
-                        <Text dimColor>{section.path}</Text>
-                        <Code source={section.patch} format="diff" path={section.path} />
-                    </Box>
-                ))}
-            </Box>
-        );
+        return drawDiffs($, $.ui.resolve(e), e.props.tool_use_id, sections, drawn);
     });
 };

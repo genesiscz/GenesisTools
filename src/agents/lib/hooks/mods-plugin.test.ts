@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { SafeJSON } from "@genesiscz/utils/json";
 import {
     compactionEndsIdleWait,
     IDLE_COMPACT_DEFAULTS,
@@ -6,8 +7,8 @@ import {
     idleCompactSettings,
     idleCompactSkip,
     idleNotice,
-} from "./idle";
-import { fullDiffEnabled, sectionsOf, sectionsOfCalls } from "./sections";
+} from "../../../../plugins/genesis-tools-mods/hooks/idle";
+import { fullDiffEnabled, sectionsOf, sectionsOfCalls } from "../../../../plugins/genesis-tools-mods/hooks/sections";
 
 const NOTE = [
     "# Diff of toolu_x",
@@ -47,6 +48,10 @@ describe("the full-diff mod's note reader", () => {
         expect(sections.map((section) => section.path)).toEqual(["/repo/src/a.ts", "/repo/src/b.ts"]);
         expect(sections[0]?.patch).toBe("@@ -1,2 +1,2 @@\n-a\n+b\n same");
         expect(sections[1]?.patch).toBe("@@ -1,1 +0,0 @@\n-gone");
+        expect(sections.map((section) => [section.added, section.removed])).toEqual([
+            [1, 1],
+            [0, 1],
+        ]);
         expect(sectionsOf("# Diff of toolu_y\n\n```sh\nls\n```\n")).toEqual([]);
     });
 
@@ -91,13 +96,13 @@ describe("idle compaction", () => {
         expect(idleCompactSettings("not json")).toEqual(IDLE_COMPACT_DEFAULTS);
         expect(
             idleCompactSettings(
-                JSON.stringify({ mods: { idleCompact: false, idleCompactMinutes: 50, idleCompactMinTokens: 0 } })
+                SafeJSON.stringify({ mods: { idleCompact: false, idleCompactMinutes: 50, idleCompactMinTokens: 0 } })
             )
         ).toEqual({ enabled: false, minutes: 50, minTokens: 0 });
         // 60 minutes or more would fire after the cache expired.
-        expect(idleCompactSettings(JSON.stringify({ mods: { idleCompactMinutes: 60, idleCompact: "no" } }))).toEqual(
-            IDLE_COMPACT_DEFAULTS
-        );
+        expect(
+            idleCompactSettings(SafeJSON.stringify({ mods: { idleCompactMinutes: 60, idleCompact: "no" } }))
+        ).toEqual(IDLE_COMPACT_DEFAULTS);
     });
 
     it("compacts only when on, drawn and over the floor", () => {

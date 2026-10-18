@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { join } from "node:path";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -37,13 +38,26 @@ import {
     hooksDistPath,
     type InstallResult,
     installAndPoint,
+    readSettings,
     repoRoot,
     uninstallHooks,
     wiringStatus,
 } from "../lib/hooks/install";
-import { claudePlugin, MODS_PLUGIN, MODS_SCOPES, type ModsScope, modsPluginState } from "../lib/hooks/mods";
+import {
+    claudePlugin,
+    claudeUserSettingsPath,
+    MODS_PLUGIN,
+    MODS_SCOPES,
+    type ModsScope,
+    modsPluginState,
+    modsWatched,
+    PLUGIN_DIRS_VAR,
+    pluginDirsOf,
+    withModsWatch,
+} from "../lib/hooks/mods";
 import { nativeDiffForced, nativeDiffState, setNativeDiff } from "../lib/hooks/native-diff";
 import { SETTABLE_KEYS, type SetResult, setHooksConfig } from "../lib/hooks/set-config";
+import { writeJsonFile } from "../lib/hooks/write-json";
 import { registerRuleCommands, registerRulePicker, ruleState, shortPath } from "./hooks-rules";
 
 const HARNESSES: readonly HarnessName[] = ["claude", "codex", "grok"];
@@ -761,9 +775,49 @@ function registerMods(hooks: Command): void {
                 ui.raw(pc.yellow(`diff.fullDiff is off, so no call has a full-diff note for the mod to draw.`));
             }
 
-            if (!state.installed) {
+            const watched = modsWatched(readSettings(claudeUserSettingsPath()));
+
+            ui.raw(
+                `hot reload: ${watched ? pc.green(`on (${PLUGIN_DIRS_VAR} in the settings env)`) : pc.dim(`off: ${toolCommand("agents hooks mods watch", "--write")}`)}`
+            );
+
+            if (!state.installed && !watched) {
                 ui.raw(`Install: ${toolCommand("agents hooks mods install", "--write")}`);
             }
+        });
+
+    mods.command("watch")
+        .description(
+            `Load the mods from this checkout in every new session and reload them on each save (${PLUGIN_DIRS_VAR} in the Claude settings env)`
+        )
+        .option("--off", "Stop: take the folder out of the settings env")
+        .option("--write", "Actually change the settings; without it this is a dry run")
+        .action((options: { off?: boolean; write?: boolean }) => {
+            const path = claudeUserSettingsPath();
+            const folder = join(repoRoot(), "plugins", "genesis-tools-mods");
+            const before = readSettings(path);
+            const after = withModsWatch(before, folder, !options.off);
+            const changed = SafeJSON.stringify(after) !== SafeJSON.stringify(before);
+
+            ui.raw(`${PLUGIN_DIRS_VAR}: ${pluginDirsOf(after).join(", ") || "(unset)"}`);
+
+            if (!changed) {
+                ui.raw(pc.dim(`${path} already says so.`));
+                return;
+            }
+
+            if (!options.write) {
+                ui.raw(pc.yellow(`dry run: ${path} was not changed. Pass --write to apply.`));
+                return;
+            }
+
+            writeJsonFile(path, after);
+            ui.raw(pc.green(`wrote ${path}`));
+            ui.raw(
+                pc.dim(
+                    "A session started from now on loads the folder and reloads the mod on each save. A running session keeps what it loaded until it restarts."
+                )
+            );
         });
 
     mods.command("install")

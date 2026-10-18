@@ -32,6 +32,10 @@ export const ALWAYS_EXCLUDES = [
     // is excluded: `cloud/shared` holds real bun tests, which `bun test ../shared`
     // runs from that package.
     "**/DevDashboard/cloud/web/**",
+    // Claude Code mod tests: they import `claude-code/testing`, which only `claude plugin test
+    // plugins/genesis-tools-mods` provides. The mod's pure helpers are tested by bun in
+    // src/agents/lib/hooks/mods-plugin.test.ts.
+    "**/plugins/genesis-tools-mods/tests/**",
 ];
 
 /**

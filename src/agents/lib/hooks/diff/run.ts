@@ -30,6 +30,7 @@ import { gitObjectSink } from "../../changes/objects";
 import { type DiffConfig, diffFor, type HooksConfig } from "../config";
 import { committedPaths, gitOut, lastHistoryMove, objectId, statusOf, untrackedFilesIn } from "../git";
 import { hookDiag } from "../log";
+import { modsPluginEnabled } from "../mods";
 import { callDir, safeSegment } from "../paths";
 import { type HookPayload, normalizeEvent } from "../payload";
 import {
@@ -605,6 +606,19 @@ export function deferredMessageParts(flushed: DiffDecision[]): string[] {
     );
 }
 
+/** The real Claude settings, never read by a test (they would make the message depend on this machine). */
+function installedMod(): boolean {
+    return !isTestProcess() && modsPluginEnabled();
+}
+
+/**
+ * Claude Code with the full-diff mod (`genesis-tools-mods`) installed and `mods.fullDiff` on: the mod draws
+ * each call's diff from its note, so the hook's own message would draw it twice. Codex and Grok have no mods.
+ */
+export function modDrawsDiffs(config: HooksConfig, harness: string, isEnabled = installedMod): boolean {
+    return harness === "claude" && config.mods.fullDiff && diffFor(config, harness).fullDiff !== "off" && isEnabled();
+}
+
 /**
  * One post phase: background tasks that have ended share half of the message, and this call gets
  * what remains. The sum, headings included, stays inside `maxMessageChars`. Claude Code replaces
@@ -627,7 +641,8 @@ export function composePostDiff({
     const flushedChars = flushedParts.reduce((total, part) => total + part.length + 2, 0);
     const heading = commandLines(payload.command, diffFor(config, payload.harness).commandLines);
     const room = Math.max(0, maxChars - flushedChars - (heading ? heading.length + 1 : 0));
-    const decision = fitDecision(runDiffPost({ payload, config, record, maxChars: room }), room);
+    const drawnByMod = modDrawsDiffs(config, payload.harness);
+    const decision = fitDecision(runDiffPost({ payload, config, record, maxChars: room, drawnByMod }), room);
     const own = decision.message ? [heading ? `${heading}\n${decision.message}` : decision.message] : [];
     const message = [...own, ...flushedParts].join("\n\n");
 
@@ -1129,12 +1144,18 @@ export function runDiffPost({
     config,
     record = recordBashEdits,
     maxChars,
+    drawnByMod = false,
 }: {
     payload: HookPayload;
     config: HooksConfig;
     record?: EditRecorder;
     /** The message budget when it must share the hook's one message (`flushDeferred`); else `diff.maxMessageChars`. */
     maxChars?: number;
+    /**
+     * The full-diff mod draws this call's diff (`modDrawsDiffs`): every diff goes to its note, and the message
+     * keeps only the notes under it, so the diff is not drawn twice.
+     */
+    drawnByMod?: boolean;
 }): DiffDecision {
     const diff = diffFor(config, payload.harness);
 
@@ -1582,6 +1603,29 @@ export function runDiffPost({
         }
 
         return { decision: "noted", reason, message: notes.join("\n"), files: [], others };
+    }
+
+    if (drawnByMod) {
+        const path = writeFullDiff({
+            toolUseId: payload.toolUseId,
+            command: payload.command,
+            parts: [...blocks.flatMap((block) => (block.source ? [block.source] : [])), ...overflow],
+            notShown: notShown.filter((path) => !overflow.some((part) => part.label === path)),
+        });
+
+        if (path) {
+            const message = notes.join("\n");
+
+            return {
+                decision: notes.length > 0 ? "noted" : "silent",
+                reason: "the full-diff mod draws the diff",
+                ...(message ? { message } : {}),
+                files,
+                attributed,
+                others,
+                stats: { chars: message.length, blocks: blocks.length, elided: 0, dropped: 0, fullDiff: path },
+            };
+        }
     }
 
     const noteChars = notes.reduce((total, line) => total + line.length + 2, 0);

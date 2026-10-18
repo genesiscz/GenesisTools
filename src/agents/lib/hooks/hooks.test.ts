@@ -54,7 +54,7 @@ import {
     wiringStatus,
 } from "./install";
 import { logDecision, releaseRotationLock, setDiagLogPath, setMaxLogBytes, takeRotationLock } from "./log";
-import { MODS_PLUGIN, modsPluginState } from "./mods";
+import { MODS_PLUGIN, modsPluginEnabled, modsPluginState, modsWatched, pluginDirsOf, withModsWatch } from "./mods";
 import { nativeDiffState } from "./native-diff";
 import { matchesGlob, resolveOutcome } from "./outcome";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
@@ -682,6 +682,42 @@ describe("applySetting", () => {
         });
         expect(modsPluginState("[]")).toEqual({ installed: false, enabled: false });
         expect(modsPluginState("not json")).toEqual({ installed: false, enabled: false });
+    });
+
+    it("reads whether the user settings enable the mods plugin", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-mods-settings-"));
+        const settings = join(dir, "settings.json");
+
+        writeFileSync(settings, SafeJSON.stringify({ enabledPlugins: { [MODS_PLUGIN]: true } }));
+        expect(modsPluginEnabled(settings)).toBe(true);
+        writeFileSync(settings, SafeJSON.stringify({ enabledPlugins: { [MODS_PLUGIN]: false } }));
+        expect(modsPluginEnabled(settings)).toBe(false);
+        writeFileSync(settings, "not json");
+        expect(modsPluginEnabled(settings)).toBe(false);
+        expect(modsPluginEnabled(join(dir, "missing.json"))).toBe(false);
+    });
+
+    it("mods watch adds the mods folder to CLAUDE_CODE_PLUGIN_DIRS and takes it out again, keeping the rest", () => {
+        const folder = "/repo/plugins/genesis-tools-mods";
+        const settings = { model: "opus", env: { OTHER: "1", CLAUDE_CODE_PLUGIN_DIRS: "/a/one" } };
+        const on = withModsWatch(settings, folder, true);
+
+        expect(pluginDirsOf(on)).toEqual(["/a/one", folder]);
+        expect(modsWatched(on)).toBe(true);
+        expect(withModsWatch(on, folder, true)).toEqual(on);
+        expect(on.model).toBe("opus");
+
+        const off = withModsWatch(on, folder, false);
+
+        expect(off).toEqual(settings);
+        expect(withModsWatch({ env: { CLAUDE_CODE_PLUGIN_DIRS: `${folder}/` } }, folder, false)).toEqual({});
+        expect(modsWatched({})).toBe(false);
+
+        const dir = mkdtempSync(join(tmpdir(), "gt-mods-watch-"));
+        const path = join(dir, "settings.json");
+
+        writeFileSync(path, SafeJSON.stringify(on));
+        expect(modsPluginEnabled(path)).toBe(true);
     });
 
     it("agentsTalk.hint is a boolean switch that ships on and survives a load", () => {

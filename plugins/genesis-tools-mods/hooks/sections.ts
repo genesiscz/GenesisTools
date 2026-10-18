@@ -1,6 +1,8 @@
-/** One file of a diff-hook full-diff note: its path and its unified-diff hunks. */
+/** One file of a diff-hook full-diff note: its path, its line counts and its unified-diff hunks. */
 export interface Section {
     path: string;
+    added: number;
+    removed: number;
     patch: string;
 }
 
@@ -12,7 +14,7 @@ export interface CallSection extends Section {
  * The files of `~/.genesis-tools/agents/hook-diffs/<call>.md`, which `tools agents hooks` writes when
  * a message cuts lines: `## <path> (+a -b)`, a blank line, then the hunks in a ```diff fence.
  */
-const SECTION = /^## (.+?) \(\+\d+ -\d+\)\n\n```diff\n([\s\S]*?)\n```$/gm;
+const SECTION = /^## (.+?) \(\+(\d+) -(\d+)\)\n\n```diff\n([\s\S]*?)\n```$/gm;
 
 /**
  * The hunks only. The note's fence starts with git's `diff --git` and `index` lines, which the Code
@@ -27,7 +29,12 @@ function hunksOf(patch: string): string {
 
 export function sectionsOf(text: string): Section[] {
     return [...text.matchAll(SECTION)]
-        .map((match) => ({ path: match[1] ?? "", patch: hunksOf(match[2] ?? "") }))
+        .map((match) => ({
+            path: match[1] ?? "",
+            added: Number(match[2]),
+            removed: Number(match[3]),
+            patch: hunksOf(match[4] ?? ""),
+        }))
         .filter((section) => section.patch.length > 0);
 }
 
