@@ -11,6 +11,8 @@
  * launcher (`tools hub`) adds its part when the installed app lacks it.
  */
 
+import { logger } from "@genesiscz/utils/logger";
+
 /** A bundle step that only some parts need; the host build skips all of them. */
 export type AppBundleStep = "diff-viewer" | "markdown-webview" | "clicky-library";
 
@@ -66,7 +68,20 @@ export function installedParts(manifest: { parts?: readonly string[] } | undefin
         return [];
     }
 
-    return manifest.parts ? normalizeParts(manifest.parts) : [...ALL_PART_IDS].sort();
+    if (!manifest.parts) {
+        return [...ALL_PART_IDS].sort();
+    }
+
+    // The manifest may come from a build of another checkout with a part this one does not know: keep the known ones
+    // instead of throwing, which would stop `appStatus()` and every later build. A `--parts` value stays strict.
+    const known = manifest.parts.map((id) => id.trim()).filter((id) => ALL_PART_IDS.includes(id));
+    const unknown = manifest.parts.map((id) => id.trim()).filter((id) => id && !ALL_PART_IDS.includes(id));
+
+    if (unknown.length > 0) {
+        logger.warn({ unknown }, "app parts: the installed manifest names parts this checkout does not know; ignored");
+    }
+
+    return normalizeParts(known);
 }
 
 export interface PartsChoice {
