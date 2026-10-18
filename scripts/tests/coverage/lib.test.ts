@@ -73,18 +73,25 @@ describe("summary", () => {
         ]);
     });
 
+    test("the static count leaves out types, comments and imports, which bun never counts as executable", () => {
+        const typesOnly =
+            'import type { A } from "./a";\n/** doc */\nexport interface B {\n    a: A;\n}\nexport type C = B | null;\n';
+        const code = 'import { x } from "./x";\n// note\nexport function f(): number {\n    return x;\n}\n';
+
+        expect(countSourceLines(typesOnly)).toBe(0);
+        expect(countSourceLines(code)).toBe(3);
+    });
+
     test("all tracked source counts an unloaded file as 0%, scaled by the bun-to-static ratio of the loaded files", () => {
         const sources: Record<string, string> = {
             // 4 static lines, bun counted 3 of them: ratio 0.75.
-            "src/a/one.ts":
-                "/** doc\n * more\n */\nexport function f() {\n    return 1;\n\n    // note\n}\nconst x = 1;\n",
+            "src/a/one.ts": "a();\nb();\nc();\nd();\n",
             // 8 static lines, never loaded: 6 estimated lines, all uncovered.
-            "src/a/two.ts": "a\nb\nc\nd\ne\nf\ng\nh\n",
+            "src/a/two.ts": "a();\nb();\nc();\nd();\ne();\nf();\ng();\nh();\n",
         };
         const summary = summarize(mergeCoverage([parseLcov(LCOV)]), ["src/a/one.ts", "src/a/two.ts"]);
         const tracked = estimateTracked(summary, (file) => sources[file]);
 
-        expect(countSourceLines(sources["src/a/one.ts"])).toBe(4);
         expect(tracked.ratio).toBe(0.75);
         expect(tracked.unloadedLines).toBe(6);
         expect([tracked.linesHit, tracked.linesFound]).toEqual([2, 9]);
@@ -130,6 +137,7 @@ describe("summary", () => {
         expect(isSourceFile("src/a/b.d.ts")).toBe(false);
         expect(isSourceFile("src/a/__tests__/helper.ts")).toBe(false);
         expect(isSourceFile("src/a/fixtures/repo.ts")).toBe(false);
+        expect(isSourceFile("src/utils/shell/fix/test.data.ts")).toBe(false);
         expect(isSourceFile("src/a/README.md")).toBe(false);
     });
 });

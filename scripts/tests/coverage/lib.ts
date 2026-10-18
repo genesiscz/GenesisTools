@@ -331,30 +331,28 @@ export function summarize(merged: Map<string, FileCoverage>, sourceFiles: string
     return { total, areas: [...areas.values()].sort((a, b) => a.area.localeCompare(b.area)), files, unloaded };
 }
 
-/** Non-blank lines outside comments: the static line count bun's executable-line count is scaled from. */
-export function countSourceLines(text: string): number {
-    let count = 0;
-    let inBlockComment = false;
+const transpilers = {
+    ts: new Bun.Transpiler({ loader: "ts" }),
+    tsx: new Bun.Transpiler({ loader: "tsx" }),
+};
 
-    for (const raw of text.split("\n")) {
-        const line = raw.trim();
+/**
+ * The static line count bun's executable-line count is scaled from: the non-blank lines of the
+ * file with its types and comments compiled away, import and re-export lines left out. bun counts
+ * almost nothing in a type-only file, and a raw line count would charge every `interface` as an
+ * uncovered line. A file the transpiler cannot read falls back to its raw non-blank lines.
+ */
+export function countSourceLines(text: string, file = "x.ts"): number {
+    let code = text;
 
-        if (inBlockComment) {
-            inBlockComment = !line.includes("*/");
-            continue;
-        }
-
-        if (line.startsWith("/*")) {
-            inBlockComment = !line.includes("*/");
-            continue;
-        }
-
-        if (line !== "" && !line.startsWith("//")) {
-            count++;
-        }
+    try {
+        code = (file.endsWith(".tsx") ? transpilers.tsx : transpilers.ts).transformSync(text);
+    } catch {
+        // A syntax error leaves the raw text: an over-estimate for one file beats no estimate.
     }
 
-    return count;
+    return code.split("\n").filter((line) => line.trim() !== "" && !/^\s*(import\b|export \{|export \*)/.test(line))
+        .length;
 }
 
 export interface TrackedEstimate {
@@ -381,7 +379,7 @@ export function estimateTracked(summary: CoverageSummary, read: (file: string) =
 
     for (const row of summary.files) {
         bunLines += row.linesFound;
-        staticLines += countSourceLines(read(row.file));
+        staticLines += countSourceLines(read(row.file), row.file);
     }
 
     const ratio = staticLines === 0 ? 1 : bunLines / staticLines;
@@ -391,7 +389,7 @@ export function estimateTracked(summary: CoverageSummary, read: (file: string) =
     let unloadedLines = 0;
 
     for (const file of summary.unloaded) {
-        const lines = Math.round(countSourceLines(read(file)) * ratio);
+        const lines = Math.round(countSourceLines(read(file), file) * ratio);
         const area = areas.get(areaOf(file));
         unloadedLines += lines;
 
@@ -426,6 +424,7 @@ export function isSourceFile(file: string): boolean {
         /\.(ts|tsx)$/.test(file) &&
         !/\.d\.ts$/.test(file) &&
         !/\.(test|spec|e2e)\.tsx?$/.test(file) &&
+        !/(^|\/)test\.data\.ts$/.test(file) &&
         !/(^|\/)(__tests__|__fixtures__|fixtures|node_modules)\//.test(file)
     );
 }
