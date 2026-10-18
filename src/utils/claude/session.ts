@@ -31,7 +31,7 @@ import {
     hasSessionId,
     hasTimestamp,
     isSubagentFile,
-    readHeadTailLines,
+    readHeadTail,
 } from "./session.utils";
 import type {
     AssistantMessage,
@@ -78,6 +78,7 @@ export {
     hasSessionId,
     hasTimestamp,
     isSubagentFile,
+    readHeadTail,
     readHeadTailLines,
 } from "./session.utils";
 
@@ -240,7 +241,7 @@ export class ClaudeSession {
         for (const filePath of files) {
             try {
                 const fileStat = await stat(filePath);
-                const lines = await readHeadTailLines(filePath, HEAD_LINES, TAIL_LINES);
+                const { lines, total } = await readHeadTail(filePath, HEAD_LINES, TAIL_LINES);
 
                 let sessionId: string | null = null;
                 let title: string | null = null;
@@ -288,13 +289,7 @@ export class ClaudeSession {
                 // Derive project name from encoded path via filesystem-walking resolver
                 projectName = extractProjectName(filePath) || null;
 
-                // readHeadTailLines returns every line of a file that has fewer than HEAD_LINES + TAIL_LINES lines.
-                // A file that fills both windows may have many more, so estimate ~300 bytes per JSONL line.
-                if (lines.length < HEAD_LINES + TAIL_LINES) {
-                    messageCount = lines.length;
-                } else {
-                    messageCount = Math.max(lines.length, Math.round(fileStat.size / 300));
-                }
+                messageCount = total;
 
                 // Apply date filters
                 if (since && startDate && startDate < since) {

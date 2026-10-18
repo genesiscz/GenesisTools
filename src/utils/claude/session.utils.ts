@@ -73,19 +73,30 @@ export function isSubagentFile(filePath: string): boolean {
 }
 
 /**
- * Read just the first N and last N lines from a JSONL file for fast metadata extraction.
+ * The first N and last N non-blank lines of a JSONL file, for fast metadata extraction, plus how many
+ * non-blank lines the whole file has: the read already splits every line, so the count costs nothing.
  */
-export async function readHeadTailLines(filePath: string, headCount: number, tailCount: number): Promise<string[]> {
+export async function readHeadTail(
+    filePath: string,
+    headCount: number,
+    tailCount: number
+): Promise<{ lines: string[]; total: number }> {
     const text = await Bun.file(filePath).text();
     const allLines = text.split("\n").filter((l) => l.trim());
 
     if (allLines.length <= headCount + tailCount) {
-        return allLines;
+        return { lines: allLines, total: allLines.length };
     }
 
     const head = allLines.slice(0, headCount);
-    const tail = allLines.slice(-tailCount);
-    return [...head, ...tail];
+    // `slice(-0)` is the whole array, so a zero tail must be spelled out.
+    const tail = tailCount > 0 ? allLines.slice(-tailCount) : [];
+    return { lines: [...head, ...tail], total: allLines.length };
+}
+
+/** Just the first N and last N lines from a JSONL file; {@link readHeadTail} also gives the total. */
+export async function readHeadTailLines(filePath: string, headCount: number, tailCount: number): Promise<string[]> {
+    return (await readHeadTail(filePath, headCount, tailCount)).lines;
 }
 
 /**

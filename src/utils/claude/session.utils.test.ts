@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readTailBytes } from "./session.utils";
+import { readHeadTail, readHeadTailLines, readTailBytes } from "./session.utils";
 
 describe("readTailBytes", () => {
     let dir: string;
@@ -58,5 +58,44 @@ describe("readTailBytes", () => {
 
         // BUG: currently drops line2 even though it's complete
         expect(lines).toEqual([line2, line3]);
+    });
+});
+
+describe("readHeadTail", () => {
+    let dir: string;
+
+    beforeEach(() => {
+        dir = mkdtempSync(join(tmpdir(), "readheadtail-"));
+    });
+
+    afterEach(() => {
+        rmSync(dir, { recursive: true, force: true });
+    });
+
+    async function file(count: number): Promise<string> {
+        const p = join(dir, "s.jsonl");
+        await Bun.write(p, `${Array.from({ length: count }, (_, i) => `{"n":${i}}`).join("\n")}\n\n`);
+        return p;
+    }
+
+    it("returns the head and tail of a long file with the total count of non-blank lines", async () => {
+        const result = await readHeadTail(await file(10), 2, 3);
+
+        expect(result.lines).toEqual(['{"n":0}', '{"n":1}', '{"n":7}', '{"n":8}', '{"n":9}']);
+        expect(result.total).toBe(10);
+    });
+
+    it("a zero tail returns only the head, not the whole file", async () => {
+        const path = await file(10);
+
+        expect(await readHeadTailLines(path, 3, 0)).toEqual(['{"n":0}', '{"n":1}', '{"n":2}']);
+        expect((await readHeadTail(path, 3, 0)).total).toBe(10);
+    });
+
+    it("a short file comes back whole", async () => {
+        expect(await readHeadTail(await file(4), 2, 3)).toEqual({
+            lines: ['{"n":0}', '{"n":1}', '{"n":2}', '{"n":3}'],
+            total: 4,
+        });
     });
 });

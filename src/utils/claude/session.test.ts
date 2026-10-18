@@ -965,8 +965,18 @@ describe("ClaudeSession.findSessions", () => {
 
         const [session] = await ClaudeSession.findSessions({ project: "gt-count-big" });
 
-        expect(session.messageCount).toBeGreaterThan(90);
-        expect(session.messageCount).toBeLessThan(110);
+        expect(session.messageCount).toBe(100);
+    });
+
+    it("counts a complete 25-line file exactly, however long its lines are", async () => {
+        const dir = join(projectsDir, "-gt-count-exact");
+        // 2 KB lines: a size estimate would read this file as about 170 messages.
+        const lines = Array.from({ length: 25 }, (_, i) => userRow(i % 60, "y".repeat(2_000)));
+        writeJsonl(join(dir, "33333333-cccc-4ccc-8ccc-cccccccccccc.jsonl"), lines);
+
+        const [session] = await ClaudeSession.findSessions({ project: "gt-count-exact" });
+
+        expect(session.messageCount).toBe(25);
     });
 
     it("applies since, until and limit to the start date", async () => {
