@@ -1,0 +1,32 @@
+# Commits that only move code or change access marks: git blame skips them (git config blame.ignoreRevsFile .git-blame-ignore-revs; GitHub reads this file by itself).
+# Each SHA carries its subject: a rebase that rewrites the SHAs needs this list rebuilt from the subjects.
+
+# feat(GenesisKit): GenesisKitBase, a small library without external packages that a host-only app build links alone
+18418e59bf2f07b6bfc8d7782e770a88d2d99e19
+
+# refactor(GenesisHub): the app's permissions host is a library of its own that links only GenesisKitBase
+b56799eb3cbc94ea161710a1ba404c68fd288a8b
+
+# feat(GenesisHub): optional app parts, a build makes only the installed ones and tools hub adds the hub
+28c64bebf4c3b81fb72a27113414102d8238c1aa
+
+# refactor(macos): the host keeps package access only on what another module uses
+a3060dcc48128c025c29b3c6875b3b4c81913c47
+
+# refactor(macos): the hub part keeps package access only on what another module uses
+35a0139a712bb4c42921e314fa0d336a0e805f7a
+
+# refactor(macos): the features part keeps package access only on what another module uses
+297f2d8a54283c9d4613af969546d068cd638ccb
+
+# refactor(macos): the widget part keeps package access only on what another module uses
+b0f4a17fcef9147ae6348f715e6a10b1650f4abf
+
+# refactor(macos): the Clicky part keeps package access only on what another module uses
+9398d3bea39bddfeaf1660c139c3b6772a6cda69
+
+# refactor(macos): the markdown part keeps package access only on what another module uses
+6b1d9a6d0a1cf7f6c34df437710a8029754538f0
+
+# refactor(macos): #550 followup - drop package from members with private setters and from members the first pass kept only because another type shared their name
+7a2e257dc886639a2075124860e22cb34872cdc4
