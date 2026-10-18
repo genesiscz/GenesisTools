@@ -136,8 +136,22 @@ describe("isolatedGitEnv", () => {
     });
 
     test("it drops every repository selector and turns off global and system config", () => {
-        const result = isolatedGitEnv({ GIT_DIR: "/x", GIT_WORK_TREE: "/y", GIT_COMMON_DIR: "/z", HOME: "/h" });
+        const result = isolatedGitEnv({
+            GIT_DIR: "/x",
+            GIT_WORK_TREE: "/y",
+            GIT_COMMON_DIR: "/z",
+            GIT_CONFIG_PARAMETERS: "'core.hookspath'='/elsewhere'",
+            GIT_CONFIG_COUNT: "1",
+            GIT_CONFIG_KEY_0: "core.hooksPath",
+            GIT_CONFIG_VALUE_0: "/elsewhere",
+            HOME: "/h",
+        });
 
+        expect(
+            ["GIT_CONFIG_PARAMETERS", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"].filter(
+                (key) => key in result
+            )
+        ).toEqual([]);
         expect(result.GIT_DIR).toBeUndefined();
         expect(result.GIT_WORK_TREE).toBeUndefined();
         expect(result.GIT_COMMON_DIR).toBeUndefined();

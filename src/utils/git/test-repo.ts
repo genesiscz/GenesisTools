@@ -54,6 +54,9 @@ const REPO_SELECTOR_KEYS = [
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_NAMESPACE",
     "GIT_PREFIX",
+    // A parent `git -c …` hands its config to every child: a hook's tests would inherit it.
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
 ] as const;
 
 /** A copy of `base` with every repository selector removed and no global or system config, for fixture repositories. */
@@ -69,6 +72,12 @@ export function isolatedGitEnv(
 
     for (const key of REPO_SELECTOR_KEYS) {
         delete result[key];
+    }
+
+    for (const key of Object.keys(result)) {
+        if (/^GIT_CONFIG_(KEY|VALUE)_\d+$/.test(key)) {
+            delete result[key];
+        }
     }
 
     return result;
