@@ -190,3 +190,14 @@ test("a path after a flag is still a path, and so is one after a flag written wi
     expect(explicitPathArgs(["--timeout=9000", "src/du", "--bail", "src/port"])).toEqual(["src/du", "src/port"]);
     expect(explicitPathArgs(["src/a.test.ts", "--coverage"])).toEqual(["src/a.test.ts"]);
 });
+
+test("the later phases drop a --parallel count given as its own argument, so no phase gets a stray filter", () => {
+    const phases = fullRunPhases({ ...PHASE_OPTIONS, args: ["--parallel", "4", "--bail", "src/x.test.ts"] });
+
+    expect(phases[0].testArgs.slice(0, 2)).toEqual(["--parallel", "4"]);
+
+    for (const phase of phases.slice(1)) {
+        expect(phase.testArgs).not.toContain("4");
+        expect(phase.testArgs).toContain("src/x.test.ts");
+    }
+});

@@ -106,7 +106,10 @@ export function fullRunPhases(options: {
     const hasExplicitTimeout = args.some((arg) => arg === "--timeout" || arg.startsWith("--timeout="));
     // `startsWith`, not equality: bun also accepts `--parallel=N`, and an exact match would let
     // that form through into the phases whose whole purpose is to keep these files apart.
-    const serialArgs = args.filter((arg) => !arg.startsWith("--parallel"));
+    // `--parallel 4` carries its count in the next argument: left behind, bun reads `4` as a test filter.
+    const serialArgs = args.filter(
+        (arg, index) => !arg.startsWith("--parallel") && !(args[index - 1] === "--parallel" && /^\d+$/.test(arg))
+    );
     const phases: FullRunPhase[] = [
         {
             kind: "parallel",
