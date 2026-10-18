@@ -207,6 +207,7 @@ describe("WHOIS parsing", () => {
 
     it("reads a refusal as throttled even when it says no information is available", () => {
         expect(interpretWhois("Query limit exceeded; no information available; try again later\n")).toBe("throttled");
+        expect(interpretWhois("% Query limit exceeded\nNo information available\n")).toBe("throttled");
     });
 
     it("ignores throttle words in the terms of use after the answer", () => {
@@ -492,14 +493,23 @@ describe("watch applyObservations", () => {
 
     it("keeps the newer refresh when an older one finishes last", () => {
         const watch = [{ domain: "x.com", addedAt: "a" }];
-        applyObservations(watch, [change("a", "available", "2026-10-18T10:05:00Z")], "2026-10-18T10:04:00Z");
-        applyObservations(watch, [change("a", "taken", "2026-10-18T10:06:00Z")], "2026-10-18T10:00:00Z");
+        const newer = applyObservations(
+            watch,
+            [change("a", "available", "2026-10-18T10:05:00Z")],
+            "2026-10-18T10:04:00Z"
+        );
+        const older = applyObservations(watch, [change("a", "taken", "2026-10-18T10:06:00Z")], "2026-10-18T10:00:00Z");
         expect(watch[0]).toMatchObject({ lastStatus: "available", observedAt: "2026-10-18T10:04:00Z" });
+        // The losing refresh reports nothing, so it cannot raise an alert about a state it did not store.
+        expect(newer).toHaveLength(1);
+        expect(older).toEqual([]);
     });
 
     it("skips an entry that was removed and added again during the refresh", () => {
         const watch = [{ domain: "x.com", addedAt: "b" }];
-        applyObservations(watch, [change("a", "taken", "2026-10-18T10:05:00Z")], "2026-10-18T10:04:00Z");
+        expect(
+            applyObservations(watch, [change("a", "taken", "2026-10-18T10:05:00Z")], "2026-10-18T10:04:00Z")
+        ).toEqual([]);
         expect(watch[0]).toEqual({ domain: "x.com", addedAt: "b" });
     });
 });

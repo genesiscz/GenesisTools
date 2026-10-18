@@ -112,15 +112,19 @@ export function changeReasons({
 }
 
 /**
- * Store what one refresh saw. It skips an entry that a refresh started later already wrote (two refreshes
- * overlapping, the older finishing last) and an entry removed and added again since this refresh read it.
+ * Store what one refresh saw and return the changes it stored. It skips an entry that a refresh started later
+ * already wrote (two refreshes overlapping, the older finishing last) and an entry removed and added again since
+ * this refresh read it.
  */
-export function applyObservations(watch: WatchEntry[], changes: WatchChange[], observedAt: string): void {
+export function applyObservations(watch: WatchEntry[], changes: WatchChange[], observedAt: string): WatchChange[] {
+    const accepted: WatchChange[] = [];
     for (const change of changes) {
         const stored = watch.find((entry) => entry.domain === change.entry.domain);
         if (!stored || stored.addedAt !== change.entry.addedAt || (stored.observedAt ?? "") > observedAt) {
             continue;
         }
+
+        accepted.push(change);
 
         const { status, checkedAt, expiresAt, price } = change.result;
         stored.lastCheckedAt = checkedAt;
@@ -141,6 +145,8 @@ export function applyObservations(watch: WatchEntry[], changes: WatchChange[], o
             stored.price = price.registration;
         }
     }
+
+    return accepted;
 }
 
 /** Re-check every watched name (fresh, with RDAP details), store the new state, return what changed. */
@@ -168,9 +174,11 @@ export async function refreshWatch({ expiryWarnDays = 45 }: { expiryWarnDays?: n
         });
     }
 
-    await storage.atomicConfigUpdate<DomainsConfig>((config) =>
-        applyObservations(config.watch ?? [], changes, observedAt)
-    );
-    logger.debug({ checked: changes.length }, "domains: watch check stored");
-    return changes;
+    // Only what was stored is reported: a refresh that lost to a newer one, or a name removed meanwhile, says nothing.
+    let accepted: WatchChange[] = [];
+    await storage.atomicConfigUpdate<DomainsConfig>((config) => {
+        accepted = applyObservations(config.watch ?? [], changes, observedAt);
+    });
+    logger.debug({ checked: changes.length, stored: accepted.length }, "domains: watch check stored");
+    return accepted;
 }

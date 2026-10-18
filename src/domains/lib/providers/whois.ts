@@ -161,20 +161,23 @@ export type WhoisVerdict = "available" | "taken" | "reserved" | "throttled" | "u
 const BOILERPLATE_START =
     /^[ \t]*(?:>>>|terms of use|terms and conditions|notice:|disclaimer|the data in this record)/im;
 
-/** The answer itself: comment banners removed, cut before the boilerplate, at most 1500 characters. */
-function answerPart(reply: string): string {
-    const text = stripComments(reply);
-    const end = text.search(BOILERPLATE_START);
-    return (end === -1 ? text : text.slice(0, end)).slice(0, 1500);
+/** The reply up to the boilerplate, comment lines included. */
+function beforeBoilerplate(reply: string): string {
+    const end = reply.search(BOILERPLATE_START);
+    return end === -1 ? reply : reply.slice(0, end);
 }
 
 export function interpretWhois(reply: string): WhoisVerdict {
-    const answer = answerPart(reply);
-    // First, so a refusal that also says "no information available" never reads as free.
-    // (.io, .me and .sh put "too many queries" in every reply's terms, which answerPart leaves out.)
-    if (THROTTLE_PATTERNS.some((pattern) => pattern.test(answer))) {
+    const region = beforeBoilerplate(reply);
+    // First, so a refusal that also says "no information available" never reads as free. Comment lines count
+    // here ("% Query limit exceeded"); the terms after the answer do not (.io, .me and .sh say "too many
+    // queries" in every reply's terms).
+    if (THROTTLE_PATTERNS.some((pattern) => pattern.test(region))) {
         return "throttled";
     }
+
+    // The answer itself: comment banners removed, at most 1500 characters.
+    const answer = stripComments(region).slice(0, 1500);
 
     if (RESERVED_PATTERNS.some((pattern) => pattern.test(answer))) {
         return "reserved";
