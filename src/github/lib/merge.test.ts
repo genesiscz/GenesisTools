@@ -1,19 +1,69 @@
-import { describe, expect, test } from "bun:test";
-import {
-    type DependentPull,
-    forcePushBeforeTips,
-    type MergeGitHubClient,
-    type MergeMethod,
-    type MergePullOptions,
-    type MergePullResult,
-    type PullRef,
-    resolveMergeMethod,
-    safeMergePull,
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import * as realOctokit from "@genesiscz/utils/github/octokit";
+import type {
+    DependentPull,
+    MergeGitHubClient,
+    MergeMethod,
+    MergePullOptions,
+    MergePullResult,
+    PullRef,
 } from "./merge";
 import { NATIVE_STACK_BASE_ERROR } from "./native-stack";
 import { postReviewComment, type ReviewCommentClient } from "./review-comments";
 import type { PullCommitSubject } from "./squash-message";
 import type { RestackBranchInput, RestackBranchResult, StackRestackOps } from "./stack-restack";
+
+type OctokitCall = { op: string; params: Record<string, unknown> };
+
+let octokitCalls: OctokitCall[] = [];
+let octokitAnswers = new Map<string, (params: Record<string, unknown>) => unknown>();
+
+/** Records the call, then answers from the case's script; a call the case did not script throws. */
+function octokitAnswer(op: string, params: Record<string, unknown>): unknown {
+    octokitCalls.push({ op, params });
+    const handler = octokitAnswers.get(op);
+
+    if (!handler) {
+        throw new Error(`unscripted octokit call ${op}`);
+    }
+
+    return handler(params);
+}
+
+const fakeOctokit = {
+    rest: {
+        pulls: {
+            get: async (params: Record<string, unknown>) => octokitAnswer("pulls.get", params),
+            list: async (params: Record<string, unknown>) => octokitAnswer("pulls.list", params),
+            listCommits: async (params: Record<string, unknown>) => octokitAnswer("pulls.listCommits", params),
+            merge: async (params: Record<string, unknown>) => octokitAnswer("pulls.merge", params),
+            update: async (params: Record<string, unknown>) => octokitAnswer("pulls.update", params),
+        },
+        repos: {
+            compareCommitsWithBasehead: async (params: Record<string, unknown>) =>
+                octokitAnswer("repos.compare", params),
+        },
+        git: {
+            updateRef: async (params: Record<string, unknown>) => octokitAnswer("git.updateRef", params),
+            deleteRef: async (params: Record<string, unknown>) => octokitAnswer("git.deleteRef", params),
+        },
+    },
+    request: async (params: Record<string, unknown>) => octokitAnswer("request", params),
+    graphql: async (query: string, variables: Record<string, unknown>) =>
+        octokitAnswer("graphql", { query, ...variables }),
+};
+
+mock.module("@genesiscz/utils/github/octokit", () => ({
+    ...realOctokit,
+    getOctokitForWrite: () => fakeOctokit,
+}));
+
+const { createOctokitMergeClient, forcePushBeforeTips, resolveMergeMethod, safeMergePull } = await import("./merge");
+
+beforeEach(() => {
+    octokitCalls = [];
+    octokitAnswers = new Map();
+});
 
 type CallLog = Array<{ op: string; args: unknown[] }>;
 
@@ -1223,6 +1273,523 @@ describe("safeMergePull — stack retarget order (cli/cli#1168)", () => {
         expect(result.remainingWork).toEqual([]);
         expect(calls.filter((c) => c.op === "unstack").map((c) => c.args[0])).toEqual([8, 9]);
         expect(calls.filter((c) => c.op === "updatePullBase")).toHaveLength(4);
+    });
+});
+
+describe("safeMergePull: edge paths", () => {
+    test("--ff-only says --subject and --body are ignored", async () => {
+        const logs: string[] = [];
+        const { client } = makeMock({ pr: basePr() });
+
+        await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "ff-only",
+            commitTitle: "feat: x",
+            client,
+            log: (m) => logs.push(m),
+        });
+
+        expect(logs).toContain("  note: --subject/--body ignored for --ff-only (no merge commit)");
+    });
+
+    test("stack-safe --rebase says --subject and --body are ignored", async () => {
+        const logs: string[] = [];
+        const { client } = makeMock({ pr: basePr() });
+        const { restack } = makeRestackMock();
+
+        await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            commitMessage: "body",
+            client,
+            restack,
+            log: (m) => logs.push(m),
+        });
+
+        expect(logs).toContain(
+            "  note: --subject/--body ignored for stack-safe --rebase (FF merge, no rewrite commit)"
+        );
+    });
+
+    test("a PR with no head SHA cannot be fast-forwarded and nothing is written", async () => {
+        const { client, calls } = makeMock({ pr: basePr({ headSha: "" }) });
+
+        await expect(safeMergePull({ owner: "o", repo: "r", number: 1, method: "ff-only", client })).rejects.toThrow(
+            "PR #1 has no head SHA — cannot fast-forward"
+        );
+        expect(calls.map((c) => c.op)).not.toContain("fastForwardBase");
+    });
+
+    test("a PR with no head SHA cannot be stack-safe rebased and nothing is restacked", async () => {
+        const { client, calls } = makeMock({ pr: basePr({ headSha: "" }) });
+        const { restack, calls: restackCalls } = makeRestackMock();
+
+        await expect(
+            safeMergePull({ owner: "o", repo: "r", number: 1, method: "rebase", client, restack })
+        ).rejects.toThrow("PR #1 has no head SHA — cannot stack-safe rebase");
+        expect(restackCalls).toEqual([]);
+        expect(calls.map((c) => c.op)).not.toContain("fastForwardBase");
+    });
+
+    test("a merge call that answers merged=false is an error and no dependent is retargeted", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2 })],
+            mergeResult: { sha: "", merged: false, message: "Base branch was modified" },
+        });
+
+        await expect(safeMergePull({ owner: "o", repo: "r", number: 1, method: "merge", client })).rejects.toThrow(
+            "Merge returned merged=false: Base branch was modified"
+        );
+        expect(calls.map((c) => c.op)).not.toContain("updatePullBase");
+    });
+
+    test("a native-stack error for a child with no findable stack is reported with the generic recovery commands", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, headRef: "branch-b", baseRef: "branch-a" })],
+            stackBaseErrorUntilUnstack: [2],
+            stackByPr: { 2: null },
+        });
+
+        const result = await safeMergePull({ owner: "o", repo: "r", number: 1, method: "merge", client });
+
+        expect(result.retargeted[0].ok).toBe(false);
+        expect(result.retargeted[0].error).toContain(NATIVE_STACK_BASE_ERROR);
+        expect(result.remainingWork).toContain("gh api repos/o/r/pulls/2 --jq .stack.number");
+        expect(result.remainingWork).toContain("gh api -X POST repos/o/r/stacks/<stack-number>/unstack");
+        expect(calls.map((c) => c.op)).toContain("getPullStackNumber");
+        expect(calls.map((c) => c.op)).not.toContain("unstack");
+    });
+
+    test("a retarget that comes back on another base is a failure with the plain PATCH command to fix it", async () => {
+        const logs: string[] = [];
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, headRef: "branch-b", baseRef: "branch-a" })],
+            afterRetarget: (d) => ({ ...d, baseRef: "develop" }),
+        });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "merge",
+            deleteBranch: true,
+            client,
+            log: (m) => logs.push(m),
+        });
+
+        expect(result.retargeted[0]).toMatchObject({ ok: false, error: "base is develop, expected main" });
+        expect(result.remainingWork).toContain("gh api -X PATCH repos/o/r/pulls/2 -f base='main'");
+        expect(result.branchDeleted).toBe(false);
+        expect(result.branchDeleteError).toBe("skipped branch delete: 1 retarget(s) failed");
+        expect(calls.map((c) => c.op)).not.toContain("deleteBranch");
+        expect(logs).toContain("    ✘ base is develop, expected main");
+    });
+
+    test("a child whose head SHA the list omitted is looked up with getPull before it is restacked", async () => {
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, headRef: "branch-b", baseRef: "branch-a", headSha: undefined })],
+        });
+        const { restack, calls: restackCalls } = makeRestackMock();
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            restackChildren: true,
+            client,
+            restack,
+        });
+
+        const child = restackCalls.find((c) => c.branch === "branch-b");
+        expect(child?.expectedHeadSha).toBe("d".repeat(40));
+        expect(calls.filter((c) => c.op === "getPull").map((c) => c.args[0])).toEqual([1, 2]);
+        expect(result.dependentsRestacked[0]).toMatchObject({ number: 2, ok: true, rebased: false });
+    });
+
+    test("a child whose head SHA cannot be looked up is reported as a failed restack, not thrown", async () => {
+        const logs: string[] = [];
+        const { client, calls } = makeMock({
+            pr: basePr(),
+            dependents: [dep({ number: 2, headRef: "branch-b", baseRef: "branch-a", headSha: undefined })],
+        });
+        const getPull = client.getPull;
+        client.getPull = async (owner, repo, number) => {
+            if (number === 2) {
+                throw new Error("lookup failed");
+            }
+
+            return getPull(owner, repo, number);
+        };
+        const { restack, calls: restackCalls } = makeRestackMock();
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "rebase",
+            restackChildren: true,
+            deleteBranch: true,
+            client,
+            restack,
+            log: (m) => logs.push(m),
+        });
+
+        expect(result.dependentsRestacked).toEqual([
+            {
+                number: 2,
+                title: "PR 2",
+                headRef: "branch-b",
+                ok: false,
+                rebased: false,
+                error: "could not resolve head SHA: lookup failed",
+            },
+        ]);
+        expect(restackCalls.map((c) => c.branch)).toEqual(["branch-a"]);
+        expect(result.remainingWork).toContain(
+            "Restack #2 (branch-b) failed: could not resolve head SHA: lookup failed"
+        );
+        expect(result.branchDeleteError).toBe("skipped branch delete: 1 restack(s) failed");
+        expect(calls.map((c) => c.op)).not.toContain("deleteBranch");
+        expect(logs).toContain("  #2 restack ✘ no head SHA");
+    });
+
+    test("a branch delete that fails is reported and the merge result stays", async () => {
+        const logs: string[] = [];
+        const { client } = makeMock({ pr: basePr(), failDelete: true });
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "merge",
+            deleteBranch: true,
+            client,
+            log: (m) => logs.push(m),
+        });
+
+        expect(result.branchDeleted).toBe(false);
+        expect(result.branchDeleteError).toBe("ref heads/branch-a not found");
+        expect(result.mergeSha).toBe("abc123deadbeef");
+        expect(result.remainingWork).toEqual([]);
+        expect(logs).toContain("  ✘ delete failed: ref heads/branch-a not found");
+    });
+
+    test("without an injected client the merge, the retarget and the delete go through the octokit write client", async () => {
+        const pull = {
+            number: 1,
+            title: "PR A",
+            state: "open",
+            merged: false,
+            draft: false,
+            mergeable: true,
+            head: { ref: "branch-a", sha: HEAD_SHA },
+            base: { ref: "main", sha: "b".repeat(40) },
+            commits: 1,
+            html_url: "https://github.com/o/r/pull/1",
+        };
+        const child = {
+            number: 2,
+            title: "PR B",
+            state: "open",
+            head: { ref: "branch-b", sha: "c".repeat(40) },
+            base: { ref: "branch-a" },
+            html_url: "https://github.com/o/r/pull/2",
+        };
+        octokitAnswers.set("pulls.get", () => ({ data: pull }));
+        octokitAnswers.set("pulls.list", (params) => ({ data: params.base === "branch-a" ? [child] : [] }));
+        octokitAnswers.set("pulls.merge", () => ({ data: { sha: "m".repeat(40), merged: true, message: "merged!" } }));
+        octokitAnswers.set("pulls.update", () => ({ data: { ...child, base: { ref: "main" } } }));
+        octokitAnswers.set("git.deleteRef", () => ({ data: {} }));
+
+        const result = await safeMergePull({
+            owner: "o",
+            repo: "r",
+            number: 1,
+            method: "merge",
+            deleteBranch: true,
+        });
+
+        expect(result.mergeSha).toBe("m".repeat(40));
+        expect(result.retargeted).toEqual([
+            { number: 2, title: "PR B", fromBase: "branch-a", toBase: "main", ok: true, state: "open" },
+        ]);
+        expect(result.branchDeleted).toBe(true);
+        expect(octokitCalls.map((c) => c.op)).toEqual([
+            "pulls.get",
+            "pulls.list",
+            "pulls.merge",
+            "pulls.list",
+            "pulls.update",
+            "git.deleteRef",
+        ]);
+        expect(octokitCalls.find((c) => c.op === "pulls.update")?.params).toMatchObject({
+            pull_number: 2,
+            base: "main",
+        });
+    });
+});
+
+describe("createOctokitMergeClient", () => {
+    const pullRef: PullRef = basePr({ number: 5, baseSha: "base-sha", headSha: "head-sha", commitCount: 2 });
+
+    test("getPull maps the REST payload and reads the native stack number", async () => {
+        octokitAnswers.set("pulls.get", () => ({
+            data: {
+                number: 5,
+                title: "Add cache",
+                state: "open",
+                merged: true,
+                head: { ref: "feat/x", sha: "head-sha" },
+                base: { ref: "main", sha: "base-sha" },
+                commits: 3,
+                html_url: "https://github.com/o/r/pull/5",
+                stack: { number: 8 },
+            },
+        }));
+
+        const pull = await createOctokitMergeClient().getPull("o", "r", 5);
+
+        expect(pull).toEqual({
+            number: 5,
+            title: "Add cache",
+            state: "open",
+            merged: true,
+            draft: false,
+            mergeable: null,
+            headRef: "feat/x",
+            baseRef: "main",
+            headSha: "head-sha",
+            baseSha: "base-sha",
+            commitCount: 3,
+            htmlUrl: "https://github.com/o/r/pull/5",
+            stackNumber: 8,
+        });
+        expect(octokitCalls[0]).toEqual({ op: "pulls.get", params: { owner: "o", repo: "r", pull_number: 5 } });
+    });
+
+    test("getPullStackNumber is the stack number of the PR, or null when it is not stacked", async () => {
+        const body = { number: 5, head: { ref: "h", sha: "s" }, base: { ref: "b", sha: "s" }, commits: 1 };
+        const client = createOctokitMergeClient();
+
+        octokitAnswers.set("pulls.get", () => ({ data: { ...body, stack: { number: 8 } } }));
+        expect(await client.getPullStackNumber("o", "r", 5)).toBe(8);
+
+        octokitAnswers.set("pulls.get", () => ({ data: body }));
+        expect(await client.getPullStackNumber("o", "r", 5)).toBeNull();
+    });
+
+    test("listOpenPullsByBase reads every page until one comes back short", async () => {
+        const item = (number: number) => ({
+            number,
+            title: `PR ${number}`,
+            head: { ref: `b${number}`, sha: `s${number}` },
+            base: { ref: "branch-a" },
+            html_url: `https://github.com/o/r/pull/${number}`,
+            state: "open",
+            ...(number === 1 ? { stack: { number: 4 } } : {}),
+        });
+        octokitAnswers.set("pulls.list", (params) => ({
+            data: params.page === 1 ? Array.from({ length: 100 }, (_, i) => item(i + 1)) : [item(101)],
+        }));
+
+        const pulls = await createOctokitMergeClient().listOpenPullsByBase("o", "r", "branch-a");
+
+        expect(pulls).toHaveLength(101);
+        expect(pulls[0]).toEqual({
+            number: 1,
+            title: "PR 1",
+            headRef: "b1",
+            baseRef: "branch-a",
+            htmlUrl: "https://github.com/o/r/pull/1",
+            state: "open",
+            headSha: "s1",
+            stackNumber: 4,
+        });
+        expect(pulls[100].number).toBe(101);
+        expect(octokitCalls.map((c) => c.params)).toEqual([
+            { owner: "o", repo: "r", state: "open", base: "branch-a", per_page: 100, page: 1 },
+            { owner: "o", repo: "r", state: "open", base: "branch-a", per_page: 100, page: 2 },
+        ]);
+    });
+
+    test("listPullCommits returns the first line of each commit message from the PR commits endpoint", async () => {
+        octokitAnswers.set("pulls.listCommits", () => ({
+            data: [
+                { sha: "1", commit: { message: "feat: one\n\nlong body" } },
+                { sha: "2", commit: { message: "\n" } },
+            ],
+        }));
+
+        const commits = await createOctokitMergeClient().listPullCommits("o", "r", pullRef);
+
+        expect(commits).toEqual([
+            { sha: "1", subject: "feat: one" },
+            { sha: "2", subject: "(no subject)" },
+        ]);
+        expect(octokitCalls).toHaveLength(1);
+        expect(octokitCalls[0].params).toEqual({ owner: "o", repo: "r", pull_number: 5, per_page: 100, page: 1 });
+    });
+
+    test("listPullCommits walks the compare endpoint when the PR commit list is short of the PR's own count", async () => {
+        const logs: string[] = [];
+        octokitAnswers.set("pulls.listCommits", () => ({ data: [{ sha: "1", commit: { message: "one" } }] }));
+        octokitAnswers.set("repos.compare", () => ({
+            data: {
+                commits: [
+                    { sha: "1", commit: { message: "one" } },
+                    { sha: "2", commit: { message: "two" } },
+                ],
+            },
+        }));
+
+        const commits = await createOctokitMergeClient().listPullCommits("o", "r", pullRef, (m) => logs.push(m));
+
+        expect(commits.map((c) => c.subject)).toEqual(["one", "two"]);
+        expect(octokitCalls.find((c) => c.op === "repos.compare")?.params).toMatchObject({
+            basehead: "base-sha...head-sha",
+        });
+        expect(logs.some((l) => l.includes("walking the compare endpoint"))).toBe(true);
+    });
+
+    test("mergePull sends the method, message and expected head, and maps the answer", async () => {
+        octokitAnswers.set("pulls.merge", () => ({ data: { sha: "m1", merged: true, message: "Merged" } }));
+        const client = createOctokitMergeClient();
+
+        const result = await client.mergePull("o", "r", 5, {
+            method: "squash",
+            commitTitle: "feat: x (#5)",
+            commitMessage: "* one",
+            expectedHeadSha: "head-sha",
+        });
+
+        expect(result).toEqual({ sha: "m1", merged: true, message: "Merged" });
+        expect(octokitCalls[0].params).toEqual({
+            owner: "o",
+            repo: "r",
+            pull_number: 5,
+            merge_method: "squash",
+            commit_title: "feat: x (#5)",
+            commit_message: "* one",
+            sha: "head-sha",
+        });
+
+        octokitAnswers.set("pulls.merge", () => ({ data: {} }));
+        expect(await client.mergePull("o", "r", 5, { method: "merge" })).toEqual({
+            sha: "",
+            merged: false,
+            message: "merged",
+        });
+    });
+
+    test("fastForwardBase moves the base ref without force when the head is ahead", async () => {
+        octokitAnswers.set("repos.compare", () => ({ data: { status: "ahead", ahead_by: 2, behind_by: 0 } }));
+        octokitAnswers.set("git.updateRef", () => ({ data: {} }));
+
+        const result = await createOctokitMergeClient().fastForwardBase("o", "r", "main", "1234567890abcdef");
+
+        expect(result).toEqual({
+            sha: "1234567890abcdef",
+            merged: true,
+            message: "Fast-forwarded origin/main to 1234567",
+        });
+        expect(octokitCalls.find((c) => c.op === "repos.compare")?.params).toMatchObject({
+            basehead: "main...1234567890abcdef",
+        });
+        expect(octokitCalls.find((c) => c.op === "git.updateRef")?.params).toEqual({
+            owner: "o",
+            repo: "r",
+            ref: "heads/main",
+            sha: "1234567890abcdef",
+            force: false,
+        });
+    });
+
+    test("fastForwardBase writes nothing when the base already is at the head", async () => {
+        octokitAnswers.set("repos.compare", () => ({ data: { status: "identical", ahead_by: 0, behind_by: 0 } }));
+
+        const result = await createOctokitMergeClient().fastForwardBase("o", "r", "main", "1234567890abcdef");
+
+        expect(result.merged).toBe(true);
+        expect(result.message).toBe("origin/main already at 1234567 (identical)");
+        expect(octokitCalls.map((c) => c.op)).toEqual(["repos.compare"]);
+    });
+
+    test.each(["diverged", "behind"])("fastForwardBase refuses a %s base and writes nothing", async (status) => {
+        octokitAnswers.set("repos.compare", () => ({ data: { status, ahead_by: 2, behind_by: 1 } }));
+
+        await expect(createOctokitMergeClient().fastForwardBase("o", "r", "main", "1234567890abcdef")).rejects.toThrow(
+            `compare status=${status} (ahead_by=2, behind_by=1)`
+        );
+        expect(octokitCalls.map((c) => c.op)).toEqual(["repos.compare"]);
+    });
+
+    test("updatePullBase patches the base and returns the dependent as GitHub now sees it", async () => {
+        octokitAnswers.set("pulls.update", () => ({
+            data: {
+                number: 6,
+                title: "PR 6",
+                head: { ref: "b6", sha: "s6" },
+                base: { ref: "main" },
+                html_url: "https://github.com/o/r/pull/6",
+                state: "open",
+                stack: { number: 3 },
+            },
+        }));
+
+        const updated = await createOctokitMergeClient().updatePullBase("o", "r", 6, "main");
+
+        expect(updated).toEqual({
+            number: 6,
+            title: "PR 6",
+            headRef: "b6",
+            baseRef: "main",
+            htmlUrl: "https://github.com/o/r/pull/6",
+            state: "open",
+            headSha: "s6",
+            stackNumber: 3,
+        });
+        expect(octokitCalls[0].params).toEqual({ owner: "o", repo: "r", pull_number: 6, base: "main" });
+    });
+
+    test("unstack posts to the stack's unstack route, and deleteBranch deletes the head ref", async () => {
+        octokitAnswers.set("request", () => ({ data: {} }));
+        octokitAnswers.set("git.deleteRef", () => ({ data: {} }));
+        const client = createOctokitMergeClient();
+
+        await client.unstack("o", "r", 8);
+        await client.deleteBranch("o", "r", "branch-a");
+
+        expect(octokitCalls).toEqual([
+            { op: "request", params: { method: "POST", url: "/repos/o/r/stacks/8/unstack" } },
+            { op: "git.deleteRef", params: { owner: "o", repo: "r", ref: "heads/branch-a" } },
+        ]);
+    });
+
+    test("listBaseForcePushTips asks the timeline and returns each replaced tip once, newest first", async () => {
+        octokitAnswers.set("graphql", () => ({
+            repository: {
+                pullRequest: {
+                    timelineItems: {
+                        nodes: [{ beforeCommit: { oid: "old" } }, { beforeCommit: { oid: "new" } }, null],
+                    },
+                },
+            },
+        }));
+
+        const tips = await createOctokitMergeClient().listBaseForcePushTips?.("o", "r", 5);
+
+        expect(tips).toEqual(["new", "old"]);
+        expect(octokitCalls[0].params).toMatchObject({ owner: "o", repo: "r", number: 5 });
+        expect(String(octokitCalls[0].params.query)).toContain("BASE_REF_FORCE_PUSHED_EVENT");
     });
 });
 
