@@ -199,6 +199,62 @@ function phaseOutput(flag: string, value: string, slug: string): string {
     return dot > slash ? `${value.slice(0, dot)}.${slug}${value.slice(dot)}` : `${value}.${slug}`;
 }
 
+/** `bun test` flags whose value may come as the NEXT argument (`--timeout 9000`), plus the wrapper's `--jobs`. */
+const VALUE_FLAGS = new Set([
+    "--timeout",
+    "--rerun-each",
+    "--retry",
+    "--seed",
+    "--coverage-reporter",
+    "--coverage-dir",
+    "-t",
+    "--test-name-pattern",
+    "--reporter",
+    "--reporter-outfile",
+    "--max-concurrency",
+    "--path-ignore-patterns",
+    "--parallel-delay",
+    "--shard",
+    "--timings",
+    "--preload",
+    "--jobs",
+]);
+
+/** Flags whose value is optional and numeric: `--parallel 4` takes it, `--parallel src/cmux` does not. */
+const NUMERIC_OPTIONAL_FLAGS = new Set(["--parallel", "--bail"]);
+
+/**
+ * The test paths in the wrapper's argv: every argument that is not a flag and not a flag's value. A bare
+ * `!arg.startsWith("-")` read the `r.xml` of `--reporter-outfile r.xml` as a path, so a full run took the
+ * explicit-path branch and never split its outputs per phase.
+ */
+export function explicitPathArgs(args: string[]): string[] {
+    const paths: string[] = [];
+
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+
+        if (arg.startsWith("-")) {
+            const next = args[i + 1];
+            const takesNext =
+                !arg.includes("=") &&
+                next !== undefined &&
+                !next.startsWith("-") &&
+                (VALUE_FLAGS.has(arg) || (NUMERIC_OPTIONAL_FLAGS.has(arg) && /^\d+$/.test(next)));
+
+            if (takesNext) {
+                i++;
+            }
+
+            continue;
+        }
+
+        paths.push(arg);
+    }
+
+    return paths;
+}
+
 /** The exit code of a whole run: the first phase that failed, else 0. */
 export function firstFailure(exits: number[]): number {
     return exits.find((code) => code !== 0) ?? 0;

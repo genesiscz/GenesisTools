@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import {
     ALWAYS_EXCLUDES,
     DEFAULT_EXCLUDES,
+    explicitPathArgs,
     firstFailure,
     fullRunPhases,
     maxRunMs,
@@ -393,7 +394,7 @@ const EXCLUDES = skipDevDashboard() ? [...DEFAULT_EXCLUDES, ...DEVDASHBOARD_EXCL
 // subprocesses tests spawn, which inherit this env.
 const testEnv = { ...process.env, NODE_ENV: "test" };
 const args = process.argv.slice(2);
-const hasExplicitPaths = args.some((arg) => !arg.startsWith("-"));
+const hasExplicitPaths = explicitPathArgs(args).length > 0;
 
 /**
  * Wall-clock ceiling for one `bun test` process.

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import {
     DEFAULT_MAX_MINUTES,
+    explicitPathArgs,
     firstFailure,
     fullRunPhases,
     maxRunMs,
@@ -174,4 +175,18 @@ test("the run exits with the first phase that failed", () => {
     expect(firstFailure([0, 1, 137])).toBe(1);
     expect(firstFailure([0, 0, 137])).toBe(137);
     expect(firstFailure([])).toBe(0);
+});
+
+test("a flag's value in the next argument is not a test path, so a full run stays a full run", () => {
+    expect(explicitPathArgs(["--parallel", "--coverage", "--reporter=junit", "--reporter-outfile", "r.xml"])).toEqual(
+        []
+    );
+    expect(explicitPathArgs(["--coverage-dir", "/tmp/cov", "--timeout", "9000", "-t", "name"])).toEqual([]);
+    expect(explicitPathArgs(["--parallel", "4", "--bail", "1"])).toEqual([]);
+});
+
+test("a path after a flag is still a path, and so is one after a flag written with =", () => {
+    expect(explicitPathArgs(["--parallel", "src/cmux"])).toEqual(["src/cmux"]);
+    expect(explicitPathArgs(["--timeout=9000", "src/du", "--bail", "src/port"])).toEqual(["src/du", "src/port"]);
+    expect(explicitPathArgs(["src/a.test.ts", "--coverage"])).toEqual(["src/a.test.ts"]);
 });
