@@ -1,4 +1,5 @@
-import { assertPublicHost, type HttpResponse, request } from "@app/domains/lib/http";
+import { checkServerIdentity } from "node:tls";
+import { type HttpResponse, request, resolvePublicAddress } from "@app/domains/lib/http";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -71,7 +72,10 @@ const PAGE_MARKERS: [RegExp, string][] = [
 
 const MAX_REDIRECTS = 5;
 
-/** GET with redirects followed by hand: every hop must be http(s) and resolve to public addresses only. */
+/**
+ * GET with redirects followed by hand: every hop must be http(s), resolve to public addresses only, and is
+ * sent to the address that passed the check. TLS still verifies the certificate against the real host name.
+ */
 async function fetchLanding(url: string): Promise<HttpResponse<unknown>> {
     let current = url;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
@@ -80,12 +84,16 @@ async function fetchLanding(url: string): Promise<HttpResponse<unknown>> {
             throw new Error(`redirect to ${target.protocol} refused`);
         }
 
-        await assertPublicHost(target.hostname);
-        const response = await request(current, {
+        const address = await resolvePublicAddress(target.hostname);
+        const pinned = new URL(current);
+        pinned.hostname = address.includes(":") ? `[${address}]` : address;
+        const host = target.hostname;
+        const response = await request(pinned.toString(), {
             label: "landing",
             timeoutMs: 10_000,
             redirect: "manual",
-            headers: { "user-agent": "Mozilla/5.0 (Macintosh) tools-domains" },
+            headers: { host: target.host, "user-agent": "Mozilla/5.0 (Macintosh) tools-domains" },
+            tls: { serverName: host, checkServerIdentity: (_name, cert) => checkServerIdentity(host, cert) },
         });
         const location = response.headers.get("location");
         if (response.status < 300 || response.status >= 400 || !location) {

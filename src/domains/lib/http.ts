@@ -20,7 +20,7 @@ export interface HttpResponse<T> {
 /** One GET or POST with a deadline. Never throws for an HTTP status; throws only for a network failure. */
 export async function request<T = unknown>(
     url: string,
-    init: RequestInit & { timeoutMs?: number; label?: string } = {}
+    init: BunFetchRequestInit & { timeoutMs?: number; label?: string } = {}
 ): Promise<HttpResponse<T>> {
     const { timeoutMs = DEFAULT_TIMEOUT_MS, label = "http", ...rest } = init;
     const started = performance.now();
@@ -80,14 +80,20 @@ export function isPublicAddress(address: string): boolean {
     return false;
 }
 
-/** Throws unless every address the host resolves to is public, so an untrusted redirect cannot reach this machine's network. */
-export async function assertPublicHost(hostname: string): Promise<void> {
+/**
+ * One public address for the host. Throws unless every address it resolves to is public, so an untrusted
+ * redirect cannot reach this machine's network. Connect to the returned address, so a second DNS answer
+ * (a rebinding) cannot swap in a private one between this check and the request.
+ */
+export async function resolvePublicAddress(hostname: string): Promise<string> {
     const host = hostname.replace(/^\[|\]$/g, "");
     const addresses = isIP(host) ? [host] : (await lookup(host, { all: true })).map((entry) => entry.address);
     const blocked = addresses.find((address) => !isPublicAddress(address));
     if (addresses.length === 0 || blocked) {
         throw new Error(`${hostname} resolves to a non-public address (${blocked ?? "none"})`);
     }
+
+    return addresses[0];
 }
 
 function redactUrl(url: string): string {
