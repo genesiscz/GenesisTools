@@ -13,13 +13,13 @@
  * this script merges them. bun records only files a test loaded, so tracked source files no test
  * imports are listed as "unloaded" and are not inside the percentages.
  */
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { parseArgs } from "node:util";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { formatTable } from "@genesiscz/utils/table";
 import { GATE_ENV_VARS } from "@genesiscz/utils/test/skip";
-import { DEFAULT_EXCLUDES } from "../../test-args";
+import { ALWAYS_EXCLUDES, DEFAULT_EXCLUDES } from "../../test-args";
 import {
     type AreaRow,
     type CoverageSummary,
@@ -140,8 +140,11 @@ function trackedFiles(): string[] {
     return proc.stdout.toString().split("\0").filter(Boolean);
 }
 
-function excluded(file: string): boolean {
-    return DEFAULT_EXCLUDES.some((glob) => new Bun.Glob(glob).match(file));
+/** The wrapper's own rule: an explicit path bypasses the default excludes (that is how a dashboard tree runs on purpose). */
+function excluded(file: string, explicitPaths: boolean): boolean {
+    const globs = explicitPaths ? ALWAYS_EXCLUDES : DEFAULT_EXCLUDES;
+
+    return globs.some((glob) => new Bun.Glob(glob).match(file));
 }
 
 /** The tracked source a run is accountable for: the whole tree, or what lies under the given paths. */
@@ -151,7 +154,7 @@ function sourceUniverse(tracked: string[], paths: string[]): string[] {
     return tracked.filter(
         (file) =>
             isSourceFile(file) &&
-            !excluded(file) &&
+            !excluded(file, roots.length > 0) &&
             (roots.length === 0 || roots.some((root) => file === `${root}.ts` || file.startsWith(`${root}/`)))
     );
 }
@@ -161,6 +164,14 @@ async function runSuite(outDir: string, gates: string[], paths: string[]): Promi
         .filter(([, gate]) => gates.includes(gate))
         .map(([file]) => `--path-ignore-patterns=${file}`);
     mkdirSync(outDir, { recursive: true });
+    // A reused --out folder must not feed an earlier run's phase files into this report: only what this script
+    // writes is removed, the lcov folder and the junit files.
+    rmSync(join(outDir, "lcov"), { recursive: true, force: true });
+
+    for (const file of filesUnder(outDir, /^junit[^/]*\.xml$/)) {
+        rmSync(file, { force: true });
+    }
+
     const logPath = join(outDir, "test.log");
     const fd = openSync(logPath, "w");
     const env: Record<string, string | undefined> = { ...process.env };

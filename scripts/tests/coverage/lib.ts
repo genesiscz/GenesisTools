@@ -4,6 +4,8 @@
  * `index.ts` does the I/O; everything here takes text and returns data, so it is tested directly.
  */
 
+import { logger } from "@genesiscz/utils/logger";
+
 /** Line and function counts of one source file, merged over every phase that loaded it. */
 export interface FileCoverage {
     file: string;
@@ -347,8 +349,9 @@ export function countSourceLines(text: string, file = "x.ts"): number {
 
     try {
         code = (file.endsWith(".tsx") ? transpilers.tsx : transpilers.ts).transformSync(text);
-    } catch {
+    } catch (error) {
         // A syntax error leaves the raw text: an over-estimate for one file beats no estimate.
+        logger.debug({ file, error }, "coverage: transpile failed, counting the raw non-blank lines");
     }
 
     return code.split("\n").filter((line) => line.trim() !== "" && !/^\s*(import\b|export \{|export \*)/.test(line))
