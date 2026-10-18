@@ -89,10 +89,37 @@ for (const [network, prefix] of [
     NON_PUBLIC.addSubnet(network, prefix, "ipv6");
 }
 
+const NAT64_WELL_KNOWN = new BlockList();
+NAT64_WELL_KNOWN.addSubnet("64:ff9b::", 96, "ipv6");
+
+/**
+ * The IPv4 address inside a well-known-prefix NAT64 address (RFC 6052): a DNS64 resolver gives every IPv4-only
+ * public site one, so the prefix itself stays allowed and the embedded address is judged instead.
+ */
+function nat64Embedded(address: string): string | undefined {
+    if (!NAT64_WELL_KNOWN.check(address, "ipv6")) {
+        return undefined;
+    }
+
+    const tail = address.split(":").slice(-2);
+    const last = tail.at(-1) ?? "";
+    if (last.includes(".")) {
+        return last;
+    }
+
+    const [hi, lo] = tail.map((group) => Number.parseInt(group || "0", 16));
+    return [hi >> 8, hi & 255, lo >> 8, lo & 255].join(".");
+}
+
 export function isPublicAddress(address: string): boolean {
     const family = isIP(address);
     if (family === 0) {
         return false;
+    }
+
+    const embedded = family === 6 ? nat64Embedded(address) : undefined;
+    if (embedded) {
+        return !NON_PUBLIC.check(embedded, "ipv4");
     }
 
     return !NON_PUBLIC.check(address, family === 4 ? "ipv4" : "ipv6");

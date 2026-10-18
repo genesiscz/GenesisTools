@@ -47,22 +47,42 @@ export function parkingServiceFor(nameservers: string[]): string | undefined {
     return undefined;
 }
 
-/** Marketplace hosts, matched against the final URL only: a page that merely links to one is not for sale. */
-const URL_MARKERS: [RegExp, string][] = [
-    [/sedoparking\.com|sedo\.com\/search\/details/i, "Sedo"],
-    [/afternic\.com/i, "Afternic"],
-    [/dan\.com\/buy-domain/i, "Dan.com"],
-    [/hugedomains\.com/i, "HugeDomains"],
-    [/atom\.com\/name\/|squadhelp\.com/i, "Atom"],
-    [/undeveloped\.com/i, "Undeveloped"],
-    [/bodis\.com/i, "Bodis"],
-    [/parkingcrew/i, "ParkingCrew"],
-    [/buydomains\.com/i, "BuyDomains"],
-    [/brandbucket\.com/i, "BrandBucket"],
-    [/domainmarket\.com/i, "DomainMarket"],
-    [/efty\.com/i, "Efty"],
-    [/sav\.com\/(domains|marketplace)/i, "Sav"],
+/**
+ * Marketplace hosts (matched as a host suffix, like the nameservers) with an optional path prefix, checked
+ * against the final URL only: a page that merely links to one is not for sale.
+ */
+const URL_MARKERS: { host: string; path?: RegExp; service: string }[] = [
+    { host: "sedoparking.com", service: "Sedo" },
+    { host: "sedo.com", path: /^\/search\/details/i, service: "Sedo" },
+    { host: "afternic.com", service: "Afternic" },
+    { host: "dan.com", path: /^\/buy-domain/i, service: "Dan.com" },
+    { host: "hugedomains.com", service: "HugeDomains" },
+    { host: "atom.com", path: /^\/name\//i, service: "Atom" },
+    { host: "squadhelp.com", service: "Atom" },
+    { host: "undeveloped.com", service: "Undeveloped" },
+    { host: "bodis.com", service: "Bodis" },
+    { host: "parkingcrew.net", service: "ParkingCrew" },
+    { host: "buydomains.com", service: "BuyDomains" },
+    { host: "brandbucket.com", service: "BrandBucket" },
+    { host: "domainmarket.com", service: "DomainMarket" },
+    { host: "efty.com", service: "Efty" },
+    { host: "sav.com", path: /^\/(domains|marketplace)/i, service: "Sav" },
 ];
+
+/** The marketplace a final URL lands on; never the probed site itself (info on afternic.com is not "parked"). */
+export function marketplaceForUrl(url: string, probedDomain: string): string | undefined {
+    const { hostname, pathname } = new URL(url);
+    const host = hostname.toLowerCase().replace(/\.$/, "");
+    const own = probedDomain.toLowerCase();
+    if (host === own || host.endsWith(`.${own}`)) {
+        return undefined;
+    }
+
+    return URL_MARKERS.find(
+        (marker) =>
+            (host === marker.host || host.endsWith(`.${marker.host}`)) && (!marker.path || marker.path.test(pathname))
+    )?.service;
+}
 
 /** Markers only a parking page itself carries, so they may match the page body. */
 const PAGE_MARKERS: [RegExp, string][] = [
@@ -136,8 +156,7 @@ export async function probeLanding(domain: string, network: LandingNetwork = NET
             const response = await fetchLanding(`${scheme}://${domain}/`, network);
             const page = response.text;
             const marketplace =
-                URL_MARKERS.find(([re]) => re.test(response.url))?.[1] ??
-                PAGE_MARKERS.find(([re]) => re.test(page))?.[1];
+                marketplaceForUrl(response.url, domain) ?? PAGE_MARKERS.find(([re]) => re.test(page))?.[1];
             return {
                 finalUrl: response.url,
                 httpStatus: response.status,
