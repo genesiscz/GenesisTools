@@ -3,18 +3,18 @@ import GenesisKit
 import SwiftUI
 
 @MainActor
-package final class ClickyHost: NSObject {
-    package static let shared = ClickyHost()
+final class ClickyHost: NSObject {
+    static let shared = ClickyHost()
     /// The settings window's own appearance instance (`NativeSettingsAppearance.shared`), so a change on General and
     /// Clicky's copy of it never disagree.
-    package let model = ClickyModel(appearance: .shared)
+    let model = ClickyModel(appearance: .shared)
     /// Opens the settings window this process shows (ClickyPlugin.swift sets it).
-    package var openSettings: @MainActor (String?) -> Void = { _ in }
+    var openSettings: @MainActor (String?) -> Void = { _ in }
     private var item: NSStatusItem?
     private var popover: NSPopover?
     private var standalone = false
 
-    package func start(standalone: Bool = false) {
+    func start(standalone: Bool = false) {
         self.standalone = standalone
         guard item == nil else { return }
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -31,12 +31,12 @@ package final class ClickyHost: NSObject {
         model.restoreEnabled()
     }
 
-    package func showSettings(pageID: String? = nil) {
+    func showSettings(pageID: String? = nil) {
         popover?.close()
         openSettings(pageID)
     }
 
-    package func stop() {
+    func stop() {
         popover?.close()
         popover = nil
         model.deactivate(remember: false)
