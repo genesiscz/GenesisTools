@@ -159,14 +159,14 @@ export async function detectRepoFromGit(): Promise<string | null> {
         // Parse git remote URL
         const url = stdout;
 
-        // SSH format: git@github.com:owner/repo.git
-        const sshMatch = url.match(/git@github\.com:([^/]+)\/([^.]+)(?:\.git)?/);
+        // SSH format: git@github.com:owner/repo.git (the repo name may hold dots: next.js)
+        const sshMatch = url.match(/git@github\.com:([^/]+)\/([^/\s]+?)(?:\.git)?(?=[\s/]|$)/);
         if (sshMatch) {
             return `${sshMatch[1]}/${sshMatch[2]}`;
         }
 
         // HTTPS format: https://github.com/owner/repo.git
-        const httpsMatch = url.match(/github\.com\/([^/]+)\/([^.]+)(?:\.git)?/);
+        const httpsMatch = url.match(/github\.com\/([^/]+)\/([^/\s]+?)(?:\.git)?(?=[\s/]|$)/);
         if (httpsMatch) {
             return `${httpsMatch[1]}/${httpsMatch[2]}`;
         }
@@ -200,23 +200,20 @@ export function parseGitHubFileUrl(input: string): GitHubFileUrl | null {
         input = input.replace(/#L\d+(?:-L\d+)?$/, "");
     }
 
-    // Detect directory (tree) URLs before stripping line references
-    const isDirectory = input.includes("/tree/");
-
     // Pattern 1: github.com blob/blame/tree URLs
     // https://github.com/owner/repo/blob/ref/path/to/file
     // https://github.com/owner/repo/blame/ref/path/to/file
     // https://github.com/owner/repo/tree/ref/path/to/dir
-    const githubMatch = input.match(/github\.com\/([^/]+)\/([^/]+)\/(?:blob|blame|tree)\/([^/]+)\/(.+)/);
+    const githubMatch = input.match(/github\.com\/([^/]+)\/([^/]+)\/(blob|blame|tree)\/([^/]+)\/(.+)/);
     if (githubMatch) {
         return {
             owner: githubMatch[1],
             repo: githubMatch[2],
-            ref: githubMatch[3],
-            path: githubMatch[4],
+            ref: githubMatch[4],
+            path: githubMatch[5],
             lineStart,
             lineEnd,
-            isDirectory,
+            isDirectory: githubMatch[3] === "tree",
         };
     }
 
