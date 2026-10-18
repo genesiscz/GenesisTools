@@ -17,7 +17,7 @@ private let markdownInstance = SingleInstance(
 /// The files, the focus flag and the changes of `--markdown [paths...] [--no-focus] [--diff <scope>]`. `open --args`
 /// starts the face in `/`, so a relative path names nothing; absolute paths are what callers send. `--diff` takes
 /// `unstaged`, `staged`, `uncommitted`, `branch`, `last` or `commit:<sha>` (MarkdownDiffRequest).
-package func markdownRequest(_ args: [String]) -> (paths: [String], focus: Bool, diff: MarkdownDiffRequest?) {
+func markdownRequest(_ args: [String]) -> (paths: [String], focus: Bool, diff: MarkdownDiffRequest?) {
     var paths: [String] = []
     var diff: MarkdownDiffRequest?
     var index = 0
