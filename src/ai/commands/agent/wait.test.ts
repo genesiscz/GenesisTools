@@ -62,12 +62,16 @@ it("a Codex worker wait finds its rollout in the recorded isolated home", async 
         sessionId: id,
         filePath: join(root, "worker.jsonl"),
     });
+    // A worker hit falls through to the live cmux lookup, which would read this machine's real cmux, tmux and ps.
+    const live = spyOn(liveSessions, "liveAgentSurfacesNow").mockResolvedValue([]);
     try {
         const hit = await resolveSessionTranscript("codex", "fixture-isolated-worker", false);
         expect(hit.filePath).toBe(rollout);
         expect(hit.source).toBe("native");
+        expect(live).toHaveBeenCalledTimes(1);
     } finally {
         resolver.mockRestore();
+        live.mockRestore();
     }
 });
 
@@ -623,6 +627,8 @@ describe("message --wait with a bad wait flag", () => {
         const deliver = spyOn(delivery, "deliverMessage").mockImplementation(async () => {
             throw new delivery.MessageError("delivery reached", []);
         });
+        // The pre-delivery baseline resolves "s-1", which would otherwise read this machine's real cmux, tmux and ps.
+        spyOn(liveSessions, "liveAgentSurfacesNow").mockResolvedValue([]);
 
         await messageCommand("grok", "s-1", ["hello"], { wait: true, waitTimeout: "5", last: "2" });
 
