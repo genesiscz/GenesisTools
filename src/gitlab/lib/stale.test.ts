@@ -1447,6 +1447,8 @@ describe("stale-branches: the sweep against a real checkout", () => {
         fake.get("/users/11/events", []);
         adoWorkItems.set(701, rawAdo(701));
         const bare = realpathSync(mkdtempSync(join(tmpdir(), "gt-gitlab-bare-")));
+        // A repository of its own with no origin, so git can never walk up into a checkout that holds the temp root.
+        expect(Bun.spawnSync(["git", "init", "-q", bare], { env: process.env }).exitCode).toBe(0);
 
         const { value: result } = await scoped(fake, () =>
             collectStaleReport({

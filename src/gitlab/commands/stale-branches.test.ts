@@ -319,6 +319,8 @@ describe("stale recheck and shipped-detail", () => {
     });
 
     test("recheck stops when the checkout cannot fetch origin", async () => {
+        // A repository of its own with no origin, so git can never walk up into a checkout that holds the temp root.
+        expect(Bun.spawnSync(["git", "init", "-q", dir], { env: process.env }).exitCode).toBe(0);
         const path = writeReport(staleReportFixture([reviewedMrFixture(1)], { repoRoot: dir }));
 
         await expect(run(liveRoutes(), "recheck", path)).rejects.toThrow("git fetch origin --prune:");
