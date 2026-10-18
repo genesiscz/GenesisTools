@@ -50,15 +50,49 @@ const QUERY_FORMAT: Record<string, (domain: string) => string> = {
     jp: (domain) => `${domain}/e`,
 };
 
+/** A WHOIS record is a few KB; anything past this is not a record worth reading. */
+const MAX_REPLY_BYTES = 64 * 1024;
+
+/**
+ * One port-43 query. The deadline covers the whole exchange (a peer that trickles bytes cannot hold it open),
+ * and a reply longer than MAX_REPLY_BYTES is cut there.
+ */
 export function whoisQuery(server: string, query: string): Promise<string> {
     return new Promise((resolve, reject) => {
         const socket = connect({ host: server, port: 43 });
         const chunks: Buffer[] = [];
-        socket.setTimeout(TIMEOUT_MS, () => socket.destroy(new Error(`WHOIS ${server}: timed out`)));
+        let size = 0;
+        let settled = false;
+        const finish = (error?: Error) => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            clearTimeout(deadline);
+            socket.destroy();
+            if (error) {
+                reject(error);
+            } else {
+                resolve(Buffer.concat(chunks).toString("utf8"));
+            }
+        };
+        const deadline = setTimeout(
+            () => finish(new Error(`WHOIS ${server}: no full reply in ${TIMEOUT_MS} ms`)),
+            TIMEOUT_MS
+        );
         socket.on("connect", () => socket.write(`${query}\r\n`));
-        socket.on("data", (chunk: Buffer) => chunks.push(chunk));
-        socket.on("error", reject);
-        socket.on("close", () => resolve(Buffer.concat(chunks).toString("utf8")));
+        socket.on("data", (chunk: Buffer) => {
+            const room = MAX_REPLY_BYTES - size;
+            chunks.push(chunk.subarray(0, room));
+            size += Math.min(chunk.byteLength, room);
+            if (size >= MAX_REPLY_BYTES) {
+                logger.debug({ server, bytes: size }, "domains: WHOIS reply cut at the size limit");
+                finish();
+            }
+        });
+        socket.on("error", (error) => finish(error));
+        socket.on("close", () => finish());
     });
 }
 
@@ -123,23 +157,35 @@ function stripComments(reply: string): string {
 
 export type WhoisVerdict = "available" | "taken" | "reserved" | "throttled" | "unknown";
 
+/** Where a registry's legal boilerplate starts; it can say "not found" or "too many queries" in another sense. */
+const BOILERPLATE_START =
+    /^[ \t]*(?:>>>|terms of use|terms and conditions|notice:|disclaimer|the data in this record)/im;
+
+/** The answer itself: comment banners removed, cut before the boilerplate, at most 1500 characters. */
+function answerPart(reply: string): string {
+    const text = stripComments(reply);
+    const end = text.search(BOILERPLATE_START);
+    return (end === -1 ? text : text.slice(0, end)).slice(0, 1500);
+}
+
 export function interpretWhois(reply: string): WhoisVerdict {
-    // Only the head, without comment banners: long legal text can say "not found" in another sense.
-    const head = stripComments(reply).slice(0, 1500);
-    if (RESERVED_PATTERNS.some((pattern) => pattern.test(head))) {
+    const answer = answerPart(reply);
+    // First, so a refusal that also says "no information available" never reads as free.
+    // (.io, .me and .sh put "too many queries" in every reply's terms, which answerPart leaves out.)
+    if (THROTTLE_PATTERNS.some((pattern) => pattern.test(answer))) {
+        return "throttled";
+    }
+
+    if (RESERVED_PATTERNS.some((pattern) => pattern.test(answer))) {
         return "reserved";
     }
 
-    if (NOT_FOUND_PATTERNS.some((pattern) => pattern.test(head))) {
+    if (NOT_FOUND_PATTERNS.some((pattern) => pattern.test(answer))) {
         return "available";
     }
 
-    if (REGISTERED_PATTERNS.some((pattern) => pattern.test(head))) {
-        return "taken";
-    }
-
-    // An empty close, an access-denied banner or a rate-limit notice proves nothing either way.
-    return THROTTLE_PATTERNS.some((pattern) => pattern.test(reply)) ? "throttled" : "unknown";
+    // An empty close or an access-denied banner proves nothing either way.
+    return REGISTERED_PATTERNS.some((pattern) => pattern.test(answer)) ? "taken" : "unknown";
 }
 
 /** Fields worth showing from a raw record; each registry formats them differently. */
