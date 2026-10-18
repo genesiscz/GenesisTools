@@ -479,4 +479,24 @@ describe("env", () => {
 
         expect(env.tools.getHome()).toBe("before");
     });
+
+    it("the e2e and integration switches read RUN_E2E and RUN_INTEGRATION, with the test gates' on and off rule", async () => {
+        const read = async (overrides: Record<string, string | undefined>): Promise<boolean[]> => {
+            let seen: boolean[] = [];
+            await env.testing.withOverrides(overrides, () => {
+                seen = [env.test.shouldRunE2E(), env.test.shouldRunIntegration()];
+            });
+
+            return seen;
+        };
+
+        expect(await read({ RUN_E2E: "1", RUN_INTEGRATION: "1" })).toEqual([true, true]);
+        expect(await read({ RUN_E2E: "0", RUN_INTEGRATION: "false" })).toEqual([false, false]);
+        expect(await read({ RUN_E2E: undefined, RUN_INTEGRATION: "" })).toEqual([false, false]);
+        // The old names no longer turn anything on.
+        expect(await read({ E2E: "1", INTEGRATION: "1", RUN_E2E: undefined, RUN_INTEGRATION: undefined })).toEqual([
+            false,
+            false,
+        ]);
+    });
 });

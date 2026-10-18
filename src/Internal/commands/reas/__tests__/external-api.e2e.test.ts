@@ -1,10 +1,10 @@
 /**
  * E2E tests for all external API endpoints used by the REAS module.
  *
- * Run: E2E=1 bun test src/Internal/commands/reas/__tests__/external-api.e2e.test.ts
+ * Run: RUN_E2E=1 bun scripts/test.ts src/Internal/commands/reas/__tests__/external-api.e2e.test.ts
  *
  * These tests exercise the actual API client classes (ReasClient, SrealityClient, etc.)
- * against live endpoints. Gated behind E2E=1 so normal test runs skip them.
+ * against live endpoints. Gated behind RUN_E2E=1 so normal test runs skip them.
  */
 
 import { describe, expect, test } from "bun:test";

@@ -11,6 +11,7 @@ import {
     has,
     isFlag,
     isNonEmpty,
+    isOptIn,
     parseIntEnv,
 } from "@genesiscz/utils/env/env-core";
 import { withScopedEnv } from "@genesiscz/utils/env/env-scoped";
@@ -308,8 +309,10 @@ export const env = {
 
     test: {
         shouldRunNetworkTests: () => isNonEmpty("RUN_NETWORK_TESTS"),
-        shouldRunE2E: () => isNonEmpty("E2E"),
-        shouldRunIntegration: () => isNonEmpty("INTEGRATION"),
+        // The same variables and the same on/off rule as the gates in src/utils/test/skip.ts, so RUN_E2E=1 and
+        // RUN_INTEGRATION=1 turn on every such test, and "0" or "false" turns them off.
+        shouldRunE2E: () => isOptIn("RUN_E2E"),
+        shouldRunIntegration: () => isOptIn("RUN_INTEGRATION"),
         shouldSkipNetworkTests: () => isNonEmpty("SKIP_NETWORK_TESTS"),
         shouldRunLiveSmoke: () => isFlag("SHOPS_LIVE_SMOKE") || isFlag("RUN_LIVE_SMOKE"),
         shouldRunShopsLiveItesco: () => isFlag("SHOPS_LIVE_ITESCO"),

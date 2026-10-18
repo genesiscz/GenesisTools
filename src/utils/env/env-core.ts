@@ -44,7 +44,14 @@ export function isNonEmpty(name: EnvKey): boolean {
     return getTrimmed(name) !== undefined;
 }
 
-/** Common gate for DEBUG, E2E, RUN_NETWORK_TESTS, flags set to "1", etc. */
+/** An opt-in switch as the test gates read one: set, not empty, and not "0" or "false". */
+export function isOptIn(name: EnvKey): boolean {
+    const value = getTrimmed(name);
+
+    return value !== undefined && value !== "0" && value.toLowerCase() !== "false";
+}
+
+/** Common gate for DEBUG, RUN_NETWORK_TESTS, flags set to "1", etc. */
 export function isFlag(name: EnvKey, truthy = "1"): boolean {
     return getRaw(name) === truthy;
 }
