@@ -270,14 +270,14 @@ enum AgentWatch {
 /// folders, and an event asks the CLI again for the parent it touched. No timer runs faster than 30 s.
 @MainActor
 final class HubAgentsModel: ObservableObject {
-    @Published package private(set) var parents: [AgentParent] = []
-    @Published package private(set) var orphans: [AgentNode] = []
+    @Published private(set) var parents: [AgentParent] = []
+    @Published private(set) var orphans: [AgentNode] = []
     /// Not published: no view shows them, and each refresh flipped `loading` twice, which re-rendered every
     /// view that observes this model (the list, the detail, its header) for nothing.
-    package private(set) var loading = false
-    package private(set) var showingCached = false
-    @Published package private(set) var loaded = false
-    @Published package private(set) var error: String?
+    private(set) var loading = false
+    private(set) var showingCached = false
+    @Published private(set) var loaded = false
+    @Published private(set) var error: String?
     /// `AgentTree.key(parent:child:)` of the open child.
     @Published var selectedID: String? {
         didSet {
@@ -287,16 +287,16 @@ final class HubAgentsModel: ObservableObject {
         }
     }
     /// A parent folded or unfolded by hand; the rest follow `defaultOpen`.
-    @Published package private(set) var foldOverride: [String: Bool] = [:]
-    @Published package private(set) var mail: AgentMail?
-    @Published package private(set) var mailError: String?
-    @Published package private(set) var loadingMail = false
+    @Published private(set) var foldOverride: [String: Bool] = [:]
+    @Published private(set) var mail: AgentMail?
+    @Published private(set) var mailError: String?
+    @Published private(set) var loadingMail = false
     /// Whole spawn prompts by agent key, loaded once per child (the list carries a preview only).
-    @Published package private(set) var prompts: [String: String] = [:]
+    @Published private(set) var prompts: [String: String] = [:]
     private var promptsLoading = Set<String>()
     /// Bumped by a deep link or a back/forward step: the list scrolls the selected row into view then,
     /// and only then (a refresh or a click never scrolls).
-    @Published package private(set) var revealRequest = 0
+    @Published private(set) var revealRequest = 0
     /// The pointer is over the list: reorders wait (`StickyOrder` hold) until it leaves.
     var holdOrder = false {
         didSet {

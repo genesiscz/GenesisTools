@@ -191,7 +191,7 @@ struct RepoFacts: Codable, Equatable {
 final class RepoFactsStore: ObservableObject {
     static let shared = RepoFactsStore()
 
-    @Published package private(set) var byPath: [String: RepoFacts] = [:]
+    @Published private(set) var byPath: [String: RepoFacts] = [:]
     private var requested = Set<String>()
     private var requestedPR = Set<String>()
     private var queue: [String] = []

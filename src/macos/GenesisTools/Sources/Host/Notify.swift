@@ -34,7 +34,7 @@ struct NotifyActionInput: Decodable {
 struct NotifyAction: Decodable {
     var id: String
     var title: String
-    package var open: String?
+    var open: String?
     var execute: String?
     /// Renders the button in red. Cosmetic only.
     var destructive: Bool?
@@ -48,7 +48,7 @@ struct NotifyPostParams: Decodable {
     var subtitle: String?
     var sound: String?
     var group: String?
-    package var open: String?
+    var open: String?
     var execute: String?
     var appIcon: String?
     /// Image, audio or video files shown with the banner. A thumbnail rides on the right of the
@@ -64,7 +64,7 @@ struct NotifyPostParams: Decodable {
     /// the waiter is looking.
     var replyDir: String?
     /// Home the click-launched `execute` should see as `GENESIS_TOOLS_HOME`.
-    package var genesisHome: String?
+    var genesisHome: String?
 }
 
 struct NotifyReplyParams: Decodable {

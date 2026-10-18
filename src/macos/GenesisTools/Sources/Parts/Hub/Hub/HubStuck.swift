@@ -49,8 +49,8 @@ enum HubStuck {
 @MainActor
 final class HubStuckStore: ObservableObject {
     static let shared = HubStuckStore()
-    @Published package private(set) var verdicts: [String: StuckVerdict] = [:]
-    @Published package private(set) var thresholds: StuckThresholds?
+    @Published private(set) var verdicts: [String: StuckVerdict] = [:]
+    @Published private(set) var thresholds: StuckThresholds?
 
     /// Two minutes: the wait threshold is ten, and each poll reads every watched session's tail.
     static let interval: Duration = .seconds(120)

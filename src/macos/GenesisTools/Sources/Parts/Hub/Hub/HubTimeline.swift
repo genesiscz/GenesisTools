@@ -200,24 +200,24 @@ final class HubTimelineModel: ObservableObject {
     /// More changed rows than this land without the slide (see `apply`).
     static let animatedChangeLimit = 8
 
-    @Published package private(set) var events: [TimelineEvent] = []
-    @Published package private(set) var since: Date?
-    @Published package private(set) var until: Date?
-    @Published package private(set) var warnings: [String] = []
-    @Published package private(set) var truncated: [String] = []
-    @Published package private(set) var loading = false
-    @Published package private(set) var loadingOlder = false
-    @Published package private(set) var loadedAt: Date?
-    @Published package private(set) var error: String?
-    @Published package private(set) var hasMore = false
+    @Published private(set) var events: [TimelineEvent] = []
+    @Published private(set) var since: Date?
+    @Published private(set) var until: Date?
+    @Published private(set) var warnings: [String] = []
+    @Published private(set) var truncated: [String] = []
+    @Published private(set) var loading = false
+    @Published private(set) var loadingOlder = false
+    @Published private(set) var loadedAt: Date?
+    @Published private(set) var error: String?
+    @Published private(set) var hasMore = false
     /// Why the last "Load older" failed; the footer shows it beside the button (the page is not empty,
     /// so the empty-list error line never renders then).
-    @Published package private(set) var olderError: String?
+    @Published private(set) var olderError: String?
     private var nextBefore: String?
     /// The page on screen is the last run's for this range and filters, from disk; the fresh one is loading.
-    @Published package private(set) var showingCache = false
+    @Published private(set) var showingCache = false
     /// Events the last refresh of the same page added or changed; they flash once.
-    @Published package private(set) var changed = Set<String>()
+    @Published private(set) var changed = Set<String>()
     /// The cache key of the page on screen: a refresh of the same page flashes, another page does not.
     private var shownKey: String?
     private static let cache = HubSWR.cache("timeline")
@@ -277,15 +277,15 @@ final class HubTimelineModel: ObservableObject {
         }
     }
 
-    @Published package private(set) var expanded: Set<String> = []
-    @Published package private(set) var details: [String: TimelineDetail] = [:]
-    @Published package private(set) var detailErrors: [String: String] = [:]
-    @Published package private(set) var loadingDetails: Set<String> = []
+    @Published private(set) var expanded: Set<String> = []
+    @Published private(set) var details: [String: TimelineDetail] = [:]
+    @Published private(set) var detailErrors: [String: String] = [:]
+    @Published private(set) var loadingDetails: Set<String> = []
     /// One commit's one file, keyed `<sha>\0<path>`.
-    @Published package private(set) var fileDiffs: [String: TimelineFileDiff] = [:]
-    @Published package private(set) var loadingDiffs: Set<String> = []
+    @Published private(set) var fileDiffs: [String: TimelineFileDiff] = [:]
+    @Published private(set) var loadingDiffs: Set<String> = []
     /// `tools ai-spend session` per session id; `.some(nil)` = asked, no spend.
-    @Published package private(set) var spend: [String: HubSpend.Estimate?] = [:]
+    @Published private(set) var spend: [String: HubSpend.Estimate?] = [:]
 
     /// When the feed was last looked at in an earlier run of the hub: the start of "since my last visit".
     let lastVisit: Date? = HubDefaults.store.object(forKey: "hub.timeline.lastVisit") as? Date

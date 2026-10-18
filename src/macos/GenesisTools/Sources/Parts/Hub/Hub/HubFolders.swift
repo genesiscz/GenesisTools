@@ -157,7 +157,7 @@ struct HubFolderTrees: View {
 @MainActor
 final class HubFolderTreeStore: ObservableObject {
     private var models: [String: FileTreeModel] = [:]
-    @Published package private(set) var folded = Set<String>()
+    @Published private(set) var folded = Set<String>()
 
     func model(for root: String) -> FileTreeModel {
         if let model = models[root] {

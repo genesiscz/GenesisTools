@@ -33,7 +33,7 @@ struct VaultUnlockParams: Decodable {
 /// `KERN_PROCARGS2` of a process: the executable path, then `argc` arguments, then the environment.
 struct ProcArgs: Equatable {
     var executable: String
-    package var arguments: [String]
+    var arguments: [String]
     var environment: [String]
 
     func environmentValue(_ name: String) -> String? {

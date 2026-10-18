@@ -409,17 +409,17 @@ final class PRThreadsStore: ObservableObject {
     static let staleAfter: TimeInterval = 30
 
     let target: PRTarget
-    @Published package private(set) var payload: PRThreadsPayload?
-    @Published package private(set) var loading = false
+    @Published private(set) var payload: PRThreadsPayload?
+    @Published private(set) var loading = false
     /// The threads on screen came from the disk cache and the host has not answered yet. 🛑 Every write
     /// waits for the fresh answer: a stale thread id or state must never reach the host.
-    @Published package private(set) var stale = false
+    @Published private(set) var stale = false
     /// Threads that are new or whose notes or state moved in the last refresh; they flash once.
-    @Published package private(set) var changed: Set<String> = []
+    @Published private(set) var changed: Set<String> = []
     /// A write in flight ("Resolving…"); the thread buttons wait for it.
-    @Published package private(set) var busy: String?
+    @Published private(set) var busy: String?
     @Published var notice: String?
-    @Published package private(set) var error: String?
+    @Published private(set) var error: String?
     /// Called on the main thread after new threads land (the model re-renders the diff's cards).
     var onChange: (() -> Void)?
     var onSubmitted: ((PRIdentity, Set<String>) -> Void)?

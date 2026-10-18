@@ -37,9 +37,9 @@ struct HubPRSessions: Decodable, Equatable {
 
 @MainActor
 final class PRSessionsStore: ObservableObject {
-    @Published package private(set) var results: [String: HubPRSessions] = [:]
-    @Published package private(set) var loading: Set<String> = []
-    @Published package private(set) var errors: [String: String] = [:]
+    @Published private(set) var results: [String: HubPRSessions] = [:]
+    @Published private(set) var loading: Set<String> = []
+    @Published private(set) var errors: [String: String] = [:]
 
     /// The argv for one PR, nil when the PR has no local checkout to search from.
     static func arguments(_ pr: HubPR, detail: HubPRDetail?, fresh: Bool) -> [String]? {

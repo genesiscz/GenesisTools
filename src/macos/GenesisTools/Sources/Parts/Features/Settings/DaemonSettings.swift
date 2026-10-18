@@ -159,11 +159,11 @@ enum DaemonFormat {
 final class DaemonSettingsStore: ObservableObject {
     static let shared = DaemonSettingsStore()
 
-    @Published package private(set) var status: DaemonStatusPayload?
-    @Published package private(set) var stats: DaemonStatsPayload?
-    @Published package private(set) var loading = false
-    @Published package private(set) var runningNow: Set<String> = []
-    @Published package private(set) var outputs: [String: DaemonRunOutput] = [:]
+    @Published private(set) var status: DaemonStatusPayload?
+    @Published private(set) var stats: DaemonStatsPayload?
+    @Published private(set) var loading = false
+    @Published private(set) var runningNow: Set<String> = []
+    @Published private(set) var outputs: [String: DaemonRunOutput] = [:]
     @Published var message: String?
     @Published var messageIsError = false
     /// Bumped by every write; a load that started before a write does not replace the tasks the write returned.

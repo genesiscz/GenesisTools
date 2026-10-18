@@ -10,8 +10,8 @@ import SwiftUI
 /// restores next time.
 enum HubDefaults {
     static let scratchSuite = "com.genesiscz.genesistools.hub-scratch"
-    package private(set) static var store: UserDefaults = .standard
-    package private(set) static var isolated = false
+    private(set) static var store: UserDefaults = .standard
+    private(set) static var isolated = false
 
     static func isolate() {
         guard !isolated, let scratch = UserDefaults(suiteName: scratchSuite) else { return }
@@ -73,7 +73,7 @@ enum HubBench {
         let phase: DragPhase
     }
 
-    package private(set) static var active = false
+    private(set) static var active = false
     private static var probes: [String: [Int]] = [:]
 
     /// A layout fact at this moment; consecutive equal values are folded, so the count of entries

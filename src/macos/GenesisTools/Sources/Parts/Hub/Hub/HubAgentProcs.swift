@@ -156,9 +156,9 @@ enum ProcsFormat {
 final class AgentProcsStore: ObservableObject {
     static let shared = AgentProcsStore()
 
-    @Published package private(set) var report: ProcsReport?
-    @Published package private(set) var loading = false
-    @Published package private(set) var stopping = Set<Int>()
+    @Published private(set) var report: ProcsReport?
+    @Published private(set) var loading = false
+    @Published private(set) var stopping = Set<Int>()
     @Published var expanded = Set<String>()
     @Published var notice: (text: String, isError: Bool)?
     /// Settings → Hub → Panes edits the same value (`HubPreferences.processEnergy`); a change there reaches this

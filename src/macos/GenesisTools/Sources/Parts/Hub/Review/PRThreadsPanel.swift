@@ -1531,7 +1531,7 @@ private struct SubmitReviewForm: View {
 /// report a new width, that row goes back to the same distance, once, after the one reflow.
 @MainActor
 final class PRListAnchor {
-    package static let space = "prThreads.content"
+    static let space = "prThreads.content"
     /// The list on screen, for the `--drag-context` snapshot demo.
     static weak var current: PRListAnchor?
 
@@ -1539,7 +1539,7 @@ final class PRListAnchor {
     private var frames: [String: CGRect] = [:]
     func rowFrame(_ id: String) -> CGRect? { frames[id] }
     /// The row at the viewport's top and its y in the content, with the scroll offset it was read at.
-    package private(set) var held: (id: String, contentY: CGFloat, offset: CGFloat)?
+    private(set) var held: (id: String, contentY: CGFloat, offset: CGFloat)?
     private var restorePending = false
     private var observer: NSObjectProtocol?
 

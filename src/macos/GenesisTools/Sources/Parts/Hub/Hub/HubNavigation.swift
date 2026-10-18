@@ -16,9 +16,9 @@ struct HubNavEntry: Equatable {
 struct HubNavHistory: Equatable {
     static let limit = 100
 
-    package private(set) var back: [HubNavEntry] = []
-    package private(set) var current: HubNavEntry?
-    package private(set) var forward: [HubNavEntry] = []
+    private(set) var back: [HubNavEntry] = []
+    private(set) var current: HubNavEntry?
+    private(set) var forward: [HubNavEntry] = []
 
     var canGoBack: Bool { !back.isEmpty }
     var canGoForward: Bool { !forward.isEmpty }

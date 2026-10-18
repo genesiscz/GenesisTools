@@ -211,8 +211,8 @@ struct CmuxHost: TerminalHost {
 
 @MainActor
 final class TerminalTreeModel: ObservableObject {
-    @Published package private(set) var tree: CmuxTree?
-    @Published package private(set) var loading = false
+    @Published private(set) var tree: CmuxTree?
+    @Published private(set) var loading = false
     let host: TerminalHost
 
     init(host: TerminalHost = TerminalHosts.current) {

@@ -22,14 +22,14 @@ package final class SettingsModel: ObservableObject {
 
     /// Guards the revert assignment above from re-entering `didSet`.
     private var isRevertingSwitch = false
-    @Published package private(set) var version = ""
-    @Published package private(set) var build = ""
-    @Published package private(set) var bundleId = ""
-    @Published package private(set) var bundlePath = ""
-    @Published package private(set) var signature = "unknown"
-    @Published package private(set) var teamId = ""
-    @Published package private(set) var manifest = ""
-    @Published package private(set) var error: String?
+    @Published private(set) var version = ""
+    @Published private(set) var build = ""
+    @Published private(set) var bundleId = ""
+    @Published private(set) var bundlePath = ""
+    @Published private(set) var signature = "unknown"
+    @Published private(set) var teamId = ""
+    @Published private(set) var manifest = ""
+    @Published private(set) var error: String?
 
     /// Same contract as `env.tools.getHome()` on the TypeScript side: GENESIS_TOOLS_HOME, else the home directory.
     package static let toolsHome: String = {

@@ -360,21 +360,21 @@ enum InboxSort: String, CaseIterable {
 
 @MainActor
 final class HubInboxModel: ObservableObject {
-    @Published package private(set) var sessions: [InboxSession] = []
+    @Published private(set) var sessions: [InboxSession] = []
     /// A notification's target that is not waiting any more: said once, instead of the click doing nothing.
     @Published var revealMissing: String?
-    @Published package private(set) var loading = false
-    @Published package private(set) var loadedAt: Date?
-    @Published package private(set) var error: String?
+    @Published private(set) var loading = false
+    @Published private(set) var loadedAt: Date?
+    @Published private(set) var error: String?
     /// The session the sidebar picked; the main list scrolls to it.
     @Published var selectedID: String?
     /// Each answered item's delivery, by item id, until the next answer to it.
-    @Published package private(set) var deliveries: [String: InboxDelivery] = [:]
-    @Published package private(set) var sending: Set<String> = []
+    @Published private(set) var deliveries: [String: InboxDelivery] = [:]
+    @Published private(set) var sending: Set<String> = []
     /// Decisions being drafted or dismissed right now (a pending write), by item id.
-    @Published package private(set) var writing: Set<String> = []
+    @Published private(set) var writing: Set<String> = []
     /// Why the last draft or dismiss of an item failed, by item id, until its next write starts.
-    @Published package private(set) var writeErrors: [String: String] = [:]
+    @Published private(set) var writeErrors: [String: String] = [:]
     /// The newest draft or dismiss asked for while one ran for the same item: it runs next, so a
     /// second pick or a note saved during a pick is never dropped.
     private var pendingWrites: [String: [String]] = [:]
@@ -383,21 +383,21 @@ final class HubInboxModel: ObservableObject {
     /// A load asked for while one ran (a write finished meanwhile). It runs when that one ends.
     private var reloadPending = false
     /// Sessions whose Send is running, by session id.
-    @Published package private(set) var sendingSessions: Set<String> = []
+    @Published private(set) var sendingSessions: Set<String> = []
     /// The last Send result per session id (where the answers went, or why nothing did).
-    @Published package private(set) var sessionResults: [String: InboxDelivery] = [:]
+    @Published private(set) var sessionResults: [String: InboxDelivery] = [:]
     /// Set when a Send found no live target: the view shows the resume dialog for this session.
     @Published var resumeFor: InboxSession?
     /// The session whose info popover is open (`--inbox-info <id>` opens it in a scripted run).
     @Published var infoFor: String?
     /// Whether a queued answer would ever leave on its own, from the last target resolution.
-    @Published package private(set) var queueHookOn = false
+    @Published private(set) var queueHookOn = false
     /// Bumped after every draft, dismiss or send has written the store: the Decisions pane reloads on it.
-    @Published package private(set) var writeGeneration = 0
+    @Published private(set) var writeGeneration = 0
     /// The card a `--decision` / `--question` launch asked for (a banner click): outlined and scrolled to.
     @Published var focusedItemID: String?
     /// Bumped per reveal, so a second click on the same banner scrolls back to the card.
-    @Published package private(set) var focusRequest = 0
+    @Published private(set) var focusRequest = 0
     /// `--inbox-resume <id>` / `--inbox-info <id>` / `--decision <id>` / `--question <id>`: opened once the
     /// list has loaded, then cleared.
     enum Reveal {
@@ -652,7 +652,7 @@ final class HubInboxModel: ObservableObject {
 
     /// How long a Send after a resume waits for the reopened pane before typing. Claude boots in a
     /// few seconds; the account picker can take longer.
-    package static let resumeWaitSeconds = 30
+    static let resumeWaitSeconds = 30
 
     /// Sends the drafted answers of a session as one message. `resumeTarget` names the place the
     /// resume dialog reopened it: the send then waits for that pane to be live and types into it.

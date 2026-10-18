@@ -15,7 +15,7 @@ enum AppMainMenu {
     /// True after this process installed the hub menu. The review process installs with no hub, so a session
     /// hosted there keeps Command-R and Command on the keys right of P. Set only here: the session view is
     /// built from call sites this package does not own.
-    package private(set) static var installedWithHub = false
+    private(set) static var installedWithHub = false
 
     static func install(hub: HubModel? = nil, keymap: Keymap = HubKeymap.shared) {
         installedWithHub = hub != nil

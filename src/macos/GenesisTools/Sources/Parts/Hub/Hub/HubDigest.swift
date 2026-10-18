@@ -145,11 +145,11 @@ enum HubDigestDay {
 @MainActor
 final class HubDigestModel: ObservableObject {
     @Published var day = HubDigestDay.string(Date())
-    @Published package private(set) var digest: HubDigest?
-    @Published package private(set) var loading = false
-    @Published package private(set) var error: String?
+    @Published private(set) var digest: HubDigest?
+    @Published private(set) var loading = false
+    @Published private(set) var error: String?
     @Published var notice: String?
-    @Published package private(set) var exporting = false
+    @Published private(set) var exporting = false
     private var generation = 0
 
     func load() {

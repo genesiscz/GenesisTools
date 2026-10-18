@@ -122,11 +122,11 @@ extension HubModel {
 final class PromptLibraryStore: ObservableObject {
     static let shared = PromptLibraryStore()
 
-    @Published package private(set) var prompts: [HubPrompt] = []
+    @Published private(set) var prompts: [HubPrompt] = []
     /// The ⌘⇧P picker is showing; shared so `tools hub --prompts` can open it too.
     @Published var pickerOpen = false
-    @Published package private(set) var loading = false
-    @Published package private(set) var busy = false
+    @Published private(set) var loading = false
+    @Published private(set) var busy = false
 
     nonisolated private static func runCLI(_ args: [String]) throws -> Data {
         let capture = try ToolsCLIRunner.capture(args)

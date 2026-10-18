@@ -105,11 +105,11 @@ enum HubForecastFormat {
 @MainActor
 final class HubForecastStore: ObservableObject {
     static let shared = HubForecastStore()
-    package static let maxAge: TimeInterval = 120
+    static let maxAge: TimeInterval = 120
 
-    @Published package private(set) var accounts: [HubForecastAccount] = []
-    @Published package private(set) var error: String?
-    @Published package private(set) var loading = false
+    @Published private(set) var accounts: [HubForecastAccount] = []
+    @Published private(set) var error: String?
+    @Published private(set) var loading = false
     private var loadedAt: Date?
 
     /// The accounts named `name` (the session's pinned account), current windows only.

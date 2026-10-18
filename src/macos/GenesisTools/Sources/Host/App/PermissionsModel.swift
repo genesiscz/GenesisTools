@@ -44,9 +44,9 @@ struct PermissionRow: Identifiable, Equatable {
 /// (`PermissionAccess`, the same module the widget's permission dialogs use); this model adds which `tools`
 /// command needs each grant and remembers probe answers, which macOS has no status for.
 final class PermissionsModel: ObservableObject {
-    @Published package private(set) var rows: [PermissionRow] = []
-    @Published package private(set) var busy: String?
-    @Published package private(set) var lastMessage: String?
+    @Published private(set) var rows: [PermissionRow] = []
+    @Published private(set) var busy: String?
+    @Published private(set) var lastMessage: String?
 
     private let access: PermissionAccess
     private var probeResults: [PermissionKind: PermissionStatus] = [:]

@@ -181,20 +181,20 @@ final class PanelFindModel: ObservableObject {
     let scope: String
     /// "Find in <title>" in the field.
     let title: String
-    @Published package private(set) var isOpen = false
+    @Published private(set) var isOpen = false
     @Published var query = "" {
         didSet { if query != oldValue { search(sameMatch: false, reveal: true) } }
     }
     @Published var caseSensitive = false {
         didSet { if caseSensitive != oldValue { search(sameMatch: false, reveal: true) } }
     }
-    @Published package private(set) var matches: [PanelFindMatch] = []
-    @Published package private(set) var currentIndex: Int?
-    @Published package private(set) var searching = false
+    @Published private(set) var matches: [PanelFindMatch] = []
+    @Published private(set) var currentIndex: Int?
+    @Published private(set) var searching = false
     /// The bar focuses its field (and selects the text) when this changes.
-    @Published package private(set) var focusToken = 0
+    @Published private(set) var focusToken = 0
     /// The host scrolls to `current` when this changes.
-    @Published package private(set) var revealToken = 0
+    @Published private(set) var revealToken = 0
 
     /// What the panel can search, set by `.panelFind` on every render (the latest data).
     var rows: () -> [PanelFindRow] = { [] }

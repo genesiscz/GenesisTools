@@ -13,8 +13,8 @@ struct LaunchdJob: Identifiable, Equatable {
 
 /// The com.genesis-tools.* launchd jobs and whether they run under this bundle's identity.
 final class ServicesModel: ObservableObject {
-    @Published package private(set) var jobs: [LaunchdJob] = []
-    @Published package private(set) var scannedAt: Date?
+    @Published private(set) var jobs: [LaunchdJob] = []
+    @Published private(set) var scannedAt: Date?
 
     private static let launchAgents = NSString(string: "~/Library/LaunchAgents").expandingTildeInPath
     private static let labelPrefix = "com.genesis-tools."

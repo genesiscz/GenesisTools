@@ -101,9 +101,9 @@ enum HubRuleKind: String, CaseIterable, Sendable {
 
 @MainActor
 final class HubRulesModel: ObservableObject {
-    @Published package private(set) var list: HubRulesList?
-    @Published package private(set) var test: HubRulesRun?
-    @Published package private(set) var busy = false
+    @Published private(set) var list: HubRulesList?
+    @Published private(set) var test: HubRulesRun?
+    @Published private(set) var busy = false
     @Published var notice: String?
     /// The PR lookup cache setting shown in the same panel (the hub has no other settings view).
     @Published var prCacheSeconds = ""

@@ -155,7 +155,7 @@ enum PRHeadPresence {
 final class PRHeadFiles: ObservableObject {
     static let shared = PRHeadFiles()
 
-    @Published package private(set) var results: [String: [String: PathAtHead]] = [:]
+    @Published private(set) var results: [String: [String: PathAtHead]] = [:]
     private var started: Set<String> = []
     private let readGit: @Sendable (String, [String]) -> String?
 

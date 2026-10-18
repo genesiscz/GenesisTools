@@ -148,11 +148,11 @@ enum HubInsights {
 /// `minInterval`: the session file grows with every tail event, and each growth is a cache miss.
 @MainActor
 final class SessionInsightsModel: ObservableObject {
-    @Published package private(set) var payload: SessionInsightsPayload?
-    @Published package private(set) var error: String?
-    @Published package private(set) var loading = false
+    @Published private(set) var payload: SessionInsightsPayload?
+    @Published private(set) var error: String?
+    @Published private(set) var loading = false
     /// The payload on screen is the last run's, from disk, and the fresh one is still loading.
-    @Published package private(set) var showingCache = false
+    @Published private(set) var showingCache = false
 
     static let minInterval: TimeInterval = 90
     private var sessionId = ""

@@ -67,9 +67,9 @@ struct CheckLogRender: Equatable {
 final class CheckLogStore: ObservableObject {
     static let shared = CheckLogStore()
 
-    @Published package private(set) var logs: [String: CheckLogRender] = [:]
-    @Published package private(set) var loading: Set<String> = []
-    @Published package private(set) var failures: [String: String] = [:]
+    @Published private(set) var logs: [String: CheckLogRender] = [:]
+    @Published private(set) var loading: Set<String> = []
+    @Published private(set) var failures: [String: String] = [:]
     /// Finished logs, as `tools hub pr check-log` printed them (Hub/HubSWR.swift).
     private static let cache = HubSWR.cache("check-log")
 

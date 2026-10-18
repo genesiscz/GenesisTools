@@ -13,13 +13,13 @@ import SwiftUI
 final class HubLiveResize: ObservableObject {
     static let shared = HubLiveResize()
 
-    @Published package private(set) var active = false
+    @Published private(set) var active = false
     /// Only a pane divider, or a side panel that lays out live (`ResizableSidePanel.holdsLayout` off), is
     /// moving: its source starts with "split". Light panes follow it live; only the transcript list holds.
-    @Published package private(set) var splitOnly = false
+    @Published private(set) var splitOnly = false
     /// What resizes now: "window", "split" (a pane divider), "panel.<key>" (a side panel holding its
     /// layout), "split.panel.<key>" (a side panel laid out live).
-    @Published package private(set) var sources: Set<String> = []
+    @Published private(set) var sources: Set<String> = []
     private var observers: [NSObjectProtocol] = []
 
     func begin(_ source: String) {

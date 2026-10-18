@@ -66,7 +66,7 @@ struct ReviewComment: Codable, Identifiable, Equatable {
 /// `~/.genesis-tools/review/<repo key>/comments.json`, written atomically on every change.
 final class ReviewCommentStore {
     let directory: URL
-    package private(set) var comments: [ReviewComment] = []
+    private(set) var comments: [ReviewComment] = []
     /// Set when an unreadable comments.json could not be moved aside: saving would overwrite it.
     private var saveBlocked = false
     /// A `--snapshot` run renders and exits: it reads the comments and never writes them back (opening
@@ -428,7 +428,7 @@ final class ReviewCommentStore {
     static let changed = Notification.Name("ReviewCommentStore.changed")
     private var projection: [ReviewComment] = []
     private var pending: [Pending] = []
-    package private(set) var saveError: String?
+    private(set) var saveError: String?
 
     private static func read(_ file: URL) throws -> [ReviewComment] {
         guard FileManager.default.fileExists(atPath: file.path) else { return [] }

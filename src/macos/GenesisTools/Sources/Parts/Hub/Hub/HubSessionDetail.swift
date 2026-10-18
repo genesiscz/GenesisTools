@@ -48,7 +48,7 @@ struct HubSessionDetailHost: View {
     var agentChild = false
     /// Paging (GenesisKit `TranscriptPaging`): 150 turns per earlier page, a first page of 12 (viewport
     /// first). `GENESIS_HUB_FIRST_PAGE=150` restores the old one-shot window, for A/B measurements.
-    package static let pageSize = TranscriptPaging.pageSize
+    static let pageSize = TranscriptPaging.pageSize
     static let firstPage = TranscriptPaging.firstPage
     /// With `GENESIS_HUB_FILL=1` only: the rest of the window arrives in chunks of this many turns while
     /// the reader is idle. Off by default: each prepend made the List measure every row again, 1 to 3.6 s
@@ -829,7 +829,7 @@ final class HubLiveActivityStore: ObservableObject {
     }
 
     static let shared = HubLiveActivityStore()
-    @Published package private(set) var work: [String: Work] = [:]
+    @Published private(set) var work: [String: Work] = [:]
 
     func set(_ activity: TranscriptLiveActivity?, for sessionId: String) {
         // A stalled think is not work: the row keeps the list's own live rule.

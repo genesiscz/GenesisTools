@@ -124,16 +124,16 @@ struct MoveAsideOutcome: Decodable, Hashable {
 final class WorktreeCleanupStore: ObservableObject {
     static let shared = WorktreeCleanupStore()
 
-    @Published package private(set) var rows: [CleanupRow] = []
-    @Published package private(set) var loading = false
-    @Published package private(set) var loadedRepos: [String] = []
-    @Published package private(set) var scanMs: Int?
-    @Published package private(set) var sizes: [String: CleanupSize] = [:]
-    @Published package private(set) var sizing = Set<String>()
-    @Published package private(set) var removing: (done: Int, total: Int)?
+    @Published private(set) var rows: [CleanupRow] = []
+    @Published private(set) var loading = false
+    @Published private(set) var loadedRepos: [String] = []
+    @Published private(set) var scanMs: Int?
+    @Published private(set) var sizes: [String: CleanupSize] = [:]
+    @Published private(set) var sizing = Set<String>()
+    @Published private(set) var removing: (done: Int, total: Int)?
     @Published var selected = Set<String>()
     @Published var notice: (text: String, isError: Bool)?
-    @Published package private(set) var moving: (done: Int, total: Int)?
+    @Published private(set) var moving: (done: Int, total: Int)?
     /// The last move-aside's outcomes: the bar under the header offers their restore commands.
     @Published var lastMoved: [MoveAsideOutcome] = []
     /// `--older-than <days>`: only worktrees idle at least this long are removable; 0 turns the rule off. Settings →
@@ -162,9 +162,9 @@ final class WorktreeCleanupStore: ObservableObject {
 
     /// The rows on screen are the last scan's, from disk, and the fresh scan is still running.
     /// Remove and Move aside wait for the fresh rows: a cached "removable" is never acted on.
-    @Published package private(set) var showingCache = false
+    @Published private(set) var showingCache = false
     /// Rows the last fresh scan added or changed; they flash once.
-    @Published package private(set) var changed = Set<String>()
+    @Published private(set) var changed = Set<String>()
     /// Sizes measured in this run; a cached size shows until its path is measured again.
     private var measured = Set<String>()
     private static let scanCache = HubSWR.cache("worktree-cleanup")

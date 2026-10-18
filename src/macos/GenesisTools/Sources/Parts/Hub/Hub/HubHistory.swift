@@ -45,10 +45,10 @@ struct HubHistoryHit: Decodable, Identifiable, Equatable {
 
 @MainActor
 final class HubHistoryModel: ObservableObject {
-    @Published package private(set) var hits: [HubHistoryHit] = []
-    @Published package private(set) var running = false
-    @Published package private(set) var query = ""
-    @Published package private(set) var error: String?
+    @Published private(set) var hits: [HubHistoryHit] = []
+    @Published private(set) var running = false
+    @Published private(set) var query = ""
+    @Published private(set) var error: String?
     private var generation = 0
     /// One `tools claude history` at a time: a query typed while one runs waits here (the newest
     /// wins) and starts when it ends, so stale searches never pile up as parallel processes.

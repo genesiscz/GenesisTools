@@ -83,8 +83,8 @@ final class PRReadinessStore: ObservableObject {
     static let shared = PRReadinessStore()
 
     /// By PR URL (`HubPR.url`).
-    @Published package private(set) var byURL: [String: PRReadiness] = [:]
-    @Published package private(set) var loading = false
+    @Published private(set) var byURL: [String: PRReadiness] = [:]
+    @Published private(set) var loading = false
     private var pending: [HubPR]?
     /// The disk's last verdicts, read once per run; a fresh batch waits for it so it never lands after one.
     private var cachePaint: Task<Void, Never>?

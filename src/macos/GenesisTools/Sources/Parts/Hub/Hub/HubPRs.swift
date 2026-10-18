@@ -243,11 +243,11 @@ private struct HubPRList: Decodable {
 
 @MainActor
 final class PRsModel: ObservableObject {
-    @Published package private(set) var prs: [HubPR] = []
-    @Published package private(set) var errors: [String] = []
-    @Published package private(set) var loading = false
+    @Published private(set) var prs: [HubPR] = []
+    @Published private(set) var errors: [String] = []
+    @Published private(set) var loading = false
     @Published var selectedID: String?
-    @Published package private(set) var details: [String: HubPRDetail] = [:]
+    @Published private(set) var details: [String: HubPRDetail] = [:]
     @Published var review: ReviewModel?
     /// The PR the embedded review shows. Several PRs can share one worktree, so the path alone
     /// cannot tell whether the review must be rebuilt.
@@ -257,7 +257,7 @@ final class PRsModel: ObservableObject {
     /// The head commit the embedded review diffs to; a push to the open PR moves it.
     private var reviewHeadSha: String?
     /// PRs whose branch has no local worktree: their head fetched into the main checkout, by PR id.
-    @Published package private(set) var fetches: [String: PRFetchEntry] = [:]
+    @Published private(set) var fetches: [String: PRFetchEntry] = [:]
     // Published and saved by hand: `@AppStorage` inside an ObservableObject never publishes.
     @Published var state = HubDefaults.store.string(forKey: "hub.prs.state") ?? "open" {
         didSet {
@@ -276,11 +276,11 @@ final class PRsModel: ObservableObject {
     /// `--pr <ref>` (snapshots, links): select this PR once the list loads instead of the newest.
     var wanted: HubPRRef?
     /// A file to open in one PR's review once that review exists (`request(_:reveal:)`).
-    package private(set) var pendingReveal: PRReveal?
+    private(set) var pendingReveal: PRReveal?
     /// A commit to select in one PR's review once the review and the PR's commits are in (`request(_:commit:)`).
-    package private(set) var pendingCommit: PRCommitPick?
+    private(set) var pendingCommit: PRCommitPick?
     /// The commit row the overview scrolls to, set when a link selected it.
-    @Published package private(set) var commitScroll: PRCommitScroll?
+    @Published private(set) var commitScroll: PRCommitScroll?
     /// What a link asked of a PR and could not get (its commit is not in the PR), in that PR's header until
     /// dismissed or another PR opens. Not in `errors`: every list load replaces those.
     @Published var notice: PRNotice?
@@ -294,15 +294,15 @@ final class PRsModel: ObservableObject {
     private var reloadPending = false
     static let pageSize = 40
     /// PRs per project the list asks for; "Load more" adds a page.
-    @Published package private(set) var limit = PRsModel.pageSize
+    @Published private(set) var limit = PRsModel.pageSize
     /// Projects whose last answer was a full page, so the forge may hold more: each gets its own
     /// "Load more" (one button for every project asked them all for another page).
-    @Published package private(set) var fullProjects: Set<String> = []
+    @Published private(set) var fullProjects: Set<String> = []
     /// Every forge project cloned under the repo roots, not only the session projects the list starts
     /// from: a project with no recent session (Reservine/ReservineBack, 2026-10-04) was missing.
-    @Published package private(set) var allProjects: [HubPRProject] = []
+    @Published private(set) var allProjects: [HubPRProject] = []
     /// Projects whose own page (`loadProject`) is loading.
-    @Published package private(set) var projectLoading: Set<String> = []
+    @Published private(set) var projectLoading: Set<String> = []
     /// Projects opened from "More projects" or given a bigger page: their checkouts join every list
     /// load, and a page bigger than the list's is asked for again after it.
     private var extraRoots: [String: String] = [:]
@@ -312,11 +312,11 @@ final class PRsModel: ObservableObject {
     private var projectGeneration: [String: Int] = [:]
     private var projectsRequested = false
     /// The rows on screen came from the disk cache and the fresh list is still loading.
-    @Published package private(set) var showingCache = false
+    @Published private(set) var showingCache = false
     /// Rows that are new or whose update time moved in the last refresh; they flash once.
-    @Published package private(set) var changed: Set<String> = []
+    @Published private(set) var changed: Set<String> = []
     /// The forge-side search (`--query`), taken from the sidebar filter.
-    package private(set) var query = ""
+    private(set) var query = ""
     /// The cache key of the list on screen; a new key (state, mine, search) starts at its cached page.
     private var shownKey: String?
     /// Counts list loads, so a cached list read off the main actor never paints over a newer request

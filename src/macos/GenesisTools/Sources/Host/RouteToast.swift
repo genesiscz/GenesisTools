@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 struct RouteToastChoice {
-    package var enabled = true
+    var enabled = true
     var seconds = 5.0
     var title: String?
     /// The route's `name` from the config: a human headline in place of the raw parameter.

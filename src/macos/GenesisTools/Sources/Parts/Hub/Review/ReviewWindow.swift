@@ -243,7 +243,7 @@ enum ReviewPalette {
 // MARK: - Model
 
 final class ReviewModel: ObservableObject {
-    package private(set) var repo: URL
+    private(set) var repo: URL
     /// The folder the review was made for (a session's folder). `repo` moves on with the Worktree choice
     /// or to the git root; this does not, so the hub can tell its own review from one for another folder.
     let home: URL
@@ -251,7 +251,7 @@ final class ReviewModel: ObservableObject {
     var onWorktreeChange: ((URL) -> Void)?
     private let makeRenderer: () -> DiffRenderer
     private var builtRenderer: DiffRenderer?
-    package private(set) var comments: ReviewCommentStore
+    private(set) var comments: ReviewCommentStore
     private var repositoryLayouts: [String: ReviewRepositoryLayout] = [:]
     private var displayedHead: String?
     /// The agent session this review is for; "Send to agent" types into its cmux pane.
@@ -280,12 +280,12 @@ final class ReviewModel: ObservableObject {
     /// An agent's review proposal shown on this diff (drafts + meta), when opened with --proposal.
     @Published var proposal: ProposalDocument?
     /// The PR/MR this diff belongs to, with its live review threads; nil for a plain working-tree diff.
-    @Published package private(set) var pr: PRThreadsStore?
+    @Published private(set) var pr: PRThreadsStore?
     /// The PR's pushes (`tools hub pr versions`): loaded when the threads name a head the diff does not
     /// show, and when the Compare picker opens.
-    @Published package private(set) var versions: PRVersionsStore?
+    @Published private(set) var versions: PRVersionsStore?
     /// A push after the diff on screen: the notice above the diff and the orange Reload in the header.
-    @Published package private(set) var pushNews: PRPushNews?
+    @Published private(set) var pushNews: PRPushNews?
     /// The newest head whose notice the reader closed: the Reload stays, the notice does not come back.
     @Published var dismissedNewsHead: String?
     @Published var showsComparePicker = false
@@ -327,7 +327,7 @@ final class ReviewModel: ObservableObject {
         }
     }
     /// The thread card j / k moved to; r, e and x act on it.
-    @Published package private(set) var focusedCard: String?
+    @Published private(set) var focusedCard: String?
     /// Bumped by s and f: the PR bar opens Submit review / Fix threads (each still asks first).
     @Published var submitRequests = 0
     @Published var fixRequests = 0
@@ -347,7 +347,7 @@ final class ReviewModel: ObservableObject {
 
     /// The repositories this diff shows (Review/ReviewRoots.swift). The first is `repo`; the hub adds
     /// the session's ticked folders, and then every file sits under its root's folder name.
-    @Published package private(set) var roots: [ReviewRoot]
+    @Published private(set) var roots: [ReviewRoot]
     /// The Files tree's root rows: tick or untick a root, or remove an added folder. Set by the hub.
     var rootActions: ReviewRootActions?
     /// Comments of the other roots, each anchored in its own repository (`comments` is `repo`'s).
@@ -360,19 +360,19 @@ final class ReviewModel: ObservableObject {
     /// Root folders whose files changed since the last load started; the next load reads only these.
     private var pendingLoads: Set<String> = []
     /// Root folders showing their last snapshot from disk (`ReviewCache.diffs`) until their load answers.
-    @Published package private(set) var cachedFolders: Set<String> = []
+    @Published private(set) var cachedFolders: Set<String> = []
     /// Root folders that have a fresh answer for this scope: a cached snapshot never replaces one.
     private var freshFolders: Set<String> = []
     var showingCache: Bool { !cachedFolders.isEmpty }
     private var rendered = false
     /// A file asked for by `reveal(path:)` before the diff had it.
-    package private(set) var pendingRevealPath: String?
+    private(set) var pendingRevealPath: String?
     /// A PR thread's card asked for by `reveal(path:thread:)` before the page showed it.
     private var pendingThreadCard: String?
     /// The agent's draft cards on this diff, in diff order: the drafts list, the banner's Next draft.
-    package private(set) var draftCards: [RenderedComment] = []
+    private(set) var draftCards: [RenderedComment] = []
     /// An undecided draft has a card on this diff: the banner's Next draft has somewhere to go.
-    @Published package private(set) var hasOpenDraftOnDiff = false
+    @Published private(set) var hasOpenDraftOnDiff = false
     /// The proposal whose first open draft was already brought into view, so a reload never jumps again.
     private var revealedProposal: String?
     /// True when the window restored a saved scroll place: the page returns there, so no first-draft jump.

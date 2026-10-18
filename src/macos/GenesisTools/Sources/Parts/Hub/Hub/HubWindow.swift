@@ -505,9 +505,9 @@ final class HubModel: ObservableObject {
     private var sessionSearchText: [String: String] = [:]
     @Published var loadingSessions = false
     /// The list on screen is the last run's, from disk, and the fresh one is loading (Hub/HubSWR.swift).
-    @Published package private(set) var showingCachedSessions = false
+    @Published private(set) var showingCachedSessions = false
     /// Sessions the last refresh added or moved; their rows flash once.
-    @Published package private(set) var changedSessions = Set<String>()
+    @Published private(set) var changedSessions = Set<String>()
     @Published var error: String?
     /// The sidebar's filter text, which every mode's list applies.
     @Published var filter = "" {
@@ -622,11 +622,11 @@ final class HubModel: ObservableObject {
     @Published var transcriptQuery: String?
 
     /// Folders added in Files for the selected session ("Add folder"), each with its own changes.
-    @Published package private(set) var extraFolders: [String] = []
+    @Published private(set) var extraFolders: [String] = []
     /// The git repository of each added folder that is inside one, keyed by folder.
-    @Published package private(set) var folderRepos: [String: String] = [:]
+    @Published private(set) var folderRepos: [String: String] = [:]
     /// Which roots Changes shows (the session's folder and added ones); empty = only the session's.
-    @Published package private(set) var changesRoots: Set<String> = []
+    @Published private(set) var changesRoots: Set<String> = []
 
     var onSettled: (() -> Void)?
     var initialMode = HubMode.sessions
@@ -651,7 +651,7 @@ final class HubModel: ObservableObject {
 
     /// Back and forward (Hub/HubNavigation.swift). Taken from the published selection itself, so
     /// every path that changes it (rows, the palette, a handed-over `--session`, "Open") is recorded.
-    @Published package private(set) var history = HubNavHistory()
+    @Published private(set) var history = HubNavHistory()
     private var navRecorder: AnyCancellable?
     private var navRecordPending = false
     private var navRestoring = false

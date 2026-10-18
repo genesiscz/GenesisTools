@@ -11,7 +11,7 @@ import AppKit
 final class HubVisibility {
     static let shared = HubVisibility()
 
-    package private(set) var visible = true
+    private(set) var visible = true
     private var observer: NSObjectProtocol?
     /// Held weakly: a listener goes when its owner does, so models created and dropped (tests make many) leave
     /// nothing behind.

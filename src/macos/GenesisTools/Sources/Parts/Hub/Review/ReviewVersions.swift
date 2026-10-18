@@ -84,11 +84,11 @@ struct PRPushNews: Equatable {
 /// other than the diff's, and when the Compare picker opens; no timer.
 final class PRVersionsStore: ObservableObject {
     let target: PRTarget
-    @Published package private(set) var payload: PRVersionsPayload?
-    @Published package private(set) var loading = false
-    @Published package private(set) var error: String?
+    @Published private(set) var payload: PRVersionsPayload?
+    @Published private(set) var loading = false
+    @Published private(set) var error: String?
     /// The PR head the last load answered for, so one push is asked about once.
-    package private(set) var loadedForHead: String?
+    private(set) var loadedForHead: String?
     /// Called on the main thread after an answer lands.
     var onChange: (() -> Void)?
     private let loader: ([String]) throws -> PRVersionsPayload

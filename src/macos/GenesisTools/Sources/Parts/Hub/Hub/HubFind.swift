@@ -14,15 +14,15 @@ struct HubFindHit: Identifiable, Hashable {
 
 @MainActor
 final class HubFindModel: ObservableObject {
-    package static let maxHits = 1000
+    static let maxHits = 1000
 
     @Published var query = ""
-    @Published package private(set) var hits: [HubFindHit] = []
-    @Published package private(set) var running = false
-    @Published package private(set) var truncated = false
-    @Published package private(set) var note: String?
+    @Published private(set) var hits: [HubFindHit] = []
+    @Published private(set) var running = false
+    @Published private(set) var truncated = false
+    @Published private(set) var note: String?
     /// A search ran for the current panel: until then there is no count to show, only how to start.
-    @Published package private(set) var searched = false
+    @Published private(set) var searched = false
 
     private var process: Process?
     private var generation = 0

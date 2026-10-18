@@ -93,12 +93,12 @@ final class HubTranscriptSearchModel: ObservableObject {
     @Published var providers: Set<String> = Set(HubSearchArgs.providers)
     @Published var project = ""
     @Published var range: HubSearchRange = .month
-    @Published package private(set) var result: HubSearchResult?
-    @Published package private(set) var running = false
-    @Published package private(set) var error: String?
+    @Published private(set) var result: HubSearchResult?
+    @Published private(set) var running = false
+    @Published private(set) var error: String?
     private var generation = 0
     /// Sessions asked for; "Search more" raises it. A full page said nothing about the sessions past it.
-    @Published package private(set) var limit = HubTranscriptSearchModel.pageSize
+    @Published private(set) var limit = HubTranscriptSearchModel.pageSize
     static let pageSize = 40
     static let maxLimit = 200
     var mayHaveMore: Bool { (result?.results.count ?? 0) >= limit && limit < Self.maxLimit }

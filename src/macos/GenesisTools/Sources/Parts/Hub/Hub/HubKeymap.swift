@@ -14,7 +14,7 @@ import SwiftUI
 @MainActor
 enum HubKeymap {
     /// The keys in force: the library plus the user's own keys (`~/.genesis-tools/keymaps/hub.json`).
-    package static let shared = Keymap(library: library)
+    static let shared = Keymap(library: library)
 
     /// The command palette's scope: its keys work while the palette is open.
     static let paletteScope: KeymapScope = "hub.palette"

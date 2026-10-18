@@ -75,7 +75,7 @@ package enum AppDock {
 
 @MainActor
 final class AppDockTarget: NSObject {
-    package static let shared = AppDockTarget()
+    static let shared = AppDockTarget()
     weak var hubWindow: NSWindow?
 
     @objc func showHub(_ sender: Any?) {

@@ -83,8 +83,8 @@ enum HubNotifyEvent: String, CaseIterable, Identifiable {
 final class HubNotifyStore: ObservableObject {
     static let shared = HubNotifyStore()
 
-    @Published package private(set) var status: HubNotifyStatus?
-    @Published package private(set) var busy = false
+    @Published private(set) var status: HubNotifyStatus?
+    @Published private(set) var busy = false
     @Published var message: String?
     /// Runs in flight: `busy` holds until the last one ends, not the first.
     private var inFlight = 0 {
