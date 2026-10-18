@@ -169,7 +169,7 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertTrue(submitCalls.first?.hasPrefix("PRThreadsPanel.swift:") ?? false, "\(submitCalls)")
         XCTAssertEqual(literals.count, 1, "the verb is spelled once, in PRCommand.publish: \(literals)")
 
-        let panel = try String(contentsOf: sources.appendingPathComponent("Review/PRThreadsPanel.swift"), encoding: .utf8)
+        let panel = try String(contentsOf: sources.appendingPathComponent("Parts/Hub/Review/PRThreadsPanel.swift"), encoding: .utf8)
         let submit = try XCTUnwrap(panel.range(of: "store.submitReview("))
         let confirm = try XCTUnwrap(panel.range(of: "if confirm(event: event, summary: summary)", options: .backwards, range: panel.startIndex..<submit.lowerBound))
         XCTAssertLessThan(panel.distance(from: confirm.upperBound, to: submit.lowerBound), 80, "submitReview runs only inside the confirmation's if")

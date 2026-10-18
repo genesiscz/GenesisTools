@@ -4,7 +4,7 @@ paths:
   - "src/macos/GenesisKit/Sources/GenesisKit/Diff/**"
   - "src/macos/GenesisKit/Tests/GenesisKitTests/Markdown/**"
   - "src/macos/GenesisKit/Tests/GenesisKitTests/Diff/**"
-  - "src/macos/GenesisTools/Sources/Markdown/**"
+  - "src/macos/GenesisTools/Sources/Parts/Markdown/**"
 ---
 
 # The GenesisKit markdown viewer and git components

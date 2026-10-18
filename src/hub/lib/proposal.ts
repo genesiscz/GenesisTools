@@ -1,5 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readManifest } from "@app/macos/lib/permissions/app";
+import { installedParts } from "@app/macos/lib/permissions/parts";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { xxhash } from "@genesiscz/utils/hash";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { json2md, jsonToBlocks } from "@genesiscz/utils/json2md";
@@ -582,6 +585,17 @@ export function hubStatus(): { available: boolean; bundlePath: string; reason?: 
             available: false,
             bundlePath,
             reason: `GenesisTools.app is not installed: ${genesisAppBuildHint()}`,
+        };
+    }
+
+    // A build without the hub part (src/macos/lib/permissions/parts.ts) has no review window and no diff viewer.
+    const manifest = readManifest();
+
+    if (manifest && !installedParts(manifest).includes("hub")) {
+        return {
+            available: false,
+            bundlePath,
+            reason: `GenesisTools.app was built without the hub part: run ${toolCommand("hub")} to add it`,
         };
     }
 

@@ -4,7 +4,7 @@
 //
 //  Tokens and small shared pieces for the Session Details window (header, transcript, sidebar).
 //  The look follows the GenesisTools review window (`ReviewPalette` in
-//  GenesisTools/src/macos/GenesisTools/Sources/Review/ReviewWindow.swift): near-black ground,
+//  GenesisTools/src/macos/GenesisTools/Sources/Parts/Hub/Review/ReviewWindow.swift): near-black ground,
 //  hairlines at white 8%, status dots, monospaced counters, 10 pt cards, SF system fonts.
 //
 //  Portable: this file needs SwiftUI and AppKit only, so GenesisTools.app can copy it as is.

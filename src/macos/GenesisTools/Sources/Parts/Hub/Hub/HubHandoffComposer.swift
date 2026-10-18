@@ -1,0 +1,517 @@
+import AppKit
+import SwiftUI
+
+// The handoff composer: pick the last N prompts or a range, preview the markdown that
+// `tools hub handoff <id> --json` builds from the transcript alone (no model call), then copy it, save
+// it into a folder, or post it to the handoff store (`--post --owner`, the handoff_post store the
+// dev-dashboard and agents read). Every write goes through the CLI, so a terminal can do the same.
+
+/// A composer asked for from outside the sidebar (`tools hub --handoff`): the hub root presents it
+/// (`.hubHandoff(model:)`), so a hidden transcript pane or sidebar cannot swallow the request.
+/// `pending` is a session id or id prefix, resolved once the session list has it.
+@MainActor
+package final class HubHandoffRequests: ObservableObject {
+    package static let shared = HubHandoffRequests()
+    /// A request made before the first session list loaded (a fresh `tools hub --handoff`): it goes to
+    /// the session that load selects, or is dropped when the load selects none.
+    package static let firstSelection = "::first-selection"
+    @Published package var pending: String?
+
+    /// The session `pending` names, or nil while the list does not have it yet.
+    package func resolve(in sessions: [HubSession]) -> HubSession? {
+        guard let pending, !pending.isEmpty, pending != Self.firstSelection else { return nil }
+        return sessions.first { $0.id == pending || $0.sessionId.hasPrefix(pending) }
+    }
+}
+
+/// Hosts the composer that `tools hub --handoff` asks for, above every pane.
+private struct HubHandoffModifier: ViewModifier {
+    @ObservedObject var model: HubModel
+    @ObservedObject private var requests = HubHandoffRequests.shared
+    @State private var composer: HandoffComposerRequest?
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: requests.pending) { present() }
+            .onChange(of: model.sessions.count) { present() }
+            .onChange(of: model.selectedID) { present() }
+            .onAppear { present() }
+            .sheet(item: $composer) { request in
+                HandoffComposerSheet(request: request) { composer = nil }
+            }
+    }
+
+    private func present() {
+        guard let pending = requests.pending else { return }
+        let session: HubSession?
+
+        if pending == HubHandoffRequests.firstSelection {
+            // Waits for the first list; then the session it selected, or nothing (a PRs-mode launch).
+            guard !model.sessions.isEmpty else { return }
+            session = model.selected
+
+            if session == nil {
+                requests.pending = nil
+                model.notice = "No session to hand off: select one, or pass --session."
+                return
+            }
+        } else {
+            session = requests.resolve(in: model.sessions)
+        }
+
+        guard let session else { return }
+        requests.pending = nil
+        composer = HandoffComposerRequest(session: session, prompts: [], from: nil)
+    }
+}
+
+extension View {
+    package func hubHandoff(model: HubModel) -> some View {
+        modifier(HubHandoffModifier(model: model))
+    }
+}
+
+package struct HandoffComposerRequest: Identifiable {
+    package let id = UUID()
+    package let session: HubSession
+    /// Prompts of the session, from its insights; empty until they load (the range picker then waits).
+    package let prompts: [InsightTurn]
+    /// Open on a range starting at this "#N"; nil opens on the last prompts.
+    package let from: Int?
+    /// The session's branch, read on the main thread when the composer opens (a HEAD file read).
+    package let branch: String?
+
+    @MainActor
+    package init(session: HubSession, prompts: [InsightTurn], from: Int?) {
+        self.session = session
+        self.prompts = prompts
+        self.from = from
+        branch = HubSessionDetailHost.branch(of: session)
+    }
+}
+
+package enum HandoffRangeChoice: Equatable {
+    case last(Int)
+    case range(from: Int, to: Int)
+
+    package var arguments: [String] {
+        switch self {
+        case .last(let count): return ["--last", String(count)]
+        case .range(let from, let to): return ["--from", String(min(from, to)), "--to", String(max(from, to))]
+        }
+    }
+}
+
+package struct HandoffDraftPayload: Decodable, Equatable {
+    package struct Posted: Decodable, Equatable {
+        package let id: String
+        package let name: String?
+        package let paste: String
+    }
+
+    package let title: String
+    package let markdown: String
+    package let fromNumber: Int
+    package let toNumber: Int
+    package let promptCount: Int
+    package let openItems: [String]
+    package let savedTo: String?
+    package let posted: Posted?
+}
+
+package enum HubHandoff {
+    /// `tools hub handoff` for this session and range. Free text rides as `--flag=value`, so a title
+    /// that starts with `-` is still a value.
+    package static func arguments(session: HubSession, branch: String?, range: HandoffRangeChoice, extra: [String] = []) -> [String] {
+        var args = ["hub", "handoff", session.sessionId, "--json"] + range.arguments
+        args.append("--title=\(session.displayTitle)")
+        if !session.cwd.isEmpty { args.append("--cwd=\(session.cwd)") }
+        if let branch, !branch.isEmpty { args.append("--branch=\(branch)") }
+        if let account = session.account, !account.isEmpty { args.append("--account=\(account)") }
+        return args + extra
+    }
+
+    package static func decode(_ data: Data) throws -> HandoffDraftPayload {
+        try JSONDecoder().decode(HandoffDraftPayload.self, from: MonitorJSON.dataByDroppingPreamble(data))
+    }
+
+    /// Blocking: a full transcript read, seconds for a large session. Off the main thread.
+    package static func run(_ request: HandoffComposerRequest, range: HandoffRangeChoice, extra: [String] = []) throws -> HandoffDraftPayload {
+        try decode(ToolsCLIRunner.run(arguments(session: request.session, branch: request.branch, range: range, extra: extra)))
+    }
+}
+
+/// The sidebar's last row: open the composer, and the stuck thresholds beside it.
+package struct HandoffSidebarRow: View {
+    package let thresholds: StuckThresholds?
+    package let onCompose: () -> Void
+    @ObservedObject private var stuck = HubStuckStore.shared
+    @State private var notice: String?
+
+    package var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SessionSectionTitle(title: "Handoff")
+            Button(action: onCompose) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 10.5))
+                    Text("Compose a handoff…")
+                        .font(.system(size: 11.5, weight: .medium))
+                }
+                .foregroundStyle(SessionPalette.secondary)
+                .padding(.horizontal, 9)
+                .frame(height: 26)
+                .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.white.opacity(0.12)))
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.genHoverPlain())
+            .instantTooltip("A markdown brief of the last prompts or a range (goal, what happened, files, open items), to copy, save or post")
+            .accessibilityIdentifier("session-details-handoff")
+            StuckThresholdsMenu(thresholds: stuck.thresholds ?? thresholds) { minutes, repeats in
+                Task { notice = await stuck.save(toolMinutes: minutes, repeats: repeats) }
+            }
+            if let notice {
+                Text(verbatim: notice)
+                    .font(.system(size: 11))
+                    .foregroundStyle(SessionPalette.red)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+}
+
+package struct HandoffComposerSheet: View {
+    package let request: HandoffComposerRequest
+    package let onClose: () -> Void
+
+    private enum Mode: String, Hashable {
+        case last, range
+    }
+
+    @State private var mode: Mode
+    /// The session's prompts: the sidebar passes them; `tools hub --handoff` opens without, and they load here.
+    @State private var prompts: [InsightTurn]
+    @State private var lastCount = 5
+    @State private var from: Int
+    @State private var to: Int
+    @State private var draft: HandoffDraftPayload?
+    @State private var error: String?
+    @State private var loading = false
+    @State private var busy = false
+    @State private var notice: String?
+    @State private var noticeIsError = false
+    @State private var confirmingPost = false
+
+    package init(request: HandoffComposerRequest, onClose: @escaping () -> Void) {
+        self.request = request
+        self.onClose = onClose
+        _prompts = State(initialValue: request.prompts)
+        let numbers = request.prompts.map(\.number)
+        let last = numbers.last ?? 1
+        _mode = State(initialValue: request.from == nil || numbers.isEmpty ? .last : .range)
+        _from = State(initialValue: request.from ?? numbers.first ?? 1)
+        _to = State(initialValue: last)
+    }
+
+    private var range: HandoffRangeChoice {
+        mode == .last ? .last(lastCount) : .range(from: from, to: to)
+    }
+
+    package var body: some View {
+        VStack(spacing: 0) {
+            header
+            Rectangle().fill(SessionPalette.hairline).frame(height: 1)
+            controls
+            Rectangle().fill(SessionPalette.hairline).frame(height: 1)
+            preview
+            Rectangle().fill(SessionPalette.hairline).frame(height: 1)
+            footer
+        }
+        .frame(width: 680, height: 580)
+        .background(SessionPalette.background)
+        .environment(\.colorScheme, .dark)
+        .task { await loadPromptsIfMissing() }
+        .task(id: range) {
+            // One read per pause in the stepper, not per click.
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            await loadPreview()
+        }
+        .alert("Post this handoff?", isPresented: $confirmingPost) {
+            Button("Post") { Task { await post() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It goes to the handoff store (handoff_post) as \"\(draft?.title ?? "")\", with \(max(1, draft?.openItems.count ?? 0)) task(s). Agents and the dev-dashboard can see and claim it.")
+        }
+    }
+
+    /// Opened from outside the sidebar, the composer has no prompts, so the Range picker stayed disabled.
+    private func loadPromptsIfMissing() async {
+        guard prompts.isEmpty else { return }
+        let id = request.session.sessionId
+        let span = HubPerf.begin("handoff.prompts", String(id.prefix(8)), awaits: true)
+        let fetch = Task.detached(priority: .utility) { try? HubInsights.load(sessionId: id).prompts }
+        // The last run's prompts fill the pickers at once (Hub/HubSWR.swift); the fresh list replaces them.
+        if let cached = await Task.detached(priority: .userInitiated, operation: { HubInsights.cached(sessionId: id)?.prompts }).value,
+           let first = cached.first, let last = cached.last, prompts.isEmpty {
+            HubSWR.painted("handoff.prompts", "\(cached.count) prompts")
+            prompts = cached
+            from = first.number
+            to = last.number
+        }
+        let loaded = await fetch.value
+        guard let loaded, let first = loaded.first, let last = loaded.last else {
+            span.end("none")
+            return
+        }
+
+        span.end("\(loaded.count) prompts")
+        // A range picked from the cached prompts stays; a range that ended at the last prompt follows it.
+        let shown = !prompts.isEmpty
+        let followsEnd = !shown || to == prompts.last?.number
+        prompts = loaded
+        if !shown {
+            from = first.number
+        }
+        if followsEnd {
+            to = last.number
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.triangle.branch")
+                .foregroundStyle(SessionPalette.blue)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Compose a handoff")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(SessionPalette.text)
+                Text(verbatim: request.session.displayTitle)
+                    .font(.system(size: 11))
+                    .foregroundStyle(SessionPalette.dim)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 8)
+            IconButton(systemName: "xmark", tooltip: "Close (Esc)", action: onClose)
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 50)
+    }
+
+    private var controls: some View {
+        HStack(spacing: 12) {
+            Picker("", selection: $mode) {
+                Text("Last prompts").tag(Mode.last)
+                Text("Range").tag(Mode.range)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .disabled(prompts.isEmpty && mode == .last)
+            .instantTooltip(prompts.isEmpty ? "The range needs the session's prompts, which have not loaded" : "The last N prompts, or a range of them")
+            if mode == .last {
+                // Never more than the session has: "5 prompts" over a one-prompt session read as five (H9).
+                Stepper(value: $lastCount, in: 1...max(1, prompts.isEmpty ? 50 : prompts.count)) {
+                    Text(verbatim: prompts.isEmpty || lastCount < prompts.count
+                        ? Plural.count(lastCount, "prompt")
+                        : "all \(Plural.count(prompts.count, "prompt"))")
+                        .font(SessionPalette.mono(11.5))
+                        .foregroundStyle(SessionPalette.secondary)
+                }
+                .fixedSize()
+                .instantTooltip(prompts.isEmpty ? "How many of the newest prompts the brief covers" : "How many of the newest prompts the brief covers (the session has \(Plural.count(prompts.count, "prompt")))")
+                .onChange(of: prompts.count, initial: true) { _, count in
+                    if count > 0, lastCount > count { lastCount = count }
+                }
+            } else {
+                promptMenu(title: "From", value: from) { from = $0 }
+                promptMenu(title: "to", value: to) { to = $0 }
+            }
+            Spacer(minLength: 8)
+            if loading {
+                ProgressView().controlSize(.small)
+            }
+            if let draft {
+                Text(verbatim: draft.promptCount > 0 ? "#\(draft.fromNumber)–#\(draft.toNumber) · \(draft.openItems.count) open" : "")
+                    .font(SessionPalette.mono(11))
+                    .foregroundStyle(SessionPalette.dim)
+                    .fixedSize()
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 44)
+    }
+
+    private func promptMenu(title: String, value: Int, set: @escaping (Int) -> Void) -> some View {
+        let label = prompts.first { $0.number == value }.map(\.title) ?? "#\(value)"
+        return MenuButton {
+            prompts.reversed().map { turn in
+                .action(turn.title, checked: turn.number == value) { set(turn.number) }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(verbatim: title)
+                    .foregroundStyle(SessionPalette.faint)
+                Text(verbatim: label)
+                    .foregroundStyle(SessionPalette.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(SessionPalette.dim)
+            }
+            .font(.system(size: 11.5))
+            .padding(.horizontal, 8)
+            .frame(maxWidth: 210, minHeight: 24)
+            .overlay(Capsule().strokeBorder(SessionPalette.cardBorder))
+        }
+        .instantTooltip("\(title == "to" ? "Last" : "First") prompt of the handoff, by its # in the transcript")
+    }
+
+    @ViewBuilder
+    private var preview: some View {
+        if let error, draft == nil {
+            Text(verbatim: error)
+                .font(SessionPalette.mono(11.5))
+                .foregroundStyle(SessionPalette.red)
+                .textSelection(.enabled)
+                .padding(16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else if let draft {
+            ScrollView {
+                Text(verbatim: draft.markdown)
+                    .font(SessionPalette.mono(11.5))
+                    .foregroundStyle(SessionPalette.text)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                    .padding(16)
+            }
+            .opacity(loading ? 0.6 : 1)
+        } else {
+            PaneSkeleton("Reading the transcript")
+        }
+    }
+
+    private var footer: some View {
+        HStack(spacing: 8) {
+            if let notice {
+                NoticePill(text: notice, isError: noticeIsError) { self.notice = nil }
+            }
+            Spacer(minLength: 8)
+            action("Copy", symbol: "doc.on.doc", tip: "Copy the markdown") {
+                guard let draft else { return }
+                PathOpener.copy(draft.markdown, what: "handoff")
+            }
+            action("Save…", symbol: "square.and.arrow.down", tip: "Write handoff-<id>-p<from>-<to>.md into a folder you choose") {
+                chooseFolder()
+            }
+            action("Post handoff…", symbol: "paperplane", tip: "Post it to the handoff store; each open item becomes a task") {
+                confirmingPost = true
+            }
+        }
+        .padding(.horizontal, 16)
+        .frame(height: 50)
+    }
+
+    private func action(_ title: String, symbol: String, tip: String, run: @escaping () -> Void) -> some View {
+        Button(action: run) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol)
+                    .font(.system(size: 10.5))
+                Text(verbatim: title)
+                    .font(.system(size: 11.5, weight: .medium))
+            }
+            .foregroundStyle(SessionPalette.secondary)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .overlay(RoundedRectangle(cornerRadius: 7, style: .continuous).strokeBorder(Color.white.opacity(0.12)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.genHoverPlain())
+        .disabled(draft == nil || busy)
+        .instantTooltip(tip)
+    }
+
+    // MARK: work
+
+    private func loadPreview() async {
+        let request = self.request
+        let wanted = range
+        loading = true
+        let span = HubPerf.begin("handoff.preview", String(request.session.sessionId.prefix(8)), awaits: true)
+        let result = await Task.detached(priority: .userInitiated) { Result { try HubHandoff.run(request, range: wanted) } }.value
+        guard wanted == range else {
+            span.end("superseded")
+            return
+        }
+
+        loading = false
+        switch result {
+        case .success(let fresh):
+            span.end("\(fresh.promptCount) prompts, \(fresh.openItems.count) open")
+            draft = fresh
+            error = nil
+        case .failure(let failure):
+            span.end("failed")
+            error = failure.localizedDescription
+            if draft != nil {
+                show(failure.localizedDescription, error: true)
+            }
+        }
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Save here"
+        panel.message = "Choose the folder for the handoff markdown"
+        if let last = HubDefaults.store.string(forKey: "hub.handoff.folder") {
+            panel.directoryURL = URL(fileURLWithPath: last)
+        } else if !request.session.cwd.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: request.session.cwd)
+        }
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            HubDefaults.store.set(url.path, forKey: "hub.handoff.folder")
+            Task { await write(extra: ["--out=\(url.path)"]) }
+        }
+    }
+
+    private func post() async {
+        await write(extra: ["--post", "--owner"])
+    }
+
+    /// A save or a post: the same read as the preview, with the write flags.
+    private func write(extra: [String]) async {
+        let request = self.request
+        let wanted = range
+        busy = true
+        defer { busy = false }
+        let span = HubPerf.begin("handoff.write", extra.joined(separator: " "), awaits: true)
+        let result = await Task.detached(priority: .userInitiated) { Result { try HubHandoff.run(request, range: wanted, extra: extra) } }.value
+        switch result {
+        case .success(let written):
+            span.end()
+            draft = written
+            if let posted = written.posted {
+                PathOpener.copy(posted.paste, what: "handoff paste text")
+                show("Posted \(posted.name ?? posted.id); its paste text is on the clipboard", error: false)
+            } else if let path = written.savedTo {
+                show("Saved \((path as NSString).abbreviatingWithTildeInPath)", error: false)
+            }
+        case .failure(let failure):
+            span.end("failed")
+            show(failure.localizedDescription, error: true)
+        }
+    }
+
+    private func show(_ text: String, error: Bool) {
+        notice = text
+        noticeIsError = error
+    }
+}

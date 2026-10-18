@@ -14,7 +14,7 @@ const CASES: [string, string[], string][] = [
     ["fix(scripts): a", ["scripts/native/widget-drive.ts"], "fix(scripts, native): a"],
     ["fix(scripts): a", ["scripts/benchmarks/widget/roster.ts"], "fix(scripts): a"],
     ["fix(history): a", ["src/utils/agent-sessions/list.ts"], "fix(ai, history): a"],
-    ["fix(hub): a", ["src/macos/GenesisTools/Sources/Hub/HubView.swift"], "fix(GenesisHub, hub): a"],
+    ["fix(hub): a", ["src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubView.swift"], "fix(GenesisHub, hub): a"],
     ["fix(hub): a", ["src/hub/server/doors/frequent.ts"], "fix(hub): a"],
     [
         "fix(dashboards): a",

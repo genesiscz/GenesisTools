@@ -19,6 +19,16 @@ import {
 } from "./app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
 import { type AppProcess, groupOldBuilds, localNetworkAnswer, parseLocalNetworkRules } from "./local-network";
+import {
+    ALL_PART_IDS,
+    bundleStepsFor,
+    installedParts,
+    parsePartsFlag,
+    partForFace,
+    partsEnvValue,
+    partsForBuild,
+    scratchName,
+} from "./parts";
 import { collectProblems, grantsFor, launchdJobsOutsideApp } from "./report";
 import { readTccRows, TCC_SERVICES, type TccReadResult, tccAuthLabel } from "./tcc";
 
@@ -422,6 +432,7 @@ describe("collectProblems", () => {
         launcherPath: "/x/GenesisTools.app/Contents/MacOS/GenesisTools",
         built: true,
         stale: false,
+        parts: [],
         identityStable: true,
     };
 
@@ -747,5 +758,49 @@ describe("permission kinds", () => {
         expect(permissionStatusLabel("notDetermined")).toBe("not asked yet");
         expect(permissionStatusLabel("partial:Add Only")).toBe("Add Only");
         expect(permissionStatusLabel("")).toBe("no answer");
+    });
+});
+
+describe("app parts", () => {
+    it("keeps the installed parts and adds the requested ones (D15 a)", () => {
+        expect(partsForBuild({ installed: [] })).toEqual([]);
+        expect(partsForBuild({ installed: [], add: ["hub"] })).toEqual(["hub"]);
+        expect(partsForBuild({ installed: ["markdown"], add: ["hub", "markdown"] })).toEqual(["hub", "markdown"]);
+        expect(partsForBuild({ installed: ["hub"], exactly: [] })).toEqual([]);
+    });
+
+    it("builds the parts a part requires", () => {
+        expect(partsForBuild({ installed: [], add: ["clicky"] })).toEqual(["clicky", "hub"]);
+        expect(partsForBuild({ installed: ["markdown"], exactly: ["clicky"] })).toEqual(["clicky", "hub"]);
+    });
+
+    it("reads a manifest from before parts existed as a full build, and no manifest as nothing", () => {
+        expect(installedParts(undefined)).toEqual([]);
+        expect(installedParts({})).toEqual([...ALL_PART_IDS].sort());
+        expect(installedParts({ parts: [] })).toEqual([]);
+        expect(installedParts({ parts: ["markdown", "hub"] })).toEqual(["hub", "markdown"]);
+    });
+
+    it("gives each parts set its own scratch folder, and the full set the old one", () => {
+        expect(scratchName(ALL_PART_IDS)).toBe("opt");
+        expect(scratchName([])).toBe("opt-host");
+        expect(scratchName(["markdown", "hub"])).toBe("opt-hub-markdown");
+    });
+
+    it("parses --parts and --add-part, and refuses an unknown part", () => {
+        expect(parsePartsFlag("host")).toEqual([]);
+        expect(parsePartsFlag("all")).toEqual([...ALL_PART_IDS].sort());
+        expect(parsePartsFlag(" hub, markdown ,hub")).toEqual(["hub", "markdown"]);
+        expect(() => parsePartsFlag("hub,nope")).toThrow("Unknown app part nope");
+        expect(partsEnvValue(["markdown", "hub"])).toBe("hub,markdown");
+    });
+
+    it("runs a part's bundle steps only when the part is built", () => {
+        expect([...bundleStepsFor([])]).toEqual([]);
+        expect(bundleStepsFor(["hub"]).has("diff-viewer")).toBe(true);
+        expect(bundleStepsFor(["hub"]).has("clicky-library")).toBe(false);
+        expect(bundleStepsFor(["clicky"]).has("clicky-library")).toBe(true);
+        expect(partForFace("--review")).toBe("hub");
+        expect(partForFace("--rpc")).toBeUndefined();
     });
 });

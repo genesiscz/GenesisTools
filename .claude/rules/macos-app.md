@@ -11,7 +11,7 @@ The rule in `.claude/rules/macos.md` still
 applies: after ANY edit to `Sources/**`, `web/**` or `Info.plist`, run `bun run app` (build, sign,
 install, reap stale faces). Swift UI you have not seen rendered is not done.
 
-## Use the shared components (GenesisKit + Sources/Hub/HubComponents.swift), never hand-roll these
+## Use the shared components (GenesisKit + Sources/Parts/Hub/Hub/HubComponents.swift), never hand-roll these
 
 The components both apps use live in **`../GenesisKit`** (`src/macos/GenesisKit`), a SwiftPM package Genesis.app
 depends on too; its README lists them. That is `IconButton`, `.instantTooltip`, the `.genHover*` button styles,
@@ -19,9 +19,25 @@ depends on too; its README lists them. That is `IconButton`, `.instantTooltip`, 
 `NoticePill`, `LiveAgo` / `LiveTime`, `MenuButton`, `ProviderBadge`, `Badge` / `CountBadge`, `GhostButton`,
 `EmptyState`, `InfoStrip`, `.kicker` and the cmux picker (`CmuxTree`, `CmuxTargetPicker`, `CmuxSessionPanel`).
 Change them there, never in a copy here: a second copy of a modifier or button style (`.instantTooltip`,
-`.genHoverPlain()`) makes every call to it ambiguous. `Hub/GenesisKitHost.swift` re-exports the package and gives it
-this app's log, cmux and panel find. Hub-only pieces (`ExternalLink`, `TitlebarHeader`, `GroupHeader`, …) stay in
-Hub/HubComponents.swift.
+`.genHoverPlain()`) makes every call to it ambiguous. `Host/KitHostAdapter.swift` re-exports the package and gives it
+this app's log and perf file; the hub part's `Hub/GenesisKitHost.swift` adds cmux, panel find and the transcript
+markdown. Hub-only pieces (`ExternalLink`, `TitlebarHeader`, `GroupHeader`, …) stay in Hub/HubComponents.swift.
+
+## Host and optional parts
+
+The app is a host plus optional parts (Martin, 2026-10-18). `Sources/Host/` (library `GenesisToolsHost`) is the
+launcher, `--rpc`, the permission faces, vault approval, notifications, the microphone, the link router and the settings
+window. Each part is one library under `Sources/Parts/`: `Hub/` (hub and review), `Widget/`, `Clicky/`, `Markdown/`,
+plus `Flow/`, the glue the widget and Clicky share. `Sources/GenesisTools/` is the executable: it registers the parts its
+build links (`Parts.swift`) and calls `runHost()`.
+
+- `GENESIS_APP_PARTS` picks the parts (Package.swift); unset is every part, so a plain `swift build` and `swift test`
+  see the whole app. `src/macos/lib/permissions/parts.ts` is the TypeScript table; a build makes the installed parts
+  (the host alone on a fresh install), and `tools hub` adds the hub. Each parts set has its own `.build/opt-<ids>`.
+- The host starts a part's face only through `AppParts` (Host/AppParts.swift); a face whose part is not linked prints
+  the `tools macos permissions build --add-part <id>` command and exits 69. Never call a part's `run…` from the host.
+- A host symbol a part uses is `package`; a part's `run…` entry point is `package` for the executable.
+- A new part: one target in Package.swift, one block in `Sources/GenesisTools/Parts.swift`, one row in parts.ts.
 
 | Need | Use | Never |
 |---|---|---|
@@ -164,8 +180,8 @@ The session screen and everything under it lives once in `../GenesisKit` (Sessio
 document, tool calls, code blocks, detail screen and sidebar, prompt parts, scroll anchor; Tools/: ToolsBridge,
 TitleFormatter, SessionTranscriptClient, MonitorJSON; Perf/: PerfLog, HangWatch, MainStackSampler, RenderProbe;
 Window/: WindowTitlebar). Change them there; its README has the layout and the API rules. What differs between
-the apps is a host hook, never a marked copy: `GenesisKitHost` (Hub/GenesisKitHost.swift: perf file, markdown
-renderer, panel find, cmux), `TranscriptServices`, `TranscriptBus` / `TranscriptFilters` (the sidebar's reveal
+the apps is a host hook, never a marked copy: `GenesisKitHost` (Host/KitHostAdapter.swift: perf file, vault, keymaps;
+Parts/Hub/Hub/GenesisKitHost.swift: markdown renderer, panel find, cmux), `TranscriptServices`, `TranscriptBus` / `TranscriptFilters` (the sidebar's reveal
 and tool filter), and options such as `sidebarExtraFirst`. The provenance headers and `/steal-code --reconcile` do
 not apply to any of it.
 

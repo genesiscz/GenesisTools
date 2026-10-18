@@ -1,5 +1,5 @@
 {
-    "note": "Every `tools hub pr` argv the review window builds (src/macos/GenesisTools/Sources/Review/PRThreads.swift PRCommand), for the checkout /work/shop and the body file /tmp/b.md. PRThreadsTests checks that Swift builds exactly these; pr.test.ts checks that the CLI parses each one and answers a failure as {error, code}.",
+    "note": "Every `tools hub pr` argv the review window builds (src/macos/GenesisTools/Sources/Parts/Hub/Review/PRThreads.swift PRCommand), for the checkout /work/shop and the body file /tmp/b.md. PRThreadsTests checks that Swift builds exactly these; pr.test.ts checks that the CLI parses each one and answers a failure as {error, code}.",
     "argv": {
         "threads": ["hub", "pr", "threads", "--repo", "/work/shop", "--json", "--max-cache-age", "30"],
         "threadsNoCache": ["hub", "pr", "threads", "--repo", "/work/shop", "--json", "--no-cache"],

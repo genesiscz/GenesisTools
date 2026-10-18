@@ -36,7 +36,7 @@ Other `open` flags: `--agent`, `--filter`, `--palette [text]`, `--find [text]`, 
     tools hub open --print-url --pr 'owner/repo#42' --commit 4e7a3bc
     # genesis-tools://hub?pr=owner%2Frepo%2342&commit=4e7a3bc
 
-A `genesis-tools://hub?…` link opens the hub where it points, with or without the browser router. Its keys are the `open` flags without dashes: `mode`, `session`, `agent`, `pr`, `reveal`, `commit`, `repo`, `tab`, `filter`, `worktree`, `decision`, `question` (`HubRequest.linkKeys` in `src/macos/GenesisTools/Sources/Hub/HubWindow.swift`). Every other key is dropped: a link shows a place, it never runs a command. The `#` of a PR ref must be written `%23`.
+A `genesis-tools://hub?…` link opens the hub where it points, with or without the browser router. Its keys are the `open` flags without dashes: `mode`, `session`, `agent`, `pr`, `reveal`, `commit`, `repo`, `tab`, `filter`, `worktree`, `decision`, `question` (`HubRequest.linkKeys` in `src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubWindow.swift`). Every other key is dropped: a link shows a place, it never runs a command. The `#` of a PR ref must be written `%23`.
 
 Through the browser router, the same query on the link host opens the hub as well, so a terminal or a chat that only makes `https://` clickable works too:
 

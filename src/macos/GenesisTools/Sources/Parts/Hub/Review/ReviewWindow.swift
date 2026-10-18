@@ -1,0 +1,3420 @@
+import AppKit
+import CoreServices
+import SwiftUI
+import WebKit
+
+// GenesisTools --review [--repo <path>] [--session <id>] [--scope uncommitted|unstaged|staged|branch]
+//                       [--style split|unified] [--snapshot <png>]
+//                       [--pr <url|repo#n>] [--range <base>..<head>] [--label <text>] [--proposal <file>]
+// `--pr` attaches the PR's live threads; `--range` (with `--label`) pins the diff to two commits and wins
+// over a proposal's own range. The hub's "Open in a review window" passes all three.
+//
+// The per-session review window. v1 shows a repository's working tree against HEAD; the session
+// change log (handoff h_p38uwgeo) becomes a second source behind the same model. `--snapshot`
+// renders once, writes a PNG of the window and exits, so a change can be checked without a screen.
+
+package func runReview(_ args: [String]) -> Never {
+    var repoPath = FileManager.default.currentDirectoryPath
+    var snapshotPath: String?
+    var session: String?
+    var scope = DiffScope.uncommitted
+    var proposalPath: String?
+    var prRef: String?
+    var range: (base: String, head: String)?
+    var commit: String?
+    var rangeLabel: String?
+    var style: DiffViewOptions.Style?
+    var activate = true
+    var snapshotHeight: CGFloat?
+    var demo = ReviewSnapshotDemo()
+    var settings: [String: Any] = [:]
+    var index = 0
+    while index < args.count {
+        let value = index + 1 < args.count ? args[index + 1] : nil
+        switch args[index] {
+        case "--repo": repoPath = value ?? repoPath; index += 1
+        case "--snapshot": snapshotPath = value; index += 1
+        case "--keys": demo.keys = true
+        case "--select-open": demo.selectOpen = Int(value ?? "") ?? 3; index += 1
+        case "--step-threads": demo.steps = Int(value ?? "") ?? 1; index += 1
+        case "--reply": demo.reply = true
+        case "--toggle": demo.toggle = true
+        case "--loading": demo.loading = true
+        case "--fix-form": demo.fixForm = true
+        case "--agent-send": demo.agentSend = true
+        case "--drag-context": demo.dragContext = Double(value ?? "").map { CGFloat($0) }; index += 1
+        case "--drag-scroll": demo.dragScroll = Double(value ?? "").map { CGFloat($0) } ?? 0; index += 1
+        case "--blame": demo.blame = ReviewSnapshotDemo.blameTarget(value); index += 1
+        case "--session": session = value; index += 1
+        case "--scope": scope = DiffScope(argument: value ?? "") ?? .uncommitted; index += 1
+        case "--proposal": proposalPath = value; index += 1
+        case "--pr": prRef = value; index += 1
+        case "--label": rangeLabel = value; index += 1
+        case "--commit": commit = value; index += 1
+        case "--range":
+            let ends = (value ?? "").components(separatedBy: "..")
+            if ends.count == 2, !ends[0].isEmpty, !ends[1].isEmpty { range = (ends[0], ends[1]) }
+            index += 1
+        case "--no-activate": activate = false
+        case "--snapshot-height": snapshotHeight = Double(value ?? "").map { CGFloat($0) }; index += 1
+        case "--style": style = DiffViewOptions.Style(rawValue: value ?? "") ?? .split; index += 1
+        case "--set":
+            // Snapshot runs only, on the scratch settings: `--set panel.review.context.collapsed=false`.
+            let pair = (value ?? "").split(separator: "=", maxSplits: 1).map(String.init)
+            if pair.count == 2 {
+                settings[pair[0]] = ["true", "false", "1", "0"].contains(pair[1]) ? (pair[1] == "true" || pair[1] == "1") : pair[1]
+            }
+            index += 1
+        default: break
+        }
+        index += 1
+    }
+
+    if snapshotPath != nil {
+        HubDefaults.isolate()
+        ReviewCommentStore.readOnly = true
+        for (key, value) in settings { HubDefaults.store.set(value, forKey: key) }
+    }
+    ReviewContextPanel.registerDefaults()
+    var options = DiffViewOptions.remembered()
+    if let style {
+        options.diffStyle = style
+    }
+
+    let app = NSApplication.shared
+    // A snapshot run must never become the active app: it would take the keystrokes of whoever is typing.
+    // A live review window is an accessory while the hub owns the Dock tile (App/DockTile.swift).
+    app.setActivationPolicy(snapshotPath == nil ? MainActor.assumeIsolated { DockTile.policy(for: .window) } : .prohibited)
+    let delegate = ReviewAppDelegate()
+    app.delegate = delegate
+    installBrowserURLForwarder()
+    if snapshotPath == nil {
+        installNotificationClicksForWindowFace()
+    }
+    MainActor.assumeIsolated { AppMainMenu.install() }
+
+    var proposal: ProposalDocument?
+    if let proposalPath {
+        do {
+            let document = try ProposalDocument(url: URL(fileURLWithPath: proposalPath))
+            repoPath = document.repoPath ?? repoPath
+            scope = .range(base: document.baseSha, head: document.headSha, label: "\(document.label) \(document.title.prefix(40))")
+            proposal = document
+        } catch {
+            FileHandle.standardError.write(Data("review: cannot read proposal \(proposalPath): \(error)\n".utf8))
+            exit(1)
+        }
+    }
+
+    if let range {
+        scope = .range(base: range.base, head: range.head, label: rangeLabel ?? "\(range.base.prefix(7))..\(range.head.prefix(7))")
+    } else if let commit, !commit.isEmpty {
+        scope = .commit(sha: commit, title: rangeLabel ?? String(commit.prefix(10)))
+    }
+    // A review window shows one review: its own renderer, and no spare kept for a next one.
+    let model = ReviewModel(repo: URL(fileURLWithPath: repoPath).standardizedFileURL, options: options, session: session, renderer: PierreWebDiffRenderer())
+    model.scope = scope
+    // A PR without a local worktree (`openInReviewWindow`): its files open on the host, as in the hub.
+    model.remoteHead = ReviewRemoteHead(launchArguments: args)
+    model.proposal = proposal
+    if let prRef {
+        model.attachPR(.ref(prRef))
+    } else if let target = proposal?.prTarget {
+        model.attachPR(target)
+    }
+    if snapshotPath == nil {
+        // The window opens where this review was left: scope, file, scroll line, unsent text (Review/ReviewSessionState.swift).
+        let stateKey = ReviewSessionKey.key(proposalPath: proposalPath, prTarget: prRef, repo: model.repo.path, launchScope: scope, session: session)
+        ReviewSessionPersistence.attach(model: model, key: stateKey, launchScope: scope)
+    }
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 1320, height: 860),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+        backing: .buffered,
+        defer: false
+    )
+    window.title = "Review · \(model.repo.lastPathComponent)"
+    // The Context panel's tabs sit in the title bar row: AppKit's title drew over "Commits" (Martin,
+    // 2026-10-02). The title still names the window in the Window menu and Mission Control.
+    window.titleVisibility = .hidden
+    window.titlebarAppearsTransparent = true
+    window.appearance = NSAppearance(named: .darkAqua)
+    window.backgroundColor = ReviewPalette.background
+    // The title bar strip zooms on a double-click and drags the window (WindowTitlebar.swift).
+    window.contentView = NSHostingView(rootView: ReviewRootView(model: model).defaultAppStorage(HubDefaults.store).titlebarZone())
+    window.center()
+    if snapshotPath != nil, let snapshotHeight {
+        // A snapshot of a long thread card (`--snapshot-height <pt>`): a taller window, and no autosave
+        // name, so the size never reaches the frame the live window restores.
+        window.setContentSize(NSSize(width: window.frame.width, height: snapshotHeight))
+    } else {
+        window.setFrameAutosaveName("GenesisToolsReview")
+    }
+    delegate.window = window
+    MainActor.assumeIsolated {
+        delegate.keymapRegistrations = [HubKeymap.registerCloseWindow(window)]
+    }
+
+    if let snapshotPath {
+        model.onFirstRender = {
+            demo.apply(to: model) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
+                    // Where a click on the title bar lands (WindowTitlebar.swift): the empty strip must reach the zone.
+                    FileHandle.standardError.write(Data("review snapshot: titlebar \(WindowTitlebar.audit(window).line)\n".utf8))
+                    ReviewSnapshot.write(window: window, webView: (model.renderer as? PierreWebDiffRenderer)?.webView, to: snapshotPath) {
+                        exit(0)
+                    }
+                }
+            }
+        }
+        // A snapshot run must end even if the page never renders.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+            FileHandle.standardError.write(Data("review snapshot: no render within 30 s\n".utf8))
+            exit(1)
+        }
+        window.orderInForSnapshot()
+    } else {
+        window.makeKeyAndOrderFront(nil)
+        if activate {
+            app.activate(ignoringOtherApps: true)
+        }
+        MainActor.assumeIsolated { DockTile.keep(.window) }
+    }
+
+    MainActor.assumeIsolated { HangWatch.start() }
+    model.start()
+    app.run()
+    exit(0)
+}
+
+private final class ReviewAppDelegate: NSObject, NSApplicationDelegate {
+    var window: NSWindow?
+    /// ⌘W for this window only. Held for as long as the process lives.
+    var keymapRegistrations: [KeymapRegistration] = []
+
+    /// A local `.html` file Launch Services handed to this running face (LocalFileHandoff).
+    func application(_ application: NSApplication, open urls: [URL]) {
+        LocalFileHandoff.deliver(urls)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+
+    /// A change made in the last second before the window closed is still waiting to be saved.
+    func applicationWillTerminate(_ notification: Notification) {
+        ReviewSessionPersistence.flushBeforeExit()
+    }
+
+    /// A reopen reaches this face when it owns the Dock tile (no hub runs) or through `open`; the
+    /// running hub comes forward too. A reopen turns the process regular, so the rule goes back first.
+    @MainActor
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        DockTile.enforce("reopen")
+        return AppDock.reopenFromOtherFace()
+    }
+
+    @MainActor
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        AppDock.menu()
+    }
+}
+
+package enum ReviewPalette {
+    package static let background = NSColor(srgbRed: 0.075, green: 0.075, blue: 0.08, alpha: 1)
+    package static let sidebar = Color(nsColor: NSColor(srgbRed: 0.095, green: 0.095, blue: 0.1, alpha: 1))
+    package static let hairline = Color.white.opacity(0.08)
+    package static let added = Color(red: 0.36, green: 0.80, blue: 0.47)
+    package static let removed = Color(red: 0.96, green: 0.38, blue: 0.40)
+    package static let modified = Color(red: 0.98, green: 0.66, blue: 0.25)
+    package static let renamed = Color(red: 0.45, green: 0.62, blue: 0.98)
+    package static let dim = Color.white.opacity(0.5)
+
+    package static func color(_ status: DiffFile.Status) -> Color {
+        switch status {
+        case .added: return added
+        case .deleted: return removed
+        case .modified: return modified
+        case .renamed: return renamed
+        }
+    }
+}
+
+// MARK: - Model
+
+package final class ReviewModel: ObservableObject {
+    package private(set) var repo: URL
+    /// The folder the review was made for (a session's folder). `repo` moves on with the Worktree choice
+    /// or to the git root; this does not, so the hub can tell its own review from one for another folder.
+    package let home: URL
+    /// Told the checkout the Worktree choice picked: the hub keeps it per session.
+    package var onWorktreeChange: ((URL) -> Void)?
+    private let makeRenderer: () -> DiffRenderer
+    private var builtRenderer: DiffRenderer?
+    package private(set) var comments: ReviewCommentStore
+    private var repositoryLayouts: [String: ReviewRepositoryLayout] = [:]
+    private var displayedHead: String?
+    /// The agent session this review is for; "Send to agent" types into its cmux pane.
+    package let session: String?
+    package var onFirstRender: (() -> Void)?
+
+    @Published package var branch = ""
+    @Published package var base: String?
+    @Published package var scope = DiffScope.uncommitted {
+        didSet { if scope != oldValue { displayedHead = nil } }
+    }
+    @Published package var commits: [RepoCommit] = []
+    /// The checkouts of this repository, for the Worktree choice (filled by each load of the primary root).
+    @Published package var worktrees: [RepoWorktree] = []
+    /// Files this session's recent turns changed in each checkout (keyed by checkout path), for the Worktree choice.
+    @Published package var worktreeActivity: [String: Int] = [:]
+    /// The checkout the session worked in most; the window opens on it unless somebody picked one.
+    @Published package var recommendedWorktree: String?
+    /// True once somebody picked a checkout, or a saved pick came back: the window never moves on its own after that.
+    @Published package var worktreeChosen = false
+    package var activityRequested = false
+    /// Branches the Base choice offers, newest first.
+    @Published package var baseCandidates: [String] = []
+    /// The base picked in the menu; nil follows the PR's target, else the repository's default branch.
+    @Published package var chosenBase: String?
+    /// An agent's review proposal shown on this diff (drafts + meta), when opened with --proposal.
+    @Published package var proposal: ProposalDocument?
+    /// The PR/MR this diff belongs to, with its live review threads; nil for a plain working-tree diff.
+    @Published package private(set) var pr: PRThreadsStore?
+    /// The PR's pushes (`tools hub pr versions`): loaded when the threads name a head the diff does not
+    /// show, and when the Compare picker opens.
+    @Published package private(set) var versions: PRVersionsStore?
+    /// A push after the diff on screen: the notice above the diff and the orange Reload in the header.
+    @Published package private(set) var pushNews: PRPushNews?
+    /// The newest head whose notice the reader closed: the Reload stays, the notice does not come back.
+    @Published package var dismissedNewsHead: String?
+    @Published package var showsComparePicker = false
+    /// Inside the hub the header is not next to the traffic lights, so it needs no leading inset.
+    package var embedded = false
+    /// Set when no checkout on disk holds the diff's head (a PR without a worktree, its head fetched
+    /// into `repo`): this repository's files open on the host at that head (Review/ReviewRemoteHead.swift).
+    package var remoteHead: ReviewRemoteHead?
+    @Published package var files: [DiffFile] = []
+    /// The file list's filter text; the list's rows are rebuilt from it in the view.
+    @Published package var filter = "" {
+        didSet {
+            if filter != oldValue {
+                MainActor.assumeIsolated { HubMainBusy.measure("review.files.filter") }
+            }
+        }
+    }
+    @Published package var selectedID: String?
+    @Published package var options: DiffViewOptions
+    @Published package var error: String?
+    @Published package var loading = false
+    @Published package var lastLoaded: Date?
+    @Published package var commentCount = 0
+    @Published package var unsentCount = 0
+    @Published package var notice: String?
+    /// The Files list as a tree or flat. Its click measures itself (`review.files.tree`, at the toggle): measured
+    /// here, every launch's session-state restore logged the whole launch as the tree's cost ("897 ms of 600 ms",
+    /// six at a time from parallel snapshot runs, 2026-10-10).
+    @Published package var treeMode = true
+    @Published package var collapsed: Set<String> = []
+    /// Set only when the diff moves to a file on its own (a find match), so a click in the list never scrolls the list.
+    @Published package var sidebarScrollTarget: String?
+    /// PR thread ids picked for "Fix threads": the cards' Fix checkboxes, the threads list, and x.
+    @Published package var selectedThreads: Set<String> = [] {
+        didSet {
+            if selectedThreads != oldValue {
+                renderer.setThreadSelection(selectedThreads.sorted())
+            }
+        }
+    }
+    /// The thread card j / k moved to; r, e and x act on it.
+    @Published package private(set) var focusedCard: String?
+    /// Bumped by s and f: the PR bar opens Submit review / Fix threads (each still asks first).
+    @Published package var submitRequests = 0
+    @Published package var fixRequests = 0
+    /// A `--snapshot --fix-form` run shows the Fix form under the PR bar instead of in a popover.
+    @Published package var showsFixFormInline = false
+    /// A `--snapshot --agent-send` run: the "Send N…" form under the PR bar, as its popover would show it.
+    @Published package var showsAgentSendInline = false
+    /// The live thread cards on the diff in page order, for j / k.
+    private var threadCards: [RenderedComment] = []
+    /// `tools agents blame` for the files hovered so far: the page's hover tips, and "Open the turn".
+    private var blame = AgentBlameState()
+    /// File ids the page asked about and no call has answered yet; one call runs at a time.
+    private var blamePending: Set<String> = []
+    private var blameRunning: Set<String> = []
+    /// Bumped when the file set changes: an answer for the old files is dropped.
+    private var blameGeneration = 0
+
+    /// The repositories this diff shows (Review/ReviewRoots.swift). The first is `repo`; the hub adds
+    /// the session's ticked folders, and then every file sits under its root's folder name.
+    @Published package private(set) var roots: [ReviewRoot]
+    /// The Files tree's root rows: tick or untick a root, or remove an added folder. Set by the hub.
+    package var rootActions: ReviewRootActions?
+    /// Comments of the other roots, each anchored in its own repository (`comments` is `repo`'s).
+    private var rootComments: [String: ReviewCommentStore] = [:]
+
+    private var watchers: [RepoWatcher] = []
+    private var started = false
+    private var loadInFlight = false
+    private var reloadAgain = false
+    /// Root folders whose files changed since the last load started; the next load reads only these.
+    private var pendingLoads: Set<String> = []
+    /// Root folders showing their last snapshot from disk (`ReviewCache.diffs`) until their load answers.
+    @Published package private(set) var cachedFolders: Set<String> = []
+    /// Root folders that have a fresh answer for this scope: a cached snapshot never replaces one.
+    private var freshFolders: Set<String> = []
+    package var showingCache: Bool { !cachedFolders.isEmpty }
+    private var rendered = false
+    /// A file asked for by `reveal(path:)` before the diff had it.
+    package private(set) var pendingRevealPath: String?
+    /// A PR thread's card asked for by `reveal(path:thread:)` before the page showed it.
+    private var pendingThreadCard: String?
+    /// The agent's draft cards on this diff, in diff order: the drafts list, the banner's Next draft.
+    package private(set) var draftCards: [RenderedComment] = []
+    /// An undecided draft has a card on this diff: the banner's Next draft has somewhere to go.
+    @Published package private(set) var hasOpenDraftOnDiff = false
+    /// The proposal whose first open draft was already brought into view, so a reload never jumps again.
+    private var revealedProposal: String?
+    /// True when the window restored a saved scroll place: the page returns there, so no first-draft jump.
+    package var resumesSavedPlace = false
+    /// When the last file set went to the renderer; `.rendered` closes the span.
+    private var renderStart: CFAbsoluteTime?
+    private let createdAt = CFAbsoluteTimeGetCurrent()
+    private var commentsObserver: NSObjectProtocol?
+
+    package init(repo: URL, options: DiffViewOptions, session: String? = nil, renderer: @autoclosure @escaping () -> DiffRenderer = MainActor.assumeIsolated { PierreWebDiffRenderer.make() }) {
+        self.repo = repo
+        home = repo
+        self.options = options
+        self.session = session
+        makeRenderer = renderer
+        comments = ReviewCommentStore(repo: repo)
+        roots = [ReviewRoot(folder: repo.path, repo: repo)]
+        commentsObserver = NotificationCenter.default.addObserver(forName: ReviewCommentStore.changed, object: nil, queue: .main) { [weak self] note in
+            guard let self, let store = note.object as? ReviewCommentStore,
+                  store === self.comments || self.rootComments.values.contains(where: { $0 === store }) else { return }
+            self.objectWillChange.send()
+            if let error = store.saveError { self.notice = error }
+            if self.builtRenderer != nil { self.pushComments() }
+        }
+    }
+
+    deinit {
+        if let commentsObserver { NotificationCenter.default.removeObserver(commentsObserver) }
+    }
+
+    /// Built on first use, not in `init`: the hub makes a review for every session it selects, even
+    /// with only the transcript open, and the first WKWebView of a process also starts WebKit's
+    /// content process (636 ms on the main thread per select, hang stacks of 2026-09-28).
+    package var renderer: DiffRenderer {
+        if let builtRenderer {
+            return builtRenderer
+        }
+        let made = HubPerf.measure("review.renderer.make") { makeRenderer() }
+        made.onEvent = { [weak self] event in
+            self?.handle(event)
+        }
+        made.apply(options)
+        builtRenderer = made
+        return made
+    }
+
+    /// What an empty diff says: a turns scope waits for the next turn instead of calling itself clean.
+    package var emptyMessage: String {
+        switch scope {
+        case .lastTurns(let count):
+            return count == 1
+                ? "The last turn changed no files in this repository.\nThis panel follows the next turn."
+                : "The last \(count) turns changed no files in this repository.\nThis panel follows the next turn."
+        case .uncommitted: return "No changes against HEAD"
+        default: return "No changes in \(scope.title)"
+        }
+    }
+
+    package var totals: (additions: Int, deletions: Int) {
+        files.reduce((0, 0)) { ($0.0 + $1.additions, $0.1 + $1.deletions) }
+    }
+
+    package var filteredFiles: [DiffFile] {
+        let needle = filter.trimmed.lowercased()
+        guard !needle.isEmpty else { return files }
+        return files.filter { $0.path.lowercased().contains(needle) }
+    }
+
+    package var selectedIndex: Int? {
+        files.firstIndex { $0.id == selectedID }
+    }
+
+    /// Starts loading and watching. Idempotent; the view calls it on appear and `stop()` on
+    /// disappear, so a hidden review (a hub tab not shown) neither watches nor reloads.
+    package func start() {
+        guard !started else { return }
+        started = true
+        reload()
+        if let pr, pr.payload == nil, !pr.loading {
+            pr.load()
+        }
+        watchRoots()
+    }
+
+    package func stop() {
+        started = false
+        watchers = []
+    }
+
+    private func watchRoots() {
+        watchers = roots.filter(\.shown).compactMap { root in
+            root.repo.map { repo in
+                let layout = repositoryLayouts[root.folder] ?? ReviewRepositoryLayout(root: repo,
+                    gitDirectory: repo.appendingPathComponent(".git"), commonDirectory: repo.appendingPathComponent(".git"))
+                return RepoWatcher(layout: layout) { [weak self] in
+                    guard let self, self.scope.followsWorkingTree else { return }
+                    self.reload(folders: [root.folder])
+                }
+            }
+        }
+    }
+
+    // MARK: Roots
+
+    /// The hub's roots for this diff: this repository first, then the session's added folders. The
+    /// same roots again changes nothing; otherwise the tree and the diff change at once (an unticked
+    /// root's files go) and the shown roots load again.
+    package func setRoots(_ wanted: [ReviewRoot]) {
+        var next = wanted.isEmpty ? [ReviewRoot(folder: repo.path, repo: repo)] : wanted
+        let names = ReviewRoots.prefixes(for: next.map { $0.repo?.path ?? $0.folder })
+        for index in next.indices {
+            next[index].prefix = next.count > 1 ? names[index] : ""
+            if next[index].repo == nil {
+                next[index].error = next[index].error ?? "Not inside a git repository, so its changes cannot be listed."
+            } else if let old = roots.first(where: { $0.folder == next[index].folder && $0.repo?.path == next[index].repo?.path }), next[index].shown {
+                next[index].files = old.files
+                next[index].branch = old.branch
+                next[index].error = old.error
+            }
+        }
+        guard next.count != roots.count || zip(next, roots).contains(where: { !$0.sameSetup(as: $1) }) else { return }
+
+        HubPerf.log("review.roots \(next.map { "\($0.prefix.isEmpty ? $0.folder : $0.prefix)\($0.shown ? "" : " (hidden)")" }.joined(separator: ", "))")
+        roots = next
+        let merged = ReviewRoots.merge(roots)
+        if merged != files {
+            files = merged
+            if selectedID == nil || !files.contains(where: { $0.id == selectedID }) {
+                selectedID = files.first?.id
+            }
+            pushToRenderer()
+            resetBlame()
+        }
+        if started {
+            watchRoots()
+            reload()
+        }
+    }
+
+    /// The comment store of a root: `comments` for this repository, one per other repository.
+    private func commentStore(for root: ReviewRoot) -> ReviewCommentStore? {
+        guard let path = root.repo?.path else { return nil }
+        if path == repo.path {
+            return comments
+        }
+        if let store = rootComments[path] {
+            return store
+        }
+        let store = ReviewCommentStore(repo: URL(fileURLWithPath: path))
+        rootComments[path] = store
+        return store
+    }
+
+    /// The shown roots with their comment stores, in root order.
+    private var commentRoots: [(root: ReviewRoot, store: ReviewCommentStore)] {
+        roots.filter(\.shown).compactMap { root in commentStore(for: root).map { (root, $0) } }
+    }
+
+    /// The root and store that hold a local comment.
+    private func commentOwner(_ id: String) -> (root: ReviewRoot, store: ReviewCommentStore)? {
+        if let owner = commentRoots.first(where: { $0.store.comments.contains { $0.id == id } }) {
+            return owner
+        }
+        return comments.comments.contains { $0.id == id } ? (primaryRoot, comments) : nil
+    }
+
+    /// This repository's root: PR threads and proposal drafts belong to it alone.
+    private var primaryRoot: ReviewRoot {
+        roots.first { $0.repo?.path == repo.path } ?? roots[0]
+    }
+
+    /// A merged file id's root, and the file as its repository names it.
+    package func locate(fileID: String) -> (root: ReviewRoot, file: DiffFile)? {
+        guard let index = ReviewRoots.index(of: fileID, in: roots), let local = roots[index].local(fileID),
+              let file = roots[index].files.first(where: { $0.id == local }) else { return nil }
+        return (roots[index], file)
+    }
+
+    /// The file on disk: its root's repository plus its repo-relative path. Nil for this repository's
+    /// files under `remoteHead`: the copy on disk belongs to another branch.
+    package func absolutePath(of file: DiffFile) -> String? {
+        guard let found = locate(fileID: file.id), let root = found.root.repo else { return nil }
+        if remoteHead != nil, root.path == repo.path { return nil }
+        return root.appendingPathComponent(found.file.path).path
+    }
+
+    /// The host's copy of this repository's file at the commit on screen (`remoteHead` for a scope that
+    /// pins none), at a line when given; nil without a remote head.
+    package func hostURL(of fileID: String, line: Int? = nil) -> URL? {
+        guard let remoteHead, let found = locate(fileID: fileID), found.root.repo?.path == repo.path else { return nil }
+        return remoteHead.hostURL(found.file.path, line, at: hostRevision)
+    }
+
+    /// The commit the host links of this repository's files open: the diff's pinned head, else the remote head's.
+    package var hostRevision: String? {
+        scope.pinnedHead ?? remoteHead?.sha
+    }
+
+    /// The repo-relative path of a merged file, for PR threads (which name paths in this repository).
+    package func repoPath(of fileID: String?) -> String? {
+        fileID.flatMap { locate(fileID: $0) }.map(\.file.path)
+    }
+
+    /// A file by an absolute path inside any root, or by a path relative to this repository.
+    package func file(atPath path: String) -> DiffFile? {
+        let normalized = path.hasPrefix("/") ? URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path : path
+        let wanted = ReviewRoots.global(path: normalized, in: roots)
+        return files.first { $0.path == wanted || $0.oldPath == wanted }
+    }
+
+    /// The diff belongs to this PR/MR: its live threads load now (or on `start`) and sit on their lines.
+    package func attachPR(_ target: PRTarget) {
+        guard pr?.target != target else { return }
+        attachPR(PRThreadsStore(target: target))
+    }
+
+    /// The same with a store whose load already runs: the hub starts a PR's threads with its detail,
+    /// before the diff (and this model) exists, so the threads do not wait for the head fetch.
+    package func attachPR(_ store: PRThreadsStore) {
+        guard pr !== store else { return }
+        store.onChange = { [weak self] in
+            self?.pushComments()
+            self?.checkForPush()
+        }
+        let pushes = PRVersionsStore(target: store.target)
+        pushes.onChange = { [weak self] in self?.updateNews() }
+        versions = pushes
+        store.onSubmitted = { [weak self] identity, ids in
+            guard let self else { return }
+            for (_, comments) in self.commentRoots {
+                comments.reconcileSubmitted(pr: identity, ids: ids)
+            }
+            do {
+                try self.proposal?.reconcileSubmitted(pr: identity, ids: ids)
+            } catch {
+                self.notice = "The review was submitted, but proposal status could not be saved: \(error.localizedDescription)"
+            }
+            self.objectWillChange.send()
+            if self.builtRenderer != nil { self.pushComments() }
+        }
+        pr = store
+        // Only into a renderer that exists: building one here would start WebKit on the PR-selection
+        // path; the diff's own render pushes the current comments when it creates the renderer.
+        if store.payload != nil, builtRenderer != nil {
+            pushComments()
+        }
+        if started, store.payload == nil, !store.loading {
+            store.load()
+        }
+    }
+
+    /// "#424" / "!12", from the proposal or the loaded threads.
+    /// While the threads load, the number comes from the branch facts the header already fetched.
+    /// Read on the main thread only (views, alerts), so the store read assumes the main actor.
+    package var prLabel: String {
+        if let label = proposal?.label ?? pr?.payload?.pr.identity.label {
+            return label
+        }
+        let path = repo.path
+        if let facts = MainActor.assumeIsolated({ RepoFactsStore.shared.facts(for: path, pr: true) }), let pull = facts.pr {
+            return facts.origin?.kind == "gitlab" ? "!\(pull.number)" : "#\(pull.number)"
+        }
+        return "the PR"
+    }
+
+    private var prIdentity: PRIdentity? {
+        if let proposal, proposal.number > 0, !proposal.project.isEmpty {
+            return proposal.identity
+        }
+        return pr?.payload?.pr.identity
+    }
+
+    private var reviewedHead: String { displayedHead ?? "" }
+
+    /// Live threads sit on the lines of the PR's head, so they go on the diff only when it compares
+    /// against a base (the PR's range, or the branch); the threads list shows them in every scope.
+    package var showsLiveThreadsInline: Bool {
+        switch scope {
+        case .branch, .range, .compare: return true
+        default: return false
+        }
+    }
+
+    /// Loads every shown root again (a new scope, new roots, the refresh button).
+    package func reload() {
+        reload(folders: Set(roots.filter(\.shown).map(\.folder)))
+    }
+
+    /// One load at a time: events that arrive during a load collapse into one follow-up load of the
+    /// roots they named. A file event reloads only its own root, so an agent writing in one repository
+    /// does not re-read the others.
+    private func reload(folders: Set<String>) {
+        pendingLoads.formUnion(folders)
+        if loadInFlight {
+            reloadAgain = true
+            return
+        }
+
+        let wanted = pendingLoads
+        pendingLoads = []
+        // Every wanted root in parallel, each in its own span. A commit or a range names commits of this
+        // repository only, so the other roots have nothing for it.
+        let jobs = roots.filter { $0.shown && wanted.contains($0.folder) }.compactMap { root in root.repo.map { (folder: root.folder, repo: $0) } }
+        guard !jobs.isEmpty else {
+            loading = false
+            return
+        }
+
+        loadInFlight = true
+        loading = true
+        let scope = scope
+        let session = session
+        let primary = repo
+        let commitRange = remoteHead?.commitRange
+        let preferredBase = chosenBase ?? targetRef
+        let onlyPrimary: Bool
+        switch scope {
+        case .commit, .range, .compare: onlyPrimary = true
+        default: onlyPrimary = false
+        }
+        let loadsPrimary = jobs.contains { $0.repo.path == primary.path }
+        let namesRoot = roots.count > 1
+        let seeds = jobs.filter { job in
+            !freshFolders.contains(job.folder) && (!onlyPrimary || job.repo.path == primary.path)
+                && (roots.first { $0.folder == job.folder }?.files.isEmpty ?? false)
+        }
+        if !seeds.isEmpty {
+            seedFromCache(seeds, scope: scope, session: session)
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let lock = NSLock()
+            var results: [String: Result<GitWorkingTreeSource.Snapshot, Error>] = [:]
+            DispatchQueue.concurrentPerform(iterations: jobs.count) { index in
+                let job = jobs[index]
+                let result: Result<GitWorkingTreeSource.Snapshot, Error>
+                if onlyPrimary && job.repo.path != primary.path {
+                    result = .success(GitWorkingTreeSource.Snapshot(branch: "", base: nil, files: []))
+                } else if !FileManager.default.fileExists(atPath: job.repo.path) {
+                    // A session's folder can be deleted under it (a Copilot session-state checkout): no git run per
+                    // refresh, one plain message on the folder row.
+                    result = .failure(MissingReviewFolder(path: job.repo.path))
+                } else {
+                    let span = HubPerf.begin("review.load", namesRoot ? "\(scope) \(job.repo.lastPathComponent)" : "\(scope)")
+                    let base = job.repo.path == primary.path ? preferredBase : nil
+                    result = Result { try GitWorkingTreeSource(repo: job.repo, preferredBase: base).load(scope: scope, session: session) }
+                    span.end()
+                }
+                lock.lock()
+                results[job.folder] = result
+                lock.unlock()
+            }
+            let primarySource = GitWorkingTreeSource(repo: primary, preferredBase: preferredBase)
+            let commits = loadsPrimary ? primarySource.commits(range: commitRange) : nil
+            let checkouts = loadsPrimary ? primarySource.worktrees() : nil
+            let candidates = loadsPrimary ? primarySource.baseCandidates() : nil
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if let commits {
+                    self.commits = commits
+                }
+                if let checkouts, primary.path == self.repo.path {
+                    self.worktrees = checkouts
+                    self.refreshWorktreeActivity()
+                }
+                if let candidates {
+                    self.baseCandidates = candidates
+                }
+                self.loadInFlight = false
+                // Answers for another scope are dropped (the scope menu changed during the load), and so
+                // are answers that the next load replaces anyway; the rest are kept, since a follow-up
+                // load may name other roots only.
+                let superseded = self.reloadAgain && Set(results.keys).isSubset(of: self.pendingLoads)
+                if scope == self.scope, !superseded {
+                    self.lastLoaded = Date()
+                    self.apply(results)
+                }
+                if self.reloadAgain {
+                    self.reloadAgain = false
+                    self.reload(folders: [])
+                } else {
+                    self.loading = false
+                }
+            }
+            // After the answer is on its way to the screen, so encoding a large diff never delays it.
+            let loaded = jobs.compactMap { job -> (repo: URL, snapshot: GitWorkingTreeSource.Snapshot)? in
+                guard !onlyPrimary || job.repo.path == primary.path, case .success(let snapshot)? = results[job.folder] else { return nil }
+                return (snapshot.repository?.root ?? job.repo, snapshot)
+            }
+            ReviewCache.writer.async {
+                for item in loaded {
+                    HubPerf.measure("review.cache.write", "\(item.snapshot.files.count) files") {
+                        ReviewCache.writeDiff(item.snapshot, repo: item.repo.path, scope: scope, session: session)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Paints each root's last snapshot of this scope from disk while its load runs. Read and decoded
+    /// off the main thread; a root whose fresh answer landed first keeps it.
+    private func seedFromCache(_ jobs: [(folder: String, repo: URL)], scope: DiffScope, session: String?) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            var found: [String: (ReviewCache.Diff, ReviewRepositoryLayout)] = [:]
+            for job in jobs {
+                guard let layout = try? GitWorkingTreeSource(repo: job.repo).repositoryLayout() else { continue }
+                let span = HubPerf.begin("review.cache.read", "\(scope)")
+                let diff = ReviewCache.readDiff(repo: layout.root.path, scope: scope, session: session)
+                span.end(diff.map { "\($0.files.count) files\($0.stripped ? " (list only)" : "")" } ?? "miss")
+                found[job.folder] = diff.map { ($0, layout) }
+            }
+            guard !found.isEmpty else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.applyCached(found, scope: scope)
+            }
+        }
+    }
+
+    @MainActor
+    private func applyCached(_ found: [String: (ReviewCache.Diff, ReviewRepositoryLayout)], scope: DiffScope) {
+        guard scope == self.scope, loading else { return }
+        var next = roots
+        var seeded: Set<String> = []
+        for index in next.indices {
+            let folder = next[index].folder
+            guard let (diff, layout) = found[folder], next[index].shown, next[index].files.isEmpty, !freshFolders.contains(folder) else { continue }
+            applyLayout(layout, to: &next[index])
+            next[index].files = diff.files
+            next[index].branch = diff.branch
+            if next[index].repo?.path == repo.path {
+                branch = diff.branch
+                base = diff.base
+            }
+            seeded.insert(folder)
+        }
+        guard !seeded.isEmpty else { return }
+        HubPerf.log("review.cache paint \(files.count) -> \(ReviewRoots.merge(next).count) files, \(scope)")
+        HubMainBusy.measure("review.cache.paint")
+        // The paint's own main-thread work; the busy window above also holds whatever else the launch draws.
+        let span = HubPerf.begin("review.cache.apply")
+        // No comment re-anchoring here: that writes the comments file, and a list-only snapshot has no lines.
+        roots = next
+        cachedFolders.formUnion(seeded)
+        files = ReviewRoots.merge(roots)
+        if selectedID == nil || !files.contains(where: { $0.id == selectedID }) {
+            selectedID = files.first?.id
+        }
+        pushToRenderer()
+        resetBlame()
+        span.end("\(files.count) files")
+    }
+
+    private func applyLayout(_ layout: ReviewRepositoryLayout, to root: inout ReviewRoot) {
+        if root.folder == roots.first?.folder, repo.path != layout.root.path {
+            repo = layout.root
+            comments = ReviewCommentStore(repo: layout.root)
+        }
+        root.repo = layout.root
+        repositoryLayouts[root.folder] = layout
+    }
+
+    /// One load's answers, per root folder. A failed root keeps its last files and shows the error on
+    /// its folder row; only a single-root diff shows it over the whole pane.
+    @MainActor
+    private func apply(_ results: [String: Result<GitWorkingTreeSource.Snapshot, Error>]) {
+        var next = roots
+        for index in next.indices {
+            guard let result = results[next[index].folder] else { continue }
+            switch result {
+            case .success(let snapshot):
+                if let layout = snapshot.repository { applyLayout(layout, to: &next[index]) }
+                freshFolders.insert(next[index].folder)
+                cachedFolders.remove(next[index].folder)
+                next[index].error = nil
+                next[index].files = snapshot.files
+                next[index].branch = snapshot.branch
+                if next[index].repo?.path == repo.path {
+                    if branch != snapshot.branch {
+                        RepoFactsStore.shared.invalidate(repo.path)
+                    }
+                    branch = snapshot.branch
+                    base = snapshot.base
+                    displayedHead = snapshot.head
+                    if !snapshot.compareConflicts.isEmpty {
+                        let names = snapshot.compareConflicts.prefix(3).map { ($0 as NSString).lastPathComponent }.joined(separator: ", ")
+                        notice = "\(Plural.count(snapshot.compareConflicts.count, "file")) changed upstream in the same places (\(names)); their left side is the older push as it was."
+                    }
+                }
+                commentStore(for: next[index])?.reanchor(files: snapshot.files)
+            case .failure(let failure):
+                // The cached files stay on screen with the error on their row, but the root no longer
+                // counts as "showing the cache": blame and the header follow the error, not the paint.
+                cachedFolders.remove(next[index].folder)
+                let message = "\(failure)"
+                if next[index].error != message {
+                    HubPerf.log("review.load \(next[index].folder) failed: \(failure)")
+                }
+                next[index].error = message
+            }
+        }
+        if next != roots {
+            roots = next
+        }
+        error = roots.count == 1 ? roots[0].error : nil
+        if started { watchRoots() }
+
+        let merged = ReviewRoots.merge(roots)
+        let changed = merged != files
+        files = merged
+        if let pending = pendingRevealPath, let file = file(atPath: pending) {
+            pendingRevealPath = nil
+            selectedID = file.id
+        }
+        if selectedID == nil || !files.contains(where: { $0.id == selectedID }) {
+            selectedID = files.first?.id
+        }
+        if changed || !rendered {
+            pushToRenderer()
+            resetBlame()
+        } else {
+            pushComments()
+            // The cached files were already the current ones: the hovers asked meanwhile go now.
+            runBlame()
+        }
+    }
+
+    /// Opens a file now or once the next load has it: an absolute path inside any root, or a path
+    /// relative to this repository.
+    package func reveal(path: String) {
+        if let file = file(atPath: path) {
+            select(file.id)
+        } else {
+            pendingRevealPath = path
+            notice = files.isEmpty ? nil : Self.noChangeNotice(path)
+        }
+    }
+
+    private static func noChangeNotice(_ path: String) -> String {
+        "\((path as NSString).lastPathComponent) has no change in this scope."
+    }
+
+    /// The file, then the PR thread's card on its line once the diff and the PR's threads are on the
+    /// page (an outdated thread has no card: the file alone opens).
+    package func reveal(path: String, thread threadID: String?) {
+        reveal(path: path)
+        pendingThreadCard = threadID.map { PRThreadRendering.cardID(thread: $0) }
+        focusPendingThread()
+    }
+
+    private func focusPendingThread() {
+        guard let pending = pendingThreadCard else { return }
+        guard let card = Self.cardToFocus(pending, rendered: rendered, cards: threadCards + draftCards) else {
+            HubPerf.log("review.reveal-thread \(pending) waits: rendered=\(rendered) cards=\(threadCards.count)")
+            return
+        }
+        pendingThreadCard = nil
+        focusedCard = card
+        HubPerf.log("review.reveal-thread \(card) focused")
+        renderer.focusThread(cardID: card, reply: false)
+    }
+
+    /// Opens the draft's file and marks its card: the drafts list, the banner, a fresh proposal.
+    package func revealDraft(_ id: String) {
+        guard let draft = proposal?.drafts.first(where: { $0.id == id }) else { return }
+        // An off-diff draft only says so: a pending reveal would open its file on some later load unasked.
+        if !files.isEmpty, file(atPath: draft.path) == nil {
+            notice = Self.noChangeNotice(draft.path)
+            return
+        }
+        reveal(path: draft.path)
+        // A draft whose file has no change in this scope never gets a card; a pending mark for it would
+        // wait for ever and block the first-draft jump.
+        guard draftCards.contains(where: { $0.id == "draft:\(id)" }) else { return }
+        pendingThreadCard = "draft:\(id)"
+        focusPendingThread()
+    }
+
+    /// The next undecided draft after the marked card, in diff order, wrapping around.
+    package func revealNextOpenDraft() {
+        let open = draftCards.filter { $0.state == "proposed" }
+        guard !open.isEmpty else {
+            notice = "No undecided agent draft sits on this diff."
+            return
+        }
+        // Position in every draft, not only the open ones: a just-decided focused card is no longer open.
+        let cards = draftCards
+        let start = focusedCard.flatMap { id in cards.firstIndex { $0.id == id } }
+        let next = start.flatMap { start in
+            (1...cards.count).lazy.map { cards[(start + $0) % cards.count] }.first { $0.state == "proposed" }
+        } ?? open[0]
+        revealDraft(String(next.id.dropFirst("draft:".count)))
+    }
+
+    /// Undecided drafts per repository path, for the file list's badges.
+    package var openDraftsByPath: [String: Int] {
+        Dictionary(grouping: (proposal?.drafts ?? []).filter { $0.status == "proposed" }, by: \.path).mapValues(\.count)
+    }
+
+    /// A proposal opens at its first undecided draft once: nothing else on screen says where it is.
+    private func revealFirstOpenDraftOnce() {
+        guard let proposal, !resumesSavedPlace, revealedProposal != proposal.url.path, pendingThreadCard == nil, focusedCard == nil,
+              let first = draftCards.first(where: { $0.state == "proposed" }) else { return }
+        revealedProposal = proposal.url.path
+        HubPerf.log("review.proposal opens at its first open draft \(first.id)")
+        revealDraft(String(first.id.dropFirst("draft:".count)))
+    }
+
+    /// The pending card, once the page has drawn the diff and holds that card; nil until then.
+    package static func cardToFocus(_ pending: String?, rendered: Bool, cards: [RenderedComment]) -> String? {
+        guard let pending, rendered, cards.contains(where: { $0.id == pending }) else { return nil }
+        return pending
+    }
+
+    package func select(_ id: String) {
+        selectedID = id
+        if showsOneFile {
+            pushToRenderer()
+        } else {
+            renderer.reveal(fileID: id)
+        }
+    }
+
+    /// Find in every file of the diff: the page searches its parsed diffs, not what is on screen.
+    package func find() {
+        renderer.find()
+    }
+
+    // MARK: pushes after the diff on screen
+
+    /// The target branch the Branch scope last loaded with (or tried): one reload per target.
+    private var branchBaseTried: String?
+
+    /// The threads name the PR's head; when the diff shows another one, ask the host what came.
+    package func checkForPush() {
+        // A Branch diff loaded before the PR was known compared against the guessed base (`origin/HEAD`).
+        if case .branch = scope, chosenBase == nil, let ref = targetRef, base != ref, branchBaseTried != ref {
+            branchBaseTried = ref
+            reload()
+        }
+        guard let head = pr?.payload?.pr.headSha, let shown = scope.pinnedHead else { return }
+        if PRThreadRendering.sameCommit(head, shown) {
+            pushNews = nil
+            return
+        }
+        versions?.load(forHead: head)
+    }
+
+    package func updateNews() {
+        guard let shown = scope.pinnedHead, let list = versions?.payload?.versions else {
+            pushNews = nil
+            return
+        }
+        pushNews = PRPushNews.between(shownHead: shown, versions: list)
+    }
+
+    /// The target branch as a ref here, for an end whose base the host did not record (GitHub).
+    private var targetRef: String? {
+        pr?.payload?.pr.targetBranch.map { "origin/\($0)" }
+    }
+
+    /// The PR's own diff, its base against its head (what the PR page shows), whatever scope is on screen.
+    package var prScope: DiffScope? {
+        guard let info = pr?.payload?.pr, let head = info.headSha, let base = info.baseSha else { return nil }
+        return .range(base: base, head: head, label: "\(info.identity.label) \(info.title.prefix(40))", fallbackBase: targetRef)
+    }
+
+    /// The diff moves to the PR's newest push; the base follows the push's own (a rebase moves it).
+    package func reloadToNewest() {
+        guard let newest = pushNews?.newest, let updated = scope.reloading(to: newest) else { return }
+        // A commit scope does not name the push's base, so the remote head moves here, not in `setScope`.
+        remoteHead = remoteHead?.moved(to: newest.headSha, base: newest.baseSha)
+        setScope(updated)
+    }
+
+    /// Only what the author changed between the push on screen and the newest one; a rebase between
+    /// them is left out (Review/ReviewVersions.swift).
+    package func showChangesSinceShown() {
+        guard let news = pushNews, let shownHead = scope.pinnedHead else { return }
+        var shownBase = news.shown?.baseSha
+        if shownBase == nil, case .range(let base, _, _, _) = scope { shownBase = base }
+        compare(from: CompareEnd(base: shownBase, head: shownHead), to: CompareEnd(base: news.newest.baseSha, head: news.newest.headSha))
+    }
+
+    /// The compare diff between two ends; labelled by their short ids.
+    package func compare(from: CompareEnd, to: CompareEnd) {
+        let label = "\(prLabel) \(from.head.prefix(7)) → \(to.head.prefix(7))"
+        setScope(.compare(from: from, to: to, label: label, targetRef: targetRef))
+    }
+
+    /// The hub, at this PR and the file on screen: a second `--hub` hands its flags to the running hub
+    /// and exits (Hub/HubSingleInstance.swift). Not a `genesis-tools://` link: Launch Services may hand
+    /// that to this very process, which has no hub.
+    package func showInHub() {
+        guard let info = pr?.payload?.pr, let executable = Bundle.main.executableURL else { return }
+        var args = ["--hub", "--pr", info.webUrl ?? info.url]
+        if let id = selectedID, let file = files.first(where: { $0.id == id }), !file.path.isEmpty {
+            args += ["--reveal", file.path]
+        }
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = args
+        do {
+            try process.run()
+            HubPerf.log("review.showInHub \(args.joined(separator: " "))")
+        } catch {
+            notice = "Could not open the hub: \(error.localizedDescription)"
+        }
+    }
+
+    /// Compare against another base (nil: automatic). The Branch scope and the Committed list follow it.
+    package func setBase(_ ref: String?) {
+        guard ref != chosenBase else { return }
+        HubPerf.log("review.base \(ref ?? "automatic")")
+        chosenBase = ref
+        restartLoad()
+    }
+
+    /// Read another checkout of the same repository: an agent's worktree instead of the main one. The
+    /// scope stays; a commit is found in every checkout, since they share one object store.
+    /// `chosen` is false only for the window's own move to the checkout the session worked in: that one is neither
+    /// remembered as a pick nor does it stop the window from following the session later.
+    package func switchWorktree(to path: String, chosen: Bool = true) {
+        if chosen { worktreeChosen = true }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        guard url.path != repo.path else {
+            if chosen { onWorktreeChange?(url) }
+            return
+        }
+        HubPerf.log("review.worktree \(repo.path) -> \(url.path)")
+        let shown = roots.first?.shown ?? true
+        repo = url
+        comments = ReviewCommentStore(repo: url)
+        var first = ReviewRoot(folder: url.path, repo: url, shown: shown)
+        first.prefix = roots.first?.prefix ?? ""
+        if roots.isEmpty {
+            roots = [first]
+        } else {
+            roots[0] = first
+        }
+        displayedHead = nil
+        base = nil
+        branch = ""
+        commits = []
+        if chosen { onWorktreeChange?(url) }
+        guard started else { return }
+        watchRoots()
+        restartLoad()
+    }
+
+    package func setScope(_ next: DiffScope) {
+        guard next != scope else { return }
+        scope = next
+        // A PR push on screen (Reload, a version, a compare) moves the commits list and the agent note with it.
+        remoteHead = remoteHead?.following(next)
+        restartLoad()
+    }
+
+    /// A new question for the same window (scope, base, checkout): nothing of the old answer stays.
+    private func restartLoad() {
+        defer { updateNews() }
+        files = []
+        for index in roots.indices {
+            roots[index].files = []
+        }
+        freshFolders = []
+        cachedFolders = []
+        rendered = false
+        reload()
+    }
+
+    package func setStyle(_ style: DiffViewOptions.Style) {
+        options.diffStyle = style
+        DiffViewOptions.remember(style)
+        renderer.apply(options)
+    }
+
+    /// The reader picked wrap or scroll (header button, menu): from then on the width no longer decides.
+    private var wrapChosen = false
+
+    package func toggleWrap() {
+        wrapChosen = true
+        options.wrap.toggle()
+        renderer.apply(options)
+    }
+
+    /// A narrow diff wraps its long lines until the reader picks: in a 530 pt Changes pane beside the
+    /// transcript and Files, scrolled lines ended at the pane edge with nothing to say they went on (H18).
+    package func fitWrap(narrow: Bool) {
+        guard !wrapChosen, options.wrap != narrow else { return }
+        options.wrap = narrow
+        HubPerf.log("review.wrap \(narrow ? "on" : "off") for the pane width")
+        renderer.apply(options)
+    }
+
+    package func stepFont(_ delta: Double) {
+        options.fontSize = max(10, min(20, options.fontSize + delta))
+        renderer.apply(options)
+    }
+
+    /// Render only the selected file. A `--snapshot --file` sets it: in a window nobody sees, WebKit
+    /// paints no frame for a file that is only scrolled into view.
+    package var showsOneFile = false
+
+    /// Every file goes to the renderer, however large the diff: it lays out only what is near the
+    /// viewport. A new scope starts at the top; a refresh of the same diff keeps the scroll position.
+    private func pushToRenderer() {
+        renderStart = PerfLog.now()
+        pushComments()
+        if showsOneFile, let index = selectedIndex {
+            renderer.show([files[index]], fresh: true)
+        } else {
+            renderer.show(files, fresh: !rendered)
+        }
+    }
+
+    /// Each root's comments on its own files, and the PR's threads and proposal on this repository's;
+    /// every file id then goes under its root's prefix.
+    private func pushComments() {
+        let primary = primaryRoot
+        let prFiles = primary.shown ? primary.files : []
+        let live = pr?.payload?.threads ?? []
+        let shownHead = scope.pinnedHead ?? remoteHead?.sha
+        let prHead = pr?.payload?.pr.headSha
+        let proposalBase = proposal?.rendered(for: prFiles, liveThreads: pr?.payload?.threads, shownHead: shownHead, prHead: prHead) ?? []
+        let proposalOnShownHead = shownHead.flatMap { head in proposal.map { PRThreadRendering.sameCommit($0.headSha, head) } } ?? false
+        let proposalComments = pr?.payload == nil ? proposalBase : PRThreadRendering.refresh(
+            proposalBase, with: live, files: prFiles, shownHead: shownHead, prHead: prHead,
+            proposalOnShownHead: proposalOnShownHead, forge: pr?.payload?.pr.forge
+        )
+        let shown = Set(proposalComments.filter { $0.id.hasPrefix("thread:") }.map { String($0.id.dropFirst(7)) })
+        let liveComments = showsLiveThreadsInline
+            ? PRThreadRendering.rendered(live, files: prFiles, skip: shown, shownHead: shownHead, prHead: prHead, forge: pr?.payload?.pr.forge)
+            : []
+        if !live.isEmpty {
+            HubPerf.log("review.prThreads \(live.count) live, \(liveComments.count) on this diff (\(files.count) files, scope \(scope.title))")
+        }
+        let owned = commentRoots
+        let local = owned.flatMap { root, store in Self.globalized(store.rendered(for: root.files), root) }
+        var threadComments = proposalComments + liveComments
+        if pr?.stale == true {
+            // Cached threads: the cards show, their Reply and Resolve wait for the host's fresh answer.
+            threadComments = threadComments.map(PRThreadRendering.readOnly)
+        }
+        // A local reply to a PR thread sits inside that thread's card, once (ReviewThreadReplies).
+        let all = ReviewThreadReplies.attach(local + Self.globalized(threadComments, primary))
+        renderer.showComments(all)
+        threadCards = ReviewKeyNav.threadCards(all, files: files)
+        draftCards = ReviewKeyNav.draftCards(all, files: files)
+        let openOnDiff = draftCards.contains { $0.state == "proposed" }
+        if hasOpenDraftOnDiff != openOnDiff {
+            hasOpenDraftOnDiff = openOnDiff
+        }
+        if let focusedCard, !(threadCards + draftCards).contains(where: { $0.id == focusedCard }) {
+            self.focusedCard = nil
+            // The page keeps its own mark: without this, a card that comes back (a scope switch and
+            // back) shows the mark while e and x say there is none.
+            renderer.focusThread(cardID: nil, reply: false)
+        }
+        focusPendingThread()
+        revealFirstOpenDraftOnce()
+        commentCount = owned.reduce(0) { $0 + $1.store.comments.count }
+        unsentCount = owned.reduce(0) { $0 + $1.store.comments.filter { $0.state == .local || $0.state == .queued }.count }
+    }
+
+    private static func globalized(_ comments: [RenderedComment], _ root: ReviewRoot) -> [RenderedComment] {
+        guard !root.prefix.isEmpty else { return comments }
+        return comments.map { comment in
+            var copy = comment
+            copy.fileId = root.global(comment.fileId)
+            return copy
+        }
+    }
+
+    /// Every comment not yet with an agent (written, or queued): the header's "Send N…" takes them all.
+    package var pendingAgentIDs: [String] {
+        pendingAgentItems.map(\.id)
+    }
+
+    /// The comments "Send N…" takes, as its list shows them: where each sits, the thread it answers,
+    /// and its text.
+    package var pendingAgentItems: [AgentSendItem] {
+        commentRoots.flatMap { root, store in
+            store.agentPending.map { comment in
+                AgentSendItem(id: comment.id, path: root.prefix.isEmpty ? comment.path : "\(root.prefix)/\(comment.path)",
+                              startLine: comment.startLine, endLine: comment.endLine, thread: comment.thread,
+                              body: comment.body, state: comment.state.rawValue)
+            }
+        }
+    }
+
+    /// A comment's new text, from its card or from the send list: the same save, the PR draft synced.
+    package func editComment(_ id: String, body: String) {
+        commentOwner(id)?.store.edit(id: id, body: body)
+        syncEditedDraft(id)
+        pushComments()
+    }
+
+    /// "Remove from this send": the comment stays, local, out of every send until queued again.
+    package func holdFromAgent(_ id: String) {
+        commentOwner(id)?.store.holdFromAgent([id])
+        pushComments()
+    }
+
+    /// Delete from the send list: the card's Delete (a PR draft it owns goes too).
+    package func deleteComment(_ id: String) {
+        deleteLocalComment(id)
+    }
+
+    /// The markdown the agent's file will hold for these comments (the outbox file, not written).
+    package func agentMessage(ids: [String]) -> String {
+        composeAgentMessage(ids).message
+    }
+
+    private func composeAgentMessage(_ ids: [String]) -> (message: String, owners: [(store: ReviewCommentStore, ids: [String])]) {
+        let owners = commentRoots.map { root, store in
+            (root: root, store: store, ids: ids.filter { id in store.comments.contains { $0.id == id } })
+        }.filter { !$0.ids.isEmpty }
+        let message = owners.compactMap { owner -> String? in
+            guard let root = owner.root.repo else { return nil }
+            let rootBranch = root.path == repo.path ? (remoteHead?.branchNote ?? branch) : owner.root.branch
+            return owner.store.agentMessage(repo: root, branch: rootBranch, files: owner.root.files, ids: owner.ids)
+        }.joined(separator: "\n")
+        return (message, owners.map { ($0.store, $0.ids) })
+    }
+
+    /// Where comments go: the window's own session, else the session last picked for this PR (or this
+    /// repository when the diff is no PR). Nil: nobody, so a comment can only be queued.
+    package var agentTarget: AgentTarget? {
+        if let session, AgentTarget.validID(session) {
+            return AgentTarget(sessionId: session, provider: nil, name: "session \(session.prefix(8))")
+        }
+        return AgentTarget.remembered(for: agentTargetKey)
+    }
+
+    /// The PR's URL, or the repository's path for a diff that is no PR: one remembered agent each.
+    package var agentTargetKey: String {
+        pr?.payload?.pr.webUrl ?? pr?.payload?.pr.url ?? repo.path
+    }
+
+    package func sendToAgent() {
+        sendToAgent(ids: pendingAgentIDs)
+    }
+
+    /// The comments go to the agent: written into one outbox file, then, when there is a target (the
+    /// window's session, or the one picked for this PR), one line naming the file is typed into that
+    /// session's pane, and only then they read "Sent to <it>". With no target they are queued, which says
+    /// what happened: written, nobody told. `afterSend` runs when a pane got them; `finished` always, once.
+    package func sendToAgent(ids: [String], to chosen: AgentTarget? = nil, afterSend: (() -> Void)? = nil, finished: (() -> Void)? = nil) {
+        guard !ids.isEmpty else {
+            notice = "No comments waiting for the agent."
+            finished?()
+            return
+        }
+
+        guard let written = writeOutbox(ids) else {
+            finished?()
+            return
+        }
+
+        guard let target = chosen ?? agentTarget else {
+            for owner in written.owners {
+                owner.store.markQueued(owner.ids)
+            }
+            pushComments()
+            notice = "Queued \(ids.count) \(ids.count == 1 ? "comment" : "comments"), not sent: no agent is picked for this review. Send… in the header picks one."
+            finished?()
+            return
+        }
+
+        let line = "Read the review comments in \(written.file.path) and address each one."
+        let host = TerminalHosts.current
+        notice = "Sending \(Plural.count(ids.count, "comment")) to \(target.name)…"
+        Task { @MainActor in
+            let error = await Task.detached(priority: .userInitiated) {
+                host.send(sessionId: target.sessionId, provider: target.provider, text: line)
+            }.value
+            let outcome = AgentDelivery.outcome(target: target, error: error)
+            for owner in written.owners {
+                switch outcome {
+                case .sent(let to): owner.store.markDelivered(owner.ids, to: to)
+                case .queued: owner.store.markQueued(owner.ids)
+                }
+            }
+            if case .sent = outcome {
+                afterSend?()
+            }
+            pushComments()
+            notice = AgentDelivery.notice(outcome, count: ids.count, host: host.name, error: error)
+            finished?()
+        }
+    }
+
+    /// The explicit fallback: the comments copied to the clipboard and kept queued. Nothing was sent.
+    package func copyForAgent(ids: [String]) {
+        guard !ids.isEmpty, let written = writeOutbox(ids) else { return }
+        for owner in written.owners {
+            owner.store.markQueued(owner.ids)
+        }
+        PathOpener.copy(written.message, what: Plural.count(ids.count, "comment"))
+        pushComments()
+        notice = "Copied \(Plural.count(ids.count, "comment")), not sent. Paste them into an agent."
+    }
+
+    /// One markdown file in the outbox with every comment and its code, one section per repository.
+    private func writeOutbox(_ ids: [String]) -> (file: URL, message: String, owners: [(store: ReviewCommentStore, ids: [String])])? {
+        let (message, owners) = composeAgentMessage(ids)
+        let outbox = comments.directory.appendingPathComponent("outbox", isDirectory: true)
+        let file = ReviewOutbox.file(in: outbox)
+        do {
+            try FileManager.default.createDirectory(at: outbox, withIntermediateDirectories: true)
+            try message.write(to: file, atomically: true, encoding: .utf8)
+        } catch {
+            notice = "Could not write \(file.path): \(error.localizedDescription)"
+            return nil
+        }
+        return (file, message, owners)
+    }
+
+    private func handle(_ event: DiffRendererEvent) {
+        switch event {
+        case .ready:
+            PerfLog.since("hub.review.webview-ready", createdAt)
+        case .rendered:
+            PerfLog.since("hub.review.render", renderStart)
+            renderStart = nil
+            if !rendered {
+                rendered = true
+                onFirstRender?()
+            }
+            focusPendingThread()
+        case .failed(let message):
+            error = message
+            HubPerf.log("review.renderer failed: \(message)")
+            FileHandle.standardError.write(Data("review renderer: \(message)\n".utf8))
+        case .commentSubmitted(let input):
+            if let id = input.editingID, id.hasPrefix("draft:") {
+                updateDraft(id, status: "edited", body: input.body)
+            } else if let id = input.editingID, id.hasPrefix("thread:") {
+                updateThread(id, editedReply: input.body)
+            } else if let id = input.editingID {
+                editComment(id, body: input.body)
+            } else {
+                addComment(input)
+            }
+            pushComments()
+        case .commentDeleted(let id):
+            deleteLocalComment(id)
+        case .openLine(let fileID, let line, let side):
+            if let found = locate(fileID: fileID), let root = found.root.repo {
+                // A click on the old side carries the old line number; the editor opens the new text.
+                let target = side == .deletions
+                    ? DiffLineMap.newLine(forOld: line, old: found.file.oldContents, new: found.file.newContents)
+                    : line
+                if remoteHead != nil, root.path == repo.path {
+                    // The file on disk is another branch's copy: the host's copy at the head instead.
+                    if let url = hostURL(of: fileID, line: target) {
+                        HubPerf.log("review.openLine \(fileID):\(line) \(side.rawValue) -> line \(target) on the host")
+                        ExternalOpener.open(url)
+                    } else {
+                        notice = "No checkout holds this head, and the host has no page for \(found.file.path)."
+                    }
+                } else {
+                    HubPerf.log("review.openLine \(fileID):\(line) \(side.rawValue) -> line \(target) in Cursor")
+                    PathOpener.cursor(root.appendingPathComponent(found.file.path).path, line: target)
+                }
+            } else {
+                HubPerf.log("review.openLine unknown file \(fileID)")
+            }
+        case .commentAction(let id, let action):
+            switch action {
+            case "accept": updateDraft(id, status: "accepted")
+            case "reject": updateDraft(id, status: "rejected")
+            case "restore": updateDraft(id, status: "proposed")
+            case "agent", "queue": send(id, to: .agent)
+            case "draft", "promote": send(id, to: .prDraft)
+            case "post": send(id, to: .prComment)
+            default: HubPerf.log("review.commentAction unknown \(action)")
+            }
+        case .threadAction(let input):
+            threadAction(input)
+        case .openURL(let url):
+            // A PR/MR link asks where to open it (host, hub, review window); anything else opens in the browser.
+            MainActor.assumeIsolated { PRRefMenu.open(url, model: self) }
+        case .focusFile(let id):
+            if selectedID != id, files.contains(where: { $0.id == id }) {
+                selectedID = id
+                sidebarScrollTarget = id
+            }
+        case .threadSelect(let id, let selected):
+            if selected {
+                selectedThreads.insert(id)
+            } else {
+                selectedThreads.remove(id)
+            }
+        case .key(let key):
+            handleKey(key)
+        case .blameNeed(let fileID):
+            if !blame.loaded.contains(fileID), !blameRunning.contains(fileID) {
+                blamePending.insert(fileID)
+                runBlame()
+            }
+        case .blameOpen(let index):
+            if let source = blame.source(at: index) {
+                AgentBlame.open(source)
+            }
+        case .headerMenu(let fileID, let selection):
+            // After the page's message returns: the menu runs its own tracking loop.
+            DispatchQueue.main.async { [weak self] in
+                self?.showHeaderMenu(fileID: fileID, selection: selection)
+            }
+        }
+    }
+
+    /// A file's path actions: the file list's context menu and the diff header's right-click menu.
+    package func pathActions(of file: DiffFile) -> [ReviewPathAction] {
+        var actions: [ReviewPathAction] = []
+        if let url = hostURL(of: file.id), let revision = hostRevision {
+            actions.append(ReviewPathAction("Open on the host at \(revision.prefix(8))") { ExternalOpener.open(url) })
+            actions.append(ReviewPathAction("Copy the host URL") { PathOpener.copy(url.absoluteString, what: "URL") })
+        }
+        if let path = absolutePath(of: file) {
+            actions.append(ReviewPathAction("Open in Cursor") { PathOpener.cursor(path) })
+            actions.append(ReviewPathAction("Reveal in Finder") { PathOpener.reveal(path) })
+            actions.append(ReviewPathAction("Copy path") { PathOpener.copy(path, what: "path") })
+        }
+        if let relative = repoPath(of: file.id) {
+            actions.append(ReviewPathAction("Copy repo-relative path") { PathOpener.copy(relative, what: "path") })
+        }
+        return actions
+    }
+
+    /// The page sends the file and any text selected there; the menu opens at the pointer.
+    private func showHeaderMenu(fileID: String, selection: String) {
+        guard let file = files.first(where: { $0.id == fileID }) else {
+            HubPerf.log("review.headerMenu unknown file \(fileID)")
+            return
+        }
+
+        let menu = NSMenu()
+        if !selection.isEmpty {
+            menu.addItem(ClosureMenuItem("Copy") { PathOpener.copy(selection) })
+            menu.addItem(.separator())
+        }
+        for action in pathActions(of: file) {
+            menu.addItem(ClosureMenuItem(action.title, action.run))
+        }
+        HubPerf.log("review.headerMenu \(file.path) (\(menu.items.count) items)")
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    /// A new local comment, kept in the store of the repository its file is in.
+    @discardableResult
+    private func addComment(_ input: CommentInput) -> ReviewComment? {
+        guard let found = locate(fileID: input.fileID), let store = commentStore(for: found.root) else { return nil }
+        var local = input
+        local.fileID = found.file.id
+        return store.add(local, files: found.root.files)
+    }
+
+    // MARK: Agent blame
+
+    /// A snapshot's `--blame <path>:<line>`: asks as a hover would; true once the answer is in.
+    package func requestBlame(path: String) -> Bool {
+        guard let file = file(atPath: path) else { return false }
+        if blame.loaded.contains(file.id) {
+            return true
+        }
+        handle(.blameNeed(fileID: file.id))
+        return false
+    }
+
+    package func showBlame(path: String, line: Int) {
+        if let file = file(atPath: path) {
+            renderer.showBlame(fileID: file.id, line: line)
+        }
+    }
+
+    /// The file set changed: every file's lines may have moved, so each is asked again on its next hover.
+    private func resetBlame() {
+        blameGeneration += 1
+        blame = AgentBlameState()
+        blamePending = []
+        blameRunning = []
+        renderer.setBlame(blame.payload)
+    }
+
+    /// Which session and turn wrote each new line of the hovered files, off the main thread. One call
+    /// at a time, for one repository (`--repo`); files hovered meanwhile, or in another root, go in the next one.
+    private func runBlame() {
+        // Cached files may not be the text on disk, and blame numbers the lines on disk: hovers wait for the load.
+        guard blameRunning.isEmpty, !blamePending.isEmpty, !showingCache else { return }
+        guard let index = roots.indices.first(where: { index in blamePending.contains { ReviewRoots.index(of: $0, in: roots) == index } }),
+              let root = roots[index].repo else {
+            // Files of no root any more (the roots changed): nothing to ask.
+            blamePending = []
+            return
+        }
+
+        let owner = roots[index]
+        let asked = blamePending.filter { ReviewRoots.index(of: $0, in: roots) == index }
+        blamePending.subtract(asked)
+        let chosen = owner.files.filter { asked.contains(owner.global($0.id)) }
+        // Repo-relative paths, merged ids: `tools` answers per path, the page asks per id.
+        let files = owner.files.map { file -> DiffFile in
+            var copy = file
+            copy.id = owner.global(file.id)
+            return copy
+        }
+        guard let paths = AgentBlame.paths(files: chosen, scope: scope) else {
+            // Deleted or skipped files have no line to own, and a scope whose new side is not the
+            // working tree has no line `tools` could number: asked, with no blame.
+            blame.merge(AgentBlameResult(sources: [], files: [], elapsedMs: nil), files: files, asked: asked)
+            renderer.setBlame(blame.payload)
+            runBlame()
+            return
+        }
+
+        blameRunning = asked
+        let generation = blameGeneration
+        DispatchQueue.global(qos: .utility).async {
+            // Files whose text on disk still hashes as cached need no call (ReviewCache.readBlame).
+            let cached = HubPerf.measure("review.blame.cache", "\(paths.count) files") { ReviewCache.readBlame(repo: root.path, paths: paths) }
+            var answer = cached.found
+            if !cached.missing.isEmpty {
+                let span = HubPerf.begin("review.blame", "\(cached.missing.count) files in \(root.lastPathComponent), \(paths.count - cached.missing.count) cached")
+                let args = AgentBlame.arguments(repo: root.path, paths: cached.missing)
+                switch Result(catching: { try JSONDecoder().decode(AgentBlameResult.self, from: ToolsCLIRunner.run(args)) }) {
+                case .success(let found):
+                    span.end("\(found.files.count) with agent lines, \(found.sources.count) turns, \(found.elapsedMs ?? 0) ms in tools")
+                    ReviewCache.writeBlame(found, repo: root.path, asked: cached.missing, hashes: cached.hashes)
+                    answer = ReviewCache.combine(cached.found, found)
+                case .failure(let error):
+                    span.end("failed: \(error)")
+                }
+            } else {
+                HubPerf.log("review.blame \(paths.count) files in \(root.lastPathComponent) all cached")
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, generation == self.blameGeneration else { return }
+                self.blameRunning = []
+                // A failure counts as asked too: the hover must not start a call per line.
+                self.blame.merge(answer, files: files, asked: asked)
+                self.renderer.setBlame(self.blame.payload)
+                self.runBlame()
+            }
+        }
+    }
+
+    // MARK: Keys and the Fix selection
+
+    package func handleKey(_ key: ReviewKey) {
+        HubPerf.log("review.key \(key.rawValue)")
+        switch key {
+        case .nextThread: stepThread(1)
+        case .previousThread: stepThread(-1)
+        case .reply:
+            guard let card = focusedThreadCard(orStep: true) else { return }
+            if card.live?.canReply == true {
+                renderer.focusThread(cardID: card.id, reply: true)
+            } else {
+                notice = "This thread is still your draft: edit it on its card instead of replying."
+            }
+        case .resolve:
+            guard let card = focusedThreadCard(orStep: false), let live = card.live else { return }
+            guard live.resolvable else {
+                notice = "This thread cannot be resolved (a draft, or the host does not allow it)."
+                return
+            }
+            threadAction(ThreadActionInput(id: card.id, action: live.resolved ? .unresolve : .resolve))
+        case .select:
+            guard let card = focusedThreadCard(orStep: false) else { return }
+            guard card.state != "draft" else {
+                notice = "Your own draft is not a thread to fix."
+                return
+            }
+            toggleThreadSelection(ReviewKeyNav.threadID(ofCard: card.id))
+        case .fix:
+            if pr == nil {
+                notice = "This diff is not a PR: there are no threads to fix."
+            } else if selectedThreads.isEmpty {
+                notice = "Select threads first: their Fix checkbox, or x on the marked thread."
+            } else {
+                fixRequests += 1
+            }
+        case .nextFile, .previousFile:
+            if let id = ReviewKeyNav.stepFile(files, from: selectedID, by: key == .nextFile ? 1 : -1), id != selectedID {
+                select(id)
+                sidebarScrollTarget = id
+            }
+        case .submit:
+            if pr?.payload == nil {
+                notice = "This diff is not a PR, or its threads have not loaded: there is no review to submit."
+            } else {
+                submitRequests += 1
+            }
+        }
+    }
+
+    private func stepThread(_ delta: Int) {
+        guard let id = ReviewKeyNav.step(threadCards, from: focusedCard, by: delta, files: files, selectedFile: selectedID) else {
+            notice = pr == nil
+                ? "This diff is not a PR: there are no threads to step through."
+                : "No PR thread sits on this diff. Threads show on their lines in the Branch scope or the PR's range."
+            return
+        }
+        focusedCard = id
+        renderer.focusThread(cardID: id, reply: false)
+    }
+
+    /// The marked card; r with no mark first moves to the next thread, e and x ask for a mark.
+    private func focusedThreadCard(orStep: Bool) -> RenderedComment? {
+        if focusedCard == nil, orStep {
+            stepThread(1)
+        }
+        guard let focusedCard, let card = threadCards.first(where: { $0.id == focusedCard }) else {
+            if !orStep {
+                notice = "Move to a thread with j or k first."
+            }
+            return nil
+        }
+        return card
+    }
+
+    package func toggleThreadSelection(_ id: String) {
+        if selectedThreads.contains(id) {
+            selectedThreads.remove(id)
+        } else {
+            selectedThreads.insert(id)
+        }
+    }
+
+    package func clearThreadSelection() {
+        selectedThreads = []
+    }
+
+    /// A button on a live PR thread card. Publishing asks first; deleting a draft asks first. The page
+    /// keeps its reply or edit box until `threadActionFinished` says the host took it.
+    private func threadAction(_ input: ThreadActionInput) {
+        let finished: (Bool) -> Void = { [weak self] ok in
+            self?.renderer.threadActionFinished(id: input.id, ok: ok)
+        }
+        guard let store = pr, let thread = input.threadID else {
+            notice = "This diff is not a PR: open the PR in the hub's PRs mode to reply there."
+            return finished(false)
+        }
+
+        HubPerf.log("review.threadAction \(input.action.rawValue)\(input.draft ? " draft" : "") \(thread)")
+        switch input.confirmation {
+        case .post?:
+            if !PRConfirm.post(input.body?.trimmed ?? "", on: store, where_: "A reply in the existing thread.") {
+                return finished(false)
+            }
+        case .deleteDraft?:
+            if !PRConfirm.deleteDraft(on: store) {
+                return finished(false)
+            }
+        case nil:
+            break
+        }
+        store.perform(input, finished: finished)
+    }
+
+    private func updateThread(_ id: String, editedReply: String? = nil, replyStatus: String? = nil, providerId: String? = nil) {
+        guard let proposal, id.hasPrefix("thread:") else { return }
+        do {
+            try proposal.update(threadID: String(id.dropFirst(7)), editedReply: editedReply, replyStatus: replyStatus, providerId: providerId)
+            objectWillChange.send()
+        } catch {
+            notice = "Could not save the proposal: \(error.localizedDescription)"
+        }
+        pushComments()
+    }
+
+    // MARK: Sending a suggestion
+
+    package enum SendTarget { case agent, prDraft, prComment }
+
+    /// What one card would send: the text as worded now, where it sits, and the PR thread it answers.
+    private struct Suggestion {
+        let text: String
+        let path: String
+        let fileID: String
+        let side: DiffSide
+        let startLine: Int
+        let line: Int
+        let thread: String?
+        /// A local reply whose PR thread is not among the loaded threads: it cannot go to the PR as a reply.
+        var unresolvedThread = false
+        /// A local comment that is already my pending draft on the PR: Promote replaces its text, Post
+        /// publishes and then deletes it, so the PR never gets the comment twice.
+        var pendingDraft: String?
+        /// Another root's folder name: the comment is not in the PR's repository, so it cannot go there.
+        var otherRoot: String?
+        /// The card's kind and state as the page reads them (`SuggestionSendGate`).
+        var kind = "local"
+        var state: String?
+    }
+
+    /// Cards whose send is on its way (a confirmation open, or the agent send running): a second
+    /// click on the same card is dropped. A PR write is covered by `PRThreadsStore.busy` once it runs.
+    private var sendingSuggestions: Set<String> = []
+
+    private func suggestion(for id: String) -> Suggestion? {
+        if let owner = commentOwner(id), let comment = owner.store.comments.first(where: { $0.id == id }),
+           let file = owner.root.files.first(where: { $0.path == comment.path }) {
+            // A reply to a PR thread answers that thread on the PR too, never a new thread on its lines.
+            let thread = comment.thread.flatMap { ref in pr?.payload?.threads.first { $0.id.hasPrefix(ref) }?.id }
+            return Suggestion(text: comment.body, path: comment.path, fileID: owner.root.global(file.id), side: comment.side,
+                              startLine: comment.startLine, line: comment.endLine, thread: thread,
+                              unresolvedThread: comment.thread != nil && thread == nil,
+                              pendingDraft: comment.state == .draft ? comment.remoteDraftID : nil,
+                              otherRoot: owner.root.repo?.path == repo.path ? nil : owner.root.prefix,
+                              kind: "local", state: comment.state.rawValue)
+        }
+        guard let proposal else { return nil }
+        let primary = primaryRoot
+        if id.hasPrefix("draft:"), let draft = proposal.drafts.first(where: { $0.id == String(id.dropFirst(6)) }),
+           let file = primary.files.first(where: { $0.path == draft.path }) {
+            return Suggestion(text: draft.editedBody ?? draft.body, path: draft.path, fileID: primary.global(file.id), side: draft.side,
+                              startLine: min(draft.startLine, draft.line), line: draft.line,
+                              thread: proposal.replyToThread(draftID: draft.id), kind: "draft", state: draft.status)
+        }
+        if id.hasPrefix("thread:"), let thread = proposal.threads.first(where: { $0.id == String(id.dropFirst(7)) }),
+           let live = pr?.payload?.threads.first(where: { $0.id == thread.id && !$0.outdated }),
+           let text = thread.reply, let file = primary.files.first(where: { $0.path == live.path || (live.oldPath != nil && $0.oldPath == live.oldPath) }) {
+            return Suggestion(text: text, path: live.path, fileID: primary.global(file.id), side: live.side,
+                              startLine: min(live.startLine ?? live.line, live.line), line: live.line, thread: live.id, kind: "thread", state: thread.replyStatus)
+        }
+        return nil
+    }
+
+    /// One suggestion, as Martin worded it, to the agent (outbox + cmux), as a review draft on the PR, or
+    /// published on the PR. Publishing asks first: a posted comment is visible to everyone at once.
+    package func send(_ id: String, to target: SendTarget) {
+        guard let item = suggestion(for: id) else {
+            notice = "Nothing to send: the suggestion is empty or its file is not in this diff."
+            return
+        }
+        if let refusal = SuggestionSendGate.refusal(kind: item.kind, state: item.state, toPR: target != .agent,
+                                                    inFlight: sendingSuggestions.contains(id), busy: pr?.busy) {
+            HubPerf.log("review.send \(id) refused: \(refusal)")
+            notice = refusal
+            return
+        }
+        let owner = commentOwner(id)
+        let isLocal = owner != nil
+        let selectedPR = pr?.payload?.pr.identity
+        let selectedHead = reviewedHead
+        let markSent: (String, String?) -> Void = { [weak self] status, providerId in
+            if id.hasPrefix("draft:") {
+                self?.updateDraft(id, status: status, providerId: providerId)
+            } else if id.hasPrefix("thread:") {
+                self?.updateThread(id, replyStatus: status, providerId: providerId)
+            } else {
+                let ownership = providerId.flatMap { draftID in
+                    selectedPR.map { PRDraftOwnership(pr: $0, headSha: selectedHead, draftID: draftID) }
+                }
+                owner?.store.mark(id, status == "posted" ? .posted : .draft, remoteID: providerId, owner: ownership)
+                self?.pushComments()
+            }
+        }
+
+        switch target {
+        case .agent:
+            if isLocal {
+                sendToAgent(ids: [id])
+                return
+            }
+            // The suggestion becomes my comment, linked to its thread: the thread's card shows it in the
+            // suggestion's place (ReviewThreadReplies), and Draft / Post reply stay on it. The proposal's
+            // own reply status is left alone: queuing it is not a reply on the PR.
+            let input = CommentInput(editingID: nil, fileID: item.fileID, side: item.side, startLine: item.startLine, endLine: item.line, body: item.text)
+            guard let comment = addComment(input) else {
+                notice = "Could not anchor the comment on \(item.path):\(item.line)."
+                return
+            }
+            if let thread = item.thread {
+                commentOwner(comment.id)?.store.link(comment.id, thread: thread)
+            }
+            sendingSuggestions.insert(id)
+            sendToAgent(ids: [comment.id], finished: { [weak self] in
+                self?.sendingSuggestions.remove(id)
+            })
+        case .prDraft, .prComment:
+            guard let store = pr else {
+                notice = "This diff is not a PR: open the PR in the hub's PRs mode to post there."
+                return
+            }
+            if owner == nil, let proposal,
+               proposal.identity != selectedPR || (id.hasPrefix("draft:") && !proposal.permitsDraftSend(displayedHead: reviewedHead, pr: selectedPR)) {
+                notice = "This proposal was reviewed at another PR or revision. Refresh the proposal before sending its line comments."
+                return
+            }
+            if let comment = owner?.store.comments.first(where: { $0.id == id }), comment.state == .draft,
+               comment.remoteOwner?.permits(pr: selectedPR, draftID: comment.remoteDraftID) != true {
+                notice = "This draft belongs to another PR or has unknown ownership. Its remote draft was left unchanged."
+                return
+            }
+            if let other = item.otherRoot {
+                notice = "This comment is on a file in \(other), not in the PR's repository."
+                return
+            }
+            if item.unresolvedThread {
+                notice = "The PR thread this reply answers is not among the loaded threads. Reload the threads, then send it again."
+                return
+            }
+            let publish = target == .prComment
+            // Held through the confirmation; once the write runs, `store.busy` holds further sends.
+            sendingSuggestions.insert(id)
+            defer { sendingSuggestions.remove(id) }
+            if publish, !confirmPost(item) { return }
+            postToProvider(item, store: store, publish: publish) { providerId in
+                markSent(publish ? "posted" : "drafted", providerId)
+            }
+        }
+    }
+
+    private func confirmPost(_ item: Suggestion) -> Bool {
+        let gitLab = prIdentity?.isGitLab ?? false
+        let alert = NSAlert()
+        alert.messageText = "Post on \(prLabel) now?"
+        alert.informativeText = "Everyone on the \(gitLab ? "merge request" : "pull request") sees it at once. \(item.thread == nil ? "A new thread on \(item.path):\(item.line)." : "A reply in the existing thread.")\n\n\(item.text.prefix(400))"
+        alert.addButton(withTitle: "Post")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    /// `tools hub pr`: a reply in the thread when there is one (`reply`, `--draft` unless published),
+    /// else a new draft on the line (`draft add`). A new comment published at once goes alone
+    /// (`PRCommand.comment`), since `draft add` + `publish` would send every pending draft.
+    /// `done` gets the provider's id for the new comment or draft, when the command returns one.
+    private func postToProvider(_ item: Suggestion, store: PRThreadsStore, publish: Bool, done: @escaping (String?) -> Void) {
+        let label = prLabel
+        let target = store.target
+        let args: (String) -> [String]
+        let providerId: (Data) -> String?
+        if let thread = item.thread {
+            args = { PRCommand.reply(target, thread: thread, bodyFile: $0, draft: !publish) }
+            providerId = { try? JSONDecoder().decode(PRReplyResult.self, from: $0).commentId }
+        } else if let draftId = item.pendingDraft, !publish {
+            args = { PRCommand.draftUpdate(target, draftId: draftId, bodyFile: $0) }
+            providerId = { _ in draftId }
+        } else if let draftId = item.pendingDraft {
+            postPendingDraft(item, draftId: draftId, store: store, done: done)
+            return
+        } else if !publish {
+            args = { PRCommand.draftAdd(target, path: item.path, line: item.line, startLine: item.startLine, side: item.side, bodyFile: $0) }
+            providerId = { try? JSONDecoder().decode(PRDraftAddResult.self, from: $0).draftId }
+        } else {
+            args = { PRCommand.comment(target, path: item.path, line: item.line, startLine: item.startLine, side: item.side, bodyFile: $0) }
+            providerId = { _ in nil }
+        }
+
+        notice = publish ? "Posting on \(label)…" : "Adding to your pending review on \(label)…"
+        store.write(publish ? "Posting…" : "Drafting…", body: item.text, args: args) { [weak self] result in
+            switch result {
+            case .success(let data):
+                self?.notice = publish ? "Posted on \(label)." : "In your pending review on \(label); Submit review publishes it."
+                done(providerId(data))
+            case .failure(let error):
+                self?.notice = "\(label) failed: \(error)"
+            }
+        }
+    }
+
+    /// `PRCommand.postPendingDraft`: publish, then delete the pending draft. A failed delete keeps the
+    /// comment posted and says the draft is still there; a failed post deletes nothing.
+    private func postPendingDraft(_ item: Suggestion, draftId: String, store: PRThreadsStore, done: @escaping (String?) -> Void) {
+        let label = prLabel
+        let steps = { (bodyFile: String) in
+            PRCommand.postPendingDraft(store.target, draftId: draftId, path: item.path, line: item.line,
+                                       startLine: item.startLine, side: item.side, bodyFile: bodyFile)
+        }
+        notice = "Posting on \(label)…"
+        HubPerf.log("review.post pending draft \(draftId.prefix(10)) on \(item.path):\(item.line)")
+        store.write("Posting…", body: item.text, args: { steps($0)[0] }) { [weak self] result in
+            if case .failure(let error) = result {
+                self?.notice = "\(label) failed: \(error). Your draft is unchanged."
+                return
+            }
+
+            done(nil)
+            store.write("Removing the draft…", body: nil, args: { _ in steps("")[1] }) { [weak self] removed in
+                switch removed {
+                case .success: self?.notice = "Posted on \(label); its pending draft is gone."
+                case .failure(let error): self?.notice = "Posted on \(label), but the pending draft is still there: \(error)"
+                }
+            }
+        }
+    }
+
+    /// Delete on a local card. A comment that is my pending draft on the PR asks whether the draft goes
+    /// too; a published comment stays on the PR (only the local card goes).
+    private func deleteLocalComment(_ id: String) {
+        guard let comments = commentOwner(id)?.store, let comment = comments.comments.first(where: { $0.id == id }) else { return }
+        guard comment.state == .draft, let draftId = comment.remoteDraftID, let store = pr else {
+            comments.delete(id: id)
+            pushComments()
+            return
+        }
+
+        guard comment.remoteOwner?.permits(pr: store.payload?.pr.identity, draftID: draftId) == true else {
+            comments.delete(id: id)
+            notice = "Local comment deleted. The remote draft has different or unknown ownership and was left unchanged."
+            pushComments()
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = "Delete this comment and its draft on \(prLabel)?"
+        alert.informativeText = "It is also a draft in your pending review. Nobody else saw the draft.\n\n\(comment.body.prefix(300))"
+        alert.addButton(withTitle: "Delete both")
+        alert.addButton(withTitle: "Keep the PR draft")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            store.write("Deleting the draft…", body: nil, args: { _ in PRCommand.draftDelete(store.target, draftId: draftId) }) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .success:
+                    comments.delete(id: id)
+                    self.notice = "Comment and its PR draft deleted."
+                case .failure(let error):
+                    self.notice = "Could not delete the PR draft (\(error)); the comment stays."
+                }
+                self.pushComments()
+            }
+        case .alertSecondButtonReturn:
+            comments.delete(id: id)
+            pushComments()
+        default:
+            break
+        }
+    }
+
+    /// An edit of a local comment that is my pending draft also replaces the draft's text (it is private
+    /// until the review is submitted, so it asks nothing).
+    private func syncEditedDraft(_ id: String) {
+        guard let comment = commentOwner(id)?.store.comments.first(where: { $0.id == id }), comment.state == .draft,
+              let draftId = comment.remoteDraftID, let store = pr else { return }
+        guard comment.remoteOwner?.permits(pr: store.payload?.pr.identity, draftID: draftId) == true else {
+            notice = "The edit was saved locally. The remote draft has different or unknown ownership and was left unchanged."
+            return
+        }
+        store.write("Updating the draft…", body: comment.body, args: { PRCommand.draftUpdate(store.target, draftId: draftId, bodyFile: $0) }) { [weak self] result in
+            if case .failure(let error) = result {
+                self?.notice = "The comment changed here, but its PR draft kept the old text: \(error)"
+            }
+        }
+    }
+
+    private func updateDraft(_ id: String, status: String, body: String? = nil, providerId: String? = nil) {
+        guard let proposal, id.hasPrefix("draft:") else { return }
+        do {
+            try proposal.update(draftID: String(id.dropFirst(6)), status: status, editedBody: body, providerId: providerId)
+            objectWillChange.send()
+        } catch {
+            notice = "Could not save the proposal: \(error.localizedDescription)"
+        }
+        pushComments()
+    }
+}
+
+// MARK: - Views
+
+package struct ReviewRootView: View {
+    @ObservedObject package var model: ReviewModel
+    /// False while the hub shows the same list as its own Files pane: one list, not two.
+    package var showsFileList = true
+    /// The hub's own list in the file panel (changed files or the folders, Hub/HubFolders.swift); nil: the changed files.
+    package var fileList: (() -> AnyView)? = nil
+    @State private var width: CGFloat = 0
+    @State private var height: CGFloat = 0
+
+    /// The file list may take 40% of the pane; below its minimum it folds to a rail instead of
+    /// squeezing either column. The minimum fits a root folder's name and a typical file name four
+    /// folders deep ("qa-decision-delivery.ts"); at 180 pt both were cut to "G…ls/" and "qa-de…very.ts",
+    /// at 260 pt the file name still lost six letters.
+    private static let listFraction: CGFloat = 0.4
+    private static let listMinWidth: CGFloat = 300
+    /// The file list opens as wide as its widest row (`FileListFit`), measured once per review; a
+    /// saved width from an earlier session opened it at 560 pt for rows that needed about 260.
+    @State private var listFit: CGFloat?
+    /// The width left of the context panel: the file list's room is a share of it.
+    @State private var innerWidth: CGFloat = 0
+    /// The standalone window's left panel (Review/ReviewContextPanel.swift), folded by default. The
+    /// hub shows its own transcript and PR panes around an embedded review, so it gets none.
+    @AppStorage(ReviewContextPanel.collapsedKey, store: HubDefaults.store) private var contextCollapsed = true
+    private static let contextFraction: CGFloat = 0.4
+    private static let contextMinWidth: CGFloat = 320
+    /// Below this width long diff lines wrap, unless the reader chose (`ReviewModel.fitWrap`).
+    package static let wrapBelow: CGFloat = 680
+
+    private var showsContext: Bool { !model.embedded }
+    private var contextSqueezed: Bool { width > 0 && width * Self.contextFraction < Self.contextMinWidth }
+
+    package var body: some View {
+        SideSplit(panelEdge: .leading, maxFraction: Self.contextFraction) {
+            if showsContext {
+                ResizableSidePanel(key: ReviewContextPanel.key, edge: .leading, title: "Context", defaultWidth: 420,
+                                   minWidth: Self.contextMinWidth, maxWidth: max(Self.contextMinWidth, width * Self.contextFraction),
+                                   autoCollapse: contextSqueezed,
+                                   // The diff and the file list move with the edge on every step and keep
+                                   // their size until release: held, the panel drew over the diff and the
+                                   // diff jumped sideways on release. The panel's own rows hold their width
+                                   // too (ReviewContextPanelView), so they stop re-wrapping per step.
+                                   holdsLayout: false) {
+                    ReviewContextPanelView(model: model)
+                }
+            }
+            filesSplit
+                .measuredWidth("review.files", $innerWidth)
+                .freezesWidthWhileDragging(panel: ReviewContextPanel.key)
+        }
+        .hubSurface(.content)
+        .preferredColorScheme(.dark)
+        .measuredWidth("review.root", $width)
+        .onGeometryChange(for: CGFloat.self, of: \.size.height) { height = $0 }
+        .onAppear { model.start() }
+        .onDisappear { model.stop() }
+        // Once, when the first files arrive: a refresh that adds a longer name never moves the diff.
+        .onChange(of: model.files.isEmpty, initial: true) { _, empty in
+            guard listFit == nil, !empty else { return }
+            listFit = HubPerf.measure("review.files.fit", "\(model.files.count) files") { FileListFit.width(model: model) }
+            HubPerf.log("review.files.fit \(Int(listFit ?? 0)) pt for \(model.files.count) files")
+        }
+        // Back from the browser or another app: the PR threads may have moved (the store skips a load
+        // younger than the CLI's 30 s cache).
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.pr?.reloadIfStale()
+        }
+        // A new model in the same place (the hub selected another session) is a new view: without
+        // this, `onAppear` never ran for it and the pane showed "No changes" for a changed repo.
+        .id(ObjectIdentifier(model))
+    }
+
+    private var filesSplit: some View {
+        let room = innerWidth * Self.listFraction
+        return SideSplit(panelEdge: .trailing, maxFraction: Self.listFraction) {
+            diffColumn
+                .freezesWidthWhileResizing(heavy: false)
+                // The diff's own width decides; only a crossing of the threshold re-renders.
+                .onGeometryChange(for: Bool.self, of: { $0.size.width > 0 && $0.size.width < Self.wrapBelow }) { model.fitWrap(narrow: $0) }
+            if showsFileList {
+                ResizableSidePanel(key: "review.files", edge: .trailing, title: "Files", defaultWidth: 320,
+                                   minWidth: Self.listMinWidth, maxWidth: max(Self.listMinWidth, room),
+                                   autoCollapse: innerWidth > 0 && room < Self.listMinWidth, fitWidth: listFit) {
+                    if let fileList {
+                        fileList()
+                    } else {
+                        FileSidebar(model: model)
+                    }
+                }
+            }
+        }
+    }
+
+    /// The header's first row sits in the title bar: clear of the traffic lights when the diff starts
+    /// at the window's edge or beside the folded panel's rail, flush beside the open panel.
+    private var headerInset: CGFloat {
+        guard showsContext else { return 78 }
+        return contextCollapsed || contextSqueezed ? 78 - ResizableSidePanel<EmptyView>.railWidth - 1 : 14
+    }
+
+    private var diffColumn: some View {
+            VStack(spacing: 0) {
+                ReviewHeader(model: model, leadingInset: headerInset)
+                if let proposal = model.proposal {
+                    ProposalBanner(model: model, proposal: proposal)
+                }
+                if let pr = model.pr {
+                    // Leaves the header, the bar and a few diff lines when the list is dragged tall.
+                    PRReviewBar(model: model, store: pr, maxListHeight: height - 240)
+                        .zIndex(1)
+                }
+                if let news = model.pushNews, model.dismissedNewsHead != news.newest.headSha {
+                    PushNewsBanner(model: model, news: news)
+                        .padding(.horizontal, 12)
+                        .padding(.top, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+                if let notice = model.notice {
+                    NoticePill(text: notice, isError: notice.lowercased().contains("could not") || notice.contains("failed")) {
+                        model.notice = nil
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                }
+                if let error = model.error {
+                    Text(error)
+                        .font(.system(size: 12, design: .monospaced))
+                        .foregroundColor(ReviewPalette.removed)
+                        .textSelection(.enabled)
+                        .padding(8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                // An error is the answer: "No changes against HEAD" under it contradicted it.
+                if model.files.isEmpty && !model.loading && model.error == nil {
+                    VStack(spacing: 8) {
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 28))
+                            .foregroundColor(ReviewPalette.added)
+                        Text(verbatim: model.emptyMessage)
+                            .foregroundColor(ReviewPalette.dim)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    RendererHost(renderer: model.renderer)
+                        .overlay {
+                            // The first load of this review: the page has nothing to draw yet.
+                            if model.files.isEmpty && model.loading {
+                                DiffSkeleton()
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                    .hubSurface(.content)
+                            }
+                        }
+                }
+            }
+            .frame(minWidth: 0, maxWidth: .infinity)
+            .clipped()
+            .sheet(isPresented: $model.showsComparePicker) {
+                if let store = model.versions {
+                    ComparePushesSheet(model: model, store: store)
+                }
+            }
+    }
+}
+
+private struct ReviewHeader: View {
+    @ObservedObject var model: ReviewModel
+    /// Standalone: room for the traffic lights when the header starts at the window's left edge.
+    var leadingInset: CGFloat = 78
+    @ObservedObject private var repos = RepoFactsStore.shared
+    @State private var pickingAgent = false
+
+    var body: some View {
+        // One row of one height at every width. It used to wrap its controls to a second row in a
+        // narrow pane: 44 pt ↔ 61 pt, and a drag across that width moved the whole diff up and
+        // down (9 flips in one sweep, measured with --bench). Now only the controls condense.
+        HStack(spacing: 10) {
+            if !model.embedded, model.pr != nil {
+                IconButton(systemName: "rectangle.3.group", tooltip: "Show this PR in the hub: its review, threads, commits and the sessions on it") {
+                    model.showInHub()
+                }
+            }
+            // The summary gives way too, least useful part first: in a 1100 pt PRs window its fixed
+            // labels were wider than the column, and the row overflowed on both sides (audit gap 6).
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { summary(.full) }
+                HStack(spacing: 8) { summary(.noCompare) }
+                HStack(spacing: 8) { summary(.totals) }
+                HStack(spacing: 6) { summary(.scope) }
+            }
+            if let news = model.pushNews {
+                ReloadPill(news: news) { model.reloadToNewest() }
+            }
+            Spacer(minLength: 8)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { controls }
+                HStack(spacing: 6) { compactControls }
+                HStack(spacing: 4) { minimalControls }
+            }
+            .layoutPriority(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
+        .frame(height: 44)
+        .buttonStyle(.genHoverPlain())
+        .padding(.leading, model.embedded ? 14 : leadingInset)
+        .padding(.trailing, 14)
+        .overlay(Rectangle().fill(ReviewPalette.hairline).frame(height: 1), alignment: .bottom)
+        .onGeometryChange(for: Int.self, of: { Int($0.size.height.rounded()) }) { HubBench.note("review.header.height", $0) }
+        // A standalone window on a branch with an open PR/MR (`tools hub repo --pr`, the same lookup
+        // behind the PR link) gets that PR's threads. The hub attaches its PRs itself.
+        .onChange(of: model.embedded ? nil : repos.byPath[model.repo.path]?.pr?.url, initial: true) { _, url in
+            if let url, model.pr == nil {
+                model.attachPR(.ref(url))
+            }
+        }
+    }
+
+    /// How much of the summary a width holds, from all of it down to the scope menu alone.
+    enum SummaryLevel: Int, Comparable {
+        case full, noCompare, totals, scope
+
+        static func < (lhs: SummaryLevel, rhs: SummaryLevel) -> Bool { lhs.rawValue < rhs.rawValue }
+    }
+
+    @ViewBuilder
+    private func summary(_ level: SummaryLevel) -> some View {
+        let totals = model.totals
+        let facts = repos.facts(for: model.repo.path, pr: true)
+            // Inside the hub the worktree / session header above already names the repo and branch.
+            if !model.embedded, level <= .noCompare {
+                Image(systemName: "arrow.triangle.branch")
+                    .foregroundColor(ReviewPalette.dim)
+                // Short labels keep their width; only the long branch name gives way (it truncates in
+                // the middle), so a crowded header never cuts "PR #424" or the repo to "…".
+                ExternalLink(text: model.repo.lastPathComponent, url: facts?.webURL, font: .system(size: 13, weight: .semibold),
+                             color: Color.white.opacity(0.92), glyph: .onHover)
+                    .fixedSize()
+                ExternalLink(text: model.branch, url: facts?.branchURL, glyph: .onHover)
+                    .frame(minWidth: 60)
+                if level == .full {
+                    CompareLink(facts: facts)
+                        .fixedSize()
+                }
+                PullRequestLink(facts: facts)
+                    .fixedSize()
+            }
+            ScopeMenu(model: model)
+            if level == .full {
+                ScopeLink(model: model, facts: facts)
+            }
+            if case .lastTurns(let count) = model.scope {
+                TurnCountStepper(count: count) { model.setScope(.lastTurns($0)) }
+            }
+            // Left of the totals, in a slot that is there while idle too: a spinner that came and went
+            // among the controls changed the row's width and moved the totals with every load.
+            ZStack {
+                if model.loading {
+                    ProgressView().controlSize(.small)
+                        .instantTooltip(model.showingCache ? "Showing the last known diff; reading the current one" : "Reading the diff")
+                }
+            }
+            .frame(width: 16, height: 16)
+            if level <= .totals {
+                Text(verbatim: "+\(totals.additions)")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(ReviewPalette.added)
+                    .fixedSize()
+                Text(verbatim: "−\(totals.deletions)")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundColor(ReviewPalette.removed)
+                    .fixedSize()
+            }
+            if level <= .noCompare {
+                Text(verbatim: Plural.count(model.files.count, "file"))
+                    .font(.system(size: 12))
+                    .foregroundColor(ReviewPalette.dim)
+                    .fixedSize()
+            }
+    }
+
+    @ViewBuilder
+    private var controls: some View {
+            if model.commentCount > 0 {
+                Label {
+                    Text(verbatim: "\(model.commentCount)")
+                } icon: {
+                    Image(systemName: "text.bubble")
+                }
+                .font(.system(size: 12))
+                .foregroundColor(ReviewPalette.dim)
+                .instantTooltip("\(Plural.count(model.commentCount, "comment")), \(model.unsentCount) not sent yet")
+            }
+            Button { pickingAgent = true } label: {
+                // The noun keeps the count from reading as a cut label ("Send 1…", H19).
+                Label(model.unsentCount > 0 ? "Send \(Plural.count(model.unsentCount, "comment"))…" : "Send", systemImage: "paperplane")
+                    .font(.system(size: 12, weight: .semibold))
+                    .fixedSize()
+            }
+            .disabled(model.unsentCount == 0)
+            .instantTooltip(model.unsentCount > 0 ? "Pick the agent session that gets the \(Plural.count(model.unsentCount, "queued comment"))" : "No comments waiting for an agent")
+            .popover(isPresented: $pickingAgent, arrowEdge: .bottom) {
+                AgentSendForm(model: model) { pickingAgent = false }
+            }
+            Button {
+                model.setStyle(model.options.diffStyle == .split ? .unified : .split)
+            } label: {
+                Text(verbatim: model.options.diffStyle == .split ? "Split" : "Unified")
+                    .font(.system(size: 12, weight: .semibold))
+                    .fixedSize()
+            }
+            .instantTooltip(model.options.diffStyle == .split ? "Side by side (click for one column)" : "One column (click for side by side)")
+            HStack(spacing: 0) {
+                IconButton(systemName: "textformat.size.smaller", tooltip: "Smaller diff text") { model.stepFont(-1) }
+                Text(verbatim: "\(Int(model.options.fontSize))")
+                    .font(.system(size: 10.5, design: .monospaced))
+                    .foregroundColor(ReviewPalette.dim)
+                    .frame(width: 18)
+                IconButton(systemName: "textformat.size.larger", tooltip: "Larger diff text") { model.stepFont(1) }
+            }
+            IconButton(
+                systemName: model.options.wrap ? "text.alignleft" : "arrow.left.and.right.text.vertical",
+                tooltip: model.options.wrap ? "Long lines wrap (click to scroll instead)" : "Long lines scroll (click to wrap)"
+            ) { model.toggleWrap() }
+            findButton
+            IconButton(systemName: "arrow.clockwise", tooltip: "Reload the diff") { model.reload() }
+    }
+
+    private var findButton: some View {
+        IconButton(systemName: "magnifyingglass", tooltip: HubKeymap.hint("Find in every file of the diff", HubKeymap.findOpen)) { model.find() }
+    }
+
+    private var sendButton: some View {
+        IconButton(systemName: "paperplane",
+                   tooltip: model.unsentCount > 0 ? "Send \(Plural.count(model.unsentCount, "queued comment")) to an agent…" : "No comments waiting for an agent") {
+            pickingAgent = true
+        }
+        .disabled(model.unsentCount == 0)
+        .popover(isPresented: $pickingAgent, arrowEdge: .bottom) {
+            AgentSendForm(model: model) { pickingAgent = false }
+        }
+    }
+
+    /// Icons instead of labels, and the text size behind a menu.
+    @ViewBuilder
+    private var compactControls: some View {
+        sendButton
+        IconButton(systemName: model.options.diffStyle == .split ? "rectangle.split.2x1" : "rectangle",
+                   tooltip: model.options.diffStyle == .split ? "Side by side (click for one column)" : "One column (click for side by side)") {
+            model.setStyle(model.options.diffStyle == .split ? .unified : .split)
+        }
+        IconButton(
+            systemName: model.options.wrap ? "text.alignleft" : "arrow.left.and.right.text.vertical",
+            tooltip: model.options.wrap ? "Long lines wrap (click to scroll instead)" : "Long lines scroll (click to wrap)"
+        ) { model.toggleWrap() }
+        findButton
+        viewMenu
+        IconButton(systemName: "arrow.clockwise", tooltip: "Reload the diff") { model.reload() }
+    }
+
+    /// The narrowest pane: send, and everything else in one menu.
+    @ViewBuilder
+    private var minimalControls: some View {
+        sendButton
+        viewMenu
+    }
+
+    /// A drawn `MenuButton`: the compact and minimal controls are options of a ViewThatFits, which built a
+    /// new NSPopUpButton for a `Menu` on every measurement (each step of a divider drag).
+    private var viewMenu: some View {
+        let model = model
+        return MenuButton(style: .genHoverIcon()) {
+            [
+                .action("Side by side", checked: model.options.diffStyle == .split) { model.setStyle(.split) },
+                .action("One column", checked: model.options.diffStyle == .unified) { model.setStyle(.unified) },
+                .action("Wrap long lines", checked: model.options.wrap) { model.toggleWrap() },
+                .divider,
+                .action("Larger text") { model.stepFont(1) },
+                .action("Smaller text") { model.stepFont(-1) },
+                .divider,
+                .action("Find in the Diff…") { model.find() },
+                .action("Reload") { model.reload() },
+            ]
+        } label: {
+            Image(systemName: "ellipsis.circle")
+                .font(.system(size: 12))
+                .frame(width: 16, height: 16)
+        }
+        .fixedSize()
+        .instantTooltip("Layout, wrap, text size, find, reload")
+        .accessibilityLabel(Text("Layout, wrap, text size, find, reload"))
+    }
+}
+
+/// "−  3  +" beside the scope menu while it shows the last N turns: widens or narrows N.
+private struct TurnCountStepper: View {
+    let count: Int
+    let change: (Int) -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            IconButton(systemName: "minus", tooltip: "One turn fewer", size: 10) { change(max(1, count - 1)) }
+                .disabled(count <= 1)
+            Text(verbatim: "\(count)")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .frame(minWidth: 18)
+            IconButton(systemName: "plus", tooltip: "One turn more", size: 10) { change(min(99, count + 1)) }
+        }
+        .fixedSize()
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: count == 1 ? "Last turn" : "Last \(count) turns"))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: change(min(99, count + 1))
+            case .decrement: change(max(1, count - 1))
+            @unknown default: break
+            }
+        }
+    }
+}
+
+/// The scope's own page on the host, beside the scope menu: the commit, or the compare view of the
+/// range or of the branch against its base. Nothing when the origin is not GitHub or GitLab, and
+/// nothing for working-tree scopes, which have no page.
+private struct ScopeLink: View {
+    @ObservedObject var model: ReviewModel
+    let facts: RepoFacts?
+
+    var body: some View {
+        if let forge = facts?.forge, let item = link(forge) {
+            ExternalLink(text: item.text, url: item.url, font: .system(size: 11.5, design: .monospaced), glyph: .onHover, tooltip: item.tooltip)
+                .fixedSize()
+        }
+    }
+
+    private func link(_ forge: ForgeWeb) -> (text: String, url: URL, tooltip: String)? {
+        switch model.scope {
+        case .commit(let sha, let title):
+            return forge.commit(sha).map { (String(sha.prefix(8)), $0, "Commit \(sha.prefix(8)): \(title)") }
+        case .range(let base, let head, _, _):
+            return forge.compare(base: base, head: head).map { ("compare", $0, "Compare \(base.prefix(8))...\(head.prefix(8))") }
+        case .compare(let from, let to, _, _):
+            return forge.compare(base: from.head, head: to.head).map {
+                ("compare", $0, "The host's compare of \(from.head.prefix(8))...\(to.head.prefix(8)); after a rebase it also shows upstream commits, which this diff leaves out")
+            }
+        case .branch:
+            // A branch with a PR/MR already has CompareLink in the standalone header.
+            if !model.embedded, facts?.pr != nil { return nil }
+            guard let base = model.base, base != "HEAD", !model.branch.isEmpty else { return nil }
+            let target = base.hasPrefix("origin/") ? String(base.dropFirst(7)) : base
+            return forge.compare(base: target, head: model.branch).map { ("compare", $0, "Compare \(target)...\(model.branch)") }
+        default:
+            return nil
+        }
+    }
+}
+
+/// Codex's review source menu: what the diff compares. Its label is the chip the markdown viewer's scope picker shows
+/// (GenesisKit `GitPickerChip`); "Pick a Commit…" opens the commit chooser (`gitCommitPopover`), with each commit's
+/// author, date and line counts, a filter and the keyboard.
+package struct ScopeMenu: View {
+    @ObservedObject package var model: ReviewModel
+    @State private var pickingCommit = false
+
+    package var body: some View {
+        // Its own width when that fits, so the totals sit beside it; it shrinks in a narrow pane instead
+        // of pushing the header past both edges: a PR range label
+        // ("feature/next…chore/abc-123456-repo-cleanup") is wider than the whole diff pane at 1000 pt.
+        // A drawn `MenuButton` shrinks like the text in it. The `Menu` it replaces needed a ViewThatFits of
+        // its own for that, and both ViewThatFits built new pop-up buttons on every measurement of the header.
+        MenuButton(items: { ScopeMenu.items(model: model) { pickingCommit = true } }) {
+            GitPickerChip(systemImage: model.scope.symbol, title: chip.title, detail: chip.detail, monospacedTitle: chip.monospaced)
+        }
+        .frame(minWidth: 80, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .instantTooltip("What this diff compares: \(label)")
+        // The list exists only while it is open: a closed chooser builds nothing (GenesisKit GitCommitPicker.swift).
+        .gitCommitPopover(isPresented: $pickingCommit, choices: model.commits.map { GitCommitChoice($0) }, selection: shownCommit,
+                          title: "Commits ahead of \(model.base ?? "the base")", details: GitCommitDetailsLoader(folder: model.repo)) { choice in
+            model.setScope(.commit(sha: choice.sha, title: choice.subject))
+        }
+    }
+
+    /// The commit the diff shows now, for the chooser's check.
+    private var shownCommit: String? {
+        if case .commit(let sha, _) = model.scope { return sha }
+        return nil
+    }
+
+    /// The scope choices at the moment of the click; `pickCommit` opens the commit chooser.
+    @MainActor
+    package static func items(model: ReviewModel, pickCommit: @escaping () -> Void = {}) -> [MenuButtonItem] {
+        // Always offered with a session: a turn without changes is an empty panel that the next turn
+        // fills, not a greyed-out item.
+        let turns = model.session != nil && model.remoteHead == nil
+        let onCommit: Bool = {
+            if case .commit = model.scope { return true }
+            return false
+        }()
+        let committed: MenuButtonItem = .action(model.commits.isEmpty ? "No Commits Ahead of the Base" : "Pick a Commit…",
+                                                checked: onCommit, enabled: !model.commits.isEmpty, run: pickCommit)
+        let prItem: [MenuButtonItem] = model.prScope.map { scope in
+            [.action("PR \(model.prLabel)", checked: model.scope == scope) { model.setScope(scope) }]
+        } ?? []
+        let versions: [MenuButtonItem] = model.pr == nil ? [] : [
+            .divider,
+            .action("Compare pushes…") { model.showsComparePicker = true },
+        ]
+        return [
+            scopeItem(.lastTurns(1), model: model, enabled: turns),
+            .action("Last Turns…", enabled: turns) { model.setScope(.lastTurns(3)) },
+            .divider,
+            scopeItem(.uncommitted, model: model),
+            scopeItem(.unstaged, model: model),
+            scopeItem(.staged, model: model),
+            .divider,
+            committed,
+            scopeItem(.branch, model: model),
+        ] + prItem + versions + [.divider, worktreeMenu(model: model), baseMenu(model: model)]
+    }
+
+    /// Which checkout the diff reads: an agent's worktree, or the main checkout.
+    @MainActor
+    private static func worktreeMenu(model: ReviewModel) -> MenuButtonItem {
+        let current = model.worktrees.first { $0.path == model.repo.path }
+        // The checkouts this session changed files in come first, with their file counts; with more than one, the
+        // one it worked in most carries a star.
+        let activity = model.worktreeActivity
+        let several = activity.values.filter { $0 > 0 }.count > 1
+        let items: [MenuButtonItem] = model.worktrees.count < 2
+            ? [.note("This repository has one checkout")]
+            : WorktreeActivity.ordered(model.worktrees, counts: activity).map { tree in
+                let title = WorktreeActivity.title(of: tree, files: activity[tree.path] ?? 0,
+                                                   recommended: several && tree.path == model.recommendedWorktree)
+                return .action(title, checked: tree.path == model.repo.path, enabled: model.remoteHead == nil || tree.path == model.repo.path) {
+                    model.switchWorktree(to: tree.path)
+                }
+            }
+        return .submenu("Worktree: \(current?.branch ?? model.repo.lastPathComponent)", items)
+    }
+
+    /// What Branch and Committed compare against.
+    @MainActor
+    private static func baseMenu(model: ReviewModel) -> MenuButtonItem {
+        let automatic: MenuButtonItem = .action("Automatic\(model.chosenBase == nil ? model.base.map { " (\($0))" } ?? "" : "")", checked: model.chosenBase == nil) {
+            model.setBase(nil)
+        }
+        let refs: [MenuButtonItem] = model.baseCandidates.map { ref in
+            .action(ref, checked: model.chosenBase == ref) { model.setBase(ref) }
+        }
+        return .submenu("Base: \(model.chosenBase ?? model.base ?? "automatic")", [automatic, .divider] + (refs.isEmpty ? [.note("No branches found")] : refs))
+    }
+
+    private var label: String {
+        switch model.scope {
+        case .branch: return "Branch vs \(model.base ?? "base")"
+        case .commit(let sha, let title): return "\(sha.prefix(7)) \(title.prefix(40))"
+        default: return model.scope.title
+        }
+    }
+
+    /// The chip's parts: the scope, then what it is against or which commit it is.
+    private var chip: (title: String, detail: String?, monospaced: Bool) {
+        switch model.scope {
+        case .branch: return ("Branch", "vs \(model.base ?? "base")", false)
+        case .commit(let sha, let title): return (String(sha.prefix(7)), title, true)
+        default: return (model.scope.title, nil, false)
+        }
+    }
+
+    @MainActor
+    private static func scopeItem(_ scope: DiffScope, model: ReviewModel, enabled: Bool = true) -> MenuButtonItem {
+        // No checkout holds the head: the working tree on disk belongs to another branch.
+        let readable = !(model.remoteHead != nil && scope.readsTheCheckout)
+        return .action(scope.title, checked: model.scope == scope, enabled: enabled && readable) { model.setScope(scope) }
+    }
+}
+
+/// The agent's overall verdict above the diff, with a tally of what Martin decided so far.
+/// Chip, then three lines: who reviewed what (one line), the counts (one line, or two short ones in a
+/// narrow pane), the summary. The counts used to share the title's row and broke "!1234" in two.
+private struct ProposalBanner: View {
+    @ObservedObject var model: ReviewModel
+    let proposal: ProposalDocument
+
+    private struct Count {
+        let text: String
+        var color = ReviewPalette.dim
+        /// Left out of the short form when it is zero.
+        var optional = false
+        var value = 1
+    }
+
+    var body: some View {
+        let color: Color = proposal.decision == "approve" ? ReviewPalette.added : proposal.decision == "request_changes" ? ReviewPalette.removed : ReviewPalette.modified
+        let (drafts, extra) = counts
+        let short = drafts.filter { !$0.optional || $0.value > 0 }
+        HStack(alignment: .top, spacing: 12) {
+            Text(proposal.decision.replacingOccurrences(of: "_", with: " ").uppercased())
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundColor(.black.opacity(0.85))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(color))
+                .fixedSize()
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(verbatim: "\(proposal.agent) reviewed \(proposal.label)")
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    if let confidence = proposal.confidence {
+                        Text(verbatim: "[\(confidence)%]")
+                            .font(.system(size: 11.5, design: .monospaced))
+                            .foregroundColor(ReviewPalette.dim)
+                            .fixedSize()
+                    }
+                    if model.hasOpenDraftOnDiff {
+                        Button {
+                            model.revealNextOpenDraft()
+                        } label: {
+                            Label("Next draft", systemImage: "arrow.down.to.line")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundColor(color)
+                        .fixedSize()
+                        .instantTooltip("Open the next undecided agent draft in the diff")
+                    }
+                }
+                ViewThatFits(in: .horizontal) {
+                    line(drafts + extra)
+                    line(short + extra)
+                    VStack(alignment: .leading, spacing: 2) {
+                        line(short)
+                        if !extra.isEmpty {
+                            line(extra)
+                        }
+                    }
+                }
+                .font(.system(size: 11.5))
+                .instantTooltip(proposal.threads.isEmpty
+                    ? "The agent's drafts and what you did with them"
+                    : "The agent's drafts, and the threads already on the PR (the agent's read sits under each one it checked)")
+                Text(proposal.summary)
+                    .font(.system(size: 12.5))
+                    .foregroundColor(Color.white.opacity(0.85))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(color.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(color.opacity(0.35)))
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+    }
+
+    /// The draft tally, and what else there is to know (drafts off this diff, the PR's threads).
+    private var counts: ([Count], [Count]) {
+        let drafts = proposal.drafts
+        let tally = Dictionary(grouping: drafts, by: \.status).mapValues(\.count)
+        let decided = { (status: String) -> Count in
+            let value = tally[status] ?? 0
+            return Count(text: "\(value) \(status)", optional: true, value: value)
+        }
+        let draftCounts = [
+            Count(text: "\(drafts.count) drafts"),
+            Count(text: "\(tally["proposed"] ?? 0) open"),
+            decided("accepted"),
+            decided("edited"),
+            decided("rejected"),
+        ]
+        var extra: [Count] = []
+        let unplaced = proposal.unplaced(in: model.files)
+        if unplaced > 0 {
+            extra.append(Count(text: "\(unplaced) not in this diff", color: ReviewPalette.modified))
+        }
+        let threads = proposal.threads
+        if !threads.isEmpty {
+            let open = threads.filter { !$0.resolved }.count
+            extra.append(Count(text: "\(threads.count) PR threads, \(open) open", color: open > 0 ? ReviewPalette.modified : ReviewPalette.dim))
+        }
+        return (draftCounts, extra)
+    }
+
+    /// One line of counts with dim " · " between them; never wraps (ViewThatFits picks a shorter form).
+    private func line(_ parts: [Count]) -> some View {
+        parts.enumerated().reduce(Text(verbatim: "")) { text, item in
+            let separator = Text(verbatim: item.offset == 0 ? "" : " · ").foregroundColor(ReviewPalette.dim)
+            return text + separator + Text(verbatim: item.element.text).foregroundColor(item.element.color)
+        }
+        .lineLimit(1)
+        .fixedSize()
+    }
+}
+
+package struct SidebarRow: Identifiable {
+    package enum Kind {
+        /// A root's folder in a review of several repositories: its checkbox, remove and error live here.
+        case root(index: Int, additions: Int, deletions: Int)
+        case directory(name: String, additions: Int, deletions: Int)
+        case file(DiffFile)
+    }
+
+    package let id: String
+    package let depth: Int
+    package let kind: Kind
+}
+
+private final class TreeNode {
+    let name: String
+    let path: String
+    var children: [String: TreeNode] = [:]
+    var files: [DiffFile] = []
+    /// Every file under this folder, nested ones included: summed once while the tree is built.
+    var additions = 0
+    var deletions = 0
+
+    init(name: String, path: String) {
+        self.name = name
+        self.path = path
+    }
+}
+
+/// Flat: one header per directory, like GitHub's file list. Tree: nested folders, where a chain of
+/// single-child folders collapses into one row (`src/browser-router/lib`), like Codex's review pane.
+/// With several roots, each root is one top-level row in root order (never folded into its first
+/// folder), with its files under it; a root with no files keeps its row.
+package func sidebarRows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>, roots: [ReviewRoot] = []) -> [SidebarRow] {
+    guard roots.count > 1 else {
+        return sidebarRows(files, tree: tree, collapsed: collapsed, depth: 0, strip: "")
+    }
+
+    return roots.enumerated().flatMap { index, root -> [SidebarRow] in
+        let own = files.filter { ReviewRoots.index(of: $0.id, in: roots) == index }
+        let totals = own.reduce((0, 0)) { ($0.0 + $1.additions, $0.1 + $1.deletions) }
+        let row = SidebarRow(id: root.rowID, depth: 0, kind: .root(index: index, additions: totals.0, deletions: totals.1))
+        guard !collapsed.contains(root.rowID) else { return [row] }
+        return [row] + sidebarRows(own, tree: tree, collapsed: collapsed, depth: 1, strip: root.prefix + "/")
+    }
+}
+
+/// One root's rows. `strip` is the root's prefix: folder names read without it, ids keep it.
+private func sidebarRows(_ files: [DiffFile], tree: Bool, collapsed: Set<String>, depth: Int, strip: String) -> [SidebarRow] {
+    guard tree else {
+        let grouped = Dictionary(grouping: files, by: \.directory)
+        return grouped.keys.sorted().flatMap { directory -> [SidebarRow] in
+            let group = grouped[directory] ?? []
+            let name = directory.hasPrefix(strip) ? String(directory.dropFirst(strip.count)) : ""
+            let additions = group.reduce(0) { $0 + $1.additions }
+            let deletions = group.reduce(0) { $0 + $1.deletions }
+            let header = name.isEmpty
+                ? []
+                : [SidebarRow(id: "dir:\(directory)", depth: depth, kind: .directory(name: name, additions: additions, deletions: deletions))]
+            return header + group.map { SidebarRow(id: $0.id, depth: depth, kind: .file($0)) }
+        }
+    }
+
+    let top = TreeNode(name: "", path: "")
+    for file in files {
+        var node = top
+        for part in file.directory.split(separator: "/").map(String.init) where !file.directory.isEmpty {
+            let path = node.path.isEmpty ? part : "\(node.path)/\(part)"
+            if node.children[part] == nil {
+                node.children[part] = TreeNode(name: part, path: path)
+            }
+            node = node.children[part]!
+            node.additions += file.additions
+            node.deletions += file.deletions
+        }
+        node.files.append(file)
+    }
+
+    var rows: [SidebarRow] = []
+    func walk(_ node: TreeNode, depth: Int) {
+        for child in node.children.values.sorted(by: { $0.name < $1.name }) {
+            var folder = child
+            var label = child.name
+            while folder.files.isEmpty, folder.children.count == 1, let only = folder.children.values.first {
+                folder = only
+                label += "/\(only.name)"
+            }
+            let id = "dir:\(folder.path)"
+            rows.append(SidebarRow(id: id, depth: depth, kind: .directory(name: label, additions: folder.additions, deletions: folder.deletions)))
+            if !collapsed.contains(id) {
+                walk(folder, depth: depth + 1)
+            }
+        }
+        for file in node.files.sorted(by: { $0.name < $1.name }) {
+            rows.append(SidebarRow(id: file.id, depth: depth, kind: .file(file)))
+        }
+    }
+    // Several roots: the walk starts inside the root's own folder, which the caller drew already.
+    let start = strip.isEmpty ? top : top.children[String(strip.dropLast())]
+    if let start {
+        walk(start, depth: depth)
+    }
+    return rows
+}
+
+/// Not private: reused standalone as the hub's "Files" pane (`HubTab.files` in HubWindow.swift).
+package struct FileSidebar: View {
+    @ObservedObject package var model: ReviewModel
+    @FocusState private var filterFocused: Bool
+    @GenReduceMotion private var reduceMotion
+
+    /// Folds or opens a folder in one `GenMotion` animation (the list is lazy: only the rows on screen move).
+    private func toggleFolder(_ id: String) {
+        let opening = model.collapsed.contains(id)
+        GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) {
+            if opening {
+                model.collapsed.remove(id)
+            } else {
+                model.collapsed.insert(id)
+            }
+        }
+    }
+
+    package var body: some View {
+        let rows = sidebarRows(model.filteredFiles, tree: model.treeMode && model.filter.isEmpty, collapsed: model.collapsed, roots: model.roots)
+        let drafts = model.openDraftsByPath
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(ReviewPalette.dim)
+                    TextField("Filter files…", text: $model.filter)
+                        .textFieldStyle(.plain)
+                        .focused($filterFocused)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(RoundedRectangle(cornerRadius: 8).stroke(ReviewPalette.hairline))
+                Button {
+                    HubMainBusy.measure("review.files.tree")
+                    model.treeMode.toggle()
+                } label: {
+                    Image(systemName: model.treeMode ? "list.bullet.indent" : "list.bullet")
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip(model.treeMode ? "Tree view (click for flat list)" : "Flat list (click for tree view)")
+            }
+            .padding(.horizontal, 10)
+            // Standalone, the list starts under the transparent title bar; in the hub its pane has a
+            // title above it already, and 52 pt left an empty band beside the diff's header.
+            .padding(.top, model.embedded ? 8 : 52)
+            .padding(.bottom, 8)
+
+            if rows.isEmpty, !model.loading {
+                Text(model.filter.isEmpty ? "No changed files" : "No file matches “\(model.filter)”")
+                    .font(.system(size: 12))
+                    .foregroundColor(ReviewPalette.dim)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 24)
+            }
+
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(rows) { row in
+                            switch row.kind {
+                            case .root(let index, let additions, let deletions):
+                                let root = model.roots[index]
+                                RootFolderRow(root: root, additions: additions, deletions: deletions,
+                                              collapsed: model.collapsed.contains(row.id), actions: model.rootActions) {
+                                    toggleFolder(row.id)
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.top, index == 0 ? 0 : 6)
+                            case .directory(let name, let additions, let deletions):
+                                let tree = model.treeMode && model.filter.isEmpty
+                                DirectoryRow(
+                                    name: name,
+                                    depth: row.depth,
+                                    additions: additions,
+                                    deletions: deletions,
+                                    tree: tree,
+                                    collapsed: model.collapsed.contains(row.id)
+                                )
+                                .rowButton(cornerRadius: 6) {
+                                    toggleFolder(row.id)
+                                }
+                                // The gap above a flat-list group sits outside the button, so the
+                                // hover box covers the folder name and nothing above it.
+                                .padding(.horizontal, 6)
+                                .padding(.top, tree ? 0 : 8)
+                            case .file(let file):
+                                FileRow(file: file, selected: file.id == model.selectedID, depth: row.depth,
+                                        drafts: model.repoPath(of: file.id).flatMap { drafts[$0] } ?? 0)
+                                    .id(file.id)
+                                    .rowButton(cornerRadius: 6) { model.select(file.id) }
+                                    .contextMenu { fileMenu(file) }
+                                    .padding(.horizontal, 6)
+                            }
+                        }
+                    }
+                    .padding(.bottom, 12)
+                }
+                .onChange(of: model.sidebarScrollTarget) { id in
+                    guard let id else { return }
+                    // Unfold the folders above the target so the row exists, then scroll only as far as needed.
+                    for folder in model.collapsed where id.hasPrefix(String(folder.dropFirst(4)) + "/") {
+                        model.collapsed.remove(folder)
+                    }
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(id)
+                    }
+                }
+            }
+        }
+        .hubSurface(.chrome)
+        // ⌘F with the keyboard in the file list focuses its filter (Hub/HubPanelFind.swift).
+        .panelFindNative("files") { filterFocused = true }
+    }
+
+    /// Open, copy or reveal the file in its own repository (with several roots, not `model.repo`).
+    /// The same list as the diff header's right-click menu (`ReviewModel.pathActions`).
+    @ViewBuilder
+    private func fileMenu(_ file: DiffFile) -> some View {
+        ForEach(model.pathActions(of: file)) { action in
+            Button(action.title, action: action.run)
+        }
+    }
+}
+
+/// The file list's width that shows every visible row whole: the widest of its rows as they draw
+/// (`FileRow`, `DirectoryRow`, `RootFolderRow`: indent, chevron or status dot, name, the +N −M
+/// counts, their paddings and HStack spacings), plus a legacy scroller when the system shows one.
+package enum FileListFit {
+    private static let fileName = NSFont.systemFont(ofSize: 12.5)
+    private static let folderName = NSFont.systemFont(ofSize: 11.5, weight: .medium)
+    private static let rootName = NSFont.systemFont(ofSize: 12, weight: .semibold)
+    private static let counts = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+    /// The row's hover box sits 6 pt inside the list on each side.
+    private static let rowInset: CGFloat = 12
+    /// Rounding and the text's own side bearings.
+    private static let slack: CGFloat = 6
+
+    @MainActor
+    package static func width(model: ReviewModel) -> CGFloat {
+        let tree = model.treeMode && model.filter.isEmpty
+        let rows = sidebarRows(model.filteredFiles, tree: tree, collapsed: model.collapsed, roots: model.roots)
+        let widest = rows.map { rowWidth($0, tree: tree, roots: model.roots, hasRootActions: model.rootActions != nil) }.max() ?? 0
+        let scroller = NSScroller.preferredScrollerStyle == .legacy ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+        return (widest + rowInset + slack + scroller).rounded(.up)
+    }
+
+    private static func text(_ string: String, _ font: NSFont) -> CGFloat {
+        ceil((string as NSString).size(withAttributes: [.font: font]).width)
+    }
+
+    /// "+N" and "−M" with `spacing` before each one that shows.
+    private static func totals(_ additions: Int, _ deletions: Int, spacing: CGFloat) -> CGFloat {
+        (additions > 0 ? spacing + text("+\(additions)", counts) : 0) + (deletions > 0 ? spacing + text("−\(deletions)", counts) : 0)
+    }
+
+    private static func rowWidth(_ row: SidebarRow, tree: Bool, roots: [ReviewRoot], hasRootActions: Bool) -> CGFloat {
+        let indent = 6 + CGFloat(row.depth) * 14
+        switch row.kind {
+        case .file(let file):
+            // dot 6, name, a 4 pt spacer, the counts; 8 pt apart; 6 pt trailing.
+            let skipped: CGFloat = file.skipped == nil ? 0 : 8 + 16
+            return indent + 6 + 8 + text(file.name, fileName) + 8 + 4 + skipped + totals(file.additions, file.deletions, spacing: 8) + 6
+        case .directory(let name, let additions, let deletions):
+            // Every folder row shows the sum of the files under it.
+            let chevron: CGFloat = tree ? 10 + 6 : 0
+            return indent + chevron + text(name, folderName) + 6 + 4 + totals(additions, deletions, spacing: 6) + 6
+        case .root(let index, let additions, let deletions):
+            let root = roots.indices.contains(index) ? roots[index] : nil
+            // chevron 10, folder icon 12, the name; the checkbox and the remove button beside the row.
+            let actions: CGFloat = hasRootActions ? 6 + 18 + ((root?.removable ?? false) ? 6 + 22 : 0) : 0
+            return 6 + 10 + 6 + 12 + 6 + text("\(root?.prefix ?? "")/", rootName) + 6 + 4 + totals(additions, deletions, spacing: 6) + 6 + actions
+        }
+    }
+}
+
+/// One entry of a file's path menu (`ReviewModel.pathActions`).
+package struct ReviewPathAction: Identifiable {
+    package let title: String
+    package let run: () -> Void
+
+    package var id: String { title }
+
+    package init(_ title: String, _ run: @escaping () -> Void) {
+        self.title = title
+        self.run = run
+    }
+}
+
+/// A root's folder in a review of several repositories: the name, its totals, "In Changes" and remove.
+/// The menu holds the same, plus the usual path actions; a failed load shows here, not over the pane.
+private struct RootFolderRow: View {
+    let root: ReviewRoot
+    let additions: Int
+    let deletions: Int
+    let collapsed: Bool
+    let actions: ReviewRootActions?
+    let toggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(collapsed || !root.shown ? 0 : 90))
+                    .foregroundColor(ReviewPalette.dim)
+                    .frame(width: 10)
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 10.5))
+                    .foregroundColor(root.shown ? ReviewPalette.renamed : ReviewPalette.dim)
+                // The folder's name stays whole ("G…ls/" named nothing); the totals give way first.
+                Text(verbatim: "\(root.prefix)/")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(root.shown ? .primary : ReviewPalette.dim)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .layoutPriority(2)
+                if let error = root.error {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(ReviewPalette.removed)
+                    Text(error)
+                        .font(.system(size: 10.5))
+                        .foregroundColor(ReviewPalette.removed)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                } else if !root.shown {
+                    Text("not in Changes").font(.system(size: 10.5)).foregroundColor(ReviewPalette.dim).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                // Whole numbers or none: a cut total ("+123…") read as a different number.
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        if additions > 0 {
+                            Text(verbatim: "+\(additions)").foregroundColor(ReviewPalette.added)
+                        }
+                        if deletions > 0 {
+                            Text(verbatim: "−\(deletions)").foregroundColor(ReviewPalette.removed)
+                        }
+                    }
+                    .fixedSize()
+                    if additions > 0 {
+                        Text(verbatim: "+\(additions)").foregroundColor(ReviewPalette.added).fixedSize()
+                    }
+                    Color.clear.frame(width: 0, height: 0)
+                }
+                .layoutPriority(1)
+            }
+            .font(.system(size: 11, design: .monospaced))
+            .padding(.leading, 6)
+            .padding(.trailing, 6)
+            .frame(height: 26)
+            .contentShape(Rectangle())
+            .rowButton(cornerRadius: 6, toggle)
+            .instantTooltip(root.error.map { "\(root.folder)\n\($0)" } ?? root.folder)
+            if let actions {
+                Toggle("", isOn: Binding(get: { root.shown }, set: { actions.setShown(root.folder, $0) }))
+                    .toggleStyle(.checkbox)
+                    .labelsHidden()
+                    .disabled(root.repo == nil)
+                    .instantTooltip(root.shown ? "In Changes: untick to hide this folder's changes" : "Tick to show this folder's changes")
+                if root.removable {
+                    IconButton(systemName: "xmark", tooltip: "Remove this folder from the session", size: 9) {
+                        actions.remove(root.folder)
+                    }
+                }
+            }
+        }
+        .contextMenu {
+            if let actions {
+                Button(root.shown ? "Hide from Changes" : "Show in Changes") { actions.setShown(root.folder, !root.shown) }
+                    .disabled(root.repo == nil)
+                if root.removable {
+                    Button("Remove folder from session") { actions.remove(root.folder) }
+                }
+                Divider()
+            }
+            Button("Open in Cursor") { PathOpener.cursor(root.folder) }
+            Button("Open in Finder") { PathOpener.finder(root.folder) }
+            Button("Open in cmux") { PathOpener.cmux(root.folder) }
+            Button("Copy path") { PathOpener.copy(root.folder, what: "path") }
+        }
+    }
+}
+
+private struct DirectoryRow: View {
+    let name: String
+    let depth: Int
+    let additions: Int
+    let deletions: Int
+    let tree: Bool
+    let collapsed: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if tree {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
+                    .foregroundColor(ReviewPalette.dim)
+                    .frame(width: 10)
+            }
+            Text(name)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundColor(ReviewPalette.dim)
+                .lineLimit(1)
+                .truncationMode(.head)
+                .instantTooltip(name)
+            Spacer(minLength: 4)
+            // The sum of every file under it, open or folded, in the file rows' colours.
+            if additions > 0 {
+                Text(verbatim: "+\(additions)").foregroundColor(ReviewPalette.added)
+            }
+            if deletions > 0 {
+                Text(verbatim: "−\(deletions)").foregroundColor(ReviewPalette.removed)
+            }
+        }
+        .font(.system(size: 11, design: .monospaced))
+        .padding(.leading, 6 + CGFloat(depth) * 14)
+        .padding(.trailing, 6)
+        .frame(height: 24)
+        .contentShape(Rectangle())
+    }
+}
+
+private struct FileRow: View {
+    let file: DiffFile
+    let selected: Bool
+    var depth = 0
+    /// Undecided agent drafts on this file.
+    var drafts = 0
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(ReviewPalette.color(file.status))
+                .frame(width: 6, height: 6)
+            Text(file.name)
+                .font(.system(size: 12.5))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 4)
+            if drafts > 0 {
+                Label(String(drafts), systemImage: "text.bubble.fill")
+                    .labelStyle(.titleAndIcon)
+                    .foregroundColor(ReviewPalette.modified)
+                    .instantTooltip(drafts == 1 ? "1 agent draft to decide" : "\(drafts) agent drafts to decide")
+            }
+            if file.skipped != nil {
+                Image(systemName: "doc.badge.ellipsis")
+                    .foregroundColor(ReviewPalette.dim)
+            }
+            if file.additions > 0 {
+                Text(verbatim: "+\(file.additions)")
+                    .foregroundColor(ReviewPalette.added)
+            }
+            if file.deletions > 0 {
+                Text(verbatim: "−\(file.deletions)")
+                    .foregroundColor(ReviewPalette.removed)
+            }
+        }
+        .font(.system(size: 11, design: .monospaced))
+        .padding(.leading, 6 + CGFloat(depth) * 14)
+        .padding(.trailing, 6)
+        .frame(height: 26)
+        // Same shape as the row hover (RowButtonStyle, radius 6, same inset): one box, not two.
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(selected ? ReviewPalette.renamed.opacity(0.16) : Color.clear)
+                .overlay(alignment: .leading) {
+                    if selected {
+                        Capsule().fill(ReviewPalette.renamed).frame(width: 3, height: 14).padding(.leading, 1)
+                    }
+                }
+        )
+        .contentShape(Rectangle())
+        .instantTooltip(file.path)
+    }
+}
+
+/// SwiftUI gets a fresh container per `makeNSView`; the renderer's one long-lived view moves into
+/// whichever container is current. Handing SwiftUI the same NSView from two makeNSView calls (the
+/// hub re-creates this view on tab and header changes) crashed layout in StackLayout.sizeThatFits.
+private struct RendererHost: NSViewRepresentable {
+    let renderer: DiffRenderer
+
+    func makeNSView(context: Context) -> NSView {
+        let container = NSView()
+        attach(to: container)
+        return container
+    }
+
+    func updateNSView(_ container: NSView, context: Context) {
+        if renderer.view.superview !== container {
+            attach(to: container)
+        }
+    }
+
+    private func attach(to container: NSView) {
+        let view = renderer.view
+        view.removeFromSuperview()
+        view.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            view.topAnchor.constraint(equalTo: container.topAnchor),
+            view.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+    }
+}
+
+// MARK: - Live reload
+
+/// FSEvents on the checkout and its actual Git directories, including shared refs of linked worktrees.
+/// The stream's latency coalesces writes; object database and build output noise is ignored.
+/// The stream holds this box (retained, released by the stream), never the watcher itself, so an
+/// event queued after the watcher is gone finds a nil reference instead of freed memory.
+private final class RepoWatcherBox {
+    weak var watcher: RepoWatcher?
+
+    init(_ watcher: RepoWatcher) {
+        self.watcher = watcher
+    }
+}
+
+private final class RepoWatcher {
+    private var stream: FSEventStreamRef?
+    private let onChange: () -> Void
+    private let layout: ReviewRepositoryLayout
+
+    init(layout: ReviewRepositoryLayout, onChange: @escaping () -> Void) {
+        self.layout = layout
+        self.onChange = onChange
+        var context = FSEventStreamContext(
+            version: 0,
+            info: Unmanaged.passRetained(RepoWatcherBox(self)).toOpaque(),
+            retain: nil,
+            release: { info in
+                if let info {
+                    Unmanaged<RepoWatcherBox>.fromOpaque(info).release()
+                }
+            },
+            copyDescription: nil
+        )
+        let callback: FSEventStreamCallback = { _, info, count, paths, _, _ in
+            guard let info, let watcher = Unmanaged<RepoWatcherBox>.fromOpaque(info).takeUnretainedValue().watcher else { return }
+            let list = unsafeBitCast(paths, to: NSArray.self) as? [String] ?? []
+            if list.prefix(count).contains(where: watcher.matters) {
+                watcher.onChange()
+            }
+        }
+        stream = FSEventStreamCreate(
+            nil,
+            callback,
+            &context,
+            layout.watchPaths as CFArray,
+            FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+            0.35,
+            FSEventStreamCreateFlags(kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagFileEvents)
+        )
+        if let stream {
+            FSEventStreamSetDispatchQueue(stream, DispatchQueue.main)
+            FSEventStreamStart(stream)
+        }
+    }
+
+    deinit {
+        if let stream {
+            FSEventStreamStop(stream)
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+        }
+    }
+
+    private func matters(_ path: String) -> Bool {
+        layout.matters(path)
+    }
+}
+
+// MARK: - Snapshot
+
+/// Writes the window as a PNG without Screen Recording: the SwiftUI chrome through
+/// `cacheDisplay`, the web content through WKWebView's own snapshot, composited at its frame.
+package enum ReviewSnapshot {
+    package static func write(window: NSWindow, webView: WKWebView?, to path: String, done: @escaping () -> Void) {
+        guard let content = window.contentView else {
+            done()
+            return
+        }
+
+        let bounds = content.bounds
+        guard let rep = content.bitmapImageRepForCachingDisplay(in: bounds) else {
+            done()
+            return
+        }
+
+        content.cacheDisplay(in: bounds, to: rep)
+        let image = NSImage(size: bounds.size)
+        image.addRepresentation(rep)
+
+        guard let webView else {
+            save(withSheet(image, window: window), to: path)
+            done()
+            return
+        }
+
+        webView.takeSnapshot(with: nil) { webImage, _ in
+            if let webImage {
+                var frame = webView.convert(webView.bounds, to: content)
+                if content.isFlipped {
+                    frame.origin.y = bounds.height - frame.maxY
+                }
+                let composed = NSImage(size: bounds.size)
+                composed.lockFocus()
+                image.draw(in: bounds)
+                webImage.draw(in: frame)
+                composed.unlockFocus()
+                save(withSheet(composed, window: window), to: path)
+            } else {
+                save(withSheet(image, window: window), to: path)
+            }
+            done()
+        }
+    }
+
+    /// A sheet (the handoff composer) is its own window, so `cacheDisplay` of the main one left it out.
+    /// It is drawn where it sits over the window; both frames are in screen points, origin bottom left.
+    private static func withSheet(_ image: NSImage, window: NSWindow) -> NSImage {
+        // An off-screen parent (a scripted run) gets SwiftUI's sheet as a window of its own, not attached.
+        let attached = window.attachedSheet ?? window.sheets.first
+        // Measured 2026-09-27: SwiftUI's sheet there is a `SheetPresentationWindow`, with isSheet false and no parent.
+        let sheet = attached ?? NSApp.windows.first {
+            $0 !== window && ($0.sheetParent === window || $0.isSheet || String(describing: type(of: $0)).contains("SheetPresentation"))
+        }
+        FileHandle.standardError.write(Data("hub snapshot: sheet \(attached != nil ? "attached" : sheet != nil ? "unattached" : "none")\n".utf8))
+        guard let sheet, let content = sheet.contentView,
+              let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds)
+        else { return image }
+
+        content.cacheDisplay(in: content.bounds, to: rep)
+        let sheetImage = NSImage(size: content.bounds.size)
+        sheetImage.addRepresentation(rep)
+        // Attached: where it sits. Unattached: where a sheet appears, centred under the title bar.
+        let frame = attached != nil
+            ? NSRect(
+                x: sheet.frame.minX - window.frame.minX,
+                y: sheet.frame.minY - window.frame.minY,
+                width: sheet.frame.width,
+                height: sheet.frame.height
+            )
+            : NSRect(
+                x: (image.size.width - sheet.frame.width) / 2,
+                y: image.size.height - sheet.frame.height - 28,
+                width: sheet.frame.width,
+                height: sheet.frame.height
+            )
+        let composed = NSImage(size: image.size)
+        composed.lockFocus()
+        image.draw(in: NSRect(origin: .zero, size: image.size))
+        sheetImage.draw(in: frame)
+        composed.unlockFocus()
+        return composed
+    }
+
+    private static func save(_ image: NSImage, to path: String) {
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:])
+        else { return }
+        try? png.write(to: URL(fileURLWithPath: path))
+    }
+}
+
+/// The review's folder is gone from disk (deleted checkout or session folder).
+package struct MissingReviewFolder: Error, CustomStringConvertible {
+    package let path: String
+    package var description: String { "This folder no longer exists: \(path)" }
+}

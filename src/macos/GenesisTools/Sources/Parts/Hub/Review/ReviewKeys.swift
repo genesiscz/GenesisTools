@@ -1,0 +1,226 @@
+import Foundation
+
+// Keyboard-first review: the page (web/diff-viewer/main.ts) posts a `key` message for j k r e x f n p s
+// while the diff has the keyboard and no box, composer or find field is focused; ? and Esc stay on the
+// page (the key list). Swift keeps the state (which card j / k is on, the Fix selection) and acts.
+
+/// What a `--snapshot` run does before it captures, so the keys and the Fix selection can be checked
+/// without a screen: `--select-open <n>`, `--step-threads <n>` (j), `--reply` (r), `--keys` (?), `--fix-form`,
+/// `--loading`.
+package struct ReviewSnapshotDemo {
+    package var keys = false
+    package var selectOpen = 0
+    package var steps = 0
+    package var reply = false
+    /// `--toggle`: x on the marked thread (it joins the Fix selection).
+    package var toggle = false
+    package var fixForm = false
+    /// `--agent-send`: the header's "Send N…" form, open, with its message preview.
+    package var agentSend = false
+    /// `--drag-context <dx> [--drag-scroll <y>]`: the Context panel's edge dragged by dx and released, the threads
+    /// list scrolled to y first; logs the list's top row and the diff's scroll before and after the release.
+    package var dragContext: CGFloat?
+    package var dragScroll: CGFloat = 0
+    /// `--blame <path>:<line>`: that line's agent blame tip, as a hover would show it.
+    package var blame: (path: String, line: Int)?
+    /// `--loading`: the header as it looks while the diff loads (the spinner beside the totals).
+    package var loading = false
+
+    private var needsPR: Bool { keys || selectOpen > 0 || steps > 0 || reply || toggle || fixForm || agentSend }
+
+    package static func blameTarget(_ value: String?) -> (path: String, line: Int)? {
+        guard let value, let colon = value.lastIndex(of: ":"), let line = Int(value[value.index(after: colon)...]) else { return nil }
+        return (String(value[..<colon]), line)
+    }
+
+    /// Waits for the PR threads (a half-second check, 20 s at most), acts, then calls `done`.
+    package func apply(to model: ReviewModel, waited: Double = 0, done: @escaping () -> Void) {
+        // A push notice the snapshot should show arrives with the versions answer, after the threads.
+        if model.versions?.loading == true, waited < 20 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                apply(to: model, waited: waited + 0.5, done: done)
+            }
+            return
+        }
+        if let dragContext {
+            return MainActor.assumeIsolated { applyDrag(dragContext, to: model, waited: waited, done: done) }
+        }
+        guard needsPR else { return applyBlame(to: model, done: done) }
+        // A standalone window attaches its branch's PR once the repo facts load, after the first render.
+        if !(model.pr?.settled ?? false), waited < 20 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                apply(to: model, waited: waited + 0.5, done: done)
+            }
+            return
+        }
+
+        let open = (model.pr?.payload?.threads ?? []).filter { !$0.resolved && !$0.outdated && !$0.isMyDraft }
+        if selectOpen > 0 {
+            model.selectedThreads = Set(open.prefix(selectOpen).map(\.id))
+        }
+        for _ in 0..<steps {
+            model.handleKey(.nextThread)
+        }
+        if toggle {
+            model.handleKey(.select)
+        }
+        if reply {
+            model.handleKey(.reply)
+        }
+        if keys {
+            model.renderer.showKeys(true)
+        }
+        if agentSend {
+            model.showsAgentSendInline = true
+        }
+        if fixForm {
+            model.showsFixFormInline = true
+        }
+        HubPerf.log("review.snapshot demo: \(open.count) open threads, \(model.selectedThreads.count) selected, focused \(model.focusedCard ?? "none")")
+        // The Fix form's plan is a `tools hub pr fix --dry-run` that searches the sessions.
+        DispatchQueue.main.asyncAfter(deadline: .now() + (fixForm || agentSend ? 8 : 1)) {
+            applyBlame(to: model, done: done)
+        }
+    }
+
+    /// Asks for the file's blame as a hover does, then shows the line's tip (20 s at most).
+    private func applyBlame(to model: ReviewModel, waited: Double = 0, done: @escaping () -> Void) {
+        if loading {
+            model.loading = true
+        }
+        guard let blame else { return done() }
+        if !model.requestBlame(path: blame.path), waited < 20 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                applyBlame(to: model, waited: waited + 0.5, done: done)
+            }
+            return
+        }
+        model.showBlame(path: blame.path, line: blame.line)
+        HubPerf.log("review.snapshot demo: blame \(blame.path):\(blame.line) after \(waited) s")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: done)
+    }
+}
+
+package enum ReviewKeyNav {
+    /// The live PR thread cards in the order the diff shows them: file by file, then by line.
+    package static func threadCards(_ comments: [RenderedComment], files: [DiffFile]) -> [RenderedComment] {
+        let order = Dictionary(files.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return comments
+            .filter { $0.kind == "thread" && $0.live != nil }
+            .sorted { (order[$0.fileId] ?? .max, $0.endLine, $0.id) < (order[$1.fileId] ?? .max, $1.endLine, $1.id) }
+    }
+
+    /// The agent's proposal draft cards in the order the diff shows them.
+    package static func draftCards(_ comments: [RenderedComment], files: [DiffFile]) -> [RenderedComment] {
+        let order = Dictionary(files.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return comments
+            .filter { $0.kind == "draft" }
+            .sorted { (order[$0.fileId] ?? .max, $0.endLine, $0.id) < (order[$1.fileId] ?? .max, $1.endLine, $1.id) }
+    }
+
+    /// The card j / k lands on. From no card, j starts at the first card in or after the selected file
+    /// and k at the last card before or in it; both wrap around at the ends.
+    package static func step(_ cards: [RenderedComment], from current: String?, by delta: Int, files: [DiffFile], selectedFile: String?) -> String? {
+        guard !cards.isEmpty else { return nil }
+        if let current, let index = cards.firstIndex(where: { $0.id == current }) {
+            return cards[(index + delta % cards.count + cards.count) % cards.count].id
+        }
+
+        let order = Dictionary(files.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let here = selectedFile.flatMap { order[$0] } ?? 0
+        if delta > 0 {
+            return (cards.first { (order[$0.fileId] ?? .max) >= here } ?? cards[0]).id
+        }
+        return (cards.last { (order[$0.fileId] ?? .max) <= here } ?? cards[cards.count - 1]).id
+    }
+
+    /// n / p: the next or previous file, stopping at the ends.
+    package static func stepFile(_ files: [DiffFile], from selected: String?, by delta: Int) -> String? {
+        guard !files.isEmpty else { return nil }
+        let index = selected.flatMap { id in files.firstIndex { $0.id == id } }
+        guard let index else { return files[delta > 0 ? 0 : files.count - 1].id }
+        return files[min(max(index + delta, 0), files.count - 1)].id
+    }
+
+    /// `live:<id>` and a proposal's `thread:<id>` name the same PR thread.
+    package static func threadID(ofCard id: String) -> String {
+        for prefix in ["live:", "thread:"] where id.hasPrefix(prefix) {
+            return String(id.dropFirst(prefix.count))
+        }
+        return id
+    }
+}
+
+extension ReviewSnapshotDemo {
+    package enum DragReadiness { case waiting, ready, timedOut }
+
+    package static func dragReadiness(settled: Bool, hasAnchor: Bool, waited: Double) -> DragReadiness {
+        if settled && hasAnchor { return .ready }
+        return waited >= 20 ? .timedOut : .waiting
+    }
+
+    /// The Context panel's drag, scripted as HubBench does: the list scrolled to `dragScroll`, then the edge
+    /// moved by `dx` in steps and released. Before and after: the list's top row and its y, and the diff's
+    /// scroll position and frame, on stderr and in app-perf.log.
+    @MainActor
+    fileprivate func applyDrag(_ dx: CGFloat, to model: ReviewModel, waited: Double = 0, done: @escaping () -> Void) {
+        switch Self.dragReadiness(settled: model.pr?.settled == true, hasAnchor: PRListAnchor.current != nil, waited: waited) {
+        case .waiting:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { applyDrag(dx, to: model, waited: waited + 0.5, done: done) }
+            return
+        case .timedOut:
+            HubPerf.log("review drag: PR or list not ready within 20 s; snapshot continues without drag")
+            done()
+            return
+        case .ready:
+            break
+        }
+
+        var heldID: String?
+        func report(_ label: String, then next: @escaping () -> Void) {
+            let anchor = PRListAnchor.current
+            if label == "dragging" {
+                heldID = anchor?.heldRowLine()?.id
+            }
+            let held = heldID.map { "held \(anchor?.rowLine($0) ?? "?")" } ?? "held none"
+            let list = "\(anchor?.topRowLine() ?? "no list"); \(held)"
+            let web = (model.renderer as? PierreWebDiffRenderer)?.webView
+            let frame = web.map { $0.convert($0.bounds, to: nil) } ?? .zero
+            let windowHeight = web?.window?.contentView?.bounds.height ?? 0
+            let finish = { (scroll: String) in
+                // Where the page's first pixel sits under the window's top: constant while the code stands still.
+                let origin = Int(windowHeight - frame.maxY) - (Int(scroll) ?? 0)
+                let line = "review drag \(label): list top \(list); diff top \(Int(windowHeight - frame.maxY)) scrollTop=\(scroll) page origin \(origin)"
+                HubPerf.log(line)
+                FileHandle.standardError.write(Data((line + "\n").utf8))
+                next()
+            }
+            guard let web else { return finish("none") }
+            web.evaluateJavaScript("String(Math.round(document.getElementById('review')?.scrollTop ?? -1))") { value, _ in
+                finish(value as? String ?? "?")
+            }
+        }
+
+        PRListAnchor.current?.scroll(to: dragScroll)
+        (model.renderer as? PierreWebDiffRenderer)?.webView.evaluateJavaScript("document.getElementById('review').scrollTop = 2400")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            report("before") {
+                let steps = 10
+                for step in 1...steps {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + Double(step) * 0.05) {
+                        NotificationCenter.default.post(name: HubBench.panelDrag, object: HubBench.PanelDrag(
+                            key: ReviewContextPanel.key, phase: .change(dx * CGFloat(step) / CGFloat(steps))))
+                    }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(steps) * 0.05 + 0.3) {
+                    report("dragging") {
+                        NotificationCenter.default.post(name: HubBench.panelDrag, object: HubBench.PanelDrag(key: ReviewContextPanel.key, phase: .end))
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                            report("after", then: done)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
