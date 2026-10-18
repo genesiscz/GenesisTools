@@ -48,6 +48,16 @@ package enum AppParts {
         return false
     }
 
+    /// A part's face reached from a click (a `genesis-tools://hub` link), where nobody reads stderr: the same alert as
+    /// `canLaunch`, then the stderr line and exit 69.
+    @MainActor
+    package static func alertMissing(face flag: String) -> Never {
+        NSApplication.shared.setActivationPolicy(.accessory)
+        NSApp.activate(ignoringOtherApps: true)
+        _ = canLaunch(face: flag)
+        run(face: flag, [])
+    }
+
     /// The parts this build links, sorted, for `--version` and the build manifest check.
     package static var linked: [String] {
         linkedParts.sorted()
