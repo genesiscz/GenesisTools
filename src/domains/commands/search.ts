@@ -20,7 +20,7 @@ export function createSearchCommand(): Command {
         .option("-m, --model <ref>", "model for the AI suggestor (default: the `domains` app default)")
         .option("--rounds <n>", "AI rounds; each later round learns from what was taken (needs --ai)", "1")
         .option("--offline", "skip suggestors that need the network")
-        .option("--max-price <usd>", "hide names whose first year costs more")
+        .option("--max-price <usd>", "hide names whose first year costs more, or whose price is unknown")
         .option("--status <list>", `statuses to show (${DOMAIN_STATUSES.join(", ")})`, "available,premium")
         .option("--all", "show every status, taken names included")
         .option("-n, --limit <n>", "rows to show", "30")

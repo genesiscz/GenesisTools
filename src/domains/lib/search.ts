@@ -1,8 +1,9 @@
 import { type CheckOptions, checkDomains } from "@app/domains/lib/check";
-import { parseDomain } from "@app/domains/lib/domain";
+import { parseDomain, tldOf } from "@app/domains/lib/domain";
+import { listPrice } from "@app/domains/lib/pricing";
 import { scoreCandidate } from "@app/domains/lib/score";
 import { type SuggestOptions, suggest } from "@app/domains/lib/suggest";
-import type { Candidate, CheckResult, DomainStatus } from "@app/domains/lib/types";
+import type { Candidate, CheckResult, DomainPrice, DomainStatus } from "@app/domains/lib/types";
 import { type VibeHit, vibeCheck } from "@app/domains/lib/vibe";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -14,7 +15,7 @@ export interface SearchOptions extends SuggestOptions {
      * told which names were taken and which free ones scored best. Needs `ai` among the suggestors.
      */
     rounds?: number;
-    /** Drop results whose first-year price is above this (USD). */
+    /** Drop results whose first-year price is above this (USD), or unknown (no quote and no TLD list price). */
     maxPrice?: number;
     /** Statuses to keep; default available + premium. */
     statuses?: DomainStatus[];
@@ -75,6 +76,22 @@ async function checkRound({
 }
 
 const isFree = (entry: Checked) => entry.result.status === "available";
+
+/** TLD list prices for the given names, one lookup per TLD; a failed lookup leaves the TLD out. */
+async function listPrices(domains: string[]): Promise<Map<string, DomainPrice>> {
+    const prices = new Map<string, DomainPrice>();
+    for (const tld of new Set(domains.map(tldOf))) {
+        const price = await listPrice(tld).catch((error: unknown) => {
+            logger.debug({ tld, error }, "domains: no list price for the estimate");
+            return null;
+        });
+        if (price) {
+            prices.set(tld, price);
+        }
+    }
+
+    return prices;
+}
 const VIBE_PENALTY = 30;
 
 export async function searchDomains(options: SearchOptions): Promise<SearchOutcome> {
@@ -116,11 +133,20 @@ export async function searchDomains(options: SearchOptions): Promise<SearchOutco
     }
 
     const statuses = new Set(options.statuses ?? ["available", "premium"]);
-    const kept = checked
-        .filter(({ result }) => statuses.has(result.status))
-        .filter(
-            ({ result }) => options.maxPrice === undefined || (result.price?.registration ?? 0) <= options.maxPrice
-        );
+    const matching = checked.filter(({ result }) => statuses.has(result.status));
+    // RDAP and WHOIS give no price: the TLD's list price stands in, so an unpriced name is neither free
+    // under --max-price nor spared the price penalty in the ranking. With no price at all it fails a ceiling.
+    const estimates = await listPrices(
+        matching.filter(({ result }) => !result.price).map(({ result }) => result.domain)
+    );
+    const priceOf = (result: CheckResult) => result.price ?? estimates.get(tldOf(result.domain)) ?? undefined;
+    const kept =
+        options.maxPrice === undefined
+            ? matching
+            : matching.filter(({ result }) => {
+                  const price = priceOf(result)?.registration;
+                  return price !== undefined && price <= (options.maxPrice ?? 0);
+              });
 
     const languages = options.vibeLanguages;
     const hits = await Promise.all(
@@ -130,7 +156,10 @@ export async function searchDomains(options: SearchOptions): Promise<SearchOutco
             return {
                 domain: candidate.domain,
                 // A rude reading in some language sinks a name, but it stays visible with its warning.
-                score: Math.max(0, scoreCandidate(candidate, result) - (vibe.length ? VIBE_PENALTY : 0)),
+                score: Math.max(
+                    0,
+                    scoreCandidate(candidate, { ...result, price: priceOf(result) }) - (vibe.length ? VIBE_PENALTY : 0)
+                ),
                 sources: candidate.sources,
                 reason: candidate.reason,
                 result,
