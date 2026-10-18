@@ -107,7 +107,8 @@ export function serverInstructions({ askViaQuestionTool, inboxState }: Instructi
         "one list.\n" +
         'DECISIONS AND TODOS: a `question_post` item with `type: "decision"` or `type: "todo"` is not a form. ' +
         "It is numbered in this session's decision log (❓ DECISION N, TODO N; numbers never reused) and the " +
-        "result is the markdown section to paste into your reply. " +
+        "result is the markdown section to paste into your reply. When your reply already numbered it, pass that " +
+        "`number`, so the log and the chat agree. " +
         decisionNudge({ state: inboxState, askViaQuestionTool }) +
         "Record " +
         "progress (acknowledged, implemented, commit refs, verdict, comments, a copy of a chat answer) with " +

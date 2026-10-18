@@ -29,6 +29,8 @@ export interface QuestionItemInput extends CreateAskItemInput {
     blocking?: boolean;
     /** Decision/todo: the id of an open or drafted item this post replaces; the old text is kept as a version. */
     supersedes?: string;
+    /** Decision/todo: the number the item already has in the chat reply, so the log uses the same one. */
+    number?: number;
     /**
      * Screenshots for any item type. `prepareQuestionItems` copies them into the question store, appends them to
      * `promptMarkdown` as markdown images and removes this field, so neither store ever sees it.
@@ -59,6 +61,7 @@ const ITEM_KEYS = new Set([
     "refs",
     "blocking",
     "supersedes",
+    "number",
     "attachments",
 ]);
 
@@ -130,6 +133,14 @@ export function validateQuestionItems(value: unknown, help: string): QuestionIte
         ) {
             problems.push(`${at}: supersedes must be a decision or todo id like d_3_<session>`);
         }
+
+        if (record.number !== undefined && record.type !== "decision" && record.type !== "todo") {
+            problems.push(`${at}: number applies to decision and todo items`);
+        }
+
+        if (record.number !== undefined && (!Number.isInteger(record.number) || Number(record.number) < 1)) {
+            problems.push(`${at}: number must be a positive whole number, the one your reply shows`);
+        }
     });
 
     if (problems.length > 0) {
@@ -200,6 +211,7 @@ export function decisionPayload(items: QuestionItemInput[], hint: DecisionSessio
             ...(item.for ? { for: item.for } : {}),
             ...(item.reevaluateWhen ? { reevaluateWhen: item.reevaluateWhen } : {}),
             ...(item.supersedes ? { supersedes: item.supersedes } : {}),
+            ...(item.number === undefined ? {} : { number: item.number }),
             ...decisionTransclusion(item.transclusion),
         })),
     };

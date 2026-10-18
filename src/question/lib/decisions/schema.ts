@@ -47,6 +47,15 @@ export const postedDecisionSchema = z.object({
         .enum(DECISION_KINDS)
         .optional()
         .describe("decision (default): a numbered ❓ DECISION N. todo: a numbered TODO N, options optional."),
+    number: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(
+            "The number this item already has in your reply (❓ DECISION 24), so the log and the chat agree. Omit it " +
+                "to take the next free number. Refused when this session already used it for this kind."
+        ),
     prompt: z.string().min(1).describe("The question, self-contained."),
     options: z.array(z.string()).default([]).describe("The answer options in order: a), b), c)."),
     excerpt: z.string().optional().describe("Context text. Defaults to up to 40 lines of the first ref."),

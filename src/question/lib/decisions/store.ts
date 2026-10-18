@@ -344,7 +344,14 @@ export async function postDecisions(
             }
 
             const used = numbers[kind];
-            const number = used.size === 0 ? 1 : Math.max(...used) + 1;
+            if (decision.number !== undefined && used.has(decision.number)) {
+                throw new Error(
+                    `${kind === "todo" ? "TODO" : "DECISION"} ${decision.number} is already in session ${sessionId}; ` +
+                        "post a later number, or revise the earlier one with supersedes"
+                );
+            }
+
+            const number = decision.number ?? (used.size === 0 ? 1 : Math.max(...used) + 1);
             const row: DecisionRecord = {
                 id: `${ID_PREFIX[kind]}_${number}_${sessionId}`,
                 sessionId,

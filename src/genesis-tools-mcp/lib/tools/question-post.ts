@@ -346,6 +346,12 @@ const ITEM_SCHEMA = {
                 "screenshots for this item (any type): copied into the question store and appended to " +
                 "promptMarkdown as images, so the card shows previews",
         },
+        number: {
+            type: "integer",
+            description:
+                "decision/todo: the number this item already has in your reply (❓ DECISION 24), so the log and the " +
+                "chat agree and a later link to it opens the right one. Omit it to take the next free number.",
+        },
         supersedes: {
             type: "string",
             description:

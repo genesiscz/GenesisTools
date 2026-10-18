@@ -21,6 +21,7 @@ import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { z } from "zod";
 import { DeliveryUnknownError, deliverToSession, resolveDeliveryTarget } from "./deliver";
 import { livePaneTargets, noPaneTargets } from "./deliver.fixtures";
+import { decisionPayload, validateQuestionItems } from "./items";
 import {
     decisionLine,
     decisionsMarkdown,
@@ -109,6 +110,47 @@ describe("decision store", () => {
         expect(first.map((row) => row.number)).toEqual([1, 2]);
         expect(second.map((row) => row.number)).toEqual([3]);
         expect(first[0]?.sessionId).toBe("abc");
+    });
+
+    test("a post keeps the number its chat reply gave, and refuses one the session already used", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "decisions-"));
+        const file = join(dir, "decisions.jsonl");
+        const events = join(dir, "events.jsonl");
+        const chat = await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [{ number: 24, prompt: "close the alternative?", options: ["a", "b"] }],
+        });
+        const next = await postDecisions(file, events, {
+            sessionId: "abc",
+            decisions: [{ prompt: "next", options: ["a"] }],
+        });
+
+        expect(chat[0]?.number).toBe(24);
+        expect(chat[0]?.id).toBe("d_24_abc");
+        expect(next[0]?.number).toBe(25);
+        await expect(
+            postDecisions(file, events, {
+                sessionId: "abc",
+                decisions: [{ number: 24, prompt: "again", options: ["a"] }],
+            })
+        ).rejects.toThrow("DECISION 24 is already in session abc");
+        expect(readDecisions(file)).toHaveLength(2);
+    });
+
+    test("a question_post item carries its chat number to the store, and only a decision or todo may", () => {
+        const items = validateQuestionItems(
+            [{ type: "decision", number: 24, promptMarkdown: "close it?", choices: ["a", "b"] }],
+            "help"
+        );
+        const payload = postDecisionsInputSchema.parse(decisionPayload(items, { sessionId: "abc" }));
+
+        expect(payload.decisions[0]?.number).toBe(24);
+        expect(() => validateQuestionItems([{ number: 3, promptMarkdown: "a form" }], "help")).toThrow(
+            "number applies to decision and todo items"
+        );
+        expect(() =>
+            validateQuestionItems([{ type: "decision", number: 0, promptMarkdown: "x", choices: ["a"] }], "help")
+        ).toThrow("number must be a positive whole number");
     });
 
     test("a post allocates its number only after another writer releases the lock", async () => {

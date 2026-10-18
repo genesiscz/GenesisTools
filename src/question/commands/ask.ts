@@ -97,6 +97,7 @@ const ASK_JSON_HELP = `
   for              decision/todo: who acts on it, "human" (default for a decision), "agent" or a model name
   reevaluateWhen   decision/todo: a condition that reopens it, e.g. "after the PR merges"
   refs             decision: [{ path, line?, endLine?, sha? }]; the first ref's lines become the excerpt
+  number           decision/todo: the number your chat reply already shows, so the log matches it
   supersedes       decision/todo: id of an open or drafted item this one replaces (it keeps its id and
                    number; the old text stays as a version: ${toolCommand("question show", "<id>", "--versions")})
   attachments      any item: screenshots, [{ "type": "image", "path": "/abs/shot.png", "label"?: "After" }];
