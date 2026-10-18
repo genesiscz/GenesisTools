@@ -42,6 +42,39 @@ export function copyRepoTree(from: string, to: string): void {
 export const TEST_REPO_EPOCH = 1_700_000_000;
 
 /**
+ * Variables that point git at a repository other than the one in `cwd`. A test run inside another git process (a
+ * hook, a `rebase --exec`) inherits them, and a fixture's `add` or `commit` would then write the OUTER repository.
+ */
+const REPO_SELECTOR_KEYS = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_PREFIX",
+] as const;
+
+/** A copy of `base` with every repository selector removed and no global or system config, for fixture repositories. */
+export function isolatedGitEnv(
+    base: Record<string, string | undefined> = env.getProcessEnv()
+): Record<string, string | undefined> {
+    const result: Record<string, string | undefined> = {
+        ...base,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_SYSTEM: "/dev/null",
+        GIT_CONFIG_NOSYSTEM: "1",
+    };
+
+    for (const key of REPO_SELECTOR_KEYS) {
+        delete result[key];
+    }
+
+    return result;
+}
+
+/**
  * Hermetic git environment for throwaway repositories: no global or system
  * config (gpgsign, template dirs, hooks, rerere), a fixed identity, no editor.
  * Bun.spawn snapshots the environment at process start, so every spawn passes
@@ -49,10 +82,7 @@ export const TEST_REPO_EPOCH = 1_700_000_000;
  */
 export function hermeticGitEnv(epoch?: number): Record<string, string | undefined> {
     const base: Record<string, string | undefined> = {
-        ...env.getProcessEnv(),
-        GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_CONFIG_SYSTEM: "/dev/null",
-        GIT_CONFIG_NOSYSTEM: "1",
+        ...isolatedGitEnv(),
         GIT_AUTHOR_NAME: "Test",
         GIT_AUTHOR_EMAIL: "test@example.com",
         GIT_COMMITTER_NAME: "Test",

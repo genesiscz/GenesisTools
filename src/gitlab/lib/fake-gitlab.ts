@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type GitLabToolConfig, mergeConfig, NEUTRAL_CONFIG } from "@app/gitlab/lib/config";
 import type { ReviewFields, StaleMr, StaleReport } from "@app/gitlab/lib/stale-branches";
+import { isolatedGitEnv } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 
@@ -449,7 +450,9 @@ export function git(cwd: string, args: string[], env: Record<string, string> = {
     const result = spawnSync(
         "git",
         ["-c", "user.name=Alice Example", "-c", "user.email=alice@example.com", "-c", "commit.gpgsign=false", ...args],
-        { cwd, encoding: "utf8", env: { ...process.env, ...GIT_ENV, ...env } }
+        // Isolated: a test run inside a git hook inherits GIT_DIR and GIT_INDEX_FILE, which would aim these writes at the
+        // outer repository, and global config could run the user's own hooks on the fixture commits.
+        { cwd, encoding: "utf8", env: { ...isolatedGitEnv(process.env), ...GIT_ENV, ...env } }
     );
 
     if (result.status !== 0) {

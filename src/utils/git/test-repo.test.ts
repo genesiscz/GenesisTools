@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { copyRepoTree, TestRepo } from "@genesiscz/utils/git/test-repo";
+import { copyRepoTree, isolatedGitEnv, TestRepo } from "@genesiscz/utils/git/test-repo";
 import { skip } from "@genesiscz/utils/test/skip";
 
 const created: TestRepo[] = [];
@@ -94,5 +94,53 @@ describe("copyRepoTree", () => {
 
         expect(readFileSync(join(root, "to", "fsmonitor--daemon.ipc"), "utf8")).toBe("a tracked file\n");
         expect(readFileSync(join(root, "to", "docs", "fsmonitor--daemon.ipc", "notes.md"), "utf8")).toBe("notes\n");
+    });
+});
+
+describe("isolatedGitEnv", () => {
+    const run = (cwd: string, args: string[], env: Record<string, string | undefined>) =>
+        Bun.spawnSync(["git", "-c", "user.name=Alice", "-c", "user.email=alice@example.com", ...args], {
+            cwd,
+            env,
+            stdout: "pipe",
+            stderr: "pipe",
+        });
+    const commits = (repo: string) =>
+        run(repo, ["rev-list", "--all", "--count"], isolatedGitEnv(process.env)).stdout.toString().trim();
+
+    test("a fixture commit stays in the fixture when the run inherits an outer repository's GIT_DIR and index", () => {
+        const root = mkdtempSync(join(tmpdir(), "gt-isolated-git-"));
+        const outer = join(root, "outer");
+        const fixture = join(root, "fixture");
+
+        for (const repo of [outer, fixture]) {
+            mkdirSync(repo);
+            expect(run(repo, ["init", "-q"], isolatedGitEnv(process.env)).exitCode).toBe(0);
+        }
+
+        writeFileSync(join(fixture, "a.txt"), "a\n");
+        const inherited = {
+            ...process.env,
+            GIT_DIR: join(outer, ".git"),
+            GIT_INDEX_FILE: join(outer, ".git", "index"),
+        };
+
+        // The negative control: with the raw inherited variables the commit lands in the OUTER repository.
+        expect(run(fixture, ["add", "a.txt"], inherited).exitCode).toBe(0);
+        expect(run(fixture, ["commit", "-qm", "raw"], inherited).exitCode).toBe(0);
+        expect([commits(outer), commits(fixture)]).toEqual(["1", "0"]);
+
+        expect(run(fixture, ["add", "a.txt"], isolatedGitEnv(inherited)).exitCode).toBe(0);
+        expect(run(fixture, ["commit", "-qm", "isolated"], isolatedGitEnv(inherited)).exitCode).toBe(0);
+        expect([commits(outer), commits(fixture)]).toEqual(["1", "1"]);
+    });
+
+    test("it drops every repository selector and turns off global and system config", () => {
+        const result = isolatedGitEnv({ GIT_DIR: "/x", GIT_WORK_TREE: "/y", GIT_COMMON_DIR: "/z", HOME: "/h" });
+
+        expect(result.GIT_DIR).toBeUndefined();
+        expect(result.GIT_WORK_TREE).toBeUndefined();
+        expect(result.GIT_COMMON_DIR).toBeUndefined();
+        expect(result).toMatchObject({ HOME: "/h", GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" });
     });
 });
