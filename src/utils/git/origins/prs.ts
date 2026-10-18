@@ -4,6 +4,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { classifyOriginUrl } from "./detector";
 import { toState as ghState } from "./gh";
 import { toState as glabState } from "./glab";
+import { unresolvedHostError } from "./host-errors";
 import { spawnRunner } from "./runner";
 import type { CommandRunner, OriginKind, PrState } from "./types";
 import { originWebBase } from "./web";
@@ -896,6 +897,14 @@ async function run({
     return { stdout: res.stdout, error: null };
 }
 
+/**
+ * Why a query to the project's host cannot work, decided before the CLI starts: with the VPN off glab
+ * waited about 7 s per call for a corp name that will never resolve. A test runner reaches no host.
+ */
+async function unreachable(project: ProjectRef, runner: CommandRunner): Promise<string | null> {
+    return runner === spawnRunner ? await unresolvedHostError(project.host) : null;
+}
+
 function errorText(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
 }
@@ -910,6 +919,10 @@ export async function viewerLogin({
     cwd?: string;
     runner?: CommandRunner;
 }): Promise<string | null> {
+    if (await unreachable(project, runner)) {
+        return null;
+    }
+
     const cmd =
         project.kind === "github"
             ? ["gh", "api", "--hostname", project.host, "user"]
@@ -957,6 +970,11 @@ export async function listPrs({
     const warnings: string[] = [];
     const parsed = typeof query === "string" ? parsePrQuery(query) : query;
     const search = parsed && (parsed.author || parsed.numbers.length > 0 || parsed.text) ? parsed : null;
+    const blocked = await unreachable(project, runner);
+
+    if (blocked) {
+        return { prs: [], error: blocked, warnings };
+    }
 
     try {
         if (project.kind === "github" && search) {
@@ -1230,6 +1248,11 @@ export async function viewPr({
     runner?: CommandRunner;
 }): Promise<PrViewResult> {
     const warnings: string[] = [];
+    const blocked = await unreachable(project, runner);
+
+    if (blocked) {
+        return { pr: null, error: blocked, warnings };
+    }
 
     try {
         if (project.kind === "github") {

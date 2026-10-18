@@ -6,6 +6,7 @@ import {
     spawnRunner,
     viewerLogin,
 } from "@genesiscz/utils/git";
+import { cleanHostError } from "@genesiscz/utils/git/origins";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isBotLogin, type PrMemory, type PrSnapshot, type ThreadStart } from "./notify";
@@ -300,7 +301,7 @@ export async function fetchGitlabRepo({
     const listed = await listPrs({ project, state: "all", limit: GITLAB_MRS, runner });
 
     if (listed.error) {
-        throw new HostError(listed.error, rateLimitedText(listed.error));
+        throw new HostError(cleanHostError(listed.error), rateLimitedText(listed.error));
     }
 
     const prs: PrSnapshot[] = [];

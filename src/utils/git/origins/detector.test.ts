@@ -5,6 +5,7 @@ import { TestRepo } from "../test-repo";
 import { classifyOriginUrl, detectOrigin, isLocalRemoteUrl, originDriver } from "./detector";
 import { ghDriver, parseGhPrList } from "./gh";
 import { glabDriver, parseGlabMrList } from "./glab";
+import { cleanHostError, summarizeHostError } from "./host-errors";
 import {
     ghCheckStatus,
     glabPipelineStatus,
@@ -913,5 +914,40 @@ describe("isLocalRemoteUrl", () => {
         expect(remote.map((url) => ({ url, local: isLocalRemoteUrl(url) }))).toEqual(
             remote.map((url) => ({ url, local: false }))
         );
+    });
+});
+
+describe("host query errors", () => {
+    // glab's stderr as it arrived with the VPN off: ERROR on its own line, the rest wrapped with padding.
+    const dnsTimeout =
+        'ERROR  \n          \n  Get "https://gitlab.example.invalid/api/v4/projects/group%2Fshop-                \n  web/merge_requests?state=all": dial tcp: lookup gitlab.example.invalid: i/o timeout.';
+
+    it("joins the wrapped lines and drops the ERROR heading", () => {
+        expect(cleanHostError(dnsTimeout)).toBe(
+            'Get "https://gitlab.example.invalid/api/v4/projects/group%2Fshop-web/merge_requests?state=all": dial tcp: lookup gitlab.example.invalid: i/o timeout.'
+        );
+    });
+
+    it("names the host that does not resolve", () => {
+        expect(summarizeHostError(dnsTimeout, "gitlab.example.invalid")).toBe(
+            "Cannot resolve gitlab.example.invalid. Is the VPN on?"
+        );
+        expect(summarizeHostError("lookup gitlab.example.invalid: no such host (the query was not sent)", null)).toBe(
+            "Cannot resolve gitlab.example.invalid. Is the VPN on?"
+        );
+    });
+
+    it("tells a refused connection and a missing login apart", () => {
+        expect(summarizeHostError("dial tcp 10.0.0.1:443: connect: connection refused", "git.example.org")).toBe(
+            "Cannot connect to git.example.org. Check the VPN or the network."
+        );
+        expect(summarizeHostError("HTTP 401: 401 Unauthorized", "git.example.org")).toBe(
+            "Not signed in to git.example.org."
+        );
+    });
+
+    it("keeps an unknown message, cut to one line", () => {
+        expect(summarizeHostError("ERROR\n  something odd", "git.example.org")).toBe("something odd");
+        expect(summarizeHostError("x".repeat(300), null)).toHaveLength(140);
     });
 });

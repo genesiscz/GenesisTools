@@ -218,6 +218,7 @@ private struct HubPRList: Decodable {
     struct Repo: Decodable {
         let repo: String
         let error: String?
+        let errorSummary: String?
         let count: Int?
         let origin: HubPR.Origin?
     }
@@ -241,10 +242,40 @@ private struct HubPRList: Decodable {
     }
 }
 
+/// One message above the PR list. `more` keeps the CLI's full error for the pill's "Details".
+struct PRListNotice: Hashable {
+    let text: String
+    var more: String?
+
+    init(_ text: String, more: String? = nil) {
+        self.text = text
+        self.more = more
+    }
+
+    /// One notice per distinct failure: projects that failed the same way (every repo on a VPN-only host while the
+    /// VPN is off) share a line, "shop-web, shop-api: Cannot resolve git.example.org. Is the VPN on?".
+    fileprivate static func failures(_ repos: [HubPRList.Repo]) -> [PRListNotice] {
+        var order: [String] = []
+        var byKey: [String: [HubPRList.Repo]] = [:]
+        for repo in repos {
+            guard let error = repo.error else { continue }
+            let key = repo.errorSummary ?? error
+            if byKey[key] == nil { order.append(key) }
+            byKey[key, default: []].append(repo)
+        }
+        return order.map { key in
+            let failed = byKey[key] ?? []
+            let names = failed.map(\.repo).joined(separator: ", ")
+            let full = failed.map { "\($0.repo): \($0.error ?? "")" }.joined(separator: "\n\n")
+            return PRListNotice("\(names): \(key)", more: failed.contains { $0.errorSummary != nil } ? full : nil)
+        }
+    }
+}
+
 @MainActor
 final class PRsModel: ObservableObject {
     @Published private(set) var prs: [HubPR] = []
-    @Published private(set) var errors: [String] = []
+    @Published private(set) var errors: [PRListNotice] = []
     @Published private(set) var loading = false
     @Published var selectedID: String?
     @Published private(set) var details: [String: HubPRDetail] = [:]
@@ -461,7 +492,7 @@ final class PRsModel: ObservableObject {
                             widening = true
                             return
                         }
-                        errors.append("\(wanted.label) is not among these PRs")
+                        errors.append(PRListNotice("\(wanted.label) is not among these PRs"))
                     }
                 }
                 if directOpen == nil, selectedID == nil || selected == nil,
@@ -475,7 +506,7 @@ final class PRsModel: ObservableObject {
                 }
             case .failure(let error):
                 span.end("failed")
-                errors = ["\(error)"]
+                errors = [PRListNotice("\(error)")]
             }
         }
     }
@@ -509,7 +540,7 @@ final class PRsModel: ObservableObject {
                 wantedStarted = nil
                 if !startWanted() {
                     wanted = nil
-                    errors.append("\(ref.label) is not among these PRs")
+                    errors.append(PRListNotice("\(ref.label) is not among these PRs"))
                 }
             }
         }
@@ -581,13 +612,13 @@ final class PRsModel: ObservableObject {
             case .failure(let error):
                 span.end("failed")
                 // Said, not swallowed: the list's own answer no longer reports a ref it handed here.
-                errors.append("Could not open \(ref.label): \(error)")
+                errors.append(PRListNotice("Could not open \(ref.label): \(error)"))
                 return
             }
             let (row, detail, data) = fresh
             guard ref.matches(row) else {
                 span.end("another PR")
-                errors.append("\(arg) answered \(row.label), not \(ref.label)")
+                errors.append(PRListNotice("\(arg) answered \(row.label), not \(ref.label)"))
                 return
             }
             span.end(row.label)
@@ -688,7 +719,7 @@ final class PRsModel: ObservableObject {
         let matches = prs.filter(ref.matches)
         if matches.count > 1 {
             let projects = matches.map(\.repo).joined(separator: ", ")
-            errors.append("\(ref.label) is in \(matches.count) projects (\(projects)); name one: <project>#\(ref.number)")
+            errors.append(PRListNotice("\(ref.label) is in \(matches.count) projects (\(projects)); name one: <project>#\(ref.number)"))
             return true
         }
         guard let match = matches.first else { return false }
@@ -740,7 +771,7 @@ final class PRsModel: ObservableObject {
             case .failure(let error):
                 span.end("failed")
                 projectsRequested = false
-                errors.append("Could not list the projects under the repo roots: \(error)")
+                errors.append(PRListNotice("Could not list the projects under the repo roots: \(error)"))
             }
         }
     }
@@ -799,20 +830,20 @@ final class PRsModel: ObservableObject {
                         fullProjects.remove(project.project)
                     }
                 }
-                if let error = list.repos.compactMap(\.error).first {
-                    errors.append("\(project.repo): \(error)")
+                if let notice = PRListNotice.failures(list.repos).first {
+                    errors.append(notice)
                 } else if list.prs.isEmpty {
-                    errors.append("\(project.repo) has no \(state == "all" ? "" : state + " ")PRs/MRs\(mineOnly ? " of yours" : "")")
+                    errors.append(PRListNotice("\(project.repo) has no \(state == "all" ? "" : state + " ")PRs/MRs\(mineOnly ? " of yours" : "")"))
                 }
             case .failure(let error):
                 span.end("failed")
-                errors.append("Could not load \(project.repo)'s PRs/MRs: \(error)")
+                errors.append(PRListNotice("Could not load \(project.repo)'s PRs/MRs: \(error)"))
             }
         }
     }
 
-    func dismissError(_ text: String) {
-        errors.removeAll { $0 == text }
+    func dismissError(_ notice: PRListNotice) {
+        errors.removeAll { $0 == notice }
     }
 
     /// A project opened from "More projects" (not a session project, not starred) leaves the list
@@ -883,7 +914,7 @@ final class PRsModel: ObservableObject {
             fullProjects = Set(list.repos.compactMap { repo in (repo.count ?? 0) >= limit ? repo.origin?.web : nil })
             changed = moved
         }
-        errors = list.repos.compactMap { repo in repo.error.map { "\(repo.repo): \($0)" } }
+        errors = PRListNotice.failures(list.repos)
         SWR.fade(moved, current: { [weak self] in self?.changed }, clear: { [weak self] in self?.changed = [] })
     }
 
@@ -1317,7 +1348,7 @@ struct PRListView: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
             ForEach(prs.errors, id: \.self) { error in
-                NoticePill(text: error, isError: true) { prs.dismissError(error) }
+                NoticePill(text: error.text, more: error.more, isError: true) { prs.dismissError(error) }
                     .padding(.horizontal, 10)
             }
             ScrollViewReader { proxy in

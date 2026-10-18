@@ -5,12 +5,18 @@ import SwiftUI
 public struct NoticePill: View {
     let text: String
     var detail: String?
+    /// The full message behind a short `text` (a CLI's raw error), shown only after a click on "Details".
+    var more: String?
     var isError: Bool
     let dismiss: () -> Void
+    @State private var showsMore = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    public init(text: String, detail: String? = nil, isError: Bool = false, dismiss: @escaping () -> Void) {
+    public init(text: String, detail: String? = nil, more: String? = nil, isError: Bool = false,
+                dismiss: @escaping () -> Void) {
         self.text = text
         self.detail = detail
+        self.more = more
         self.isError = isError
         self.dismiss = dismiss
     }
@@ -28,6 +34,23 @@ public struct NoticePill: View {
                 if let detail {
                     Text(detail).font(.system(size: 11.5)).foregroundColor(KitPalette.dim)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+                if let more {
+                    Button {
+                        GenMotion.perform(expanding: !showsMore, reduceMotion: reduceMotion) { showsMore.toggle() }
+                    } label: {
+                        Label(showsMore ? "Hide details" : "Details",
+                              systemImage: showsMore ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 11))
+                            .foregroundColor(KitPalette.dim)
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip(showsMore ? "Hide the full message" : "Show the full message")
+                    if showsMore {
+                        Text(more).font(.system(size: 11, design: .monospaced)).foregroundColor(KitPalette.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .transition(.genReveal)
+                    }
                 }
             }
             .textSelection(.enabled)

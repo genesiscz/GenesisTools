@@ -24,7 +24,7 @@ import {
 } from "@genesiscz/utils/git";
 import { branchMentions, localBranchNames } from "@genesiscz/utils/git/branch-names";
 import { projectRefFromUrl as checkoutProjectRef, rankCheckouts } from "@genesiscz/utils/git/local-checkouts";
-import { isLocalRemoteUrl } from "@genesiscz/utils/git/origins";
+import { cleanHostError, isLocalRemoteUrl, summarizeHostError } from "@genesiscz/utils/git/origins";
 import { type RepoFacts, repoFacts, repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -64,6 +64,8 @@ export interface HubPrRepo {
     origin: { kind: OriginKind | null; host: string | null; web: string | null } | null;
     count: number;
     error: string | null;
+    /** One short line for `error` when it came from the host ("Cannot resolve <host>. Is the VPN on?"). */
+    errorSummary: string | null;
     warnings: string[];
 }
 
@@ -380,6 +382,7 @@ async function collectHubPrs({
                 origin,
                 count: 0,
                 error: null,
+                errorSummary: null,
                 warnings: [],
             };
             const project = first.origin ? projectRefFromRemote(first.origin.url) : null;
@@ -400,7 +403,8 @@ async function collectHubPrs({
                 prof.measureAsync(`list.viewer ${project.host}`, () => viewerFor(project, cwd)),
             ]);
             const byBranch = worktreeByBranch(worktrees.all);
-            entry.error = listed.error;
+            entry.error = listed.error ? cleanHostError(listed.error) : null;
+            entry.errorSummary = listed.error ? summarizeHostError(listed.error, project.host) : null;
             entry.warnings = listed.warnings;
             entry.count = listed.prs.length;
 
@@ -433,6 +437,7 @@ async function collectHubPrs({
                 origin: null,
                 count: 0,
                 error: "lookup failed, see the log",
+                errorSummary: null,
                 warnings: [],
             });
         }
