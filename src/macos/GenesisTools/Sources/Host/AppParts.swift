@@ -41,7 +41,7 @@ package enum AppParts {
     /// else an alert that names the fix. A child that exits on its own (69 for a missing part, 64 at the staging gate)
     /// would be unseen: its stderr is discarded.
     @MainActor
-    package static func canLaunch(face flag: String) -> Bool {
+    static func canLaunch(face flag: String) -> Bool {
         if let part = partOfFace[flag], !has(face: flag) {
             return requirePart(part, for: "launch \(flag)")
         }
@@ -57,7 +57,7 @@ package enum AppParts {
 
     /// The alert title when the staging gate would refuse a plain launch of `flag` (HostMain refuses it with exit 64),
     /// or nil when the face may start.
-    package static func stagingRefusal(face flag: String, facesEnabled: Bool) -> String? {
+    static func stagingRefusal(face flag: String, facesEnabled: Bool) -> String? {
         guard NativeStaging.refuses([flag], facesEnabled: facesEnabled) else { return nil }
         return NativeStaging.settingsFaces.contains(flag) ? "Settings are in staging" : "The widget is in staging"
     }
