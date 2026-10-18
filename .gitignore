@@ -38,6 +38,8 @@ lib-cov
 # Coverage directory used by tools like istanbul
 
 coverage
+# The coverage report tool itself, not a report folder.
+!scripts/tests/coverage/
 *.lcov
 
 # nyc test coverage

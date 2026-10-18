@@ -136,6 +136,39 @@ test("an empty list adds no phase, so no phase is a pathless bun test of the who
     expect(phases.map((phase) => phase.kind)).toEqual(["parallel"]);
 });
 
+test("each phase of a coverage run writes its own lcov and junit file, so the last phase cannot overwrite the bulk", () => {
+    const phases = fullRunPhases({
+        ...PHASE_OPTIONS,
+        args: [
+            "--parallel",
+            "--coverage",
+            "--coverage-dir=/tmp/cov/",
+            "--reporter=junit",
+            "--reporter-outfile",
+            "r.xml",
+        ],
+    });
+
+    expect(phases.map((phase) => phase.testArgs.filter((arg) => arg.startsWith("--coverage-dir")))).toEqual([
+        ["--coverage-dir=/tmp/cov/0-parallel"],
+        ["--coverage-dir=/tmp/cov/1-serial"],
+        ["--coverage-dir=/tmp/cov/2-own-process"],
+        ["--coverage-dir=/tmp/cov/3-own-process"],
+    ]);
+    expect(phases[1].testArgs).toContain("--reporter-outfile=r.1-serial.xml");
+    expect(phases[1].testArgs).not.toContain("r.xml");
+});
+
+test("coverage without a folder splits bun's default coverage folder, and a single phase is left alone", () => {
+    const phases = fullRunPhases({ ...PHASE_OPTIONS, args: ["--coverage"] });
+
+    expect(phases[2].testArgs).toContain("--coverage-dir=coverage/2-own-process");
+
+    const [only] = fullRunPhases({ ...PHASE_OPTIONS, args: ["--coverage"], loadSensitive: [], ownProcess: [] });
+
+    expect(only.testArgs.some((arg) => arg.startsWith("--coverage-dir"))).toBe(false);
+});
+
 test("the run exits with the first phase that failed", () => {
     expect(firstFailure([0, 0, 0])).toBe(0);
     expect(firstFailure([0, 1, 137])).toBe(1);

@@ -2,7 +2,15 @@
 import { writeFileSync } from "node:fs";
 import { cpus } from "node:os";
 import { dirname, join } from "node:path";
-import { firstFailure, fullRunPhases, maxRunMs, profileArgs, withSerialIsolation } from "./test-args";
+import {
+    ALWAYS_EXCLUDES,
+    DEFAULT_EXCLUDES,
+    firstFailure,
+    fullRunPhases,
+    maxRunMs,
+    profileArgs,
+    withSerialIsolation,
+} from "./test-args";
 import { diagnose, lockStamp, STAMP_FILE } from "./test-deps";
 import { descendantsOf, reap } from "./test-reap";
 
@@ -299,63 +307,6 @@ const LOAD_SENSITIVE_FILES = [
  * That theory is NOT proven; this entry contains the damage whatever the cause turns out to be.
  */
 const OWN_PROCESS_FILES = ["src/question/lib/record.test.ts"];
-
-/**
- * Excludes that hold even for an explicit path argument.
- *
- * An explicit path is an opt-in, so it deliberately bypasses `EXCLUDES` — that is how you
- * run the dev-dashboard tree on purpose. But a `*.spec.ts` can never be a bun test in this
- * repo, so collecting one is always a mistake rather than a choice: bun errors with
- * "Playwright Test needs to be invoked via 'npx playwright test'" or an undefined
- * `this.skip`, and that reads as a suite failure for a file that is green under its own
- * runner. Verified 2026-09-15: 39 `*.spec.ts` files, NONE importing `bun:test`.
- *
- * Declared once and spread into `DEFAULT_EXCLUDES` below, so the default run and the
- * explicit-path run can never disagree about it.
- */
-const ALWAYS_EXCLUDES = [
-    "**/*.spec.ts",
-    // Same reasoning as `*.spec.ts`, one directory further: every test under
-    // DevDashboard/cloud/web is a vitest file, and its own `test` script runs
-    // `vitest run` for exactly that reason. The tree loads `better-sqlite3`, a
-    // native Node addon bun cannot dlopen ("'better-sqlite3' is not yet supported
-    // in Bun", ERR_DLOPEN_FAILED), so bun collecting one is always a mistake and
-    // never a choice. Verified 2026-09-16: 6 test files under
-    // DevDashboard/cloud/web/src, all 6 import `vitest`, NONE imports `bun:test`;
-    // they contributed 13 phantom failures to a local full run. Only `cloud/web`
-    // is excluded: `cloud/shared` holds real bun tests, which `bun test ../shared`
-    // runs from that package.
-    "**/DevDashboard/cloud/web/**",
-];
-
-/**
- * Excluded from every full run unless targeted explicitly. These lived only in
- * package.json's `test` script for a long time, which meant a direct
- * `bun scripts/test.ts` (agents do this constantly) silently INCLUDED them —
- * and the e2e suites among them spawn real servers: every such run leaked two
- * orphaned dev-dashboard agents, dozens accumulated over days. The wrapper is
- * the single entrypoint, so the excludes live here.
- */
-const DEFAULT_EXCLUDES = [
-    "**/dashboard/**",
-    "**/dev-dashboard/**",
-    "**/claude-history-dashboard/**",
-    "**/Internal/**",
-    "**/shops/**",
-    "**/task/tests/**",
-    "**/*.e2e.test.ts",
-    "**/matrix-e2e.test.ts",
-    // Playwright and WDIO own `*.spec.ts`; bun's discovery does not. Collecting one errors
-    // with "Playwright Test needs to be invoked via 'npx playwright test'" or an undefined
-    // `this.skip`, which reads as a suite failure and is green under its own runner. The
-    // `**/dev-dashboard/**` and `**/dashboard/**` excludes already hide most of them, but
-    // an explicit path argument bypasses those, so passing `src/dev-dashboard/` collected 4.
-    // Verified 2026-09-15: all 39 `*.spec.ts` files in the repo belong to Playwright or
-    // WDIO and NONE imports `bun:test` (checked with a positive control on two real bun
-    // tests, because the first attempt at that check was itself broken and returned 0 for
-    // both).
-    ...ALWAYS_EXCLUDES,
-];
 
 /**
  * DevDashboard is a sub-project carrying three test runners of its own: bun for
