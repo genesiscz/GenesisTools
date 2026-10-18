@@ -25,7 +25,11 @@ class FixtureBodyExtractor {
     dispose(): void {}
 }
 
+// Over the real module, so every other export the import graph names still exists.
+const realEmlx = await import("@app/macos/lib/mail/emlx");
+
 mock.module("@app/macos/lib/mail/emlx", () => ({
+    ...realEmlx,
     EmlxBodyExtractor: FixtureBodyExtractor,
     parseEmlxBodyPartsFromFile: async () => null,
 }));
