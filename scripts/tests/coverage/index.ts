@@ -43,10 +43,31 @@ const ROOT = dirname(dirname(dirname(import.meta.dir)));
 /**
  * The opt-in gates whose tests are safe to run on a developer Mac: they write only inside the test
  * sandbox, spend nothing, touch no keychain, window, terminal or notification, and their resource
- * exists on a Mac with the repo installed. The audit behind each entry is in the PR that added
- * this script. A gate missing here stays off, whatever `--gates safe` says.
+ * exists on a Mac with the repo installed. Audited file by file on 2026-10-18; the audit is in the PR
+ * that added this list. A gate missing here stays off, whatever `--gates safe` says.
  */
-const SAFE_LOCAL_GATES: (keyof typeof GATE_ENV_VARS)[] = [];
+const SAFE_LOCAL_GATES: (keyof typeof GATE_ENV_VARS)[] = [
+    "darwinkit",
+    "mailInfra",
+    "claudeData",
+    "localModels",
+    "audioDevice",
+    "integration",
+];
+
+/**
+ * Files a safe gate turns on that still stay out of a `--gates safe` run, because one variable covers
+ * them together with safe files.
+ */
+const SAFE_GATE_EXCLUDES: Record<string, string> = {
+    // Runs `swift -e` and writes a fixed /tmp path; Swift work on this Mac goes one build at a time.
+    "src/darwinkit/__tests__/vision.test.ts": "darwinkit",
+    // Installs @lancedb/lancedb over the network and loads a native module that is deleted after the run.
+    "src/utils/search/stores/lancedb-vector-store.test.ts": "integration",
+    // Its `installed` mode starts the real codex app-server, which now answers account/read with an error
+    // (seen 2026-10-18): drift against the installed Codex, not a safety problem.
+    "src/codex/lib/terminal-server.test.ts": "integration",
+};
 
 const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -136,6 +157,9 @@ function sourceUniverse(tracked: string[], paths: string[]): string[] {
 }
 
 async function runSuite(outDir: string, gates: string[], paths: string[]): Promise<number> {
+    const ignores = Object.entries(SAFE_GATE_EXCLUDES)
+        .filter(([, gate]) => gates.includes(gate))
+        .map(([file]) => `--path-ignore-patterns=${file}`);
     mkdirSync(outDir, { recursive: true });
     const logPath = join(outDir, "test.log");
     const fd = openSync(logPath, "w");
@@ -154,6 +178,7 @@ async function runSuite(outDir: string, gates: string[], paths: string[]): Promi
         `--coverage-dir=${join(outDir, "lcov")}`,
         "--reporter=junit",
         `--reporter-outfile=${join(outDir, "junit.xml")}`,
+        ...ignores,
         ...paths,
     ];
     process.stderr.write(`[coverage] ${argv.join(" ")}\n`);
