@@ -158,13 +158,25 @@ function stripComments(reply: string): string {
 export type WhoisVerdict = "available" | "taken" | "reserved" | "throttled" | "unknown";
 
 /** Where a registry's legal boilerplate starts; it can say "not found" or "too many queries" in another sense. */
-const BOILERPLATE_START =
-    /^[ \t]*(?:>>>|terms of use|terms and conditions|notice:|disclaimer|the data in this record)/im;
+const BOILERPLATE_MARKER = "(?:>>>|terms of use|terms and conditions|notice:|disclaimer|the data in this record)";
+const BOILERPLATE_START = new RegExp(`^[ \\t]*${BOILERPLATE_MARKER}`, "im");
+const COMMENTED_BOILERPLATE_START = new RegExp(`^[ \\t]*[%#][%# \\t]*${BOILERPLATE_MARKER}`, "im");
 
-/** The reply up to the boilerplate, comment lines included. */
+/**
+ * The reply up to the boilerplate, comment lines included. A commented marker ("% Terms of Use: ...") ends the
+ * answer only after the answer has begun: a banner at the top (.de opens with "% Terms and Conditions of Use")
+ * comes before the answer, not after it.
+ */
 function beforeBoilerplate(reply: string): string {
-    const end = reply.search(BOILERPLATE_START);
-    return end === -1 ? reply : reply.slice(0, end);
+    const ends = [reply.search(BOILERPLATE_START)];
+    const answerStart = reply.search(/^[ \t]*[^%#\s]/m);
+    if (answerStart !== -1) {
+        const commented = reply.slice(answerStart).search(COMMENTED_BOILERPLATE_START);
+        ends.push(commented === -1 ? -1 : answerStart + commented);
+    }
+
+    const found = ends.filter((end) => end !== -1);
+    return found.length === 0 ? reply : reply.slice(0, Math.min(...found));
 }
 
 export function interpretWhois(reply: string): WhoisVerdict {

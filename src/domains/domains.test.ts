@@ -220,6 +220,15 @@ describe("WHOIS parsing", () => {
         );
     });
 
+    it("ignores throttle words in commented terms after the answer, but not in a banner before it", () => {
+        const footer = "% Terms of Use: too many queries may cause access to be blocked\n";
+        expect(interpretWhois(`Domain not found.\n${footer}`)).toBe("available");
+        expect(interpretWhois(`Domain Name: x.io\nRegistrar: Example Inc.\n${footer}`)).toBe("taken");
+        expect(interpretWhois(`% Terms and Conditions of Use\n% Query limit exceeded\nDomain not found.\n`)).toBe(
+            "throttled"
+        );
+    });
+
     it("treats a throttle reply as throttled, not available", () => {
         expect(interpretWhois("Query limit exceeded, try again later")).toBe("throttled");
         expect(interpretWhois(`% ${"terms of use ".repeat(80)}\nQuery limit exceeded`)).toBe("throttled");
