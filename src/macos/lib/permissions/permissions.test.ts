@@ -810,6 +810,7 @@ describe("app parts", () => {
         expect(parsePartsFlag("all")).toEqual([...ALL_PART_IDS].sort());
         expect(parsePartsFlag(" hub, markdown ,hub")).toEqual(["hub", "markdown"]);
         expect(() => parsePartsFlag("hub,nope")).toThrow("Unknown app part nope");
+        expect(() => parsePartsFlag("all,nope")).toThrow("Unknown app part nope");
         expect(partsEnvValue(["markdown", "hub"])).toBe("hub,markdown");
     });
 
