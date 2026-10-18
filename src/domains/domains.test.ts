@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
-import { parkingServiceFor } from "./lib/aftermarket";
+import { fetchLanding, type LandingNetwork, parkingServiceFor } from "./lib/aftermarket";
 import { mergeVerdicts } from "./lib/check";
 import { parseDomain, seedWords } from "./lib/domain";
-import { isPublicAddress } from "./lib/http";
+import { type HttpResponse, isPublicAddress, pickPublicAddress } from "./lib/http";
 import { interpretWhois, whoisFields } from "./lib/providers/whois";
 import { pronounceability, scoreCandidate } from "./lib/score";
 import { blend, dropVowels, shortForms } from "./lib/suggest/basic";
@@ -265,7 +265,15 @@ describe("isPublicAddress", () => {
             expect(isPublicAddress(address)).toBe(false);
         }
 
-        for (const address of ["::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1"]) {
+        for (const address of [
+            "::1",
+            "fd00::1",
+            "fe80::1",
+            "::ffff:127.0.0.1",
+            "::ffff:7f00:1",
+            "::ffff:c0a8:101",
+            "::7f00:1",
+        ]) {
             expect(isPublicAddress(address)).toBe(false);
         }
     });
@@ -273,5 +281,67 @@ describe("isPublicAddress", () => {
     it("accepts public addresses", () => {
         expect(isPublicAddress("93.184.216.34")).toBe(true);
         expect(isPublicAddress("2606:4700::1111")).toBe(true);
+    });
+});
+
+describe("fetchLanding", () => {
+    const DNS: Record<string, string[]> = {
+        "a.example": ["93.184.216.34"],
+        "b.example": ["2606:4700::1111"],
+        "evil.example": ["93.184.216.34", "10.0.0.5"],
+    };
+    const reply = (status: number, location?: string): HttpResponse<unknown> => ({
+        status,
+        url: "",
+        body: null,
+        text: "",
+        headers: new Headers(location ? { location } : {}),
+    });
+
+    function network(redirects: Record<string, string>) {
+        const sent: { url: string; init: Parameters<LandingNetwork["send"]>[1] }[] = [];
+        const net: LandingNetwork = {
+            // The real rule on a fake DNS table; an IP literal resolves to itself, as in resolvePublicAddress.
+            resolve: async (host) => pickPublicAddress(host, DNS[host] ?? [host.replace(/^\[|\]$/g, "")]),
+            send: async (url, init) => {
+                sent.push({ url, init });
+                const location = redirects[url];
+                return location ? reply(302, location) : reply(200);
+            },
+        };
+        return { net, sent };
+    }
+
+    it("pins every hop to the checked address and keeps the real host for Host and TLS", async () => {
+        const { net, sent } = network({ "https://93.184.216.34/": "https://b.example/x" });
+        const response = await fetchLanding("https://a.example/", net);
+        expect(response.url).toBe("https://b.example/x");
+        expect(sent.map((entry) => entry.url)).toEqual(["https://93.184.216.34/", "https://[2606:4700::1111]/x"]);
+        expect(sent[1].init?.headers).toMatchObject({ host: "b.example" });
+        expect(sent[1].init?.tls?.serverName).toBe("b.example");
+        expect(sent[1].init?.redirect).toBe("manual");
+    });
+
+    it("never sends to a private destination, whatever its spelling", async () => {
+        for (const target of [
+            "http://evil.example/",
+            "http://127.0.0.1/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://[::ffff:7f00:1]/",
+            "http://[::1]:8080/",
+        ]) {
+            const { net, sent } = network({ "https://93.184.216.34/": target });
+            await expect(fetchLanding("https://a.example/", net)).rejects.toThrow("non-public");
+            expect(sent).toHaveLength(1);
+        }
+    });
+
+    it("refuses a non-http redirect and a redirect loop", async () => {
+        const toFile = network({ "https://93.184.216.34/": "file:///etc/passwd" });
+        await expect(fetchLanding("https://a.example/", toFile.net)).rejects.toThrow("refused");
+
+        const loop = network({ "https://93.184.216.34/": "https://a.example/" });
+        await expect(fetchLanding("https://a.example/", loop.net)).rejects.toThrow("redirects");
+        expect(loop.sent).toHaveLength(6);
     });
 });

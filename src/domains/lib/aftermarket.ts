@@ -71,12 +71,21 @@ const PAGE_MARKERS: [RegExp, string][] = [
 ];
 
 const MAX_REDIRECTS = 5;
+const MAX_PAGE_BYTES = 256 * 1024;
+
+/** The probe's two network edges, replaceable in tests. */
+export interface LandingNetwork {
+    resolve: (hostname: string) => Promise<string>;
+    send: (url: string, init: Parameters<typeof request>[1]) => Promise<HttpResponse<unknown>>;
+}
+
+const NETWORK: LandingNetwork = { resolve: resolvePublicAddress, send: request };
 
 /**
  * GET with redirects followed by hand: every hop must be http(s), resolve to public addresses only, and is
  * sent to the address that passed the check. TLS still verifies the certificate against the real host name.
  */
-async function fetchLanding(url: string): Promise<HttpResponse<unknown>> {
+export async function fetchLanding(url: string, network: LandingNetwork = NETWORK): Promise<HttpResponse<unknown>> {
     let current = url;
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
         const target = new URL(current);
@@ -84,14 +93,15 @@ async function fetchLanding(url: string): Promise<HttpResponse<unknown>> {
             throw new Error(`redirect to ${target.protocol} refused`);
         }
 
-        const address = await resolvePublicAddress(target.hostname);
+        const address = await network.resolve(target.hostname);
         const pinned = new URL(current);
         pinned.hostname = address.includes(":") ? `[${address}]` : address;
         const host = target.hostname;
-        const response = await request(pinned.toString(), {
+        const response = await network.send(pinned.toString(), {
             label: "landing",
             timeoutMs: 10_000,
             redirect: "manual",
+            maxBytes: MAX_PAGE_BYTES,
             headers: { host: target.host, "user-agent": "Mozilla/5.0 (Macintosh) tools-domains" },
             tls: { serverName: host, checkServerIdentity: (_name, cert) => checkServerIdentity(host, cert) },
         });
@@ -119,12 +129,12 @@ export interface LandingProbe {
 }
 
 /** Second for-sale signal after the nameservers: where the site lands and what the page says. */
-export async function probeLanding(domain: string): Promise<LandingProbe> {
+export async function probeLanding(domain: string, network: LandingNetwork = NETWORK): Promise<LandingProbe> {
     const afternicUrl = `https://www.afternic.com/forsale/${domain}`;
     for (const scheme of ["https", "http"]) {
         try {
-            const response = await fetchLanding(`${scheme}://${domain}/`);
-            const page = response.text.slice(0, 200_000);
+            const response = await fetchLanding(`${scheme}://${domain}/`, network);
+            const page = response.text;
             const marketplace =
                 URL_MARKERS.find(([re]) => re.test(response.url))?.[1] ??
                 PAGE_MARKERS.find(([re]) => re.test(page))?.[1];
@@ -132,7 +142,7 @@ export async function probeLanding(domain: string): Promise<LandingProbe> {
                 finalUrl: response.url,
                 httpStatus: response.status,
                 marketplace,
-                forSaleText: FOR_SALE_TEXT.test(response.text),
+                forSaleText: FOR_SALE_TEXT.test(page),
                 afternicUrl,
             };
         } catch (error) {
