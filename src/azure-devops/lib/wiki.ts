@@ -608,6 +608,10 @@ export async function diffWikiPage({
         version: wiki.versions?.[0]?.version,
         top: 100,
     });
+    if (!to && commits.length === 0) {
+        throw new Error(`Page ${page.path} has no history, so there is nothing to compare`);
+    }
+
     const toCommit = to ? findCommit(commits, to) : commits[0];
 
     if (!toCommit) {
