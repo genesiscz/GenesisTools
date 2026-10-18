@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { shellQuote } from "@genesiscz/utils/shell/quote";
+import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import { ClaudeWorkerStore } from "./store";
 import { spawnWorker, steerWorker, turnArgs } from "./worker";
 
@@ -68,18 +68,27 @@ describe.skipIf(process.platform === "win32")("spawnWorker delivers the prompt o
         const configPath = join(home, "config-dir.txt");
         const argvPath = join(home, "argv.txt");
         const stdinPath = join(home, "stdin.txt");
-        const fake = join(bin, "claude");
-        writeFileSync(
-            fake,
-            `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellQuote(argvPath)}\nprintf '%s' "\${CLAUDE_CONFIG_DIR-unset}" > ${shellQuote(configPath)}\ncat > ${shellQuote(stdinPath)}\n`,
-            { mode: 0o755 }
+        // The kept program, linked where the resolver looks: a script made in `home` would be started and then deleted
+        // with the run's temp root (the syspolicyd trap in .claude/rules/tests.md), so the paths come in by environment.
+        symlinkSync(
+            keptExecutable(
+                "claude",
+                `#!/bin/sh\nprintf '%s\\n' "$@" > "$FAKE_CLAUDE_ARGV"\nprintf '%s' "\${CLAUDE_CONFIG_DIR-unset}" > "$FAKE_CLAUDE_CONFIG"\ncat > "$FAKE_CLAUDE_STDIN"\n`
+            ),
+            join(bin, "claude")
         );
-        chmodSync(fake, 0o755);
 
         const prompt = "review the patch, the login uses sk-fixture-not-a-real-secret";
 
         await env.testing.withOverrides(
-            { HOME: home, GENESIS_TOOLS_HOME: home, CLAUDE_CONFIG_DIR: undefined },
+            {
+                HOME: home,
+                GENESIS_TOOLS_HOME: home,
+                CLAUDE_CONFIG_DIR: undefined,
+                FAKE_CLAUDE_ARGV: argvPath,
+                FAKE_CLAUDE_CONFIG: configPath,
+                FAKE_CLAUDE_STDIN: stdinPath,
+            },
             async () => {
                 const result = await spawnWorker({
                     name: "reviewer",
@@ -121,13 +130,21 @@ test.skipIf(process.platform === "win32")(
         const argv = join(scratch, "argv");
         const source = join(scratch, "source-home");
         const seenHome = join(scratch, "seen-home");
-        writeFileSync(
-            join(bin, "claude"),
-            `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellQuote(argv)}\nprintf '%s' "$CLAUDE_CONFIG_DIR" > ${shellQuote(seenHome)}\ncat >/dev/null\nprintf '%s\\n' '{"type":"result","subtype":"success","session_id":"fixture-existing-session","result":"received"}'\n`,
-            { mode: 0o755 }
+        symlinkSync(
+            keptExecutable(
+                "claude",
+                `#!/bin/sh\nprintf '%s\\n' "$@" > "$FAKE_CLAUDE_ARGV"\nprintf '%s' "$CLAUDE_CONFIG_DIR" > "$FAKE_CLAUDE_SEEN_HOME"\ncat >/dev/null\nprintf '%s\\n' '{"type":"result","subtype":"success","session_id":"fixture-existing-session","result":"received"}'\n`
+            ),
+            join(bin, "claude")
         );
         await env.testing.withOverrides(
-            { HOME: scratch, GENESIS_TOOLS_HOME: scratch, CLAUDE_CONFIG_DIR: join(scratch, "wrong-ambient-home") },
+            {
+                HOME: scratch,
+                GENESIS_TOOLS_HOME: scratch,
+                CLAUDE_CONFIG_DIR: join(scratch, "wrong-ambient-home"),
+                FAKE_CLAUDE_ARGV: argv,
+                FAKE_CLAUDE_SEEN_HOME: seenHome,
+            },
             async () => {
                 const store = new ClaudeWorkerStore();
                 store.createMeta({

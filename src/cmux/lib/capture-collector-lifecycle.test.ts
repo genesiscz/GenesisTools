@@ -6,14 +6,15 @@ import { enableScreenCollector, screenCollectorStatus } from "@app/cmux/lib/capt
 import { installCapture, uninstallCapture } from "@app/cmux/lib/capture-installer";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { keptBin } from "@genesiscz/utils/test/kept-executable";
 
 const originalEnvironment = env.testing.snapshot();
 const fixtureHome = mkdtempSync(join(tmpdir(), "cmux-collector-os-home-"));
-const fixtureBin = join(fixtureHome, "bin");
+// The detached collector starts this cmux: kept, never deleted with the run's temp root (the syspolicyd trap in
+// .claude/rules/tests.md).
+const fixtureBin = keptBin({ cmux: "#!/bin/sh\nexit 99\n" });
 const fixtureAutosave = join(fixtureHome, "Library/Application Support/cmux");
-mkdirSync(fixtureBin, { recursive: true });
 mkdirSync(fixtureAutosave, { recursive: true });
-writeFileSync(join(fixtureBin, "cmux"), "#!/bin/sh\nexit 99\n", { mode: 0o700 });
 writeFileSync(join(fixtureAutosave, "session-fixture.json"), SafeJSON.stringify({ windows: [] }));
 beforeEach(() => {
     env.testing.set("HOME", fixtureHome);

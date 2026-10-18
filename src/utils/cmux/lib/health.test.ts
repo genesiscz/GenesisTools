@@ -1,10 +1,11 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isCmuxAccessDenied } from "@genesiscz/utils/cmux/lib/access-denied";
 import { type CmuxHealth, CmuxUnresponsiveError, classifyCmuxHealth } from "@genesiscz/utils/cmux/lib/health";
 import { logger } from "@genesiscz/utils/logger";
+import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import { runCmuxJSON, runCmuxOk } from "./cli";
 
 describe("classifyCmuxHealth", () => {
@@ -70,22 +71,29 @@ describe("CmuxUnresponsiveError", () => {
 });
 
 /**
- * Overwrites the SAME fake `cmux` binary's content, rather than installing a fresh
- * one per call: `resolveCmuxPath()` caches the resolved path after the first
- * successful `Bun.which` lookup, so a second `mkdtempSync` dir prepended to PATH
- * later in the same test file is silently ignored once the cache is warm.
+ * Rewrites the SAME fake `cmux`'s behaviour, rather than installing a fresh one per
+ * call: `resolveCmuxPath()` caches the resolved path after the first successful
+ * `Bun.which` lookup, so a second `mkdtempSync` dir prepended to PATH later in the
+ * same test file is silently ignored once the cache is warm.
+ *
+ * The program itself is kept, never rewritten or deleted with the run's temp root
+ * (the syspolicyd trap in .claude/rules/tests.md): the `cmux` on PATH is a link to
+ * it, and it sources the behaviour file next to that link. cmux inherits no
+ * environment this file could set, so the link's folder is how it finds the file.
  */
-let fakeCmuxBinPath: string | null = null;
+let fakeCmuxDir: string | null = null;
 
 function writeFakeCmux(script: string): void {
-    if (!fakeCmuxBinPath) {
-        const dir = mkdtempSync(join(tmpdir(), "fake-cmux-access-denied-"));
-        fakeCmuxBinPath = join(dir, "cmux");
-        process.env.PATH = `${dir}:${process.env.PATH}`;
+    if (!fakeCmuxDir) {
+        fakeCmuxDir = mkdtempSync(join(tmpdir(), "fake-cmux-access-denied-"));
+        symlinkSync(
+            keptExecutable("cmux", '#!/bin/sh\n. "$(dirname "$0")/cmux-behaviour"\n'),
+            join(fakeCmuxDir, "cmux")
+        );
+        process.env.PATH = `${fakeCmuxDir}:${process.env.PATH}`;
     }
 
-    writeFileSync(fakeCmuxBinPath, script);
-    chmodSync(fakeCmuxBinPath, 0o755);
+    writeFileSync(join(fakeCmuxDir, "cmux-behaviour"), script);
 }
 
 // Regression test: #446 item 2 — every non-zero cmux exit, including the

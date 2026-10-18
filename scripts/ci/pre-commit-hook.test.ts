@@ -1,6 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import {
-    chmodSync,
     copyFileSync,
     existsSync,
     mkdirSync,
@@ -15,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { env as testEnvironment } from "@genesiscz/utils/env.client";
-import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
+import { keptBin, keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import { jsonProblem } from "./check-json";
 import { findLostComments, parseZeroContextDiff } from "./check-lost-comments";
 
@@ -27,14 +26,6 @@ import { findLostComments, parseZeroContextDiff } from "./check-lost-comments";
  */
 
 const ROOT = resolve(import.meta.dir, "../..");
-
-/** Executed files stay outside the wrapper's cleanup root and are immutable once published. */
-function executableFixture(name: string, body: string): string {
-    return persistentFixture(name, body, (path) => {
-        writeFileSync(path, body);
-        chmodSync(path, 0o755);
-    });
-}
 
 // A test run inside another git process (a hook, a rebase --exec) inherits GIT_DIR / GIT_INDEX_FILE, which would
 // point every git call below at the outer repository.
@@ -62,11 +53,11 @@ describe("config hook installer", () => {
         copyFileSync(join(ROOT, "scripts/git/install-hooks.ts"), join(directory, "scripts/git/install-hooks.ts"));
         mkdirSync(join(directory, ".githooks"));
         symlinkSync(
-            executableFixture("pre-commit", '#!/bin/sh\nprintf "pre-commit\\n" >> hook-runs\ntest ! -f fail-hook\n'),
+            keptExecutable("pre-commit", '#!/bin/sh\nprintf "pre-commit\\n" >> hook-runs\ntest ! -f fail-hook\n'),
             join(directory, ".githooks/pre-commit")
         );
         symlinkSync(
-            executableFixture("commit-msg", '#!/bin/sh\nprintf "%s\\n" "$@" > hook-args\n'),
+            keptExecutable("commit-msg", '#!/bin/sh\nprintf "%s\\n" "$@" > hook-args\n'),
             join(directory, ".githooks/commit-msg")
         );
         if (unsupported) {
@@ -75,7 +66,7 @@ describe("config hook installer", () => {
                 throw new Error("git is required");
             }
 
-            const wrapper = executableFixture(
+            const wrapper = keptExecutable(
                 "git",
                 `#!/bin/sh\nif [ "$1" = hook ] && [ "$2" = list ]; then exit 1; fi\nexec '${realGit}' "$@"\n`
             );
@@ -197,10 +188,8 @@ describe("config hook installer", () => {
 
     test("checkout and rebase early exits never start git or tools", () => {
         const s = scratch();
-        const programs = ["git", "bun", "tools"].map((command) =>
-            executableFixture(command, '#!/bin/sh\nprintf "unexpected process\\n" >> unexpected-process\nexit 99\n')
-        );
-        const bin = dirname(programs[0]);
+        const unexpected = '#!/bin/sh\nprintf "unexpected process\\n" >> unexpected-process\nexit 99\n';
+        const bin = keptBin({ git: unexpected, bun: unexpected, tools: unexpected });
 
         const linked = join(s.directory, "linked");
         mkdirSync(linked);
@@ -263,7 +252,7 @@ beforeAll(() => {
     copyFileSync(join(ROOT, "biome.json"), join(repo, "biome.json"));
     mkdirSync(join(repo, ".githooks"));
     symlinkSync(
-        executableFixture("pre-commit", readFileSync(join(ROOT, ".githooks/pre-commit"), "utf8")),
+        keptExecutable("pre-commit", readFileSync(join(ROOT, ".githooks/pre-commit"), "utf8")),
         join(repo, ".githooks/pre-commit")
     );
     mkdirSync(join(repo, "scripts", "ci"), { recursive: true });

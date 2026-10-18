@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { keptBin } from "@genesiscz/utils/test/kept-executable";
 
 const INSTALL_SH = join(import.meta.dir, "install.sh");
 
@@ -59,23 +60,19 @@ function tempHome(): string {
     return mkdtempSync(join(tmpdir(), "genesis-install-test-"));
 }
 
-let fakeXcodeBin: string | undefined;
-
 /**
  * A fake `xcode-select` on PATH, so detect_xcode_toolchain is testable without the real tool.
- * ONE script per file, told what to print through the environment: macOS scans a never-run
- * executable on its first exec (~140 ms measured), so a fresh script per test paid that each time.
+ * ONE kept script, told what to print through the environment: macOS scans a never-run
+ * executable on its first exec (~140 ms measured), and a script started and then deleted with
+ * the run's temp root is the syspolicyd trap in .claude/rules/tests.md.
  * An empty `FAKE_XCODE_DEV_DIR` makes it fail the way a missing toolchain does.
  */
 function fakeXcodeSelect(devDir: string | null): { pathPrepend: string; env: Record<string, string> } {
-    if (!fakeXcodeBin) {
-        fakeXcodeBin = mkdtempSync(join(tmpdir(), "genesis-install-xcode-"));
-        const script = join(fakeXcodeBin, "xcode-select");
-        writeFileSync(script, '#!/bin/sh\n[ -n "$FAKE_XCODE_DEV_DIR" ] || exit 2\necho "$FAKE_XCODE_DEV_DIR"\n');
-        chmodSync(script, 0o755);
-    }
+    const bin = keptBin({
+        "xcode-select": '#!/bin/sh\n[ -n "$FAKE_XCODE_DEV_DIR" ] || exit 2\necho "$FAKE_XCODE_DEV_DIR"\n',
+    });
 
-    return { pathPrepend: fakeXcodeBin, env: { FAKE_XCODE_DEV_DIR: devDir ?? "" } };
+    return { pathPrepend: bin, env: { FAKE_XCODE_DEV_DIR: devDir ?? "" } };
 }
 
 describe("shell_rc_filename", () => {

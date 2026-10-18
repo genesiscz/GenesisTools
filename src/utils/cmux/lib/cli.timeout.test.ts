@@ -1,7 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { keptBin } from "@genesiscz/utils/test/kept-executable";
 import { DEFAULT_CMUX_TIMEOUT_MS, runCmux, runCmuxJSON, runCmuxOk } from "./cli";
 
 /**
@@ -12,11 +10,8 @@ import { DEFAULT_CMUX_TIMEOUT_MS, runCmux, runCmuxJSON, runCmuxOk } from "./cli"
  * whose whole subject is cmux livelock, the safety belonged in the default.
  */
 function fakeCmuxOnPath(script: string): void {
-    const dir = mkdtempSync(join(tmpdir(), "fake-cmux-"));
-    const bin = join(dir, "cmux");
-    writeFileSync(bin, script);
-    chmodSync(bin, 0o755);
-    process.env.PATH = `${dir}:${process.env.PATH}`;
+    // Kept, never deleted with the run's temp root (the syspolicyd trap in .claude/rules/tests.md).
+    process.env.PATH = `${keptBin({ cmux: script })}:${process.env.PATH}`;
 }
 
 describe("runCmux timeout", () => {

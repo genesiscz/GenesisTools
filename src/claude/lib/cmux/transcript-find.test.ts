@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdtemp } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerCmuxCommand } from "@app/claude/commands/cmux";
@@ -7,6 +7,7 @@ import { applyPresets, presets } from "@genesiscz/utils/browser-router/presets";
 import { defaultRouterConfig, route } from "@genesiscz/utils/browser-router/route";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { keptBin } from "@genesiscz/utils/test/kept-executable";
 import { Command } from "commander";
 import {
     findInTranscript,
@@ -273,10 +274,9 @@ describe("transcript find", () => {
 
     test("the command sends literal backslashes through RPC and keeps Enter a named key", async () => {
         const dir = await mkdtemp(join(tmpdir(), "cmux-find-transport-"));
-        const executable = join(dir, "cmux");
+        // Kept, never deleted with the run's temp root (the syspolicyd trap in .claude/rules/tests.md).
+        const bin = keptBin({ cmux: `#!/bin/sh\nprintf '%s\\n' "$@" >> "$FAKE_CMUX_ARGS"\n` });
         const capture = join(dir, "args");
-        await Bun.write(executable, `#!/bin/sh\nprintf '%s\\n' "$@" >> '${capture}'\n`);
-        await chmod(executable, 0o755);
         const query = String.raw`literal\nq\t`;
         const source = `
             import { mock } from "bun:test";
@@ -299,7 +299,7 @@ describe("transcript find", () => {
         `;
         const proc = Bun.spawn([process.execPath, "-e", source], {
             cwd: join(import.meta.dir, "../../../.."),
-            env: { ...env.getProcessEnv(), PATH: `${dir}:${env.getProcessEnv().PATH ?? ""}` },
+            env: { ...env.getProcessEnv(), PATH: `${bin}:${env.getProcessEnv().PATH ?? ""}`, FAKE_CMUX_ARGS: capture },
             stdout: "pipe",
             stderr: "pipe",
         });

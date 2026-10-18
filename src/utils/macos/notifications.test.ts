@@ -1,19 +1,18 @@
 import { describe, expect, it } from "bun:test";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { systemChannelDelivered } from "@genesiscz/utils/notifications/channels/system";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
+import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import * as notifications from "./notifications";
 import { launchdSession, resolveNotificationFallbackState, sendViaTerminalNotifier } from "./notifications";
 
 setupStorageSandbox();
 
+/** Kept, one per body: a fake started and then deleted with the run's temp root is the syspolicyd trap. */
 function fakeNotifier(body: string): string {
-    const path = join(mkdtempSync(join(tmpdir(), "fake-terminal-notifier-")), "terminal-notifier");
-    writeFileSync(path, `#!/bin/sh\n${body}\n`);
-    chmodSync(path, 0o755);
-    return path;
+    return keptExecutable("terminal-notifier", `#!/bin/sh\n${body}\n`);
 }
 
 describe("sendViaTerminalNotifier", () => {
@@ -187,8 +186,9 @@ describe("probeTerminalNotifier", () => {
     });
 
     it("rejects a candidate that is not executable", async () => {
-        const path = fakeNotifier("exit 0");
-        chmodSync(path, 0o644);
+        // Never executable, so never started: it stays in the temp root instead of changing a kept fake's mode.
+        const path = join(mkdtempSync(join(tmpdir(), "fake-terminal-notifier-")), "terminal-notifier");
+        writeFileSync(path, "#!/bin/sh\nexit 0\n", { mode: 0o644 });
 
         expect(await notifications.probeTerminalNotifier(path, { timeoutMs: 2_000 })).toBe(false);
     });

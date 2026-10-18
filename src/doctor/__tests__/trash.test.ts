@@ -1,8 +1,9 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { moveManyToTrash } from "@app/doctor/lib/trash";
+import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 
 const root = mkdtempSync(join(tmpdir(), "doctor-trash-"));
 const bin = join(root, "bin");
@@ -11,26 +12,27 @@ mkdirSync(bin);
 mkdirSync(trashDir);
 
 /**
- * A stand-in for `/usr/bin/trash -v`, so no test fills the real Trash: it moves each item into `trashDir` and prints
- * the same `# Moved` line, prints the same error line for a name with "fail" in it, and hangs on "hang" (as one
- * process, like the real command, so a timeout kill closes its output).
+ * A stand-in for `/usr/bin/trash -v`, so no test fills the real Trash: it moves each item into the `Trash` folder
+ * beside it (`trashDir`, since every item lives in `root`) and prints the same `# Moved` line, prints the same error
+ * line for a name with "fail" in it, and hangs on "hang" (as one process, like the real command, so a timeout kill
+ * closes its output). Kept, never deleted with `root` (the syspolicyd trap in .claude/rules/tests.md), so it embeds
+ * no per-run path: the command inherits no environment this file could set, so the folder comes from each item.
  */
-const fake = join(bin, "trash");
-writeFileSync(
-    fake,
+const fake = keptExecutable(
+    "trash",
     `#!/bin/sh
 shift 2
 for p in "$@"; do
+  t="$(dirname "$p")/Trash"
   case "$p" in
     *fail*) echo "trash[1:2] # Error attempting to move $p to the trash folder, Error Domain=NSCocoaErrorDomain Code=513 \\"You don't have permission.\\"" >&2 ;;
     *hang*) exec sleep 30 ;;
-    *silent*) mv "$p" "${trashDir}/" ;;
-    *) mv "$p" "${trashDir}/" && echo "# Moved \\"$p\\" to \\"${trashDir}/$(basename "$p")\\"" ;;
+    *silent*) mv "$p" "$t/" ;;
+    *) mv "$p" "$t/" && echo "# Moved \\"$p\\" to \\"$t/$(basename "$p")\\"" ;;
   esac
 done
 `
 );
-chmodSync(fake, 0o755);
 
 function item(name: string): string {
     const path = join(root, name);

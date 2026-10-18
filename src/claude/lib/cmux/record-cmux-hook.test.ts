@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { resumeArgv } from "@genesiscz/utils/agent-sessions/resume-argv";
 import { findProjectRoot } from "@genesiscz/utils/fs/project-root";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { keptBin } from "@genesiscz/utils/test/kept-executable";
 import { clearResumeBinding, syncResumeBinding } from "../../../../plugins/genesis-tools/hooks/record-session-cmux";
 import { isHeadlessAgent } from "../../../../plugins/genesis-tools/lib/agent-process";
 import { resumeArgv as pluginResumeArgv } from "../../../../plugins/genesis-tools/lib/resume-argv";
@@ -93,12 +94,11 @@ describe("record-session-cmux heartbeat", () => {
     });
 
     test.each(["identify", "set"])("a failed %s is retried before the journal heartbeat expires", async (failure) => {
-        const bin = join(home, "bin");
         const calls = join(home, "calls");
-        await mkdir(bin, { recursive: true });
-        await writeFile(
-            join(bin, "cmux"),
-            `#!/bin/sh
+        // Kept, never deleted with `home` (the syspolicyd trap in .claude/rules/tests.md); it reads its paths from
+        // the environment.
+        const bin = keptBin({
+            cmux: `#!/bin/sh
 printf '%s\\n' "$*" >> "$FIXTURE_DIR/calls"
 case "$*" in
   *identify*)
@@ -118,8 +118,7 @@ case "$*" in
   *) exit 1 ;;
 esac
 `,
-            { mode: 0o755 }
-        );
+        });
         const fixtureEnv = {
             PATH: `${bin}:${process.env.PATH ?? ""}`,
             FIXTURE_DIR: home,

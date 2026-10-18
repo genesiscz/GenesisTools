@@ -1,16 +1,13 @@
 import { expect, test } from "bun:test";
-import { chmod, mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { keptBin } from "@genesiscz/utils/test/kept-executable";
 
 // Regression test: 2026-09-07 restore screenshot — cmux send turns shell escapes into Enter keys.
 test("literal terminal transport preserves backslashes and the final Enter", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "cmux-literal-test-"));
-    const executable = join(dir, "cmux");
-    await Bun.write(executable, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
-    await chmod(executable, 0o755);
+    // Kept, never deleted with the run's temp root (the syspolicyd trap in .claude/rules/tests.md).
+    const dir = keptBin({ cmux: "#!/bin/sh\nprintf '%s\\n' \"$@\"\n" });
     const modulePath = join(import.meta.dir, "cli.ts");
     const payload = "printf '%s\\n' 'a\\tb\\rc'\n";
     const source = `

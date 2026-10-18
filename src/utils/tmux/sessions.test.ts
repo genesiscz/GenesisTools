@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import { resetTmuxBinCache, setTmuxBinForTests } from "@genesiscz/utils/tmux/bin";
 import {
     argvWithChildDeadline,
@@ -678,7 +679,7 @@ describe("tmux spawn wedge guard", () => {
     // child of the perl watchdog armed with TMUX_CHILD_DEADLINE_MS. The REAP: the same
     // watchdog, armed for 1 s, still kills a wedged client after the parent is SIGKILLed.
     test("SIGKILL of the parent still reaps a wedged list-sessions client", async () => {
-        const { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
+        const { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
 
         if (!existsSync("/usr/bin/perl")) {
             return;
@@ -695,10 +696,12 @@ describe("tmux spawn wedge guard", () => {
 
         // A script file, because listTmuxSessions runs it as the tmux binary. The first run of a new executable
         // costs ~270 ms on macOS and those runs queue across test processes (8 at once: 280 to 2050 ms), which
-        // the 8 s watchdog absorbs and a 1 s one cannot.
-        const realClient = { path: join(dir, "tmux"), pidfile: join(dir, "tmux.pid") };
-        writeFileSync(realClient.path, `#!/bin/sh\n${spinnerBody(realClient.pidfile)}\n`);
-        chmodSync(realClient.path, 0o755);
+        // the 8 s watchdog absorbs and a 1 s one cannot. It is kept, never deleted with `dir` (the syspolicyd trap in
+        // .claude/rules/tests.md), so its pidfile comes in through the environment.
+        const realClient = {
+            path: keptExecutable("tmux", `#!/bin/sh\n${spinnerBody("$FAKE_TMUX_PIDFILE")}\n`),
+            pidfile: join(dir, "tmux.pid"),
+        };
         // The 1 s client is `sh -c` for that reason: 10 ms to start, however many tests run beside this one.
         const reapedPidfile = join(dir, "wedged.pid");
         const reapedArgv = ["/bin/sh", "-c", spinnerBody(reapedPidfile)];
@@ -728,7 +731,7 @@ describe("tmux spawn wedge guard", () => {
         // bun test preload) and the child writes into the real temp folder.
         const child = Bun.spawn(["bun", "run", parent], {
             cwd: repoRoot,
-            env: process.env,
+            env: { ...process.env, FAKE_TMUX_PIDFILE: realClient.pidfile },
             stdout: "ignore",
             stderr: "pipe",
         });

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
+import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import { checkSource, pluginsDisabledFor } from "./lint-rules";
 
 /**
@@ -310,12 +310,7 @@ describe("no-process-tool-spawn", () => {
  * A fake tool the wrapper starts, made once per body and kept: a new script per run, deleted with the run's folder,
  * was one of the executables syspolicyd crashed on when the Mac froze on 2026-10-14.
  */
-function fakeTool(name: string, body: string): string {
-    return persistentFixture(name, body, (path) => {
-        writeFileSync(path, body);
-        chmodSync(path, 0o755);
-    });
-}
+const fakeTool = keptExecutable;
 
 describe("lint-changed wrapper dispatch", () => {
     test("Swift-only and empty diffs still run repo rules while Biome remains scoped", () => {

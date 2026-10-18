@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CommandRunner } from "@genesiscz/utils/git/origins";
 import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
+import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import { hubPr, hubPrs, missingCommits, PrRefError } from "./prs";
 
 setupStorageSandbox();
@@ -213,8 +213,8 @@ describe("missingCommits", () => {
     it("answers null instead of waiting forever when git hangs, so no worktree is dropped on a guess", async () => {
         const repo = await TestRepo.create({ prefix: "gt-review-prs-" });
         repos.push(repo);
-        const stuck = join(repo.dir, "stuck-git");
-        writeFileSync(stuck, "#!/bin/sh\nsleep 30\n", { mode: 0o755 });
+        // Kept, never deleted with the repo (the syspolicyd trap in .claude/rules/tests.md).
+        const stuck = keptExecutable("stuck-git", "#!/bin/sh\nsleep 30\n");
         const started = Date.now();
 
         const gone = await missingCommits(repo.dir, ["0".repeat(40)], { timeoutMs: 300, git: stuck });

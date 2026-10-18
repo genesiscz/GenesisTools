@@ -8,6 +8,7 @@ import {
     mkdirSync,
     mkdtempSync,
     readdirSync,
+    readFileSync,
     realpathSync,
     renameSync,
     rmSync,
@@ -28,6 +29,7 @@ import {
 } from "@app/macos/lib/kit-fixtures";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
 import { scanWithC } from "../engine";
 import {
     applySnapshotRetention,
@@ -670,18 +672,22 @@ describeOnDarwin("du index: root paths and bounded collection", () => {
     let base: string;
     let harness: string;
 
-    beforeAll(async () => {
+    beforeAll(() => {
         base = realpathSync(mkdtempSync(join(tmpdir(), "gt-index-collector-")));
         const source = join(base, "harness.c");
-        harness = join(base, "harness");
         writeFileSync(source, INDEX_HARNESS);
-        const compile = Bun.spawn(["clang", "-O2", "-pthread", source, "-o", harness], {
-            stdout: "pipe",
-            stderr: "pipe",
-            env: env.getProcessEnv(),
+        // Compiled once per harness, native source and compiler, and kept: a binary built into `base` was started and
+        // then deleted with it (the syspolicyd trap in .claude/rules/tests.md).
+        const clang = Bun.spawnSync(["clang", "--version"], { env: env.getProcessEnv() }).stdout.toString();
+        const native = readFileSync(join(import.meta.dir, "../../native/clonesize.c"), "utf8");
+        harness = persistentFixture("harness", [clang, INDEX_HARNESS, native].join("\0"), (draft) => {
+            const compile = Bun.spawnSync(["clang", "-O2", "-pthread", source, "-o", draft], {
+                stdout: "pipe",
+                stderr: "pipe",
+                env: env.getProcessEnv(),
+            });
+            expect({ code: compile.exitCode, stderr: compile.stderr.toString() }).toEqual({ code: 0, stderr: "" });
         });
-        const stderr = await new Response(compile.stderr).text();
-        expect({ code: await compile.exited, stderr }).toEqual({ code: 0, stderr: "" });
     });
 
     afterAll(() => rmSync(base, { recursive: true, force: true }));

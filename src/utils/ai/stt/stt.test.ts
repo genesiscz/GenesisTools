@@ -1,5 +1,5 @@
 import { expect, mock, spyOn, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { accountEntrySchema } from "@genesiscz/utils/ai/config/schema";
@@ -7,6 +7,7 @@ import { voiceConfiguration } from "@genesiscz/utils/ai/voice/configuration";
 import { recordingControl, recordingFailure, recordPcmClip } from "@genesiscz/utils/ai/voice/record";
 import { createVoiceSession } from "@genesiscz/utils/ai/voice/session";
 import { logger } from "@genesiscz/utils/logger";
+import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import * as capture from "./capture/pcm-source";
 import { openPcmSource, type PcmSource } from "./capture/pcm-source";
 import { createFixtureStt } from "./fixture";
@@ -550,10 +551,12 @@ test("capture child permission, interruption, failure and empty success remain d
         [70, "capture_failed"],
         [0, "no_audio"],
     ] as const) {
-        const launcher = join(directory, `launcher-${status}`);
+        // Kept, one per status, never deleted with `directory` (the syspolicyd trap in .claude/rules/tests.md).
+        const launcher = keptExecutable(
+            `launcher-${status}`,
+            `#!/bin/sh\necho 'fixture diagnostic only' >&2\nexit ${status}\n`
+        );
         const output = join(directory, `clip-${status}.pcm`);
-        writeFileSync(launcher, `#!/bin/sh\necho 'fixture diagnostic only' >&2\nexit ${status}\n`);
-        chmodSync(launcher, 0o700);
         try {
             await recordPcmClip({ output, micLauncher: launcher });
             throw new Error("capture unexpectedly succeeded");
@@ -563,8 +566,6 @@ test("capture child permission, interruption, failure and empty success remain d
         }
         expect(existsSync(output)).toBe(false);
     }
-    const launcher = join(directory, "launcher-success");
-    writeFileSync(launcher, "#!/bin/sh\nhead -c 3200 /dev/zero\n");
-    chmodSync(launcher, 0o700);
+    const launcher = keptExecutable("launcher-success", "#!/bin/sh\nhead -c 3200 /dev/zero\n");
     expect((await recordPcmClip({ output: join(directory, "success.pcm"), micLauncher: launcher })).bytes).toBe(3200);
 });

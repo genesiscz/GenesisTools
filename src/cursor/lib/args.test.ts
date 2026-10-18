@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { keptBin } from "@genesiscz/utils/test/kept-executable";
 import { type CursorArgs, parseCursorArgs } from "./args";
 
 function parsed(argv: string[]): CursorArgs {
@@ -123,7 +124,8 @@ describe("tools cursor entrypoint", () => {
     ])("forwards question words %j after the child's end-of-options marker", async ({ words }) => {
         const dir = mkdtempSync(join(tmpdir(), "cursor-bin-"));
         const marker = join(dir, "argv");
-        writeFileSync(join(dir, "cursor"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${marker}"\n`, { mode: 0o755 });
+        // Kept, never deleted with the run's temp root (the syspolicyd trap in .claude/rules/tests.md).
+        const bin = keptBin({ cursor: `#!/bin/sh\nprintf '%s\\n' "$@" > "$FAKE_CURSOR_MARKER"\n` });
 
         try {
             const proc = Bun.spawn(
@@ -138,7 +140,7 @@ describe("tools cursor entrypoint", () => {
                     ...words,
                 ],
                 {
-                    env: { ...process.env, PATH: `${dir}:${env.get("PATH") ?? ""}` },
+                    env: { ...process.env, PATH: `${bin}:${env.get("PATH") ?? ""}`, FAKE_CURSOR_MARKER: marker },
                     stdin: "ignore",
                     stdout: "pipe",
                     stderr: "pipe",
@@ -175,11 +177,11 @@ describe("tools cursor entrypoint", () => {
     it("exits 1 and never starts cursor for an unsupported mode written with an equals sign", async () => {
         const dir = mkdtempSync(join(tmpdir(), "cursor-bin-"));
         const marker = join(dir, "started");
-        writeFileSync(join(dir, "cursor"), `#!/bin/sh\ntouch "${marker}"\n`, { mode: 0o755 });
+        const bin = keptBin({ cursor: '#!/bin/sh\ntouch "$FAKE_CURSOR_MARKER"\n' });
 
         try {
             const proc = Bun.spawn(["bun", "run", join(import.meta.dir, "../index.ts"), "--mode=unsupported", "q"], {
-                env: { ...process.env, PATH: `${dir}:${env.get("PATH") ?? ""}` },
+                env: { ...process.env, PATH: `${bin}:${env.get("PATH") ?? ""}`, FAKE_CURSOR_MARKER: marker },
                 stdin: "ignore",
                 stdout: "pipe",
                 stderr: "pipe",

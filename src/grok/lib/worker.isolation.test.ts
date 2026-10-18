@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { withFileLock } from "@genesiscz/utils/storage";
+import { keptBin } from "@genesiscz/utils/test/kept-executable";
 import { sessionMetaPath, turnLogPath } from "./paths";
 import { GrokSessionStore } from "./store";
 import {
@@ -315,12 +316,12 @@ describe("safety mode is only persisted by the turn that wins the reservation", 
 describe("a steer that waits for the turn lock", () => {
     test("builds its arguments and safety mode from the metadata it finds inside the lock", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-grok-locked-plan-"));
-        const binDir = mkdtempSync(join(tmpdir(), "gt-grok-locked-bin-"));
+        // Kept, never deleted with the run's temp root (the syspolicyd trap in .claude/rules/tests.md).
+        const binDir = keptBin({ grok: `#!/bin/sh\nprintf '%s\\n' "$@" > "$FAKE_GROK_ARGV"\n` });
         const argsFile = join(home, "argv.txt");
-        writeFileSync(join(binDir, "grok"), `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\n`, { mode: 0o755 });
 
         await env.testing.withOverrides(
-            { GENESIS_TOOLS_HOME: home, PATH: `${binDir}:${process.env.PATH}` },
+            { GENESIS_TOOLS_HOME: home, PATH: `${binDir}:${process.env.PATH}`, FAKE_GROK_ARGV: argsFile },
             async () => {
                 const store = new GrokSessionStore();
                 store.createMeta({

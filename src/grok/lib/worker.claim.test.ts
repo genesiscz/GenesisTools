@@ -3,7 +3,7 @@ import { closeSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
-import { shellQuote } from "@genesiscz/utils/shell/quote";
+import { keptBin } from "@genesiscz/utils/test/kept-executable";
 import { WorkerDeliveryRejectedError } from "@genesiscz/utils/worker/delivery";
 import { sessionMetaPath, turnLogPath } from "./paths";
 import { GrokSessionStore } from "./store";
@@ -246,13 +246,19 @@ test.skipIf(process.platform === "win32")(
         const argv = join(scratch, "argv");
         const seenHome = join(scratch, "seen-home");
         const source = join(scratch, "owned-home");
-        writeFileSync(
-            join(scratch, "grok"),
-            `#!/bin/sh\nprintf '%s\\n' "$@" > ${shellQuote(argv)}\nprintf '%s' "$GROK_HOME" > ${shellQuote(seenHome)}\nprintf '%s\\n' '{"type":"end","sessionId":"fixture-existing-session"}'\n`,
-            { mode: 0o755 }
-        );
+        // Kept, never deleted with the run's temp root (the syspolicyd trap in .claude/rules/tests.md), so the
+        // per-test paths come in through the environment.
+        const bin = keptBin({
+            grok: `#!/bin/sh\nprintf '%s\\n' "$@" > "$FAKE_GROK_ARGV"\nprintf '%s' "$GROK_HOME" > "$FAKE_GROK_SEEN_HOME"\nprintf '%s\\n' '{"type":"end","sessionId":"fixture-existing-session"}'\n`,
+        });
         await env.testing.withOverrides(
-            { HOME: scratch, GENESIS_TOOLS_HOME: scratch, PATH: `${scratch}:${env.get("PATH") ?? ""}` },
+            {
+                HOME: scratch,
+                GENESIS_TOOLS_HOME: scratch,
+                PATH: `${bin}:${env.get("PATH") ?? ""}`,
+                FAKE_GROK_ARGV: argv,
+                FAKE_GROK_SEEN_HOME: seenHome,
+            },
             async () => {
                 const store = new GrokSessionStore();
                 store.createMeta({
