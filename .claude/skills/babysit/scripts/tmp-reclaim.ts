@@ -23,7 +23,18 @@
  * - its tree could not be scanned within the time budget.
  *
  *   bun tmp-reclaim.ts [--run <dir>] [--min-age-hours 6] [--live-hours 12] [--protect <id|path> ...]
+ *   bun tmp-reclaim.ts --own-session <session uuid> [--min-age-minutes 10] [--run <dir>]
  *   bun tmp-reclaim.ts --apply --plan <plan.json> [--run <dir>]
+ *
+ * `--own-session` is for the session that runs it, which the live-session guard otherwise always shields
+ * (2026-10-18: a lead's own `/tmp/cc/GenesisTools/<session>/` held 14 GB of SwiftPM scratch builds while the disk was
+ * full). It lists BUILD OUTPUT only, inside `/tmp/cc/<project>/<that session>/`: a SwiftPM triple folder
+ * (`arm64-apple-macosx`, `x86_64-apple-macosx`), a SwiftPM scratch folder (`.build` or a `--scratch-path`) that holds
+ * nothing but SwiftPM's own entries, and a Swift or clang module cache (only `.pcm`, `.swiftmodule`, `.timestamp`,
+ * `.modulevalidation` and `.lock` files). Notes, logs, reply files, patches, briefs, worktrees' sources and the
+ * `removals/` folder are never listed. Every other guard stays: no open file, socket, FIFO or `.git` inside, same
+ * owner and device, not changed in the last --min-age-minutes (default 10, because the session is live), and on
+ * apply the same inode and the same build-output class again.
  */
 import {
     existsSync,
@@ -55,7 +66,41 @@ interface Plan {
     createdAt: number;
     minAgeHours: number;
     candidates: Candidate[];
+    /** Set by an `--own-session` dry run: the apply re-checks each entry as that session's build output. */
+    ownSession?: { id: string; dirs: string[]; minAgeMinutes: number };
 }
+
+export type BuildOutputKind = "swiftpm-triple" | "swiftpm-scratch" | "module-cache";
+
+const SWIFTPM_TRIPLES = new Set(["arm64-apple-macosx", "x86_64-apple-macosx"]);
+/** What SwiftPM itself writes into a scratch path; a folder holding anything else is not pure build output. */
+const SWIFTPM_SCRATCH_ENTRIES = new Set([
+    ...SWIFTPM_TRIPLES,
+    ".lock",
+    "artifacts",
+    "build.db",
+    "checkouts",
+    "debug",
+    "debug.yaml",
+    "index-build",
+    "manifest.db",
+    "manifest.db-shm",
+    "manifest.db-wal",
+    "plugin-tools.yaml",
+    "plugins",
+    "prebuilts",
+    "registry",
+    "release",
+    "release.yaml",
+    "repositories",
+    "workspace-state.json",
+]);
+const MODULE_CACHE_FILES = [".pcm", ".swiftmodule", ".timestamp", ".modulevalidation", ".lock"];
+const MODULE_CACHE_MARKERS = [".pcm", ".swiftmodule", "modules.timestamp"];
+/** Never walked in an own-session scan: dependency trees, repositories and moved-aside files a user may restore. */
+const OWN_SESSION_SKIP = new Set(["node_modules", ".git", "removals"]);
+const OWN_SESSION_MAX_DEPTH = 12;
+const SESSION_UUID = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
 const PLAN_MAX_AGE_MS = 30 * 60_000;
 const SCAN_BUDGET_MS = 20_000;
@@ -295,6 +340,215 @@ function judge(path: string, protection: Protection, open: string[]): Candidate 
     return { path, ino: st.ino, bytes: tree.bytes, newest: tree.newest };
 }
 
+function childNames(path: string): string[] | null {
+    try {
+        return readdirSync(path);
+    } catch {
+        return null;
+    }
+}
+
+/** True when every file of the tree is a module-cache file and at least one is a compiled module. */
+function isModuleCache(path: string): boolean {
+    const deadline = Date.now() + SCAN_BUDGET_MS;
+    const stack = [path];
+    let modules = 0;
+
+    while (stack.length) {
+        if (Date.now() > deadline) {
+            return false;
+        }
+
+        const p = stack.pop() as string;
+        const st = lstatSync(p, { throwIfNoEntry: false });
+
+        if (!st || st.isSymbolicLink()) {
+            return false;
+        }
+
+        if (st.isDirectory()) {
+            const names = childNames(p);
+
+            if (!names) {
+                return false;
+            }
+
+            stack.push(...names.map((name) => join(p, name)));
+            continue;
+        }
+
+        if (!st.isFile() || !MODULE_CACHE_FILES.some((ext) => p.endsWith(ext))) {
+            return false;
+        }
+
+        if (p.endsWith(".pcm") || p.endsWith(".swiftmodule")) {
+            modules++;
+        }
+    }
+
+    return modules > 0;
+}
+
+/** Which kind of regenerable build output a folder is, or null when it is anything else. */
+export function buildOutputKind(path: string): BuildOutputKind | null {
+    const st = lstatSync(path, { throwIfNoEntry: false });
+
+    if (!st?.isDirectory() || st.isSymbolicLink()) {
+        return null;
+    }
+
+    const name = basename(path);
+
+    if (SWIFTPM_TRIPLES.has(name)) {
+        return "swiftpm-triple";
+    }
+
+    const names = childNames(path) ?? [];
+
+    if (
+        names.length > 0 &&
+        names.every((child) => SWIFTPM_SCRATCH_ENTRIES.has(child)) &&
+        (name === ".build" || names.includes("workspace-state.json") || names.some((n) => SWIFTPM_TRIPLES.has(n)))
+    ) {
+        return "swiftpm-scratch";
+    }
+
+    if (names.some((child) => MODULE_CACHE_MARKERS.some((m) => child.endsWith(m))) && isModuleCache(path)) {
+        return "module-cache";
+    }
+
+    return null;
+}
+
+/** The scratch folders of one session: every `<ccRoot>/<project>/<session uuid>` that is a real folder. */
+export function ownSessionDirs(id: string, ccRoot: string): string[] {
+    if (!SESSION_UUID.test(id)) {
+        throw new Error(`--own-session needs the full session uuid, got ${SafeJSON.stringify(id)}`);
+    }
+
+    return (childNames(ccRoot) ?? [])
+        .map((project) => join(ccRoot, project, id))
+        .filter((dir) => {
+            const st = lstatSync(dir, { throwIfNoEntry: false });
+            return Boolean(st?.isDirectory() && !st.isSymbolicLink());
+        });
+}
+
+/**
+ * The build output inside one session folder. A SwiftPM scratch folder whose tree the guards refuse (its
+ * `checkouts/` are git clones) is not listed whole; its triple folders below it are.
+ */
+export function ownBuildOutput(sessionDir: string): string[] {
+    const out: string[] = [];
+    const rootDev = lstatSync(sessionDir).dev;
+    const stack: Array<{ dir: string; depth: number }> = [{ dir: sessionDir, depth: 0 }];
+
+    while (stack.length) {
+        const { dir, depth } = stack.pop() as { dir: string; depth: number };
+
+        for (const name of childNames(dir) ?? []) {
+            const path = join(dir, name);
+            const st = lstatSync(path, { throwIfNoEntry: false });
+
+            if (!st?.isDirectory() || st.isSymbolicLink() || OWN_SESSION_SKIP.has(name)) {
+                continue;
+            }
+
+            const kind = buildOutputKind(path);
+
+            if (kind === "swiftpm-scratch" && "refuse" in scan(path, rootDev)) {
+                stack.push({ dir: path, depth: depth + 1 });
+                continue;
+            }
+
+            if (kind) {
+                out.push(path);
+                continue;
+            }
+
+            if (depth < OWN_SESSION_MAX_DEPTH) {
+                stack.push({ dir: path, depth: depth + 1 });
+            }
+        }
+    }
+
+    return out.sort();
+}
+
+/** The guards for one entry of an own-session plan; the live-session guard is the one it leaves out. */
+export function judgeOwn(
+    path: string,
+    options: { sessionDirs: string[]; open: string[]; minAgeMinutes: number }
+): Candidate | string {
+    const st = lstatSync(path, { throwIfNoEntry: false });
+
+    if (!st) {
+        return "gone";
+    }
+
+    if (st.isSymbolicLink()) {
+        return "symlink";
+    }
+
+    if (st.uid !== uid) {
+        return "other-user";
+    }
+
+    const real = realpathSync(path);
+    const sessionDir = options.sessionDirs
+        .filter((dir) => existsSync(dir))
+        .map((dir) => realpathSync(dir))
+        .find((dir) => real.startsWith(`${dir}/`));
+
+    if (!sessionDir) {
+        return "outside-session";
+    }
+
+    if (
+        relative(sessionDir, real)
+            .split("/")
+            .some((part) => OWN_SESSION_SKIP.has(part))
+    ) {
+        return "skipped-folder";
+    }
+
+    const kind = buildOutputKind(path);
+
+    if (!kind) {
+        return "not-build-output";
+    }
+
+    if (options.open.some((o) => o === path || o.startsWith(`${path}/`) || o === real || o.startsWith(`${real}/`))) {
+        return "open-file";
+    }
+
+    const tree = scan(path, lstatSync(sessionDir).dev);
+
+    if ("refuse" in tree) {
+        return tree.refuse;
+    }
+
+    if (Date.now() - tree.newest < options.minAgeMinutes * 60_000) {
+        return "recent";
+    }
+
+    return { path, ino: st.ino, bytes: tree.bytes, newest: tree.newest };
+}
+
+/** The session folder an own-session entry sits in (canonical paths only): its quarantine goes there, on one volume. */
+function ownRoot(path: string, sessionDirs: string[]): string | null {
+    if (typeof path !== "string" || resolve(path) !== path || realpathSync(path) !== path) {
+        return null;
+    }
+
+    return (
+        sessionDirs
+            .filter((dir) => existsSync(dir))
+            .map((dir) => realpathSync(dir))
+            .find((dir) => path.startsWith(`${dir}/`)) ?? null
+    );
+}
+
 /** Only canonical paths (realpath equal, so no symlink anywhere in them) with the planner's shapes may be reclaimed. */
 function candidateRoot(path: string): string | null {
     if (typeof path !== "string" || resolve(path) !== path) {
@@ -348,7 +602,62 @@ function entries(): string[] {
 
 const gb = (bytes: number) => `${(bytes / 1e9).toFixed(2)} GB`;
 
+function ownSessionDryRun(id: string): void {
+    const minAgeMinutes = Number(flag("--min-age-minutes") ?? 10);
+
+    if (!Number.isFinite(minAgeMinutes) || minAgeMinutes < 1) {
+        console.error("✖ --min-age-minutes must be at least 1");
+        process.exit(2);
+    }
+
+    const dirs = ownSessionDirs(id, join(roots[0] ?? "/tmp", "cc"));
+
+    if (dirs.length === 0) {
+        console.error(`✖ no /tmp/cc/<project>/${id} folder`);
+        process.exit(2);
+    }
+
+    const open = openPaths();
+    const candidates: Candidate[] = [];
+    const skipped: Record<string, number> = {};
+
+    for (const path of dirs.flatMap((dir) => ownBuildOutput(dir))) {
+        const verdict = judgeOwn(path, { sessionDirs: dirs, open, minAgeMinutes });
+
+        if (typeof verdict === "string") {
+            skipped[verdict] = (skipped[verdict] ?? 0) + 1;
+        } else {
+            candidates.push(verdict);
+        }
+    }
+
+    candidates.sort((a, b) => b.bytes - a.bytes);
+
+    for (const c of candidates.slice(0, 40)) {
+        const age = ((Date.now() - c.newest) / 60_000).toFixed(0);
+        console.log(`${(c.bytes / 1e6).toFixed(0).padStart(7)} MB  ${age.padStart(6)} min  ${c.path}`);
+    }
+
+    const total = candidates.reduce((sum, c) => sum + c.bytes, 0);
+    const planDir = runDir ? join(runDir, "logs") : join(roots[0] ?? "/tmp", "cc");
+    mkdirSync(planDir, { recursive: true });
+    const planPath = join(planDir, `tmp-reclaim-plan-${Date.now()}.json`);
+    const plan: Plan = { createdAt: Date.now(), minAgeHours: 0, candidates, ownSession: { id, dirs, minAgeMinutes } };
+    writeFileSync(planPath, SafeJSON.stringify(plan, null, 2));
+    console.log(
+        `${candidates.length} build-output candidates of session ${id}, ${gb(total)}; skipped ${SafeJSON.stringify(skipped)}`
+    );
+    console.log(`plan: ${planPath}\napply it within 30 minutes: bun tmp-reclaim.ts --apply --plan ${planPath}`);
+    process.exit(0);
+}
+
 function main(): void {
+    const ownSession = flag("--own-session");
+
+    if (!has("--apply") && ownSession) {
+        ownSessionDryRun(ownSession);
+    }
+
     if (!has("--apply")) {
         const protection = protectedEntries();
         const open = openPaths();
@@ -409,7 +718,10 @@ function main(): void {
     // The dry run decided with its own threshold; the re-check uses the same one.
     minAgeHours = validAge(plan.minAgeHours, "plan.minAgeHours");
 
-    const protection = protectedEntries();
+    const own = plan.ownSession;
+    // An own-session plan is re-checked by judgeOwn, which needs no live-session list (that scan reads every
+    // agent's transcript folders).
+    const protection = own ? null : protectedEntries();
     const open = openPaths();
     let freed = 0;
     let removed = 0;
@@ -421,7 +733,7 @@ function main(): void {
         for (const planned of plan.candidates) {
             let root: string | null = null;
             try {
-                root = candidateRoot(planned.path);
+                root = own ? ownRoot(planned.path, own.dirs) : candidateRoot(planned.path);
             } catch {
                 // A vanished or unreadable path is no longer a candidate either.
             }
@@ -431,7 +743,9 @@ function main(): void {
                 continue;
             }
 
-            const now = judge(planned.path, protection, open);
+            const now = own
+                ? judgeOwn(planned.path, { sessionDirs: own.dirs, open, minAgeMinutes: own.minAgeMinutes })
+                : judge(planned.path, protection ?? protectedEntries(), open);
 
             if (typeof now === "string" || now.ino !== planned.ino) {
                 const why = typeof now === "string" ? now : "replaced";
