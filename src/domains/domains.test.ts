@@ -377,7 +377,7 @@ describe("search price ceiling", () => {
 
 describe("request maxBytes", () => {
     it("reads only the first bytes of a large body and never reads a manual redirect's body", async () => {
-        let cancelled = false;
+        const cancelled = Promise.withResolvers<true>();
         const server = Bun.serve({
             port: 0,
             fetch(req) {
@@ -391,7 +391,7 @@ describe("request maxBytes", () => {
                         controller.enqueue(new TextEncoder().encode("é".repeat(1000)));
                     },
                     cancel() {
-                        cancelled = true;
+                        cancelled.resolve(true);
                     },
                 });
                 return new Response(stream);
@@ -403,8 +403,9 @@ describe("request maxBytes", () => {
             // 2 bytes per "é": 4001 bytes are 2000 whole characters and half of one, dropped by the decoder.
             expect(page.text.startsWith("é".repeat(2000))).toBe(true);
             expect(page.text.length).toBeLessThanOrEqual(2001);
-            await Bun.sleep(20);
-            expect(cancelled).toBe(true);
+            // The server learns of the cancel asynchronously: wait for that event, with a deadline only as a backstop.
+            const deadline = new Promise<false>((resolve) => setTimeout(() => resolve(false), 5_000).unref());
+            expect(await Promise.race([cancelled.promise, deadline])).toBe(true);
 
             const hop = await request(`http://127.0.0.1:${server.port}/redirect`, {
                 redirect: "manual",
