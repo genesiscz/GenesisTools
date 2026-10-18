@@ -1,3 +1,5 @@
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage/storage";
@@ -39,6 +41,53 @@ export async function request<T = unknown>(
     }
 
     return { status: response.status, url: response.url, body, text, headers: response.headers };
+}
+
+/** Loopback, private, link-local, carrier-grade NAT, multicast and other non-public addresses. */
+export function isPublicAddress(address: string): boolean {
+    const mapped = address.toLowerCase().match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/)?.[1];
+    if (mapped) {
+        return isPublicAddress(mapped);
+    }
+
+    if (isIP(address) === 4) {
+        const [a, b] = address.split(".").map(Number);
+        return !(
+            a === 0 ||
+            a === 10 ||
+            a === 127 ||
+            a >= 224 ||
+            (a === 100 && b >= 64 && b <= 127) ||
+            (a === 169 && b === 254) ||
+            (a === 172 && b >= 16 && b <= 31) ||
+            (a === 192 && b === 168) ||
+            (a === 192 && b === 0) ||
+            (a === 198 && (b === 18 || b === 19))
+        );
+    }
+
+    if (isIP(address) === 6) {
+        const lower = address.toLowerCase();
+        return !(
+            lower === "::" ||
+            lower === "::1" ||
+            /^f[cd]/.test(lower) ||
+            /^fe[89ab]/.test(lower) ||
+            /^ff/.test(lower)
+        );
+    }
+
+    return false;
+}
+
+/** Throws unless every address the host resolves to is public, so an untrusted redirect cannot reach this machine's network. */
+export async function assertPublicHost(hostname: string): Promise<void> {
+    const host = hostname.replace(/^\[|\]$/g, "");
+    const addresses = isIP(host) ? [host] : (await lookup(host, { all: true })).map((entry) => entry.address);
+    const blocked = addresses.find((address) => !isPublicAddress(address));
+    if (addresses.length === 0 || blocked) {
+        throw new Error(`${hostname} resolves to a non-public address (${blocked ?? "none"})`);
+    }
 }
 
 function redactUrl(url: string): string {

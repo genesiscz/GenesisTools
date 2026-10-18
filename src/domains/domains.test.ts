@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { parkingServiceFor } from "./lib/aftermarket";
 import { mergeVerdicts } from "./lib/check";
 import { parseDomain, seedWords } from "./lib/domain";
+import { isPublicAddress } from "./lib/http";
 import { interpretWhois, whoisFields } from "./lib/providers/whois";
 import { pronounceability, scoreCandidate } from "./lib/score";
 import { blend, dropVowels, shortForms } from "./lib/suggest/basic";
@@ -33,6 +34,11 @@ describe("parseDomain", () => {
         expect(parseDomain("genesis")).toBeNull();
         expect(parseDomain("-bad.com")).toBeNull();
         expect(parseDomain("a_b.com")).toBeNull();
+    });
+
+    it("rejects a subdomain, which no registry holds as a name of its own", () => {
+        expect(parseDomain("blog.example.com")).toBeNull();
+        expect(parseDomain("shop.example.co.uk")).toBeNull();
     });
 });
 
@@ -160,9 +166,10 @@ describe("findVibeHits", () => {
         expect(findVibeHits("bereshit", lists)).toEqual([{ languages: ["en"], word: "shit", position: "end" }]);
     });
 
-    it("ignores a 3-letter word hidden inside a longer one", () => {
-        expect(findVibeHits("classic", lists)).toEqual([]);
-        expect(findVibeHits("assets", lists)[0]?.position).toBe("start");
+    it("counts a 3-letter word only as the whole label", () => {
+        expect(findVibeHits("class", lists)).toEqual([]);
+        expect(findVibeHits("assets", lists)).toEqual([]);
+        expect(findVibeHits("ass", lists)).toEqual([{ languages: ["en"], word: "ass", position: "whole" }]);
     });
 
     it("folds diacritics before matching", () => {
@@ -183,6 +190,18 @@ describe("WHOIS parsing", () => {
 
     it("treats a throttle reply as throttled, not available", () => {
         expect(interpretWhois("Query limit exceeded, try again later")).toBe("throttled");
+        expect(interpretWhois(`% ${"terms of use ".repeat(80)}\nQuery limit exceeded`)).toBe("throttled");
+    });
+
+    it("needs registration evidence for taken; an empty or odd reply is unknown", () => {
+        expect(interpretWhois("")).toBe("unknown");
+        expect(interpretWhois("Access denied for your IP address.\n")).toBe("unknown");
+        expect(interpretWhois("Domain Name: X.IO\nCreation Date: 2015-01-01T00:00:00Z\n")).toBe("taken");
+    });
+
+    it("reads a registry block as reserved", () => {
+        expect(interpretWhois("Domain: nic.eu\nStatus: NOT ALLOWED\n")).toBe("reserved");
+        expect(interpretWhois("This domain name is reserved by the registry.\n")).toBe("reserved");
     });
 
     it("reads registrar blocks, expiry and nameservers", () => {
@@ -211,6 +230,16 @@ describe("watch changeReasons", () => {
         expect(reasons).toEqual(["taken -> available", "now available"]);
     });
 
+    it("does not read an inconclusive check as a status change", () => {
+        const reasons = changeReasons({
+            entry: { domain: "x.com", addedAt: "", lastStatus: "taken" },
+            result: { ...base, status: "unknown" },
+            now,
+            expiryWarnDays: 45,
+        });
+        expect(reasons).toEqual([]);
+    });
+
     it("warns about a close expiry and stays quiet otherwise", () => {
         const soon = changeReasons({
             entry: { domain: "x.com", addedAt: "", lastStatus: "taken" },
@@ -227,5 +256,22 @@ describe("watch changeReasons", () => {
             expiryWarnDays: 45,
         });
         expect(later).toEqual([]);
+    });
+});
+
+describe("isPublicAddress", () => {
+    it("refuses loopback, private, link-local and mapped private addresses", () => {
+        for (const address of ["127.0.0.1", "10.1.2.3", "172.20.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1"]) {
+            expect(isPublicAddress(address)).toBe(false);
+        }
+
+        for (const address of ["::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1"]) {
+            expect(isPublicAddress(address)).toBe(false);
+        }
+    });
+
+    it("accepts public addresses", () => {
+        expect(isPublicAddress("93.184.216.34")).toBe(true);
+        expect(isPublicAddress("2606:4700::1111")).toBe(true);
     });
 });
