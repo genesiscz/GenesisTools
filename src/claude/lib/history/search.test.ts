@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, it, mock, setSystemTime, spyOn } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -316,9 +316,20 @@ describe("conversation lookups", () => {
     it("parseDate reads a calendar day as local midnight and relative phrases from now", () => {
         expect(search.parseDate("2026-03-01").getTime()).toBe(new Date(2026, 2, 1).getTime());
 
-        const hoursAgo = (Date.now() - search.parseDate("2 days ago").getTime()) / 3_600_000;
-        expect(hoursAgo).toBeGreaterThan(47);
-        expect(hoursAgo).toBeLessThan(49);
+        // A frozen clock, and calendar days in local time: the day after a DST change is the case wall-clock
+        // bounds got wrong, since "2 days ago" is then 47 or 49 hours back, not 48.
+        try {
+            for (const now of [new Date(2026, 5, 15, 12, 0, 0), new Date(2026, 2, 30, 12, 0, 0)]) {
+                setSystemTime(now);
+                const expected = new Date(now);
+                expected.setDate(now.getDate() - 2);
+
+                expect(search.parseDate("2 days ago").getTime()).toBe(expected.getTime());
+                expect(search.parseDate("2 days ago").getHours()).toBe(12);
+            }
+        } finally {
+            setSystemTime();
+        }
     });
 });
 
