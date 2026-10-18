@@ -17,7 +17,9 @@ public protocol FeatureSettingsPluginHost: AnyObject {
     var mode: FeatureSettingsMode { get }
     /// The appearance the window draws with; a plug-in model that edits the same keys shares this instance.
     var appearance: NativeSettingsAppearance { get }
-    /// Adds a section to the sidebar. False when a section with this id is already there.
+    /// Adds a section to the sidebar, or replaces the section with the same id (ids are not reserved per plug-in, so
+    /// give each section an id of your part). False when the sections would no longer be valid, such as two pages with
+    /// one id: the window then keeps the sections it had.
     @discardableResult
     func register(section: NativeSettingsSection) -> Bool
     /// Shows the window on `pageID` (the selected page when nil).

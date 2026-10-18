@@ -2219,7 +2219,10 @@ private struct SessionListView: View {
                             detail: "Key sounds and the app's settings",
                             symbol: "keyboard",
                             tooltip: "Open the settings window at Clicky, the keyboard sounds"
-                        ) { FeatureSettingsLaunch.open(pageID: "clicky.sound") }
+                        ) {
+                            guard AppParts.requirePart("clicky", for: "open Clicky's settings") else { return }
+                            FeatureSettingsLaunch.open(pageID: "clicky.sound")
+                        }
                     }
                     .padding(.bottom, 6)
                 }

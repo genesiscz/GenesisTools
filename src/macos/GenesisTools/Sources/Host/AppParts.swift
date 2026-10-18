@@ -42,7 +42,15 @@ package enum AppParts {
     @MainActor
     package static func canLaunch(face flag: String) -> Bool {
         guard let part = partOfFace[flag], !has(face: flag) else { return true }
-        HubPerf.log("launch \(flag): this build has no \(part) part")
+        return requirePart(part, for: "launch \(flag)")
+    }
+
+    /// Before a click opens something of `part` that has no face of its own (Clicky's settings pages): true when this
+    /// build links it, else the same alert as `canLaunch`, with the command that adds it.
+    @MainActor
+    package static func requirePart(_ part: String, for action: String) -> Bool {
+        guard !isLinked(part) else { return true }
+        HubPerf.log("\(action): this build has no \(part) part")
         let alert = NSAlert()
         alert.messageText = "This GenesisTools build has no \(part) part"
         alert.informativeText = "Add it with: tools macos permissions build --add-part \(part)"
