@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The code block's size estimate, its AppKit text conversion and the wrapped container's height cache

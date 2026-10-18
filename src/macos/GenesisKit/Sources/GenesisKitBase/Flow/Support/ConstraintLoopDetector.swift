@@ -14,11 +14,11 @@ import os
 /// Detects constraint update loops by counting updates per window per run loop cycle.
 /// When too many updates occur (indicating a loop), it logs a fault and triggers an assertion.
 @MainActor
-final class ConstraintLoopDetector {
+package final class ConstraintLoopDetector {
 
     // MARK: - Singleton
 
-    static let shared = ConstraintLoopDetector()
+    package static let shared = ConstraintLoopDetector()
 
     // MARK: - Properties
 
@@ -40,7 +40,7 @@ final class ConstraintLoopDetector {
     /// Returns `true` if safe to proceed, `false` if loop detected (caller should skip super).
     /// - Parameter window: The window being updated
     @discardableResult
-    func beginUpdate(for window: AnyObject) -> Bool {
+    package func beginUpdate(for window: AnyObject) -> Bool {
         let id = ObjectIdentifier(window)
         updateCounts[id, default: 0] += 1
 
@@ -76,13 +76,13 @@ final class ConstraintLoopDetector {
 
     /// Manually reset the cycle counts.
     /// Called automatically at end of run loop, but can be called manually if needed.
-    func resetCycle() {
+    package func resetCycle() {
         updateCounts.removeAll(keepingCapacity: true)
         hasScheduledReset = false
     }
 
     /// Get current update count for a window (for testing/debugging)
-    func updateCount(for window: AnyObject) -> Int {
+    package func updateCount(for window: AnyObject) -> Int {
         updateCounts[ObjectIdentifier(window)] ?? 0
     }
 }

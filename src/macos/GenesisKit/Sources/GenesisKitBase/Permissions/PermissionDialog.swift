@@ -4,7 +4,7 @@ import SwiftUI
 /// The dialog's content: the app icon with the grant's symbol, what is needed and why, what to do, and the actions.
 /// Laid out like a macOS alert: icon on the leading side, text, buttons on the trailing edge with the default last.
 public struct PermissionDialogView: View {
-    @ObservedObject var model: PermissionDialogModel
+    @ObservedObject package var model: PermissionDialogModel
 
     public init(model: PermissionDialogModel) {
         self.model = model

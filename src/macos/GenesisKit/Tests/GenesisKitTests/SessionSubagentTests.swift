@@ -1,4 +1,5 @@
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The session sidebar orders sub-agents working first, then idle, failed and done, newest started

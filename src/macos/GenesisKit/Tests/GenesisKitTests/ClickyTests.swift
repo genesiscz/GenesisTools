@@ -6,6 +6,7 @@ import UserNotifications
 import Vision
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 final class ClickyTests: XCTestCase {

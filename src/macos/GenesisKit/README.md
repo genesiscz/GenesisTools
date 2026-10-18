@@ -12,12 +12,20 @@ logging, the title bar zone and the small controls. One copy, two consumers:
 
 ## Layout
 
-Five libraries, folders by job. A file goes where its job is, not where its first caller was. An app compiles only
+Six libraries, folders by job. A file goes where its job is, not where its first caller was. An app compiles only
 the libraries it imports, so an optional part costs an app nothing until it uses it (Martin, 2026-10-14 and 15).
 
+- `GenesisKitBase` (`Sources/GenesisKitBase/`): what GenesisTools.app's permissions host needs and nothing more:
+  `Permissions/`, `Perf/` (PerfLog, PerfSpans, HangWatch, …), `Paths/` (`PathOpener`, `Clipboard`, `CopyToast`,
+  `PathKind`, `PathDisplay`), `Tools/` (`ToolsBridge`, the server client), `Style/` (motion, `RowButton`, `Plural`,
+  `KitPalette`, and `KitHost`: the `GenesisKitBaseHost` protocol and the class-name lookup), `Window/`
+  (`WindowTitlebar`, `SingleInstance`). No external package. `GenesisKit` re-exports it, so an app that imports
+  `GenesisKit` never names it. A host-only GenesisTools build links only this (12 s cold instead of 83 s, 2026-10-18),
+  with `GENESIS_KIT_BASE_ONLY=1` so this package declares nothing else (Package.swift). A file moves here only when
+  the host needs it and it needs nothing outside this library; `GenesisKit`'s files reach its helpers through `package`.
 - `GenesisKit` (`Sources/GenesisKit/`): what both apps use, including `Alerts/` (`AlertPolicy`, the channels and the
-  channel matrix row), `System/` (`ActivityGate`, `ScreenCaptureDetector`) and `ChartColor`. GenesisTools.app always
-  compiles it.
+  channel matrix row), `System/` (`ActivityGate`, `ScreenCaptureDetector`) and `ChartColor`. Every GenesisTools part
+  compiles it. Its `GenesisKitHost` protocol refines `GenesisKitBaseHost` with the markdown, transcript and git hooks.
 - `GenesisKitCharts` (`Sources/GenesisKitCharts/`): sunburst, treemap, donut, ring gauge, health bar and their
   layouts. Any app may import it. `Sparkline`, the native charts and `ChartColor` stay in the core.
 - `GenesisKitOverlay` (`Sources/GenesisKitOverlay/`): screen effects (`ScreenEffectsController`: tints, edge glow,

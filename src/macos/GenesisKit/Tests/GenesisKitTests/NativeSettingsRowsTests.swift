@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// Pictures for a person to look at: written only when `GENESISKIT_SHOTS` names a folder. The tests assert on the

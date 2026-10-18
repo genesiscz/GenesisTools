@@ -1,5 +1,6 @@
 import Combine
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 final class TranscriptArrivalTests: XCTestCase {

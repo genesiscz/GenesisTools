@@ -1,4 +1,5 @@
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// Two measurements open at once each count only the bodies that ran inside their own window: starting

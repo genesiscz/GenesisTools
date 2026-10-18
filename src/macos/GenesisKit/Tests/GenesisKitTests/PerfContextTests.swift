@@ -1,4 +1,5 @@
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// A stall line names the open screen and the steps before it.

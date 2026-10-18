@@ -1,4 +1,5 @@
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// Martin, 2026-10-01: Edit and Write calls must show their input as the diff, as Claude Code does,

@@ -1,5 +1,6 @@
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 final class WidgetImageCompareTests: XCTestCase {

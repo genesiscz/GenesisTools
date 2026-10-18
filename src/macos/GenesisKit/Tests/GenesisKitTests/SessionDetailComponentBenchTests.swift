@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The parts of a session screen's load, timed one at a time on a real transcript: the page fetch and the

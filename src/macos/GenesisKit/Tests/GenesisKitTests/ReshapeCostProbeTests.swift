@@ -1,6 +1,7 @@
 import SwiftUI
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// Opt-in probe (`RESHAPE_PROBE=1 swift test --filter ReshapeCostProbeTests`): what a reshape costs the main thread

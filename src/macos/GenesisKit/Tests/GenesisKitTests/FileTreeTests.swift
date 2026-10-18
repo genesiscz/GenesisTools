@@ -1,5 +1,6 @@
 import SwiftUI
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The shared file tree: folders first in Finder's order, a flat row list where an open folder's children

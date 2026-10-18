@@ -2,6 +2,7 @@ import AppKit
 import ImageIO
 import UniformTypeIdentifiers
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The wall-clock limits below hold on an idle machine and fail on a loaded one with correct code, so they are checked

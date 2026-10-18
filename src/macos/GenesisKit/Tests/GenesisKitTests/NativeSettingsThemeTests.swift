@@ -1,6 +1,7 @@
 import Foundation
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 @MainActor

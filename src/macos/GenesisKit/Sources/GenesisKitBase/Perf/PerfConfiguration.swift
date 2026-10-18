@@ -60,5 +60,5 @@ public struct PerfConfiguration: Sendable {
     )
 
     /// Read once, when perf logging is first used.
-    static let current: PerfConfiguration = GenesisKit.host?.perf ?? .fallback
+    package static let current: PerfConfiguration = KitHost.host?.perf ?? .fallback
 }

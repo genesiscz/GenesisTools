@@ -1,4 +1,5 @@
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// Every gate writes one line to the shared trail (Martin, 2026-10-16: "I want all permission gates to be audited").

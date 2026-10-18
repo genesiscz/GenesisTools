@@ -1,5 +1,6 @@
 import os
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The tree lists what is on disk now, not what was there when a folder was first read. Another app (an agent

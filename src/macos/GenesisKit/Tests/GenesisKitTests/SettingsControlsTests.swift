@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The settings controls added so every stored setting can be changed in the UI: each test proves a control writes

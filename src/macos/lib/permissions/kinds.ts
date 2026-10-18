@@ -1,6 +1,6 @@
 /**
  * The grants `GenesisTools --permission-dialog <kind>` and `--permission-status <kind>` take: the raw values of
- * GenesisKit's PermissionKind (src/macos/GenesisKit/Sources/GenesisKit/Permissions/PermissionKind.swift). A test keeps
+ * GenesisKit's PermissionKind (src/macos/GenesisKit/Sources/GenesisKitBase/Permissions/PermissionKind.swift). A test keeps
  * the two lists equal.
  */
 export const PERMISSION_KINDS = [

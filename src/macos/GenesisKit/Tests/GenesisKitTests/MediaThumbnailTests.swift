@@ -5,6 +5,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 final class MediaThumbnailCacheTests: XCTestCase {

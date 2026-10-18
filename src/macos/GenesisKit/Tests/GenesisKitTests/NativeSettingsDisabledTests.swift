@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// A disabled settings control must look disabled. AppKit's own disabled switch drew like the enabled one over the

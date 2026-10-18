@@ -2,6 +2,7 @@ import AppKit
 import Combine
 import SwiftUI
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The Tasks module's tick, create and edit paths, and the inbox pieces of the 2026-10-10 polish.

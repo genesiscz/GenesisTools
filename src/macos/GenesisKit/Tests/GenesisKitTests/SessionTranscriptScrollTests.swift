@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 // GenesisTools adaptation: this app's module, which holds the kit types too.
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// Scrolling the Session Details transcript, driven in a window nobody sees.

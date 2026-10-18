@@ -1,5 +1,6 @@
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The rule store is a keyed archive; these fixtures are XML archives, which PropertyListSerialization reads with the

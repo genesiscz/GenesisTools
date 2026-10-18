@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreVideo
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 @testable import GenesisKitPosture
 

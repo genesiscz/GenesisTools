@@ -2,6 +2,7 @@ import Combine
 import SwiftUI
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// Fitted panels grow and shrink with what opens inside them: the height they ask for, how the window changes

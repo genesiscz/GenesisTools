@@ -38,13 +38,7 @@ public struct PathLabel: View {
 
     /// The shown text ("~/…"): what a panel find row lists under `findField`.
     public static func display(_ path: String) -> String {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        if path == home {
-            return "~"
-        }
-
-        // Only below the home folder: a sibling such as `/Users/mean` keeps its full path.
-        return path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
+        PathDisplay.tilde(path)
     }
 
     public var body: some View {

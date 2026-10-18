@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The title bar strip of a full-size-content window (Window/WindowTitlebar.swift): what a click there does,

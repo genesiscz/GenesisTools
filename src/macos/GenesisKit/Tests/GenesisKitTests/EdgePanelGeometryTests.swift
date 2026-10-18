@@ -1,6 +1,7 @@
 import SwiftUI
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 final class EdgePanelGeometryTests: XCTestCase {

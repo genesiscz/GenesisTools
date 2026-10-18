@@ -30,7 +30,7 @@ public extension PermissionStatus {
 /// lands on the row the CLI checks.
 public struct SystemPermissions: PermissionSystem {
     /// A prompt waits for the user; past this deadline the request reads the grant as it is and returns.
-    static let promptDeadline: TimeInterval = 180
+    package static let promptDeadline: TimeInterval = 180
 
     private static let tccUserDb = NSString(string: "~/Library/Application Support/com.apple.TCC/TCC.db")
         .expandingTildeInPath
@@ -100,7 +100,7 @@ public struct SystemPermissions: PermissionSystem {
             let store = EKEventStore()
             await Self.waitForAnswer { done in
                 store.requestFullAccessToEvents { _, error in
-                    if let error { GenesisKit.log("permission calendar request: \(error.localizedDescription)") }
+                    if let error { KitHost.log("permission calendar request: \(error.localizedDescription)") }
                     done()
                 }
             }
@@ -109,7 +109,7 @@ public struct SystemPermissions: PermissionSystem {
             let store = EKEventStore()
             await Self.waitForAnswer { done in
                 store.requestFullAccessToReminders { _, error in
-                    if let error { GenesisKit.log("permission reminders request: \(error.localizedDescription)") }
+                    if let error { KitHost.log("permission reminders request: \(error.localizedDescription)") }
                     done()
                 }
             }
@@ -118,7 +118,7 @@ public struct SystemPermissions: PermissionSystem {
             let store = CNContactStore()
             await Self.waitForAnswer { done in
                 store.requestAccess(for: .contacts) { _, error in
-                    if let error { GenesisKit.log("permission contacts request: \(error.localizedDescription)") }
+                    if let error { KitHost.log("permission contacts request: \(error.localizedDescription)") }
                     done()
                 }
             }
@@ -153,7 +153,7 @@ public struct SystemPermissions: PermissionSystem {
     @MainActor
     public func openSettings(_ kind: PermissionKind) -> Bool {
         let opened = NSWorkspace.shared.open(kind.settingsURL)
-        GenesisKit.log("permission \(kind.rawValue) open settings \(kind.settingsAnchor) opened=\(opened)")
+        KitHost.log("permission \(kind.rawValue) open settings \(kind.settingsAnchor) opened=\(opened)")
         return opened
     }
 
@@ -185,7 +185,7 @@ public struct SystemPermissions: PermissionSystem {
             wait.arm(continuation)
             start { wait.finish(()) }
             DispatchQueue.global().asyncAfter(deadline: .now() + promptDeadline) {
-                if wait.finish(()) { GenesisKit.log("permission prompt had no answer after \(Int(promptDeadline)) s") }
+                if wait.finish(()) { KitHost.log("permission prompt had no answer after \(Int(promptDeadline)) s") }
             }
         }
     }
@@ -195,7 +195,7 @@ public struct SystemPermissions: PermissionSystem {
     /// it, so the dialog gets its answer by the deadline like every other request. The probe itself cannot be
     /// stopped, so `flights` keeps one per `key`: a "Check again" while it still runs waits for that one's answer
     /// (by its own deadline) instead of starting another blocking probe.
-    static func probe(_ key: String, within deadline: TimeInterval, flights: ProbeFlights = .shared,
+    package static func probe(_ key: String, within deadline: TimeInterval, flights: ProbeFlights = .shared,
                       _ work: @escaping @Sendable () -> PermissionStatus) async -> PermissionStatus
     {
         let wait = PromptWait<PermissionStatus>()
@@ -205,7 +205,7 @@ public struct SystemPermissions: PermissionSystem {
                 DispatchQueue.global(qos: .userInitiated).async { flights.land(key, work()) }
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + deadline) {
-                if wait.finish(.notDetermined) { GenesisKit.log("permission probe had no answer after \(Int(deadline)) s") }
+                if wait.finish(.notDetermined) { KitHost.log("permission probe had no answer after \(Int(deadline)) s") }
             }
         }
     }
@@ -216,7 +216,7 @@ public struct SystemPermissions: PermissionSystem {
             let script = NSAppleScript(source: "tell application \"System Events\" to get name")
             let result = script?.executeAndReturnError(&errorInfo)
             if let message = errorInfo?[NSAppleScript.errorMessage] as? String {
-                GenesisKit.log("permission automation probe: \(message)")
+                KitHost.log("permission automation probe: \(message)")
             }
             return result != nil ? .granted : .denied
         }
@@ -232,13 +232,13 @@ public struct SystemPermissions: PermissionSystem {
 /// The blocking probes still running, one per resource, and who waits for each. A probe can outlive its caller's
 /// deadline (an Automation prompt nobody answers), so a later request joins it rather than starting another: at most
 /// one blocking work item per resource, however often "Check again" is pressed.
-final class ProbeFlights: @unchecked Sendable {
-    static let shared = ProbeFlights()
+package final class ProbeFlights: @unchecked Sendable {
+    package static let shared = ProbeFlights()
     private let lock = NSLock()
     private var waiting: [String: [PromptWait<PermissionStatus>]] = [:]
 
     /// Adds `wait` to `key`'s probe; true when none was running, so the caller starts it.
-    func join(_ key: String, _ wait: PromptWait<PermissionStatus>) -> Bool {
+    package func join(_ key: String, _ wait: PromptWait<PermissionStatus>) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         let starts = waiting[key] == nil
@@ -248,7 +248,7 @@ final class ProbeFlights: @unchecked Sendable {
     }
 
     /// The probe answered: every wait still open gets the answer, and the next request starts a new probe.
-    func land(_ key: String, _ answer: PermissionStatus) {
+    package func land(_ key: String, _ answer: PermissionStatus) {
         lock.lock()
         let waits = waiting.removeValue(forKey: key) ?? []
         lock.unlock()
@@ -256,7 +256,7 @@ final class ProbeFlights: @unchecked Sendable {
     }
 
     /// Probes still running; for tests.
-    var running: Int {
+    package var running: Int {
         lock.lock()
         defer { lock.unlock() }
         return waiting.count
@@ -264,18 +264,18 @@ final class ProbeFlights: @unchecked Sendable {
 }
 
 /// One continuation resumed exactly once, by the answer or by the deadline.
-final class PromptWait<Value: Sendable>: @unchecked Sendable {
+package final class PromptWait<Value: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Value, Never>?
     private var finished = false
 
-    func arm(_ continuation: CheckedContinuation<Value, Never>) {
+    package func arm(_ continuation: CheckedContinuation<Value, Never>) {
         lock.lock()
         self.continuation = continuation
         lock.unlock()
     }
 
-    var isFinished: Bool {
+    package var isFinished: Bool {
         lock.lock()
         defer { lock.unlock() }
         return finished
@@ -283,7 +283,7 @@ final class PromptWait<Value: Sendable>: @unchecked Sendable {
 
     /// True for the call that resumed it.
     @discardableResult
-    func finish(_ value: Value) -> Bool {
+    package func finish(_ value: Value) -> Bool {
         lock.lock()
         guard !finished else {
             lock.unlock()
@@ -359,15 +359,15 @@ public struct PermissionAccess: Sendable {
         switch lifted.contains(kind, under: current) ? nil : current.mode(for: kind) {
         case .ask:
             lifted.insert(kind, under: current)
-            GenesisKit.log("permission \(kind.rawValue) simulated prompt answered")
+            KitHost.log("permission \(kind.rawValue) simulated prompt answered")
             return system.status(kind)
         case .denied, .stale:
-            GenesisKit.log("permission \(kind.rawValue) request skipped: simulated denial")
+            KitHost.log("permission \(kind.rawValue) request skipped: simulated denial")
             return status(kind)
         case nil:
             let result = await system.request(kind)
             probed.remember(result, for: kind)
-            GenesisKit.log("permission \(kind.rawValue) requested: \(result.wireValue)")
+            KitHost.log("permission \(kind.rawValue) requested: \(result.wireValue)")
             return result
         }
     }

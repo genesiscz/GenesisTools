@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-private struct NativeReduceMotionKey: EnvironmentKey { static let defaultValue = false }
+// `nativeSettingsReduceMotion` is in GenesisKitBase (Style/MotionEnvironment.swift), beside GenMotion, which reads it.
 private struct NativeReduceTransparencyKey: EnvironmentKey { static let defaultValue = false }
 private struct NativeThemeKey: EnvironmentKey { static let defaultValue = NativeSettingsTheme.glass }
 
@@ -9,10 +9,6 @@ extension EnvironmentValues {
     public var nativeSettingsTheme: NativeSettingsTheme {
         get { self[NativeThemeKey.self] }
         set { self[NativeThemeKey.self] = newValue }
-    }
-    public var nativeSettingsReduceMotion: Bool {
-        get { self[NativeReduceMotionKey.self] }
-        set { self[NativeReduceMotionKey.self] = newValue }
     }
     public var nativeSettingsReduceTransparency: Bool {
         get { self[NativeReduceTransparencyKey.self] }

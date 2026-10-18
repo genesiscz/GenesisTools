@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Vision
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// A user turn's parts, as `tools ai sessions tail --json` prints them (src/utils/ai/transcripts/prompt-parts.ts,

@@ -51,7 +51,7 @@ public enum LocalNetworkPrivacy {
     }
 
     /// A keyed archive's reference prints as `<CFKeyedArchiverUID …>{value = N}`; Foundation has no public reader.
-    static func uidValue(_ reference: Any) -> Int? {
+    package static func uidValue(_ reference: Any) -> Int? {
         let text = String(describing: reference)
         guard text.hasPrefix("<CFKeyedArchiverUID"), let marker = text.range(of: "{value = ") else { return nil }
         return Int(text[marker.upperBound...].prefix(while: \.isNumber))
@@ -81,10 +81,10 @@ public enum LocalNetworkPrivacy {
     /// gateway of the Wi-Fi or Ethernet network, port 80 (a refused connection reached it too). Returns once the
     /// connection got through, `answered()` says the store holds the answer, or `deadline` passes. False when no
     /// local network is up.
-    static func reach(within deadline: TimeInterval, answered: @escaping @Sendable () -> Bool) -> Bool {
+    package static func reach(within deadline: TimeInterval, answered: @escaping @Sendable () -> Bool) -> Bool {
         let queue = DispatchQueue(label: "genesiskit.local-network")
         guard let (gateway, interface) = gatewayOfLocalNetwork(queue: queue) else {
-            GenesisKit.log("permission local-network probe: no Wi-Fi or Ethernet gateway")
+            KitHost.log("permission local-network probe: no Wi-Fi or Ethernet gateway")
             return false
         }
 
@@ -106,7 +106,7 @@ public enum LocalNetworkPrivacy {
         let end = Date().addingTimeInterval(deadline)
         while Date() < end {
             if reached.wait(timeout: .now() + 1) == .success {
-                GenesisKit.log("permission local-network probe reached \(gateway)")
+                KitHost.log("permission local-network probe reached \(gateway)")
                 // The store may record the answer a moment after the connection got through.
                 for _ in 0..<3 where !answered() { Thread.sleep(forTimeInterval: 1) }
                 return true
@@ -114,7 +114,7 @@ public enum LocalNetworkPrivacy {
 
             if answered() { return true }
         }
-        GenesisKit.log("permission local-network probe had no answer after \(Int(deadline)) s")
+        KitHost.log("permission local-network probe had no answer after \(Int(deadline)) s")
         return true
     }
 
@@ -172,7 +172,7 @@ private final class RuleStoreCache: @unchecked Sendable {
     func rules(for signingIdentifier: String) -> [LocalNetworkPrivacy.Rule]? {
         let path = LocalNetworkPrivacy.ruleStorePath
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else {
-            GenesisKit.log("permission local-network: cannot stat \(path)")
+            KitHost.log("permission local-network: cannot stat \(path)")
             return nil
         }
 
@@ -185,7 +185,7 @@ private final class RuleStoreCache: @unchecked Sendable {
 
         guard let data = FileManager.default.contents(atPath: path),
               let rules = LocalNetworkPrivacy.answeredRules(for: signingIdentifier, in: data) else {
-            GenesisKit.log("permission local-network: \(path) is not a readable keyed archive")
+            KitHost.log("permission local-network: \(path) is not a readable keyed archive")
             return nil
         }
 

@@ -1,13 +1,9 @@
 import SwiftUI
 
-private struct WidgetReduceMotionKey: EnvironmentKey { static let defaultValue = false }
+// `widgetReduceMotion` is in GenesisKitBase (Style/MotionEnvironment.swift), beside GenMotion, which reads it.
 private struct WidgetReduceTransparencyKey: EnvironmentKey { static let defaultValue = false }
 
 extension EnvironmentValues {
-    public var widgetReduceMotion: Bool {
-        get { self[WidgetReduceMotionKey.self] }
-        set { self[WidgetReduceMotionKey.self] = newValue }
-    }
     public var widgetReduceTransparency: Bool {
         get { self[WidgetReduceTransparencyKey.self] }
         set { self[WidgetReduceTransparencyKey.self] = newValue }

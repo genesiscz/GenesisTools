@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The session screen's load pipeline: tool-change batches, the one-builder document queue, paging and the

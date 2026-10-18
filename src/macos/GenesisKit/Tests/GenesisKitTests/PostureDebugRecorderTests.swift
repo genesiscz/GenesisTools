@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 @testable import GenesisKitPosture
 

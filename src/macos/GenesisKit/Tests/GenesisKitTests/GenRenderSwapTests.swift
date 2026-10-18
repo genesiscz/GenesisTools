@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// A pane switch keeps the old content on screen until the new one is ready (Martin, 2026-10-13).

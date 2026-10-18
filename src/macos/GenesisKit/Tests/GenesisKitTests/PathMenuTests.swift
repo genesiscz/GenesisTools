@@ -1,5 +1,6 @@
 import AppKit
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The generic path menu (Paths/PathMenu.swift): which verbs a file or a folder offers for a configured

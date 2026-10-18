@@ -1,5 +1,6 @@
 import Darwin
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// A unix-socket server on a thread, one connection at a time: each request line goes to `reply`, whose lines

@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// No test here reaches TCC: every grant comes from `FakePermissionSystem`, every dialog goes to

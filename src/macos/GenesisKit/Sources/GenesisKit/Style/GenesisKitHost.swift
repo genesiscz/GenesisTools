@@ -1,5 +1,7 @@
+// The base library (permissions, perf, paths, tools, the host's log and lookup) is part of GenesisKit for every
+// importer: an app that imports GenesisKit never imports GenesisKitBase itself.
+@_exported import GenesisKitBase
 import AppKit
-import os
 import SwiftUI
 
 /// What an app lends the kit: where its log lines go, how it opens a terminal, and how it renders
@@ -7,24 +9,14 @@ import SwiftUI
 ///
 /// The kit finds the host by class name, `GenesisKitHostAdapter` (declare it
 /// `@objc(GenesisKitHostAdapter) final class …: NSObject, GenesisKitHost`), so no launch code has to
-/// call anything. `GenesisKit.install(_:)` sets one explicitly (tests).
-public protocol GenesisKitHost: AnyObject {
-    /// One diagnostic line (GenesisTools: `HubPerf.log` into app-perf.log).
-    func log(_ line: String)
-    /// Whether "Open in a new cmux workspace" is offered for a path.
-    var opensTerminal: Bool { get }
-    /// Opens a shell in `folder`. Called on the main thread; the host moves slow work off it.
-    func openTerminal(folder: String)
+/// call anything. `GenesisKit.install(_:)` sets one explicitly (tests). The log, perf, terminal and permission
+/// probe members are GenesisKitBase's `GenesisKitBaseHost`, which this protocol refines.
+public protocol GenesisKitHost: GenesisKitBaseHost {
     /// Text a panel find can mark (GenesisTools: `FindText`); nil draws a plain `Text`.
     func findText(_ text: String, field: String) -> AnyView?
-    /// Where PerfLog, HangWatch and MainStackSampler write, and whether they are on. Read once.
-    var perf: PerfConfiguration { get }
     /// The transcript's markdown (replies, prompt parts) in the app's own renderer; nil draws inline
     /// markdown in one `Text`.
     func transcriptMarkdown(_ text: String, style: TranscriptMarkdownStyle) -> AnyView?
-    /// What a NEW process of this app reads for `kind`. macOS caches Input Monitoring and Screen Recording per
-    /// process, so a grant given while this one runs shows only in a new one. nil when the app has no probe.
-    func freshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus?
     /// The notes vault the markdown viewer resolves vault links and `[[wikilinks]]` against (Genesis: the
     /// Obsidian vault); nil when the app has none.
     var markdownVaultRoot: String? { get }
@@ -49,13 +41,8 @@ public protocol GenesisKitHost: AnyObject {
 }
 
 public extension GenesisKitHost {
-    func log(_ line: String) {}
-    var opensTerminal: Bool { false }
-    func openTerminal(folder: String) {}
     func findText(_ text: String, field: String) -> AnyView? { nil }
-    var perf: PerfConfiguration { .fallback }
     func transcriptMarkdown(_ text: String, style: TranscriptMarkdownStyle) -> AnyView? { nil }
-    func freshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus? { nil }
     var markdownVaultRoot: String? { nil }
     var markdownConfiguredVault: String? { nil }
     func markdownCompletions(_ request: MarkdownCompletion.Request) -> [String]? { nil }
@@ -67,41 +54,23 @@ public extension GenesisKitHost {
     var keymapDirectory: URL? { nil }
 }
 
+/// The app's host as a full `GenesisKitHost`. The lookup itself is GenesisKitBase's `KitHost`, so both libraries
+/// see one object; an app whose adapter is only a `GenesisKitBaseHost` reads nil here.
 public enum GenesisKit {
-    nonisolated(unsafe) private static var installed: GenesisKitHost?
-    nonisolated(unsafe) private static var looked = false
-    private static let lock = NSLock()
-
     /// Sets the host by hand instead of the class-name lookup.
     public static func install(_ host: GenesisKitHost?) {
-        lock.lock()
-        defer { lock.unlock() }
-        installed = host
-        looked = true
+        KitHost.install(host)
     }
 
     /// The app's host, found once by class name; nil in an app that declares none.
     public static var host: GenesisKitHost? {
-        lock.lock()
-        defer { lock.unlock() }
-        if !looked {
-            looked = true
-            if let type = NSClassFromString("GenesisKitHostAdapter") as? NSObject.Type {
-                installed = type.init() as? GenesisKitHost
-            }
-        }
-        return installed
+        KitHost.host as? GenesisKitHost
     }
-
 
     /// `package`: the Genesis-only libraries (GenesisKitPosture, GenesisKitDisk) log through it too.
     package static func log(_ line: String) {
-        host?.log(line)
-        unifiedLog.notice("\(line, privacy: .public)")
+        KitHost.log(line)
     }
-
-    /// Every kit log line also goes here, so an app with no log of its own still keeps it.
-    private static let unifiedLog = Logger(subsystem: "genesiskit", category: "kit")
 }
 
 /// A shown text that the host's panel find can mark, else a plain `Text`.

@@ -1,4 +1,5 @@
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// Stale-while-revalidate (Style/SWR.swift, Tools/DiskCache.swift): which rows flash, and the reads off the main thread.

@@ -201,7 +201,7 @@ public enum GateAudit {
             let written = line.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
             guard written == line.count else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
         } catch {
-            GenesisKit.log("gate audit: could not append to \(file): \(error)")
+            KitHost.log("gate audit: could not append to \(file): \(error)")
         }
     }
 
@@ -223,7 +223,7 @@ public enum GateAudit {
     public static func write(gate: String, event: String, _ fields: [String: Any] = [:]) {
         var entry = fields.filter { JSONSerialization.isValidJSONObject(["value": $0.value]) }
         if entry.count != fields.count {
-            GenesisKit.log("gate audit \(gate) \(event): dropped non-JSON fields \(Set(fields.keys).subtracting(entry.keys).sorted())")
+            KitHost.log("gate audit \(gate) \(event): dropped non-JSON fields \(Set(fields.keys).subtracting(entry.keys).sorted())")
         }
         entry["at"] = ISO8601DateFormatter().string(from: Date())
         entry["gate"] = gate
@@ -235,7 +235,7 @@ public enum GateAudit {
         ]
 
         guard let data = try? JSONSerialization.data(withJSONObject: GateCredentialRedactor.fields(entry), options: [.sortedKeys]) else {
-            GenesisKit.log("gate audit \(gate) \(event): the entry is not JSON")
+            KitHost.log("gate audit \(gate) \(event): the entry is not JSON")
             return
         }
 

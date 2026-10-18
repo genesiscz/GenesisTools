@@ -88,7 +88,7 @@ public final class ApprovalDialogModel: ObservableObject {
 /// Laid out like a macOS alert: the app icon with the request's symbol, a short title, the reason as the first line a
 /// reader sees, a column of facts, the rest folded, and the buttons on the trailing edge with the default last.
 public struct ApprovalDialogView: View {
-    @ObservedObject var model: ApprovalDialogModel
+    @ObservedObject package var model: ApprovalDialogModel
 
     public init(model: ApprovalDialogModel) {
         self.model = model

@@ -76,8 +76,8 @@ public struct GenReduceMotion: DynamicProperty {
 /// not announce itself, so those changes stay instant.
 @MainActor
 public final class GenExpansionHost {
-    var action: (Bool) -> Void = { _ in }
-    weak var parent: GenExpansionHost?
+    package var action: (Bool) -> Void = { _ in }
+    package weak var parent: GenExpansionHost?
 
     public init() {}
 

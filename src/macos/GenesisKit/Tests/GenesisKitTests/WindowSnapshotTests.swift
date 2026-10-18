@@ -1,6 +1,7 @@
 import CoreGraphics
 import XCTest
 
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// A `--snapshot` window turns opaque for its window-server capture only while a desktop picture hides it. The window

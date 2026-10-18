@@ -17,7 +17,7 @@ public enum Plural {
     }
 
     /// English regular plurals of the last word: "reply" → "replies", "match" → "matches", "key" → "keys".
-    static func regular(_ singular: String) -> String {
+    package static func regular(_ singular: String) -> String {
         let lower = singular.lowercased()
         if lower.hasSuffix("y"), let before = lower.dropLast().last, !"aeiou".contains(before) {
             return String(singular.dropLast()) + "ies"

@@ -35,7 +35,7 @@ const KEY = "GenesisToolsStagingFaces";
 const SIMULATE_KEY = "GenesisToolsSimulateDeniedPermissions";
 const APP = join(homedir(), "Applications", "GenesisTools.app");
 
-/** The ids and short names PermissionKind(id:) accepts (src/macos/GenesisKit/Sources/GenesisKit/Permissions/PermissionKind.swift). */
+/** The ids and short names PermissionKind(id:) accepts (src/macos/GenesisKit/Sources/GenesisKitBase/Permissions/PermissionKind.swift). */
 const KINDS = [
     "input-monitoring",
     "accessibility",

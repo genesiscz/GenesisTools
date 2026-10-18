@@ -83,11 +83,11 @@ public enum MainStackSampler {
     }
 
     /// One stall's samples, taken out of the shared state in one critical section.
-    struct Burst {
-        var stacks: [[UInt]] = []
-        var attempts = 0
-        var first: CFAbsoluteTime = 0
-        var last: CFAbsoluteTime = 0
+    package struct Burst {
+        package var stacks: [[UInt]] = []
+        package var attempts = 0
+        package var first: CFAbsoluteTime = 0
+        package var last: CFAbsoluteTime = 0
     }
 
     /// Hands over and resets the samples. Call with `lock` held.
@@ -103,7 +103,7 @@ public enum MainStackSampler {
     /// Captures `spacing` apart while the ping sent at `ping` is unanswered, at most `limit` times. Called from the
     /// watchdog queue; one call covers the whole stall, because App Nap stretches the watchdog's own
     /// 250 ms timer in a background app (a 1.5 s test stall got 8 samples when this ran 10 per tick).
-    static func captureBurst(for ping: CFAbsoluteTime, limit: Int = 150, spacing: TimeInterval = 0.02) {
+    package static func captureBurst(for ping: CFAbsoluteTime, limit: Int = 150, spacing: TimeInterval = 0.02) {
         // Only for the length of a stall: without it App Nap stretches every 20 ms sleep of a
         // background app to ~150 ms, and a 1.5 s stall yielded 9 stacks.
         let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical], reason: "main-thread stall capture")
@@ -135,7 +135,7 @@ public enum MainStackSampler {
     }
 
     /// Writes one stall's aggregated stacks next to HangWatch's samples. Off the main thread.
-    static func finish(_ burst: Burst, stallMs: Double, directory: URL) {
+    package static func finish(_ burst: Burst, stallMs: Double, directory: URL) {
         let taken = burst.stacks
         let tried = burst.attempts
         let spanMs = (burst.last - burst.first) * 1000

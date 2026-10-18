@@ -26,7 +26,7 @@ public final class ToolsServerClient: @unchecked Sendable {
         private let lock = NSLock()
         private var cancelled = false
 
-        init(cancel: @escaping () -> Void) {
+        package init(cancel: @escaping () -> Void) {
             self.cancelBlock = cancel
         }
 
@@ -411,12 +411,12 @@ public final class ToolsServerClient: @unchecked Sendable {
 /// (`Collection.firstIndex`, a byte at a time) and copy it, so one reply cost time quadratic in its size; an idle hub
 /// spent most of its I/O queue there (2026-10-08). Only the new bytes are searched now (memchr), and the partial
 /// line is copied only when a newline ends a line before it.
-final class LineSplitter: @unchecked Sendable {
+package final class LineSplitter: @unchecked Sendable {
     private var buffer = Data()
     /// Bytes at the buffer's start already searched: none of them is a newline.
     private var searched = 0
 
-    func push(_ bytes: ArraySlice<UInt8>) -> [Data] {
+    package func push(_ bytes: ArraySlice<UInt8>) -> [Data] {
         buffer.append(contentsOf: bytes)
         var lines: [Data] = []
         var lineStart = 0

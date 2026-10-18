@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The selection pill of `GenSegmentedTabs` slides to the new segment and takes its width on the GenMotion curve,

@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import XCTest
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// Martin, 2026-10-07: in a tool call's diff the green and red bands stopped about 96 columns in, and the

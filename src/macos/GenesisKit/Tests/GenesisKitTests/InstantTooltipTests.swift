@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import XCTest
 // Moved from GenesisAIMonitorKit on 2026-09-30 with the tooltip it tests.
+@testable import GenesisKitBase
 @testable import GenesisKit
 
 /// The presenter is a singleton that reuses one panel, gates every hide behind

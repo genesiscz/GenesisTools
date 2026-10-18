@@ -175,11 +175,11 @@ public struct ToolsBridge: Sendable {
         )
     }
 
-    static func shebangMentionsBun(_ path: String) -> Bool {
+    package static func shebangMentionsBun(_ path: String) -> Bool {
         shebangMentions(path, needles: ["bun"])
     }
 
-    static func shebangMentions(_ path: String, needles: [String]) -> Bool {
+    package static func shebangMentions(_ path: String, needles: [String]) -> Bool {
         guard let handle = FileHandle(forReadingAtPath: path) else { return false }
         defer { try? handle.close() }
         let prefix = handle.readData(ofLength: 256)
@@ -190,7 +190,7 @@ public struct ToolsBridge: Sendable {
         return needles.contains { line.contains($0) }
     }
 
-    static func findBun(
+    package static func findBun(
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
         isExecutable: (String) -> Bool = { FileManager.default.isExecutableFile(atPath: $0) },
         pathEnvironment: String = ProcessInfo.processInfo.environment["PATH"] ?? ""
@@ -401,7 +401,7 @@ public struct ToolsBridge: Sendable {
 }
 
 extension ToolsBridge {
-    static func spanLabel(subcommand: String, args: [String]) -> String {
+    package static func spanLabel(subcommand: String, args: [String]) -> String {
         let verb = args.prefix(while: { !$0.hasPrefix("-") }).prefix(2).joined(separator: ".")
         return "tools.\(subcommand)" + (verb.isEmpty ? "" : ".\(verb)")
     }

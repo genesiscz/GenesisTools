@@ -1,4 +1,5 @@
 import AppKit
+@testable import GenesisKitBase
 @testable import GenesisKit
 import SwiftUI
 import XCTest

@@ -733,7 +733,7 @@ describe("old builds still running", () => {
 describe("permission kinds", () => {
     it("lists exactly the raw values of GenesisKit's PermissionKind", async () => {
         const source = await Bun.file(
-            join(import.meta.dir, "../../GenesisKit/Sources/GenesisKit/Permissions/PermissionKind.swift")
+            join(import.meta.dir, "../../GenesisKit/Sources/GenesisKitBase/Permissions/PermissionKind.swift")
         ).text();
         const body = source.slice(source.indexOf("public enum PermissionKind"), source.indexOf("public var id"));
         const swiftKinds = [...body.matchAll(/^\s+case (\w+)(?: = "([\w-]+)")?$/gm)].map((m) => m[2] ?? m[1]);

@@ -4,7 +4,7 @@ import SwiftUI
 /// the row's full frame, so the hover box and the selection box are the same box. Keep gaps and
 /// insets outside the button.
 public struct RowButtonStyle: ButtonStyle {
-    var cornerRadius: CGFloat
+    package var cornerRadius: CGFloat
 
     public init(cornerRadius: CGFloat = 6) {
         self.cornerRadius = cornerRadius
