@@ -1,10 +1,20 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
+import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
+import { foreignTmuxSocketReason } from "./private-tmux-socket";
 
 const PRELOAD = resolve(import.meta.dir, "preload-test-tmpdir.ts");
+
+/** A real Unix socket at `path`, listening until the server is closed. */
+async function listenOn(path: string): Promise<Server> {
+    const server = createServer();
+    await new Promise<void>((done) => server.listen(path, done));
+    return server;
+}
 
 /**
  * The preload cannot be imported here (it runs before any test module loads, and a second
@@ -68,5 +78,81 @@ describe("test tmpdir preload", () => {
         const red = run("red.test.ts");
         expect(red.status).not.toBe(0);
         expect(readdirSync(parent).filter((name) => name.startsWith("gt-test-tmp-"))).toEqual(["gt-test-tmp-young"]);
+    });
+
+    test("a tmux socket path planted as a symlink out of the root is never killed", async () => {
+        const parent = mkdtempSync(join(tmpdir(), "tmux-plant-parent-"));
+        const suite = mkdtempSync(join(tmpdir(), "tmux-plant-suite-"));
+        const outside = mkdtempSync(join(tmpdir(), "tmux-plant-out-"));
+        const target = join(outside, "s");
+        const log = join(outside, "tmux.log");
+        const server = await listenOn(target);
+        writeFileSync(
+            join(suite, "plant.test.ts"),
+            [
+                'import { test } from "bun:test";',
+                'import { mkdirSync, symlinkSync } from "node:fs";',
+                'import { tmpdir } from "node:os";',
+                'import { join } from "node:path";',
+                'test("plants the socket path", () => {',
+                "    const folder = join(tmpdir(), `tmux-${process.getuid?.()}`);",
+                "    mkdirSync(folder);",
+                '    symlinkSync(process.env.PLANT_TARGET ?? "", join(folder, "default"));',
+                "});",
+                "",
+            ].join("\n")
+        );
+        // The fake tmux is the only one on PATH, so the preload resolves it; it records any start.
+        const fakeTmux = keptExecutable("tmux", '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$FAKE_TMUX_LOG"\n');
+
+        try {
+            const run = spawnSync(process.execPath, ["test", "--preload", PRELOAD, "plant.test.ts"], {
+                cwd: suite,
+                encoding: "utf8",
+                env: {
+                    ...process.env,
+                    PATH: resolve(fakeTmux, ".."),
+                    TMPDIR: parent,
+                    TMP: parent,
+                    TEMP: parent,
+                    PLANT_TARGET: target,
+                    FAKE_TMUX_LOG: log,
+                },
+            });
+
+            expect(run.status).toBe(0);
+            expect(run.stderr).toContain("[test] tmux kill-server skipped:");
+            expect(run.stderr).toContain("is a symlink");
+            expect(existsSync(log)).toBe(false);
+            expect(existsSync(target)).toBe(true);
+        } finally {
+            server.close();
+        }
+    });
+
+    test("only a real socket inside the root counts as the run's own", async () => {
+        const root = mkdtempSync(join(tmpdir(), "tmux-guard-"));
+        const outside = mkdtempSync(join(tmpdir(), "tmux-guard-out-"));
+        const own = join(root, "own");
+        const foreign = join(outside, "s");
+        const servers = [await listenOn(own), await listenOn(foreign)];
+
+        try {
+            expect(foreignTmuxSocketReason(root, own)).toBeUndefined();
+
+            symlinkSync(foreign, join(root, "link"));
+            expect(foreignTmuxSocketReason(root, join(root, "link"))).toBe("is a symlink");
+
+            writeFileSync(join(root, "plain"), "");
+            expect(foreignTmuxSocketReason(root, join(root, "plain"))).toBe("is not a socket");
+
+            // The socket itself is real, but its folder is a symlink that leaves the root.
+            symlinkSync(outside, join(root, "tmux-dir"));
+            expect(foreignTmuxSocketReason(root, join(root, "tmux-dir", "s"))).toStartWith("resolves to ");
+        } finally {
+            for (const server of servers) {
+                server.close();
+            }
+        }
     });
 });

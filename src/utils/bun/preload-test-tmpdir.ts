@@ -1,9 +1,10 @@
 import { afterAll } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { lstatSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { TEST_RUNTIME_FLAG } from "@genesiscz/utils/test-process";
+import { foreignTmuxSocketReason } from "./private-tmux-socket";
 
 /**
  * Give every test process its own temp root, and remove it when the run is green.
@@ -76,14 +77,22 @@ env.testing.unset("TMUX");
 /**
  * The server on this run's private socket outlives the run: the dashboard's tmux code sets `exit-empty off`
  * (`ensureTmuxServerPersists` in src/utils/tmux/sessions.ts), and removing the folder only unlinks the socket. So
- * it is stopped by its exact socket path, which lies inside this root and can never name the user's server.
+ * it is stopped by its exact socket path, and only when that path is a real socket inside this root, so it can never
+ * name the user's server.
  */
 const stopPrivateTmuxServer = (): void => {
     const uid = process.getuid?.();
     const tmux = Bun.which("tmux");
     const socket = join(root, `tmux-${uid}`, "default");
 
-    if (uid === undefined || !tmux || !existsSync(socket)) {
+    if (uid === undefined || !tmux || !lstatSync(socket, { throwIfNoEntry: false })) {
+        return;
+    }
+
+    // A symlink planted at the path would aim kill-server at a server outside this run.
+    const foreign = foreignTmuxSocketReason(root, socket);
+    if (foreign) {
+        process.stderr.write(`[test] tmux kill-server skipped: ${socket} ${foreign}\n`);
         return;
     }
 
