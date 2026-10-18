@@ -16,8 +16,14 @@ export function createWatchCommand(): Command {
         .argument("[domains...]", "domain names (also --file or stdin)")
         .option("--file <path>", "read names from a file")
         .option("--note <text>", "why you watch it")
+        .option("--json", "print JSON to stdout")
         .action(async (domains: string[], opts) => {
             const { added, invalid } = await addWatch(await gatherNames({ args: domains, file: opts.file }), opts.note);
+            if (opts.json) {
+                out.result({ added, invalid });
+                return;
+            }
+
             reportInvalid(invalid);
             out.log.success(added.length ? `Watching ${added.join(", ")}` : "Nothing new to watch.");
         });
@@ -59,8 +65,14 @@ export function createWatchCommand(): Command {
         .alias("remove")
         .description("Remove names from the watchlist")
         .argument("<domains...>", "domain names")
-        .action(async (domains: string[]) => {
+        .option("--json", "print JSON to stdout")
+        .action(async (domains: string[], opts) => {
             const removed = await removeWatch(domains);
+            if (opts.json) {
+                out.result({ removed });
+                return;
+            }
+
             out.log.success(removed.length ? `Removed ${removed.join(", ")}` : "None of those were watched.");
         });
 
@@ -71,11 +83,21 @@ export function createWatchCommand(): Command {
         .option("--changed", "show only names with something to report")
         .option("--json", "print JSON to stdout")
         .action(async (opts) => {
+            const expiryWarnDays = Number.parseInt(opts.expiryDays, 10);
+            if (!Number.isInteger(expiryWarnDays) || expiryWarnDays < 0) {
+                out.log.error(`--expiry-days needs a whole number of days, got "${opts.expiryDays}"`);
+                process.exitCode = 1;
+                return;
+            }
+
             const spinner = opts.json ? null : out.spinner();
             spinner?.start("Re-checking the watchlist");
-            const changes = await refreshWatch({ expiryWarnDays: Number.parseInt(opts.expiryDays, 10) || 45 });
+            const changes = await refreshWatch({ expiryWarnDays });
             spinner?.stop(`Checked ${changes.length} name(s)`);
             const shown = opts.changed ? changes.filter((change) => change.reasons.length) : changes;
+            if (changes.some((change) => change.reasons.length)) {
+                process.exitCode = 3;
+            }
 
             if (opts.json) {
                 out.result({ changes: shown });
@@ -93,9 +115,6 @@ export function createWatchCommand(): Command {
             }
 
             out.println(table.toString());
-            if (changes.some((change) => change.reasons.length)) {
-                process.exitCode = 3;
-            }
         });
 
     return watch;

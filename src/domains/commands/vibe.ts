@@ -20,6 +20,10 @@ export function createVibeCommand(): Command {
                 })
             );
 
+            if (report.some((entry) => entry.hits.length)) {
+                process.exitCode = 2;
+            }
+
             if (opts.json) {
                 out.result({ languages, report });
                 return;
@@ -37,10 +41,6 @@ export function createVibeCommand(): Command {
                     .map((hit) => `"${hit.word}" (${hit.languages.join(", ")}; ${hit.position})`)
                     .join(", ");
                 out.println(`${pc.red("⚠")} ${pc.white(entry.name)} contains ${words}`);
-            }
-
-            if (report.some((entry) => entry.hits.length)) {
-                process.exitCode = 2;
             }
 
             out.println(

@@ -37,13 +37,21 @@ export function createHackCommand(): Command {
             }
 
             if (hacks.length === 0) {
+                if (opts.json) {
+                    out.result({ results: [] });
+                    return;
+                }
+
                 out.log.warn(`No TLD ends any of: ${sources.join(", ")}`);
                 return;
             }
 
             const spinner = opts.json ? null : out.spinner();
             spinner?.start(`Checking ${hacks.length} hack(s)`);
-            const { results } = await checkDomains(hacks.map((hack) => hack.domain));
+            const { results } = await checkDomains(
+                hacks.map((hack) => hack.domain),
+                { store: true }
+            );
             spinner?.stop(`Checked ${results.length} hack(s)`);
             const reasons = new Map(hacks.map((hack) => [hack.domain, hack.reason]));
             const shown = opts.free

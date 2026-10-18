@@ -3,7 +3,7 @@ import { parseMoney } from "@app/domains/lib/input";
 import { searchDomains } from "@app/domains/lib/search";
 import { suggestorIds } from "@app/domains/lib/suggest";
 import { DOMAIN_STATUSES, isDomainStatus } from "@app/domains/lib/types";
-import { parseVariadic, suggestCommand } from "@genesiscz/utils/cli";
+import { parseVariadic, suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
@@ -29,6 +29,14 @@ export function createSearchCommand(): Command {
         .option("--fresh", "ignore cached check results")
         .option("--json", "print JSON to stdout")
         .action(async (seedParts: string[], opts) => {
+            const requested: string[] = opts.all ? [...DOMAIN_STATUSES] : parseVariadic(opts.status);
+            const badStatus = requested.find((status) => !isDomainStatus(status));
+            if (badStatus !== undefined) {
+                out.println(suggestEnumFlag("tools domains", "--status", DOMAIN_STATUSES, { given: badStatus }));
+                process.exitCode = 1;
+                return;
+            }
+
             const vibeLang = opts.vibeLang ? parseVariadic(opts.vibeLang) : undefined;
             const spinner = opts.json ? null : out.spinner();
             spinner?.start("Generating candidates");
@@ -44,7 +52,7 @@ export function createSearchCommand(): Command {
                 checkLimit: Number.parseInt(opts.checkLimit, 10) || 150,
                 rounds: Number.parseInt(opts.rounds, 10) || 1,
                 maxPrice: parseMoney(opts.maxPrice),
-                statuses: opts.all ? [...DOMAIN_STATUSES] : parseVariadic(opts.status).filter(isDomainStatus),
+                statuses: requested.filter(isDomainStatus),
                 vibeLanguages: vibeLang?.includes("none") ? [] : vibeLang,
                 check: { fresh: opts.fresh },
                 onProgress: (done, total, round) =>

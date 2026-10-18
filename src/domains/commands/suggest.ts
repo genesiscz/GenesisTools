@@ -22,6 +22,18 @@ export function createSuggestCommand(): Command {
         .option("--json", "print JSON to stdout")
         .action(async (seedParts: string[], opts) => {
             if (opts.list || seedParts.length === 0) {
+                if (opts.json) {
+                    out.result({
+                        suggestors: SUGGESTORS.map(({ id, label, online, defaultOn }) => ({
+                            id,
+                            label,
+                            online,
+                            defaultOn,
+                        })),
+                    });
+                    return;
+                }
+
                 renderCliSection("Suggestors");
                 for (const suggestor of SUGGESTORS) {
                     const flags = [suggestor.defaultOn ? "default" : "opt-in", suggestor.online ? "online" : "offline"];

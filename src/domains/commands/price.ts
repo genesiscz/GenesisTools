@@ -3,7 +3,7 @@ import { money, statusCell } from "@app/domains/lib/display";
 import { tldOf } from "@app/domains/lib/domain";
 import { gatherNames, reportInvalid } from "@app/domains/lib/input";
 import { holdingCost, listPrice } from "@app/domains/lib/pricing";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -21,13 +21,13 @@ export function createPriceCommand(): Command {
             const { results, invalid } = await checkDomains(names);
             const rows = await Promise.all(
                 results.map(async (result) => {
-                    const list = await listPrice(tldOf(result.domain));
+                    const list = await listPrice(tldOf(result.domain)).catch((error: unknown) => {
+                        logger.warn({ domain: result.domain, error }, "domains: TLD list price unavailable");
+                        return null;
+                    });
                     const quote = result.price ?? list ?? undefined;
-                    return {
-                        result,
-                        list,
-                        total: quote && result.status !== "taken" ? holdingCost(quote, years) : undefined,
-                    };
+                    const registrable = result.status === "available" || result.status === "premium";
+                    return { result, list, total: quote && registrable ? holdingCost(quote, years) : undefined };
                 })
             );
 

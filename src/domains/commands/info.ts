@@ -77,9 +77,14 @@ export function createInfoCommand(): Command {
                 }
 
                 if (reg.expires) {
-                    const days = Math.floor((Date.parse(reg.expires) - Date.now()) / DAY_MS);
-                    const left = days < 60 ? pc.yellow(`${days} days left`) : pc.dim(`${days} days left`);
-                    row("Expires", `${reg.expires.slice(0, 10)} ${left}`);
+                    const expiresAt = Date.parse(reg.expires);
+                    if (Number.isFinite(expiresAt)) {
+                        const days = Math.floor((expiresAt - Date.now()) / DAY_MS);
+                        const left = days < 60 ? pc.yellow(`${days} days left`) : pc.dim(`${days} days left`);
+                        row("Expires", `${reg.expires.slice(0, 10)} ${left}`);
+                    } else {
+                        row("Expires", reg.expires);
+                    }
                 }
 
                 if (reg.statuses.length) {

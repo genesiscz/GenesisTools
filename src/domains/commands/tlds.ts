@@ -37,7 +37,7 @@ export function createTldsCommand(): Command {
             let sort: unknown = opts.sort;
             if (sort === true) {
                 if (!isInteractive()) {
-                    out.println(suggestEnumFlag("tools domains tlds", "--sort", SORTS));
+                    out.println(suggestEnumFlag("tools domains", "--sort", SORTS));
                     process.exitCode = 1;
                     return;
                 }
@@ -46,7 +46,7 @@ export function createTldsCommand(): Command {
             }
 
             if (!isSort(sort)) {
-                out.println(suggestEnumFlag("tools domains tlds", "--sort", SORTS, { given: String(sort) }));
+                out.println(suggestEnumFlag("tools domains", "--sort", SORTS, { given: String(sort) }));
                 process.exitCode = 1;
                 return;
             }
