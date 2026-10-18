@@ -811,6 +811,8 @@ describe("app parts", () => {
         expect(parsePartsFlag(" hub, markdown ,hub")).toEqual(["hub", "markdown"]);
         expect(() => parsePartsFlag("hub,nope")).toThrow("Unknown app part nope");
         expect(() => parsePartsFlag("all,nope")).toThrow("Unknown app part nope");
+        // A manifest from a newer checkout may name a part this one does not know.
+        expect(installedParts({ parts: ["hub", "flow", " "] })).toEqual(["hub"]);
         expect(partsEnvValue(["markdown", "hub"])).toBe("hub,markdown");
     });
 
