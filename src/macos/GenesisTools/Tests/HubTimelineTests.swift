@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The Activity mode's pure rules: the range presets, the `tools hub timeline` arguments a page is
 /// asked with, the client-side filters, the day and hour grouping, the detail envelopes per kind

@@ -36,7 +36,7 @@ func markdownRequest(_ args: [String]) -> (paths: [String], focus: Bool, diff: M
     return (paths, !args.contains("--no-focus"), diff)
 }
 
-func runMarkdown(_ args: [String]) -> Never {
+package func runMarkdown(_ args: [String]) -> Never {
     let (paths, focus, diff) = markdownRequest(args)
     HubPerf.log("markdown: launch with \(paths.count) file(s), focus=\(focus)")
     if !markdownInstance.claim() {

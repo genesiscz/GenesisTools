@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The client-side mirror of `sanitizeFileTags` (`src/question/lib/pending/form.ts`) that gives
 /// the Hub's `@file` field and browse picker inline feedback before a submit round-trips.

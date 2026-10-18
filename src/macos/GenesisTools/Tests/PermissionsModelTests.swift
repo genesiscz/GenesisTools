@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The settings window's permission list reads and asks through GenesisKit's permission module
 /// (App/PermissionsModel.swift). A fake system stands in for TCC.

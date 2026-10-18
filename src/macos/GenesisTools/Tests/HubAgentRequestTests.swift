@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// `--agent <child>` opens the node that child names. An Agent call's id (`toolu_…`) names exactly one
 /// node by its `toolUseId`; a node whose id merely starts with it, or whose name equals it, never wins.

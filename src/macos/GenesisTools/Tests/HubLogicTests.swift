@@ -1,6 +1,7 @@
 import Combine
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The hub's pure rules: pane order, request flags, the scratch settings of scripted runs, and the
 /// proposal document the review window reads and writes back.

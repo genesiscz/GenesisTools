@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// A session's folder that holds no repository resolves to the checkout of the same name one level
 /// down. A miss is not remembered: a checkout that appears later (a move still in progress) is found.

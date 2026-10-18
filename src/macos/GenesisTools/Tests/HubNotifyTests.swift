@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The PR notifications popover reads `tools hub notify status --json` and `poll --force --json`
 /// (src/hub/lib/notify-poll.ts), and a banner click runs `open -n GenesisTools.app --args --hub --mode prs

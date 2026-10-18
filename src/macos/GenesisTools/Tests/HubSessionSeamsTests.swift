@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The session readers the hub and the review window run through `tools`: every sample below has
 /// the exact field set the command printed on 2026-09-24 (values invented). A field Swift declares

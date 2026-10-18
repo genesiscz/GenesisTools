@@ -164,7 +164,7 @@ private final class ClickyAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-func runClicky(_ args: [String] = []) -> Never {
+package func runClicky(_ args: [String] = []) -> Never {
     MainActor.assumeIsolated {
         let pageID = args.firstIndex(of: "--page").flatMap { index in
             args.indices.contains(index + 1) ? args[index + 1] : nil

@@ -13,7 +13,7 @@ import WebKit
 // change log (handoff h_p38uwgeo) becomes a second source behind the same model. `--snapshot`
 // renders once, writes a PNG of the window and exits, so a change can be checked without a screen.
 
-func runReview(_ args: [String]) -> Never {
+package func runReview(_ args: [String]) -> Never {
     var repoPath = FileManager.default.currentDirectoryPath
     var snapshotPath: String?
     var session: String?

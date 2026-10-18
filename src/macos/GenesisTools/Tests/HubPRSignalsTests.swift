@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The PR detail's check logs (Hub/HubPRChecks.swift) and the notification settings
 /// (Hub/HubNotify.swift) decode what `tools hub pr check-log --json` and `tools hub notify status --json` print.

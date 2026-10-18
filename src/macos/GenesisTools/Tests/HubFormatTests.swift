@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// `HubFormat.date` parses each string once and answers repeats from its cache, so it must give the
 /// same answer the second time, a miss included.

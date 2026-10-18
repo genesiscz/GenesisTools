@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// Timings of the hub's session detail (`HubSessionDetailHost`) on a real transcript, one open per process,
 /// in a window shaped like Genesis' Session Details window. Skipped unless `SESSION_DETAILS_BENCH=<out.jsonl>`

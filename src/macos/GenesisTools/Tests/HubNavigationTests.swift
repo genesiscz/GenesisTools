@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// Back and forward through the hub (`HubNavHistory`, `HubModel.goBack`) and the group order a
 /// dragged header leaves behind (`GroupPrefs.drop`).

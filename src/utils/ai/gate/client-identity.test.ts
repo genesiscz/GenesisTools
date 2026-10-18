@@ -24,7 +24,7 @@ describe("the checkout's own preloads", () => {
     test("name every preload the launcher passes, and the Swift vault window keeps the same list", () => {
         const launcher = `${readFileSync(join(REPO, "tools"), "utf8")}\n${readFileSync(join(REPO, "src/utils/cli/tool-exec.ts"), "utf8")}`;
         const passed = [...launcher.matchAll(/"(src\/[^"]*preload[^"]*\.ts)"/g)].map((match) => match[1]);
-        const swift = readFileSync(join(REPO, "src/macos/GenesisTools/Sources/VaultUnlock.swift"), "utf8");
+        const swift = readFileSync(join(REPO, "src/macos/GenesisTools/Sources/Host/VaultUnlock.swift"), "utf8");
         const swiftList = swift.match(/static let ownPreloads = \[([^\]]*)\]/)?.[1] ?? "";
 
         expect(passed.length).toBeGreaterThan(0);

@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// A PR whose branch has no local worktree: the `tools hub pr fetch` argv, its answer and its error
 /// sentences (Hub/HubPRFetch.swift), the range scope on the fetched head (Hub/HubPRs.swift), and the

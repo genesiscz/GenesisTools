@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// Stale-while-revalidate (Hub/HubSWR.swift): each cached hub answer comes back from disk the way the
 /// view reads it. The flash rules are GenesisKit's (SWRTests there).

@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The review window's `tools hub pr` side: the argv of every write, the one door to `publish`,
 /// and how live threads land on the diff. Nothing here runs `tools` or touches a real PR.

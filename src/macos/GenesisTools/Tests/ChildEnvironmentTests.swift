@@ -1,7 +1,8 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
-/// The PATH an app face gives its children (Sources/App/ChildEnvironment.swift).
+/// The PATH an app face gives its children (Sources/Host/App/ChildEnvironment.swift).
 final class ChildEnvironmentTests: XCTestCase {
     private let user = ["/Users/someone/.local/bin", "/Users/someone/.bun/bin", "/opt/homebrew/bin", "/usr/local/bin"]
 

@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// A review window's saved state (Review/ReviewSessionState.swift), the hub's saved place
 /// (Hub/HubPlace.swift) and the face record a rebuild reads argv from (App/FaceRecord.swift).

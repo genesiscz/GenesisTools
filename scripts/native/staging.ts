@@ -8,7 +8,7 @@
  *   bun scripts/native/staging.ts allow
  *   bun scripts/native/staging.ts show <kind>
  *
- * The faces are gated (src/macos/GenesisTools/Sources/App/NativePreview.swift, NativeStaging): the Preview bundles
+ * The faces are gated (src/macos/GenesisTools/Sources/Host/App/NativePreview.swift, NativeStaging): the Preview bundles
  * run them, the normal app only when the defaults key below is true. Testing in the normal app uses its real
  * privacy grants (com.genesiscz.genesistools) instead of the Preview bundle's. A normal install never sets the key.
  *

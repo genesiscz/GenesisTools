@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// Every path and copy control goes through Hub/HubPathActions.swift: a folder opens in Finder (never
 /// the folder's default app, which LaunchServices set to QuickTime on one Mac), a file is revealed or

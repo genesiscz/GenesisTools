@@ -173,7 +173,7 @@ func openWidgetInstanceLock(in base: URL) -> Int32 {
     open(base.appendingPathComponent("widget-instance.lock").path, O_CREAT | O_RDWR | O_CLOEXEC, 0o600)
 }
 
-func runAgentWidget(_ args: [String]) -> Never {
+package func runAgentWidget(_ args: [String]) -> Never {
     MainActor.assumeIsolated {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(Bundle.main.bundleIdentifier ?? "GenesisTools", isDirectory: true)

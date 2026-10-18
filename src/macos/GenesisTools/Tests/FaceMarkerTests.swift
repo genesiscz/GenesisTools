@@ -1,7 +1,8 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
-/// Which launcher markers an app face hands its children (Sources/App/FaceMarker.swift).
+/// Which launcher markers an app face hands its children (Sources/Host/App/FaceMarker.swift).
 final class FaceMarkerTests: XCTestCase {
     private let own = "com.example.tools"
 

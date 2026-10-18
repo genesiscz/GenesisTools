@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The session-insights seams: the `tools hub insights|stuck|handoff --json` payloads (field sets as the
 /// commands print them on 2026-09-26, values invented), the chart's bucketing and hit test, the

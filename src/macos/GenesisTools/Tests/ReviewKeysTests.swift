@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// Keyboard-first review and "Fix these threads": the argv of `tools hub pr fix`, the order j / k walk
 /// the thread cards in, and n / p over the files. Nothing here runs `tools` or types into a pane.

@@ -1,7 +1,8 @@
 import Combine
 import GenesisKit
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// A session often starts in the main checkout and works in a linked worktree; the Changes and Files tabs showed
 /// the main checkout, which held none of its work (nabidky-2.0 on 2026-10-16).

@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// Which faces keep the link relay in front of them (LinkRelay.swift).
 final class LinkRelayTests: XCTestCase {

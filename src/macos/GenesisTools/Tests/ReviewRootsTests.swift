@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// One review over several repositories: every file under its root's folder name, one tree with one
 /// top-level folder per root, and every merged id back to its own repository.

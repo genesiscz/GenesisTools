@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The worktree cleanup panel and the Today mode decode `tools hub worktrees list|size|remove --json`
 /// and `tools hub timeline --json` (src/hub/lib/worktrees.ts, src/hub/lib/timeline.ts). The samples

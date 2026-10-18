@@ -3,7 +3,8 @@ import AppKit
 import SwiftUI
 import XCTest
 // GenesisTools adaptation: this app's module.
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// `LiveTime`: the wording of every relative time, the moments it ticks, and that a tick redraws
 /// the label and never the view that holds it.

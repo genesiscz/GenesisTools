@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The review header's scope menu label for three scopes, drawn in a borderless window that is never ordered front
 /// (alpha 0, behind every window, no mouse). Only when `HUB_PICKER_SHOTS` names the PNG to write.

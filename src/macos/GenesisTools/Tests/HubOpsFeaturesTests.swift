@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The operations features decode what their `tools` doors print and keep their small pure rules:
 /// the agent process pane (`tools hub procs --json`, src/hub/lib/procs/), the prompt library

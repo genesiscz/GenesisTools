@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The review window's disk caches (Review/ReviewCache.swift): which slot a diff lives in, when its
 /// contents are dropped, and blame entries that answer only while the file's text is unchanged.

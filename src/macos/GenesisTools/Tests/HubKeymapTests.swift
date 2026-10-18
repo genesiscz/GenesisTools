@@ -1,5 +1,6 @@
 import AppKit
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 import XCTest
 
 /// The hub's keys through `HubKeymap` (Martin, 2026-10-15).

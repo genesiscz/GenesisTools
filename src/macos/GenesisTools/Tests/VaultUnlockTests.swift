@@ -1,7 +1,8 @@
 import GenesisKit
 import SwiftUI
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The vault approval window's pure parts (Sources/VaultUnlock.swift): reading a process from the kernel's bytes,
 /// what counts as the same program for a remembered approval, the session's name, and what the window tells the user.

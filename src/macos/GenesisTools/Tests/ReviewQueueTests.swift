@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The review window's comments for an agent: queued until a session's pane really got them, one card
 /// per PR thread for my reply to it, the reply still attached after an edit, and the commit menu.

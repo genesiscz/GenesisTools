@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The hub's daily overlays read `tools hub search|digest|forecast|rules … --json` (src/hub/lib/search.ts,
 /// digest.ts, forecast.ts, rules.ts). The samples follow those shapes with invented names and values.

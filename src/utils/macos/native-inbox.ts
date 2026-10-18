@@ -14,7 +14,7 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
  * - `installed`: the widget can run here but is not running. Agents may post, and must ALSO ask in chat.
  * - `running`: the widget is running, so a post reaches the user.
  *
- * The widget and Clicky are in staging (src/macos/GenesisTools/Sources/App/NativePreview.swift): they run in the
+ * The widget and Clicky are in staging (src/macos/GenesisTools/Sources/Host/App/NativePreview.swift): they run in the
  * Preview bundle (`scripts/build-widget-preview.ts`), and in the normal app only on a machine whose owner set the
  * `GenesisToolsStagingFaces` defaults key (`bun scripts/native/staging.ts on`). A normal install has neither.
  */

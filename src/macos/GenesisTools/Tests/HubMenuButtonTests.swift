@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// `MenuButton` draws its label in SwiftUI and builds the AppKit menu only at the click: the menu must
 /// carry every title, check mark, disabled state, divider and submenu the SwiftUI `Menu` had.

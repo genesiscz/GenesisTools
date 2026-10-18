@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// Comparing two pushes of a PR across a rebase (Review/ReviewVersions.swift), on a real scratch
 /// repository: the diff must show the author's change between the pushes and nothing the rebase

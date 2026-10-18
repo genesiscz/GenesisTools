@@ -1,6 +1,7 @@
 import SwiftUI
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The panel find's match model (Hub/HubPanelFind.swift): case and accents, several matches in one
 /// row, markdown matched block by block, next and previous wrapping, the current match kept when the

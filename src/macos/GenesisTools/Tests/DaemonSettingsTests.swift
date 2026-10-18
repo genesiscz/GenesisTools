@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// Settings → Background → Daemon reads `tools daemon status --json`, `tools daemon stats --json` and
 /// `tools daemon stats --view run --run <id> --json`. The samples are the CLI's shapes with invented task names.

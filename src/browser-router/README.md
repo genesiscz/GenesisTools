@@ -16,7 +16,7 @@ named browser, run a program, start a local server and open it, or record a tool
 **A link clicked in another app** (Mail, Slack, a terminal's `open https://...`, a PDF) goes
 through macOS Launch Services. Once `tools browser-router install` made GenesisTools.app the
 http and https handler, macOS delivers the URL to it as an Apple Event (`kAEGetURL`, handled by
-`installBrowserURLHandler` in `src/macos/GenesisTools/Sources/BrowserURL.swift`). The app reads
+`installBrowserURLHandler` in `src/macos/GenesisTools/Sources/Host/BrowserURL.swift`). The app reads
 its config, decides, shows a card in the bottom-left corner, and runs the action. Nothing else is needed.
 
 **A URL typed into a browser's address bar, or a link clicked inside a web page, never reaches

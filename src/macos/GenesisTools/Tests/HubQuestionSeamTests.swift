@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The JSON `tools question inbox` prints, as captured from the real CLI against a scratch store
 /// (every field the TS side writes, nulls included), and the argv the hub sends back. One wrong

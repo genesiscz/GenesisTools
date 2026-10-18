@@ -1,7 +1,7 @@
 /**
  * Round-trip cost of the read-only `GenesisTools --rpc` methods.
  *
- * `runRpc` (`src/macos/GenesisTools/Sources/Notify.swift`) ends in `NSApplication.run()` and only
+ * `runRpc` (`src/macos/GenesisTools/Sources/Host/Notify.swift`) ends in `NSApplication.run()` and only
  * `notify.authorize` arms a deadline, so `notify.post`, `notify.remove`, `notify.list` and
  * `notify.status` wait forever on a wedged `usernoted`. The fix arms one cancellable deadline at
  * the top of `runRpc`. This script is the latency side of that change: arming a timer must not

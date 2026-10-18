@@ -27,7 +27,7 @@ export const GOLD_CASES: readonly GoldCase[] = [
         id: "sigint-forward",
         query: "Where is a Ctrl-C forwarded from the tools wrapper to the running tool process?",
         root: ".",
-        gold: ["tools", "src/macos/GenesisTools/Sources/Launcher.swift"],
+        gold: ["tools", "src/macos/GenesisTools/Sources/Host/Launcher.swift"],
     },
     {
         id: "usage-cost",

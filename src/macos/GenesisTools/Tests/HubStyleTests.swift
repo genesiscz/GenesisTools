@@ -1,6 +1,7 @@
 import GenesisKit
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// How the window style, the glass switch and General → Theme combine into what the hub draws.
 final class HubStyleTests: XCTestCase {

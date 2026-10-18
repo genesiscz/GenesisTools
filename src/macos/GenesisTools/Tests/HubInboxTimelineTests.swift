@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The Inbox and Today modes read `tools question inbox --json` and `tools hub timeline --json`
 /// (src/question/lib/inbox, src/hub/lib/timeline.ts). These pin the JSON contract and the ordering.

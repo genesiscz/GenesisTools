@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// A local file macOS hands to GenesisTools (it is the default browser, so `.html` files come here) goes to a
 /// real browser, never back to a link router.

@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// An Activity row whose event keeps its id but moves to another time (a session's "last turn", a PR's
 /// "updated") must show the new time in the hour group it now sits in. The list paints the disk cache first and

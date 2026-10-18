@@ -62,7 +62,7 @@ documents were closed"; find it with `command log show --predicate 'processID ==
 now quits with `exit(0)`, never `NSApp.terminate`, and a build is not done until one `open -a ~/Applications/GenesisTools.app
 https://example.org/` leaves no router running after ~8 s.
 
-**Notifications specifically** (`src/macos/GenesisTools/Sources/Notify.swift`, reached from
+**Notifications specifically** (`src/macos/GenesisTools/Sources/Host/Notify.swift`, reached from
 `src/utils/macos/notifications.ts` via `genesis-app-rpc.ts`): `tools macos permissions build`, then
 `tools notify status`. `alertStyle: banner` means macOS's "Temporary" — the banner fades in ~5 s,
 taking its buttons and attachment with it, and **code cannot change this**

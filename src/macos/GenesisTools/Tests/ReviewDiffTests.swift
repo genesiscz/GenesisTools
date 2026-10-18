@@ -1,5 +1,6 @@
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// How the review window hands a file set to the web diff: every file, in order, in batches small
 /// enough that the first files paint at once and the web view's IPC never holds the whole diff.

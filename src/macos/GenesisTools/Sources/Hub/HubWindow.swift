@@ -176,26 +176,16 @@ struct HubRequest {
         return value
     }
 
-    /// The flags a link may carry. Never `--snapshot`, `--bench`, `--set` or `--menu`: a link is a place to
-    /// show, not a file to write or a command to run.
-    static let linkKeys: Set<String> = [
-        "mode", "session", "agent", "pr", "reveal", "commit", "repo", "tab", "filter", "worktree", "decision", "question",
-    ]
+    /// The flags a link may carry (Host/HubLink.swift).
+    static var linkKeys: Set<String> { HubLink.linkKeys }
 
-    /// `genesis-tools://hub?session=<parent>&agent=<child>` (any of `linkKeys`) as `--hub` arguments, the
-    /// same ones `tools hub open` passes; nil for any other URL.
+    /// `genesis-tools://hub?…` as `--hub` arguments (Host/HubLink.swift).
     static func arguments(fromLink raw: String) -> [String]? {
-        guard let components = URLComponents(string: raw), components.scheme == "genesis-tools", components.host == "hub" else { return nil }
-        var args: [String] = []
-        for item in components.queryItems ?? [] where linkKeys.contains(item.name) {
-            guard let value = item.value, !value.isEmpty else { continue }
-            args += ["--\(item.name)", value]
-        }
-        return args
+        HubLink.arguments(fromLink: raw)
     }
 }
 
-func runHub(_ args: [String]) -> Never {
+package func runHub(_ args: [String]) -> Never {
     PerfLog.phase("hub.launch")
     // `--resume` (a rebuild's relaunch) opens the place the hub last showed (Hub/HubPlace.swift).
     let args = HubPlace.expand(args)

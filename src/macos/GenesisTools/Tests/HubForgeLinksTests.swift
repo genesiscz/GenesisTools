@@ -1,6 +1,7 @@
 import AppKit
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// The web pages the hub links labels to (Hub/HubForgeLinks.swift), and the rule that keeps the
 /// instant tooltip off a control whose menu or popover a click just opened (Hub/HubTooltipGuard.swift).

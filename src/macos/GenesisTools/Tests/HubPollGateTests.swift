@@ -1,6 +1,7 @@
 import GenesisKit
 import XCTest
-@testable import GenesisTools
+@testable import GenesisToolsHost
+@testable import GenesisToolsHub
 
 /// What the hub asks its data sources, and when it does not: no `tools` process while nobody can see the
 /// window (Hub/HubVisibility.swift).
