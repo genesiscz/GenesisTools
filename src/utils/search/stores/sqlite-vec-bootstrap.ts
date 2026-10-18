@@ -47,6 +47,21 @@ export function resetSqliteVecLoaderState(): void {
     delete g[STATE_KEY];
 }
 
+/**
+ * Whether the SQLite library already loaded in this process can load extensions. Bun's bundled macOS build is
+ * compiled with OMIT_LOAD_EXTENSION (1), the Homebrew one without it (0); measured 2026-10-18 on 3.51.0 and 3.53.4.
+ */
+function loadedSqliteLoadsExtensions(): boolean {
+    const db = new Database(":memory:");
+
+    try {
+        const row: unknown = db.query("SELECT sqlite_compileoption_used('OMIT_LOAD_EXTENSION') AS omitted").get();
+        return typeof row === "object" && row !== null && "omitted" in row && row.omitted === 0;
+    } finally {
+        db.close();
+    }
+}
+
 export function ensureExtensionCapableSQLiteCore(log?: SqliteVecLog): void {
     const s = state();
 
@@ -80,9 +95,12 @@ export function ensureExtensionCapableSQLiteCore(log?: SqliteVecLog): void {
                 const message = err instanceof Error ? err.message : String(err);
 
                 if (message.includes("SQLite already loaded")) {
+                    // The library outlives this state: `bun test --isolate` gives every file a fresh global, so a
+                    // later file in the same worker forgets the earlier file's swap. Ask the loaded library.
+                    s.homebrewDylibFound = loadedSqliteLoadsExtensions();
                     log?.debug(
                         `[sqlite-vec] setCustomSQLite(${libPath}) skipped - SQLite already loaded ` +
-                            "in this process (swap attempted by an earlier module instance / preload)."
+                            `in this process; it ${s.homebrewDylibFound ? "loads" : "cannot load"} extensions.`
                     );
                     return;
                 }

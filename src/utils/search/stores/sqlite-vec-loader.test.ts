@@ -50,7 +50,48 @@ const db = new Database(":memory:");
 console.log(\`{"loaded":\${loadSqliteVec(db) ? "true" : "false"}}\`);
 `;
 
+// A second test file in the same --isolate worker: the swap happened, then the global state was lost.
+const FIXTURE_FRESH_GLOBAL_AFTER_SWAP = `
+import { Database } from "bun:sqlite";
+import { assertVecExtensionAvailable, ensureExtensionCapableSQLite, loadSqliteVec, resetSqliteVecState } from ${SafeJSON.stringify(LOADER_PATH)};
+ensureExtensionCapableSQLite();
+const db = new Database(":memory:");
+loadSqliteVec(db);
+db.run("CREATE VIRTUAL TABLE t_vec USING vec0(embedding float[2])");
+resetSqliteVecState();
+let capable = true;
+try { assertVecExtensionAvailable(db, "t"); } catch { capable = false; }
+console.log(\`{"capable":\${capable}}\`);
+`;
+
+// The same lost state over bun's bundled SQLite, which really cannot load extensions.
+const FIXTURE_FRESH_GLOBAL_BUNDLED = `
+import { Database } from "bun:sqlite";
+import { getSqliteVecLoaderState } from ${SafeJSON.stringify(join(import.meta.dir, "sqlite-vec-bootstrap.ts"))};
+import { ensureExtensionCapableSQLite } from ${SafeJSON.stringify(LOADER_PATH)};
+new Database(":memory:");
+ensureExtensionCapableSQLite();
+console.log(\`{"capable":\${getSqliteVecLoaderState().homebrewDylibFound}}\`);
+`;
+
 describe("sqlite-vec-loader ordering", () => {
+    it.skipIf(!RUN_ORDERING_TESTS)(
+        "a fresh global after the swap still knows the loaded SQLite loads extensions, so a vec index opens",
+        async () => {
+            const { stdout, exitCode } = await runFixture(FIXTURE_FRESH_GLOBAL_AFTER_SWAP);
+
+            expect(exitCode).toBe(0);
+            expect(parseLastStdoutLine(stdout)).toEqual({ capable: true });
+        }
+    );
+
+    it.skipIf(!RUN_ORDERING_TESTS)("a fresh global over bun's bundled SQLite still reports no extensions", async () => {
+        const { stdout, exitCode } = await runFixture(FIXTURE_FRESH_GLOBAL_BUNDLED);
+
+        expect(exitCode).toBe(0);
+        expect(parseLastStdoutLine(stdout)).toEqual({ capable: false });
+    });
+
     it.skipIf(!RUN_ORDERING_TESTS)(
         "loadSqliteVec returns false when a Database is constructed before the swap",
         async () => {
