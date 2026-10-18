@@ -54,9 +54,11 @@ Codex variant:
 
 1. For each finding, read the current source at the cited lines BEFORE you judge it. A finding is a claim with a
    timestamp, not a fact. One verdict per finding: `fixed`, `rejected` (cite the file:line that disproves it),
-   `already-done`, or `no-change` (only when a cited file:line proves the finding wrong). A valid finding deferred
-   by the derived policy uses `belongs-elsewhere` (the reply schema's deferral verdict), an explained reply, and an
-   OPEN thread. Do not add fields the installed reply schema does not support.
+   `already-done`, or `no-change` (only when a cited file:line proves the finding wrong). Give every item its
+   `severity`, the reviewer's label lower-cased (`critical`, `major`, `high`, `security`, `medium`, `minor`, `low`;
+   security at any level is `security`, CodeRabbit's Trivial or Nitpick is `low`); the file is refused without it.
+   A valid finding deferred by the derived policy uses `belongs-elsewhere` (the reply schema's deferral verdict), an
+   explained reply, and an OPEN thread. Do not add fields the installed reply schema does not support.
 2. Fix the valid findings selected by the derived round policy at the root, and respect the module's documented contracts (what a function promises to throw
    or return) and its callers. Add or extend a test that fails without the fix, in the test files listed above. Do
    NOT create a new test file.
@@ -85,6 +87,7 @@ Codex variant:
          "where": "<file>:<line>",
          "title": "<one-line title of the defect>",
          "context": "<what was flagged and why it matters>",
+         "severity": "<critical | major | high | security | medium | minor | low>",
          "verdict": "fixed",
          "commits": ["<your commit, 9-char short SHA>"],
          "codeBefore": { "lang": "ts", "code": "<1 to 8 lines before>" },

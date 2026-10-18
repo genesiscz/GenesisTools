@@ -29,6 +29,21 @@ Invoke, with the Skill tool, before any other step:
 These skills own their mechanics; this file only says how they fit together. When they disagree with this file,
 they win for their own mechanics, and you say so in the report.
 
+## 0a. Start of every run: the checklist
+
+Do all of these before the first dispatch, in this order:
+
+1. The skills of step 0 are loaded.
+2. 🛑 **Disk alarm:** `bun .claude/skills/babysit/scripts/df-watch.ts --below-gb 5` with Bash `run_in_background`. It
+   exits, and so wakes you, only when free space drops below 5 GB. When it fires, run step 7c's `tmp-reclaim.ts` at
+   once and start the alarm again; never wait for the user (2026-10-18: the disk sat full three times while the lead
+   waited for the user, although this script and Martin's standing permission existed).
+3. The run card (step 1) and the mode (step 2).
+4. The plan confirmation for the workers you spawn yourself (step 2).
+5. The owner check of every PR (step 3.1).
+6. Decisions: every ❓ DECISION of the run goes into the decision log under its chat number and into the chat, and
+   gets a `decision` event in the run ledger (review-loop, "Decisions during a loop"). A later mention is a link.
+
 ## 1. The run card: what to configure
 
 Write it to `/tmp/cc/<project>/<session>/babysit/run.json` at the start; the scripts read it.
@@ -71,9 +86,12 @@ above 10 GB after all worker worktrees, else `unified`.
   cherry-picks onto the PR branch in a scratch worktree, and a file that unified changed later than the PR branch
   conflicts (#511's import list did). Use it only when disk is short.
 
-🛑 **Confirmation period (from 2026-10-14 until Martin says he no longer needs it):** before you dispatch, show the
-plan with AskUserQuestion and wait: the PRs, the worker per PR, the mode with the free-disk numbers, `post`, and
-the stop point. After the confirmation period, state the plan in one line and proceed.
+🛑 **Plan confirmation for the workers you spawn yourself** (Martin, 2026-10-18; it narrows the confirmation period
+that started 2026-10-14). Before you dispatch a worker that YOU decided to spawn, show the plan with
+AskUserQuestion and wait: the PRs, the worker per PR, the mode with the free-disk numbers, `post`, and the stop
+point. A session the user assigns to you (he names it, or another session hands it over on his word) needs no
+confirmation: state the plan in one line and proceed. (2026-10-18: the lead dispatched self-spawned workers with no
+confirmation.)
 
 ## 3. Prepare each PR
 
@@ -90,30 +108,29 @@ the stop point. After the confirmation period, state the plan in one line and pr
    the hidden channels, `expand` every thread (the L1 table can scramble files). Keep each thread's `threadId`.
 4. Read the source at every cited line before you brief: a stale or wrong finding is briefed as such, so the worker
    does not "fix" it.
-5. **Round policy** (Martin, 2026-10-17 12:16; it replaces "fix every finding in every round", because eve opened
-   new Medium and Low findings on every push of #536 for 28 rounds). The executable rule is `scripts/policy.ts`;
-   `fill-brief.ts` derives it from the round, GitHub's changed-file count and `--dedicated-review`. Both brief
-   templates and judging use that generated policy. Count the PR's fix rounds; a follow-up PR starts at round 1.
-   - A PR with more than 100 changed files: rounds 1 to 3 fix every valid finding, Medium and Low included. From
-     round 4, fix only Critical and High.
-   - A PR with 100 changed files or fewer: rounds 1 and 2 fix every valid finding. From round 3, fix only Critical
-     and High.
-   - In the rounds that fix only Critical and High, a Medium or Low finding gets a reply (valid or not, and why).
-     It is not fixed in that PR, and its thread stays OPEN: resolve only a thread that was acted on (fixed, or
-     rejected with a cited file:line). Record a policy deferral with the reply transport's supported
-     `"verdict": "belongs-elsewhere"` and explain the policy in the reply; do not add unsupported schema fields. `integrate.ts` keeps it in the summary but partitions it into a separate
-     `post-replies.ts --no-resolve` batch, never the batch that resolves threads (Martin, 2026-10-17 12:45).
-   - **A valid security finding is always fixed**, at any severity and in any round (Martin, 2026-10-17 12:45:
-     "security valid always"). Read the reviewer's category (`🔒 Security`), not only its severity.
+5. **Round policy**: review-loop's "Round policy" section is the source; this is its short form (Martin,
+   2026-10-18). The executable rule is `scripts/policy.ts`; `fill-brief.ts` derives it from the round, GitHub's
+   changed-file count and `--dedicated-review`, and both brief templates and judging use that generated policy.
+   Count the fix rounds of the PR; a follow-up PR starts again at round 1.
+   - Rounds 1 and 2 fix every valid finding, Medium and Low included, whatever the PR's size. No deferral, and every
+     file a valid fix needs is in scope. A `no-change` or rejection needs a cited file:line that proves the finding
+     wrong.
+   - Round 3 and later fix every valid Critical and High. A Medium or Low is fixed only when it is cheap (about 20
+     changed lines) or the same class as an earlier round's fix; every other one gets a reply (valid or not, and why
+     it waits) and its thread stays OPEN: resolve only a thread that was acted on. Record such a deferral with the
+     reply transport's `"verdict": "belongs-elsewhere"` and explain the policy in the reply; `integrate.ts` keeps it
+     in the summary but posts it in a separate `post-replies.ts --no-resolve` batch, never the batch that resolves
+     threads (Martin, 2026-10-17 12:45). (2026-10-18: a lead fixed a Low in round 3 with neither reason.)
+   - **A valid security finding is always fixed**, at any severity and in any round. Read the reviewer's category
+     (`🔒 Security`), not only its severity.
    - **A dedicated code review the user asks for** (an independent worker review such as `review-brief.ts` on Astra
-     or Sol) is fixed in full: every valid finding, Medium and Low included, whatever round the PR is in. Fix it
-     yourself or steer the PR's fixing worker, then judge it as any round (Martin, 2026-10-17 13:05).
-   - Inside the fix-everything rounds, a deferral is not accepted ("nothing is a follow up or out of scope", Martin,
-     2026-10-17), and every file a valid fix needs is in scope. A `no-change` or rejection needs a cited file:line
-     that proves the finding wrong.
+     or Sol) is fixed in full, whatever round the PR is in. Fix it yourself or steer the PR's fixing worker, then
+     judge it as any round (Martin, 2026-10-17 13:05).
    - **Merge bar:** when the last round's Critical and High findings are fixed and judged, merge without waiting
-     for eve to review that last fix. The PR still needs at least one CodeRabbit review, green CI and a reply on
-     every thread.
+     for eve to review that last fix (eve's degraded pass counts as a review). A PR over about 50 changed files
+     still needs at least one CodeRabbit review, asked through review-loop's `scripts/cr-queue.ts`; a smaller PR may
+     land on eve's review. Green CI, and a reply on every Critical, Major, High, Security, refused and deferred
+     thread (review-loop step 5a).
 6. Scope: `git fetch origin <pr branch>`, then `bun .claude/skills/babysit/scripts/pr-scope.ts <N> --compare HEAD`.
    It lists the PR's files, the test file of each one (a sibling `.test.ts`, or a neighbour test that imports it),
    and whether unified differs from the PR branch per file. That list is the starting context, not a scope limit.
@@ -212,7 +229,7 @@ Three Monitors, all with `timeout_ms: 1800000`, each re-armed as the very next t
    approving it.
 
 Two-way proof: once per new worker, send a ping on the bus (`--to grok_pr<N>` or `--to codex_<name>`) and see the
-reply arrive (Sol answered in 20 s, Grok in 59 s). During the confirmation period do it for every worker.
+reply arrive (Sol answered in 20 s, Grok in 59 s). Do it for every worker you spawn yourself.
 
 Waiting on a Codex turn: `bun .claude/skills/babysit/scripts/wait-turn.ts --run <dir> --worker <name> --thread <id>
 --pr <N> --round <R>` with Bash `run_in_background`; the harness wakes the lead when the turn ends, and the worker's
@@ -249,11 +266,18 @@ PR: VERIFIED, VERIFIED WITH CAVEATS, or REFUTED, with evidence.
 
 Judge against the same derived round policy from `scripts/policy.ts` that `fill-brief.ts` put in the brief.
 Every required finding is fixed in its PR before the push; a valid security finding and every valid finding in a
-dedicated user review are always required, including Medium and Low. Other Medium/Low findings deferred by the
-ordinary later-round policy get explained replies and remain OPEN. Verify that integrate partitions those replies
-into its no-resolve batch. If a required fix needs a file outside the original diff, change it in this PR and explain
-it in the reply; scope never excuses a required fix. A Swift change the worker could not run is not judged until the
-lead ran its tests: `swift-typecheck.ts` proves it compiles, and #501 round 2 typechecked clean yet broke a test.
+dedicated user review are always required. In rounds 1 and 2 that is every valid finding, and a deferral is not
+accepted. Medium/Low findings deferred by the later-round policy get explained replies and remain OPEN; verify that
+integrate partitions those replies into its no-resolve batch. If a required fix needs a file outside the original
+diff, change it in this PR and explain it in the reply; scope never excuses a required fix. A Swift change the worker
+could not run is not judged until the lead ran its tests through `swift-slot.ts`: `swift-typecheck.ts` proves it
+compiles, and #501 round 2 typechecked clean yet broke a test.
+
+🛑 **Swift and "ready".** CI runs no Swift. A PR that changes Swift is prepared for merge only after a local run of the
+FULL Swift suite of every package it changes, at the PR's final head, with the result written into the PR (the
+commands, the head SHA, the test count, the exit code; a round summary's "Also in this push" line or a PR comment).
+Add `src/macos/GenesisTools` (`--disable-build-manifest-caching`) when GenesisKit changed. A filtered judge run is
+not the suite (Martin, 2026-10-18; that night Swift PRs were called ready before their suites reran).
 
 ## 7. Correct, integrate, push
 
@@ -305,11 +329,17 @@ Off unless the user approves it in their own words for this run ("drive the PRs 
 only for PRs the run owns: never another session's PR, never the integration branch. Ask once, early, and keep
 running review rounds while the question is open: a missing answer never blocks a round, it only means no merge.
 
-A PR lands when all hold: at least 3 review rounds done; every finding required by the derived policy is fixed
-and judged (including every valid security finding and all dedicated-review findings); at least one CodeRabbit
-review; a reply on every thread; CI green on the landing tree; its base is master or a parent the run merges first
-(a PR stacked on another session's branch waits for that branch). Merge without waiting for eve to review the last
-judged fix. Policy-deferred Medium/Low threads may remain OPEN. Then the review-loop landing recipe, which
+A PR lands when all hold: review-loop step 5a ("Before you call a PR ready") passes; at least 3 review rounds done;
+every finding required by the derived policy is fixed and judged (every valid security finding and all
+dedicated-review findings included), so no critical or high finding is open; eve reviewed the head before the last
+fix (the merge bar, step 3.5); a PR over about 50 files has a CodeRabbit review; a reply on every thread; CI green
+on the landing tree; its base is master or a parent the run merges first (a PR stacked on another session's branch
+waits for that branch). Merge without waiting for eve to review the last judged fix. Policy-deferred Medium/Low
+threads may remain OPEN. In an unattended land-it job a red CI, an open
+Critical or High, a conflict or a failing test is the next task, never a reason to park the PR with a note (Martin,
+2026-10-05: "you just resolve the issues and iterate until ur able to drive it to master"); keep the guardrails
+(`tools github merge` only, no bypassed check, no paid CodeRabbit usage). Then the review-loop landing recipe (its
+file-set check for a recommitted stacked branch included), which
 `bun .claude/skills/babysit/scripts/land.ts --run <dir> --pr <N> --merge` runs as one command (without `--merge` it
 only prepares and prints the squash; every git call is an argument array, because a hand-typed
 `--force-with-lease=$B:c1a…` in zsh read `:c` as a modifier and pushed without the lease):
@@ -330,7 +360,8 @@ only prepares and prints the squash; every git call is an argument array, becaus
 3. `git fetch origin <branch>` in the main checkout (`tools github merge` compares against the local remote ref and
    refuses a "moved" branch otherwise), then `tools github merge --rebase <N>`. Stacks merge bottom-up; the tool
    retargets dependents.
-4. Log a `note` event with the merge SHA, and list every PR that did not land with its reason in the report.
+4. Check `gh pr view <N> --json state`: a restacked merge can leave the PR OPEN (#501, 2026-10-15). Log a `note`
+   event with the merge SHA, and list every PR that did not land with its reason in the report.
 
 A PR that conflicts with master, or whose parent was just squash-merged, is restacked first:
 `bun .claude/skills/babysit/scripts/restack.ts --wt <worktree> --onto origin/master [--upstream <fork point>]`. It runs
@@ -344,11 +375,14 @@ code: rerun CI and judge it before the merge; eve need not re-review the last ju
 CodeRabbit review and a reply on every thread. When the restack carries a fix round too, push it with
 `integrate.ts … --restacked-from <old head>`: the lease is that old head, and the gates check only the PR's own commits.
 
-## 7c. Disk: watch it, reclaim /tmp safely
+## 7c. Disk: watch it, reclaim /tmp yourself
 
-A night of worktrees, Swift builds and test runs fills a disk. Start `bun .claude/skills/babysit/scripts/df-watch.ts
---below-gb 5` with Bash `run_in_background` at the start of a run: it exits (and wakes you) only when free space drops
-below the threshold. Then, and only with the user's standing permission for /tmp cleanup:
+A night of worktrees, Swift builds and test runs fills a disk. `df-watch.ts --below-gb 5` runs from the start of
+every run (step 0a.2). When it fires, or whenever free disk is low, reclaim at once with the steps below. Do not wait
+for the user and do not ask: Martin gave the standing permission on 2026-10-18 (an agent may reclaim its own
+session scratch and its own build output, and `tmp-reclaim.ts` is the sanctioned way to delete in /tmp, not `rm`).
+On 2026-10-18 the disk sat full three times while the lead waited for him, and the lead's own session folder held
+14 GB, most of it SwiftPM scratch builds.
 
 1. `bun .claude/skills/babysit/scripts/tmp-reclaim.ts --run <dir>` (dry run): lists the candidates in /tmp, $TMPDIR and
    each `/tmp/cc/<project>/<session>` folder, writes a plan file, deletes nothing. It skips live sessions (any agent
@@ -359,8 +393,25 @@ below the threshold. Then, and only with the user's standing permission for /tmp
    inode, still old, still closed), moved into a scratch folder in the same root and deleted there. The result is a
    `note` in the run ledger.
 
-Never delete a worktree this way (it refuses `.git` anyway): worktrees go through step 8's release. Machine caches
-outside /tmp (uv, SwiftPM, a repo's `.build`) are a separate, user-approved decision, not this script's.
+Limits you must know:
+
+- The plain dry run never picks a LIVE session's folder, and that includes your own. For your own session run a
+  second dry run with `--own-session <your session uuid>` (then `--apply --plan <file>` as above): it lists BUILD
+  OUTPUT only inside `/tmp/cc/<project>/<that session>/`, even though the session is live. That is SwiftPM triple
+  folders (`arm64-apple-macosx`, `x86_64-apple-macosx`), SwiftPM scratch folders that hold only SwiftPM's own
+  entries, and Swift or clang module caches (only `.pcm`, `.swiftmodule` and their stamp files). It never lists
+  notes, logs, reply files, patches, briefs, `node_modules` or `removals/`, and it keeps the other guards (no open
+  file, socket, FIFO or `.git` inside; not changed in the last `--min-age-minutes`, default 10; the same inode and
+  the same build-output class again at apply). Measured 2026-10-18 on this run's lead session: 38 candidates,
+  10.55 GB. Worker and scratch worktrees still go through step 8's release, and review clones through review-loop's
+  `scripts/cleanup.ts`.
+- Never delete a worktree this way (it refuses `.git` anyway): worktrees go through step 8's release.
+- Machine caches outside /tmp (uv, SwiftPM, a repo's `.build`) are a separate, user-approved decision, not this
+  script's.
+- 🛑 Never copy a SwiftPM `.build/` folder for a bench or an A/B: build and measure in the checkout's real `.build`,
+  and for a before and after use two worktrees that already exist (Martin, 2026-10-07; four copies cost 3.5 GB on a
+  full disk, 2026-10-06, when the session folder had grown to 3.8 GB).
+- Check `du -sh /tmp/cc/<project>/<session>` before the final report.
 
 ## 8. Clean up after every round, automatically
 
@@ -397,16 +448,22 @@ everything that arrived after a merge; it exits 1 while any of those needs work.
 follow-up commit on a branch from master, with a reply on the thread naming it. Never write "every thread answered" or
 "clean at merge" without a fresh exit 0, or a list of what is still open.
 
-A CodeRabbit thread that WE resolved without a reply is not a gap: post-replies resolves a fixed CodeRabbit thread
-silently on purpose, because a thread reply spends CodeRabbit's hourly chat budget, and the round summary comment
-carries the answer. The audit counts those apart ("resolved by us with the answer in the round summary"). Answer by
-hand only a thread the reviewer resolved itself with no answer anywhere (2026-10-14: five #515 threads were answered
-by hand for nothing).
+Thread replies follow review-loop's "Thread replies by severity" (Martin, 2026-10-18): every Critical, Major, High
+and Security thread gets our reply on the thread, from any reviewer, CodeRabbit included (every reply item carries
+the required `severity`, and post-replies posts the CodeRabbit ones of those severities); so does every refusal and
+deferral. A fixed Medium or Low CodeRabbit
+thread that WE resolved without a reply is not a gap and needs no backfill: post-replies resolves it silently on
+purpose, because a thread reply spends CodeRabbit's hourly chat budget, and the round summary comment carries the
+answer. The audit counts those apart ("resolved by us with the answer in the round summary"). Answer by hand only a
+thread the reviewer resolved itself with no answer anywhere (2026-10-14: five #515 threads were answered by hand for
+nothing). (2026-10-18: Critical and High CodeRabbit threads were resolved with no reply.)
+
+Before the word "ready" goes into any report, run review-loop step 5a ("Before you call a PR ready") for each PR.
 
 ## 10. Bugs in the harness: fix them, after the user confirms
 
 A defect in handoff-to, agents-talk, `tools codex`, `tools grok`, `tools claude worker` or `tools agents` that broke a
 step, cost real time, or reported something false: describe it in one line with the proposed fix and ask the user
-(AskUserQuestion) before you change anything. On yes: fix on unified with a test, then cherry-pick onto the open PR
+(AskUserQuestion, and post it to the decision log under its chat number, step 0a.6) before you change anything. On yes: fix on unified with a test, then cherry-pick onto the open PR
 that owns that code (on 2026-10-14 that was #509 for Codex). Do not nitpick: wording, cosmetics and one-off quirks go
 into the report's "what to change" list, not into a fix.

@@ -37,6 +37,10 @@ reruns your checks, and pushes. Quality is judged, not speed.
    (name the commit), or `no-change` (only when a cited file:line proves the finding wrong). For valid findings deferred
    by the derived policy, use `belongs-elsewhere` (the reply schema's deferral verdict), explain the policy, and keep
    the thread OPEN. Do not add fields the installed reply schema does not support.
+   Give every item its `severity`, the reviewer's label lower-cased: `critical`, `major`, `high`, `security`,
+   `medium`, `minor` or `low` (a security finding is `security` at any level; CodeRabbit's Trivial or Nitpick is
+   `low`). The file is refused without it, and critical, major, high and security threads get a reply on the
+   thread.
 2. Fix the valid findings selected by the derived round policy at the root. Respect each module's documented contracts and its callers. Add or extend a test
    that fails without the fix, in an existing test file next to the code. Do not create a new test file unless the
    code has none.
@@ -68,6 +72,7 @@ finding, including rejected ones:
       "where": "<file>:<line>",
       "title": "<one-line title of the defect>",
       "context": "<what was flagged and why it matters>",
+      "severity": "<critical | major | high | security | medium | minor | low>",
       "verdict": "fixed",
       "commits": ["<your commit, 9-char short SHA>"],
       "codeBefore": { "lang": "ts", "code": "<1 to 8 lines>" },

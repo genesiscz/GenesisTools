@@ -30,7 +30,7 @@ import { reviewBrief } from "./review-brief";
 import { loadRun, runPaths } from "./run";
 import { trySwiftSlot } from "./swift-slot";
 import { parseSwiftTargets, typecheckPackage } from "./swift-typecheck";
-import { openPaths } from "./tmp-reclaim";
+import { buildOutputKind, judgeOwn, openPaths, ownBuildOutput, ownSessionDirs } from "./tmp-reclaim";
 import {
     conflictedFiles,
     higherVersionSide,
@@ -1450,7 +1450,7 @@ describe("round 5 carried findings", () => {
     });
 });
 
-test("generated worker briefs follow the size, round and dedicated-review policy", () => {
+test("generated worker briefs follow the round and dedicated-review policy", () => {
     const dir = fs.mkdtempSync(join(tmpdir(), "babysit-policy-"));
     const preload = join(dir, "github-fixture.ts");
     fs.writeFileSync(join(dir, "run.json"), SafeJSON.stringify({ repo: "fixture/repo", main: dir }));
@@ -1475,7 +1475,7 @@ test("generated worker briefs follow the size, round and dedicated-review policy
         [63, 1, false, true],
         [63, 2, false, true],
         [63, 3, false, false],
-        [120, 3, false, true],
+        [120, 3, false, false],
         [120, 4, false, false],
         [120, 32, true, true],
     ] as const) {
@@ -1513,6 +1513,7 @@ test("generated worker briefs follow the size, round and dedicated-review policy
         expect(brief).toContain("A valid security finding is always fixed");
         expect(brief).toContain("Change every file the fix needs in this PR");
         if (!all) {
+            expect(brief).toContain("about 20 changed lines");
             expect(brief).toContain("deferred");
             expect(brief).toContain("OPEN");
             expect(brief).not.toContain("never defer");
@@ -4151,7 +4152,7 @@ describe("round 22 external Swift products", () => {
         });
         try {
             for (const [manifest, expected] of [
-                ["src/macos/GenesisTools/Package.swift", ["GenesisTools", "GenesisToolsTests"]],
+                ["src/macos/GenesisTools/Package.swift", ["GenesisToolsHost", "GenesisTools", "GenesisToolsTests"]],
                 ["src/macos/GenesisWidgetPreview/Package.swift", ["GenesisWidgetPreview"]],
             ] as const) {
                 const text = fs.readFileSync(join(import.meta.dir, "../../../..", manifest), "utf8");
@@ -4973,7 +4974,9 @@ describe("round 32 policy and landing routing", () => {
             true
         );
         expect(roundPolicy({ round: 3, changedFiles: 100 }).fixAll).toBe(false);
-        expect(roundPolicy({ round: 3, changedFiles: 101 }).fixAll).toBe(true);
+        // One rule for every size since 2026-10-18: a PR over 100 files no longer gets a third fix-everything round.
+        expect(roundPolicy({ round: 3, changedFiles: 101 }).fixAll).toBe(false);
+        expect(roundPolicy({ round: 2, changedFiles: 101 }).fixAll).toBe(true);
         for (const template of ["brief-self-fetch.md", "brief-template.md"]) {
             const text = fs.readFileSync(join(import.meta.dir, "../references", template), "utf8");
             expect(text).toContain("{{ROUND_POLICY}}");
@@ -5149,4 +5152,126 @@ describe("round 32 policy and landing routing", () => {
             }
         }
     );
+});
+
+describe("tmp-reclaim --own-session lists only the live session's build output", () => {
+    const session = "1b4001ba-d479-40f2-9e25-b13cb2ef5a13";
+
+    function plantSession(): { cc: string; dir: string; nonBuild: string[] } {
+        const cc = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "babysit-own-")));
+        const dir = join(cc, "Project", session);
+        const file = (path: string, text = "x") => {
+            fs.mkdirSync(dirname(join(dir, path)), { recursive: true });
+            fs.writeFileSync(join(dir, path), text);
+        };
+        // Build output: a scratch path of SwiftPM entries only, a `.build` whose checkouts are git clones (so only its
+        // triple folder may go), and a module cache.
+        file("pluggable/b-hub/arm64-apple-macosx/debug/App.o");
+        file("pluggable/b-hub/workspace-state.json", "{}");
+        file("pluggable/b-hub/build.db");
+        file("pkg/.build/arm64-apple-macosx/debug/Kit.o");
+        file("pkg/.build/workspace-state.json", "{}");
+        file("pkg/.build/checkouts/dep/.git/HEAD", "ref: refs/heads/main\n");
+        file("pluggable/mc/ABC/Foundation-1.pcm");
+        file("pluggable/mc/Swift-2.swiftmodule");
+        file("pluggable/mc/modules.timestamp");
+        // Everything below must never be listed, nor any folder above it.
+        const nonBuild = [
+            "briefs/520-r1.md",
+            "logs/run.log",
+            "524-r2-replies.json",
+            "fix.patch",
+            "pluggable/b-notes/notes.md",
+            "mc-mixed/readme.txt",
+            "removals/old/arm64-apple-macosx/debug/Old.o",
+            "worktrees/w/node_modules/dep/.build/arm64-apple-macosx/x.o",
+        ];
+        for (const path of nonBuild) {
+            file(path);
+        }
+        file("pluggable/b-notes/arm64-apple-macosx/debug/Notes.o");
+        file("pluggable/b-notes/workspace-state.json", "{}");
+        file("mc-mixed/Foundation-1.pcm");
+        fs.symlinkSync(join(dir, "pluggable/b-hub/arm64-apple-macosx"), join(dir, "linked-triple"));
+        return { cc, dir, nonBuild: nonBuild.map((path) => join(dir, path)) };
+    }
+
+    test("the dry-run list holds build output and never a planted non-build file", () => {
+        const { dir, nonBuild } = plantSession();
+        const listed = ownBuildOutput(dir);
+        expect(listed).toEqual(
+            [
+                "pkg/.build/arm64-apple-macosx",
+                "pluggable/b-hub",
+                "pluggable/b-notes/arm64-apple-macosx",
+                "pluggable/mc",
+            ].map((path) => join(dir, path))
+        );
+        for (const path of nonBuild) {
+            expect(listed.filter((candidate) => path === candidate || path.startsWith(`${candidate}/`))).toEqual([]);
+        }
+        expect(buildOutputKind(join(dir, "pluggable/b-notes"))).toBeNull();
+        expect(buildOutputKind(join(dir, "mc-mixed"))).toBeNull();
+        expect(buildOutputKind(join(dir, "linked-triple"))).toBeNull();
+        expect(buildOutputKind(join(dir, "pluggable/mc"))).toBe("module-cache");
+    });
+
+    test("judgeOwn keeps the guards: recent, open, FIFO, outside the session, not build output", () => {
+        const { cc, dir } = plantSession();
+        // A change time can sit a millisecond ahead of Date.now(); with a zero age limit that still reads as recent.
+        Bun.sleepSync(20);
+        const options = { sessionDirs: [dir], open: [] as string[], minAgeMinutes: 0 };
+        const hub = join(dir, "pluggable/b-hub");
+        const verdict = judgeOwn(hub, options);
+        expect(typeof verdict === "string" ? verdict : verdict.path).toBe(hub);
+        expect(judgeOwn(hub, { ...options, minAgeMinutes: 10 })).toBe("recent");
+        expect(judgeOwn(hub, { ...options, open: [join(hub, "build.db")] })).toBe("open-file");
+        expect(judgeOwn(join(dir, "pluggable/b-notes"), options)).toBe("not-build-output");
+        expect(judgeOwn(join(dir, "removals/old/arm64-apple-macosx"), options)).toBe("skipped-folder");
+        expect(judgeOwn(join(dir, "linked-triple"), options)).toBe("symlink");
+        const outside = join(cc, "Other", "arm64-apple-macosx");
+        fs.mkdirSync(outside, { recursive: true });
+        expect(judgeOwn(outside, options)).toBe("outside-session");
+        expect(
+            Bun.spawnSync(["mkfifo", join(hub, "arm64-apple-macosx/debug/pipe")], { env: process.env }).exitCode
+        ).toBe(0);
+        expect(judgeOwn(hub, options)).toBe("socket");
+    });
+
+    test("the session is found by its full uuid only", () => {
+        const { cc, dir } = plantSession();
+        expect(ownSessionDirs(session, cc)).toEqual([dir]);
+        expect(() => ownSessionDirs("1b4001ba", cc)).toThrow("full session uuid");
+    });
+
+    test("apply removes the planned build output and refuses an entry that is no longer build output", () => {
+        const { dir } = plantSession();
+        const hub = join(dir, "pluggable/b-hub");
+        const notesTriple = join(dir, "pluggable/b-notes/arm64-apple-macosx");
+        const candidate = (path: string) => ({ path, ino: fs.lstatSync(path).ino, bytes: 1, newest: 0 });
+        const planned = [candidate(hub), candidate(notesTriple)];
+        // After the dry run someone put a note into the triple folder's place: the apply must refuse it.
+        fs.rmSync(notesTriple, { recursive: true });
+        fs.mkdirSync(notesTriple);
+        fs.writeFileSync(join(notesTriple, "kept.md"), "a note");
+        const plan = join(dir, "..", "plan.json");
+        fs.writeFileSync(
+            plan,
+            SafeJSON.stringify({
+                createdAt: Date.now(),
+                minAgeHours: 0,
+                candidates: planned,
+                ownSession: { id: session, dirs: [dir], minAgeMinutes: 0 },
+            })
+        );
+        const result = Bun.spawnSync(
+            [process.execPath, join(import.meta.dir, "tmp-reclaim.ts"), "--apply", "--plan", plan],
+            { stdout: "pipe", stderr: "pipe", env: process.env }
+        );
+        expect(result.stderr.toString()).toBe("");
+        expect(result.stdout.toString()).toContain("removed 1 of 2 planned entries");
+        expect(fs.existsSync(hub)).toBe(false);
+        expect(fs.readFileSync(join(notesTriple, "kept.md"), "utf8")).toBe("a note");
+        expect(fs.existsSync(join(dir, "pluggable/b-notes/notes.md"))).toBe(true);
+    });
 });
