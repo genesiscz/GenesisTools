@@ -1,15 +1,47 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mergeConfig, NEUTRAL_CONFIG } from "@app/gitlab/lib/config";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { closedBugFacts } from "@app/gitlab/lib/closed-bug";
+import { mergeConfig, messagesOf, NEUTRAL_CONFIG } from "@app/gitlab/lib/config";
 import { setDateStyle } from "@app/gitlab/lib/dates";
+import {
+    adoReads,
+    adoWorkItems,
+    BOB,
+    baseRoutes,
+    createStaleRepo,
+    FAKE_HOST,
+    FAKE_PROJECT,
+    FAKE_TOKEN,
+    FakeGitLab,
+    installFakeAdo,
+    mrRoutes,
+    PROJECT_API,
+    rawAdo,
+    rawMr,
+    rawNote,
+    type StaleRepo,
+    scoped,
+    startFakeRuntime,
+    status,
+    stopFakeRuntime,
+} from "@app/gitlab/lib/fake-gitlab";
 import type { MrNote, MrSummary, MrWithNotes } from "@app/gitlab/lib/merge-requests";
 import {
     closedBugContextOf,
+    collectStaleReport,
+    emptyReview,
     findReviewedMr,
     freshness,
+    gitFacts,
     markLabelsApplied,
     markPosted,
     mergeReviews,
+    normalizeEvidence,
+    normalizeLabels,
     noteWindow,
+    operationalState,
     pendingLabels,
     renderStaleReport,
     type StaleMr,
@@ -285,6 +317,19 @@ describe("stale-branches: review bookkeeping", () => {
             "ADO 4242 comments 1 -> 2",
         ]);
         expect(freshness(stored, { ...stored }, item("Closed", "2026-02-01"))).toEqual({ changed: false, details: [] });
+    });
+
+    test("freshness names a closed or merged MR and a retargeted branch", () => {
+        const stored = mr(1);
+        const result = freshness(stored, { ...stored, state: "merged", targetBranch: "develop", draft: false }, null);
+
+        expect(result).toEqual({
+            changed: true,
+            details: ["MR state opened -> merged", "target branch main -> develop"],
+        });
+        expect(freshness({ ...stored, draft: true }, { ...stored, draft: false }, null).details).toEqual([
+            "MR marked ready",
+        ]);
     });
 
     test("mergeReviews fills reviewed MRs from slice maps and previous reports, later sources win", () => {
@@ -1030,5 +1075,450 @@ describe("company-specific note and instruction text", () => {
 
         expect(text).toContain("Write the comment in the team voice. Then run:");
         expect(staleInstructions(mergeConfig({}, NEUTRAL_CONFIG))).not.toContain("team voice");
+    });
+});
+
+describe("stale-branches: input validation", () => {
+    test("normalizeEvidence trims entries, drops blanks and refuses anything but an array of strings", () => {
+        expect(normalizeEvidence(undefined)).toEqual([]);
+        expect(normalizeEvidence(null)).toEqual([]);
+        expect(normalizeEvidence([" git log -1 ", "", "  "])).toEqual(["git log -1"]);
+        expect(() => normalizeEvidence("git log")).toThrow("review.evidence must be an array of strings");
+        expect(() => normalizeEvidence(["ok", 3])).toThrow('got ["ok",3]');
+    });
+
+    test("normalizeLabels keeps trimmed add and remove actions and names the entry it refuses", () => {
+        expect(normalizeLabels(null)).toEqual([]);
+        expect(
+            normalizeLabels([
+                { type: "add", label: " Stale " },
+                { type: "remove", label: "blocked" },
+            ])
+        ).toEqual([
+            { type: "add", label: "Stale" },
+            { type: "remove", label: "blocked" },
+        ]);
+        expect(() => normalizeLabels("Stale")).toThrow("review.labels must be an array of {type, label}");
+        expect(() => normalizeLabels([{ type: "toggle", label: "x" }])).toThrow(
+            'Invalid label action {"type":"toggle"'
+        );
+        expect(() => normalizeLabels([{ type: "add", label: "   " }])).toThrow("Invalid label action");
+    });
+
+    test("mergeReviews refuses a confidence outside 0 to 100 and names the MR", () => {
+        const target = report([mr(1)]);
+
+        expect(() =>
+            mergeReviews(target, [{ "1": { ...emptyReview(), recommendation: "KEEP", confidence: 150 } }])
+        ).toThrow("!1: review.confidence must be a number from 0 to 100, got 150");
+        expect(() =>
+            mergeReviews(target, [{ "1": { ...emptyReview(), recommendation: "KEEP", confidence: "oops" as never } }])
+        ).toThrow("review.confidence must be a number from 0 to 100");
+    });
+
+    test("pendingLabels refuses a label that is added and removed, and an MR with nothing pending", () => {
+        const clash = mr(
+            1,
+            {
+                labels: [
+                    { type: "add", label: STALE },
+                    { type: "remove", label: STALE },
+                ],
+            },
+            {}
+        );
+        const done = mr(2, { labels: [{ type: "add", label: STALE }], labelsAppliedAt: "2026-09-08T00:00:00Z" });
+
+        expect(() => pendingLabels(report([clash]))).toThrow("!1 adds and removes the same label: Stale");
+        expect(() => pendingLabels(report([done]), 2)).toThrow("!2 has no pending label changes in this report");
+        expect(pendingLabels(report([done]))).toEqual([]);
+    });
+
+    test("operationalState keeps only what post, apply-labels and close recorded", () => {
+        expect(operationalState(undefined)).toEqual({});
+        expect(
+            operationalState({
+                recommendation: "CLOSE",
+                postedNoteUrl: `${MR_URL}/1#note_5`,
+                labelsBefore: [],
+                closedAt: undefined,
+                draftNoteId: 0,
+            })
+        ).toEqual({ postedNoteUrl: `${MR_URL}/1#note_5`, labelsBefore: [], draftNoteId: 0 });
+    });
+});
+
+describe("stale-branches: renderStaleReport for work items and closed bugs", () => {
+    const task = workItem({
+        id: 501,
+        type: "Task",
+        state: "Active",
+        parentId: 600,
+        url: "https://ado.example.com/501",
+        assignee: "Dana Example",
+    });
+    const parent = workItem({
+        id: 600,
+        type: "Bug",
+        state: "Closed",
+        url: "https://ado.example.com/600",
+        changed: "2026-08-01T00:00:00Z",
+        comments: [
+            { id: 1, author: "Eve", date: "2026-07-01T00:00:00Z", text: "works\n   on my machine" },
+            { id: 2, author: "Fay", date: "2026-07-05T00:00:00Z", text: "still broken on UAT" },
+        ],
+        lastCommentDate: "2026-07-05T00:00:00Z",
+    });
+    const roles = { uat: "origin/staging", production: "origin/main", test: null };
+    const shipped = {
+        mergeBase: "abc",
+        filesChanged: 3,
+        insertions: 5,
+        deletions: 0,
+        refs: [
+            { ref: "origin/staging", matched: 0, sampled: 4, verdict: "absent" as const },
+            { ref: "origin/main", matched: 0, sampled: 4, verdict: "absent" as const },
+        ],
+        files: [],
+        verdict: "absent" as const,
+        note: null,
+    };
+    const context = { roles, messages: messagesOf(NEUTRAL_CONFIG), projectPath: "acme/web-app" };
+    const taskUnderBug = (): StaleMr =>
+        mr(
+            1,
+            { recommendation: "KEEP", confidence: null, reason: "r", draftComment: "d", adoCommentsSummary: "Broken." },
+            {
+                ado: {
+                    id: 501,
+                    source: "title",
+                    item: task,
+                    effective: parent,
+                    error: null,
+                    parentError: null,
+                },
+                adoExtra: [
+                    adoFacts(workItem({ id: 7, type: "Story", state: "Active" })),
+                    {
+                        id: 8,
+                        source: "branch",
+                        item: null,
+                        effective: null,
+                        error: { id: 8, error: "TF401019: no access" },
+                        parentError: null,
+                    },
+                ],
+                shipped,
+                closedBug: closedBugFacts({ item: parent, shipped, iid: 1, context }),
+                sideComments: [
+                    { key: "a", body: "x", postedNoteUrl: `${MR_URL}/1#note_9`, postedAt: "2026-09-01T00:00:00Z" },
+                    { key: "b", body: "y", draftNoteId: 33 },
+                    { key: "c", body: "z" },
+                ],
+            }
+        );
+
+    test("a Task under a Closed bug shows the parent state, the comments of the parent and the closed-bug line", () => {
+        const md = renderStaleReport(report([taskUnderBug()]), { createdAt: "2026-09-08 15:00", adoTags: [] });
+
+        expect(md).toContain("| Task: Active; parent Bug [600](https://ado.example.com/600): Closed |");
+        expect(md).toContain(
+            "- ADO Task: [501 t](https://ado.example.com/501), state **Active**, assignee Dana Example"
+        );
+        expect(md).toContain("- Corrected to parent Bug: [600 t](https://ado.example.com/600), state **Closed**");
+        expect(md).toContain("- ADO last activity: 2026-08-01 by Carol Example; last comment 2026-07-05");
+        expect(md).toContain("- Also names ADO Story: [7 t](u), state **Active**");
+        expect(md).toContain("- Also names ADO 8 unreadable: TF401019: no access");
+        expect(md).toContain("- What the comments say in the ADO (2 on 600): Broken.");
+        expect(md).toContain("    - 2026-07-05 Fay: still broken on UAT\n    - 2026-07-01 Eve: works on my machine");
+        expect(md).toContain("- Closed bug, open MR: nowhere (sample); staging 0/4, main 0/4; Closed ?");
+        expect(md).toContain("**(fix not released)**");
+        expect(md).toContain("| Closed bug, open MR, fix not on UAT or production (closed-bug) | 1 |");
+        expect(md).toContain("| Work item Closed but content absent everywhere | 1 |");
+        expect(md).toContain(`- Side texts of ours: a [posted 2026-09-01](${MR_URL}/1#note_9); b draft 33; c pending`);
+        expect(md).toContain("- Recommended action: **KEEP**\n");
+    });
+
+    test("an unreadable parent is named, and a branch or work item that cannot be compared is said so", () => {
+        const noParent = mr(
+            2,
+            { recommendation: "KEEP", confidence: 50, reason: "r", draftComment: "d" },
+            {
+                ado: {
+                    id: 502,
+                    source: "branch",
+                    item: workItem({ id: 502, type: "Task", state: "Active", parentId: 650 }),
+                    effective: workItem({ id: 502, type: "Task", state: "Active", parentId: 650 }),
+                    error: null,
+                    parentError: { id: 650, error: "TF401232: gone" },
+                },
+                git: { ...mr(2).git, sourceMissing: true, behind: null, ahead: null, lastCommitDate: null },
+                shipped: { ...shipped, verdict: "unknown", refs: [], note: null },
+                lastNote: note({ createdAt: "2026-02-03T00:00:00Z", author: "gitlab", system: true }),
+            }
+        );
+        const targetGone = mr(3, {}, { git: { ...mr(3).git, targetMissing: true } });
+        const md = renderStaleReport(report([noParent, targetGone]), { createdAt: "2026-09-08 15:00", adoTags: [] });
+
+        expect(md).toContain("- Parent 650 unreadable: TF401232: gone");
+        expect(md).toContain("source missing commits");
+        expect(md).toContain("- Shipped: unknown (no sampled lines); 3 files, +5 -0");
+        expect(md).toContain("(note 2026-02-03 by gitlab, system)");
+        expect(md).toContain("| target missing |");
+        expect(md).toContain("| source missing |");
+        expect(md).toContain("KEEP (50 %)");
+    });
+});
+
+describe("stale-branches: the sweep against a real checkout", () => {
+    const NOW = new Date("2026-04-01T12:00:00Z");
+    let repo: StaleRepo;
+
+    beforeAll(async () => {
+        repo = createStaleRepo();
+        await installFakeAdo();
+        startFakeRuntime();
+    });
+
+    afterAll(() => {
+        stopFakeRuntime();
+    });
+
+    afterEach(() => {
+        adoWorkItems.clear();
+        adoReads.length = 0;
+    });
+
+    const api = { host: FAKE_HOST, token: FAKE_TOKEN, project: FAKE_PROJECT };
+
+    async function sweep(fake: FakeGitLab, config = mergeConfig({}, NEUTRAL_CONFIG)) {
+        const lines: string[] = [];
+        const { value } = await scoped(fake, () =>
+            collectStaleReport({
+                api,
+                config,
+                cwd: repo.clone,
+                reviewMinAgeDays: 60,
+                inactiveAfterDays: 30,
+                now: NOW,
+                log: (line) => lines.push(line),
+            })
+        );
+
+        return { report: value, lines };
+    }
+
+    function openMrs(fake: FakeGitLab, list: Array<Record<string, unknown>>) {
+        fake.get(`${PROJECT_API}/merge_requests`, () => list);
+        for (const raw of list) {
+            mrRoutes(fake, raw.iid as number);
+        }
+    }
+
+    test("gitFacts counts the commits behind and ahead and names the last commit of the branch", () => {
+        expect(gitFacts(repo.clone, mr(1))).toEqual({
+            sourceMissing: false,
+            targetMissing: false,
+            behind: 1,
+            ahead: 1,
+            lastCommitDate: "2026-02-01",
+            lastCommitAuthor: "Alice Example",
+            lastCommitEmail: "alice@example.com",
+        });
+        expect(gitFacts(repo.clone, mr(2))).toMatchObject({
+            lastCommitDate: "2026-02-10",
+            lastCommitAuthor: "Bob Example",
+            lastCommitEmail: "bob@example.com",
+        });
+    });
+
+    test("gitFacts leaves the distance empty when a branch is gone from origin", () => {
+        const gone = { ...mr(9), sourceBranch: "feature/deleted" };
+        const noTarget = { ...mr(1), targetBranch: "release/none" };
+
+        expect(gitFacts(repo.clone, gone)).toEqual({
+            sourceMissing: true,
+            targetMissing: false,
+            behind: null,
+            ahead: null,
+            lastCommitDate: null,
+            lastCommitAuthor: null,
+            lastCommitEmail: null,
+        });
+        expect(gitFacts(repo.clone, noTarget)).toMatchObject({
+            sourceMissing: false,
+            targetMissing: true,
+            behind: null,
+            ahead: null,
+            lastCommitDate: "2026-02-01",
+        });
+    });
+
+    test("a sweep records each MR's git distance, notes, content check, siblings and author activity", async () => {
+        const fake = baseRoutes(new FakeGitLab());
+        openMrs(fake, [
+            rawMr(1, { created_at: "2026-01-01T00:00:00Z", updated_at: "2026-02-15T00:00:00Z" }),
+            rawMr(2, {
+                author: BOB,
+                created_at: "2026-02-20T00:00:00Z",
+                updated_at: "2026-03-30T00:00:00Z",
+                labels: ["NOT merged into main"],
+            }),
+            rawMr(3, { target_branch: "feature/1", created_at: "2026-03-25T00:00:00Z" }),
+        ]);
+        mrRoutes(fake, 1, {
+            approvedBy: ["dave"],
+            notes: [
+                rawNote(1, { author: "carol", body: "Please rebase", at: "2026-02-10T00:00:00Z" }),
+                rawNote(2, { system: true, body: "added 2 commits", at: "2026-02-12T00:00:00Z" }),
+                rawNote(3, { system: true, body: "assigned to @carol", at: "2026-02-13T00:00:00Z" }),
+            ],
+        });
+        fake.get(`${PROJECT_API}/merge_requests/2/approvals`, status(404));
+        fake.get(`${PROJECT_API}/merge_requests/3/notes`, status(404));
+        fake.get("/users/11/events", [{ created_at: "2026-03-20T10:00:00Z" }]);
+        fake.get("/users/12/events", status(403));
+
+        const { report: result, lines } = await sweep(fake);
+        const [first, second, third] = result.mrs;
+
+        expect(result.mrs.map((m) => m.iid)).toEqual([1, 2, 3]);
+        expect(result).toMatchObject({
+            asOfDate: "2026-04-01",
+            host: FAKE_HOST,
+            project: FAKE_PROJECT,
+            defaultBranch: "main",
+            repoRoot: repo.clone,
+            shippedRefs: ["origin/main"],
+            shippedRoles: { uat: null, production: "origin/main", test: null },
+        });
+        expect(result._instructions).toBe(staleInstructions(mergeConfig({}, NEUTRAL_CONFIG)));
+        expect(lines[0]).toBe("3 open MRs in acme/widgets");
+        expect(lines.some((line) => line.startsWith("!1 90 d, work item none"))).toBe(true);
+
+        expect(first).toMatchObject({ ageDays: 90, daysSinceUpdate: 45, needsReview: true });
+        expect(first?.git).toMatchObject({ behind: 1, ahead: 1, lastCommitDate: "2026-02-01" });
+        expect(first?.notes.map((n) => n.id)).toEqual([2, 1]);
+        expect(first?.lastHumanNote?.body).toBe("Please rebase");
+        expect(first?.approvals).toEqual({ approved: true, approvedBy: ["dave"] });
+        expect(first?.shipped?.verdict).toBe("absent");
+
+        expect(second).toMatchObject({ ageDays: 40, needsReview: false, approvals: null });
+        expect(second?.shipped?.verdict).toBe("present");
+        expect(second?.labelConflicts).toHaveLength(1);
+        expect(second?.labelConflicts[0]).toContain('label "NOT merged into main"');
+
+        expect(third?.notes).toEqual([]);
+        expect(first?.siblings.map((s) => [s.iid, s.relation])).toEqual([[3, "stacked-on-this"]]);
+        expect(third?.siblings.map((s) => [s.iid, s.relation])).toEqual([[1, "this-stacks-on"]]);
+
+        expect(result.authors.map((a) => a.username)).toEqual(["alice", "bob"]);
+        expect(result.authors[0]).toMatchObject({
+            gitlabState: "active",
+            lastGitlabEvent: "2026-03-20",
+            lastGitlabEventError: null,
+            gitIdentities: ["Alice Example <alice@example.com>"],
+            lastCommitDate: "2026-03-01",
+            openMrs: 2,
+            oldestMrAgeDays: 90,
+            oldestMrIid: 1,
+        });
+        expect(result.authors[1]).toMatchObject({
+            gitlabState: "blocked",
+            lastGitlabEvent: null,
+            lastCommitDate: "2026-02-10",
+        });
+        expect(result.authors[1]?.lastGitlabEventError).toContain("403");
+
+        expect(result.failures.some((f) => f.startsWith("approvals of !2:"))).toBe(true);
+        expect(result.failures.some((f) => f.startsWith("notes of !3:"))).toBe(true);
+        expect(result.failures.some((f) => f.startsWith("GitLab events of bob:"))).toBe(true);
+        expect(result.commands.some((c) => c.includes("azure-devops"))).toBe(false);
+    });
+
+    test("a checkout without origin and a failing sibling search are recorded as failures, not thrown", async () => {
+        const config = mergeConfig({ workItems: { idPattern: "AB#(\\d+)" } }, NEUTRAL_CONFIG);
+        const fake = baseRoutes(new FakeGitLab());
+        const list = [rawMr(1, { title: "AB#701 Lonely" })];
+        openMrs(fake, list);
+        fake.get(`${PROJECT_API}/merge_requests`, (request) =>
+            request.query.get("state") === "all" ? status(403, { message: "403 Forbidden" }) : list
+        );
+        fake.get("/users/11/events", []);
+        adoWorkItems.set(701, rawAdo(701));
+        const bare = realpathSync(mkdtempSync(join(tmpdir(), "gt-gitlab-bare-")));
+
+        const { value: result } = await scoped(fake, () =>
+            collectStaleReport({
+                api,
+                config,
+                cwd: bare,
+                reviewMinAgeDays: 60,
+                inactiveAfterDays: 30,
+                now: NOW,
+            })
+        );
+
+        expect(result.failures[0]).toStartWith("git fetch origin --prune:");
+        expect(result.failures.some((f) => f.startsWith("sibling MRs of work item 701:"))).toBe(true);
+        expect(result.mrs[0]?.git.sourceMissing).toBe(true);
+        expect(result.mrs[0]?.shipped).toBeNull();
+        expect(result.mrs[0]?.siblings).toEqual([]);
+    });
+
+    test("work items named by a title, a branch or a description are read once each, a Task through its parent", async () => {
+        const config = mergeConfig({ workItems: { idPattern: "AB#(\\d+)" } }, NEUTRAL_CONFIG);
+        const fake = baseRoutes(new FakeGitLab());
+        const list = [
+            rawMr(1, { title: "AB#501 Fix popup", created_at: "2026-01-01T00:00:00Z" }),
+            rawMr(2, { description: "Covers AB#502, AB#503 and AB#504", created_at: "2026-02-20T00:00:00Z" }),
+            rawMr(4, {
+                title: "AB#501 other attempt",
+                source_branch: "other/4",
+                created_at: "2026-03-01T00:00:00Z",
+            }),
+        ];
+        openMrs(fake, list);
+        fake.get(`${PROJECT_API}/merge_requests`, (request) =>
+            request.query.get("state") === "all" ? list.filter((m) => String(m.title).includes("501")) : list
+        );
+        fake.get("/users/11/events", []);
+        adoWorkItems.set(501, rawAdo(501, { type: "Task", parent: 600, title: "Popup task" }));
+        adoWorkItems.set(600, rawAdo(600, { type: "Bug", state: "Closed", title: "Popup bug" }));
+        adoWorkItems.set(502, rawAdo(502, { type: "Story", state: "Active" }));
+        adoWorkItems.set(503, "TF401019: no access to project");
+        adoWorkItems.set(504, rawAdo(504, { type: "Task", parent: 601 }));
+        adoWorkItems.set(601, "TF401232: work item 601 does not exist");
+
+        const { report: result } = await sweep(fake, config);
+        const [first, second, other] = result.mrs;
+
+        expect(first?.ado).toMatchObject({ id: 501, source: "title", error: null, parentError: null });
+        expect(first?.ado?.item?.type).toBe("Task");
+        expect(first?.ado?.effective).toMatchObject({ id: 600, type: "Bug", state: "Closed" });
+        expect(first?.closedBug?.adoId).toBe(600);
+        expect(first?.closedBug?.fix).toBe("nowhere");
+
+        expect(second?.ado).toMatchObject({ id: 502, source: "description" });
+        expect(second?.adoExtra.map((a) => [a.id, a.error?.error.slice(0, 11) ?? null])).toEqual([
+            [503, "TF401019: n"],
+            [504, null],
+        ]);
+        expect(second?.adoExtra[1]?.parentError?.id).toBe(601);
+
+        expect(other?.shipped).toBeNull();
+        expect(other?.git.sourceMissing).toBe(true);
+        expect(other?.ado?.id).toBe(501);
+        expect(other?.siblings.map((s) => [s.iid, s.relation])).toEqual([[1, "same-ado"]]);
+        expect(first?.siblings.map((s) => [s.iid, s.relation])).toEqual([[4, "same-ado"]]);
+
+        expect(adoReads.filter((id) => id === 501)).toHaveLength(1);
+        expect([...new Set(adoReads)].sort()).toEqual([501, 502, 503, 504, 600, 601]);
+        expect(result.failures).toContain("ADO 503 (from !2 description): TF401019: no access to project");
+        expect(
+            result.failures.some((f) => f.startsWith("ADO 504 is a Task and its parent 601 is unreadable (from !2)"))
+        ).toBe(true);
+        expect(result.commands.some((c) => c.includes("(sibling MRs, one call per work item)"))).toBe(true);
+        expect(result.commands.some((c) => c.includes("azure-devops workitem"))).toBe(true);
     });
 });
