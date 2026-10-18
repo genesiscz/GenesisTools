@@ -1,9 +1,9 @@
 import SwiftUI
 
-package struct PermissionsView: View {
-    @ObservedObject package var model: PermissionsModel
+struct PermissionsView: View {
+    @ObservedObject var model: PermissionsModel
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("Everything `tools` runs is attributed to this app, so one grant per row serves every terminal and launchd job. Requests made here show the same prompt the CLI would.")
@@ -71,10 +71,10 @@ package struct PermissionsView: View {
     }
 }
 
-package struct ServicesView: View {
-    @ObservedObject package var model: ServicesModel
+struct ServicesView: View {
+    @ObservedObject var model: ServicesModel
 
-    package var body: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text("launchd jobs installed by tools (com.genesis-tools.*). A job written before this app existed keeps its bare command and the terminal-less grants; reinstall it with its own tool (for example `tools dev-dashboard ui up`) to route it through the launcher.")
@@ -112,11 +112,11 @@ package struct ServicesView: View {
     }
 }
 
-package struct SettingsView: View {
-    @ObservedObject package var model: SettingsModel
+struct SettingsView: View {
+    @ObservedObject var model: SettingsModel
     @AppStorage(AppMainWindow.key) private var mainWindow = AppMainWindow.permissions
 
-    package var body: some View {
+    var body: some View {
         Form {
             Section("Main window") {
                 Picker("Opening GenesisTools shows", selection: $mainWindow) {

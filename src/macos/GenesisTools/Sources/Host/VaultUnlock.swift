@@ -23,33 +23,33 @@ import Foundation
 import LocalAuthentication
 import Security
 
-package struct VaultUnlockParams: Decodable {
-    package var tool: String
-    package var purpose: String
-    package var secret: String?
-    package var command: String?
+struct VaultUnlockParams: Decodable {
+    var tool: String
+    var purpose: String
+    var secret: String?
+    var command: String?
 }
 
 /// `KERN_PROCARGS2` of a process: the executable path, then `argc` arguments, then the environment.
-package struct ProcArgs: Equatable {
-    package var executable: String
+struct ProcArgs: Equatable {
+    var executable: String
     package var arguments: [String]
-    package var environment: [String]
+    var environment: [String]
 
-    package func environmentValue(_ name: String) -> String? {
+    func environmentValue(_ name: String) -> String? {
         let prefix = "\(name)="
         return environment.first { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
     }
 }
 
 /// What the kernel says about one process.
-package struct VaultCaller {
-    package var pid: pid_t
-    package var executable: String?
-    package var args: ProcArgs?
-    package var cwd: String?
-    package var ancestors: [(pid: pid_t, command: String)]
-    package var identity: VaultRecipient.Identity? = nil
+struct VaultCaller {
+    var pid: pid_t
+    var executable: String?
+    var args: ProcArgs?
+    var cwd: String?
+    var ancestors: [(pid: pid_t, command: String)]
+    var identity: VaultRecipient.Identity? = nil
 
     private static let scriptExtensions = [".ts", ".tsx", ".js", ".mjs", ".cjs"]
 
@@ -61,7 +61,7 @@ package struct VaultCaller {
     /// The preloads the `tools` wrapper passes to every tool, relative to the checkout the script is in. They are
     /// GenesisTools' own code, so they load no extra code (2026-10-15: every `tools claude login` could only be
     /// allowed once, and the window named the preload as the program).
-    package static let ownPreloads = [
+    static let ownPreloads = [
         "src/utils/bun/preload-solid-scoped.ts", "src/utils/search/stores/sqlite-vec-preload.ts",
         "src/utils/bun/preload-orphan-watchdog.ts",
     ]
@@ -122,7 +122,7 @@ package struct VaultCaller {
 
     /// The script an interpreter runs (`bun run …/src/ai/commands/usage/poll-daemon.ts`): with the executable, the
     /// identity a remembered approval is for.
-    package var script: String? {
+    var script: String? {
         guard let raw = scriptIndex.flatMap({ args?.arguments[$0] }) else { return nil }
         if raw.hasPrefix("/") { return (raw as NSString).standardizingPath }
         // `bun scratch/x.ts` names a different program in every folder: remembered as typed, an approval matched
@@ -131,7 +131,7 @@ package struct VaultCaller {
         return ((cwd as NSString).appendingPathComponent(raw) as NSString).standardizingPath
     }
 
-    package static func isInterpreter(_ executable: String) -> Bool {
+    static func isInterpreter(_ executable: String) -> Bool {
         let name = (executable as NSString).lastPathComponent.lowercased()
         return name.hasPrefix("gt-") || name.range(of:
             #"^(node|nodejs|bun|deno|python[0-9.]*|pypy[0-9.]*|ruby[0-9.]*|perl[0-9.]*|php[0-9.]*|lua[0-9.]*|luajit|tclsh[0-9.]*|wish|osascript|java|pwsh|sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh)$"#,
@@ -139,10 +139,10 @@ package struct VaultCaller {
     }
 
     /// An interpreter's executable alone never identifies the program it runs.
-    package var isInterpreter: Bool { executable.map(Self.isInterpreter) ?? false }
+    var isInterpreter: Bool { executable.map(Self.isInterpreter) ?? false }
 
     /// The tool as GenesisTools names it, from the kernel's view: `src/<tool>/` in the script, else the `gt-<tool>` link.
-    package var toolName: String? {
+    var toolName: String? {
         if let script, let range = script.range(of: "/src/", options: .backwards),
            let slash = script[range.upperBound...].firstIndex(of: "/") {
             return String(script[range.upperBound..<slash])
@@ -153,7 +153,7 @@ package struct VaultCaller {
     }
 
     /// Flags and environment that load code the script path does not name. Any of them: no remembered approval.
-    package var injected: [String] {
+    var injected: [String] {
         var found: [String] = []
         let loaderEnvironment = ["LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"]
         let interpreterEnvironment = [
@@ -180,7 +180,7 @@ package struct VaultCaller {
     }
 
     /// Why this request can only be allowed once, or nil when an allow may be remembered.
-    package var onceOnlyReason: String? {
+    var onceOnlyReason: String? {
         if args == nil { return "the caller's arguments and environment could not be read" }
         if !injected.isEmpty { return "extra code may be loaded" }
         if isInterpreter, script == nil { return "the script it runs is not known" }
@@ -188,9 +188,9 @@ package struct VaultCaller {
     }
 }
 
-package enum VaultProcess {
+enum VaultProcess {
     /// Little-endian `argc`, the executable path, NUL padding, `argc` arguments, the environment up to an empty entry.
-    package static func parseProcArgs(_ bytes: [UInt8]) -> ProcArgs? {
+    static func parseProcArgs(_ bytes: [UInt8]) -> ProcArgs? {
         guard bytes.count > 4 else { return nil }
         let argc = Int(bytes[0]) | Int(bytes[1]) << 8 | Int(bytes[2]) << 16 | Int(bytes[3]) << 24
         var index = 4
@@ -226,7 +226,7 @@ package enum VaultProcess {
         return ProcArgs(executable: executable, arguments: arguments, environment: environment)
     }
 
-    package static func procArgs(_ pid: pid_t) -> ProcArgs? {
+    static func procArgs(_ pid: pid_t) -> ProcArgs? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return nil }
@@ -235,13 +235,13 @@ package enum VaultProcess {
         return parseProcArgs(Array(buffer.prefix(size)))
     }
 
-    package static func path(_ pid: pid_t) -> String? {
+    static func path(_ pid: pid_t) -> String? {
         var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
         guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
         return String(cString: buffer)
     }
 
-    package static func cwd(_ pid: pid_t) -> String? {
+    static func cwd(_ pid: pid_t) -> String? {
         var info = proc_vnodepathinfo()
         let size = proc_pidinfo(pid, PROC_PIDVNODEPATHINFO, 0, &info, Int32(MemoryLayout<proc_vnodepathinfo>.size))
         guard size > 0 else { return nil }
@@ -250,7 +250,7 @@ package enum VaultProcess {
         }
     }
 
-    package static func parent(_ pid: pid_t) -> pid_t? {
+    static func parent(_ pid: pid_t) -> pid_t? {
         var info = proc_bsdinfo()
         let size = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size))
         guard size > 0, info.pbi_ppid > 0 else { return nil }
@@ -258,14 +258,14 @@ package enum VaultProcess {
     }
 
     /// `name first-argument` of a process, short enough for one link of the chain.
-    package static func label(_ pid: pid_t) -> String {
+    static func label(_ pid: pid_t) -> String {
         let name = path(pid).map { ($0 as NSString).lastPathComponent } ?? "pid \(pid)"
         let first = procArgs(pid)?.arguments.dropFirst().first { !$0.hasPrefix("-") }.map { ($0 as NSString).lastPathComponent }
         let text = [name, first].compactMap { $0 }.joined(separator: " ")
         return text.count > 60 ? String(text.prefix(59)) + "…" : text
     }
 
-    package static func caller(_ pid: pid_t) -> VaultCaller {
+    static func caller(_ pid: pid_t) -> VaultCaller {
         let identity = VaultRecipient.identity(pid)
         var ancestors: [(pid: pid_t, command: String)] = []
         var current = parent(pid)
@@ -282,14 +282,14 @@ package enum VaultProcess {
 }
 
 /// The agent session the caller belongs to, from its own environment, its parent chain and the session's transcript.
-package struct VaultSessionInfo: Equatable {
-    package var sessionId: String?
-    package var title: String?
-    package var agent: String?
-    package var cmuxTab: String?
+struct VaultSessionInfo: Equatable {
+    var sessionId: String?
+    var title: String?
+    var agent: String?
+    var cmuxTab: String?
 
     /// "genesis-tools-native (Claude Code)", "Claude Code session 1b4001ba", "codex exec (pid 80)", or nil.
-    package var summary: String? {
+    var summary: String? {
         if let sessionId {
             return title.map { "\($0) (Claude Code)" } ?? "Claude Code session \(sessionId.prefix(8))"
         }
@@ -298,8 +298,8 @@ package struct VaultSessionInfo: Equatable {
     }
 }
 
-package enum VaultSession {
-    package static func info(_ caller: VaultCaller, claudeHome: String) -> VaultSessionInfo {
+enum VaultSession {
+    static func info(_ caller: VaultCaller, claudeHome: String) -> VaultSessionInfo {
         var info = VaultSessionInfo()
         if let id = caller.args?.environmentValue("CLAUDE_CODE_SESSION_ID"), !id.isEmpty {
             info.sessionId = id
@@ -316,7 +316,7 @@ package enum VaultSession {
     }
 
     /// The session's name as Claude Code shows it, from the last 512 KB of its transcript (the title rows repeat).
-    package static func claudeTitle(sessionId: String, claudeHome: String) -> String? {
+    static func claudeTitle(sessionId: String, claudeHome: String) -> String? {
         let projects = (claudeHome as NSString).appendingPathComponent("projects")
         guard sessionId.range(of: #"^[A-Za-z0-9-]+$"#, options: .regularExpression) != nil,
               let folders = try? FileManager.default.contentsOfDirectory(atPath: projects) else { return nil }
@@ -335,7 +335,7 @@ package enum VaultSession {
     }
 
     /// A name the user gave (`/rename`) beats the agent name, which beats the generated title; the last of each wins.
-    package static func title(fromTranscriptTail text: String) -> String? {
+    static func title(fromTranscriptTail text: String) -> String? {
         for field in ["customTitle", "agentName", "aiTitle"] {
             let pattern = "\"\(field)\":\"((?:[^\"\\\\]|\\\\.)*)\""
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
@@ -352,47 +352,47 @@ package enum VaultSession {
 }
 
 /// One remembered approval: this executable, this script. `tool` is for display and `revoke <tool>` only.
-package struct VaultGrant: Codable, Equatable {
-    package var key: String
-    package var tool: String
-    package var executable: String
-    package var script: String?
-    package var grantedAt: Int64
+struct VaultGrant: Codable, Equatable {
+    var key: String
+    var tool: String
+    var executable: String
+    var script: String?
+    var grantedAt: Int64
     /// Epoch milliseconds; nil means "always", until revoked with `tools ai gate revoke`.
-    package var until: Int64?
-    package var method: String
+    var until: Int64?
+    var method: String
 
-    package func isLive(at now: Int64) -> Bool {
+    func isLive(at now: Int64) -> Bool {
         until.map { $0 > now } ?? true
     }
 
     /// A grant without a script, for an interpreter, would cover every program it runs; the first version stored such
     /// grants for `bun run <script>` callers. They match nothing and go on the next write.
-    package var isTooBroad: Bool {
+    var isTooBroad: Bool {
         guard script == nil else { return false }
         return VaultCaller.isInterpreter(executable)
     }
 }
 
-package struct VaultGrantsFile: Codable {
-    package var version: Int
-    package var grants: [VaultGrant]
+struct VaultGrantsFile: Codable {
+    var version: Int
+    var grants: [VaultGrant]
 }
 
-package enum VaultGrants {
-    package static func key(tool: String, executable: String, script: String?) -> String {
+enum VaultGrants {
+    static func key(tool: String, executable: String, script: String?) -> String {
         "vault|\(tool)|\(executable)|\(script ?? "")"
     }
 
-    package static var directory: String {
+    static var directory: String {
         (genesisHome() as NSString).appendingPathComponent(".genesis-tools/ai/gate")
     }
 
-    package static var path: String {
+    static var path: String {
         (directory as NSString).appendingPathComponent("vault-grants.json")
     }
 
-    package static func load(from path: String = path) -> VaultGrantsFile {
+    static func load(from path: String = path) -> VaultGrantsFile {
         guard let data = FileManager.default.contents(atPath: path),
               let file = try? JSONDecoder().decode(VaultGrantsFile.self, from: data) else {
             return VaultGrantsFile(version: 1, grants: [])
@@ -405,7 +405,7 @@ package enum VaultGrants {
     /// a hard link of `~/.bun/bin/bun`, and which one starts a script depends on the tool that spawned it. The usage
     /// daemon ran as bun, gt-services, gt-claude and gt-codex on one morning (2026-10-15), and each asked again for the
     /// same script after "Always". Only these paths count, so a binary elsewhere that calls itself bun still asks.
-    package static func runtime(of executable: String, home: String = genesisHome()) -> String {
+    static func runtime(of executable: String, home: String = genesisHome()) -> String {
         let bun = ["\(home)/.bun/bin/bun", "/opt/homebrew/bin/bun", "/usr/local/bin/bun"]
         let launchers = "\(home)/.genesis-tools/bin/"
         let isLauncher = executable.hasPrefix(launchers) && (executable as NSString).lastPathComponent.hasPrefix("gt-")
@@ -413,11 +413,11 @@ package enum VaultGrants {
         return bun.contains(executable) || isLauncher ? "bun" : executable
     }
 
-    package static func sameProgram(_ grant: VaultGrant, executable: String, script: String?, home: String = genesisHome()) -> Bool {
+    static func sameProgram(_ grant: VaultGrant, executable: String, script: String?, home: String = genesisHome()) -> Bool {
         grant.script == script && runtime(of: grant.executable, home: home) == runtime(of: executable, home: home)
     }
 
-    package static func live(executable: String, script: String?, now: Int64, in file: VaultGrantsFile,
+    static func live(executable: String, script: String?, now: Int64, in file: VaultGrantsFile,
                      home: String = genesisHome()) -> VaultGrant? {
         file.grants.last {
             sameProgram($0, executable: executable, script: script, home: home) && !$0.isTooBroad && $0.isLive(at: now)
@@ -425,7 +425,7 @@ package enum VaultGrants {
     }
 
     /// Replaces any grant for the same program and drops expired and too-broad ones.
-    package static func remember(_ grant: VaultGrant, now: Int64, in file: VaultGrantsFile,
+    static func remember(_ grant: VaultGrant, now: Int64, in file: VaultGrantsFile,
                          home: String = genesisHome()) -> VaultGrantsFile {
         var next = file
         next.grants = file.grants.filter {
@@ -438,7 +438,7 @@ package enum VaultGrants {
     /// The TypeScript revoker uses O_EXCL at this same path and understands a bare PID record. Its proper-lockfile
     /// claim arbiter is a directory with the suffix below; hold it while creating the PID record and updating.
     /// Never steal here: TypeScript owns stale recovery; an unavailable lock makes this allow once-only.
-    package static func store(_ grant: VaultGrant, now: Int64, to path: String = path, timeout: TimeInterval = 10) async -> Bool {
+    static func store(_ grant: VaultGrant, now: Int64, to path: String = path, timeout: TimeInterval = 10) async -> Bool {
         let lockPath = path + ".lock"
         do {
             try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
@@ -464,7 +464,7 @@ package enum VaultGrants {
     }
 
     @discardableResult
-    package static func save(_ file: VaultGrantsFile, to path: String = path) -> Bool {
+    static func save(_ file: VaultGrantsFile, to path: String = path) -> Bool {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         guard let data = try? encoder.encode(file) else { return false }
@@ -477,14 +477,14 @@ package enum VaultGrants {
 
 /// One open window per program: the usage daemon starts a process every minute, and without this each one would open
 /// its own window while the first waits for an answer. The lock lives as long as this process (one request, one window).
-package enum VaultWindowLock {
-    package static func path(for key: String) -> String {
+enum VaultWindowLock {
+    static func path(for key: String) -> String {
         let hash = key.utf8.reduce(UInt64(14_695_981_039_346_656_037)) { ($0 ^ UInt64($1)) &* 1_099_511_628_211 }
         return (VaultGrants.directory as NSString).appendingPathComponent("vault-window-\(String(hash, radix: 16)).lock")
     }
 
     /// The descriptor holding the lock, or nil when another process holds it. Never closed: the process exits with it.
-    package static func acquire(_ path: String) -> Int32? {
+    static func acquire(_ path: String) -> Int32? {
         try? FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         let fd = open(path, O_CREAT | O_RDWR, 0o600)
         guard fd >= 0 else { return nil }
@@ -498,50 +498,50 @@ package enum VaultWindowLock {
 }
 
 /// What the window shows, built from the request, the kernel's caller and its session. Pure, so tests read it.
-package struct VaultWindowContent {
-    package var title: String
-    package var purpose: String
-    package var facts: [ApprovalFact]
-    package var details: [ApprovalFact]
-    package var warning: String?
-    package var onceOnlyReason: String?
+struct VaultWindowContent {
+    var title: String
+    var purpose: String
+    var facts: [ApprovalFact]
+    var details: [ApprovalFact]
+    var warning: String?
+    var onceOnlyReason: String?
 
-    package static let rememberChoices = [
+    static let rememberChoices = [
         ApprovalRemember(seconds: 0, title: "Just this once"),
         ApprovalRemember(seconds: 8 * 3_600, title: "For 8 hours"),
         ApprovalRemember(seconds: 7 * 86_400, title: "For 7 days"),
         ApprovalRemember(seconds: nil, title: "Always for this program"),
     ]
 
-    package static let footnote = "The vault key unlocks every secret GenesisTools stores (AI account tokens and API keys), so an allowed program can read all of them."
+    static let footnote = "The vault key unlocks every secret GenesisTools stores (AI account tokens and API keys), so an allowed program can read all of them."
 
-    package static func shortPath(_ path: String, home: String = NSHomeDirectory()) -> String {
+    static func shortPath(_ path: String, home: String = NSHomeDirectory()) -> String {
         path == home ? "~" : path.hasPrefix(home + "/") ? "~" + path.dropFirst(home.count) : path
     }
 
     /// A script inside a project reads from the project's folder: `GenesisTools/src/ai/commands/usage/poll-daemon.ts`,
     /// not a home path cut in the middle (Martin's screenshot, 2026-10-15 00:46).
-    package static func programPath(_ path: String, home: String = NSHomeDirectory()) -> String {
+    static func programPath(_ path: String, home: String = NSHomeDirectory()) -> String {
         guard let range = path.range(of: "/src/", options: .backwards) else { return shortPath(path, home: home) }
         let project = (String(path[..<range.lowerBound]) as NSString).lastPathComponent
         return project.isEmpty ? shortPath(path, home: home) : project + path[range.lowerBound...]
     }
 
     /// `ai/acc_work/apiKey` reads as `acc_work › apiKey`.
-    package static func secretLabel(_ secret: String) -> String {
+    static func secretLabel(_ secret: String) -> String {
         let parts = secret.split(separator: "/").map(String.init)
         return (parts.first == "ai" ? Array(parts.dropFirst()) : parts).joined(separator: " › ")
     }
 
     /// The caller's phrase as a sentence: capital first letter, a full stop at the end.
-    package static func sentence(_ text: String) -> String {
+    static func sentence(_ text: String) -> String {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let first = trimmed.first else { return trimmed }
         let capitalised = first.uppercased() + trimmed.dropFirst()
         return [".", "!", "?", ")"].contains(where: capitalised.hasSuffix) ? capitalised : capitalised + "."
     }
 
-    package static func build(_ params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo,
+    static func build(_ params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo,
                       home: String = NSHomeDirectory()) -> VaultWindowContent {
         let tool = caller.toolName ?? params.tool
         let starter = caller.ancestors.last.map { "None: started by \($0.command)" } ?? "None: started by launchd"
@@ -598,19 +598,19 @@ package struct VaultWindowContent {
 /// password whenever another program (this app) reads it; Martin got that twice per allow. The app reads it once, keeps
 /// a copy in an item it creates itself (its creator reads it without a prompt), and stamps the copy with the source
 /// item's modification date, so a rotated key is read again. Reading attributes alone never prompts.
-package enum VaultKeychain {
-    package static let service = "genesis-tools"
-    package static let copyService = "genesis-tools-app-copy"
-    package static let account = "master-key"
+enum VaultKeychain {
+    static let service = "genesis-tools"
+    static let copyService = "genesis-tools-app-copy"
+    static let account = "master-key"
 
-    package enum Outcome: Equatable {
+    enum Outcome: Equatable {
         case key(String, fromCopy: Bool)
         case missing
         case failed(String)
     }
 
     /// The copy may answer only for the exact source it was taken from.
-    package static func copyIsCurrent(copyStamp: String?, sourceStamp: String?) -> Bool {
+    static func copyIsCurrent(copyStamp: String?, sourceStamp: String?) -> Bool {
         guard let copyStamp, let sourceStamp else { return false }
         return copyStamp == sourceStamp
     }
@@ -655,7 +655,7 @@ package enum VaultKeychain {
         }
     }
 
-    package static func key() -> Outcome {
+    static func key() -> Outcome {
         let source = stamp(of: service)
         if source.status == errSecItemNotFound { return .missing }
 
@@ -681,7 +681,7 @@ package enum VaultKeychain {
 /// Every request's line in `audit.jsonl` carries what decides it (the command, its parents, the folder, any loaded-code
 /// signal, why it is once-only) and, for `prompted`, everything the window showed, warnings included: an approval can
 /// be audited later from the file alone (Martin, 2026-10-16).
-package func vaultAudit(_ event: String, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo, detail: String = "",
+func vaultAudit(_ event: String, params: VaultUnlockParams, caller: VaultCaller, session: VaultSessionInfo, detail: String = "",
                         shown: VaultWindowContent? = nil) {
     var parts = ["purpose: \(params.purpose)"]
     if let secret = params.secret { parts.append("secret: \(secret)") }
@@ -745,7 +745,7 @@ private func vaultDeny(_ reason: String) -> Never {
 
 @MainActor private let vaultPresenter = ApprovalPanelPresenter()
 
-package func unlockVault(_ params: VaultUnlockParams) {
+func unlockVault(_ params: VaultUnlockParams) {
     let caller = VaultProcess.caller(getppid())
     let session = VaultSession.info(caller, claudeHome: (NSHomeDirectory() as NSString).appendingPathComponent(".claude"))
     guard let executable = caller.executable else {

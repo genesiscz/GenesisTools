@@ -2,7 +2,7 @@ import AppKit
 import Foundation
 
 extension PermissionStatus {
-    package var color: NSColor {
+    var color: NSColor {
         switch self {
         case .granted: return .systemGreen
         case .denied, .restricted: return .systemRed
@@ -12,7 +12,7 @@ extension PermissionStatus {
     }
 }
 
-package enum GrantAction: Equatable {
+enum GrantAction: Equatable {
     /// macOS shows its own prompt for this service
     case prompt
     /// no prompt exists: open the pane and reveal the app
@@ -21,17 +21,17 @@ package enum GrantAction: Equatable {
     case probe
 }
 
-package struct PermissionRow: Identifiable, Equatable {
-    package let kind: PermissionKind
+struct PermissionRow: Identifiable, Equatable {
+    let kind: PermissionKind
     /// which tools command needs it, in one line
-    package let usedBy: String
-    package let state: PermissionStatus
+    let usedBy: String
+    let state: PermissionStatus
 
-    package var id: String { kind.rawValue }
-    package var title: String { kind == .automation ? "Automation (System Events)" : kind.title }
-    package var pane: String { kind.settingsAnchor }
+    var id: String { kind.rawValue }
+    var title: String { kind == .automation ? "Automation (System Events)" : kind.title }
+    var pane: String { kind.settingsAnchor }
 
-    package var action: GrantAction {
+    var action: GrantAction {
         switch kind.requestStyle {
         case .systemPrompt, .promptThenSettings: return .prompt
         case .settingsOnly: return .openPane(kind.settingsAnchor)
@@ -43,7 +43,7 @@ package struct PermissionRow: Identifiable, Equatable {
 /// The settings window's list of every grant GenesisTools can hold. Status, requests and panes come from GenesisKit
 /// (`PermissionAccess`, the same module the widget's permission dialogs use); this model adds which `tools`
 /// command needs each grant and remembers probe answers, which macOS has no status for.
-package final class PermissionsModel: ObservableObject {
+final class PermissionsModel: ObservableObject {
     @Published package private(set) var rows: [PermissionRow] = []
     @Published package private(set) var busy: String?
     @Published package private(set) var lastMessage: String?
@@ -68,11 +68,11 @@ package final class PermissionsModel: ObservableObject {
         (.localNetwork, "programs started through tools that reach your network (dev servers, Claude sessions)"),
     ]
 
-    package init(access: PermissionAccess = .live) {
+    init(access: PermissionAccess = .live) {
         self.access = access
     }
 
-    package func refresh() {
+    func refresh() {
         rows = Self.usedBy.map { kind, usedBy in
             PermissionRow(kind: kind, usedBy: usedBy, state: probeResults[kind] ?? access.status(kind))
         }
@@ -80,7 +80,7 @@ package final class PermissionsModel: ObservableObject {
 
     // MARK: - Actions
 
-    package func request(_ row: PermissionRow) {
+    func request(_ row: PermissionRow) {
         busy = row.id
         lastMessage = nil
         let kind = row.kind
@@ -96,7 +96,7 @@ package final class PermissionsModel: ObservableObject {
         }
     }
 
-    package func openPane(_ pane: String) {
+    func openPane(_ pane: String) {
         if let kind = PermissionKind.allCases.first(where: { $0.settingsAnchor == pane }) {
             MainActor.assumeIsolated { _ = access.openSettings(kind) }
         } else {
@@ -104,7 +104,7 @@ package final class PermissionsModel: ObservableObject {
         }
     }
 
-    package func revealApp() {
+    func revealApp() {
         PathOpener.reveal(Bundle.main.bundlePath)
     }
 }

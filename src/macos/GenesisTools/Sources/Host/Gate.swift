@@ -13,43 +13,43 @@ import AppKit
 import Foundation
 import LocalAuthentication
 
-package struct GateAncestor: Decodable {
-    package var pid: Int
-    package var command: String
+struct GateAncestor: Decodable {
+    var pid: Int
+    var command: String
 }
 
-package struct GateClientInfo: Decodable {
-    package var name: String
-    package var pid: Int?
-    package var executable: String?
-    package var script: String?
-    package var command: String?
-    package var cwd: String?
-    package var ancestors: [GateAncestor]?
+struct GateClientInfo: Decodable {
+    var name: String
+    var pid: Int?
+    var executable: String?
+    var script: String?
+    var command: String?
+    var cwd: String?
+    var ancestors: [GateAncestor]?
     /// The pid is running and is an ancestor of the gate process: it really started the request.
-    package var isAncestor: Bool?
+    var isAncestor: Bool?
     /// Interpreter flags or environment that load code the script path does not name.
-    package var injected: [String]?
+    var injected: [String]?
     /// `isAncestor` plus a binary (and, for an interpreter, a clean script) strong enough to remember.
-    package var verified: Bool?
+    var verified: Bool?
 }
 
-package struct GateAccountInfo: Decodable {
-    package var id: String
-    package var name: String
-    package var label: String?
+struct GateAccountInfo: Decodable {
+    var id: String
+    var name: String
+    var label: String?
 }
 
-package struct GateApproveParams: Decodable {
-    package var client: GateClientInfo
-    package var provider: String
-    package var account: GateAccountInfo
+struct GateApproveParams: Decodable {
+    var client: GateClientInfo
+    var provider: String
+    var account: GateAccountInfo
     /// Button choices in seconds. 0 is "allow once". Defaults to once, 8 hours, 7 days.
-    package var rememberChoicesSeconds: [Int]?
+    var rememberChoicesSeconds: [Int]?
     /// "long-lived" (an Anthropic setup token that survives refreshes), "access" (an OAuth
     /// access token another process can revoke by refreshing) or "api-key" (the account's stored
     /// API key, xai/openai). Decided by the CLI before the window.
-    package var tokenKind: String?
+    var tokenKind: String?
 }
 
 private func describeToken(_ kind: String?, provider: String) -> String {
@@ -80,7 +80,7 @@ private func gateEmit(decision: String, rememberSeconds: Int, method: String, re
 
 /// Touch ID first, then the account password when biometrics are unavailable or the user picks
 /// the fallback. A cancel at either step is a deny. The vault window (VaultUnlock.swift) confirms with it too.
-package func authenticate(reason: String, completion: @escaping (_ method: String?, _ failure: String) -> Void) {
+func authenticate(reason: String, completion: @escaping (_ method: String?, _ failure: String) -> Void) {
     let biometric = LAContext()
     biometric.localizedFallbackTitle = "Use Password"
     var unavailable: NSError?
@@ -122,22 +122,22 @@ package func authenticate(reason: String, completion: @escaping (_ method: Strin
 }
 
 /// What the gate window shows, built from the CLI's request. Pure, so tests read it.
-package struct GateWindowContent {
-    package var title: String
-    package var purpose: String
-    package var facts: [ApprovalFact]
-    package var details: [ApprovalFact]
-    package var warning: String?
-    package var rememberChoices: [ApprovalRemember]
+struct GateWindowContent {
+    var title: String
+    var purpose: String
+    var facts: [ApprovalFact]
+    var details: [ApprovalFact]
+    var warning: String?
+    var rememberChoices: [ApprovalRemember]
 
-    package static func rememberTitle(_ seconds: Int) -> String {
+    static func rememberTitle(_ seconds: Int) -> String {
         if seconds <= 0 { return "Just this once" }
         if seconds % 86_400 == 0 { return "For \(Plural.count(seconds / 86_400, "day"))" }
         if seconds % 3_600 == 0 { return "For \(Plural.count(seconds / 3_600, "hour"))" }
         return "For \(seconds / 60) min"
     }
 
-    package static func build(_ params: GateApproveParams, home: String = NSHomeDirectory()) -> GateWindowContent {
+    static func build(_ params: GateApproveParams, home: String = NSHomeDirectory()) -> GateWindowContent {
         let client = params.client
         let accountLabel = params.account.label.map { "\(params.account.name) (\($0))" } ?? params.account.name
         let choices = (params.rememberChoicesSeconds?.isEmpty == false ? params.rememberChoicesSeconds : nil) ?? [0, 8 * 3_600, 7 * 86_400]
@@ -208,7 +208,7 @@ private func gateAuditFields(_ params: GateApproveParams) -> [String: Any] {
             "tokenKind": params.tokenKind ?? "token"]
 }
 
-package func approveGate(_ params: GateApproveParams) {
+func approveGate(_ params: GateApproveParams) {
     let content = GateWindowContent.build(params)
     let audit = gateAuditFields(params)
     func record(_ event: String, _ extra: [String: Any] = [:]) {

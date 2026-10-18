@@ -11,14 +11,14 @@ import Foundation
 /// The login shell's values come from `$SHELL -ilc env` (about 0.3 s), cached in
 /// `~/.genesis-tools/app/login-env.json`: a face reads the cache at launch and the hub refreshes it in
 /// the background for the next one. Without a cache the window faces capture once, synchronously.
-package enum ChildEnvironment {
+enum ChildEnvironment {
     /// The login shell's variables a child needs and launchd does not give.
-    package static let capturedKeys = ["PATH", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"]
+    static let capturedKeys = ["PATH", "NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR"]
     private static let marker = "__GENESIS_TOOLS_LOGIN_ENV__"
 
     /// Where a login shell on this Mac usually finds the command-line tools: the floor when no login
     /// shell could be read.
-    package static func userDirectories(home: String) -> [String] {
+    static func userDirectories(home: String) -> [String] {
         [
             "\(home)/.local/bin",
             "\(home)/.bun/bin",
@@ -29,11 +29,11 @@ package enum ChildEnvironment {
     }
 
     /// The PATH launchd gives a face started by Launch Services.
-    package static let launchdPath = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+    static let launchdPath = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
 
     /// `base` in its own order, then every directory of `adding` it lacks, in order. Nothing moves
     /// ahead of the base, so its choice of which `git` or `node` runs first stays the same.
-    package static func path(_ base: [String], adding directories: [String]) -> String {
+    static func path(_ base: [String], adding directories: [String]) -> String {
         var result: [String] = []
         for directory in base + directories where !directory.isEmpty && !result.contains(directory) {
             result.append(directory)
@@ -45,7 +45,7 @@ package enum ChildEnvironment {
     /// A face Launch Services started (launchd's PATH, or none) takes the login shell's PATH in its
     /// order; a face started from a terminal keeps that terminal's PATH in its order. Either way the
     /// usual directories that are missing come last.
-    package static func updates(current: [String: String], login: [String: String], home: String, exists: (String) -> Bool) -> [String: String] {
+    static func updates(current: [String: String], login: [String: String], home: String, exists: (String) -> Bool) -> [String: String] {
         var result: [String: String] = [:]
         let split: (String?) -> [String] = { ($0 ?? "").split(separator: ":").map(String.init).filter { !$0.isEmpty } }
         let currentPath = split(current["PATH"])
@@ -66,7 +66,7 @@ package enum ChildEnvironment {
     }
 
     /// The captured keys from `env` output after the marker line.
-    package static func parse(_ output: String) -> [String: String] {
+    static func parse(_ output: String) -> [String: String] {
         guard let range = output.range(of: marker + "\n") else { return [:] }
         var result: [String: String] = [:]
         for line in output[range.upperBound...].split(separator: "\n") {
@@ -82,7 +82,7 @@ package enum ChildEnvironment {
     /// Call once at launch, before any thread or child starts: `setenv` is not safe beside a spawn.
     /// `loginShell` reads the login shell's values (the cache, or a capture when there is none);
     /// `refresh` also recaptures in the background for the next launch (the hub, which lives long).
-    package static func install(loginShell: Bool, refresh: Bool) {
+    static func install(loginShell: Bool, refresh: Bool) {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         var login = loginShell ? readCache() : nil
         let hadCache = login != nil

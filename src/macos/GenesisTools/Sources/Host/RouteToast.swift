@@ -1,16 +1,16 @@
 import AppKit
 import Foundation
 
-package struct RouteToastChoice {
+struct RouteToastChoice {
     package var enabled = true
-    package var seconds = 5.0
-    package var title: String?
+    var seconds = 5.0
+    var title: String?
     /// The route's `name` from the config: a human headline in place of the raw parameter.
-    package var name: String?
+    var name: String?
 }
 
-package enum RouteToast {
-    package static func choice(routeIndex: Int?, fallbackTitle: String) -> RouteToastChoice {
+enum RouteToast {
+    static func choice(routeIndex: Int?, fallbackTitle: String) -> RouteToastChoice {
         var choice = RouteToastChoice()
         guard let data = try? loadConfigData(),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -40,7 +40,7 @@ package enum RouteToast {
         return choice
     }
 
-    package static func show(kicker: String, headline: String, detail: String, seconds: Double, done: @escaping () -> Void) -> RouteToastCard {
+    static func show(kicker: String, headline: String, detail: String, seconds: Double, done: @escaping () -> Void) -> RouteToastCard {
         let card = RouteToastCard(kicker: kicker, headline: headline, detail: detail, seconds: seconds, done: done)
         card.present()
         return card
@@ -70,17 +70,17 @@ package enum RouteToast {
     }
 }
 
-package final class RouteToastCard: NSPanel {
+final class RouteToastCard: NSPanel {
     private let body: ToastBody
     private let seconds: Double
     private let done: () -> Void
     private var dismissed = false
     private var restingOrigin = NSPoint.zero
 
-    package override var canBecomeKey: Bool { false }
-    package override var canBecomeMain: Bool { false }
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
 
-    package init(kicker: String, headline: String, detail: String, seconds: Double, done: @escaping () -> Void) {
+    init(kicker: String, headline: String, detail: String, seconds: Double, done: @escaping () -> Void) {
         self.seconds = seconds
         self.done = done
         body = ToastBody(kicker: kicker, headline: headline, detail: detail)
@@ -106,7 +106,7 @@ package final class RouteToastCard: NSPanel {
         restingOrigin = frame.origin
     }
 
-    package func present() {
+    func present() {
         let resting = restingOrigin
         setFrameOrigin(NSPoint(x: resting.x, y: resting.y - 18))
         orderFrontRegardless()
@@ -121,15 +121,15 @@ package final class RouteToastCard: NSPanel {
     }
 
     /// The card keeps its size: a new line replaces the status line instead of growing it.
-    package func append(_ line: String) {
+    func append(_ line: String) {
         body.append(line)
     }
 
-    package override func mouseDown(with event: NSEvent) {
+    override func mouseDown(with event: NSEvent) {
         fadeOut()
     }
 
-    package func fadeOut() {
+    func fadeOut() {
         guard !dismissed else { return }
         dismissed = true
         let away = NSPoint(x: restingOrigin.x, y: frame.origin.y + 10)
@@ -144,7 +144,7 @@ package final class RouteToastCard: NSPanel {
         })
     }
 
-    package func holdThenFade() {
+    func holdThenFade() {
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
             self?.fadeOut()
         }

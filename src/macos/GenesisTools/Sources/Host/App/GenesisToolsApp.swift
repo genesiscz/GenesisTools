@@ -14,7 +14,7 @@ import UserNotifications
 ///
 /// Requests made from here are attributed to GenesisTools itself, so every prompt lands on the same
 /// identity the CLI uses.
-package func runWindowApp(showWindowImmediately: Bool) -> Never {
+func runWindowApp(showWindowImmediately: Bool) -> Never {
     let app = NSApplication.shared
     let delegate = GenesisAppDelegate(showWindowImmediately: showWindowImmediately)
     app.delegate = delegate
@@ -31,7 +31,7 @@ private let settingsWindowShowNotification = Notification.Name(NativePreview.nam
 /// The response arrives within a few hundred milliseconds in practice; the rest is headroom.
 private let notificationClickGraceSeconds = 1.2
 
-package final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
+final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     private let showWindowImmediately: Bool
     private var window: NSWindow?
     /// The settings window's instance lock, held while this process shows it; -1 until then. The kernel
@@ -42,13 +42,13 @@ package final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     private var documentHandedOff = false
 
     /// A local `.html` file Launch Services handed to this face, or launched it for (LocalFileHandoff).
-    package func application(_ application: NSApplication, open urls: [URL]) {
+    func application(_ application: NSApplication, open urls: [URL]) {
         if LocalFileHandoff.deliver(urls) > 0 {
             documentHandedOff = true
         }
     }
 
-    package init(showWindowImmediately: Bool) {
+    init(showWindowImmediately: Bool) {
         self.showWindowImmediately = showWindowImmediately
         super.init()
     }
@@ -56,14 +56,14 @@ package final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     /// Registering here rather than in `applicationDidFinishLaunching` is what makes a click work:
     /// a response that caused this launch is dropped if the delegate is not in place by the time
     /// launching finishes. Without it, clicking a banner only opened the settings window.
-    package func applicationWillFinishLaunching(_ notification: Notification) {
+    func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         UNUserNotificationCenter.current().delegate = sharedNotificationDelegate
         installBrowserURLHandler()
         logClick("launch argv=\(Array(CommandLine.arguments.dropFirst())) window=\(showWindowImmediately)")
     }
 
-    package func applicationDidFinishLaunching(_ notification: Notification) {
+    func applicationDidFinishLaunching(_ notification: Notification) {
         if showWindowImmediately {
             showWindow()
             return
@@ -102,7 +102,7 @@ package final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     /// A link click ends itself (BrowserURL calls terminate on every path). Between the approval
     /// card closing and the command finishing there can be no window at all, and quitting there
     /// dropped an approved command before it ran.
-    package func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         !browserLinkReceived
     }
 
@@ -110,7 +110,7 @@ package final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     /// A reopen turns the process regular, so the one-tile rule goes back first (App/DockTile.swift).
     /// A face without a window (a notification click) stays an accessory and ignores it.
     @MainActor
-    package func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard window != nil else {
             NSApp.setActivationPolicy(.accessory)
             return false
@@ -120,7 +120,7 @@ package final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor
-    package func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
         AppDock.menu()
     }
 
@@ -199,12 +199,12 @@ extension GenesisAppDelegate {
     }
 }
 
-package struct RootView: View {
+struct RootView: View {
     @StateObject private var permissions = PermissionsModel()
     @StateObject private var services = ServicesModel()
     @StateObject private var settings = SettingsModel()
 
-    package var body: some View {
+    var body: some View {
         VStack(spacing: 8) {
             // A build without the hub part (Host/AppParts.swift) has no hub to open.
             if AppParts.has(face: "--hub") {

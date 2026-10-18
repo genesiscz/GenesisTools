@@ -14,24 +14,24 @@ import Foundation
 /// Private libSystem API (used by Chromium, kitty, WezTerm): the spawned child stops being
 /// attributed to us and becomes its own responsible process.
 @_silgen_name("responsibility_spawnattrs_setdisclaim")
-package func responsibility_spawnattrs_setdisclaim(_ attrs: UnsafeMutablePointer<posix_spawnattr_t?>, _ disclaim: Int32) -> Int32
+func responsibility_spawnattrs_setdisclaim(_ attrs: UnsafeMutablePointer<posix_spawnattr_t?>, _ disclaim: Int32) -> Int32
 
-package let stageMarker = "GENESIS_TOOLS_APP_STAGE"
-package let bundleIdVariable = "GENESIS_TOOLS_APP_BUNDLE_ID"
-package let inodeVariable = "GENESIS_TOOLS_APP_INODE"
-package let fallbackBundleId = "com.genesiscz.genesistools"
+let stageMarker = "GENESIS_TOOLS_APP_STAGE"
+let bundleIdVariable = "GENESIS_TOOLS_APP_BUNDLE_ID"
+let inodeVariable = "GENESIS_TOOLS_APP_INODE"
+let fallbackBundleId = "com.genesiscz.genesistools"
 
-package var childPid: pid_t = 0
+var childPid: pid_t = 0
 
-package func bundleVersion() -> String {
+func bundleVersion() -> String {
     Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
 }
 
-package func warn(_ message: String) {
+func warn(_ message: String) {
     FileHandle.standardError.write(Data("GenesisTools: \(message)\n".utf8))
 }
 
-package func launcherUsage() -> Never {
+func launcherUsage() -> Never {
     FileHandle.standardError.write(Data("""
     GenesisTools launcher \(bundleVersion())
     usage: GenesisTools <program> [args...]
@@ -50,7 +50,7 @@ package func launcherUsage() -> Never {
 
 /// `replace: true` turns this process into the program (POSIX_SPAWN_SETEXEC, same pid) instead of
 /// starting a child; it returns only when that failed.
-package func spawnChild(path: String, arguments: [String], environment: [String: String], disclaim: Bool, replace: Bool = false) -> pid_t {
+func spawnChild(path: String, arguments: [String], environment: [String: String], disclaim: Bool, replace: Bool = false) -> pid_t {
     var attrs: posix_spawnattr_t? = nil
     guard posix_spawnattr_init(&attrs) == 0 else {
         warn("posix_spawnattr_init failed: \(String(cString: strerror(errno)))")
@@ -94,7 +94,7 @@ package func spawnChild(path: String, arguments: [String], environment: [String:
     return pid
 }
 
-package func forwardSignals() {
+func forwardSignals() {
     for sig in [SIGINT, SIGTERM, SIGHUP, SIGQUIT] {
         signal(sig) { received in
             if childPid > 0 {
@@ -106,7 +106,7 @@ package func forwardSignals() {
 
 /// macOS has no PR_SET_PDEATHSIG. If our parent dies (terminal closed, `tools` killed),
 /// terminate the child instead of leaving a headless tool running for days.
-package func watchParentDeath() {
+func watchParentDeath() {
     let parent = getppid()
     DispatchQueue.global(qos: .utility).async {
         let kq = kqueue()
@@ -125,7 +125,7 @@ package func watchParentDeath() {
     }
 }
 
-package func waitAndExit(_ pid: pid_t) -> Never {
+func waitAndExit(_ pid: pid_t) -> Never {
     var status: Int32 = 0
     while waitpid(pid, &status, 0) == -1 {
         if errno != EINTR {
@@ -142,7 +142,7 @@ package func waitAndExit(_ pid: pid_t) -> Never {
     exit((status >> 8) & 0xff)
 }
 
-package func runLauncher(_ arguments: [String]) -> Never {
+func runLauncher(_ arguments: [String]) -> Never {
     var environment = ProcessInfo.processInfo.environment
     let bundleId = Bundle.main.bundleIdentifier ?? fallbackBundleId
 

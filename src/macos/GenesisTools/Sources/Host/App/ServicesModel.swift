@@ -1,18 +1,18 @@
 import AppKit
 import Foundation
 
-package struct LaunchdJob: Identifiable, Equatable {
-    package let id: String
-    package let plistPath: String
+struct LaunchdJob: Identifiable, Equatable {
+    let id: String
+    let plistPath: String
     /// ProgramArguments go through this bundle's launcher
-    package let underApp: Bool
+    let underApp: Bool
     /// `launchctl print` found it loaded in the user domain
-    package let loaded: Bool
-    package let program: String
+    let loaded: Bool
+    let program: String
 }
 
 /// The com.genesis-tools.* launchd jobs and whether they run under this bundle's identity.
-package final class ServicesModel: ObservableObject {
+final class ServicesModel: ObservableObject {
     @Published package private(set) var jobs: [LaunchdJob] = []
     @Published package private(set) var scannedAt: Date?
 
@@ -20,7 +20,7 @@ package final class ServicesModel: ObservableObject {
     private static let labelPrefix = "com.genesis-tools."
 
     /// The scan waits on `launchctl print` per job, so it runs off the main thread and publishes once.
-    package func refresh() {
+    func refresh() {
         let launcher = Bundle.main.executablePath ?? ""
         DispatchQueue.global(qos: .userInitiated).async {
             let scanned = Self.scan(launcher: launcher)
@@ -50,7 +50,7 @@ package final class ServicesModel: ObservableObject {
             }
     }
 
-    package func reveal(_ job: LaunchdJob) {
+    func reveal(_ job: LaunchdJob) {
         PathOpener.reveal(job.plistPath)
     }
 

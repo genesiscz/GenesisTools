@@ -4,7 +4,7 @@ import Foundation
 /// Private libSystem API: the pid macOS holds responsible for `pid` (what `launchctl procinfo` prints
 /// as "responsible pid"). TCC asks this process's identity when `pid` touches a protected resource.
 @_silgen_name("responsibility_get_pid_responsible_for_pid")
-package func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
+func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
 
 /// The launcher markers an app face (hub, window, --rpc, link router) hands its children, so a `tools`
 /// they start skips both launcher stages when it would only reach the identity it already has.
@@ -16,16 +16,16 @@ package func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
 /// records the inode of THAT process's binary, which is what stage B records for its own tree: `tools`
 /// compares it with the installed launcher (`genesisAppLauncher()`) and re-enters after a rebuild.
 /// Any other responsible process (a terminal) removes inherited markers, so the children use the launcher.
-package enum FaceMarker {
-    package struct Responsible: Equatable {
+enum FaceMarker {
+    struct Responsible: Equatable {
         /// The bundle id of the app whose executable the responsible process runs, nil for a bare binary.
-        package let bundleId: String?
+        let bundleId: String?
         /// The inode of that executable, nil when it can no longer be found.
-        package let inode: UInt64?
+        let inode: UInt64?
     }
 
     /// The marker values to set (a value) or remove (nil).
-    package static func updates(ownBundleId: String, responsible: Responsible?) -> [String: String?] {
+    static func updates(ownBundleId: String, responsible: Responsible?) -> [String: String?] {
         guard let responsible, responsible.bundleId == ownBundleId, let inode = responsible.inode else {
             return [bundleIdVariable: nil, inodeVariable: nil]
         }
@@ -34,7 +34,7 @@ package enum FaceMarker {
     }
 
     /// The process macOS holds responsible for this one, read from the kernel.
-    package static func responsibleProcess() -> Responsible? {
+    static func responsibleProcess() -> Responsible? {
         let pid = responsibility_get_pid_responsible_for_pid(getpid())
         guard pid > 0 else { return nil }
 
@@ -51,7 +51,7 @@ package enum FaceMarker {
     }
 
     /// Call once at launch, before any thread or child starts: `setenv` is not safe beside a spawn.
-    package static func install() {
+    static func install() {
         let ownBundleId = Bundle.main.bundleIdentifier ?? fallbackBundleId
         for (key, value) in updates(ownBundleId: ownBundleId, responsible: responsibleProcess()) {
             if let value {

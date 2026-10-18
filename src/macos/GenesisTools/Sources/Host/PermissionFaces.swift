@@ -22,13 +22,13 @@ private func permissionUsage() -> Never {
     exit(64)
 }
 
-package func runPermissionStatus(_ args: [String]) -> Never {
+func runPermissionStatus(_ args: [String]) -> Never {
     guard let id = args.first, let kind = PermissionKind(id: id) else { permissionUsage() }
     print(SystemPermissions().status(kind).wireValue)
     exit(0)
 }
 
-package func runPermissionDialog(_ args: [String]) -> Never {
+func runPermissionDialog(_ args: [String]) -> Never {
     guard let id = args.first, let kind = PermissionKind(id: id) else { permissionUsage() }
     let reason = args.firstIndex(of: "--reason").flatMap { index in
         args.indices.contains(index + 1) ? args[index + 1] : nil
@@ -56,7 +56,7 @@ package func runPermissionDialog(_ args: [String]) -> Never {
 /// One JSON object: whether nehelper's rule store could be read, and every answer it keeps for this app. A copy outside
 /// the installed bundle (an old build a rebuild moved aside) has an answer of its own, keyed by its executable path;
 /// `tools macos permissions` reads them to say which running old builds will ask again.
-package func runLocalNetworkRules() -> Never {
+func runLocalNetworkRules() -> Never {
     struct Output: Encodable {
         let readable: Bool
         let rules: [LocalNetworkPrivacy.Rule]
@@ -72,7 +72,7 @@ package func runLocalNetworkRules() -> Never {
 
 /// Starts `GenesisTools --permission-dialog <kind>` through Launch Services, so the dialog face is its own responsible
 /// process and outlives the face that asked (which exits right after). Waits at most 5 s for the launch.
-package func launchPermissionDialog(_ kind: PermissionKind, reason: String? = nil) {
+func launchPermissionDialog(_ kind: PermissionKind, reason: String? = nil) {
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.arguments = ["--permission-dialog", kind.rawValue] + (reason.map { ["--reason", $0] } ?? [])
     configuration.createsNewApplicationInstance = true
@@ -90,7 +90,7 @@ package func launchPermissionDialog(_ kind: PermissionKind, reason: String? = ni
 }
 
 /// Asks a new `GenesisTools --permission-status <kind>` process, which reads TCC without this process's cache.
-package func probeFreshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus? {
+func probeFreshPermissionStatus(_ kind: PermissionKind) async -> PermissionStatus? {
     guard let executable = Bundle.main.executableURL else { return nil }
     let status: PermissionStatus? = await withCheckedContinuation { continuation in
         let child = Process()

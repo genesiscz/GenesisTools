@@ -6,15 +6,15 @@ import Foundation
 /// widget and Clicky again with the arguments they had (src/macos/lib/permissions/relaunch.ts). `ps` joins argv with
 /// spaces, so a path with a space (`--repo "/x/My Repo"`) cannot be read back from it; this record can.
 /// It goes at a normal exit; one left by a SIGTERM is pruned by the next rebuild.
-package enum FaceRecord {
-    package static var directory: URL {
+enum FaceRecord {
+    static var directory: URL {
         // `genesisHome()`, as the TS side and the relay journal: a sandboxed GENESIS_TOOLS_HOME holds all three.
         URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app/faces", isDirectory: true)
     }
 
     /// The faces a rebuild reopens (and that keep a link relay in front of them): the settings window, the hub,
     /// a review, the widget and the feature settings, never a scripted run.
-    package static func isWindowFace(_ argv: [String]) -> Bool {
+    static func isWindowFace(_ argv: [String]) -> Bool {
         if argv.contains("--snapshot") || argv.contains("--bench") {
             return false
         }
@@ -22,7 +22,7 @@ package enum FaceRecord {
         return first.isEmpty || first == "--window" || first.hasPrefix("-psn_") || first == "--hub" || first == "--review" || first == "--widget" || first == "--features" || first == "--clicky" || first == "--markdown"
     }
 
-    package static func encode(pid: Int32, argv: [String]) -> Data? {
+    static func encode(pid: Int32, argv: [String]) -> Data? {
         struct Record: Encodable {
             let pid: Int32
             let argv: [String]
@@ -32,7 +32,7 @@ package enum FaceRecord {
     }
 
     /// Call once at launch with the arguments after the executable.
-    package static func write(_ argv: [String]) {
+    static func write(_ argv: [String]) {
         guard isWindowFace(argv), let data = encode(pid: getpid(), argv: argv) else { return }
         let url = directory.appendingPathComponent("\(getpid()).json")
         do {

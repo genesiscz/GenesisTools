@@ -7,7 +7,7 @@ import Foundation
 /// that names the command adding it, instead of failing to link.
 package enum AppParts {
     /// Which part serves each face flag. The same table as `APP_PARTS` in parts.ts.
-    package static let partOfFace: [String: String] = [
+    static let partOfFace: [String: String] = [
         "--hub": "hub",
         "--review": "hub",
         "--widget": "widget",
@@ -28,12 +28,12 @@ package enum AppParts {
         }
     }
 
-    package static func isLinked(_ part: String) -> Bool {
+    static func isLinked(_ part: String) -> Bool {
         linkedParts.contains(part)
     }
 
     /// True when this build can start the face `flag` (`--hub`, `--widget`, ...).
-    package static func has(face flag: String) -> Bool {
+    static func has(face flag: String) -> Bool {
         faces[flag] != nil
     }
 
@@ -78,7 +78,7 @@ package enum AppParts {
     /// A part's face reached from a click (a `genesis-tools://hub` link), where nobody reads stderr: the same alert as
     /// `canLaunch`, then the stderr line and exit 69.
     @MainActor
-    package static func alertMissing(face flag: String) -> Never {
+    static func alertMissing(face flag: String) -> Never {
         NSApplication.shared.setActivationPolicy(.accessory)
         NSApp.activate(ignoringOtherApps: true)
         _ = canLaunch(face: flag)
@@ -86,13 +86,13 @@ package enum AppParts {
     }
 
     /// The parts this build links, sorted, for `--version` and the build manifest check.
-    package static var linked: [String] {
+    static var linked: [String] {
         linkedParts.sorted()
     }
 
     /// Runs the face `flag` with `args`. A face whose part is not linked prints which part it needs and exits 69
     /// (EX_UNAVAILABLE).
-    package static func run(face flag: String, _ args: [String]) -> Never {
+    static func run(face flag: String, _ args: [String]) -> Never {
         if let run = faces[flag] {
             run(args)
         }

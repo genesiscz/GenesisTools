@@ -3,10 +3,10 @@ import Foundation
 
 /// The Allow / Deny card for a route that runs a command. Same look as RouteToast: dark card,
 /// gold hairline, the Genesis Tools mark. Return allows, Esc denies.
-package enum RouteApproval {
+enum RouteApproval {
     /// The "Running" toast is already up (statusBar level, same spot) and would hide this card,
     /// so it steps aside while the question is open and only comes back when the run is allowed.
-    package static func ask(argv: [String], open: String?) -> Bool {
+    static func ask(argv: [String], open: String?) -> Bool {
         let toasts = NSApp.windows.compactMap { $0 as? RouteToastCard }.filter { $0.isVisible }
         for toast in toasts {
             toast.orderOut(nil)
@@ -36,13 +36,13 @@ private enum Palette {
     static let wellBorder = NSColor(white: 1, alpha: 0.08)
 }
 
-package final class RouteApprovalCard: NSPanel {
+final class RouteApprovalCard: NSPanel {
     private var allowed = false
 
-    package override var canBecomeKey: Bool { true }
-    package override var canBecomeMain: Bool { true }
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
 
-    package init(argv: [String], open: String?) {
+    init(argv: [String], open: String?) {
         let body = ApprovalBody(argv: argv, open: open)
         let size = body.fittingSize
         super.init(
@@ -65,7 +65,7 @@ package final class RouteApprovalCard: NSPanel {
         placeInTheMiddle()
     }
 
-    package func runModal() -> Bool {
+    func runModal() -> Bool {
         let resting = frame.origin
         alphaValue = 0
         setFrameOrigin(NSPoint(x: resting.x, y: resting.y - 14))
@@ -101,7 +101,7 @@ package final class RouteApprovalCard: NSPanel {
         RunLoop.main.add(timer, forMode: .common)
     }
 
-    package override func cancelOperation(_ sender: Any?) {
+    override func cancelOperation(_ sender: Any?) {
         finish(false)
     }
 

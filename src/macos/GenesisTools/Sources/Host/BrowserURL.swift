@@ -3,13 +3,13 @@ import Foundation
 import LocalAuthentication
 
 /// Set synchronously from the URL event, before the bare-launch grace period opens the window.
-package var browserLinkReceived = false
+var browserLinkReceived = false
 private var browserLinkFinished = false
 /// True while a route's command runs off the main thread. A click on the toast then waits for the
 /// command to end instead of quitting under it (the child's output pipe would close mid-run).
 private var browserCommandRunning = false
 
-package func installBrowserURLHandler() {
+func installBrowserURLHandler() {
     NSAppleEventManager.shared().setEventHandler(
         BrowserURLHandler.shared,
         andSelector: #selector(BrowserURLHandler.handle(_:reply:)),
@@ -53,7 +53,7 @@ package final class BrowserURLForwarder: NSObject {
     /// windows raised above every other app's (a genesis.tools/md click put the review window over Brave).
     private var stackBeforeDelivery: [Int] = []
 
-    package static func onScreenStack() -> [Int] {
+    static func onScreenStack() -> [Int] {
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         return list.compactMap { info in
             guard (info[kCGWindowLayer as String] as? Int) == 0 else { return nil }
@@ -62,7 +62,7 @@ package final class BrowserURLForwarder: NSObject {
     }
 
     /// For each of `ours`, the window that sat directly above it in `stack` and is not ours; nil when it was on top.
-    package static func windowsAbove(_ ours: Set<Int>, in stack: [Int]) -> [Int: Int] {
+    static func windowsAbove(_ ours: Set<Int>, in stack: [Int]) -> [Int: Int] {
         var result: [Int: Int] = [:]
         for (index, number) in stack.enumerated() where ours.contains(number) {
             if let above = stack[..<index].last(where: { !ours.contains($0) }) {
@@ -137,7 +137,7 @@ package final class BrowserURLForwarder: NSObject {
         target.app.activate()
     }
 
-    @objc package func handle(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+    @objc func handle(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
         guard let raw = event.paramDescriptor(forKeyword: AEKeyword(keyDirectObject))?.stringValue,
               raw.contains("://")
         else { return }
@@ -146,7 +146,7 @@ package final class BrowserURLForwarder: NSObject {
 
     /// One link into a fresh router instance; also the path for links AppKit hands to a delegate's
     /// `application(_:open:)` (LocalFileHandoff.deliver).
-    package func forward(_ raw: String) {
+    func forward(_ raw: String) {
         if returnToWebApp(raw) {
             return
         }
@@ -214,7 +214,7 @@ package final class BrowserURLForwarder: NSObject {
     /// the app the click came from, so the hub does not jump in front of it. The activation may come
     /// now or after the handler, so it is undone on each one inside the window as well. A click made
     /// in this face itself keeps the focus here.
-    package func yieldActivation() {
+    func yieldActivation() {
         if NSApp.isActive && Date().timeIntervalSince(activatedAt) > 0.5 {
             return
         }
@@ -232,7 +232,7 @@ package final class BrowserURLForwarder: NSObject {
     }
 }
 
-package func runBrowserLink(_ raw: String) -> Never {
+func runBrowserLink(_ raw: String) -> Never {
     keepRouterDocumentFree()
     let app = NSApplication.shared
     app.delegate = browserLinkApp
@@ -281,11 +281,11 @@ private func armBrowserRouterDeadline() {
 /// Ends a router for good. `NSApp.terminate` first asks every open document to close and can be cancelled
 /// ("NSDocumentController canceling termination - not all documents were closed", 2026-10-05 21:18): that left
 /// a router with no URL handler alive for 5 h, and macOS handed it every link.
-package func quitBrowserLink() -> Never {
+func quitBrowserLink() -> Never {
     exit(0)
 }
 
-package func handleBrowserLink(_ raw: String) {
+func handleBrowserLink(_ raw: String) {
     browserLinkReceived = true
     // A hub link reaches a router only when Launch Services started a bare instance for it (no GenesisTools ran,
     // so no relay took it): the hub gets it in a fresh instance with the link as argv (main.swift), as through
@@ -436,7 +436,7 @@ package enum LocalFileHandoff {
 
 /// Where a link goes when routing failed: the browser recorded before GenesisTools took http(s), else
 /// Brave when installed, else Safari. Never a link router, which would hand the link straight back.
-package func fallbackOpenArguments(_ url: String) -> [String] {
+func fallbackOpenArguments(_ url: String) -> [String] {
     let recorded = (try? Data(contentsOf: configDirectory().appendingPathComponent("previous.json"))).flatMap { data in
         (try? JSONSerialization.jsonObject(with: data) as? [String: String])?["appPath"]
     }
@@ -746,7 +746,7 @@ private final class BrowserURLHandler: NSObject {
 /// The second one is the retired standalone "Genesis Router.app".
 private let linkRouterBundleIDs = ["se.johnste.finicky", "com.genesiscz.genesistools", browserRouterBundleID]
 
-package func runDefaultBrowser(_ args: [String]) -> Never {
+func runDefaultBrowser(_ args: [String]) -> Never {
     switch args.first ?? "status" {
     case "set":
         setDefaultBrowser()
@@ -764,7 +764,7 @@ package func runDefaultBrowser(_ args: [String]) -> Never {
 }
 
 /// Preserve the recovery record until its replacement is published, and let the caller refuse activation on failure.
-package func recordPreviousBrowser(
+func recordPreviousBrowser(
     at recorded: URL,
     appPath: String,
     preserveUnreadable: Bool,

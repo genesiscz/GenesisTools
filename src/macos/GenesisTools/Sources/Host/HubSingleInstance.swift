@@ -19,7 +19,7 @@ package enum HubSingleInstance {
     }
 
     /// Another process holds the hub lock, so a hub runs there.
-    package static var isRunningElsewhere: Bool {
+    static var isRunningElsewhere: Bool {
         instance.isRunningElsewhere
     }
 
@@ -29,7 +29,7 @@ package enum HubSingleInstance {
     }
 
     /// For a window that is already running (a review window's Dock click): post the request and go on.
-    package static func handOff(_ args: [String]) {
+    static func handOff(_ args: [String]) {
         instance.handOff(args)
     }
 

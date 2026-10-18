@@ -6,20 +6,20 @@ import Foundation
 /// except confirmed exits and EPERM on the fd tables of protected system executables. A holder that
 /// execs into such a binary while keeping the read end is not seen. That exception trusts the system
 /// binary's code not to relay the bytes; it does not prove the read end was closed.
-package enum VaultRecipient {
-    package struct Identity: Equatable {
-        package var pid: pid_t
-        package var startSeconds: UInt64
-        package var startMicroseconds: UInt64
-        package var executable: String
+enum VaultRecipient {
+    struct Identity: Equatable {
+        var pid: pid_t
+        var startSeconds: UInt64
+        var startMicroseconds: UInt64
+        var executable: String
     }
 
-    package enum Endpoint: Equatable {
+    enum Endpoint: Equatable {
         case pipe(handle: UInt64, peer: UInt64)
         case socket(pcb: UInt64, peer: UInt64)
         case other
 
-        package var connected: Bool {
+        var connected: Bool {
             switch self {
             case let .pipe(handle, peer), let .socket(handle, peer):
                 return handle != 0 && peer != 0 && handle != peer
@@ -28,7 +28,7 @@ package enum VaultRecipient {
             }
         }
 
-        package func isPeer(of output: Endpoint) -> Bool {
+        func isPeer(of output: Endpoint) -> Bool {
             switch (self, output) {
             case let (.pipe(handle, peer), .pipe(outputHandle, outputPeer)),
                  let (.socket(handle, peer), .socket(outputHandle, outputPeer)):
@@ -39,11 +39,11 @@ package enum VaultRecipient {
         }
     }
 
-    package enum ReadFailure {
+    enum ReadFailure {
         case exited
         case unavailable(code: Int32, executable: String?)
 
-        package var maySkip: Bool {
+        var maySkip: Bool {
             switch self {
             case .exited:
                 return true
@@ -58,16 +58,16 @@ package enum VaultRecipient {
         }
     }
 
-    package struct ProcessFDs {
-        package var pid: pid_t
+    struct ProcessFDs {
+        var pid: pid_t
         /// nil means the table, or any relevant descriptor in it, could not be read completely.
-        package var endpoints: [Endpoint]?
-        package var failure: ReadFailure? = nil
+        var endpoints: [Endpoint]?
+        var failure: ReadFailure? = nil
 
-        package var maySkip: Bool { endpoints == nil && failure?.maySkip == true }
+        var maySkip: Bool { endpoints == nil && failure?.maySkip == true }
     }
 
-    package static func rejection(stdout: Endpoint, caller: Identity?, current: Identity?, processes: [ProcessFDs]) -> String? {
+    static func rejection(stdout: Endpoint, caller: Identity?, current: Identity?, processes: [ProcessFDs]) -> String? {
         guard stdout.connected else { return "vault stdout must be a connected pipe or Unix-domain socket" }
         guard let caller, let current else { return "the caller's process identity could not be read" }
         guard current == caller else { return "the caller's process instance or executable changed before key release" }
@@ -84,7 +84,7 @@ package enum VaultRecipient {
         return nil
     }
 
-    package static func identity(_ pid: pid_t) -> Identity? {
+    static func identity(_ pid: pid_t) -> Identity? {
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
@@ -211,7 +211,7 @@ package enum VaultRecipient {
         }
     }
 
-    package static func releaseRejection(caller: Identity?) -> String? {
+    static func releaseRejection(caller: Identity?) -> String? {
         do {
             let output = try stdoutEndpoint()
             guard output.connected else { return "vault stdout must be a connected pipe or Unix-domain socket" }

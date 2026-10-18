@@ -58,7 +58,7 @@ private func listInputDevices() -> Never {
     exit(0)
 }
 
-package func runMic(_ args: [String]) -> Never {
+func runMic(_ args: [String]) -> Never {
     var rate: Double = 16000
     var deviceFilter: String?
     var index = 0

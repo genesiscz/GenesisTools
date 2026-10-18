@@ -4,7 +4,7 @@ import Foundation
 /// Bundle facts and the one switch the launcher honours: the `disabled` marker file, which makes
 /// `tools` run without the launcher (same effect as GENESIS_TOOLS_NO_APP=1, but persistent).
 package final class SettingsModel: ObservableObject {
-    @Published package var launcherEnabled = true {
+    @Published var launcherEnabled = true {
         didSet {
             guard launcherEnabled != oldValue, !isRevertingSwitch else {
                 return
@@ -40,10 +40,10 @@ package final class SettingsModel: ObservableObject {
 
         return NSHomeDirectory()
     }()
-    package static let appDir = "\(toolsHome)/.genesis-tools/app"
-    package static let disabledMarker = "\(appDir)/disabled"
+    static let appDir = "\(toolsHome)/.genesis-tools/app"
+    static let disabledMarker = "\(appDir)/disabled"
 
-    package func refresh() {
+    func refresh() {
         let info = Bundle.main.infoDictionary ?? [:]
         version = info["CFBundleShortVersionString"] as? String ?? "dev"
         build = info["CFBundleVersion"] as? String ?? "?"
@@ -54,18 +54,18 @@ package final class SettingsModel: ObservableObject {
         readSignature()
     }
 
-    package func revealApp() {
+    func revealApp() {
         PathOpener.reveal(Bundle.main.bundlePath)
     }
 
     /// Finder by name (Hub/HubPathActions.swift): opening the folder with its default app can land in
     /// QuickTime Player when LaunchServices maps folders to it.
-    package func openAppDir() {
+    func openAppDir() {
         let opened = PathOpener.perform(.finder, Self.appDir)
         report(opened != .missing(PathOpener.fileURL(Self.appDir).path), what: "open \(Self.appDir)")
     }
 
-    package func openPrivacySettings() {
+    func openPrivacySettings() {
         let url = PermissionKind.settingsURL(anchor: "Privacy")
         report(NSWorkspace.shared.open(url), what: "open System Settings > Privacy & Security")
     }

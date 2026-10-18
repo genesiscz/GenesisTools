@@ -5,22 +5,22 @@ import Foundation
 ///
 /// `--window` (`tools macos permissions ui`, the hub's lock button, ⌘, in the hub) always opens the
 /// permissions window, so it stays one click away when the hub is the main window.
-package enum AppMainWindow: String, CaseIterable, Identifiable {
+enum AppMainWindow: String, CaseIterable, Identifiable {
     case permissions
     case hub
 
-    package static let key = "app.mainWindow"
+    static let key = "app.mainWindow"
 
-    package var id: String { rawValue }
+    var id: String { rawValue }
 
-    package var title: String {
+    var title: String {
         switch self {
         case .permissions: return "Permissions and settings"
         case .hub: return "Hub"
         }
     }
 
-    package static var current: AppMainWindow {
+    static var current: AppMainWindow {
         UserDefaults.standard.string(forKey: key).flatMap(AppMainWindow.init(rawValue:)) ?? .permissions
     }
 }

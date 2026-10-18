@@ -5,7 +5,7 @@ import AppKit
 /// (AppParts.swift).
 @MainActor
 package enum FeatureSettingsLaunch {
-    package static let face = "--features"
+    static let face = "--features"
 
     package static func open(pageID: String? = nil) {
         guard AppParts.canLaunch(face: face), let executable = Bundle.main.executableURL else { return }

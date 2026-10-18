@@ -1,12 +1,12 @@
 import Foundation
 import GenesisKitBase
 
-package enum AppToolsOrigin {
-    package static func binaryPath() throws -> String {
+enum AppToolsOrigin {
+    static func binaryPath() throws -> String {
         try resolve(configured: Bundle.main.object(forInfoDictionaryKey: "GenesisToolsSourceToolsPath") as? String)
     }
 
-    package static func resolve(configured: String?, isExecutable: (String) -> Bool = ToolsBridge.isExecutableFile,
+    static func resolve(configured: String?, isExecutable: (String) -> Bool = ToolsBridge.isExecutableFile,
                         fallback: () -> String = { ToolsBridge.defaultBinaryPath() }) throws -> String {
         guard let configured else { return fallback() }
         guard configured.hasPrefix("/"), isExecutable(configured) else {

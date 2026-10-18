@@ -3,19 +3,19 @@ import Foundation
 /// What the link relay did, one line per event in `~/.genesis-tools/app/link-relay.log`, so a link that went
 /// to the wrong process, a relay that died or hung, and a window face that started its own relay can be read
 /// back later. Window faces write here too when a delivery reaches them instead of the relay.
-package enum RelayJournal {
-    package static var directory: URL {
+enum RelayJournal {
+    static var directory: URL {
         URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app")
     }
 
-    package static var logFile: URL { directory.appendingPathComponent("link-relay.log") }
+    static var logFile: URL { directory.appendingPathComponent("link-relay.log") }
 
     /// `pid`, start time, last heartbeat and whether it ended cleanly: how the next relay tells a crash or a
     /// kill from a normal end.
-    package static var stateFile: URL { directory.appendingPathComponent("link-relay.json") }
+    static var stateFile: URL { directory.appendingPathComponent("link-relay.json") }
 
     /// "relay" in the relay, else the face's first argument ("--review"), or "bare".
-    package nonisolated(unsafe) static var role = CommandLine.arguments.dropFirst().first ?? "bare"
+    nonisolated(unsafe) static var role = CommandLine.arguments.dropFirst().first ?? "bare"
 
     private static let stamp: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
@@ -26,7 +26,7 @@ package enum RelayJournal {
 
     private static let lock = NSLock()
 
-    package static func write(_ message: String, to file: URL = logFile) {
+    static func write(_ message: String, to file: URL = logFile) {
         let line = "\(stamp.string(from: Date())) pid=\(getpid()) \(role) \(message)\n"
         lock.lock()
         defer { lock.unlock() }
@@ -54,7 +54,7 @@ package enum RelayJournal {
     }
 
     /// A link's scheme, host and path, without the query (it can carry tokens).
-    package static func describe(_ raw: String) -> String {
+    static func describe(_ raw: String) -> String {
         guard let components = URLComponents(string: raw), let scheme = components.scheme else {
             return String(raw.prefix(60))
         }
@@ -62,25 +62,25 @@ package enum RelayJournal {
         return "\(scheme)://\(rest.prefix(120))\(components.query == nil ? "" : "?…")"
     }
 
-    package struct State: Codable, Equatable {
-        package var pid: Int32
-        package var startedAt: Date
-        package var heartbeatAt: Date
-        package var cleanExit: Bool
+    struct State: Codable, Equatable {
+        var pid: Int32
+        var startedAt: Date
+        var heartbeatAt: Date
+        var cleanExit: Bool
     }
 
-    package static func readState(_ file: URL = stateFile) -> State? {
+    static func readState(_ file: URL = stateFile) -> State? {
         guard let data = try? Data(contentsOf: file) else { return nil }
         return try? JSONDecoder().decode(State.self, from: data)
     }
 
-    package static func writeState(_ state: State, to file: URL = stateFile) {
+    static func writeState(_ state: State, to file: URL = stateFile) {
         guard let data = try? JSONEncoder().encode(state) else { return }
         try? data.write(to: file, options: .atomic)
     }
 
     /// The line the next relay writes about the one before it, nil when that one ended cleanly or still runs.
-    package static func previousEnd(_ previous: State?, isAlive: (Int32) -> Bool, crashReport: (Date) -> String?) -> String? {
+    static func previousEnd(_ previous: State?, isAlive: (Int32) -> Bool, crashReport: (Date) -> String?) -> String? {
         guard let previous, !previous.cleanExit, !isAlive(previous.pid) else { return nil }
         let silent = Date().timeIntervalSince(previous.heartbeatAt)
         var line = "previous relay pid=\(previous.pid) ended without a clean exit; started \(stamp.string(from: previous.startedAt)),"
@@ -94,7 +94,7 @@ package enum RelayJournal {
     }
 
     /// The newest `GenesisTools-*.ips` written after `since`.
-    package static func crashReport(since: Date) -> String? {
+    static func crashReport(since: Date) -> String? {
         let folder = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Logs/DiagnosticReports")
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         return files

@@ -44,7 +44,7 @@ package enum AppDock {
     /// The hub, wherever it runs: this window, the running hub, or a new one. False when none runs and
     /// no new one could be started, so a caller that would quit can show something else instead.
     @discardableResult
-    package static func showHub(_ hubWindow: NSWindow?) -> Bool {
+    static func showHub(_ hubWindow: NSWindow?) -> Bool {
         // A build without the hub part (Host/AppParts.swift): the caller shows its own window instead.
         guard AppParts.has(face: "--hub") else {
             HubPerf.log("dock: this build has no hub part")
@@ -74,11 +74,11 @@ package enum AppDock {
 }
 
 @MainActor
-package final class AppDockTarget: NSObject {
+final class AppDockTarget: NSObject {
     package static let shared = AppDockTarget()
-    package weak var hubWindow: NSWindow?
+    weak var hubWindow: NSWindow?
 
-    @objc package func showHub(_ sender: Any?) {
+    @objc func showHub(_ sender: Any?) {
         // A build without the hub part: the alert names the command that adds it (Host/AppParts.swift).
         guard AppParts.canLaunch(face: "--hub") else { return }
         AppDock.showHub(hubWindow)

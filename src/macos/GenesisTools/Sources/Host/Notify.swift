@@ -23,63 +23,63 @@ import UserNotifications
 
 /// Turns a button into a text field: macOS shows an input box with a send button instead of firing
 /// the action immediately. What the user types arrives as the reply's `text`.
-package struct NotifyActionInput: Decodable {
+struct NotifyActionInput: Decodable {
     /// Label on the send button. Defaults to "Send".
-    package var buttonTitle: String?
+    var buttonTitle: String?
     /// Greyed-out hint inside the empty field.
-    package var placeholder: String?
+    var placeholder: String?
 }
 
 /// One button on a banner. `open` and `execute` may both be set; open runs after execute.
-package struct NotifyAction: Decodable {
-    package var id: String
-    package var title: String
+struct NotifyAction: Decodable {
+    var id: String
+    var title: String
     package var open: String?
-    package var execute: String?
+    var execute: String?
     /// Renders the button in red. Cosmetic only.
-    package var destructive: Bool?
+    var destructive: Bool?
     /// Present: the button opens a text field and the answer comes back in the reply file.
-    package var input: NotifyActionInput?
+    var input: NotifyActionInput?
 }
 
-package struct NotifyPostParams: Decodable {
-    package var message: String
-    package var title: String?
-    package var subtitle: String?
-    package var sound: String?
-    package var group: String?
+struct NotifyPostParams: Decodable {
+    var message: String
+    var title: String?
+    var subtitle: String?
+    var sound: String?
+    var group: String?
     package var open: String?
-    package var execute: String?
-    package var appIcon: String?
+    var execute: String?
+    var appIcon: String?
     /// Image, audio or video files shown with the banner. A thumbnail rides on the right of the
     /// banner; expanding the notification shows the first one full size.
-    package var attachments: [String]?
-    package var ignoreDnD: Bool?
+    var attachments: [String]?
+    var ignoreDnD: Bool?
     /// Supply one to make the notification addressable by `notify.remove`, or to replace an
     /// already-delivered notification in place. Generated when absent, and always returned.
-    package var id: String?
-    package var actions: [NotifyAction]?
+    var id: String?
+    var actions: [NotifyAction]?
     /// Absolute directory the click handler writes the reply into. Stamped by the poster so a
     /// Launch Services relaunch, which does not inherit `GENESIS_TOOLS_HOME`, still writes where
     /// the waiter is looking.
-    package var replyDir: String?
+    var replyDir: String?
     /// Home the click-launched `execute` should see as `GENESIS_TOOLS_HOME`.
     package var genesisHome: String?
 }
 
-package struct NotifyReplyParams: Decodable {
-    package var id: String
+struct NotifyReplyParams: Decodable {
+    var id: String
     /// Directory the reply was stamped into at post time. Defaults to `notificationReplyDir()`.
-    package var replyDir: String?
+    var replyDir: String?
     /// Delete the reply after reading it, so a second caller cannot consume the same answer twice.
-    package var consume: Bool?
+    var consume: Bool?
 }
 
-package struct NotifyRemoveParams: Decodable {
-    package var ids: [String]?
+struct NotifyRemoveParams: Decodable {
+    var ids: [String]?
     /// Remove every delivered notification whose `group` matches.
-    package var group: String?
-    package var all: Bool?
+    var group: String?
+    var all: Bool?
 }
 
 private struct MethodEnvelope: Decodable {
@@ -94,7 +94,7 @@ private struct ParamsEnvelope<T: Decodable>: Decodable {
 
 /// Every face of this entry point exits through one of these, so a caller always gets exactly one
 /// JSON line on stdout and never has to guess from the exit code alone.
-package func emitResult(_ result: [String: Any]) -> Never {
+func emitResult(_ result: [String: Any]) -> Never {
     emit(["ok": true, "result": result])
     exit(0)
 }
@@ -124,7 +124,7 @@ private func armRpcDeadline(for method: String) {
     }
 }
 
-package func emitError(code: String, message: String, exitCode: Int32) -> Never {
+func emitError(code: String, message: String, exitCode: Int32) -> Never {
     emit(["ok": false, "error": ["code": code, "message": message]])
     exit(exitCode)
 }
@@ -149,7 +149,7 @@ private func emit(_ payload: [String: Any]) {
 /// `sound` defaults to the system default, matching the DarwinKit and osascript backends this
 /// replaces. terminal-notifier stays silent unless asked, so a caller that relied on that gets a
 /// sound it did not before; that is the one deliberate behaviour change here.
-package func notificationContent(_ params: NotifyPostParams, identifier: String) -> UNMutableNotificationContent {
+func notificationContent(_ params: NotifyPostParams, identifier: String) -> UNMutableNotificationContent {
     let content = UNMutableNotificationContent()
     content.title = params.title ?? "GenesisTools"
     content.body = params.message
@@ -279,13 +279,13 @@ private func buildAction(_ action: NotifyAction) -> UNNotificationAction {
 /// notification — so the answer cannot be returned on its stdout. It is written here instead, and a
 /// waiting CLI watches the directory. One file per notification id, overwritten if the same
 /// notification is answered twice.
-package func notificationReplyDir() -> String {
+func notificationReplyDir() -> String {
     (genesisHome() as NSString).appendingPathComponent(".genesis-tools/app/replies")
 }
 
 /// Notification ids are path components of the reply file. A slash or `..` would let `notify.reply`
 /// (and the click writer) read or write outside the reply directory, using the app's TCC grants.
-package func isSafeNotificationId(_ id: String) -> Bool {
+func isSafeNotificationId(_ id: String) -> Bool {
     if id.isEmpty {
         return false
     }
@@ -365,7 +365,7 @@ private func writeReply(notificationId: String, actionId: String, text: String?,
 /// A click runs in a process macOS launched, with no terminal attached, so stderr goes nowhere and
 /// a silent no-op is indistinguishable from a click that never arrived. This file is the only way
 /// to tell those apart after the fact.
-package func logClick(_ message: String) {
+func logClick(_ message: String) {
     let dir = (genesisHome() as NSString).appendingPathComponent(".genesis-tools/app")
     let path = (dir as NSString).appendingPathComponent("notify-clicks.log")
     let stamp = ISO8601DateFormatter().string(from: Date())
@@ -390,7 +390,7 @@ private func clickHasRoute(userInfo: [AnyHashable: Any], actionIdentifier: Strin
 
 /// Run whatever the clicked element was carrying. Blocks until an `execute` command finishes, so
 /// the caller must not run this on the main queue.
-package func performClickAction(userInfo: [AnyHashable: Any], actionIdentifier: String) {
+func performClickAction(userInfo: [AnyHashable: Any], actionIdentifier: String) {
     // Read one level at a time. userInfo comes back from the notification store as a plist, so the
     // inner dictionaries arrive as [String: Any] and a direct cast to [String: [String: String]]
     // fails, silently turning every click into a no-op. That was the first shipped bug here.
@@ -450,10 +450,10 @@ package func performClickAction(userInfo: [AnyHashable: Any], actionIdentifier: 
 
 /// Registered by every face of the bundle that can receive a click, including an instance macOS
 /// launched purely to deliver one.
-package final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
+final class NotificationDelegate: NSObject, UNUserNotificationCenterDelegate {
     /// Called when a notification arrives while this process is frontmost. Without it the banner is
     /// suppressed and the user never gets the chance to click.
-    package func userNotificationCenter(
+    func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
@@ -461,7 +461,7 @@ package final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
         completionHandler([.banner, .sound])
     }
 
-    package func userNotificationCenter(
+    func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
@@ -507,15 +507,15 @@ package final class NotificationDelegate: NSObject, UNUserNotificationCenterDele
 
 /// `UNUserNotificationCenter.delegate` is a weak reference, so the delegate has to be owned by
 /// something that outlives the call that registers it.
-package let sharedNotificationDelegate = NotificationDelegate()
+let sharedNotificationDelegate = NotificationDelegate()
 
 /// True once a banner click has been delivered to this process.
-package var notificationClickReceived = false
+var notificationClickReceived = false
 
 /// A process macOS launched only to deliver a click has nothing else to do, so it quits once the
 /// action has run. The settings window clears this, so clicking a banner while the window is open
 /// does not close it.
-package var quitAfterNotificationClick = true
+var quitAfterNotificationClick = true
 
 /// True in a window face (`--hub`, `--review`): a routed click gives the focus back to the app before.
 private var clickInWindowFace = false
@@ -646,7 +646,7 @@ private func remove(_ params: NotifyRemoveParams) {
 /// `alertStyle` is read-only in `UserNotifications`. An app cannot promote itself from a Temporary
 /// banner to a Persistent alert, by design, so handing the user this link is the only thing code
 /// can do about it. It lives here rather than in a caller so every door offers the same fix.
-package let notificationSettingsUrl =
+let notificationSettingsUrl =
     "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(fallbackBundleId)"
 
 private func openSettings() {
@@ -813,9 +813,9 @@ private func list() {
 
 /// Bumped only when an existing method's request or reply changes shape. Adding a method does not
 /// bump it: a client discovers those from `rpc.hello`'s method list instead.
-package let rpcProtocolVersion = 1
+let rpcProtocolVersion = 1
 
-package let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list", "notify.status", "notify.authorize", "notify.settings", "notify.reply", "gate.approve", "vault.unlock"]
+let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.list", "notify.status", "notify.authorize", "notify.settings", "notify.reply", "gate.approve", "vault.unlock"]
 
 /// `GenesisTools --rpc '<json>'`, or `--rpc -` to read the request from stdin: run one method and
 /// exit with one JSON line on stdout.
@@ -823,7 +823,7 @@ package let rpcMethods = ["rpc.hello", "notify.post", "notify.remove", "notify.l
 /// `.accessory` keeps the process off the Dock, the same footprint terminal-notifier gets from
 /// LSUIElement. An NSApplication run loop is what lets the UserNotifications callbacks land, and
 /// every path exits from inside a callback, so the request is always settled.
-package func runRpc(_ arguments: [String]) -> Never {
+func runRpc(_ arguments: [String]) -> Never {
     let payload: String
 
     if let first = arguments.first, first != "-" {

@@ -13,8 +13,8 @@ import Foundation
 /// runs before AppKit starts (`ensure`). A face that Launch Services itself started (`open -n`) is
 /// registered from launch, so it is older than a relay it starts; it runs itself again as a plain child,
 /// which registers only when its NSApplication starts.
-package enum LinkRelay {
-    package static let argument = "--link-relay"
+enum LinkRelay {
+    static let argument = "--link-relay"
     private nonisolated(unsafe) static var lockDescriptor: Int32 = -1
     private static let startDeadline: TimeInterval = 3
 
@@ -23,19 +23,19 @@ package enum LinkRelay {
     }
 
     /// The window faces that need a relay in front of them: every face `FaceRecord` reopens after a rebuild.
-    package static func shouldEnsure(_ arguments: [String]) -> Bool {
+    static func shouldEnsure(_ arguments: [String]) -> Bool {
         FaceRecord.isWindowFace(arguments)
     }
 
     /// A bare launch may be macOS delivering a banner click to a fresh process, and that click is lost in a
     /// re-run, so only an explicit window request runs itself again.
-    package static func mayRunAgain(_ arguments: [String]) -> Bool {
+    static func mayRunAgain(_ arguments: [String]) -> Bool {
         let first = arguments.first ?? ""
         return first == "--hub" || first == "--review" || first == "--window"
     }
 
     /// Another process holds the relay lock. Asks the kernel, not a pid file.
-    package static var isRunning: Bool {
+    static var isRunning: Bool {
         guard lockDescriptor < 0 else { return true }
         let descriptor = open(lockFile.path, O_RDONLY | O_CLOEXEC)
         guard descriptor >= 0 else { return false }
@@ -49,7 +49,7 @@ package enum LinkRelay {
 
     /// For a window face, before NSApplication exists: start the relay when none runs, and when this
     /// process is already registered with Launch Services, run this face again as a child and exit.
-    package static func ensure(_ arguments: [String]) {
+    static func ensure(_ arguments: [String]) {
         guard !isRunning else { return }
         let bundleId = Bundle.main.bundleIdentifier ?? ""
         let own = ProcessInfo.processInfo.processIdentifier
@@ -116,7 +116,7 @@ package enum LinkRelay {
     }
 
     /// One line in app-perf.log and in the relay's own journal (LinkRelayJournal.swift).
-    package static func note(_ text: String) {
+    static func note(_ text: String) {
         HubPerf.log("relay: \(text)")
         RelayJournal.write(text)
     }
@@ -127,7 +127,7 @@ package enum LinkRelay {
     private nonisolated(unsafe) static var terminationSources: [DispatchSourceSignal] = []
 
     /// The relay face itself. Exits at once when another relay holds the lock.
-    package static func run() -> Never {
+    static func run() -> Never {
         RelayJournal.role = "relay"
         guard claim() else {
             note("relay lock could not be claimed, exiting")
@@ -196,7 +196,7 @@ package enum LinkRelay {
     }
 
     /// A startup probe holds a shared lock briefly. Give it time to release without mistaking it for a relay.
-    package static func acquireLock(_ descriptor: Int32) -> Bool {
+    static func acquireLock(_ descriptor: Int32) -> Bool {
         for attempt in 0..<4 {
             if flock(descriptor, LOCK_EX | LOCK_NB) == 0 { return true }
             if attempt < 3 { Thread.sleep(forTimeInterval: 0.1) }
@@ -205,7 +205,7 @@ package enum LinkRelay {
     }
 
     /// A descriptor is returned only after the file opened and this process owns its exclusive lock.
-    package static func claimDescriptor(_ file: URL) -> Int32? {
+    static func claimDescriptor(_ file: URL) -> Int32? {
         let descriptor = open(file.path, O_RDWR | O_CREAT | O_CLOEXEC, 0o644)
         guard descriptor >= 0 else { return nil }
         guard acquireLock(descriptor) else {

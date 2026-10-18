@@ -678,7 +678,7 @@ private func readEvents(onEvent: @escaping (CapsuleEvent) -> Void, onEnd: @escap
     thread.start()
 }
 
-package func runCapsule(_ args: [String]) -> Never {
+func runCapsule(_ args: [String]) -> Never {
     var theme = Theme.dark
     var screenChoice = "main"
     var position = "bottom"
