@@ -21,26 +21,41 @@ export interface AppPart {
     /** The `GenesisTools <flag>` faces this part serves. */
     faces: readonly string[];
     bundleSteps: readonly AppBundleStep[];
-    /** Other parts whose code this one calls: a build with this part builds them too (Package.swift `requires`). */
+    /** Parts a build with this one makes too (Package.swift `requires`); never a code dependency. */
     requires?: readonly string[];
     summary: string;
 }
 
 export const APP_PARTS: readonly AppPart[] = [
     {
+        id: "features",
+        // `--clicky` is the face's old name, from the time Clicky owned the window.
+        faces: ["--features", "--clicky"],
+        bundleSteps: [],
+        summary: "the feature settings window, where the other parts add their pages (staging)",
+    },
+    // The hub, the widget and Clicky have pages in the feature settings window, so a build with one makes it too.
+    {
         id: "hub",
         faces: ["--hub", "--review"],
         bundleSteps: ["diff-viewer", "markdown-webview"],
+        requires: ["features"],
         summary: "the hub and the diff review window",
     },
-    { id: "widget", faces: ["--widget"], bundleSteps: [], summary: "the agent widget (staging)" },
+    {
+        id: "widget",
+        faces: ["--widget"],
+        bundleSteps: [],
+        requires: ["features"],
+        summary: "the agent widget (staging)",
+    },
     {
         id: "clicky",
-        faces: ["--clicky"],
+        // No face of its own: Clicky's status item runs in the feature settings process.
+        faces: [],
         bundleSteps: ["clicky-library"],
-        // Its settings pages show the hub's notification rules and read through the hub's `tools` server.
-        requires: ["hub"],
-        summary: "Clicky and its settings (staging)",
+        requires: ["features"],
+        summary: "Clicky, the keyboard sounds (staging)",
     },
     { id: "markdown", faces: ["--markdown"], bundleSteps: ["markdown-webview"], summary: "the markdown viewer" },
 ];

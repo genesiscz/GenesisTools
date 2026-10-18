@@ -20,7 +20,7 @@ import { isProcessAlive } from "@genesiscz/utils/process-alive";
  */
 
 /** The settings window, the hub, a review, the edge-panel widget and Clicky (the feature settings host). */
-export type WindowFaceKind = "hub" | "review" | "settings" | "widget" | "clicky";
+export type WindowFaceKind = "hub" | "review" | "settings" | "widget" | "features";
 
 export interface WindowFace {
     pid: number;
@@ -73,8 +73,9 @@ export function windowFaceKind(argv: string[]): WindowFaceKind | null {
         return "widget";
     }
 
-    if (first === "--clicky") {
-        return "clicky";
+    // `--clicky` is the old name of the feature settings face: a face started by an older build still carries it.
+    if (first === "--features" || first === "--clicky") {
+        return "features";
     }
 
     // --rpc, --notify, --mic, --capsule end on their own; a link router must never be kept alive; the link relay
@@ -195,8 +196,8 @@ const WIDGET_ONE_SHOTS: OneShotFlags = {
     optional: new Set(),
 };
 
-/** Sources/ClickyEntry.swift: the settings page to open. */
-const CLICKY_ONE_SHOTS: OneShotFlags = { value: new Set(["--page"]), bare: new Set(), optional: new Set() };
+/** Parts/Features/FeaturesEntry.swift: the settings page to open. */
+const FEATURES_ONE_SHOTS: OneShotFlags = { value: new Set(["--page"]), bare: new Set(), optional: new Set() };
 
 function withoutOneShots(argv: string[], flags: OneShotFlags): string[] {
     const kept: string[] = [];
@@ -256,8 +257,8 @@ export function relaunchPlan(faces: WindowFace[], frontPid: number | null): Rela
             argv = [...withoutHubActions(kept), "--resume"];
         } else if (face.kind === "widget") {
             argv = [...withoutOneShots(kept, WIDGET_ONE_SHOTS), "--ensure-running"];
-        } else if (face.kind === "clicky") {
-            argv = withoutOneShots(kept, CLICKY_ONE_SHOTS);
+        } else if (face.kind === "features") {
+            argv = ["--features", ...withoutOneShots(kept.slice(1), FEATURES_ONE_SHOTS)];
         }
 
         if (!activate) {

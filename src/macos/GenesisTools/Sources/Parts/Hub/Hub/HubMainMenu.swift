@@ -148,10 +148,10 @@ package enum AppMainMenu {
 package final class AppMenuTarget: NSObject {
     package static let shared = AppMenuTarget()
 
-    /// The settings window with every feature's pages: Clicky, Widgets, Dictation, Focus and Hub
-    /// (`GenesisTools --clicky`, ClickyEntry.swift).
+    /// The settings window with the pages of every part this build links (`GenesisTools --features`,
+    /// Parts/Features/FeaturesEntry.swift).
     @objc package func openSettings(_ sender: Any?) {
-        ClickyLaunch.openSettings()
+        FeatureSettingsLaunch.open()
     }
 
     /// The review window's keys live in the hub library: the shared menu, Close Window, and panel find.
@@ -224,7 +224,7 @@ package enum HubMenuCommands {
         HubMenuCommand(title: "Glass", id: HubKeymap.glass, run: { $0.runPalette(.toggleGlass, toggleGlass: toggleGlass) },
                        checked: { _ in HubDefaults.preferences.glass && HubGlassSwitch.available },
                        enabled: { _ in HubGlassSwitch.available }, separated: true),
-        HubMenuCommand(title: "Hub Settings…", id: "hub.view.settings", run: { _ in ClickyLaunch.openSettings(pageID: HubSettingsPages.appearancePageID) }),
+        HubMenuCommand(title: "Hub Settings…", id: "hub.view.settings", run: { _ in FeatureSettingsLaunch.open(pageID: HubSettingsPages.appearancePageID) }),
         HubMenuCommand(title: "Split Diff", id: "hub.view.diff.split", run: { review(of: $0)?.setStyle(.split) },
                        checked: { review(of: $0)?.options.diffStyle == .split }, enabled: { review(of: $0) != nil }, separated: true),
         HubMenuCommand(title: "Unified Diff", id: "hub.view.diff.unified", run: { review(of: $0)?.setStyle(.unified) },

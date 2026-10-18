@@ -58,7 +58,8 @@ public enum ClickySettingsPages {
         }
     }
 
-    public static func sections(model: ClickyModel) -> [NativeSettingsSection] {
+    /// The Clicky section alone, for a settings window that other parts add pages to (`FeatureSettingsPlugin`).
+    public static func section(model: ClickyModel) -> NativeSettingsSection {
         func page(_ item: ClickyPage) -> NativeSettingsPage {
             NativeSettingsPage(
                 id: pageID(item), title: item.rawValue, symbol: item.symbol,
@@ -67,33 +68,18 @@ public enum ClickySettingsPages {
                 ClickySettingsPageContent(model: model, page: item)
             }
         }
-        return [
-            NativeSettingsSection(
-                id: "general", title: "",
-                pages: [
-                    NativeSettingsPage(
-                        id: "general", title: "General", symbol: "gearshape.fill", tint: .gray,
-                        subtitle: "GenesisTools appearance and accessibility."
-                    ) {
-                        NativeSettingsGeneralPage()
-                    }
-                ], order: 0),
-            NativeSettingsSection(
-                id: "clicky", title: "Clicky",
-                pages: [ClickyPage.sound, .sleep, .notifications, .stats, .performance, .visualizer].map(page), order: 10),
-            NativeSettingsSection(
-                id: "about", title: "",
-                pages: [
-                    NativeSettingsPage(
-                        id: "about", title: "About", symbol: "info.circle.fill", tint: .gray,
-                        subtitle: "GenesisTools for your Mac."
-                    ) {
-                        NativeSettingsAboutPage(additionalInfo: [
-                            "Clicky includes seven original synthesized switch voices. No third-party recordings are bundled."
-                        ])
-                    }
-                ], order: 90),
-        ]
+        return NativeSettingsSection(
+            id: "clicky", title: "Clicky",
+            pages: [ClickyPage.sound, .sleep, .notifications, .stats, .performance, .visualizer].map(page), order: 10)
+    }
+
+    /// The line Clicky adds to the About page.
+    public static let aboutInfo =
+        "Clicky includes seven original synthesized switch voices. No third-party recordings are bundled."
+
+    /// A window of Clicky's own: General, Clicky and About.
+    public static func sections(model: ClickyModel) -> [NativeSettingsSection] {
+        [FeatureSettingsPages.general, section(model: model), FeatureSettingsPages.about(additionalInfo: [aboutInfo])]
     }
 }
 

@@ -2219,7 +2219,7 @@ private struct SessionListView: View {
                             detail: "Key sounds and the app's settings",
                             symbol: "keyboard",
                             tooltip: "Open the settings window at Clicky, the keyboard sounds"
-                        ) { ClickyLaunch.openSettings() }
+                        ) { FeatureSettingsLaunch.open(pageID: "clicky.sound") }
                     }
                     .padding(.bottom, 6)
                 }

@@ -55,6 +55,8 @@ final class FaceMarkerTests: XCTestCase {
                       "the next flag is not a snapshot path")
         XCTAssertFalse(NativeStaging.refuses(["--clicky", "--page", "general", "--headless"], facesEnabled: false),
                        "headless Settings starts neither Clicky nor Flow, as a snapshot")
+        XCTAssertTrue(NativeStaging.refuses(["--features"], facesEnabled: false))
+        XCTAssertFalse(NativeStaging.refuses(["--features", "--page", "general", "--headless"], facesEnabled: false))
         XCTAssertTrue(NativeStaging.refuses(["--widget", "--headless"], facesEnabled: false))
         XCTAssertFalse(NativeStaging.refuses(["--widget"], facesEnabled: true))
         XCTAssertFalse(NativeStaging.refuses(["--hub", "--snapshot", "/tmp/fixture.png"], facesEnabled: false))

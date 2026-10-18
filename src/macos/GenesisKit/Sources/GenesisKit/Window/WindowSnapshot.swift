@@ -157,3 +157,15 @@ public enum WindowSnapshot {
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 }
+
+extension NSWindow {
+    /// Shows a `--snapshot` window without it ever reaching the screen: alpha 0, no mouse, not in
+    /// the window cycle. AppKit and WebKit still lay it out and draw it, so the PNG is complete,
+    /// and nothing flashes on the desktop or takes the keystrokes of whoever is typing.
+    public func orderInForSnapshot() {
+        alphaValue = 0
+        ignoresMouseEvents = true
+        collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
+        orderFrontRegardless()
+    }
+}

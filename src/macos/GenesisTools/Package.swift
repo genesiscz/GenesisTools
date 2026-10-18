@@ -4,8 +4,10 @@ import PackageDescription
 
 // GenesisTools.app is a small host plus optional parts (Martin, 2026-10-18: "make it a bit generic so we can pick
 // more parts of the native app to not build"). The host (Sources/Host) is the launcher, `--rpc`, the permission
-// faces, vault approval, notifications, the microphone, the link router and the settings window. Each part is one
+// faces, vault approval, notifications, the microphone, the link router and the permissions window. Each part is one
 // library under Sources/Parts; the executable (Sources/GenesisTools) links the host plus the parts this build asks for.
+// No part imports another: a part reaches the others only through the host (a face started in its own process) or
+// through GenesisKit's `FeatureSettingsPlugin`, which the executable wires up (Sources/GenesisTools/Parts.swift).
 //
 // `GENESIS_APP_PARTS` names the parts, comma-separated ("" = the host only). Unset = every part, so a plain
 // `swift build`, `swift test` and the IDE see the whole app. `src/macos/lib/permissions/parts.ts` is the one table
@@ -14,20 +16,17 @@ struct AppPart {
     let id: String
     let target: String
     let path: String
-    /// Other parts whose code this one calls; a build with this part links them too (parts.ts `requires`).
+    /// Parts a build with this one makes too (parts.ts `requires`). Never a code dependency: the targets stay apart.
     var requires: [String] = []
-    var shared: [String] = []
 }
 
-/// Code two parts share: not a part of its own, linked by the parts that need it.
-let flowTarget = "GenesisToolsFlow"
-
 let allParts: [AppPart] = [
-    // The hub starts the widget and Clicky in their own processes (Parts/Flow/WidgetLaunch.swift, ClickyLaunch.swift).
-    AppPart(id: "hub", target: "GenesisToolsHub", path: "Sources/Parts/Hub", shared: [flowTarget]),
-    AppPart(id: "widget", target: "GenesisToolsWidget", path: "Sources/Parts/Widget", shared: [flowTarget]),
-    // Clicky's settings pages show the hub's notification rules and read through its `tools` server.
-    AppPart(id: "clicky", target: "GenesisToolsClicky", path: "Sources/Parts/Clicky", requires: ["hub"], shared: [flowTarget]),
+    // The feature settings window (`--features`): General, Background, About, plus each linked part's plug-in.
+    AppPart(id: "features", target: "GenesisToolsFeatures", path: "Sources/Parts/Features"),
+    // The hub, the widget and Clicky have pages in that window, so a build with one of them makes it too.
+    AppPart(id: "hub", target: "GenesisToolsHub", path: "Sources/Parts/Hub", requires: ["features"]),
+    AppPart(id: "widget", target: "GenesisToolsWidget", path: "Sources/Parts/Widget", requires: ["features"]),
+    AppPart(id: "clicky", target: "GenesisToolsClicky", path: "Sources/Parts/Clicky", requires: ["features"]),
     AppPart(id: "markdown", target: "GenesisToolsMarkdown", path: "Sources/Parts/Markdown"),
 ]
 
@@ -53,14 +52,10 @@ let hostTarget: Target = .target(
     path: "Sources/Host"
 )
 let fullKit: Target.Dependency = .product(name: "GenesisKit", package: "GenesisKit")
-let flowTargetDecl: Target = .target(name: flowTarget, dependencies: ["GenesisToolsHost", fullKit], path: "Sources/Parts/Flow")
 
+// Every part links the host and the full kit, and nothing else; the host links only GenesisKitBase.
 let partTargets: [Target] = allParts.map { appPart in
-    // Every part links the full kit; the host links only GenesisKitBase.
-    var dependencies: [Target.Dependency] = [.target(name: "GenesisToolsHost"), fullKit]
-    dependencies += appPart.shared.map { Target.Dependency.target(name: $0) }
-    dependencies += appPart.requires.compactMap { id in part(id).map { Target.Dependency.target(name: $0.target) } }
-    return .target(name: appPart.target, dependencies: dependencies, path: appPart.path)
+    .target(name: appPart.target, dependencies: [.target(name: "GenesisToolsHost"), fullKit], path: appPart.path)
 }
 
 let executableDependencies: [Target.Dependency] =
@@ -78,7 +73,7 @@ let executable: Target = .executableTarget(
 // and `--bench` runs. The exceptions render into a window nobody sees (alpha 0, below the desktop,
 // never activated): LiveTimeTests and SessionTranscriptScrollTests, copied from Genesis, and
 // WindowTitlebarTests (clicks sent to the title bar strip). It always tests every part.
-let testDependencies: [Target.Dependency] = [.target(name: "GenesisToolsHost"), .target(name: flowTarget)]
+let testDependencies: [Target.Dependency] = [.target(name: "GenesisToolsHost")]
     + allParts.map { Target.Dependency.target(name: $0.target) }
 let tests: Target = .testTarget(name: "GenesisToolsTests", dependencies: testDependencies, path: "Tests")
 
@@ -96,5 +91,5 @@ let package = Package(
     platforms: [.macOS(.v14)],
     // The components shared with Genesis.app (cmux picker, path and copy controls, menu buttons).
     dependencies: [.package(path: "../GenesisKit")],
-    targets: kitBaseOnly ? [hostTarget, executable] : [hostTarget, flowTargetDecl] + partTargets + [executable, tests]
+    targets: kitBaseOnly ? [hostTarget, executable] : [hostTarget] + partTargets + [executable, tests]
 )

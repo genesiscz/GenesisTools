@@ -15,7 +15,7 @@
   `module <id> <edge> [group]`, `hover|unhover <edge> [group]`, `collapse`, `select <key>`, `settings [page]`.
 - Change preferences through the widget's own door: `tools hub widget call --input <json>` with
   `{"action":"preferences","patch":{…}}` (e.g. `showWidget`).
-- Settings window: the `--clicky --page <id>` face; screenshot it with
+- Settings window: the `--features --page <id>` face (`--clicky` is its old name); screenshot it with
   `tools control screenshot --app <pid> --path …` (no focus change).
 - `tools control window --app <pid> --json` lists a face's windows; pick by PID, several faces share one bundle.
 

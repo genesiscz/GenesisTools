@@ -1,8 +1,8 @@
 import AppKit
 
-/// Starts the widget face (`GenesisTools --widget`) in its own process, and pins a session to it. In Flow, not the
-/// widget part: the hub and Clicky start the widget too, and a build without it answers the face with the command
-/// that adds it (Host/AppParts.swift).
+/// Starts the widget face (`GenesisTools --widget`) in its own process, and pins a session to it. In the host, not the
+/// widget part: the hub and the settings window start the widget too, and a build without it answers the face with the
+/// command that adds it (AppParts.swift).
 @MainActor
 package enum WidgetLaunch {
     /// A launch that only makes sure the widget face runs: a running face ignores it instead of opening settings.

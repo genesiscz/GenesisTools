@@ -11,7 +11,9 @@ package enum AppParts {
         "--hub": "hub",
         "--review": "hub",
         "--widget": "widget",
-        "--clicky": "clicky",
+        "--features": "features",
+        // The old name of the settings face, from the time Clicky owned the window: relaunch records and scripts.
+        "--clicky": "features",
         "--markdown": "markdown",
     ]
 

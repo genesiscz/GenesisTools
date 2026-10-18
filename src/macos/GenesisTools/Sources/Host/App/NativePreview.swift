@@ -17,21 +17,26 @@ package enum NativePreview {
     }
 }
 
-/// The widget and Clicky are in staging. They run in the Preview bundles, and in the normal app only on a machine whose
+/// The widget and the feature settings face (Clicky, dictation and Focus run in it) are in staging. They run in the Preview bundles, and in the normal app only on a machine whose
 /// owner turned them on with `bun scripts/native/staging.ts on` (the defaults key below). A normal install never has it.
 package enum NativeStaging {
     package static let defaultsKey = "GenesisToolsStagingFaces"
     package static var facesEnabled: Bool { NativePreview.enabled || UserDefaults.standard.bool(forKey: defaultsKey) }
 
-    /// Whether these arguments start a staged face this app may not run. The exceptions are Clicky's off-screen Settings
-    /// runs, a snapshot (`--clicky --page <id> --snapshot <png>`, one page drawn, then exit) and a headless run
-    /// (`--clicky --page <id> --headless`): neither starts Clicky nor Flow. The widget has no such mode, so
+    /// The feature settings face under both its names (`--clicky` is the old one).
+    package static let settingsFaces: Set<String> = ["--features", "--clicky"]
+
+    /// Whether these arguments start a staged face this app may not run. The exceptions are the off-screen Settings
+    /// runs, a snapshot (`--features --page <id> --snapshot <png>`, one page drawn, then exit) and a headless run
+    /// (`--features --page <id> --headless`): neither starts Clicky nor Flow. The widget has no such mode, so
     /// `--widget --snapshot` is refused like any widget launch.
-    /// `--snapshot` with no path after it is refused too: Clicky would read no snapshot path and start for real.
+    /// `--snapshot` with no path after it is refused too: the face would read no snapshot path and start for real.
     package static func refuses(_ arguments: [String], facesEnabled: Bool) -> Bool {
-        guard !facesEnabled, let face = arguments.first, face == "--widget" || face == "--clicky" else { return false }
-        // `--clicky --headless` (scripts/native/settings-v2.ts) is the same off-screen Settings without a picture.
-        return !(face == "--clicky" && (snapshotPath(arguments) != nil || arguments.contains("--headless")))
+        guard !facesEnabled, let face = arguments.first, face == "--widget" || settingsFaces.contains(face) else {
+            return false
+        }
+        // `--features --headless` (scripts/native/settings-v2.ts) is the same off-screen Settings without a picture.
+        return !(settingsFaces.contains(face) && (snapshotPath(arguments) != nil || arguments.contains("--headless")))
     }
 
     /// The value after `--snapshot`, when there is one and it is not the next flag.

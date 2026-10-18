@@ -16,7 +16,7 @@ public enum HubWindowStyle: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// The hub's preferences that a person sets, shared by the hub window (`--hub`) and the Hub pages of the settings
-/// window (`--clicky`). Both faces run from one bundle, so they read one defaults domain. A write posts a distributed
+/// window (`--features`). Both faces run from one bundle, so they read one defaults domain. A write posts a distributed
 /// notification, and every other process reloads, as `NativeSettingsAppearance` does for General.
 ///
 /// Remembered view state (panel widths, folds, filters, sort orders, last selections) is not here: the hub keeps it

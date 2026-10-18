@@ -18,7 +18,7 @@ Rules, each learned the hard way:
 - **Check both files before anything else:** `sips -g pixelWidth -g pixelHeight before.png after.png`. When one side
   is 2x and the other 1x, resample the 2x side: `sips --resampleWidth <1x width> after.png`.
 - **Off screen, never the user's windows.** Hub: `GenesisTools --hub --mode <m> [--session <id>] --width W --height H
-  --snapshot <png>`. Settings: `GenesisTools --clicky --page <page id> --snapshot <png>` (needs the installed bundle).
+  --snapshot <png>`. Settings: `GenesisTools --features --page <page id> --snapshot <png>` (needs the installed bundle).
   Widget: `bun scripts/native/widget-drive.ts record …` or `tools control capture` by window id.
 - **One pane alone needs `--panes <name>`.** The hub's session view shows panes side by side; `--tab` only picks the
   focused pane. A pair taken with `--tab changes` on a new build shows the transcript.

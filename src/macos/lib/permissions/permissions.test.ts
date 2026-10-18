@@ -764,14 +764,17 @@ describe("permission kinds", () => {
 describe("app parts", () => {
     it("keeps the installed parts and adds the requested ones (D15 a)", () => {
         expect(partsForBuild({ installed: [] })).toEqual([]);
-        expect(partsForBuild({ installed: [], add: ["hub"] })).toEqual(["hub"]);
-        expect(partsForBuild({ installed: ["markdown"], add: ["hub", "markdown"] })).toEqual(["hub", "markdown"]);
+        expect(partsForBuild({ installed: [], add: ["markdown"] })).toEqual(["markdown"]);
+        expect(partsForBuild({ installed: ["markdown"], add: ["markdown"] })).toEqual(["markdown"]);
         expect(partsForBuild({ installed: ["hub"], exactly: [] })).toEqual([]);
     });
 
-    it("builds the parts a part requires", () => {
-        expect(partsForBuild({ installed: [], add: ["clicky"] })).toEqual(["clicky", "hub"]);
-        expect(partsForBuild({ installed: ["markdown"], exactly: ["clicky"] })).toEqual(["clicky", "hub"]);
+    it("builds the feature settings window with every part that has pages in it, and no part needs another", () => {
+        expect(partsForBuild({ installed: [], add: ["clicky"] })).toEqual(["clicky", "features"]);
+        expect(partsForBuild({ installed: ["markdown"], exactly: ["clicky"] })).toEqual(["clicky", "features"]);
+        expect(partsForBuild({ installed: ["markdown"], add: ["hub"] })).toEqual(["features", "hub", "markdown"]);
+        // A manifest written by a build from before the features part: its next build adds the window.
+        expect(partsForBuild({ installed: ["widget"] })).toEqual(["features", "widget"]);
     });
 
     it("reads a manifest from before parts existed as a full build, and no manifest as nothing", () => {

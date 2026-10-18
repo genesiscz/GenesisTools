@@ -26,14 +26,16 @@ import {
 const LAUNCHER = "/Users/alice/Applications/GenesisTools.app/Contents/MacOS/GenesisTools";
 
 describe("windowFaceKind", () => {
-    it("keeps the settings window, the hub, a review, the widget and Clicky", () => {
+    it("keeps the settings window, the hub, a review, the widget and the feature settings", () => {
         expect(windowFaceKind([])).toBe("settings");
         expect(windowFaceKind(["--window"])).toBe("settings");
         expect(windowFaceKind(["-psn_0_12345"])).toBe("settings");
         expect(windowFaceKind(["--hub", "--session", "abc"])).toBe("hub");
         expect(windowFaceKind(["--review", "--proposal", "/x/p.json"])).toBe("review");
         expect(windowFaceKind(["--widget", "--ensure-running"])).toBe("widget");
-        expect(windowFaceKind(["--clicky", "--page", "general"])).toBe("clicky");
+        expect(windowFaceKind(["--features", "--page", "general"])).toBe("features");
+        // The face's old name, as a face started by an older build carries it.
+        expect(windowFaceKind(["--clicky", "--page", "general"])).toBe("features");
     });
 
     it("skips short-lived faces, link routers and scripted runs", () => {
@@ -227,12 +229,12 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
         ]);
     });
 
-    it("starts Clicky again without its settings page", () => {
+    it("starts the feature settings face again without its page, under its new name", () => {
         const listing = ps(`  311 ${LAUNCHER} --clicky --page widgets.general`);
 
         expect(plan({ psStdout: listing, stalePids: ["311"] })).toEqual([
             ["open", "-n", "-g", BUNDLE, "--args", "--link-relay"],
-            ["open", "-n", "-g", BUNDLE, "--args", "--clicky", "--no-activate"],
+            ["open", "-n", "-g", BUNDLE, "--args", "--features", "--no-activate"],
         ]);
     });
 
@@ -241,7 +243,7 @@ describe("a rebuild reopens exactly the faces it stopped", () => {
         const commands = plan({ psStdout: hubOnly, stalePids: ["321"] });
 
         expect(commands.some((args) => args.includes("--widget"))).toBe(false);
-        expect(commands.some((args) => args.includes("--clicky"))).toBe(false);
+        expect(commands.some((args) => args.includes("--features"))).toBe(false);
         expect(commands).toHaveLength(2);
 
         const shortLived = ps(`  331 ${LAUNCHER} --rpc {}`, `  332 ${LAUNCHER} --notify`, `  333 ${LAUNCHER} --widget`);

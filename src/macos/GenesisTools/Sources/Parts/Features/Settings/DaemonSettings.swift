@@ -170,18 +170,20 @@ package final class DaemonSettingsStore: ObservableObject {
     private var writeGeneration = 0
     private var loadGeneration = 0
 
+    /// A `tools` process per call: the hub's resident server has no door for `daemon`, so this is what the hub's
+    /// runner did too, without needing the hub part.
     private nonisolated static func cli(_ args: [String], timeout: TimeInterval = 60) async -> Result<Data, Error> {
-        await Task.detached(priority: .userInitiated) {
-            Result {
-                let capture = try ToolsCLIRunner.capture(args, timeout: timeout)
-                guard capture.status == 0 else {
-                    let stderr = String(decoding: capture.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                    let stdout = String(decoding: capture.stdout, as: UTF8.self)
-                    throw DaemonSettingsError(text: Self.errorText(stdout: stdout, stderr: stderr, status: capture.status))
-                }
-                return capture.stdout
+        do {
+            let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath()).run(
+                subcommand: args.first ?? "", args: Array(args.dropFirst()), timeoutSeconds: Int(timeout.rounded(.up)))
+            guard result.exitCode == 0 else {
+                let stderr = result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                throw DaemonSettingsError(text: Self.errorText(stdout: result.stdout, stderr: stderr, status: result.exitCode))
             }
-        }.value
+            return .success(Data(result.stdout.utf8))
+        } catch {
+            return .failure(error)
+        }
     }
 
     /// `config set --json` prints `{error}` on stdout when it refuses; prefer that sentence over the stderr noise.
@@ -432,7 +434,7 @@ private struct DaemonTaskCard: View {
         if store.runningNow.contains(task.name) { return "Running now" }
         guard let last = stats?.lastRun else { return task.enabled ? "No run in the last 24 hours" : "Off" }
         if last.status == "unfinished",
-            let started = HubFormat.date(last.startedAt),
+            let started = SessionFormat.parseISO(last.startedAt),
             Date().timeIntervalSince(started) * 1000 < Double(task.timeoutMs)
         {
             return "Running now"
@@ -445,7 +447,7 @@ private struct DaemonTaskCard: View {
         var parts = [task.schedule, "timeout \(DaemonFormat.duration(Double(task.timeoutMs)))", "priority \(task.priority)"]
         if task.retries > 0 { parts.append(Plural.count(task.retries, "retry", "retries")) }
         if task.isTimeOfDay { parts.append("missed runs: \(DaemonMissedRun.title(task.missedRun.mode).lowercased())") }
-        if let last = stats?.lastRun, let date = HubFormat.date(last.startedAt) {
+        if let last = stats?.lastRun, let date = SessionFormat.parseISO(last.startedAt) {
             parts.append("last \(date.formatted(date: .omitted, time: .shortened))")
         }
         return parts.joined(separator: " · ")
@@ -686,7 +688,7 @@ private struct DaemonRunList: View {
                 .font(.system(size: 9, weight: .semibold))
                 .rotationEffect(.degrees(open ? 90 : 0))
                 .foregroundStyle(.secondary)
-            LiveAgo(date: HubFormat.date(run.startedAt), style: .ago)
+            LiveAgo(date: SessionFormat.parseISO(run.startedAt), style: .ago)
                 .font(.system(size: 11.5)).monospacedDigit().frame(width: 74, alignment: .leading)
             Circle().fill(state.color).frame(width: 7, height: 7)
             Text(state.label).font(.system(size: 12)).frame(width: 78, alignment: .leading)

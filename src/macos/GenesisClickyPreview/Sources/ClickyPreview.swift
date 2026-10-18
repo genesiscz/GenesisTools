@@ -54,7 +54,7 @@ private final class ClickyPreviewDelegate: NSObject, NSApplicationDelegate {
             window.orderFrontRegardless()
             let widget = widget
             Task { @MainActor in
-                // The Widgets pages wait for their roster, as `--clicky --snapshot` does.
+                // The Widgets pages wait for their roster, as `--features --snapshot` does.
                 let deadline = ContinuousClock.now + .seconds(30)
                 while let widget, !widget.settingsLoaded, ContinuousClock.now < deadline {
                     try? await Task.sleep(for: .milliseconds(100))

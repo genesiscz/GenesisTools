@@ -13,13 +13,13 @@ package enum FaceRecord {
     }
 
     /// The faces a rebuild reopens (and that keep a link relay in front of them): the settings window, the hub,
-    /// a review, the widget and Clicky, never a scripted run.
+    /// a review, the widget and the feature settings, never a scripted run.
     package static func isWindowFace(_ argv: [String]) -> Bool {
         if argv.contains("--snapshot") || argv.contains("--bench") {
             return false
         }
         let first = argv.first ?? ""
-        return first.isEmpty || first == "--window" || first.hasPrefix("-psn_") || first == "--hub" || first == "--review" || first == "--widget" || first == "--clicky" || first == "--markdown"
+        return first.isEmpty || first == "--window" || first.hasPrefix("-psn_") || first == "--hub" || first == "--review" || first == "--widget" || first == "--features" || first == "--clicky" || first == "--markdown"
     }
 
     package static func encode(pid: Int32, argv: [String]) -> Data? {

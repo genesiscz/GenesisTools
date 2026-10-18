@@ -11,7 +11,7 @@
 // Dock icon; the window path opts into a regular app with `NSApplication`.
 //
 // This is the host's part of the entry point. The executable (Sources/GenesisTools/main.swift) registers the parts
-// its build links (hub, widget, Clicky, markdown) and then calls `runHost`; their faces start through `AppParts`.
+// its build links (hub, widget, Clicky, markdown, feature settings) and then calls `runHost`; their faces start through `AppParts`.
 
 import Foundation
 
@@ -43,7 +43,7 @@ package func runHost() -> Never {
         AppParts.run(face: firstArgument, Array(arguments.dropFirst()))
     }
 
-    // The widget and Clicky are in staging: the Preview bundles run them, and the normal app only after
+    // The widget and the feature settings face are in staging: the Preview bundles run them, and the normal app only after
     // `bun scripts/native/staging.ts on` on this machine (NativeStaging), so a normal install or `tools update` never does.
     if NativeStaging.refuses(arguments, facesEnabled: NativeStaging.facesEnabled) {
         FileHandle.standardError.write(Data(
@@ -63,7 +63,7 @@ package func runHost() -> Never {
         // A face that is (or runs under) this bundle's responsible process tells its `tools` children to
         // skip the launcher; one started from a plain terminal clears the markers (App/FaceMarker.swift).
         if !NativePreview.enabled { FaceMarker.install() }
-        // A rebuild reopens the settings, hub, review, widget and Clicky faces with these exact arguments (App/FaceRecord.swift).
+        // A rebuild reopens the settings, hub, review, widget and feature settings faces with these exact arguments (App/FaceRecord.swift).
         if !NativePreview.enabled { FaceRecord.write(arguments) }
     }
 
@@ -143,7 +143,7 @@ package func runHost() -> Never {
     }
 
     // The faces of the optional parts: --hub (sessions, transcripts, changes, decisions; Parts/Hub/Hub/HubWindow.swift),
-    // --review (the diff review window, Parts/Hub/Review/ReviewWindow.swift), --widget, --clicky, and --markdown
+    // --review (the diff review window, Parts/Hub/Review/ReviewWindow.swift), --widget, --features (--clicky), and --markdown
     // (GenesisKit's markdown viewer, Parts/Markdown/MarkdownFace.swift).
     if AppParts.partOfFace[firstArgument] != nil {
         AppParts.run(face: firstArgument, Array(arguments.dropFirst()))

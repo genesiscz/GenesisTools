@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * Flips every switch on every Settings page of the installed GenesisTools.app and proves each change reached storage:
- * the page runs in an invisible, never-key window (`GenesisTools --clicky --page <id> --headless`), a switch is pressed
+ * the page runs in an invisible, never-key window (`GenesisTools --features --page <id> --headless`), a switch is pressed
  * through accessibility, a FRESH process reads the page again, and the switch is then restored and read back once more.
  * Nothing takes the user's focus or moves the pointer.
  *
@@ -134,7 +134,7 @@ interface OpenPage {
 }
 
 async function openPage(page: string): Promise<OpenPage> {
-    const child = Bun.spawn([APP, "--clicky", "--page", page, "--headless"], { stdout: "ignore", stderr: "ignore" });
+    const child = Bun.spawn([APP, "--features", "--page", page, "--headless"], { stdout: "ignore", stderr: "ignore" });
     const { page: read, failure } = await waitUntilReady({
         read: () => readSwitches(child.pid),
         sleep: (ms) => Bun.sleep(ms),

@@ -1,5 +1,5 @@
 // Reads and presses accessibility elements of one process, including windows that are not on screen (a
-// `GenesisTools --clicky --headless` Settings window has alpha 0, so `tools control see` refuses it).
+// `GenesisTools --features --headless` Settings window has alpha 0, so `tools control see` refuses it).
 //
 //   swiftc -O scripts/native/ax.swift -o <scratch>/ax
 //   <scratch>/ax tree <pid> [max-depth]          one line per element: depth, role, identifier, title, value

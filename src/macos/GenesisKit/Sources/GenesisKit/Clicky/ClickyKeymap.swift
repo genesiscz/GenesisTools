@@ -2,7 +2,7 @@
 //  ClickyKeymap.swift
 //  GenesisKit
 //
-//  The Clicky process menu (GenesisTools ClickyEntry.swift). Two app-wide keys. Clicky has no Help menu,
+//  The feature settings process menu (GenesisTools Parts/Features/FeaturesEntry.swift). Two app-wide keys. Clicky has no Help menu,
 //  so this library is not opened from one.
 //
 

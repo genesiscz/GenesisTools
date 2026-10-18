@@ -50,7 +50,7 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
                 }
                 WidgetLaunch.start(args)
             })
-        coordinator?.settingsPresenter = { ClickyLaunch.openSettings(pageID: $0) }
+        coordinator?.settingsPresenter = { FeatureSettingsLaunch.open(pageID: $0) }
         coordinator?.model.openDestination = { session, mode, file in
             var args = [
                 "--hub", "--mode", "sessions", "--session", session.target.sessionId,

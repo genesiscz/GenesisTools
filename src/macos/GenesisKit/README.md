@@ -54,7 +54,7 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | `Diff/` | git and diffs for any host: `GenesisKitGTProvider` (the data source, swappable), `GitWorkingTreeSource` + `DiffScope`, `GitDiffView` + `GitScopePicker` + `GitCommitPicker` (popover choosers built when opened, `GitPickerChip`), `GitFileDiffModel`, `GitRepos` (one status per repository, refreshed by git's own folder events), the file state badge and marks, the gutter (`GitGutterModel`, `GitHunks`, `GitHunkPopover`), history and commits (`GitHistoryModel`, `GitCommitList`, `GitRepoPanel`, `GitCommitView`), tree marks, agent blame |
 | `Time/` | `LiveTime`, `LiveAgo`, `LiveTimeFormat` |
 | `Cmux/` | `CmuxTree`, `CmuxTarget`, `CmuxTargetPicker` (Tree / Layout), `CmuxSessionPanel` |
-| `Settings/` | the settings window (`FeatureSettingsWindowController`, `NativeSettingsStore`, pages and controls, `NativeSettingsTilePicker`), its look (`NativeSettingsAppearance`, `NativeSettingsBackdrop`, `NativePaneFill` / `NativePaneBackground` for a host that draws its panes in that look), and the hub's preferences with their Hub pages (`HubPreferences`, `HubSettingsPages`) |
+| `Settings/` | the settings window (`FeatureSettingsWindowController`, `NativeSettingsStore`, pages and controls, `NativeSettingsTilePicker`), the plug-in contract for a window that several parts of an app add pages to (`FeatureSettingsPlugin`, `FeatureSettingsPluginHost`, `FeatureSettingsMode`) with the two pages every such window has (`FeatureSettingsPages.general`, `.about(additionalInfo:)`), its look (`NativeSettingsAppearance`, `NativeSettingsBackdrop`, `NativePaneFill` / `NativePaneBackground` for a host that draws its panes in that look), and the hub's preferences with their Hub pages (`HubPreferences`, `HubSettingsPages`) |
 | `Alerts/` | Turning measured values into alert events (`AlertPolicy`: tiers, hysteresis, snooze, quiet hours), and the channels that show them (`AlertDispatcher`, `AlertChannelMatrix`) |
 | `GenesisKitPosture/Camera/` | One webcam at low energy (`CameraFrameSource`: VGA, device frame rate, interval bursts with the light off in between), its preview, the camera grant and the device list |
 | `GenesisKitDisk/Disk/` | Free-space sampling (`VolumeSpaceMonitor`), forecasts, history, a resumable FSEvents stream, the big-file radar, the du index reader and the decoders for the tools disk commands (`ToolsDiskProvider`); unrelated to `DiskCache` in `Tools/` |
@@ -756,7 +756,8 @@ The Clicky settings as a view you embed yourself: the full sidebar and page layo
 
 Builds the settings sections for Clicky, and names the page ids. Use it to put the Clicky pages into a settings window that the host owns.
 
-- `static func sections(model: ClickyModel) -> [NativeSettingsSection]`: three sections. "general" holds the shared General page (order 0). "clicky" holds Sound, Sleep, Notifications, Stats, Performance and Visualizer (order 10). "about" holds the About page (order 90).
+- `static func section(model: ClickyModel) -> NativeSettingsSection`: the "clicky" section alone, for a window other parts add pages to (a `FeatureSettingsPlugin` registers it). `aboutInfo` is the line Clicky adds to the About page.
+- `static func sections(model: ClickyModel) -> [NativeSettingsSection]`: three sections, for a window of Clicky's own. "general" holds the shared General page (order 0). "clicky" holds Sound, Sleep, Notifications, Stats, Performance and Visualizer (order 10). "about" holds the About page (order 90).
 - `static func pageID(_ page: ClickyPage) -> String`: the page id. `general` gives "general", `about` gives "about", and the others give "clicky." plus the lowercased name, such as "clicky.stats".
 
 ```swift

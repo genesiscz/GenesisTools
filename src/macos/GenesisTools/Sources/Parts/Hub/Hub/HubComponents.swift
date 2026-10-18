@@ -360,18 +360,6 @@ package struct CompareLink: View {
     }
 }
 
-extension NSWindow {
-    /// Shows a `--snapshot` window without it ever reaching the screen: alpha 0, no mouse, not in
-    /// the window cycle. AppKit and WebKit still lay it out and draw it, so the PNG is complete,
-    /// and nothing flashes on the desktop or takes the keystrokes of whoever is typing.
-    package func orderInForSnapshot() {
-        alphaValue = 0
-        ignoresMouseEvents = true
-        collectionBehavior = [.transient, .ignoresCycle, .fullScreenAuxiliary]
-        orderFrontRegardless()
-    }
-}
-
 // MARK: - Side split
 
 /// Two children: the main view and a `ResizableSidePanel` on `panelEdge`. The panel gets its ideal

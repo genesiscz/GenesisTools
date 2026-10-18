@@ -26,10 +26,21 @@ markdown. Hub-only pieces (`ExternalLink`, `TitlebarHeader`, `GroupHeader`, …)
 ## Host and optional parts
 
 The app is a host plus optional parts (Martin, 2026-10-18). `Sources/Host/` (library `GenesisToolsHost`) is the
-launcher, `--rpc`, the permission faces, vault approval, notifications, the microphone, the link router and the settings
-window. Each part is one library under `Sources/Parts/`: `Hub/` (hub and review), `Widget/`, `Clicky/`, `Markdown/`,
-plus `Flow/`, the glue the widget and Clicky share. `Sources/GenesisTools/` is the executable: it registers the parts its
-build links (`Parts.swift`) and calls `runHost()`.
+launcher, `--rpc`, the permission faces, vault approval, notifications, the microphone, the link router, the
+permissions window, and the launchers that start another part's face (`FeatureSettingsLaunch`, `WidgetLaunch`). Each
+part is one library under `Sources/Parts/`: `Features/` (the feature settings window, `--features`), `Hub/` (hub and
+review), `Widget/`, `Clicky/`, `Markdown/`. `Sources/GenesisTools/` is the executable: it registers the parts its build
+links (`Parts.swift`) and calls `runHost()`.
+
+- 🛑 A part never imports another part (Martin, 2026-10-18: "GenesisToolsClicky doesn't need hub, and hub doens't need
+  clicky"). Package.swift gives each part target only the host and the kit, so the compiler refuses such an import.
+  A part reaches another part in two ways only: it starts that part's face in a new process through a host launcher,
+  or it adds pages to the feature settings window.
+- **Settings pages are plug-ins.** A part with pages implements GenesisKit's `FeatureSettingsPlugin`
+  (Settings/FeatureSettingsPlugin.swift): `install(in:)` registers its sections and, in `.live` mode, starts its
+  services in the window's process (Clicky's status item, the widget's dictation and Focus runtime). The executable adds
+  each linked part's plug-in (`registerSettingsPlugins` in Parts.swift). The window's own pages are General,
+  Background (the daemon) and About. `--clicky` is the face's old name and still works.
 
 - `GENESIS_APP_PARTS` picks the parts (Package.swift); unset is every part, so a plain `swift build` and `swift test`
   see the whole app. `src/macos/lib/permissions/parts.ts` is the TypeScript table; a build makes the installed parts
@@ -37,7 +48,11 @@ build links (`Parts.swift`) and calls `runHost()`.
 - The host starts a part's face only through `AppParts` (Host/AppParts.swift); a face whose part is not linked prints
   the `tools macos permissions build --add-part <id>` command and exits 69. Never call a part's `run…` from the host.
 - A host symbol a part uses is `package`; a part's `run…` entry point is `package` for the executable.
-- A new part: one target in Package.swift, one block in `Sources/GenesisTools/Parts.swift`, one row in parts.ts.
+- A new part: one target in Package.swift, one block in `Sources/GenesisTools/Parts.swift`, one row in parts.ts. A part
+  with settings pages adds its plug-in in Parts.swift and `requires: ["features"]` in both tables (a build makes the
+  window with it; `requires` never adds a code link).
+- Moving a part to another repository: its folder, its plug-in line in Parts.swift and its row in both tables. What it
+  uses from the host and the kit must then be `public`, because `package` access stops at the package border.
 
 | Need | Use | Never |
 |---|---|---|
@@ -229,13 +244,13 @@ committed. Keep them verbatim until then; `Hub/StolenShims.swift` stands in for 
   feed loads (`diff` on a review comment: the PR's diff at that thread, one click).
 - The Native style in a snapshot: `--set hub.style=native --set featureSettings.appearance.theme=glass|solid|gradient|graphite|midnight|dusk`
   (scratch only; `HubDefaults.isolate()` copies General's `featureSettings.appearance.*` too). A `--snapshot` cannot show
-  the desktop behind glass: it draws the blur as flat grey. The Hub settings pages need a bundle under `--clicky`; from
+  the desktop behind glass: it draws the blur as flat grey. The Hub settings pages need a bundle under `--features`; from
   a checkout use `../GenesisClickyPreview` (`swift build --disable-build-manifest-caching`, see `.claude/rules/macos.md`,
   then `.build/debug/GenesisClickyPreview --page hub.appearance
   --theme gradient --hub-style native --snapshot x.png`), which writes only its own preview suite and tells no hub.
   It shows the Widgets pages with `--sessions <n>` (a made-up roster) or `--widget-snapshot <file.json>` (a saved
   `tools hub widget snapshot --json`).
-- A Settings snapshot (`--clicky --page <id> --snapshot`, and GenesisClickyPreview) is the window server's own composite
+- A Settings snapshot (`--features --page <id> --snapshot`, and GenesisClickyPreview) is the window server's own composite
   (GenesisKit `WindowSnapshot`). `cacheDisplay` skips the backdrop and portal layers Liquid Glass is made of, and SwiftUI
   draws everything a glass view covers through them, so a page holding glass came out transparent: Projects / Sessions
   under Gradient, every page under Glass (2026-10-11; the live window was never affected). The capture needs the
