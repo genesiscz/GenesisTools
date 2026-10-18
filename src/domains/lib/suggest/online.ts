@@ -4,6 +4,7 @@ import { combine, type SuggestContext, type Suggestor } from "@app/domains/lib/s
 import { callLLMStructured } from "@genesiscz/utils/ai/core/call";
 import { ModelResolutionError, resolveModel } from "@genesiscz/utils/ai/core/resolve";
 import type { ResolvedBinding } from "@genesiscz/utils/ai/core/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 
@@ -108,7 +109,7 @@ async function resolveBrainstormModel(model: string | undefined): Promise<Resolv
     }
 
     throw new Error(
-        "AI suggestor: no model. Pass --model <ref> or set one: tools ai config default set chat <ref> --app domains",
+        `AI suggestor: no model. Pass --model <ref> or set one: ${toolCommand("ai config default set", "chat", "<ref>", "--app", "domains")}`,
         { cause: lastError }
     );
 }

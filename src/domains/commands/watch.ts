@@ -1,6 +1,7 @@
 import { infoCell, money, statusCell } from "@app/domains/lib/display";
 import { gatherNames, reportInvalid } from "@app/domains/lib/input";
 import { addWatch, listWatch, refreshWatch, removeWatch } from "@app/domains/lib/watch";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable } from "@genesiscz/utils/table";
 import { Command } from "commander";
@@ -34,7 +35,7 @@ export function createWatchCommand(): Command {
             }
 
             if (entries.length === 0) {
-                out.log.info("The watchlist is empty. Add names: tools domains watch add genesis.tech");
+                out.log.info(`The watchlist is empty. Add names: ${toolCommand("domains watch add", "genesis.tech")}`);
                 return;
             }
 

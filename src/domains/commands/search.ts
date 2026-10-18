@@ -4,6 +4,7 @@ import { searchDomains } from "@app/domains/lib/search";
 import { suggestorIds } from "@app/domains/lib/suggest";
 import { DOMAIN_STATUSES, isDomainStatus } from "@app/domains/lib/types";
 import { parseVariadic, suggestCommand } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 import pc from "picocolors";
@@ -74,6 +75,10 @@ export function createSearchCommand(): Command {
                 out.println(pc.dim(`⚠ ${flagged.length} name(s) contain a rude word in some language; see VIBE.`));
             }
 
-            out.println(pc.dim("Prices are registrar quotes; confirm at checkout. Next: tools domains info <name>"));
+            out.println(
+                pc.dim(
+                    `Prices are registrar quotes; confirm at checkout. Next: ${toolCommand("domains info", "<name>")}`
+                )
+            );
         });
 }

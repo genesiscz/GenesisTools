@@ -1,6 +1,7 @@
 import { scoreCandidate } from "@app/domains/lib/score";
 import { SUGGESTORS, suggest, suggestorIds } from "@app/domains/lib/suggest";
 import { parseVariadic } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliSection, truncateDisplay } from "@genesiscz/utils/table";
 import { Command } from "commander";
@@ -63,7 +64,7 @@ export function createSuggestCommand(): Command {
 
             out.println(table.toString());
             out.println(
-                pc.dim(`${candidates.length} generated. Check them: tools domains search ${seedParts.join(" ")}`)
+                pc.dim(`${candidates.length} generated. Check them: ${toolCommand("domains search", ...seedParts)}`)
             );
         });
 }
