@@ -5,28 +5,31 @@
 18418e59bf2f07b6bfc8d7782e770a88d2d99e19
 
 # refactor(GenesisHub): the app's permissions host is a library of its own that links only GenesisKitBase
-b56799eb3cbc94ea161710a1ba404c68fd288a8b
+9fe6a3962ccedc99aaecfc76563de8b3d452c1ea
 
 # feat(GenesisHub): optional app parts, a build makes only the installed ones and tools hub adds the hub
-28c64bebf4c3b81fb72a27113414102d8238c1aa
+072c291fa4e2fa91725f08e8e9014dfa157d97e0
 
 # refactor(macos): the host keeps package access only on what another module uses
-a3060dcc48128c025c29b3c6875b3b4c81913c47
+d4b9555910fb2a445de2bc4b6a0c8e4614b51411
 
 # refactor(macos): the hub part keeps package access only on what another module uses
-35a0139a712bb4c42921e314fa0d336a0e805f7a
+e18e15128228c71333ae356c3541ac2c044047d4
 
 # refactor(macos): the features part keeps package access only on what another module uses
-297f2d8a54283c9d4613af969546d068cd638ccb
+75629a1f507d812deb1d441da0bf49df41511a3a
 
 # refactor(macos): the widget part keeps package access only on what another module uses
-b0f4a17fcef9147ae6348f715e6a10b1650f4abf
+fa6b1a6370a908ce46e778ff30f8255c31ad6be3
 
 # refactor(macos): the Clicky part keeps package access only on what another module uses
-9398d3bea39bddfeaf1660c139c3b6772a6cda69
+e089e914cc3fa8640712b57e5f6c5604aa403245
 
 # refactor(macos): the markdown part keeps package access only on what another module uses
-6b1d9a6d0a1cf7f6c34df437710a8029754538f0
+e24f682ead19f989dabd794f3416c246e8c11c71
 
 # refactor(macos): #550 followup - drop package from members with private setters and from members the first pass kept only because another type shared their name
-7a2e257dc886639a2075124860e22cb34872cdc4
+bf7613a943db987a38e06bd5c23153ca9ce87a2a
+
+# refactor(macos): #550 followup - after the restack, package access stays only where another module uses it
+abcc897a683054a9593958e7636935afd9460b7d
