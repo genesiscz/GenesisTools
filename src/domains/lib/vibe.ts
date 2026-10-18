@@ -48,7 +48,7 @@ function fold(text: string): string {
     return foldAscii(text).replace(/[^a-z]/g, "");
 }
 
-async function wordList(language: string): Promise<string[]> {
+async function wordList(language: string): Promise<{ words: string[]; fromList: boolean }> {
     try {
         const text = await storage.getFileOrPut<string>(
             `vibe/${language}.txt`,
@@ -62,16 +62,36 @@ async function wordList(language: string): Promise<string[]> {
             },
             "4 weeks"
         );
-        return [...new Set([...text.split("\n").map(fold), ...(BUILT_IN[language] ?? [])])].filter(Boolean);
+        const words = [...new Set([...text.split("\n").map(fold), ...(BUILT_IN[language] ?? [])])].filter(Boolean);
+        return { words, fromList: true };
     } catch (error) {
         logger.debug({ language, error }, "domains: vibe list unavailable, using the built-in words");
-        return BUILT_IN[language] ?? [];
+        return { words: BUILT_IN[language] ?? [], fromList: false };
     }
 }
 
+const listLoads = new Map<string, Promise<string[]>>();
+
+/** Every concurrent check shares one load per language; a fallback is forgotten so a later call retries. */
+function sharedWordList(language: string): Promise<string[]> {
+    let load = listLoads.get(language);
+    if (!load) {
+        load = wordList(language).then(({ words, fromList }) => {
+            if (!fromList) {
+                listLoads.delete(language);
+            }
+
+            return words;
+        });
+        listLoads.set(language, load);
+    }
+
+    return load;
+}
+
 /**
- * Pure matcher. Words of 4+ letters match anywhere; 3-letter words only at the start, the end, or as
- * the whole label, because short words hide inside innocent ones ("ass" in "class").
+ * Pure matcher. Words of 4+ letters match anywhere; 3-letter words only as the whole label, because
+ * short words hide inside innocent ones ("ass" in "class", "assist", "bass").
  */
 export function findVibeHits(label: string, lists: Record<string, string[]>): VibeHit[] {
     const folded = fold(label);
@@ -90,7 +110,7 @@ export function findVibeHits(label: string, lists: Record<string, string[]>): Vi
                       : folded.endsWith(word)
                         ? "end"
                         : "inside";
-            if (word.length === 3 && position === "inside") {
+            if (word.length === 3 && position !== "whole") {
                 continue;
             }
 
@@ -110,7 +130,7 @@ export async function vibeCheck(label: string, languages: string[] = VIBE_LANGUA
     const lists: Record<string, string[]> = {};
     await Promise.all(
         languages.map(async (language) => {
-            lists[language] = await wordList(language);
+            lists[language] = await sharedWordList(language);
         })
     );
     return findVibeHits(label, lists);

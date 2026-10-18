@@ -1,4 +1,4 @@
-import { checkDomain } from "@app/domains/lib/check";
+import { checkDomains } from "@app/domains/lib/check";
 import { parseDomain } from "@app/domains/lib/domain";
 import { storage } from "@app/domains/lib/http";
 import type { CheckResult, DomainStatus } from "@app/domains/lib/types";
@@ -81,7 +81,8 @@ export function changeReasons({
     expiryWarnDays: number;
 }): string[] {
     const reasons: string[] = [];
-    if (entry.lastStatus && entry.lastStatus !== result.status) {
+    // "unknown" means no provider could decide this time; it is not a change of state.
+    if (entry.lastStatus && result.status !== "unknown" && entry.lastStatus !== result.status) {
         reasons.push(`${entry.lastStatus} -> ${result.status}`);
     }
 
@@ -108,14 +109,18 @@ export function changeReasons({
 export async function refreshWatch({ expiryWarnDays = 45 }: { expiryWarnDays?: number } = {}): Promise<WatchChange[]> {
     const entries = await listWatch();
     const now = new Date();
+    const { results } = await checkDomains(
+        entries.map((entry) => entry.domain),
+        { fresh: true, details: true }
+    );
+    const byDomain = new Map(results.map((result) => [result.domain, result]));
     const changes: WatchChange[] = [];
     for (const entry of entries) {
-        const parsed = parseDomain(entry.domain);
-        if (!parsed) {
+        const result = byDomain.get(parseDomain(entry.domain)?.domain ?? entry.domain);
+        if (!result) {
             continue;
         }
 
-        const result = await checkDomain(parsed, { fresh: true, details: true });
         changes.push({
             entry,
             result,
@@ -131,10 +136,23 @@ export async function refreshWatch({ expiryWarnDays = 45 }: { expiryWarnDays?: n
                 continue;
             }
 
-            stored.lastStatus = change.result.status;
-            stored.lastCheckedAt = change.result.checkedAt;
-            stored.expiresAt = change.result.expiresAt;
-            stored.price = change.result.price?.registration;
+            const { status, checkedAt, expiresAt, price } = change.result;
+            stored.lastCheckedAt = checkedAt;
+            if (status === "unknown") {
+                continue;
+            }
+
+            stored.lastStatus = status;
+            if (expiresAt) {
+                stored.expiresAt = expiresAt;
+            } else if (status === "available" || status === "premium") {
+                // A registrable name has no expiry; the old one belonged to the previous owner.
+                stored.expiresAt = undefined;
+            }
+
+            if (price) {
+                stored.price = price.registration;
+            }
         }
     });
     logger.debug({ checked: changes.length }, "domains: watch check stored");

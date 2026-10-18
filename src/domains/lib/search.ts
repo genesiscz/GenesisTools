@@ -65,7 +65,7 @@ async function checkRound({
     let done = 0;
     const { results } = await checkDomains(
         toCheck.map((candidate) => candidate.domain),
-        { ...options.check, onResult: () => options.onProgress?.(++done, toCheck.length, round) }
+        { store: true, ...options.check, onResult: () => options.onProgress?.(++done, toCheck.length, round) }
     );
     const byDomain = new Map(results.map((result) => [result.domain, result]));
     return toCheck.flatMap((candidate) => {

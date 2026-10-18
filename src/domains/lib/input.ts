@@ -1,5 +1,33 @@
+import { fstatSync } from "node:fs";
 import { parseVariadic } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+
+const STDIN_DEADLINE_MS = 10_000;
+
+/** True when fd 0 is a pipe or a file; a TTY, a socket or /dev/null holds no list of names. */
+function stdinHasInput(): boolean {
+    try {
+        const stat = fstatSync(0);
+        return stat.isFIFO() || stat.isFile();
+    } catch {
+        return false;
+    }
+}
+
+async function readStdin(): Promise<string> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), STDIN_DEADLINE_MS);
+    });
+    const text = await Promise.race([Bun.stdin.text(), deadline]);
+    clearTimeout(timer);
+    if (text === null) {
+        out.log.warn(`stdin sent nothing for ${STDIN_DEADLINE_MS / 1000} s; pass names as arguments or --file`);
+        return "";
+    }
+
+    return text;
+}
 
 /** Names from args, a `--file` (one per line, # comments), and piped stdin, in that order. */
 export async function gatherNames({ args, file }: { args: string[]; file?: string }): Promise<string[]> {
@@ -8,8 +36,8 @@ export async function gatherNames({ args, file }: { args: string[]; file?: strin
         names.push(...splitLines(await Bun.file(file).text()));
     }
 
-    if (names.length === 0 && !process.stdin.isTTY) {
-        names.push(...splitLines(await Bun.stdin.text()));
+    if (names.length === 0 && stdinHasInput()) {
+        names.push(...splitLines(await readStdin()));
     }
 
     return names.filter(Boolean);

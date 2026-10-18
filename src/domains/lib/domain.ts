@@ -8,6 +8,7 @@ import type { ParsedDomain } from "@app/domains/lib/types";
 const MULTI_LABEL_SUFFIXES = new Set([
     "co.uk",
     "org.uk",
+    "ac.uk",
     "me.uk",
     "ltd.uk",
     "com.au",
@@ -15,8 +16,12 @@ const MULTI_LABEL_SUFFIXES = new Set([
     "org.au",
     "co.nz",
     "co.jp",
+    "ne.jp",
+    "or.jp",
     "co.kr",
     "com.br",
+    "net.br",
+    "org.br",
     "com.mx",
     "com.ar",
     "com.tr",
@@ -25,6 +30,14 @@ const MULTI_LABEL_SUFFIXES = new Set([
     "com.hk",
     "com.sg",
     "co.in",
+    "co.id",
+    "com.my",
+    "com.ph",
+    "com.vn",
+    "com.co",
+    "com.pe",
+    "co.at",
+    "or.at",
     "co.za",
     "co.il",
     "com.pl",
@@ -59,10 +72,13 @@ export function parseDomain(input: string): ParsedDomain | null {
     const lastTwo = labels.slice(-2).join(".");
     const tldLabels = labels.length > 2 && MULTI_LABEL_SUFFIXES.has(lastTwo) ? 2 : 1;
     const tld = labels.slice(-tldLabels).join(".");
-    const label = labels.slice(0, -tldLabels).join(".");
-    if (!label) {
+    const rest = labels.slice(0, -tldLabels);
+    // "blog.example.com" is not a registrable name: its registry answers "no such domain", which reads as free.
+    if (rest.length !== 1) {
         return null;
     }
+
+    const label = rest[0];
 
     const unicode = domainToUnicode(ascii);
     return { domain: ascii, label, tld, ...(unicode !== ascii ? { unicode } : {}) };

@@ -44,7 +44,7 @@ Every command takes `--json` for scripts and agents.
 | `premium` | Registrable, but the registry charges a premium (the per-name quote is above the TLD's standard price). |
 | `taken` | Registered. |
 | `for sale` | Registered and parked with a marketplace (Afternic, Sedo, Park.io, HugeDomains ...). |
-| `reserved` | Blocked by the registry. |
+| `reserved` | Blocked by the registry (a WHOIS reply that says so). |
 | `unknown` | No provider could decide. Rate limits, timeouts and errors land here, never in `free`. |
 
 ## How a check works
@@ -54,9 +54,9 @@ The default chain stops at the first decisive answer:
 1. **DNS** (`dns`): a delegated name is taken, with no API call spent. No NS records proves nothing.
 2. **Priced registrar** (`vercel`): one bulk call per 200 names returns availability, the exact price and the registry premium flag, with no account.
 3. **RDAP** (`rdap`): the registry's own answer, via the IANA bootstrap (cached a day).
-4. **WHOIS** (`whois`): port 43 for TLDs without RDAP (.io, .eu, .me, .gg, .co ...), server found through whois.iana.org.
+4. **WHOIS** (`whois`): port 43 for TLDs without RDAP (.io, .eu, .me, .gg, .co ...), server found through whois.iana.org. A reply reads as taken only when it carries registration lines (registrar, creation date, nameservers); an empty, refused or unrecognized reply is unknown.
 
-Each stage runs over the whole batch, so 150 names cost one DNS lookup each and a single Vercel request. A "taken" from any provider beats an "available" from another. Results are cached for 6 hours; `--fresh` skips the cache.
+Each stage runs over the whole batch, so 150 names cost one DNS lookup each and a single Vercel request. A "taken" from any provider beats an "available" from another. `search` and `hack` cache decisive results for 6 hours; `check`, `price` and `info` read that cache but never write it. `--fresh` skips the cache.
 
 ## Providers
 

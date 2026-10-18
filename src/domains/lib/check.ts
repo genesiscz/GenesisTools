@@ -17,6 +17,8 @@ export interface CheckOptions {
     concurrency?: number;
     /** Also ask RDAP about taken names (registrar, expiry). */
     details?: boolean;
+    /** Write decisive results to the 6-hour cache. Off by default, so a lookup leaves no state behind. */
+    store?: boolean;
     onResult?: (result: CheckResult) => void;
 }
 
@@ -235,7 +237,7 @@ export async function checkDomains(inputs: string[], options: CheckOptions = {})
         const result = mergeVerdicts(domain.domain, verdicts.get(domain.domain) ?? []);
         results.set(domain.domain, result);
         options.onResult?.(result);
-        if (result.status !== "unknown") {
+        if (options.store && result.status !== "unknown") {
             await storage.putCacheFile(cacheKey(domain.domain, options.providers), result, CACHE_TTL);
         }
     }

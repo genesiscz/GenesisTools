@@ -65,9 +65,18 @@ async function loadBootstrap(): Promise<Map<string, string>> {
 }
 
 export async function rdapBaseFor(tld: string): Promise<string | undefined> {
-    bootstrapPromise ??= loadBootstrap();
-    const map = await bootstrapPromise;
-    return map.get(tld) ?? map.get(tld.split(".").pop() ?? "");
+    bootstrapPromise ??= loadBootstrap().catch((error: unknown) => {
+        bootstrapPromise = null;
+        throw error;
+    });
+
+    try {
+        const map = await bootstrapPromise;
+        return map.get(tld) ?? map.get(tld.split(".").pop() ?? "");
+    } catch (error) {
+        logger.warn({ tld, error }, "domains: RDAP bootstrap unavailable");
+        return undefined;
+    }
 }
 
 export async function fetchRdap(domain: string, tld: string): Promise<{ status: number; body: RdapDomain | null }> {
