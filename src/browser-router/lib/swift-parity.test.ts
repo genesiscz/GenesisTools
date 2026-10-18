@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyPresets, presetById, presets } from "@genesiscz/utils/browser-router/presets";
@@ -13,18 +13,35 @@ import {
 } from "@genesiscz/utils/browser-router/route";
 import { CLEAN_CASES } from "@genesiscz/utils/browser-router/testing/clean-cases";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { persistentFixture } from "@genesiscz/utils/test/persistent-fixture";
 
 // The router ships in a macOS app. swiftc on Linux is not its toolchain, and its compile outlives the
 // default 5 s test timeout on a CI runner.
 const swiftc =
     process.platform === "darwin" ? spawnSync("swiftc", ["--version"], { encoding: "utf8", env: process.env }) : null;
 const canCompile = swiftc?.status === 0;
+const SOURCES = [join(import.meta.dir, "../native/Router.swift"), join(import.meta.dir, "../native/Cli.swift")];
+
+/**
+ * The helper compiled once per source and compiler version, and kept: a binary built into the per-run temp root
+ * is started and then deleted with that root, the syspolicyd trap in .claude/rules/tests.md.
+ */
+function routerCli(): string {
+    const key = [swiftc?.stdout ?? "", ...SOURCES.map((source) => readFileSync(source, "utf8"))].join("\0");
+
+    return persistentFixture("router-cli", key, (draft) => {
+        const compiled = spawnSync("swiftc", ["-o", draft, ...SOURCES], { encoding: "utf8", env: process.env });
+
+        if (compiled.status !== 0) {
+            throw new Error(`swiftc failed (${compiled.status}): ${compiled.stderr}`);
+        }
+    });
+}
 
 describe.skipIf(!canCompile)("swift router parity", () => {
     test("the helper agrees with the TypeScript router", () => {
         const home = mkdtempSync(join(tmpdir(), "browser-router-swift-"));
         const configPath = join(home, "config.json");
-        const binary = join(home, "router-cli");
         // Every preset on the invented link host, plus an alias onto a registered port.
         const chosen = {
             "local-services": {},
@@ -42,18 +59,7 @@ describe.skipIf(!canCompile)("swift router parity", () => {
         };
         const parityConfig = { ...base, routes: applyPresets([], presets({ config: base, check: () => true })) };
         writeFileSync(configPath, `${SafeJSON.stringify(parityConfig, null, 2)}\n`);
-        const compiled = spawnSync(
-            "swiftc",
-            [
-                "-o",
-                binary,
-                join(import.meta.dir, "../native/Router.swift"),
-                join(import.meta.dir, "../native/Cli.swift"),
-            ],
-            { encoding: "utf8", env: process.env }
-        );
-
-        expect(compiled.status, compiled.stderr).toBe(0);
+        const binary = routerCli();
         const samples = [
             "https://example.com/a",
             "https://links.example.test/md/open?path=%2Ftmp%2Fa%20b.md",
