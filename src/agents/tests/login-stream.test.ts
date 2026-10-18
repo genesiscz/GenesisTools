@@ -205,10 +205,11 @@ describe("agents login --once --timeout", () => {
         const home = mkdtempSync(join(tmpdir(), "gt-agents-login-timeout-"));
         const session = `timeout-${Date.now()}`;
 
-        const sender = await runOnce(home, ["--agent-name", "alpha", "--session", session, "--timeout", "1"]);
+        // A quarter second: the deadline counts from the login's own start, so the empty-mailbox path is the same.
+        const sender = await runOnce(home, ["--agent-name", "alpha", "--session", session, "--timeout", "0.25"]);
         expect(sender.code).toBe(124);
 
-        const empty = await runOnce(home, ["--agent-name", "beta", "--session", session, "--timeout", "1"]);
+        const empty = await runOnce(home, ["--agent-name", "beta", "--session", session, "--timeout", "0.25"]);
         expect(empty.code).toBe(124);
         expect(empty.lines.at(-1)).toMatchObject({ type: "timeout", agent_name: "beta", session });
 
