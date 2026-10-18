@@ -93,6 +93,10 @@ import type {
     ToolCallSummary,
 } from "./session.types";
 
+/** Lines `findSessions` reads from the start and from the end of each file for its metadata. */
+const HEAD_LINES = 20;
+const TAIL_LINES = 5;
+
 /**
  * A fully-typed, immutable wrapper around a Claude Code JSONL session file.
  *
@@ -236,7 +240,7 @@ export class ClaudeSession {
         for (const filePath of files) {
             try {
                 const fileStat = await stat(filePath);
-                const lines = await readHeadTailLines(filePath, 20, 5);
+                const lines = await readHeadTailLines(filePath, HEAD_LINES, TAIL_LINES);
 
                 let sessionId: string | null = null;
                 let title: string | null = null;
@@ -284,11 +288,9 @@ export class ClaudeSession {
                 // Derive project name from encoded path via filesystem-walking resolver
                 projectName = extractProjectName(filePath) || null;
 
-                // Estimate message count from file size instead of re-reading the whole file.
-                // readHeadTailLines already returns all lines for small files.
-                // For larger files, estimate ~300 bytes per JSONL line on average.
-                if (lines.length <= 25) {
-                    // Small file — we already have all lines from readHeadTailLines
+                // readHeadTailLines returns every line of a file that has fewer than HEAD_LINES + TAIL_LINES lines.
+                // A file that fills both windows may have many more, so estimate ~300 bytes per JSONL line.
+                if (lines.length < HEAD_LINES + TAIL_LINES) {
                     messageCount = lines.length;
                 } else {
                     messageCount = Math.max(lines.length, Math.round(fileStat.size / 300));
@@ -656,7 +658,7 @@ export class ClaudeSession {
 
             if (msg.type === "user") {
                 const userMsg = msg as UserMessage;
-                const text = extractUserText(userMsg.message.content);
+                const text = this._userText(userMsg.message.content, includeToolResults);
                 if (text) {
                     parts.push(text);
                 }
@@ -689,7 +691,7 @@ export class ClaudeSession {
             } else if (msg.type === "subagent") {
                 const sub = msg as SubagentMessage;
                 if (sub.role === "user") {
-                    const text = extractUserText((sub.message as UserMessageContent).content);
+                    const text = this._userText((sub.message as UserMessageContent).content, includeToolResults);
                     if (text) {
                         parts.push(text);
                     }
@@ -702,21 +704,6 @@ export class ClaudeSession {
                             parts.push(`[Image: ${(block as ImageBlock).source.media_type}]`);
                         } else if (block.type === "tool_reference") {
                             parts.push(`[Tool Reference: ${(block as ToolReferenceBlock).tool_name}]`);
-                        }
-                    }
-                }
-            }
-
-            // Handle tool results inside user messages
-            if (includeToolResults && msg.type === "user") {
-                const userMsg = msg as UserMessage;
-                if (Array.isArray(userMsg.message.content)) {
-                    for (const block of userMsg.message.content) {
-                        if (block.type === "tool_result") {
-                            const tr = block as ToolResultBlock;
-                            if (typeof tr.content === "string") {
-                                parts.push(`[Tool Result]: ${tr.content}`);
-                            }
                         }
                     }
                 }
@@ -1561,6 +1548,11 @@ export class ClaudeSession {
     // =========================================================================
     // Private Helpers
     // =========================================================================
+
+    /** The text of one user message: a string as it is, blocks without tool results unless asked. */
+    private _userText(content: string | ContentBlock[], includeToolResults: boolean): string {
+        return typeof content === "string" ? content : this._extractUserTextBlocks(content, includeToolResults);
+    }
 
     /**
      * Extract text from user content blocks, optionally including tool results.
