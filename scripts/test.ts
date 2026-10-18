@@ -151,6 +151,7 @@ const GATE_ENV_VARS: Record<string, string> = {
     audioDevice: "RUN_AUDIO_DEVICE",
     realApis: "RUN_REAL_APIS",
     spotifyData: "RUN_SPOTIFY_DATA",
+    voiceMemos: "RUN_VOICE_MEMOS",
 };
 
 function describeGates(): { enabled: string[]; disabled: string[] } {

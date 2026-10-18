@@ -29,6 +29,7 @@ import { env } from "@genesiscz/utils/env";
  *   RUN_LOCAL_MODELS=1 bun test          # tests that require locally-installed ONNX models (e.g. sherpa-onnx)
  *   RUN_AUDIO_DEVICE=1 bun test          # tests that need a real audio output device (playback)
  *   RUN_SPOTIFY_DATA=1 bun test          # tests that read the machine's imported Spotify history
+ *   RUN_VOICE_MEMOS=1 bun test           # tests that export and transcribe the machine's real voice memos
  *
  * Env-var names intentionally reuse the conventions already in the repo
  * (RUN_NETWORK_TESTS, RUN_LIVE, …) so existing CI/local muscle memory holds.
@@ -145,6 +146,12 @@ export const optIn = {
      * Set RUN_SPOTIFY_DATA=1 to include them.
      */
     spotifyData: flag("RUN_SPOTIFY_DATA"),
+    /**
+     * Tests that export one of the machine's real voice memos and transcribe every recording with a local
+     * model. Nothing leaves the Mac, but they read private recordings and take up to a minute.
+     * Set RUN_VOICE_MEMOS=1 to include them.
+     */
+    voiceMemos: flag("RUN_VOICE_MEMOS"),
 } as const;
 
 /**
@@ -228,6 +235,8 @@ export const skip = {
      * Gates tests that need the machine's own imported Spotify history — none on CI.
      */
     spotifyData: !optIn.spotifyData,
+    /** Skip unless RUN_VOICE_MEMOS is set: export and transcribe the machine's real voice memos. */
+    voiceMemos: !optIn.voiceMemos,
 } as const;
 
 /** Compose gates: skip if ANY condition is true. */
@@ -281,4 +290,5 @@ export const GATE_ENV_VARS: Record<keyof typeof optIn, string> = {
     audioDevice: "RUN_AUDIO_DEVICE",
     realApis: "RUN_REAL_APIS",
     spotifyData: "RUN_SPOTIFY_DATA",
+    voiceMemos: "RUN_VOICE_MEMOS",
 };

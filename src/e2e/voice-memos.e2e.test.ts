@@ -72,7 +72,8 @@ describe.skipIf(skip.unlessMac)("tools macos voice-memos", () => {
     });
 
     describe("export", () => {
-        it("export memo 377 to temp dir", async () => {
+        // Memo 377 is a real recording on the author's Mac: private data, so it needs its own opt-in.
+        it.skipIf(skip.voiceMemos)("export memo 377 to temp dir", async () => {
             const r = await execTool(["macos", "voice-memos", "export", "377", EXPORT_DIR]);
             expect(r.exitCode).toBe(0);
             expect(existsSync(EXPORT_DIR)).toBe(true);
@@ -88,10 +89,17 @@ describe.skipIf(skip.unlessMac)("tools macos voice-memos", () => {
             expect(getOutput(r).toLowerCase()).toMatch(/no memo|not found/i);
         });
 
-        it("transcribe --all exits 0", async () => {
-            const r = await execTool(["macos", "voice-memos", "transcribe", "--all", "--provider", "local-hf"], 60_000);
-            expect(r.exitCode).toBe(0);
-        }, 60_000);
+        it.skipIf(skip.voiceMemos)(
+            "transcribe --all exits 0",
+            async () => {
+                const r = await execTool(
+                    ["macos", "voice-memos", "transcribe", "--all", "--provider", "local-hf"],
+                    60_000
+                );
+                expect(r.exitCode).toBe(0);
+            },
+            60_000
+        );
     });
 
     describe("error handling", () => {
