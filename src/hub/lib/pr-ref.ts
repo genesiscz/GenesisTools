@@ -11,9 +11,12 @@ export function isHubPrRef(ref: string): boolean {
     return /^(?:.*[#!])?\d+$/.test(text) || PR_PAGE.test(text);
 }
 
-/** What the hub's `--commit` takes (`HubCommitSha` in Sources/Hub/HubCommitLink.swift): 7 to 40 hex characters, a prefix of the sha. */
+/**
+ * What the hub's `--commit` takes (`HubCommitSpan` in Sources/Parts/Hub/Hub/HubCommitLink.swift): 7 to 40 hex
+ * characters, a prefix of the sha, or `<from>..<to>`, a run of commits with both ends included.
+ */
 export function isHubCommitSha(sha: string): boolean {
-    return /^[0-9a-f]{7,40}$/i.test(sha.trim());
+    return /^[0-9a-f]{7,40}(?:\.\.[0-9a-f]{7,40})?$/i.test(sha.trim());
 }
 
 /** Why `tools hub open`'s `--commit` / `--repo` cannot open as given; undefined when they can or are absent. */
@@ -27,7 +30,7 @@ export function commitFlagsProblem({
     pr?: string;
 }): string | undefined {
     if (commit !== undefined && !isHubCommitSha(commit)) {
-        return `--commit takes a sha of 7 to 40 hex characters, got ${commit}`;
+        return `--commit takes a sha of 7 to 40 hex characters, or <from>..<to>, got ${commit}`;
     }
 
     if (repo !== undefined && pr !== undefined) {
