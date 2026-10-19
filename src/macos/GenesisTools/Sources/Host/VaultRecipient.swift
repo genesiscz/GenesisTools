@@ -211,15 +211,31 @@ enum VaultRecipient {
         }
     }
 
+    /// Inspects every user process, then each process that appeared meanwhile, until two lists in a row
+    /// add nothing. A busy session starts processes all the time, so one strict before/after pair denied
+    /// the key many times a day (82 on 2026-10-19). Exits cannot introduce a new reader; a process that
+    /// left the list without exiting changed uid, and a list that never settles still denies.
+    static func settledTables(rounds: Int, list: () throws -> Set<pid_t>, inspect: (pid_t) -> ProcessFDs,
+                              exited: (pid_t) -> Bool) rethrows -> [ProcessFDs]? {
+        var seen = try list()
+        var tables = seen.sorted().map(inspect)
+        for _ in 0..<rounds {
+            let current = try list()
+            guard seen.subtracting(current).allSatisfy(exited) else { return nil }
+            let added = current.subtracting(seen)
+            if added.isEmpty { return tables }
+            tables += added.sorted().map(inspect)
+            seen.formUnion(added)
+        }
+        return nil
+    }
+
     static func releaseRejection(caller: Identity?) -> String? {
         do {
             let output = try stdoutEndpoint()
             guard output.connected else { return "vault stdout must be a connected pipe or Unix-domain socket" }
-            let pids = try userPids()
-            let tables = pids.sorted().map { processFDs($0, output: output) }
-            let currentPids = try userPids()
-            // Exits cannot introduce a new reader; new processes or uid changes still require a fresh request.
-            guard currentPids.isSubset(of: pids), pids.subtracting(currentPids).allSatisfy(hasExited) else {
+            guard let tables = try settledTables(rounds: 16, list: userPids,
+                                                 inspect: { processFDs($0, output: output) }, exited: hasExited) else {
                 return "the user's process list changed during vault recipient inspection"
             }
             guard try stdoutEndpoint() == output else { return "vault stdout changed during recipient inspection" }

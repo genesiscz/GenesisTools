@@ -53,6 +53,29 @@ final class VaultUnlockTests: XCTestCase {
         }
     }
 
+    func testVaultRecipientInspectsProcessesThatStartDuringInspection() {
+        let inspect = { (pid: pid_t) in VaultRecipient.ProcessFDs(pid: pid, endpoints: []) }
+        var lists: [Set<pid_t>] = [[1, 2], [1, 2, 3], [1, 2, 3, 4], [1, 2, 3, 4]]
+        let settled = VaultRecipient.settledTables(rounds: 16, list: { lists.removeFirst() }, inspect: inspect,
+                                                   exited: { _ in false })
+        XCTAssertEqual(settled?.map(\.pid), [1, 2, 3, 4], "a process that starts meanwhile is inspected, not a denial")
+
+        var exits: [Set<pid_t>] = [[1, 2], [1], [1]]
+        XCTAssertEqual(VaultRecipient.settledTables(rounds: 16, list: { exits.removeFirst() }, inspect: inspect,
+                                                    exited: { $0 == 2 })?.map(\.pid), [1, 2])
+
+        var uidChange: [Set<pid_t>] = [[1, 2], [1]]
+        XCTAssertNil(VaultRecipient.settledTables(rounds: 16, list: { uidChange.removeFirst() }, inspect: inspect,
+                                                  exited: { _ in false }), "a process that left without exiting denies")
+
+        var next: pid_t = 10
+        let neverSettles = VaultRecipient.settledTables(rounds: 4, list: { () -> Set<pid_t> in
+            next += 1
+            return Set(10...next)
+        }, inspect: inspect, exited: { _ in false })
+        XCTAssertNil(neverSettles, "a list that keeps growing past the rounds still denies")
+    }
+
     func testVaultRecipientSkipsOnlyExitedOrPermissionDeniedSystemProcesses() {
         let identity = VaultRecipient.Identity(pid: 42, startSeconds: 100, startMicroseconds: 7, executable: "/bin/client")
         let output = VaultRecipient.Endpoint.pipe(handle: 10, peer: 20)
