@@ -69,9 +69,20 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(HubPRRef("#42")?.project)
         XCTAssertEqual(HubPRRef("group/app#42")?.project, "group/app")
         XCTAssertEqual(HubPRRef("app!12")?.number, 12)
-        XCTAssertEqual(HubPRRef("app!12")?.label, "app#12")
+        XCTAssertEqual(HubPRRef("app!12")?.label, "app!12")
+        XCTAssertEqual(HubPRRef("#42")?.label, "#42")
         XCTAssertNil(HubPRRef("app#x"))
         XCTAssertNil(HubPRRef("seven"))
+    }
+
+    /// A ref outside the list goes to `tools hub pr show` as the project name, which the CLI finds among
+    /// every checkout under the repo roots; the hub's own project index may not have loaded yet.
+    func testAPRRefOutsideTheListOpensByItsProjectName() {
+        XCTAssertEqual(HubPRRef("group/sub/app!12")?.showArg, "group/sub/app!12")
+        XCTAssertEqual(HubPRRef("acme/app#42")?.showArg, "acme/app#42")
+        XCTAssertEqual(HubPRRef("https://gitlab.example/group/app/-/merge_requests/3")?.showArg, "https://gitlab.example/group/app/-/merge_requests/3")
+        XCTAssertNil(HubPRRef("#42")?.showArg)
+        XCTAssertTrue(PRsModel.notListed(HubPRRef("!7")!).text.contains("<project>!7"))
     }
 
     /// The browser extension and pasted links hand the hub a page URL, often with a tab suffix.

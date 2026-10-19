@@ -13,7 +13,6 @@ import {
     type ProjectRef,
     type PrQuery,
     type PrSummary,
-    parsePrRef,
     parsePrUrl,
     projectRefFromRemote,
     spawnRunner,
@@ -31,6 +30,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { cached } from "@genesiscz/utils/storage/cache-flag";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import { resolveHubPrRef } from "./pr/project-ref";
 import { type ProposalSummary, proposalFor } from "./proposal";
 
 /** The hub's PR row: the host's PR plus where it lives on this machine. */
@@ -523,10 +523,10 @@ export async function hubPr({
     runner?: CommandRunner;
     storage?: Pick<Storage, "getCacheFile" | "putCacheFile">;
 }): Promise<HubPrDetail> {
-    const parsedRef = parsePrRef(ref);
+    const parsedRef = await prof.measureAsync("show.ref", () => resolveHubPrRef(ref));
 
-    if (!parsedRef) {
-        throw new PrRefError(`expected a PR/MR URL or <repoPath>#<number>, got "${ref}"`);
+    if ("problem" in parsedRef) {
+        throw new PrRefError(parsedRef.problem);
     }
 
     let project: ProjectRef;

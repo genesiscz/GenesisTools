@@ -85,13 +85,13 @@ struct HubPRRef: Equatable {
     /// `group/app!7`: a GitLab merge request, whose page needs a host only its checkout knows.
     var isMergeRequest = false
 
-    /// What `tools hub pr show` can fetch with no local checkout: the page, else a GitHub
-    /// `owner/repo` PR. Never for a merge request: a github.com guess opened another project or
-    /// failed with a host error that hid the real cause.
-    var showURL: String? {
+    /// What `tools hub pr show` takes: the page, else `<project>!<n>` / `<project>#<n>`, which the CLI
+    /// looks up among every checkout under the repo roots (and reads an unknown `owner/repo#n` as a
+    /// github.com PR). Nil for a bare number: only the list's rows can name its project.
+    var showArg: String? {
         if let pageURL { return pageURL }
-        guard !isMergeRequest, let project, project.split(separator: "/").count == 2 else { return nil }
-        return "https://github.com/\(project)/pull/\(number)"
+        guard let project else { return nil }
+        return "\(project)\(isMergeRequest ? "!" : "#")\(number)"
     }
 
     /// The forge host of the page this ref came from; nil for a path-only ref.
@@ -151,7 +151,7 @@ struct HubPRRef: Equatable {
         return pr.repo.lowercased() == wanted || key == wanted || key.hasSuffix("/" + wanted)
     }
 
-    var label: String { project.map { "\($0)#\(number)" } ?? "#\(number)" }
+    var label: String { "\(project ?? "")\(isMergeRequest ? "!" : "#")\(number)" }
 }
 
 /// A forge project with a checkout under the repo roots (`tools hub pr projects`).
@@ -394,6 +394,9 @@ final class PRsModel: ObservableObject {
     /// The deep-linked PR `openDirect` is fetching, and the selection when it started: its answer
     /// still selects it after the list cleared `wanted`, unless someone picked another row meanwhile.
     private var directOpen: (ref: HubPRRef, selectionAtStart: String?)?
+    /// The last ref `openDirect` answered for, shown or failed: it said so itself, so a list landing
+    /// after it neither reports the ref missing a second time nor widens and asks again.
+    private var directAnswered: HubPRRef?
     /// The selected PR's live threads, started with its detail: the review adopts the store when it
     /// exists, so the threads never wait for the head fetch and the diff.
     private var prefetchedThreads: PRThreadsStore?
@@ -514,12 +517,12 @@ final class PRsModel: ObservableObject {
                     wantedStarted = nil
                     // A deep-linked PR outside the list is on its way from its checkout (`openDirect`):
                     // that answer selects it, so the list neither reports it missing nor picks another row.
-                    if !select(wanted), directOpen?.ref != wanted {
+                    if !select(wanted), directOpen?.ref != wanted, directAnswered != wanted {
                         if widen(to: wanted) {
                             widening = true
                             return
                         }
-                        errors.append(PRListNotice("\(wanted.label) is not among these PRs"))
+                        errors.append(Self.notListed(wanted))
                     }
                 }
                 if directOpen == nil, selectedID == nil || selected == nil,
@@ -559,15 +562,16 @@ final class PRsModel: ObservableObject {
             wantedStarted = nil
             startWanted()
         } else if !select(ref, opened: true) {
-            if widen(to: ref) {
-                reload()
-            } else {
-                // Not in the list (newer than it, or of a project it does not hold): straight from its checkout.
-                wanted = ref
-                wantedStarted = nil
-                if !startWanted() {
+            // Not in the list (newer, merged, or of a project it does not hold): straight from its checkout,
+            // before any reload. Only a bare number, which only the rows can place, waits for the All list.
+            wanted = ref
+            wantedStarted = nil
+            if !startWanted() {
+                if widen(to: ref) {
+                    reload()
+                } else {
                     wanted = nil
-                    errors.append(PRListNotice("\(ref.label) is not among these PRs"))
+                    errors.append(Self.notListed(ref))
                 }
             }
         }
@@ -590,10 +594,10 @@ final class PRsModel: ObservableObject {
             return true
         }
         guard matches.isEmpty else { return false }
-        // A checkout of the project among the list's folders, else the PR's page: `hub pr show` finds
-        // the checkout under the repo roots itself. Without the page fallback a PR of a project with no
-        // recent session ("Open in GenesisTools" on Reservine/ReservineBack#815) left another PR open.
-        guard let arg = ref.pageURL ?? directRoot(ref).map({ "\($0)#\(ref.number)" }) ?? ref.showURL else { return false }
+        // The PR's page, else a checkout already known here, else the project name: `hub pr show` finds
+        // its checkout under the repo roots itself. Waiting for this hub's project index lost a link that
+        // came before it loaded (`group/sub/app!12` from a link, 2026-10-19: "is not among these PRs").
+        guard let arg = ref.pageURL ?? directRoot(ref).map({ "\($0)#\(ref.number)" }) ?? ref.showArg else { return false }
         wantedStarted = ref
         openDirect(ref, arg: arg)
         return true
@@ -634,6 +638,7 @@ final class PRsModel: ObservableObject {
             if request?.ref == ref {
                 directOpen = nil
             }
+            directAnswered = ref
             let fresh: (HubPR, HubPRDetail, Data)
             switch answer {
             case .success(let value):
@@ -743,6 +748,11 @@ final class PRsModel: ObservableObject {
         wanted = ref
         state = "all"
         return true
+    }
+
+    /// Only a ref with no project gets here: one with a project or a page always goes to `openDirect`.
+    nonisolated static func notListed(_ ref: HubPRRef) -> PRListNotice {
+        PRListNotice("\(ref.label) is not in this list. Name its project (<project>\(ref.isMergeRequest ? "!" : "#")\(ref.number)) or paste its page URL")
     }
 
     /// Selects the one PR `ref` names; false when none matches. A bare number found in several
