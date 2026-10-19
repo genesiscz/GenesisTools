@@ -10,6 +10,15 @@
 
 set -e
 
+# Each stage prints its seconds: a slow push names its stage instead of looking like a hang (2026-10-19).
+hook_started=$(date +%s)
+stage_started=$hook_started
+stage_done() {
+    now=$(date +%s)
+    echo "  ($((now - stage_started))s)"
+    stage_started=$now
+}
+
 # Skip if pushing nothing (e.g. delete-only push).
 if ! read -r local_ref local_sha remote_ref remote_sha; then
     exit 0
@@ -29,6 +38,7 @@ fi
 # would echo the matched values into a public log. Sub-second on 800 needles.
 echo "▶ placeholder-check (local needle list)..."
 bash scripts/ci/placeholder-check.sh
+stage_done
 
 echo "▶ biome (push-range files)..."
 if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
@@ -58,12 +68,15 @@ if [ -n "$changed" ]; then
 else
     echo "  (no lintable files in push range)"
 fi
+stage_done
 
 echo "▶ bun run lint:rules..."
 bun run lint:rules
+stage_done
 
 echo "▶ bun run lint:dashboard..."
 bun run lint:dashboard
+stage_done
 
 # A failed typecheck fails the push. It used to run `bun install` and retry, which turned a
 # real error report into a pass whenever the install happened to fix it, and hid the failure.
@@ -73,6 +86,7 @@ if ! bun run typecheck:all; then
     echo "  stale: run \`bun install\` and push again."
     exit 1
 fi
+stage_done
 
 # The repo guards from the CI "checks" job (ci.yml, after the TypeScript check). They used to run on
 # CI only, so a pid probe or a hard-coded command name reached every PR of a stack before anything
@@ -97,7 +111,10 @@ run_guard() {
         (sleep "$guard_timeout"; kill "$cmd" 2>/dev/null) &
         watchdog=$!
         wait "$cmd" || rc=$?
-        # The watchdog is gone once it fired, and under `set -e` a failed kill would end this subshell here.
+        # The watchdog's `sleep` outlives a killed subshell and holds the hook's output pipe open, so git
+        # waited the whole deadline after "passed" (157 s of a 204 s push); kill the sleep first. Under
+        # `set -e` a failed kill (the watchdog already fired) would end this subshell here, hence `|| true`.
+        pkill -P "$watchdog" 2>/dev/null || true
         kill "$watchdog" 2>/dev/null || true
         if [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; then
             echo "✖ killed after ${guard_timeout}s (GT_PRE_PUSH_GUARD_TIMEOUT)" >> "$guard_dir/$name.log"
@@ -139,7 +156,8 @@ if [ "$guard_failed" -ne 0 ]; then
     exit 1
 fi
 
-echo "✔ pre-push passed (CI mirror)"
+stage_done
+echo "✔ pre-push passed (CI mirror) in $(( $(date +%s) - hook_started ))s"
 # Note: `bash scripts/ci/check-hardcoded-paths.sh` catches hardcoded /tmp/Users
 # paths in src/. Not wired in here yet — it can be appended after the typecheck
 # line above (lint + typecheck:all on master are green as of 2026-06-02).
