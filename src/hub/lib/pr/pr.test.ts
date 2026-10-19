@@ -1342,6 +1342,17 @@ describe("resolveHubPrRef", () => {
         expect("problem" in twice && twice.problem).toContain("names 2 projects");
     });
 
+    test("of two clones of one project, the folder named like the project wins over the first by name", async () => {
+        const clones = async () => ({
+            roots: ["/work"],
+            checkouts: [
+                checkout("/work/aaa/site-v2", "github.com", "acme/site"),
+                checkout("/work/site", "github.com", "acme/site"),
+            ],
+        });
+        expect(await resolveHubPrRef("acme/site#4", { source: clones })).toEqual({ path: "/work/site", number: 4 });
+    });
+
     test("a URL never scans the checkouts", async () => {
         const never = async () => {
             throw new Error("scanned");

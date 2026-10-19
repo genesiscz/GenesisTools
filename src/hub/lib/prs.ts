@@ -30,7 +30,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { cached } from "@genesiscz/utils/storage/cache-flag";
 import { Storage } from "@genesiscz/utils/storage/storage";
-import { resolveHubPrRef } from "./pr/project-ref";
+import { namedLikeProject, resolveHubPrRef } from "./pr/project-ref";
 import { type ProposalSummary, proposalFor } from "./proposal";
 
 /** The hub's PR row: the host's PR plus where it lives on this machine. */
@@ -235,6 +235,16 @@ function groupByOrigin(facts: RepoFacts[]): { groups: ProjectGroup[]; skipped: H
         }
 
         groups.set(key, group);
+    }
+
+    // Two clones of one project: the folder named like the project names the group and is its checkout.
+    for (const group of groups.values()) {
+        const named = group.facts.findIndex((fact) => fact.root && namedLikeProject(fact.root, group.key));
+
+        if (named > 0) {
+            group.facts.unshift(...group.facts.splice(named, 1));
+            group.paths.unshift(...group.paths.splice(named, 1));
+        }
     }
 
     return { groups: [...groups.values()], skipped };
@@ -476,7 +486,15 @@ export async function hubPrProjects(): Promise<HubPrProject[]> {
         const web = fact.origin?.web;
         const kind = fact.origin?.kind;
 
-        if (!web || !fact.root || (kind !== "github" && kind !== "gitlab") || byProject.has(web)) {
+        if (!web || !fact.root || (kind !== "github" && kind !== "gitlab")) {
+            continue;
+        }
+
+        // Two clones of one project (`daf-app` and `daf-app-v2`): the one named like the project wins, whatever
+        // order the scan found them in. The first one found had named the PR group after the other folder.
+        const known = byProject.get(web);
+
+        if (known && (namedLikeProject(known.root, web) || !namedLikeProject(fact.root, web))) {
             continue;
         }
 

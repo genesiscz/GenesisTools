@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import { loadConfig } from "@app/browser-extension/lib/config";
 import { configuredCheckouts } from "@app/browser-extension/lib/deps";
 import { type LocalCheckout, rankCheckouts } from "@genesiscz/utils/git/local-checkouts";
@@ -87,6 +88,14 @@ function checkoutOf(name: string, checkouts: LocalCheckout[]): { root: string } 
         return { projects };
     }
 
-    const best = rankCheckouts({ project: pool[0].project, checkouts: pool })[0];
+    // Of two clones of one project, the folder named like the project (`app`, not `app-v2`).
+    const ranked = rankCheckouts({ project: pool[0].project, checkouts: pool });
+    const best = ranked.find((checkout) => namedLikeProject(checkout.root, checkout.project.path)) ?? ranked[0];
     return best ? { root: best.root } : { projects };
+}
+
+/** Whether a checkout's folder carries its project's name (the last segment of the web path), in any case. */
+export function namedLikeProject(root: string, web: string): boolean {
+    const name = web.replace(/\/+$/, "").split("/").pop() ?? "";
+    return basename(root).toLowerCase() === name.toLowerCase();
 }
