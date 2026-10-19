@@ -39,17 +39,45 @@ final class WindowCycleTests: XCTestCase {
         XCTAssertEqual(WindowCycle.candidates(list, pids: [1, 2]), [.init(pid: 1, number: 10), .init(pid: 2, number: 11)])
     }
 
-    func testRepeatedPressesVisitEveryWindowInAFixedOrderAcrossProcesses() {
-        let hub = WindowCycle.Candidate(pid: 1, number: 30)
-        let review = WindowCycle.Candidate(pid: 2, number: 12)
-        let settings = WindowCycle.Candidate(pid: 3, number: 51)
-        let all = [hub, review, settings]
-        XCTAssertEqual(WindowCycle.next(after: 12, in: all, backwards: false), hub)
-        XCTAssertEqual(WindowCycle.next(after: 30, in: all, backwards: false), settings)
-        XCTAssertEqual(WindowCycle.next(after: 51, in: all, backwards: false), review, "wraps around")
-        XCTAssertEqual(WindowCycle.next(after: 12, in: all, backwards: true), settings)
-        XCTAssertEqual(WindowCycle.next(after: 30, in: all, backwards: true), review)
-        XCTAssertEqual(WindowCycle.next(after: 40, in: all, backwards: false), settings, "a key window not in the list still has a place")
-        XCTAssertNil(WindowCycle.next(after: 30, in: [hub], backwards: false), "one window: nothing to move to")
+    private let hub = WindowCycle.Candidate(pid: 1, number: 30)
+    private let review = WindowCycle.Candidate(pid: 2, number: 12)
+    private let settings = WindowCycle.Candidate(pid: 3, number: 51)
+    private let markdown = WindowCycle.Candidate(pid: 4, number: 70)
+
+    func testTheFrozenListIsTheKeyWindowThenTheLastFocusedThenTheUnseen() {
+        let onScreen = [markdown, settings, hub, review]
+        let recent = [review, WindowCycle.Candidate(pid: 2, number: 99), hub, settings]
+        XCTAssertEqual(WindowCycle.order(onScreen, recent: recent, key: review), [review, hub, settings, markdown],
+                       "a closed window (99) drops out; one never focused (markdown) comes last")
+        XCTAssertEqual(WindowCycle.promote(settings, in: recent).prefix(2), [settings, review])
+    }
+
+    func testAHeldModifierVisitsEveryWindowAndOnePressGoesBackToThePreviousWindow() {
+        let frozen = [review, hub, settings, markdown]
+        let first = WindowCycle.Session.start(frozen, backwards: false, modifiers: .option)
+        XCTAssertEqual(first?.landed, hub, "one press: the previous window")
+        XCTAssertEqual(first?.step(backwards: false).landed, settings)
+        XCTAssertEqual(first?.step(backwards: false).step(backwards: false).step(backwards: false).landed, review, "wraps around")
+        XCTAssertEqual(WindowCycle.Session.start(frozen, backwards: true, modifiers: .option)?.landed, markdown)
+        XCTAssertNil(WindowCycle.Session.start([review], backwards: false, modifiers: .option), "one window: nothing to move to")
+
+        // Martin's case: three presses held, then a release, then a new run starts from the landed window.
+        var recent = [review, hub, settings, markdown]
+        var run = WindowCycle.Session.start(WindowCycle.order(frozen, recent: recent, key: review), backwards: false, modifiers: .option)!
+        for _ in 1..<3 { run = run.step(backwards: false) }
+        XCTAssertEqual(run.landed, markdown)
+        recent = WindowCycle.promote(run.landed, in: recent)
+        let next = WindowCycle.Session.start(WindowCycle.order(frozen, recent: recent, key: markdown), backwards: false, modifiers: .option)
+        XCTAssertEqual(next?.landed, review, "the window the run started from, not the first by number")
+    }
+
+    func testCmdTabBackShowsTheWindowThatWasKeyWhenGenesisToolsLeft() {
+        let onScreen = [hub, review, settings]
+        XCTAssertEqual(WindowCycle.restoreTarget([markdown, settings, hub], candidates: onScreen, own: 1), settings,
+                       "the markdown window closed meanwhile")
+        XCTAssertNil(WindowCycle.restoreTarget([hub, review], candidates: onScreen, own: 1), "the hub's own window: AppKit shows it")
+        XCTAssertTrue(WindowCycle.cameByCommandTab(sinceFlags: 0.05, sinceMouse: 4, sinceKey: 0.2))
+        XCTAssertFalse(WindowCycle.cameByCommandTab(sinceFlags: 2, sinceMouse: 4, sinceKey: 0.1), "a typed key (a launcher)")
+        XCTAssertFalse(WindowCycle.cameByCommandTab(sinceFlags: 0.3, sinceMouse: 0.02, sinceKey: 5), "a click (Dock, link, notification)")
     }
 }
