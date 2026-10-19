@@ -1,4 +1,5 @@
 import type { SharedV4ProviderMetadata } from "@ai-sdk/provider";
+import { anthropicRequestRules } from "@genesiscz/utils/ai/anthropic/models";
 import type { ProviderChoice } from "@genesiscz/utils/ask/types";
 import { getLanguageModel } from "@genesiscz/utils/ask/types/provider";
 import {
@@ -207,10 +208,23 @@ export function effectiveSystemPrompt(prefix: string | undefined, base: string |
     return applySystemPromptPrefix(prefix, base);
 }
 
+/**
+ * The temperature a request may carry: none for a Claude model that no longer accepts sampling
+ * (Opus 4.7 on, Fable), where the SDK would only drop it with a warning on stderr.
+ */
+function acceptedTemperature(target: CallTarget, temperature: number | undefined): number | undefined {
+    if (temperature === undefined || !target.modelId) {
+        return temperature;
+    }
+
+    return anthropicRequestRules(target.modelId).sampling ? temperature : undefined;
+}
+
 /** The single `streamText`/`generateText` call. Everything else in this file funnels here. */
 export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult> {
     const { target, tools } = options;
     const hasTools = Boolean(tools && Object.keys(tools).length > 0);
+    const temperature = acceptedTemperature(target, options.temperature);
 
     const settings = {
         model: target.model,
@@ -220,7 +234,7 @@ export async function coreChat(options: CoreChatOptions): Promise<CoreChatResult
         ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
         ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
         ...(options.maxTokens ? { maxOutputTokens: options.maxTokens } : {}),
-        ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+        ...(temperature !== undefined ? { temperature } : {}),
         ...(hasTools && tools ? { tools, stopWhen: stepCountIs(options.maxSteps ?? DEFAULT_MAX_STEPS) } : {}),
     };
 
@@ -523,7 +537,8 @@ async function runStructured<T>(
     target: CallTarget,
     options: CallLLMStructuredOptions<T>
 ): Promise<CallLLMStructuredResult<T>> {
-    const { schema, maxTokens, temperature, onPartial } = options;
+    const { schema, maxTokens, onPartial } = options;
+    const temperature = acceptedTemperature(target, options.temperature);
 
     const callArgs = {
         system: effectiveSystemPrompt(target.systemPromptPrefix, options.systemPrompt),

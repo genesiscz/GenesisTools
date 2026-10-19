@@ -170,3 +170,39 @@ describe("coreChat → recordUsage", () => {
         expect(queryUsage(todayWindow()).total.events).toBe(0);
     });
 });
+
+describe("coreChat sampling", () => {
+    function capturingTarget(modelId: string): { target: CallTarget; seen: Array<number | undefined> } {
+        const seen: Array<number | undefined> = [];
+        const model = new MockLanguageModelV4({
+            doGenerate: async (options): Promise<GenerateResult> => {
+                seen.push(options.temperature);
+                return {
+                    content: [{ type: "text", text: "hello" }],
+                    finishReason: STOP,
+                    usage: {
+                        inputTokens: { total: 1, noCache: 1, cacheRead: undefined, cacheWrite: undefined },
+                        outputTokens: { total: 1, text: 1, reasoning: undefined },
+                    },
+                    warnings: [],
+                };
+            },
+        }) as unknown as LanguageModel;
+
+        return { target: target({ model, modelId, label: `work/${modelId}` }), seen };
+    }
+
+    test("drops temperature for a Claude model that no longer accepts sampling", async () => {
+        const { target: opus, seen } = capturingTarget("claude-opus-5-5");
+        await coreChat({ target: opus, prompt: "hi", temperature: 0.9 });
+
+        expect(seen).toEqual([undefined]);
+    });
+
+    test("keeps temperature for a model that accepts it", async () => {
+        const { target: older, seen } = capturingTarget("claude-opus-4-1-20250805");
+        await coreChat({ target: older, prompt: "hi", temperature: 0.9 });
+
+        expect(seen).toEqual([0.9]);
+    });
+});
