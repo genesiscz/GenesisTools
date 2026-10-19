@@ -23,6 +23,7 @@ import {
     rollupCi,
     viewPr,
 } from "./prs";
+import { missingCliError, spawnRunner } from "./runner";
 import type { CommandRunner } from "./types";
 import { branchWebUrl, commitWebUrl, originWebBase } from "./web";
 
@@ -914,6 +915,23 @@ describe("isLocalRemoteUrl", () => {
         expect(remote.map((url) => ({ url, local: isLocalRemoteUrl(url) }))).toEqual(
             remote.map((url) => ({ url, local: false }))
         );
+    });
+});
+
+describe("spawnRunner", () => {
+    it("names a CLI that is not installed instead of a bare exit 127", async () => {
+        const res = await spawnRunner(["gt-no-such-cli-7f3a", "pr", "list"], { cwd: process.cwd(), timeoutMs: 1_000 });
+        expect(res.code).toBe(127);
+        expect(res.stderr).toBe(missingCliError("gt-no-such-cli-7f3a"));
+        expect(summarizeHostError(res.stderr, "github.com")).toBe(
+            "gt-no-such-cli-7f3a is not installed (brew install gt-no-such-cli-7f3a)"
+        );
+    });
+
+    it("still runs a CLI that exists", async () => {
+        const res = await spawnRunner(["git", "--version"], { cwd: process.cwd(), timeoutMs: 5_000 });
+        expect(res.code).toBe(0);
+        expect(res.stdout).toStartWith("git version");
     });
 });
 
