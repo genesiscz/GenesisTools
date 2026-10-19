@@ -242,7 +242,9 @@ export function registerPermissionsCommand(program: Command): void {
             );
             const proc = Bun.spawn({
                 cmd: ["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", keychain],
-                stdio: ["inherit", "inherit", "inherit"],
+                // security prints every key it touched to stdout (attribute dumps, a screen per key); the password
+                // prompt and errors are on stderr, so only those reach the terminal.
+                stdio: ["inherit", "ignore", "inherit"],
             });
             const code = await proc.exited;
 
