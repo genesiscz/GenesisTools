@@ -114,7 +114,7 @@ function cases(): Case[] {
     add("du.volume", "du", "/", ["du", "volume", "--format", "json"], true);
 
     // ---- tools macos clones: read-only verbs ---------------------------------
-    add("macos.measure.c", "macos", C, ["macos", "clones", "measure", C, "--min-real", "1", "--format", "json"]);
+    add("macos.measure.c", "macos", C, ["macos", "clones", "measure", C, "--min-real", "1B", "--format", "json"]);
     add("macos.measure.nobreakdown", "macos", C, [
         "macos",
         "clones",
@@ -126,8 +126,8 @@ function cases(): Case[] {
         "--format",
         "json",
     ]);
-    add("macos.measure.b", "macos", B, ["macos", "clones", "measure", B, "--min-real", "1", "--format", "json"]);
-    add("macos.measure.a", "macos", A, ["macos", "clones", "measure", A, "--min-real", "1", "--format", "json"]);
+    add("macos.measure.b", "macos", B, ["macos", "clones", "measure", B, "--min-real", "1B", "--format", "json"]);
+    add("macos.measure.a", "macos", A, ["macos", "clones", "measure", A, "--min-real", "1B", "--format", "json"]);
     add("macos.measure.sort-real", "macos", C, [
         "macos",
         "clones",
@@ -176,7 +176,7 @@ function cases(): Case[] {
         "--format",
         "json",
     ]);
-    add("macos.duplicates.c", "macos", C, ["macos", "clones", "duplicates", C, "--min-real", "1", "--format", "json"]);
+    add("macos.duplicates.c", "macos", C, ["macos", "clones", "duplicates", C, "--min-real", "1B", "--format", "json"]);
     add("macos.duplicates.group", "macos", C, [
         "macos",
         "clones",

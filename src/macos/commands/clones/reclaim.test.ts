@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getCachedPlan } from "@app/macos/lib/clones/cache";
-import { getPreset, presetsPath } from "@app/macos/lib/clones/presets";
+import { getPreset, presetsPath, touchPreset, updatePresetAuto } from "@app/macos/lib/clones/presets";
 import { type ClonesConfig, storage } from "@app/macos/lib/clones/store";
 import { byKeys, contractShapeMismatches, readKitFixtureJson } from "@app/macos/lib/kit-fixtures";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -105,7 +105,7 @@ describe("createReclaimCommand", () => {
                 "--targets",
                 "node_modules",
                 "--min-real",
-                "1024",
+                "1KB",
                 "--format",
                 "json",
             ]);
@@ -198,7 +198,7 @@ describe("createReclaimCommand", () => {
                 "--targets",
                 "node_modules",
                 "--min-real",
-                "1024",
+                "1KB",
                 "--no-daemon",
             ]);
             expect(res.code).toBe(0);
@@ -218,7 +218,7 @@ describe("createReclaimCommand", () => {
                 "--targets",
                 "node_modules",
                 "--min-real",
-                "1024",
+                "1KB",
                 "--format",
                 "jsonl",
             ]);
@@ -246,7 +246,7 @@ describe("createReclaimCommand", () => {
     it("apply without --yes in non-TTY refuses and names the flag", async () => {
         const outer = twoTrees();
         try {
-            const res = await run(["apply", "--dir", outer, "--targets", "node_modules", "--min-real", "1024"]);
+            const res = await run(["apply", "--dir", outer, "--targets", "node_modules", "--min-real", "1KB"]);
             expect(res.code).toBe(1);
             expect(res.err).toContain("--yes");
         } finally {
@@ -257,7 +257,7 @@ describe("createReclaimCommand", () => {
     it("apply reuses the plan snapshot while the roots are unchanged, and rescans after a change", async () => {
         const outer = twoTrees();
         try {
-            await run(["plan", "--dir", outer, "--targets", "node_modules", "--min-real", "1024", "--format", "json"]);
+            await run(["plan", "--dir", outer, "--targets", "node_modules", "--min-real", "1KB", "--format", "json"]);
             const reused = await run([
                 "apply",
                 "--dir",
@@ -265,7 +265,7 @@ describe("createReclaimCommand", () => {
                 "--targets",
                 "node_modules",
                 "--min-real",
-                "1024",
+                "1KB",
                 "--format",
                 "json",
             ]);
@@ -281,7 +281,7 @@ describe("createReclaimCommand", () => {
                 "--targets",
                 "node_modules",
                 "--min-real",
-                "1024",
+                "1KB",
                 "--format",
                 "json",
             ]);
@@ -301,7 +301,7 @@ describe("createReclaimCommand", () => {
                 "--targets",
                 "node_modules",
                 "--min-real",
-                "1024",
+                "1KB",
                 "--format",
                 "json",
                 "--save",
@@ -334,13 +334,13 @@ describe("createReclaimCommand", () => {
         try {
             await storage.setConfig({ ...(snapshot ?? { watchedDirs: [] }), daemon: false });
             registerSpy.mockClear();
-            const res = await run(["plan", "--dir", outer, "--targets", "node_modules", "--min-real", "1024"]);
+            const res = await run(["plan", "--dir", outer, "--targets", "node_modules", "--min-real", "1KB"]);
             expect(res.code).toBe(0);
             expect(registerSpy.mock.calls.length).toBe(0);
 
             // Lifting the opt-out lets a plan register again.
             await storage.setConfig({ ...(snapshot ?? { watchedDirs: [] }), daemon: true });
-            const again = await run(["plan", "--dir", outer, "--targets", "node_modules", "--min-real", "1024"]);
+            const again = await run(["plan", "--dir", outer, "--targets", "node_modules", "--min-real", "1KB"]);
             expect(again.code).toBe(0);
             expect(registerSpy.mock.calls.length).toBeGreaterThan(0);
         } finally {
@@ -357,17 +357,7 @@ describe("createReclaimCommand", () => {
     it("presets run --apply does not record a run that was refused for a missing --yes", async () => {
         const outer = twoTrees();
         try {
-            await run([
-                "presets",
-                "save",
-                "refused",
-                "--dir",
-                outer,
-                "--targets",
-                "node_modules",
-                "--min-real",
-                "1024",
-            ]);
+            await run(["presets", "save", "refused", "--dir", outer, "--targets", "node_modules", "--min-real", "1KB"]);
             const res = await run(["presets", "run", "refused", "--apply"]);
             expect(res.code).toBe(1);
             expect(getPreset("refused")?.lastRunAt).toBeUndefined();
@@ -384,17 +374,7 @@ describe("createReclaimCommand", () => {
     it("presets auto --on arms a plan with limits, the table shows it, and --off stops it", async () => {
         const outer = twoTrees();
         try {
-            await run([
-                "presets",
-                "save",
-                "nightly",
-                "--dir",
-                outer,
-                "--targets",
-                "node_modules",
-                "--min-real",
-                "1024",
-            ]);
+            await run(["presets", "save", "nightly", "--dir", outer, "--targets", "node_modules", "--min-real", "1KB"]);
             const armed = await run(["presets", "auto", "nightly", "--on", "--max-bytes", "2GB", "--max-files", "40"]);
             expect(armed.code ?? 0).toBe(0);
             expect(getPreset("nightly")?.auto).toEqual({ enabled: true, maxBytes: 2 * 1024 ** 3, maxFiles: 40 });
@@ -419,10 +399,46 @@ describe("createReclaimCommand", () => {
         }
     });
 
+    it("arming has no default limits, none clears one, and saving over the id keeps auto and the last run", async () => {
+        const outer = twoTrees();
+        const save = (targets: string) =>
+            run(["presets", "save", "kept", "--dir", outer, "--targets", targets, "--min-real", "1KB"]);
+        try {
+            await save("node_modules");
+            await run(["presets", "auto", "kept", "--on"]);
+            expect(getPreset("kept")?.auto).toEqual({ enabled: true });
+
+            await run(["presets", "auto", "kept", "--max-bytes", "2GB", "--max-files", "40"]);
+            await run(["presets", "auto", "kept", "--max-bytes", "none"]);
+            expect(getPreset("kept")?.auto).toEqual({ enabled: true, maxFiles: 40 });
+
+            const created = getPreset("kept")?.createdAt;
+            updatePresetAuto("kept", { enabled: true, maxFiles: 40, dryRunAt: "2026-10-19T03:00:00.000Z" });
+            touchPreset("kept", { lastRunAt: "2026-10-19T03:00:00.000Z", lastReclaimable: 4096 });
+
+            await save("node_modules");
+            const same = getPreset("kept");
+            expect(same?.auto).toEqual({ enabled: true, maxFiles: 40, dryRunAt: "2026-10-19T03:00:00.000Z" });
+            expect(same?.createdAt).toBe(created);
+            expect(same?.lastReclaimable).toBe(4096);
+
+            await save("vendor");
+            // A new selector keeps auto armed, but its next run is a dry run again.
+            expect(getPreset("kept")?.auto).toEqual({ enabled: true, maxFiles: 40 });
+            expect(getPreset("kept")?.targets).toEqual(["vendor"]);
+        } finally {
+            if (existsSync(presetsPath())) {
+                rmSync(presetsPath());
+            }
+
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
     it("presets list --format table prints an aligned inventory", async () => {
         const outer = twoTrees();
         try {
-            await run(["presets", "save", "boxed", "--dir", outer, "--targets", "node_modules", "--min-real", "1024"]);
+            await run(["presets", "save", "boxed", "--dir", outer, "--targets", "node_modules", "--min-real", "1KB"]);
             const listed = await run(["presets", "list", "--format", "table"]);
             expect(listed.out).toContain("ID");
             expect(listed.out).toContain("TARGETS");
@@ -449,7 +465,7 @@ describe("reclaim JSON contracts", () => {
                 "--targets",
                 "node_modules",
                 "--min-real",
-                "1024",
+                "1KB",
                 "--no-daemon",
                 "--format",
                 "json",
@@ -476,7 +492,7 @@ describe("reclaim JSON contracts", () => {
                     "--targets",
                     "node_modules",
                     "--min-real",
-                    "1024",
+                    "1KB",
                     "--no-daemon",
                     "--yes",
                     "--format",

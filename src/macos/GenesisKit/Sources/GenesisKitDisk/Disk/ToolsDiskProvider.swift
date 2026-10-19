@@ -105,7 +105,8 @@ public struct ClonesReclaimPlanOptions: Equatable, Sendable {
     public var keepUnfreeable: Bool
     /// Each one is an `--exclude` glob.
     public var exclude: [String]
-    /// `--min-real <bytes>`: the minimum per-file size. Nil uses the CLI default, 10 MB.
+    /// `--min-real <n>B`: the minimum per-file size in bytes (the CLI refuses a size without a unit). Nil uses the CLI
+    /// default, 10 MB.
     public var minReal: Int64?
     /// True lets the plan register the daily scan with `tools daemon`, the CLI's default. False (the default
     /// here) passes `--no-daemon`, so a plan the app runs leaves only the run log and the 60 s plan snapshot.
@@ -147,7 +148,7 @@ public struct ClonesReclaimPlanOptions: Equatable, Sendable {
         if !rewriteStores.isEmpty { args += ["--rewrite-stores", rewriteStores.map(\.rawValue).joined(separator: ",")] }
         if keepUnfreeable { args.append("--keep-unfreeable") }
         for glob in exclude { args += ["--exclude", glob] }
-        if let minReal { args += ["--min-real", String(minReal)] }
+        if let minReal { args += ["--min-real", "\(minReal)B"] }
         return args
     }
 }
@@ -206,7 +207,7 @@ public struct ToolsDiskProvider: Sendable {
     public func clonesMeasure(paths: [String], minReal: Int64? = nil) async throws -> ClonesMeasureReport {
         try Self.requirePaths(paths, command: "macos clones measure")
         var args = ["clones", "measure"] + paths.map(Self.operand) + ["--format", "json"]
-        if let minReal { args += ["--min-real", String(minReal)] }
+        if let minReal { args += ["--min-real", "\(minReal)B"] }
         return try await fetch(ClonesMeasureReport.self, command: "macos clones measure", subcommand: "macos", args: args)
     }
 
@@ -214,7 +215,7 @@ public struct ToolsDiskProvider: Sendable {
     public func clonesDu(path: String, depth: Int? = nil, minReal: Int64? = nil) async throws -> ClonesMeasureReport {
         var args = ["clones", "du", Self.operand(path), "--format", "json"]
         if let depth { args += ["--depth", String(depth)] }
-        if let minReal { args += ["--min-real", String(minReal)] }
+        if let minReal { args += ["--min-real", "\(minReal)B"] }
         return try await fetch(ClonesMeasureReport.self, command: "macos clones du", subcommand: "macos", args: args)
     }
 
@@ -222,7 +223,7 @@ public struct ToolsDiskProvider: Sendable {
     public func clonesDuplicates(paths: [String], minReal: Int64? = nil) async throws -> ClonesDuplicatesReport {
         try Self.requirePaths(paths, command: "macos clones duplicates")
         var args = ["clones", "duplicates"] + paths.map(Self.operand) + ["--format", "json"]
-        if let minReal { args += ["--min-real", String(minReal)] }
+        if let minReal { args += ["--min-real", "\(minReal)B"] }
         return try await fetch(ClonesDuplicatesReport.self, command: "macos clones duplicates", subcommand: "macos", args: args)
     }
 

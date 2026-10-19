@@ -1,8 +1,9 @@
 import { homedir } from "node:os";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
+import { addMinRealOptions } from "@app/macos/commands/clones/min-real-flags";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
-import { BYTE_SIZE_FORMS, parseByteSize } from "@app/macos/lib/clones/min-real";
+import { type MinRealFlags, resolveMinReal } from "@app/macos/lib/clones/min-real";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
@@ -33,11 +34,10 @@ function collect(value: string, previous: string[]): string[] {
     return [...previous, value];
 }
 
-interface DuplicatesOpts {
+interface DuplicatesOpts extends MinRealFlags {
     format?: string;
     group?: boolean;
     nodeModules?: boolean;
-    minReal?: string;
     include: string[];
     exclude: string[];
     top?: string;
@@ -64,7 +64,7 @@ const PRUNE_NAMES = [".git"];
 const DEFAULT_TOP_HUMAN = 30;
 
 export function createDuplicatesCommand(): Command {
-    const cmd = new Command("duplicates")
+    const cmd = addMinRealOptions(new Command("duplicates"), "Ignore duplicate sets smaller than this (per-file size)")
         .description("Content-identical files/dirs that are NOT yet clones (folder-collapsed)")
         .argument("[roots...]", "Roots to scan (default: configured watchedDirs, else cwd)")
         .addOption(
@@ -72,7 +72,6 @@ export function createDuplicatesCommand(): Command {
         )
         .option("--group", "List every member path under each set", false)
         .option("--node-modules", "Expand each root to its node_modules dirs", false)
-        .option("--min-real <size>", `Ignore duplicate sets smaller than this (per-file size) (${BYTE_SIZE_FORMS})`)
         .option("--include <glob>", "Include glob (repeatable; matches relpath or any segment)", collect, [])
         .option("--exclude <glob>", "Exclude glob (repeatable, wins over --include)", collect, [])
         .option(
@@ -97,12 +96,14 @@ export function createDuplicatesCommand(): Command {
                 process.exit(2);
             }
 
-            const minSize = opts.minReal === undefined ? undefined : parseByteSize(opts.minReal);
-            if (minSize === null) {
-                console.error(`--min-real must be a positive size (${BYTE_SIZE_FORMS}), got "${opts.minReal}".`);
+            const resolvedMinReal = resolveMinReal(opts, undefined);
+            if ("error" in resolvedMinReal) {
+                console.error(resolvedMinReal.error);
                 process.exitCode = 1;
                 return;
             }
+
+            const minSize = resolvedMinReal.bytes;
 
             // SIGINT → abort the walk + hash within one 64 KB chunk. Without
             // this, sync readSync on a multi-GB file blocks Ctrl+C until the

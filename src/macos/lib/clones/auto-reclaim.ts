@@ -22,9 +22,35 @@ import type { DuplicateSet } from "./render/types";
 
 const log = logger.child({ component: "clones:auto-reclaim" });
 
-/** Limits a newly armed preset gets unless the CLI says otherwise. */
-export const DEFAULT_AUTO_MAX_BYTES = 5 * 1024 ** 3;
-export const DEFAULT_AUTO_MAX_FILES = 500;
+/** A run's limits. An absent limit does not limit: an armed preset clones every set unless the user set one
+ *  (Martin, 2026-10-19: the old 5 GB and 500-file defaults had no measured reason, and a set with more files than
+ *  the cap was never cloned at all). */
+export interface AutoLimits {
+    maxBytes?: number;
+    maxFiles?: number;
+}
+
+/** "no limits", "5 GB", "500 files" or "5 GB, 500 files". */
+export function formatLimits(limits: AutoLimits): string {
+    const parts = [
+        ...(limits.maxBytes !== undefined ? [formatBytes(limits.maxBytes)] : []),
+        ...(limits.maxFiles !== undefined ? [`${limits.maxFiles} files`] : []),
+    ];
+    return parts.length === 0 ? "no limits" : parts.join(", ");
+}
+
+/** The stored limits after a flag change: a number sets a limit, null clears it (`none`), undefined keeps it. */
+export function mergeLimits(
+    previous: AutoLimits | undefined,
+    change: { maxBytes?: number | null; maxFiles?: number | null }
+): AutoLimits {
+    const maxBytes = change.maxBytes === null ? undefined : (change.maxBytes ?? previous?.maxBytes);
+    const maxFiles = change.maxFiles === null ? undefined : (change.maxFiles ?? previous?.maxFiles);
+    return {
+        ...(maxBytes !== undefined ? { maxBytes } : {}),
+        ...(maxFiles !== undefined ? { maxFiles } : {}),
+    };
+}
 
 /** Files one set rewrites, counted from the same (keep, replace) pairs apply clones: a folder set counts every file
  *  under each replaced folder, and copies under a fixed store root stay as they are. */
@@ -41,7 +67,7 @@ export interface LimitedPlan {
 }
 
 /** The plan cut to the limits: the biggest sets first, each kept only while the run's bytes and files still fit. */
-export function limitPlan(plan: ReclaimPlan, limits: { maxBytes: number; maxFiles: number }): LimitedPlan {
+export function limitPlan(plan: ReclaimPlan, limits: AutoLimits): LimitedPlan {
     const ordered = [...plan.sets].sort((a, b) => b.reclaimable - a.reclaimable);
     const keepOnlyRoots = fixedStoreRoots(plan);
     const kept: DuplicateSet[] = [];
@@ -50,10 +76,10 @@ export function limitPlan(plan: ReclaimPlan, limits: { maxBytes: number; maxFile
     let droppedBytes = 0;
 
     for (const set of ordered) {
-        const fitsBytes = bytes + set.reclaimable <= limits.maxBytes;
+        const fitsBytes = limits.maxBytes === undefined || bytes + set.reclaimable <= limits.maxBytes;
         const setFiles = fitsBytes ? filesOf(set, keepOnlyRoots) : 0;
 
-        if (fitsBytes && files + setFiles <= limits.maxFiles) {
+        if (fitsBytes && (limits.maxFiles === undefined || files + setFiles <= limits.maxFiles)) {
             kept.push(set);
             bytes += set.reclaimable;
             files += setFiles;
@@ -82,7 +108,7 @@ export interface AutoReclaimOutcome {
     planned: { sets: number; bytes: number };
     /** What fits the limits and would be, or was, cloned. */
     withinLimits: { sets: number; bytes: number; files: number };
-    limits: { maxBytes: number; maxFiles: number };
+    limits: AutoLimits;
     applied?: { cloned: number; skipped: number; errors: number; bytesReclaimed: number };
     runId?: string;
     error?: string;
@@ -159,7 +185,7 @@ async function runOne(input: {
 }): Promise<AutoReclaimOutcome> {
     const { preset, deps, dryRun } = input;
     const auto = preset.auto;
-    const limits = { maxBytes: auto.maxBytes, maxFiles: auto.maxFiles };
+    const limits = mergeLimits(auto, {});
     const base = {
         preset: preset.id,
         limits,
@@ -185,7 +211,7 @@ async function runOne(input: {
             const why =
                 plan.sets.length === 0
                     ? "the plan found no duplicates"
-                    : `no duplicate set fits the limits (${formatBytes(limits.maxBytes)}, ${limits.maxFiles} files)`;
+                    : `no duplicate set fits the limits (${formatLimits(limits)})`;
             return { ...outcome, action: "nothing", why };
         }
 
@@ -246,8 +272,7 @@ export function formatAutoReclaimReport(outcomes: AutoReclaimOutcome[]): string[
     return [
         `auto reclaim: ${outcomes.length} plan${outcomes.length === 1 ? "" : "s"} marked auto`,
         ...outcomes.map((o) => {
-            const limits = `limits ${formatBytes(o.limits.maxBytes)}, ${o.limits.maxFiles} files`;
-            const found = `the plan found ${formatBytes(o.planned.bytes)} in ${o.planned.sets} sets; ${o.withinLimits.sets} sets, ${o.withinLimits.files} files, ${formatBytes(o.withinLimits.bytes)} fit the ${limits}`;
+            const found = `the plan found ${formatBytes(o.planned.bytes)} in ${o.planned.sets} sets; ${o.withinLimits.sets} sets, ${o.withinLimits.files} files, ${formatBytes(o.withinLimits.bytes)} fit the limits (${formatLimits(o.limits)})`;
             const run = o.runId ? ` · reclaim run log ${o.runId}` : "";
 
             switch (o.action) {
@@ -264,17 +289,13 @@ export function formatAutoReclaimReport(outcomes: AutoReclaimOutcome[]): string[
     ];
 }
 
-/** The settings `presets auto <id> --on` stores: the given limits, else the old ones, else the defaults. A new
- *  arming always starts without `dryRunAt`, so its first run is a dry run. */
+/** The settings `presets auto <id> --on` stores: the given limits, else the old ones, else none. A new arming
+ *  always starts without `dryRunAt`, so its first run is a dry run. */
 export function armedAuto(
     previous: PresetAuto | undefined,
-    limits: { maxBytes?: number; maxFiles?: number }
+    change: { maxBytes?: number | null; maxFiles?: number | null }
 ): PresetAuto {
-    return {
-        enabled: true,
-        maxBytes: limits.maxBytes ?? previous?.maxBytes ?? DEFAULT_AUTO_MAX_BYTES,
-        maxFiles: limits.maxFiles ?? previous?.maxFiles ?? DEFAULT_AUTO_MAX_FILES,
-    };
+    return { enabled: true, ...mergeLimits(previous, change) };
 }
 
 export const realAutoReclaimDeps = (): AutoReclaimDeps => {

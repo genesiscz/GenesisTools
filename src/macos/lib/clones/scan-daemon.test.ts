@@ -4,8 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     type AutoReclaimDeps,
+    armedAuto,
     formatAutoReclaimReport,
+    formatLimits,
     limitPlan,
+    mergeLimits,
     runAutoReclaims,
 } from "@app/macos/lib/clones/auto-reclaim";
 import { parseByteSize } from "@app/macos/lib/clones/min-real";
@@ -196,7 +199,7 @@ describe("auto reclaim", () => {
         expect(report).toContain("auto reclaim: 1 plan marked auto");
         expect(report).toContain("work: applied, 3 files cloned, 4.0 GB reclaimed, 0 skipped, 0 errors");
         expect(report).toContain(
-            "the plan found 6.0 GB in 3 sets; 2 sets, 3 files, 4.0 GB fit the limits 4.0 GB, 10 files"
+            "the plan found 6.0 GB in 3 sets; 2 sets, 3 files, 4.0 GB fit the limits (4.0 GB, 10 files)"
         );
     });
 
@@ -305,8 +308,18 @@ describe("auto reclaim", () => {
         expect(limited.droppedSets).toBe(1);
         expect(parseByteSize("5GB")).toBe(5 * GB);
         expect(parseByteSize("500 mb")).toBe(500 * 1024 ** 2);
-        expect(parseByteSize("1048576")).toBe(1048576);
+        expect(parseByteSize("1048576")).toBeNull();
         expect(parseByteSize("lots")).toBeNull();
         expect(parseByteSize("0")).toBeNull();
+    });
+
+    it("an absent limit does not limit, and none clears a stored one", () => {
+        const all = limitPlan(fakePlan(["/w/x"], sets), {});
+        expect(all.plan.sets).toHaveLength(sets.length);
+        expect(all.droppedSets).toBe(0);
+        expect(formatLimits({})).toBe("no limits");
+        expect(armedAuto(undefined, {})).toEqual({ enabled: true });
+        expect(mergeLimits({ maxBytes: 5 * GB, maxFiles: 500 }, { maxBytes: null })).toEqual({ maxFiles: 500 });
+        expect(mergeLimits({ maxBytes: 5 * GB }, { maxFiles: 9 })).toEqual({ maxBytes: 5 * GB, maxFiles: 9 });
     });
 });

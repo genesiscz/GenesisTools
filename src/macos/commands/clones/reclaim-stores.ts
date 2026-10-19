@@ -10,8 +10,6 @@ import { createBoxTable } from "@genesiscz/utils/table";
 import { Command, Option } from "commander";
 import pc from "picocolors";
 
-const DEFAULT_STORE_MIN = 1 << 20;
-
 interface StoresOpts {
     minSize: string;
     format?: string;
@@ -23,11 +21,7 @@ export function createStoresCommand(): Command {
         .description(
             "Report bun cache entries that no install tree clones (fully private bytes). Report only: it never deletes"
         )
-        .option(
-            "--min-size <size>",
-            `Judge each entry by its files of at least this size (${BYTE_SIZE_FORMS})`,
-            String(DEFAULT_STORE_MIN)
-        )
+        .option("--min-size <size>", `Judge each entry by its files of at least this size (${BYTE_SIZE_FORMS})`, "1MB")
         .addOption(new Option("--format <format>", "Output format").choices(["auto", "table", "json"]).default("auto"))
         .option("-v, --verbose", "Verbose logging", false)
         .action(async (opts: StoresOpts) => {
@@ -37,7 +31,7 @@ export function createStoresCommand(): Command {
                 console.error(`--min-size must be a positive size (${BYTE_SIZE_FORMS}), got "${opts.minSize}".`);
                 console.error(
                     suggestCommand("tools macos clones", {
-                        add: ["--min-size", String(DEFAULT_STORE_MIN)],
+                        add: ["--min-size", "1MB"],
                         subcommand: ["macos", "clones", "reclaim", "stores"],
                     })
                 );

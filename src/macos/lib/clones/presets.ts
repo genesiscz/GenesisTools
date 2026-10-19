@@ -33,10 +33,11 @@ export interface Preset {
 /** The guard rails of a plan the scan task runs on its own. */
 export interface PresetAuto {
     enabled: boolean;
-    /** At most this many bytes of duplicate copies are cloned in one run. */
-    maxBytes: number;
-    /** At most this many files are cloned in one run. */
-    maxFiles: number;
+    /** At most this many bytes of duplicate copies are cloned in one run. Absent: no limit, the default since
+     *  2026-10-19 (each clone is byte-compared first and the run can be rolled back). */
+    maxBytes?: number;
+    /** At most this many files are cloned in one run. Absent: no limit. */
+    maxFiles?: number;
     /** When the scan task first ran this plan as a dry run. Until then it only reports; turning auto on again clears
      *  it, so every new arming starts with a dry run. */
     dryRunAt?: string;

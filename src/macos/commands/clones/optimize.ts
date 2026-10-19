@@ -1,5 +1,6 @@
 import { resolveKinds } from "@app/macos/commands/clones/kinds";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
+import { addMinRealOptions } from "@app/macos/commands/clones/min-real-flags";
 import {
     closestProcessIds,
     IntegrityError,
@@ -20,8 +21,9 @@ import {
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { discoverRoots, RepoNotFoundError } from "@app/macos/lib/clones/discover";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
-import { BYTE_SIZE_FORMS, parseByteSize } from "@app/macos/lib/clones/min-real";
+import { type MinRealFlags, parseCount, resolveMinReal } from "@app/macos/lib/clones/min-real";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
+import { DEFAULT_MIN_REAL } from "@app/macos/lib/clones/reclaim";
 import { emitClonesError } from "@app/macos/lib/clones/render/envelope";
 import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import type { DuplicateSet, ProcessReport } from "@app/macos/lib/clones/render/types";
@@ -42,7 +44,8 @@ function collect(value: string, previous: string[]): string[] {
     return [...previous, value];
 }
 
-export interface OptimizeOpts {
+export interface OptimizeOpts extends MinRealFlags {
+    limit?: string;
     format?: string;
     apply?: boolean;
     rollback?: boolean;
@@ -55,7 +58,6 @@ export interface OptimizeOpts {
     dir: string[];
     worktreesOf?: string;
     targets?: string | boolean;
-    minReal: string;
     include: string[];
     exclude: string[];
     verbose?: boolean;
@@ -108,7 +110,7 @@ async function unknownProcess(format: string | undefined, command: string, id: s
 }
 
 export function createOptimizeCommand(): Command {
-    const cmd = new Command("optimize")
+    const cmd = addMinRealOptions(new Command("optimize"), "Minimum real size to consider", "10MB")
         .description(
             "Clone duplicate files of any kind under the roots you name (every file at or above --min-real); dry run by default, --apply acts (audited, reversible)"
         )
@@ -118,7 +120,8 @@ export function createOptimizeCommand(): Command {
         )
         .option("--apply", "Actually convert duplicates into clones (requires confirm)", false)
         .option("--rollback", "Un-share a previous process's clones (requires --process)", false)
-        .option("--list", "List recorded optimize runs", false)
+        .option("--list", "List recorded optimize runs, newest first", false)
+        .option("--limit <n>", "With --list: only the newest N runs")
         .option("--log", "Replay a process's JSONL audit log (requires --process)", false)
         .option("--process <id>", "Target process id for --log / --rollback")
         .option("--no-cache", "Ignore the 60 s plan cache; force a fresh scan")
@@ -130,7 +133,6 @@ export function createOptimizeCommand(): Command {
             "--targets [kinds]",
             `What to scan under --dir: ${TARGET_KIND_VALUES.join(", ")} (every file under each dir)`
         )
-        .option("--min-real <size>", `Minimum real size to consider (${BYTE_SIZE_FORMS})`, "10485760")
         .option("--include <glob>", "Include glob (repeatable)", collect, [])
         .option("--exclude <glob>", "Exclude glob (repeatable, wins over --include)", collect, [])
         .option("-v, --verbose", "Verbose logging", false)
@@ -138,7 +140,17 @@ export function createOptimizeCommand(): Command {
         .action(async (rootsArg: string[], opts: OptimizeOpts) => {
             applyLogLevel(opts);
             if (opts.list) {
-                await printLn(resolveRenderer(resolveFormat(opts.format)).processList(listProcesses()));
+                const limit = opts.limit === undefined ? undefined : parseCount(opts.limit);
+                if (limit === null) {
+                    const message = `--limit must be a whole number above 0, got "${opts.limit}".`;
+                    await invalidArguments(opts, message);
+                    console.error(message);
+                    process.exitCode = 1;
+                    return;
+                }
+
+                const report = listProcesses(limit === undefined ? {} : { limit });
+                await printLn(resolveRenderer(resolveFormat(opts.format)).processList(report));
                 process.exitCode = 0;
                 return;
             }
@@ -340,14 +352,15 @@ export function createOptimizeCommand(): Command {
                 process.exit(2);
             }
 
-            const minReal = parseByteSize(opts.minReal);
-            if (minReal === null) {
-                const message = `--min-real must be a positive size (${BYTE_SIZE_FORMS}), got "${opts.minReal}".`;
-                await invalidArguments(opts, message);
-                console.error(message);
+            const resolvedMinReal = resolveMinReal(opts, DEFAULT_MIN_REAL);
+            if ("error" in resolvedMinReal) {
+                await invalidArguments(opts, resolvedMinReal.error);
+                console.error(resolvedMinReal.error);
                 process.exitCode = 1;
                 return;
             }
+
+            const minReal = resolvedMinReal.bytes ?? DEFAULT_MIN_REAL;
 
             const cacheParams = planCacheParams({
                 roots,

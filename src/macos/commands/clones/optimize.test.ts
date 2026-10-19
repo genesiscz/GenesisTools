@@ -37,7 +37,7 @@ describe("createOptimizeCommand (dry-run default)", () => {
             );
             try {
                 await createOptimizeCommand().parseAsync(
-                    ["node", "optimize", dir, "--format", "json", "--min-real", "1024"],
+                    ["node", "optimize", dir, "--format", "json", "--min-real", "1KB"],
                     { from: "node" }
                 );
             } finally {
@@ -118,16 +118,29 @@ describe("optimize --list", () => {
                 return true;
             }
         );
+        let limited = "";
         try {
             await createOptimizeCommand().parseAsync(["node", "optimize", "--list", "--format", "json"], {
                 from: "node",
             });
+            const full = output;
+            output = "";
+            await createOptimizeCommand().parseAsync(
+                ["node", "optimize", "--list", "--limit", "1", "--format", "json"],
+                {
+                    from: "node",
+                }
+            );
+            limited = output;
+            output = full;
         } finally {
             stdoutSpy.mockRestore();
         }
 
         const parsed = SafeJSON.parse(output) as { processes: { id: string }[] };
         expect(parsed.processes.some((pr) => pr.id === id)).toBe(true);
+        // --limit reads only the newest runs; the one just written is the newest.
+        expect((SafeJSON.parse(limited) as { processes: { id: string }[] }).processes.map((pr) => pr.id)).toEqual([id]);
     });
 });
 
@@ -255,7 +268,7 @@ describe("optimize --dir", () => {
                         "--format",
                         "json",
                         "--min-real",
-                        "1024",
+                        "1KB",
                     ],
                     { from: "node" }
                 );
@@ -411,7 +424,7 @@ describe("optimize selector flags", () => {
         const outer = fixture();
         try {
             // `vendor` is empty, so a --targets that is honoured finds no roots.
-            const res = await capture([join(outer, "proj"), "--targets", "vendor", "--min-real", "1024"]);
+            const res = await capture([join(outer, "proj"), "--targets", "vendor", "--min-real", "1KB"]);
             expect(res.code).toBe(2);
             expect(res.err).toContain("No roots");
         } finally {
@@ -429,7 +442,7 @@ describe("optimize selector flags", () => {
                 "--targets",
                 "node_modules",
                 "--min-real",
-                "1024",
+                "1KB",
                 "--format",
                 "json",
             ]);

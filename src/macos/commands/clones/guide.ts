@@ -27,7 +27,7 @@ export function clonesGuide(): string {
         "  reclaim     the fleet door: name a directory, it finds the trees for you",
         "  config      watched dirs and defaults",
         "  daemon      the daily dry-run scan, which also applies presets armed",
-        "              with reclaim presets auto --on (clones only, within limits)",
+        "              with reclaim presets auto --on (clones only; no limits unless set)",
         "",
         "RECLAIM",
         `  ${toolCommand("macos clones reclaim plan", "--dir", "~/Projects/Acme")}`,
