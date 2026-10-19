@@ -840,15 +840,18 @@ export function parseGlabMrView({
         reviewDecision,
         approvals: approvalCount,
         body: str(row.description) ?? "",
+        // GitLab lists an MR's commits newest first, gh oldest first: every caller gets the oldest first.
         commits: commits
-            ? records(parseJson(commits, "glab commits")).map((commit) => ({
-                  sha: str(commit.id) ?? "",
-                  title: str(commit.title) ?? "",
-                  author: str(commit.author_name),
-                  authorLogin: null,
-                  date: str(commit.committed_date) ?? str(commit.authored_date),
-                  body: glabCommitBody(str(commit.message)),
-              }))
+            ? records(parseJson(commits, "glab commits"))
+                  .toReversed()
+                  .map((commit) => ({
+                      sha: str(commit.id) ?? "",
+                      title: str(commit.title) ?? "",
+                      author: str(commit.author_name),
+                      authorLogin: null,
+                      date: str(commit.committed_date) ?? str(commit.authored_date),
+                      body: glabCommitBody(str(commit.message)),
+                  }))
             : [],
         changedFiles,
         additions: null,

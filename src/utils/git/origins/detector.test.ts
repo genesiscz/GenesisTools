@@ -864,7 +864,8 @@ describe("GitLab MR list and view", () => {
                 { id: "c2", title: "Tidy", message: "Tidy\n", author_name: "Bob", committed_date: "d" },
             ]),
         });
-        expect(detail.commits.map((commit) => commit.body)).toEqual(["The reason.", null]);
+        // GitLab answers newest first; the detail is oldest first, as gh's.
+        expect(detail.commits.map((commit) => commit.body)).toEqual([null, "The reason."]);
     });
 });
 
