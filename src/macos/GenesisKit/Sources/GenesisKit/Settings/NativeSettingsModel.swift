@@ -221,6 +221,9 @@ public final class NativeSettingsAppearance: ObservableObject {
     private let keyPrefix: String
     private var observer: NSObjectProtocol?
     private var applyingExternal = false
+    /// Fields an earlier `migrateIfNeeded` set. Over defaults that drop writes (a settings snapshot) their keys stay
+    /// missing, and a second model's migration must not overwrite the first one's value.
+    private var migratedFields: Set<Field> = []
     private let log: Logger
 
     public init(
@@ -251,7 +254,9 @@ public final class NativeSettingsAppearance: ObservableObject {
 
     public func migrateIfNeeded(reduceMotion legacyMotion: Bool, reduceTransparency legacyTransparency: Bool) {
         let missingMotion = defaults.object(forKey: "\(keyPrefix).reduceMotion") == nil
+            && !migratedFields.contains(.motion)
         let missingTransparency = defaults.object(forKey: "\(keyPrefix).reduceTransparency") == nil
+            && !migratedFields.contains(.transparency)
         guard missingMotion || missingTransparency else { return }
         applyingExternal = true
         if missingMotion { reduceMotion = legacyMotion }
@@ -260,6 +265,7 @@ public final class NativeSettingsAppearance: ObservableObject {
         var changed: [Field] = []
         if missingMotion { changed.append(.motion) }
         if missingTransparency { changed.append(.transparency) }
+        migratedFields.formUnion(changed)
         persist(fields: changed)
     }
 

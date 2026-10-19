@@ -57,6 +57,27 @@ final class ClickySnapshotDefaultsTests: XCTestCase {
         XCTAssertEqual(defaults.persistentDomain(forName: suite)?.keys.sorted(), before)
     }
 
+    /// The widget model migrates its own legacy keys after Clicky (Parts.swift installs Clicky first). Over defaults
+    /// that drop writes the appearance keys stay missing, so the second migration must leave Clicky's value alone.
+    func testASecondMigrationKeepsTheFirstOneInASnapshot() throws {
+        let suite = "dev.genesis.clicky.snapshot.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var legacy = ClickyPreferences()
+        legacy.reduceMotion = true
+        defaults.set(try JSONEncoder().encode(legacy), forKey: "clicky.preferences.v1")
+        let readOnly = try XCTUnwrap(ReadOnlyDefaults(reading: suite))
+        let appearance = NativeSettingsAppearance(
+            defaults: readOnly, notificationNamespace: suite, observeExternalChanges: false)
+        let model = ClickyModel(defaults: readOnly, previewOnly: true, appearance: appearance, observeSystemEvents: false)
+        defer { model.shutdown() }
+
+        appearance.migrateIfNeeded(reduceMotion: false, reduceTransparency: false)
+
+        XCTAssertTrue(appearance.reduceMotion)
+        XCTAssertTrue(model.preferences.reduceMotion)
+    }
+
     func testOnlyASnapshotShellLeavesTheSharedAppearanceAndTheStandardDefaults() {
         let snapshot = FeatureSettingsShell(mode: .snapshot)
         XCTAssertFalse(snapshot.appearance === NativeSettingsAppearance.shared)
