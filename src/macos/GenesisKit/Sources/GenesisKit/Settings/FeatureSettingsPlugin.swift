@@ -17,6 +17,9 @@ public protocol FeatureSettingsPluginHost: AnyObject {
     var mode: FeatureSettingsMode { get }
     /// The appearance the window draws with; a plug-in model that edits the same keys shares this instance.
     var appearance: NativeSettingsAppearance { get }
+    /// The defaults the window and its plug-in models read and write: `.standard`, and in a snapshot a view of it that
+    /// drops every write (ReadOnlyDefaults), so drawing a page never changes the user's settings.
+    var defaults: UserDefaults { get }
     /// Adds a section to the sidebar, or replaces the section with the same id (ids are not reserved per plug-in, so
     /// give each section an id of your part). False when the sections would no longer be valid, such as two pages with
     /// one id: the window then keeps the sections it had.

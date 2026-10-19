@@ -24,14 +24,22 @@ package enum FeatureSettingsPlugins {
 @MainActor
 package final class FeatureSettingsShell: FeatureSettingsPluginHost {
     package let mode: FeatureSettingsMode
-    package let appearance = NativeSettingsAppearance.shared
+    package let defaults: UserDefaults
+    /// The live window's shared instance; a snapshot's own, over `defaults`, so a plug-in that migrates appearance
+    /// keys (Clicky, the widget) shows the result on every page and stores nothing.
+    package let appearance: NativeSettingsAppearance
+    /// A snapshot keeps no window frame and no selected page either.
     private lazy var window = FeatureSettingsWindowController(
-        sections: [FeatureSettingsPages.general, DaemonSettingsPages.section()], appearance: appearance)
+        sections: [FeatureSettingsPages.general, DaemonSettingsPages.section()], defaults: defaults,
+        appearance: appearance, frameAutosaveName: mode == .snapshot ? "" : "FeatureSettings.window")
     private var aboutInfo: [String] = []
     private(set) var plugins: [FeatureSettingsPlugin] = []
 
     init(mode: FeatureSettingsMode) {
         self.mode = mode
+        defaults = mode == .snapshot ? ReadOnlyDefaults() ?? .standard : .standard
+        appearance =
+            mode == .snapshot ? NativeSettingsAppearance(defaults: defaults, observeExternalChanges: false) : .shared
     }
 
     /// Builds every plug-in and installs it; About goes last, with the lines the plug-ins added.

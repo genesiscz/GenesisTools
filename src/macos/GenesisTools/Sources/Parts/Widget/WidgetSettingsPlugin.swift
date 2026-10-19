@@ -22,7 +22,11 @@ package final class WidgetSettingsPlugin: FeatureSettingsPlugin {
             return
         }
         flowRuntime = runtime
-        let model = WidgetModel(binaryPath: ToolsBridge.defaultBinaryPath(), stateRoot: stateRoot)
+        // The host's defaults and appearance: in a snapshot they drop every write, so the model's appearance
+        // migration and its legacy keys store nothing.
+        let model = WidgetModel(
+            binaryPath: ToolsBridge.defaultBinaryPath(), stateRoot: stateRoot, defaults: host.defaults,
+            appearance: host.appearance)
         self.model = model
         let transforms = FlowTransformTools(bridge: model.bridge, configuration: runtime.configuration)
         self.transforms = transforms

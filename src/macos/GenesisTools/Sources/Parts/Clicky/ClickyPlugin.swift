@@ -6,7 +6,8 @@ import GenesisKit
 @MainActor
 package final class ClickyPlugin: FeatureSettingsPlugin {
     /// The model a snapshot draws. Building the live model can write (a recovery copy of undecodable preferences, the
-    /// appearance keys it migrates), so a snapshot reads the user's state through defaults that drop every write.
+    /// appearance keys it migrates), so a snapshot model uses the host's defaults and appearance, which drop every
+    /// write in a snapshot.
     private var snapshotModel: ClickyModel?
 
     package init() {}
@@ -14,7 +15,9 @@ package final class ClickyPlugin: FeatureSettingsPlugin {
     package func install(in host: FeatureSettingsPluginHost) {
         // A headless run keeps the live model: its controls are driven on purpose and save like a click would.
         if host.mode == .snapshot {
-            let model = ClickyModel(defaults: ReadOnlyDefaults() ?? .standard, previewOnly: true, observeSystemEvents: false)
+            let model = ClickyModel(
+                defaults: host.defaults, previewOnly: true, appearance: host.appearance,
+                observeSystemEvents: false)
             snapshotModel = model
             host.register(section: ClickySettingsPages.section(model: model))
             host.addAboutInfo(ClickySettingsPages.aboutInfo)
@@ -45,20 +48,4 @@ package final class ClickyPlugin: FeatureSettingsPlugin {
         }
         ClickyHost.shared.stop()
     }
-}
-
-/// A defaults domain that reads like `UserDefaults(suiteName:)` and drops every write, for a run that must leave the
-/// user's settings as it found them (ClickyPlugin's snapshot model).
-final class ReadOnlyDefaults: UserDefaults {
-    init?(reading suiteName: String? = nil) {
-        super.init(suiteName: suiteName)
-    }
-
-    override func set(_ value: Any?, forKey defaultName: String) {}
-    override func set(_ value: Bool, forKey defaultName: String) {}
-    override func set(_ value: Int, forKey defaultName: String) {}
-    override func set(_ value: Float, forKey defaultName: String) {}
-    override func set(_ value: Double, forKey defaultName: String) {}
-    override func set(_ url: URL?, forKey defaultName: String) {}
-    override func removeObject(forKey defaultName: String) {}
 }
