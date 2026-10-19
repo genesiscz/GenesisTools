@@ -874,7 +874,7 @@ function renderMeta(meta: NonNullable<BridgeComment["meta"]>): HTMLElement {
     if (meta.fix) {
         const fix = element("div", "margin-top:6px");
         fix.appendChild(element("div", `${css.dim};margin-bottom:3px`, "Proposed fix:"));
-        fix.appendChild(fencedText(meta.fix));
+        fix.appendChild(richText(meta.fix));
         box.appendChild(fix);
     }
 
@@ -886,15 +886,6 @@ function renderMeta(meta: NonNullable<BridgeComment["meta"]>): HTMLElement {
         box.appendChild(details);
     }
 
-    return box;
-}
-
-/** Markdown with ``` fences: fenced parts become code blocks, the rest stays rich text. */
-function fencedText(text: string): HTMLElement {
-    const box = element("div", "");
-    for (const part of fencedParts(text)) {
-        box.appendChild(part.kind === "prose" ? richText(part.text) : codeBlock(part.text, part.language));
-    }
     return box;
 }
 
@@ -1138,7 +1129,27 @@ function button(label: string, onClick: () => void, primary = false, title?: str
 }
 
 /** Text with `code` spans and line breaks; everything else stays literal (no HTML injection). */
+/**
+ * A note's text: ``` fences become code blocks, the rest keeps its line breaks and `inline code`. A draft's
+ * fence showed as a literal "```ts" line with a stray backtick after the code (2026-10-19).
+ */
 function richText(text: string): HTMLElement {
+    const parts = fencedParts(text);
+
+    if (parts.length === 1 && parts[0].kind === "prose") {
+        return proseText(parts[0].text);
+    }
+
+    const box = element("div", "");
+
+    for (const part of parts) {
+        box.appendChild(part.kind === "prose" ? proseText(part.text) : codeBlock(part.text, part.language));
+    }
+
+    return box;
+}
+
+function proseText(text: string): HTMLElement {
     const body = element("div", css.body);
     const lines = text.split("\n");
 
