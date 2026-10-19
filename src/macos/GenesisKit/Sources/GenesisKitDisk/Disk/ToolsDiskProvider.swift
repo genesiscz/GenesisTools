@@ -94,8 +94,9 @@ public struct ClonesReclaimPlanOptions: Equatable, Sendable {
     public var dirs: [String]
     /// `--worktrees-of <repo>`: also resolve this repository's git worktrees.
     public var worktreesOf: String?
-    /// `--targets`: kinds (`gitignored`, `node_modules`, `vendor`, `Pods`, `.cxx`) or `find -name` patterns.
-    /// Nil uses the CLI default, `gitignored`.
+    /// `--targets`: kinds (`gitignored`, `node_modules`, `vendor`, `Pods`, `.cxx`, `all`) or `find -name` patterns.
+    /// `all` wins over the others: every file at or above `minReal` under each folder counts. Nil uses the CLI default,
+    /// `gitignored`.
     public var targets: [String]?
     /// `--keep-partners`: package-manager stores never rewritten.
     public var keepPartners: [ClonesKeepPartnerID]
@@ -148,8 +149,127 @@ public struct ClonesReclaimPlanOptions: Equatable, Sendable {
         if !rewriteStores.isEmpty { args += ["--rewrite-stores", rewriteStores.map(\.rawValue).joined(separator: ",")] }
         if keepUnfreeable { args.append("--keep-unfreeable") }
         for glob in exclude { args += ["--exclude", glob] }
-        if let minReal { args += ["--min-real", "\(minReal)B"] }
+        if let minReal { args += ["--min-real", ToolsDiskProvider.sizeArgument(minReal)] }
         return args
+    }
+}
+
+/// Filters that `clones measure`, `clones duplicates` and `clones optimize` share. Defaults are the CLI's.
+public struct ClonesScanFilters: Equatable, Sendable {
+    /// `--min-real`: measure hides smaller subtrees, duplicates and optimize ignore smaller files. Nil is the CLI
+    /// default (10 MB for measure and optimize, none for duplicates).
+    public var minReal: Int64?
+    /// `--node-modules`: expand each root to the node_modules folders under it.
+    public var nodeModules: Bool
+    /// Each one is an `--include` glob.
+    public var include: [String]
+    /// Each one is an `--exclude` glob. An exclude wins over an include.
+    public var exclude: [String]
+
+    public init(minReal: Int64? = nil, nodeModules: Bool = false, include: [String] = [], exclude: [String] = []) {
+        self.minReal = minReal
+        self.nodeModules = nodeModules
+        self.include = include
+        self.exclude = exclude
+    }
+
+    var arguments: [String] {
+        var args: [String] = []
+        if nodeModules { args.append("--node-modules") }
+        if let minReal { args += ["--min-real", ToolsDiskProvider.sizeArgument(minReal)] }
+        for glob in include { args += ["--include", glob] }
+        for glob in exclude { args += ["--exclude", glob] }
+        return args
+    }
+}
+
+/// How `clones measure` orders its rows.
+public enum ClonesMeasureSort: String, CaseIterable, Sendable {
+    /// du ÷ real: the folders du overstates most.
+    case overcount
+    case real
+    case du
+}
+
+/// What `tools macos clones measure` reports. Defaults are the CLI's.
+public struct ClonesMeasureOptions: Equatable, Sendable {
+    public var filters: ClonesScanFilters
+    /// `--top <n>`: only the first n rows. Nil shows every row.
+    public var top: Int?
+    /// `--sort`. Nil is the CLI default, `overcount`.
+    public var sort: ClonesMeasureSort?
+    /// False passes `--no-breakdown`: totals and the clone analysis only.
+    public var breakdown: Bool
+    /// False passes `--no-unique`: skips the deduplicated on-disk figure, which costs a second walk.
+    public var unique: Bool
+    /// `--show-partners`: probe bun's install cache for cross-tree partner paths (seconds on a large cache).
+    public var showPartners: Bool
+
+    public init(filters: ClonesScanFilters = ClonesScanFilters(), top: Int? = nil, sort: ClonesMeasureSort? = nil,
+                breakdown: Bool = true, unique: Bool = true, showPartners: Bool = false) {
+        self.filters = filters
+        self.top = top
+        self.sort = sort
+        self.breakdown = breakdown
+        self.unique = unique
+        self.showPartners = showPartners
+    }
+
+    var arguments: [String] {
+        var args = filters.arguments
+        if let top { args += ["--top", String(top)] }
+        if let sort { args += ["--sort", sort.rawValue] }
+        if !breakdown { args.append("--no-breakdown") }
+        if !unique { args.append("--no-unique") }
+        if showPartners { args.append("--show-partners") }
+        return args
+    }
+}
+
+/// What `tools macos clones duplicates` searches. JSON always returns every set, so there is no `--top` here.
+public struct ClonesDuplicatesOptions: Equatable, Sendable {
+    public var filters: ClonesScanFilters
+    /// `--prefix-hash`: a 4 KB hash before the full one. Helps a cold scan of mixed files; may slow a warm one.
+    public var prefixHash: Bool
+
+    public init(filters: ClonesScanFilters = ClonesScanFilters(), prefixHash: Bool = false) {
+        self.filters = filters
+        self.prefixHash = prefixHash
+    }
+
+    var arguments: [String] {
+        filters.arguments + (prefixHash ? ["--prefix-hash"] : [])
+    }
+}
+
+/// What `tools macos clones optimize` clones: every duplicate file at or above the minimum under `roots`, or under
+/// the trees found in `dirs` (and `worktreesOf`). Unlike reclaim, it needs no install trees.
+public struct ClonesOptimizeOptions: Equatable, Sendable {
+    /// Positional roots. With `dirs` or `worktreesOf`, the CLI searches them for trees too.
+    public var roots: [String]
+    /// Each one is a `--dir`: search this folder for install trees.
+    public var dirs: [String]
+    /// `--worktrees-of <repo>`.
+    public var worktreesOf: String?
+    /// `--targets`, as for reclaim. Used only with `dirs` or `worktreesOf`.
+    public var targets: [String]?
+    public var filters: ClonesScanFilters
+
+    public init(roots: [String] = [], dirs: [String] = [], worktreesOf: String? = nil, targets: [String]? = nil,
+                filters: ClonesScanFilters = ClonesScanFilters()) {
+        self.roots = roots
+        self.dirs = dirs
+        self.worktreesOf = worktreesOf
+        self.targets = targets
+        self.filters = filters
+    }
+
+    var arguments: [String] {
+        var args: [String] = []
+        for dir in dirs { args += ["--dir", dir] }
+        if let worktreesOf { args += ["--worktrees-of", worktreesOf] }
+        if let targets, !targets.isEmpty { args += ["--targets", targets.joined(separator: ",")] }
+        return args + filters.arguments
     }
 }
 
@@ -203,11 +323,11 @@ public struct ToolsDiskProvider: Sendable {
 
     // MARK: tools macos clones
 
-    /// `tools macos clones measure <paths...> --format json`. `minReal` hides subtrees below it (CLI default 10 MB).
-    public func clonesMeasure(paths: [String], minReal: Int64? = nil) async throws -> ClonesMeasureReport {
+    /// `tools macos clones measure <paths...> --format json`: clone-aware sizes per folder.
+    public func clonesMeasure(paths: [String], options: ClonesMeasureOptions = ClonesMeasureOptions()) async throws
+        -> ClonesMeasureReport {
         try Self.requirePaths(paths, command: "macos clones measure")
-        var args = ["clones", "measure"] + paths.map(Self.operand) + ["--format", "json"]
-        if let minReal { args += ["--min-real", "\(minReal)B"] }
+        let args = ["clones", "measure"] + paths.map(Self.operand) + ["--format", "json", "--silent"] + options.arguments
         return try await fetch(ClonesMeasureReport.self, command: "macos clones measure", subcommand: "macos", args: args)
     }
 
@@ -215,16 +335,18 @@ public struct ToolsDiskProvider: Sendable {
     public func clonesDu(path: String, depth: Int? = nil, minReal: Int64? = nil) async throws -> ClonesMeasureReport {
         var args = ["clones", "du", Self.operand(path), "--format", "json"]
         if let depth { args += ["--depth", String(depth)] }
-        if let minReal { args += ["--min-real", "\(minReal)B"] }
+        if let minReal { args += ["--min-real", Self.sizeArgument(minReal)] }
         return try await fetch(ClonesMeasureReport.self, command: "macos clones du", subcommand: "macos", args: args)
     }
 
-    /// `tools macos clones duplicates <paths...> --format json`. `minReal` ignores sets below it per file.
-    public func clonesDuplicates(paths: [String], minReal: Int64? = nil) async throws -> ClonesDuplicatesReport {
+    /// `tools macos clones duplicates <paths...> --format json`: content-identical files that are not clones yet.
+    public func clonesDuplicates(paths: [String], options: ClonesDuplicatesOptions = ClonesDuplicatesOptions())
+        async throws -> ClonesDuplicatesReport {
         try Self.requirePaths(paths, command: "macos clones duplicates")
-        var args = ["clones", "duplicates"] + paths.map(Self.operand) + ["--format", "json"]
-        if let minReal { args += ["--min-real", "\(minReal)B"] }
-        return try await fetch(ClonesDuplicatesReport.self, command: "macos clones duplicates", subcommand: "macos", args: args)
+        let args = ["clones", "duplicates"] + paths.map(Self.operand) + ["--format", "json", "--silent"]
+            + options.arguments
+        return try await fetch(ClonesDuplicatesReport.self, command: "macos clones duplicates", subcommand: "macos",
+                               args: args)
     }
 
     /// `tools macos clones reclaim plan --format json`: what apply would rewrite. Planning rewrites nothing.
@@ -347,6 +469,11 @@ public struct ToolsDiskProvider: Sendable {
     }
 
     /// A path as a command-line operand: a relative path that starts with `-` gets `./`, so it never parses as a flag.
+    /// A size flag's value in bytes with its unit: the CLI refuses a bare number.
+    public static func sizeArgument(_ bytes: Int64) -> String {
+        "\(bytes)B"
+    }
+
     static func operand(_ path: String) -> String {
         path.hasPrefix("-") ? "./" + path : path
     }
@@ -577,6 +704,114 @@ extension ToolsDiskProvider {
         return try Self.decode(RemovedLine.self, from: payload, command: "macos clones reclaim presets rm").removed
     }
 
+    /// `tools macos clones reclaim presets list --format json`: every saved selector with its last run and auto state.
+    public func clonesPresets() async throws -> [ClonesPreset] {
+        let payload = try await runClones(args: ["clones", "reclaim", "presets", "list", "--format", "json"],
+                                          command: "macos clones reclaim presets list", changesDisk: false)
+        return try Self.decode(PresetList.self, from: payload, command: "macos clones reclaim presets list").presets
+    }
+
+    /// The argv after `macos` for `clones reclaim presets run <id>`: a plan, or `--apply --yes`. `usesCachedPlan`
+    /// false passes `--no-cache` to an apply (a plan always rescans).
+    public static func clonesPresetRunArguments(id: String, apply: Bool, usesCachedPlan: Bool = true) -> [String] {
+        ["clones", "reclaim", "presets", "run", id, "--format", "json", "--silent", "--no-daemon"]
+            + (apply ? ["--apply", "--yes"] : [])
+            + (apply && !usesCachedPlan ? ["--no-cache"] : [])
+    }
+
+    /// `tools macos clones reclaim presets run <id> --format json`: plans the preset's whole saved selector and records
+    /// its last run and reclaimable bytes. Planning rewrites nothing.
+    public func clonesPresetPlan(id: String) async throws -> ClonesReclaimPlan {
+        let payload = try await runClones(args: Self.clonesPresetRunArguments(id: id, apply: false),
+                                          command: "macos clones reclaim presets run", changesDisk: false)
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.decode(ClonesReclaimPlan.self, from: payload, command: "macos clones reclaim presets run")
+        }.value
+    }
+
+    /// `tools macos clones reclaim presets run <id> --apply --yes --format json`: applies the preset's plan, reusing
+    /// a plan of the same selector from the last 60 s unless `usesCachedPlan` is false. Detached like
+    /// `clonesReclaimApply`; the preset records the run only when the apply completed.
+    public func clonesPresetApply(id: String, usesCachedPlan: Bool = true) async throws -> ClonesReclaimApplyOutcome {
+        let args = Self.clonesPresetRunArguments(id: id, apply: true, usesCachedPlan: usesCachedPlan)
+        let payload = try await runClones(args: args, command: "macos clones reclaim presets run --apply",
+                                          changesDisk: true)
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.decodeClonesReclaimApply(payload)
+        }.value
+    }
+
+    /// The argv after `macos` for `clones reclaim presets auto <id>`. `enabled` nil changes only the limits.
+    public static func clonesPresetAutoArguments(id: String, enabled: Bool?, maxBytes: ClonesAutoLimit<Int64> = .unchanged,
+                                                 maxFiles: ClonesAutoLimit<Int> = .unchanged) -> [String] {
+        var args = ["clones", "reclaim", "presets", "auto", id, "--json"]
+        if let enabled { args.append(enabled ? "--on" : "--off") }
+        switch maxBytes {
+        case .unchanged: break
+        case .set(let bytes): args += ["--max-bytes", sizeArgument(bytes)]
+        case .none: args += ["--max-bytes", "none"]
+        }
+        switch maxFiles {
+        case .unchanged: break
+        case .set(let files): args += ["--max-files", String(files)]
+        case .none: args += ["--max-files", "none"]
+        }
+        return args
+    }
+
+    /// `tools macos clones reclaim presets auto <id> --json`: lets the daily scan task run the preset on its own (the
+    /// first run after arming is a dry run), stops it, or changes its per-run limits. Returns the preset after it.
+    public func clonesPresetAuto(id: String, enabled: Bool?, maxBytes: ClonesAutoLimit<Int64> = .unchanged,
+                                 maxFiles: ClonesAutoLimit<Int> = .unchanged) async throws -> ClonesPreset {
+        let args = Self.clonesPresetAutoArguments(id: id, enabled: enabled, maxBytes: maxBytes, maxFiles: maxFiles)
+        let payload = try await runClones(args: args, command: "macos clones reclaim presets auto", changesDisk: false)
+        return try Self.decode(ClonesPreset.self, from: payload, command: "macos clones reclaim presets auto")
+    }
+
+    /// The argv after `macos` for `clones optimize --log --process <id>`.
+    public static func clonesProcessLogArguments(processId: String) -> [String] {
+        ["clones", "optimize", "--log", "--process", processId, "--format", "json", "--silent"]
+    }
+
+    /// `tools macos clones optimize --log --process <id> --format json`: a recorded run with every file operation
+    /// (keep, replace, status, hashes before and after, error). Reads the audit log; changes nothing.
+    public func clonesProcessLog(processId: String) async throws -> ClonesApplyResult {
+        let payload = try await runClones(args: Self.clonesProcessLogArguments(processId: processId),
+                                          command: "macos clones optimize --log", changesDisk: false)
+        return try await Task.detached(priority: .userInitiated) { try Self.decodeClonesApply(payload) }.value
+    }
+
+    /// The argv after `macos` for `clones optimize`: a dry run, or `--apply --yes`.
+    public static func clonesOptimizeArguments(_ options: ClonesOptimizeOptions, apply: Bool,
+                                               usesCachedPlan: Bool = true) -> [String] {
+        ["clones", "optimize"] + options.roots.map(operand) + ["--format", "json", "--silent"] + options.arguments
+            + (apply ? ["--apply", "--yes"] : [])
+            + (apply && !usesCachedPlan ? ["--no-cache"] : [])
+    }
+
+    /// `tools macos clones optimize --format json`: plans (a recorded dry run) or applies the cloning of every
+    /// duplicate file under the roots. An apply is audited and reversible with `clonesRollback`, and runs detached
+    /// with `actTimeoutSeconds`.
+    public func clonesOptimize(_ options: ClonesOptimizeOptions, apply: Bool,
+                               usesCachedPlan: Bool = true) async throws -> ClonesApplyResult {
+        try Self.requirePaths(options.roots + options.dirs, command: "macos clones optimize")
+        let args = Self.clonesOptimizeArguments(options, apply: apply, usesCachedPlan: usesCachedPlan)
+        let payload = try await runClones(args: args, command: apply ? "macos clones optimize --apply" : "macos clones optimize",
+                                          changesDisk: apply)
+        return try await Task.detached(priority: .userInitiated) { try Self.decodeClonesApply(payload) }.value
+    }
+
+    /// `tools macos clones reclaim stores --format json`: bun cache entries no install tree clones. Report only; it
+    /// deletes nothing. `minBytes` judges each entry by its files of at least that size (CLI default 64 KB).
+    public func clonesStoreReport(minBytes: Int64? = nil) async throws -> ClonesStoreReport {
+        var args = ["clones", "reclaim", "stores", "--format", "json"]
+        if let minBytes { args += ["--min-size", Self.sizeArgument(minBytes)] }
+        let payload = try await runClones(args: args, command: "macos clones reclaim stores", changesDisk: false)
+        return try await Task.detached(priority: .userInitiated) {
+            try Self.decode(ClonesStoreReport.self, from: payload, command: "macos clones reclaim stores")
+        }.value
+    }
+
     /// `tools macos clones daemon enable --json`: registers the daily scan and prune tasks.
     public func clonesDaemonEnable() async throws -> ClonesDaemonChange {
         let payload = try await runClones(args: ["clones", "daemon", "enable", "--json"],
@@ -599,13 +834,16 @@ extension ToolsDiskProvider {
 
     /// The argv after `macos` for `clones config`: `--list` prints the config; each added or removed folder is its
     /// own flag. A path with a comma cannot pass (the CLI splits comma lists), so it is refused.
-    public static func clonesConfigArguments(addDirs: [String] = [], removeDirs: [String] = []) throws -> [String] {
+    public static func clonesConfigArguments(addDirs: [String] = [], removeDirs: [String] = [], minReal: Int64? = nil,
+                                             nodeModules: Bool? = nil) throws -> [String] {
         if let bad = (addDirs + removeDirs).first(where: { $0.contains(",") }) {
             throw ToolsDiskProviderError.invalidArgument("tools macos clones config splits on commas: \(bad)")
         }
         var args = ["clones", "config", "--list"]
         for dir in addDirs { args += ["--add-dir", dir] }
         for dir in removeDirs { args += ["--remove-dir", dir] }
+        if let minReal { args += ["--set-min-real", sizeArgument(minReal)] }
+        if let nodeModules { args += ["--node-modules", nodeModules ? "on" : "off"] }
         return args
     }
 
@@ -615,11 +853,18 @@ extension ToolsDiskProvider {
                         args: Self.clonesConfigArguments())
     }
 
-    /// `tools macos clones config --add-dir … --remove-dir …`: the config after the change. The CLI skips a folder
-    /// that does not exist (compare `watchedDirs`).
-    public func clonesConfigUpdate(addDirs: [String] = [], removeDirs: [String] = []) async throws -> ClonesConfig {
+    /// `tools macos clones config --add-dir … --remove-dir … --set-min-real … --node-modules …`: the config after the
+    /// change. The CLI skips a folder that does not exist (compare `watchedDirs`). `minReal` and `nodeModules` are the
+    /// daily scan's defaults.
+    public func clonesConfigUpdate(addDirs: [String] = [], removeDirs: [String] = [], minReal: Int64? = nil,
+                                   nodeModules: Bool? = nil) async throws -> ClonesConfig {
         try await fetch(ClonesConfig.self, command: "macos clones config", subcommand: "macos",
-                        args: Self.clonesConfigArguments(addDirs: addDirs, removeDirs: removeDirs))
+                        args: Self.clonesConfigArguments(addDirs: addDirs, removeDirs: removeDirs, minReal: minReal,
+                                                         nodeModules: nodeModules))
+    }
+
+    private struct PresetList: Decodable {
+        var presets: [ClonesPreset]
     }
 
     private struct PresetLine: Decodable {

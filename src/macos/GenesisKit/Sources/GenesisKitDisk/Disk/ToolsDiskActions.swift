@@ -665,3 +665,57 @@ public struct ClonesConfig: Codable, Equatable, Sendable {
         self.daemon = daemon
     }
 }
+
+/// `tools macos clones reclaim stores --format json` (`src/macos/lib/clones/store-report.ts`): bun cache entries that
+/// no install tree clones now. Report only.
+public struct ClonesStoreReport: Codable, Equatable, Sendable {
+    /// The package-manager store that was read.
+    public struct Store: Codable, Equatable, Sendable {
+        public var id: ClonesKeepPartnerID
+        public var root: String
+
+        public init(id: ClonesKeepPartnerID, root: String) {
+            self.id = id
+            self.root = root
+        }
+    }
+
+    /// One cache entry (`name@version@@registry@@@1`, or `@scope/name@…`).
+    public struct Entry: Codable, Equatable, Identifiable, Sendable {
+        public var entry: String
+        public var files: Int
+        /// Private bytes of the entry's listed files, once per inode: what deleting the entry would free.
+        public var privateBytes: Int64
+
+        public var id: String { entry }
+
+        public init(entry: String, files: Int, privateBytes: Int64) {
+            self.entry = entry
+            self.files = files
+            self.privateBytes = privateBytes
+        }
+    }
+
+    public var store: Store
+    /// Only files of at least this size were judged.
+    public var minBytes: Int64
+    public var filesListed: Int
+    public var entries: [Entry]
+    public var totalPrivate: Int64
+
+    public init(store: Store, minBytes: Int64, filesListed: Int, entries: [Entry], totalPrivate: Int64) {
+        self.store = store
+        self.minBytes = minBytes
+        self.filesListed = filesListed
+        self.entries = entries
+        self.totalPrivate = totalPrivate
+    }
+}
+
+/// A per-run limit of an auto preset in `ToolsDiskProvider.clonesPresetAuto`: keep it, set it, or remove it.
+public enum ClonesAutoLimit<Value: Equatable & Sendable>: Equatable, Sendable {
+    case unchanged
+    case set(Value)
+    /// No limit: the run clones every set that is left.
+    case none
+}
