@@ -12,4 +12,9 @@ package final class HubSettingsPlugin: FeatureSettingsPlugin {
         host.register(section: HubSettingsPages.section())
         host.register(section: PRActivitySettingsPages.section())
     }
+
+    /// The PR activity page reads `tools hub notify status` when it appears; a snapshot of it waits for that.
+    package func settingsReady(page: String?) -> Bool {
+        page != PRActivitySettingsPages.pageID || HubNotifyStore.shared.settled
+    }
 }

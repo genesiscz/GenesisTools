@@ -39,6 +39,9 @@ public protocol FeatureSettingsPlugin: AnyObject {
     func install(in host: FeatureSettingsPluginHost)
     /// True once the pages have the data they draw. A snapshot waits for every plug-in.
     var settingsReady: Bool { get }
+    /// `settingsReady` for a snapshot of `page` (nil: the first page). A page that loads only when it appears answers
+    /// here, so a snapshot of another page does not wait for it.
+    func settingsReady(page: String?) -> Bool
     /// The window was asked for again while it runs (a second launch, a click in another window): reload what may be
     /// stale.
     func settingsReopened()
@@ -48,6 +51,7 @@ public protocol FeatureSettingsPlugin: AnyObject {
 
 extension FeatureSettingsPlugin {
     public var settingsReady: Bool { true }
+    public func settingsReady(page: String?) -> Bool { settingsReady }
     public func settingsReopened() {}
     public func stop() async {}
 }

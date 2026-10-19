@@ -28,9 +28,13 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
     /// The live window's shared instance; a snapshot's own, over `defaults`, so a plug-in that migrates appearance
     /// keys (Clicky, the widget) shows the result on every page and stores nothing.
     let appearance: NativeSettingsAppearance
+    /// The Daemon page's data. The shell owns it, so a snapshot of that page can wait for it like a plug-in's.
+    let daemon = DaemonSettingsStore()
+    /// The page a snapshot draws (nil: the first page).
+    var shownPageID: String?
     /// A snapshot keeps no window frame and no selected page either.
     private lazy var window = FeatureSettingsWindowController(
-        sections: [FeatureSettingsPages.general, DaemonSettingsPages.section()], defaults: defaults,
+        sections: [FeatureSettingsPages.general, DaemonSettingsPages.section(store: daemon)], defaults: defaults,
         appearance: appearance, frameAutosaveName: mode == .snapshot ? "" : "FeatureSettings.window")
     private var aboutInfo: [String] = []
     private(set) var plugins: [FeatureSettingsPlugin] = []
@@ -51,7 +55,12 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
         register(section: FeatureSettingsPages.about(additionalInfo: aboutInfo))
     }
 
-    var ready: Bool { plugins.allSatisfy(\.settingsReady) }
+    /// Every plug-in has its data, and so has the Daemon page when it is the one shown: in a build without plug-ins
+    /// the snapshot drew its loading placeholder (eve on #549).
+    var ready: Bool {
+        plugins.allSatisfy { $0.settingsReady(page: shownPageID) }
+            && (shownPageID != DaemonSettingsPages.pageID || daemon.settled)
+    }
 
     @discardableResult
     func register(section: NativeSettingsSection) -> Bool { window.register(section: section) }
@@ -76,6 +85,7 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
     /// server's own composite (`WindowSnapshot`), because `cacheDisplay` leaves Liquid Glass and everything it covers
     /// transparent.
     func snapshot(pageID: String?, to path: String, delay: Double) {
+        shownPageID = pageID
         let window = window.prepare(pageID: pageID)
         window.orderInForSnapshot()
         Task { @MainActor in

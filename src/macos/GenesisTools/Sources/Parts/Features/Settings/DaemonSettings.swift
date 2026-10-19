@@ -157,8 +157,6 @@ enum DaemonFormat {
 
 @MainActor
 final class DaemonSettingsStore: ObservableObject {
-    static let shared = DaemonSettingsStore()
-
     @Published private(set) var status: DaemonStatusPayload?
     @Published private(set) var stats: DaemonStatsPayload?
     @Published private(set) var loading = false
@@ -232,6 +230,9 @@ final class DaemonSettingsStore: ObservableObject {
             }
         }
     }
+
+    /// The first load has ended, with the tasks or with the error it shows; a snapshot of the page waits for it.
+    var settled: Bool { !loading && (status != nil || message != nil) }
 
     func stats(for task: String) -> DaemonTaskStats? {
         stats?.tasks.first { $0.task == task }
@@ -310,7 +311,7 @@ struct DaemonSettingsError: Error, CustomStringConvertible {
 enum DaemonSettingsPages {
     static let pageID = "daemon"
 
-    static func section() -> NativeSettingsSection {
+    static func section(store: DaemonSettingsStore) -> NativeSettingsSection {
         NativeSettingsSection(
             id: "background", title: "Background",
             pages: [
@@ -318,7 +319,7 @@ enum DaemonSettingsPages {
                     id: pageID, title: "Daemon", symbol: "gearshape.2", tint: .gray,
                     subtitle: "The tasks the GenesisTools daemon runs: their schedule, limits, runs and output."
                 ) {
-                    DaemonSettingsView(store: .shared)
+                    DaemonSettingsView(store: store)
                 },
             ], order: 37)
     }

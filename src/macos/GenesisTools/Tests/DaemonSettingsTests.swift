@@ -29,6 +29,38 @@ final class DaemonSettingsTests: XCTestCase {
      "health":null}
     """
 
+    @MainActor
+    func testASnapshotOfTheDaemonPageWaitsForItsData() {
+        let shell = FeatureSettingsShell(mode: .snapshot)
+        XCTAssertTrue(shell.plugins.isEmpty)
+        shell.shownPageID = DaemonSettingsPages.pageID
+        XCTAssertFalse(shell.daemon.settled)
+        XCTAssertFalse(shell.ready, "the Daemon page has no tasks yet")
+        shell.daemon.message = "tools daemon status failed"
+        XCTAssertTrue(shell.ready, "an error the page shows ends the wait")
+    }
+
+    @MainActor
+    func testASnapshotOfAnotherPageDoesNotWaitForTheDaemon() {
+        let shell = FeatureSettingsShell(mode: .snapshot)
+        shell.shownPageID = "general"
+        XCTAssertTrue(shell.ready)
+    }
+
+    @MainActor
+    func testASnapshotOfThePRActivityPageWaitsForTheNotifyStatus() {
+        let plugin = HubSettingsPlugin()
+        let store = HubNotifyStore.shared
+        defer { store.message = nil }
+        XCTAssertTrue(plugin.settingsReady(page: "general"))
+        XCTAssertEqual(plugin.settingsReady(page: PRActivitySettingsPages.pageID), store.settled)
+        if store.status == nil {
+            XCTAssertFalse(plugin.settingsReady(page: PRActivitySettingsPages.pageID), "no notify status yet")
+            store.message = "tools hub notify status exited 1"
+            XCTAssertTrue(plugin.settingsReady(page: PRActivitySettingsPages.pageID), "an error the page shows ends the wait")
+        }
+    }
+
     func testStatusDecodesEveryTaskSetting() throws {
         let status = try JSONDecoder().decode(DaemonStatusPayload.self, from: Data(statusJSON.utf8))
         XCTAssertEqual(status.daemon.pid, 4242)

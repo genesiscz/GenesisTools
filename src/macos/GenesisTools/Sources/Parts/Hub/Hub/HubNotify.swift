@@ -97,6 +97,9 @@ final class HubNotifyStore: ObservableObject {
         run(["hub", "notify", "status", "--json"], label: "notify.status", decodesStatus: true)
     }
 
+    /// The status read has ended, with the settings or with the error it shows.
+    var settled: Bool { !busy && (status != nil || message != nil) }
+
     /// One `tools hub notify set` change, then the status again.
     func set(_ flags: [String]) {
         run(["hub", "notify", "set"] + flags + ["--json"], label: "notify.set", reload: true)
