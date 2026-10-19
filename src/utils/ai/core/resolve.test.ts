@@ -4,8 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { APICallError, RetryError } from "ai";
 import { AiConfigStore } from "../config/AiConfigStore";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "../config/schema";
+import type { AccountUsageSnapshot } from "../providers/account-features";
+import type { ProviderBinding } from "../providers/plugin-types";
+import { type AutoCandidate, autoAccountCandidates, isAccountRefusal, runWithAutoAccount } from "./auto-account";
 import { ModelResolutionError, resolveModelTarget } from "./resolve";
 import { isUnlisted } from "./types";
 
@@ -347,5 +351,120 @@ describe("resolveModel — errors", () => {
         writeConfig({ defaults: { account: { chat: "@account/acc_max" } } });
 
         expect(resolveModelTarget("@proxy/onlyslug")).rejects.toThrow("@proxy/<slug>/<modelId>");
+    });
+});
+
+describe("auto account", () => {
+    const usage = (accountId: string, limits: AccountUsageSnapshot["limits"]): AccountUsageSnapshot => ({
+        provider: "anthropic-sub",
+        accountId,
+        accountName: accountId,
+        fetchedAt: "2026-10-19T12:00:00Z",
+        limits,
+    });
+    const refusal = (statusCode: number) =>
+        new APICallError({
+            message: `status ${statusCode}`,
+            url: "https://api.example.test",
+            requestBodyValues: {},
+            statusCode,
+        });
+
+    test("ranks subscription accounts by the room left in windows that apply, full ones last, paid ones never", async () => {
+        writeConfig({});
+        const candidates = await autoAccountCandidates({
+            snapshots: [
+                usage("acc_max", [{ key: "five_hour", label: "5h", kind: "session", percentUsed: 100 }]),
+                usage("acc_max2", [
+                    { key: "five_hour", label: "5h", kind: "session", percentUsed: 30 },
+                    // A Sonnet-only window says nothing about the Opus default, and credit is money, not room.
+                    {
+                        key: "seven_day_sonnet",
+                        label: "7d Sonnet",
+                        kind: "scoped",
+                        scopeModel: "sonnet",
+                        percentUsed: 99,
+                    },
+                    { key: "extra", label: "Extra", kind: "credit", percentUsed: 100 },
+                ]),
+            ],
+        });
+        const ids = candidates.map((candidate) => candidate.target.account.id);
+
+        expect(ids).not.toContain("acc_xai");
+        expect(ids.indexOf("acc_max2")).toBeLessThan(ids.indexOf("acc_max"));
+        expect(ids.at(-1)).toBe("acc_max");
+        expect(candidates.find((c) => c.target.account.id === "acc_max2")?.why).toBe("5h 30% used");
+        expect(candidates.find((c) => c.target.account.id === "acc_max")?.why).toBe("5h 100% used (full)");
+    });
+
+    test("isAccountRefusal: 401, 403 and 429, also wrapped in SDK retries; never a server error", () => {
+        expect(isAccountRefusal(refusal(429))).toBe(true);
+        expect(isAccountRefusal(refusal(403))).toBe(true);
+        expect(
+            isAccountRefusal(new RetryError({ message: "x", reason: "maxRetriesExceeded", errors: [refusal(429)] }))
+        ).toBe(true);
+        expect(isAccountRefusal(refusal(500))).toBe(false);
+        expect(isAccountRefusal(new Error("boom"))).toBe(false);
+    });
+
+    async function fakeCandidates(): Promise<{ candidates: AutoCandidate[]; disposed: string[] }> {
+        writeConfig({});
+        const disposed: string[] = [];
+        const candidates = await Promise.all(
+            ["acc_max", "acc_max2"].map(async (id) => {
+                const target = await resolveModelTarget(`@account/${id}`);
+                const binding: ProviderBinding = {
+                    accountId: id,
+                    providerId: target.account.provider,
+                    billed: false,
+                    language: () => {
+                        throw new Error("not called");
+                    },
+                    dispose: () => {
+                        disposed.push(id);
+                    },
+                };
+                return { target: { ...target, plugin: { ...target.plugin, bind: async () => binding } }, why: "x" };
+            })
+        );
+        return { candidates, disposed };
+    }
+
+    test("runWithAutoAccount moves to the next account when one refuses, and disposes each binding", async () => {
+        const { candidates, disposed } = await fakeCandidates();
+        const asked: string[] = [];
+        const result = await runWithAutoAccount({
+            candidates,
+            app: "test",
+            run: async (resolved) => {
+                asked.push(resolved.account.id);
+                if (resolved.account.id === "acc_max") {
+                    throw new RetryError({ message: "x", reason: "maxRetriesExceeded", errors: [refusal(429)] });
+                }
+
+                return "ok";
+            },
+        });
+
+        expect(result).toBe("ok");
+        expect(asked).toEqual(["acc_max", "acc_max2"]);
+        expect(disposed).toEqual(["acc_max", "acc_max2"]);
+    });
+
+    test("runWithAutoAccount rethrows an error another account would not fix, without trying the next", async () => {
+        const { candidates } = await fakeCandidates();
+        const asked: string[] = [];
+        const outcome = await runWithAutoAccount({
+            candidates,
+            app: "test",
+            run: async (resolved) => {
+                asked.push(resolved.account.id);
+                throw refusal(500);
+            },
+        }).catch((error: unknown) => error);
+
+        expect(APICallError.isInstance(outcome) && outcome.statusCode).toBe(500);
+        expect(asked).toEqual(["acc_max"]);
     });
 });

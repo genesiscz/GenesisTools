@@ -2,6 +2,12 @@ import { isValidLabel } from "@app/domains/lib/domain";
 import { request } from "@app/domains/lib/http";
 import { combine, type SuggestContext, type Suggestor } from "@app/domains/lib/suggest/types";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import {
+    type AutoAccountOptions,
+    type AutoCandidate,
+    autoAccountCandidates,
+    runWithAutoAccount,
+} from "@genesiscz/utils/ai/core/auto-account";
 import { callLLMStructured } from "@genesiscz/utils/ai/core/call";
 import { ModelResolutionError, resolveModelTarget } from "@genesiscz/utils/ai/core/resolve";
 import type { ResolvedBinding, ResolvedTarget } from "@genesiscz/utils/ai/core/types";
@@ -85,113 +91,134 @@ const SYSTEM_PROMPT =
     "real TLD finishes the word (genesiste.ch). Avoid words that sound rude in Czech, German, Spanish or " +
     "English. No hyphens.";
 
-async function optionalTarget(
-    resolve: () => Promise<ResolvedTarget>,
-    via: string
-): Promise<ResolvedTarget | undefined> {
+/** What the AI step will use: one account the user named, or the ranked subscription accounts. */
+export type BrainstormPlan = { kind: "fixed"; target: ResolvedTarget } | { kind: "auto"; candidates: AutoCandidate[] };
+
+/** A full ref (`@account/...`, `provider/model`) names an account; a bare id (`sonnet`) only names the model. */
+function isFullRef(model: string): boolean {
+    return model.startsWith("@") || model.includes("/");
+}
+
+/**
+ * Decide which account pays for the brainstorm:
+ *   `--account <name>`, a full `--model` ref, or the `domains` app default: the user's own choice, even a paid one;
+ *   else `auto` (also `--account auto`): every enabled subscription account, ranked by usage room;
+ *   else, only when no subscription account exists, the `ask` default (a paid account; the caller warns).
+ * Resolves only: no credential is read and nothing is bound.
+ */
+export async function brainstormPlan(options: {
+    account?: string;
+    model?: string;
+    snapshots?: AutoAccountOptions["snapshots"];
+}): Promise<BrainstormPlan> {
+    const store = await AiConfigStore.load();
+    const { account, model } = options;
+    const fixed = (ref: string | undefined, app: string) =>
+        resolveModelTarget(ref, { task: "chat", app, store }).then((target) => ({ kind: "fixed", target }) as const);
+
+    if (account && account !== "auto") {
+        const entry = store.account(account);
+
+        if (!entry) {
+            throw new Error(
+                `No AI account "${account}". List them with: ${toolCommand("ai config account list")}, or pass --account auto`
+            );
+        }
+
+        const bare = model && !isFullRef(model) ? `:${model}` : "";
+        return fixed(`@account/${entry.id}${bare}`, "domains");
+    }
+
+    if (!account && model && isFullRef(model)) {
+        return fixed(model, "domains");
+    }
+
+    const domainsDefault = store.data().defaults.app?.domains?.chat;
+
+    if (!account && !model && (domainsDefault?.model || domainsDefault?.provider)) {
+        return fixed(undefined, "domains");
+    }
+
+    const candidates = await autoAccountCandidates({
+        task: "chat",
+        store,
+        ...(model ? { model } : {}),
+        ...(options.snapshots ? { snapshots: options.snapshots } : {}),
+    });
+
+    if (candidates.length > 0) {
+        return { kind: "auto", candidates };
+    }
+
     try {
-        return await resolve();
+        return await fixed(model, "ask");
     } catch (error) {
-        // Only "nothing usable here" moves on; a credential or vault error is the real answer.
         if (!(error instanceof ModelResolutionError)) {
             throw error;
         }
 
-        logger.debug({ via, error }, "domains: no AI model here, trying the next");
-        return undefined;
-    }
-}
-
-/**
- * Pick the account without spending money the user did not ask to spend:
- *   an explicit `--model` ref or the `domains` app default (the user's own choice, honoured even when paid),
- *   else the `ask` default when it is a subscription or free account,
- *   else the first enabled subscription account that can chat,
- *   else the `ask` default after all (a paid account; the caller warns).
- * Resolves only: no credential is read and nothing is bound.
- */
-export async function brainstormTarget(model: string | undefined): Promise<ResolvedTarget> {
-    if (model) {
-        return resolveModelTarget(model, { task: "chat", app: "domains" });
-    }
-
-    const store = await AiConfigStore.load();
-    const domainsDefault = store.data().defaults.app?.domains?.chat;
-
-    if (domainsDefault?.model || domainsDefault?.provider) {
-        return resolveModelTarget(undefined, { task: "chat", app: "domains", store });
-    }
-
-    const askDefault = await optionalTarget(
-        () => resolveModelTarget(undefined, { task: "chat", app: "ask", store }),
-        "ask default"
-    );
-
-    if (askDefault && askDefault.account.billing.mode !== "metered") {
-        return askDefault;
-    }
-
-    for (const account of store.accounts({ billing: "subscription", enabled: true })) {
-        const target = await optionalTarget(
-            () => resolveModelTarget(`@account/${account.id}`, { task: "chat", store }),
-            `subscription ${account.name}`
+        throw new Error(
+            `AI suggestor: no subscription account and no default. Pass --account <name> or set one: ${toolCommand("ai config default set", "chat", "<ref>", "--app", "domains")}`,
+            { cause: error }
         );
-
-        if (target) {
-            return target;
-        }
     }
-
-    if (askDefault) {
-        return askDefault;
-    }
-
-    throw new Error(
-        `AI suggestor: no model. Pass --model <ref> or set one: ${toolCommand("ai config default set", "chat", "<ref>", "--app", "domains")}`
-    );
 }
 
 const warnedPaidAccounts = new Set<string>();
 
-async function resolveBrainstormModel(model: string | undefined): Promise<ResolvedBinding> {
-    const target = await brainstormTarget(model);
-    logger.debug(
-        { account: target.account.name, billing: target.account.billing.mode, model: target.model.id, via: target.via },
-        "domains: AI suggestor account"
-    );
-
-    if (target.account.billing.mode === "metered" && !warnedPaidAccounts.has(target.account.id)) {
-        warnedPaidAccounts.add(target.account.id);
-        out.log.warn(
-            `AI suggestor uses "${target.account.name}" (${target.account.provider}), a paid API account: every round costs money. ` +
-                `For a subscription account, pass --model @account/<id> or run ` +
-                toolCommand("ai config default set", "chat", "@account/<id>", "--app", "domains")
-        );
+function warnIfPaid(target: ResolvedTarget): void {
+    if (target.account.billing.mode !== "metered" || warnedPaidAccounts.has(target.account.id)) {
+        return;
     }
 
-    const binding = await target.plugin.bind({ account: target.account });
-    return { ...target, binding };
+    warnedPaidAccounts.add(target.account.id);
+    out.log.warn(
+        `AI suggestor uses "${target.account.name}" (${target.account.provider}), a paid API account: every round costs money. ` +
+            `For a subscription account, pass --account auto or --account <name>, or run ` +
+            toolCommand("ai config default set", "chat", "@account/<id>", "--app", "domains")
+    );
 }
 
 async function brainstorm(context: SuggestContext) {
-    const resolved = await resolveBrainstormModel(context.model);
-    try {
-        return await callLLMStructured({
+    const plan = await brainstormPlan({ account: context.account, model: context.model });
+    const call = (resolved: ResolvedBinding, maxRetries?: number) =>
+        callLLMStructured({
             model: resolved,
             systemPrompt: SYSTEM_PROMPT,
             userPrompt: aiUserPrompt(context),
             schema: AiNames,
             app: "domains",
             temperature: 0.9,
+            ...(maxRetries !== undefined ? { maxRetries } : {}),
         });
+
+    if (plan.kind === "auto") {
+        // No SDK retries: a full account answers 429 for hours, and the next account is the better retry.
+        return runWithAutoAccount({
+            candidates: plan.candidates,
+            app: "domains",
+            run: (resolved) => call(resolved, 0),
+        });
+    }
+
+    const { target } = plan;
+    logger.debug(
+        { account: target.account.name, billing: target.account.billing.mode, model: target.model.id, via: target.via },
+        "domains: AI suggestor account"
+    );
+    warnIfPaid(target);
+
+    const binding = await target.plugin.bind({ account: target.account });
+    try {
+        return await call({ ...target, binding });
     } finally {
-        await resolved.binding.dispose?.();
+        await binding.dispose?.();
     }
 }
 
 export const aiSuggestor: Suggestor = {
     id: "ai",
-    label: "LLM brainstorm (brandables, translations, hacks); a subscription account first, warns on a paid one",
+    label: "LLM brainstorm (brandables, translations, hacks); the subscription account with the most room, warns on a paid one",
     online: true,
     defaultOn: false,
     async suggest(context) {

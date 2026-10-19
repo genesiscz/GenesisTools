@@ -94,6 +94,8 @@ export interface CallLLMStructuredOptions<T> {
     schema: z.ZodType<T>;
     maxTokens?: number;
     temperature?: number;
+    /** The SDK's own retries; 0 lets a caller with another account to try fail at once. */
+    maxRetries?: number;
     /**
      * When set, the call streams via `streamObject` and invokes this with each
      * best-effort partial object. Falls back silently to `generateObject` when
@@ -547,6 +549,7 @@ async function runStructured<T>(
         providerOptions: buildProviderOptions(target.providerType),
         ...(maxTokens ? { maxOutputTokens: maxTokens } : {}),
         ...(temperature !== undefined ? { temperature } : {}),
+        ...(options.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
     };
 
     if (onPartial) {

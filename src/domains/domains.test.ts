@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
+import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { fetchLanding, type LandingNetwork, marketplaceForUrl, parkingServiceFor } from "./lib/aftermarket";
@@ -15,7 +16,7 @@ import { pronounceability, scoreCandidate } from "./lib/score";
 import { effectivePrice, withinBudget } from "./lib/search";
 import { blend, dropVowels, shortForms } from "./lib/suggest/basic";
 import { findHacks, hackSources } from "./lib/suggest/hacks";
-import { brainstormTarget } from "./lib/suggest/online";
+import { brainstormPlan } from "./lib/suggest/online";
 import { findVibeHits } from "./lib/vibe";
 import { applyObservations, changeReasons, type WatchChange } from "./lib/watch";
 
@@ -544,14 +545,30 @@ describe("AI suggestor account", () => {
     });
     const paid = account("acc_paid", { provider: "xai", billing: { mode: "metered" } });
     const work = account("acc_work");
+    const side = account("acc_side");
+    const usage = (accountId: string, percentUsed: number): AccountUsageSnapshot => ({
+        provider: "anthropic-sub",
+        accountId,
+        accountName: accountId,
+        fetchedAt: "2026-10-19T12:00:00Z",
+        limits: [{ key: "five_hour", label: "5h", kind: "session", percentUsed }],
+    });
+    const paidAsk = { app: { ask: { chat: { model: "@account/acc_paid:grok-4-fast" } } } };
 
     function writeConfig(config: Partial<AiConfigData>): void {
         const home = mkdtempSync(join(tmpdir(), "gt-domains-ai-"));
         env.testing.set("GENESIS_TOOLS_HOME", home);
         mkdirSync(join(home, ".genesis-tools", "ai"), { recursive: true });
-        const full: AiConfigData = { version: CONFIG_VERSION, accounts: [paid, work], defaults: {}, ...config };
+        const full: AiConfigData = { version: CONFIG_VERSION, accounts: [paid, work, side], defaults: {}, ...config };
         writeFileSync(join(home, ".genesis-tools", "ai", "config.json"), SafeJSON.stringify(full, null, 2));
         AiConfigStore.invalidate();
+    }
+
+    async function picked(options: Parameters<typeof brainstormPlan>[0]): Promise<string[]> {
+        const plan = await brainstormPlan(options);
+        return plan.kind === "fixed"
+            ? [plan.target.account.id]
+            : plan.candidates.map((candidate) => candidate.target.account.id);
     }
 
     beforeEach(() => AiConfigStore.invalidate());
@@ -560,33 +577,28 @@ describe("AI suggestor account", () => {
         AiConfigStore.invalidate();
     });
 
-    it("prefers a subscription account over a paid ask default", async () => {
-        writeConfig({ defaults: { app: { ask: { chat: { model: "@account/acc_paid:grok-4-fast" } } } } });
-        expect((await brainstormTarget(undefined)).account.id).toBe("acc_work");
+    it("auto ranks the subscription accounts by usage room and leaves the paid ask default out", async () => {
+        writeConfig({ defaults: paidAsk });
+        const snapshots = [usage("acc_work", 100), usage("acc_side", 24)];
+        expect(await picked({ snapshots })).toEqual(["acc_side", "acc_work"]);
+        expect(await picked({ account: "auto", snapshots })).toEqual(["acc_side", "acc_work"]);
     });
 
-    it("keeps a subscription ask default", async () => {
-        const side = account("acc_side");
-        writeConfig({
-            accounts: [paid, work, side],
-            defaults: { app: { ask: { chat: { model: "@account/acc_side" } } } },
-        });
-        expect((await brainstormTarget(undefined)).account.id).toBe("acc_side");
-    });
-
-    it("honours a paid domains default and a paid --model, which the user chose", async () => {
+    it("uses a named account, a full --model ref, or the domains default, even a paid one", async () => {
         writeConfig({ defaults: { app: { domains: { chat: { model: "@account/acc_paid:grok-4-fast" } } } } });
-        expect((await brainstormTarget(undefined)).account.id).toBe("acc_paid");
-        expect((await brainstormTarget("@account/acc_paid:grok-4-fast")).account.id).toBe("acc_paid");
+        expect(await picked({})).toEqual(["acc_paid"]);
+        expect(await picked({ account: "acc_side" })).toEqual(["acc_side"]);
+        expect(await picked({ model: "@account/acc_work" })).toEqual(["acc_work"]);
     });
 
     it("falls back to a paid ask default only when no subscription account exists", async () => {
-        writeConfig({
-            accounts: [paid],
-            defaults: { app: { ask: { chat: { model: "@account/acc_paid:grok-4-fast" } } } },
-        });
-        const target = await brainstormTarget(undefined);
-        expect(target.account.id).toBe("acc_paid");
-        expect(target.account.billing.mode).toBe("metered");
+        writeConfig({ accounts: [paid], defaults: paidAsk });
+        const plan = await brainstormPlan({ snapshots: [] });
+        expect(plan.kind === "fixed" && plan.target.account.billing.mode).toBe("metered");
+    });
+
+    it("names the fix for an unknown --account", async () => {
+        writeConfig({});
+        expect(brainstormPlan({ account: "nobody" })).rejects.toThrow("--account auto");
     });
 });

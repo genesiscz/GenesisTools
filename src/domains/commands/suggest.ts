@@ -15,7 +15,14 @@ export function createSuggestCommand(): Command {
         .option("-s, --suggestors <ids>", `suggestors to run (${suggestorIds().join(", ")})`)
         .option("--ai", "add the LLM brainstorm suggestor")
         .option("--about <text>", "one line about the business, for the AI suggestor")
-        .option("-m, --model <ref>", "model for the AI suggestor (default: the `domains` app default)")
+        .option(
+            "-m, --model <ref>",
+            "model for the AI suggestor: a bare id (sonnet) or a full ref (@account/<id>:<model>)"
+        )
+        .option(
+            "--account <name>",
+            "AI account for the AI suggestor, or auto: the subscription account with the most room (default)"
+        )
         .option("--offline", "skip suggestors that need the network")
         .option("--list", "list the suggestors and exit")
         .option("-n, --limit <n>", "rows to show", "60")
@@ -53,6 +60,7 @@ export function createSuggestCommand(): Command {
                 offline: opts.offline,
                 description: opts.about,
                 model: opts.model,
+                account: opts.account,
             });
             const ranked = candidates
                 .map((candidate) => ({ ...candidate, score: scoreCandidate(candidate) }))

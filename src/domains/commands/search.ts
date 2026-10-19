@@ -15,9 +15,16 @@ export function createSearchCommand(): Command {
         .argument("<seed...>", 'what the name is about, e.g. "Genesis Tech s.r.o."')
         .option("-t, --tlds <list>", "TLDs to combine with (comma-separated)")
         .option("-s, --suggestors <ids>", `suggestors to run (${suggestorIds().join(", ")})`)
-        .option("--ai", "add the LLM brainstorm suggestor (uses your default AI account)")
+        .option("--ai", "add the LLM brainstorm suggestor (a subscription account; warns before a paid one)")
         .option("--about <text>", "one line about the business, for the AI suggestor")
-        .option("-m, --model <ref>", "model for the AI suggestor (default: the `domains` app default)")
+        .option(
+            "-m, --model <ref>",
+            "model for the AI suggestor: a bare id (sonnet) or a full ref (@account/<id>:<model>)"
+        )
+        .option(
+            "--account <name>",
+            "AI account for the AI suggestor, or auto: the subscription account with the most room (default)"
+        )
         .option("--rounds <n>", "AI rounds; each later round learns from what was taken (needs --ai)", "1")
         .option("--offline", "skip suggestors that need the network")
         .option("--max-price <usd>", "hide names whose first year costs more, or whose price is unknown")
@@ -49,6 +56,7 @@ export function createSearchCommand(): Command {
                 offline: opts.offline,
                 description: opts.about,
                 model: opts.model,
+                account: opts.account,
                 checkLimit: Number.parseInt(opts.checkLimit, 10) || 150,
                 rounds: Number.parseInt(opts.rounds, 10) || 1,
                 maxPrice: parseMoney(opts.maxPrice),

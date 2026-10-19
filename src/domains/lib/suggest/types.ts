@@ -16,6 +16,8 @@ export interface SuggestContext {
     liked?: string[];
     /** ModelRef for the AI suggestor (`haiku`, `@account/<id>:<model>`); default: the `domains` app default. */
     model?: string;
+    /** AI account name or id, or `auto` (the subscription account with the most usage room, the default). */
+    account?: string;
 }
 
 export interface Suggestor {

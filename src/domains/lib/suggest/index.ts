@@ -42,6 +42,7 @@ export interface SuggestOptions {
     avoid?: string[];
     liked?: string[];
     model?: string;
+    account?: string;
 }
 
 export function buildContext(options: SuggestOptions): SuggestContext {
@@ -59,6 +60,7 @@ export function buildContext(options: SuggestOptions): SuggestContext {
         avoid: options.avoid,
         liked: options.liked,
         model: options.model,
+        account: options.account,
     };
 }
 
