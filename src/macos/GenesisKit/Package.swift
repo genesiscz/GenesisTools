@@ -13,11 +13,11 @@ import PackageDescription
 // Manager: disk providers) are Genesis's. GenesisTools.app links `GenesisKit` and imports the others only where it
 // uses them. They reach core helpers through `package` access, not `public`.
 //
-// `GENESIS_KIT_BASE_ONLY=1` declares GenesisKitBase alone, with no external package, for an app build that links only
-// the base (a host-only GenesisTools build, once the app links GenesisKitBase on its own): SwiftPM resolves every
-// package a manifest names, linked or not, and the three markdown packages cost about 6 s of a cold build that
-// compiles none of them. Setting it for a build that imports GenesisKit removes the product that build needs. Unset (Genesis.app,
-// `swift test`, a full GenesisTools build) declares everything.
+// `GENESIS_KIT_BASE_ONLY=1` declares GenesisKitBase alone, with no external package: GenesisTools' host-only build
+// (src/macos/lib/permissions/app.ts) sets it, because SwiftPM resolves every package a manifest names, linked or
+// not, and the three markdown packages cost about 6 s of a cold build that compiles none of them. Setting it for a
+// build that imports GenesisKit removes the product that build needs. Unset (Genesis.app, `swift test`, a full
+// GenesisTools build) declares everything.
 let baseOnly = ProcessInfo.processInfo.environment["GENESIS_KIT_BASE_ONLY"] == "1"
 
 // The small base every app links: permissions, perf, path opening and copying, `tools` access, motion and the host
