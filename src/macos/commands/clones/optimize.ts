@@ -109,7 +109,9 @@ async function unknownProcess(format: string | undefined, command: string, id: s
 
 export function createOptimizeCommand(): Command {
     const cmd = new Command("optimize")
-        .description("Dry-run by default; --apply to clone duplicates (audited, reversible)")
+        .description(
+            "Clone duplicate files of any kind under the roots you name (every file at or above --min-real); dry run by default, --apply acts (audited, reversible)"
+        )
         .argument("[roots...]", "Roots to optimize (default: configured watchedDirs, else cwd)")
         .addOption(
             new Option("--format <format>", "Output format").choices(["auto", "table", "json", "jsonl"]).default("auto")
@@ -124,7 +126,10 @@ export function createOptimizeCommand(): Command {
         .option("--node-modules", "Expand each root to its node_modules dirs", false)
         .option("--dir <path>", "Search this directory for install trees (repeatable)", collect, [])
         .option("--worktrees-of <repo>", "Resolve this repo's git worktrees, siblings included")
-        .option("--targets [kinds]", `What to scan under --dir: ${TARGET_KIND_VALUES.join(", ")}`)
+        .option(
+            "--targets [kinds]",
+            `What to scan under --dir: ${TARGET_KIND_VALUES.join(", ")} (every file under each dir)`
+        )
         .option("--min-real <bytes>", "Minimum real size to consider", "10485760")
         .option("--include <glob>", "Include glob (repeatable)", collect, [])
         .option("--exclude <glob>", "Exclude glob (repeatable, wins over --include)", collect, [])
@@ -411,6 +416,7 @@ export function createOptimizeCommand(): Command {
                                 minSize: cacheParams.minSize,
                                 include: cacheParams.include,
                                 exclude: cacheParams.exclude,
+                                ...(targets.length > 0 ? { pruneNames: [".git"] } : {}),
                                 cache: fileCache,
                                 signal: controller.signal,
                             })
@@ -495,6 +501,7 @@ export function createOptimizeCommand(): Command {
                         minSize: cacheParams.minSize,
                         include: cacheParams.include,
                         exclude: cacheParams.exclude,
+                        ...(targets.length > 0 ? { pruneNames: [".git"] } : {}),
                         cache: fileCache,
                         signal: controller.signal,
                     })

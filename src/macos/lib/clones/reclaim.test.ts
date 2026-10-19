@@ -36,6 +36,29 @@ describe("defaultSelector", () => {
 });
 
 describe("planReclaim", () => {
+    it("targets all finds a duplicate outside any install dir and never reads .git", async () => {
+        const outer = mkdtempSync(join(tmpdir(), "gt-cl-reclaim-all-"));
+        let runId = "";
+        try {
+            for (const name of ["w1", "w2"]) {
+                mkdirSync(join(outer, name, "bin"), { recursive: true });
+                mkdirSync(join(outer, name, ".git"), { recursive: true });
+                writeFileSync(join(outer, name, "bin", "tool"), Buffer.alloc(50_000, 3));
+                writeFileSync(join(outer, name, ".git", "pack"), Buffer.alloc(50_000, 4));
+            }
+
+            const plan = await planReclaim({ ...defaultSelector([outer]), targets: ["all"], minReal: 1024 });
+            runId = plan.runId;
+            expect(plan.roots).toEqual([realpathSync(outer)]);
+            expect(plan.sets.length).toBe(1);
+            expect(plan.sets[0].copies).toBe(2);
+            expect(plan.totalReclaimable).toBe(50_000);
+        } finally {
+            dropRunLog(runId);
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
     it("finds the duplicate shared by two sibling trees and logs the run", async () => {
         const outer = twoTrees();
         let runId = "";

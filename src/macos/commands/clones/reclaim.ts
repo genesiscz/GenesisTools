@@ -93,7 +93,10 @@ function applySelectorFlags(cmd: Command): Command {
         .argument("[dirs...]", "Directories to search (same as --dir)")
         .option("--dir <path>", "Directory to search (repeatable)", collect, [])
         .option("--worktrees-of <repo>", "Resolve this repo's git worktrees, siblings included")
-        .option("--targets [kinds]", `What to scan: ${TARGET_KIND_VALUES.join(", ")}, or a find -name pattern`)
+        .option(
+            "--targets [kinds]",
+            `What to scan: ${TARGET_KIND_VALUES.join(", ")} (every file under each dir, not only install dirs), or a find -name pattern that matches directory names`
+        )
         .option(
             "--keep-partners [ids]",
             `Package-manager stores never rewritten (${KEEP_PARTNER_IDS.join(", ")}); only bun also offers its cached copies as keep candidates`
@@ -784,7 +787,7 @@ function createPresetsCommand(): Command {
 
 export function createReclaimCommand(): Command {
     const group = new Command("reclaim").description(
-        "Find the install trees under a directory (worktrees included) and share their duplicates"
+        "Find the install trees under a directory (worktrees included) and share their duplicates; --targets all takes every file"
     );
     group.addCommand(createPlanCommand());
     group.addCommand(createApplyCommand());

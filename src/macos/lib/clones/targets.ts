@@ -31,8 +31,10 @@ async function spawnText(cmd: string, args: string[], stdin?: string): Promise<S
 
 /** Values `--targets` accepts. `gitignored` is the default when the flag is
  *  omitted: it means "the well-known install dirs, but only where git agrees
- *  they are ignored (or there is no repo to ask)". */
-export const TARGET_KIND_VALUES = ["gitignored", "node_modules", "vendor", "Pods", ".cxx"] as const;
+ *  they are ignored (or there is no repo to ask)". `all` makes each searched
+ *  dir a root of its own, so every file in it counts: a tracked binary that
+ *  each worktree checks out again is a duplicate no install dir holds. */
+export const TARGET_KIND_VALUES = ["gitignored", "node_modules", "vendor", "Pods", ".cxx", "all"] as const;
 
 export type TargetKind = (typeof TARGET_KIND_VALUES)[number];
 
@@ -198,10 +200,29 @@ function matchesExplicit(name: string, explicit: readonly string[]): boolean {
     return explicit.some((value) => value === name || minimatch(name, value, { dot: true, nocomment: true }));
 }
 
-/** Resolve `--dir` + `--targets` into concrete scan roots. Explicitly named
+/** The dirs with every dir inside another one dropped: a repo's worktrees
+ *  often live under its own `.worktrees/`, and a nested root would be walked
+ *  twice. */
+function outermostDirs(dirs: string[]): string[] {
+    const out: string[] = [];
+    for (const dir of [...new Set(dirs)].sort()) {
+        if (!out.some((root) => dir.startsWith(`${root}/`))) {
+            out.push(dir);
+        }
+    }
+
+    return out;
+}
+
+/** Resolve `--dir` + `--targets` into concrete scan roots. `all` returns the
+ *  dirs themselves (nested ones dropped) and skips the `find`. Explicitly named
  *  kinds (and explicit `find -name` patterns) bypass the gitignore filter; the
  *  composer rule always applies. */
 export async function expandTargets(args: { dirs: string[]; targets: string[] }): Promise<ExpandTargetsResult> {
+    if (args.targets.includes("all")) {
+        return { roots: outermostDirs(args.dirs), skipped: [] };
+    }
+
     const end = clonesProfile.start("expand");
     const ignoredMode = args.targets.includes("gitignored");
     const explicit = [...new Set(args.targets.filter((t) => t !== "gitignored"))];
