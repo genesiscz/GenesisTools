@@ -35,13 +35,18 @@
  * `src/<tool>/lib/` and import it from there.
  */
 import { posix } from "node:path";
-import { $ } from "bun";
 
 /** Top-level invocations that hand control to the CLI. */
 const RUNNER_CALL = /^\s*(?:await\s+)?(?:runTool\s*\(|main\s*\(\s*\)|program\s*\.\s*parse(?:Async)?\s*\()/;
 
+/**
+ * A plain spawn, never Bun's `$` shell: in the pre-push hook, where eight guards start at once, `$\`git
+ * ls-files src/\`` (8,700 lines, 360 KB) never returned in two pushes out of three, with no child left and
+ * the process idle, and the hook waited on it without end (2026-10-19). `check-tool-commands.ts` lists
+ * files the same way and never hung.
+ */
 async function trackedFiles(pattern: string): Promise<string[]> {
-    const result = await $`git ls-files ${pattern}`.nothrow().quiet();
+    const result = Bun.spawnSync(["git", "ls-files", pattern], { stdout: "pipe", stderr: "pipe" });
 
     if (result.exitCode !== 0) {
         console.error(`::error:: \`git ls-files\` failed (exit ${result.exitCode}) — refusing to report a clean scan.`);

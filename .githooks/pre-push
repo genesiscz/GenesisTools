@@ -83,11 +83,28 @@ guard_pids=""
 guard_names=""
 # The subshell inherits `set -e`, so a failing guard must not end it before its status is written:
 # `|| rc=$?` keeps the subshell alive and records the real exit code.
+# Every guard has a deadline: one that never returns (entrypoint-import-guard sat idle for 40 minutes
+# in a hook on 2026-10-19, and `wait` held the push with it) is killed and reported as "did not finish".
+guard_timeout="${GT_PRE_PUSH_GUARD_TIMEOUT:-180}"
 run_guard() {
     name="$1"
     shift
     guard_names="$guard_names $name"
-    (rc=0; "$@" > "$guard_dir/$name.log" 2>&1 || rc=$?; echo "$rc" > "$guard_dir/$name.status") &
+    (
+        rc=0
+        "$@" > "$guard_dir/$name.log" 2>&1 &
+        cmd=$!
+        (sleep "$guard_timeout"; kill "$cmd" 2>/dev/null) &
+        watchdog=$!
+        wait "$cmd" || rc=$?
+        # The watchdog is gone once it fired, and under `set -e` a failed kill would end this subshell here.
+        kill "$watchdog" 2>/dev/null || true
+        if [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; then
+            echo "✖ killed after ${guard_timeout}s (GT_PRE_PUSH_GUARD_TIMEOUT)" >> "$guard_dir/$name.log"
+        else
+            echo "$rc" > "$guard_dir/$name.status"
+        fi
+    ) &
     guard_pids="$guard_pids $!"
 }
 run_guard logging-guard bash scripts/ci/logging-guard.sh
