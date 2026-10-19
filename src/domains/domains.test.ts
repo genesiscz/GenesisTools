@@ -1,4 +1,11 @@
-import { describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { fetchLanding, type LandingNetwork, marketplaceForUrl, parkingServiceFor } from "./lib/aftermarket";
 import { mergeVerdicts } from "./lib/check";
 import { parseDomain, seedWords } from "./lib/domain";
@@ -8,6 +15,7 @@ import { pronounceability, scoreCandidate } from "./lib/score";
 import { effectivePrice, withinBudget } from "./lib/search";
 import { blend, dropVowels, shortForms } from "./lib/suggest/basic";
 import { findHacks, hackSources } from "./lib/suggest/hacks";
+import { brainstormTarget } from "./lib/suggest/online";
 import { findVibeHits } from "./lib/vibe";
 import { applyObservations, changeReasons, type WatchChange } from "./lib/watch";
 
@@ -520,5 +528,65 @@ describe("watch applyObservations", () => {
             applyObservations(watch, [change("a", "taken", "2026-10-18T10:05:00Z")], "2026-10-18T10:04:00Z")
         ).toEqual([]);
         expect(watch[0]).toEqual({ domain: "x.com", addedAt: "b" });
+    });
+});
+
+describe("AI suggestor account", () => {
+    const account = (id: string, overrides: Partial<AccountEntry> = {}): AccountEntry => ({
+        id,
+        name: id,
+        provider: "anthropic-sub",
+        enabled: true,
+        billing: { mode: "subscription" },
+        credentials: {},
+        useEnvApiKey: false,
+        ...overrides,
+    });
+    const paid = account("acc_paid", { provider: "xai", billing: { mode: "metered" } });
+    const work = account("acc_work");
+
+    function writeConfig(config: Partial<AiConfigData>): void {
+        const home = mkdtempSync(join(tmpdir(), "gt-domains-ai-"));
+        env.testing.set("GENESIS_TOOLS_HOME", home);
+        mkdirSync(join(home, ".genesis-tools", "ai"), { recursive: true });
+        const full: AiConfigData = { version: CONFIG_VERSION, accounts: [paid, work], defaults: {}, ...config };
+        writeFileSync(join(home, ".genesis-tools", "ai", "config.json"), SafeJSON.stringify(full, null, 2));
+        AiConfigStore.invalidate();
+    }
+
+    beforeEach(() => AiConfigStore.invalidate());
+    afterEach(() => {
+        env.testing.unset("GENESIS_TOOLS_HOME");
+        AiConfigStore.invalidate();
+    });
+
+    it("prefers a subscription account over a paid ask default", async () => {
+        writeConfig({ defaults: { app: { ask: { chat: { model: "@account/acc_paid:grok-4-fast" } } } } });
+        expect((await brainstormTarget(undefined)).account.id).toBe("acc_work");
+    });
+
+    it("keeps a subscription ask default", async () => {
+        const side = account("acc_side");
+        writeConfig({
+            accounts: [paid, work, side],
+            defaults: { app: { ask: { chat: { model: "@account/acc_side" } } } },
+        });
+        expect((await brainstormTarget(undefined)).account.id).toBe("acc_side");
+    });
+
+    it("honours a paid domains default and a paid --model, which the user chose", async () => {
+        writeConfig({ defaults: { app: { domains: { chat: { model: "@account/acc_paid:grok-4-fast" } } } } });
+        expect((await brainstormTarget(undefined)).account.id).toBe("acc_paid");
+        expect((await brainstormTarget("@account/acc_paid:grok-4-fast")).account.id).toBe("acc_paid");
+    });
+
+    it("falls back to a paid ask default only when no subscription account exists", async () => {
+        writeConfig({
+            accounts: [paid],
+            defaults: { app: { ask: { chat: { model: "@account/acc_paid:grok-4-fast" } } } },
+        });
+        const target = await brainstormTarget(undefined);
+        expect(target.account.id).toBe("acc_paid");
+        expect(target.account.billing.mode).toBe("metered");
     });
 });

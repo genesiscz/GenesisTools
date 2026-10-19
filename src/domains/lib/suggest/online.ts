@@ -1,11 +1,12 @@
 import { isValidLabel } from "@app/domains/lib/domain";
 import { request } from "@app/domains/lib/http";
 import { combine, type SuggestContext, type Suggestor } from "@app/domains/lib/suggest/types";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import { callLLMStructured } from "@genesiscz/utils/ai/core/call";
-import { ModelResolutionError, resolveModel } from "@genesiscz/utils/ai/core/resolve";
-import type { ResolvedBinding } from "@genesiscz/utils/ai/core/types";
+import { ModelResolutionError, resolveModelTarget } from "@genesiscz/utils/ai/core/resolve";
+import type { ResolvedBinding, ResolvedTarget } from "@genesiscz/utils/ai/core/types";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { z } from "zod";
 
 interface DatamuseWord {
@@ -84,34 +85,92 @@ const SYSTEM_PROMPT =
     "real TLD finishes the word (genesiste.ch). Avoid words that sound rude in Czech, German, Spanish or " +
     "English. No hyphens.";
 
+async function optionalTarget(
+    resolve: () => Promise<ResolvedTarget>,
+    via: string
+): Promise<ResolvedTarget | undefined> {
+    try {
+        return await resolve();
+    } catch (error) {
+        // Only "nothing usable here" moves on; a credential or vault error is the real answer.
+        if (!(error instanceof ModelResolutionError)) {
+            throw error;
+        }
+
+        logger.debug({ via, error }, "domains: no AI model here, trying the next");
+        return undefined;
+    }
+}
+
 /**
- * Resolve the model ourselves: an explicit `--model` ref, else the `domains` app's chat default, else the
- * `ask` app's (the account you already chat with), so `--ai` works without extra setup.
+ * Pick the account without spending money the user did not ask to spend:
+ *   an explicit `--model` ref or the `domains` app default (the user's own choice, honoured even when paid),
+ *   else the `ask` default when it is a subscription or free account,
+ *   else the first enabled subscription account that can chat,
+ *   else the `ask` default after all (a paid account; the caller warns).
+ * Resolves only: no credential is read and nothing is bound.
  */
-async function resolveBrainstormModel(model: string | undefined): Promise<ResolvedBinding> {
+export async function brainstormTarget(model: string | undefined): Promise<ResolvedTarget> {
     if (model) {
-        return resolveModel(model, { task: "chat", app: "domains" });
+        return resolveModelTarget(model, { task: "chat", app: "domains" });
     }
 
-    let lastError: unknown;
-    for (const app of ["domains", "ask"]) {
-        try {
-            return await resolveModel(undefined, { task: "chat", app });
-        } catch (error) {
-            // Only "nothing configured" moves on; a credential or vault error is the real answer.
-            if (!(error instanceof ModelResolutionError)) {
-                throw error;
-            }
+    const store = await AiConfigStore.load();
+    const domainsDefault = store.data().defaults.app?.domains?.chat;
 
-            logger.debug({ app, error }, "domains: no AI model for this app, trying the next");
-            lastError = error;
+    if (domainsDefault?.model || domainsDefault?.provider) {
+        return resolveModelTarget(undefined, { task: "chat", app: "domains", store });
+    }
+
+    const askDefault = await optionalTarget(
+        () => resolveModelTarget(undefined, { task: "chat", app: "ask", store }),
+        "ask default"
+    );
+
+    if (askDefault && askDefault.account.billing.mode !== "metered") {
+        return askDefault;
+    }
+
+    for (const account of store.accounts({ billing: "subscription", enabled: true })) {
+        const target = await optionalTarget(
+            () => resolveModelTarget(`@account/${account.id}`, { task: "chat", store }),
+            `subscription ${account.name}`
+        );
+
+        if (target) {
+            return target;
         }
     }
 
+    if (askDefault) {
+        return askDefault;
+    }
+
     throw new Error(
-        `AI suggestor: no model. Pass --model <ref> or set one: ${toolCommand("ai config default set", "chat", "<ref>", "--app", "domains")}`,
-        { cause: lastError }
+        `AI suggestor: no model. Pass --model <ref> or set one: ${toolCommand("ai config default set", "chat", "<ref>", "--app", "domains")}`
     );
+}
+
+const warnedPaidAccounts = new Set<string>();
+
+async function resolveBrainstormModel(model: string | undefined): Promise<ResolvedBinding> {
+    const target = await brainstormTarget(model);
+    logger.debug(
+        { account: target.account.name, billing: target.account.billing.mode, model: target.model.id, via: target.via },
+        "domains: AI suggestor account"
+    );
+
+    if (target.account.billing.mode === "metered" && !warnedPaidAccounts.has(target.account.id)) {
+        warnedPaidAccounts.add(target.account.id);
+        out.log.warn(
+            `AI suggestor uses "${target.account.name}" (${target.account.provider}), a paid API account: every round costs money. ` +
+                `For a subscription account, pass --model @account/<id> or run ` +
+                toolCommand("ai config default set", "chat", "@account/<id>", "--app", "domains")
+        );
+    }
+
+    const binding = await target.plugin.bind({ account: target.account });
+    return { ...target, binding };
 }
 
 async function brainstorm(context: SuggestContext) {
@@ -132,7 +191,7 @@ async function brainstorm(context: SuggestContext) {
 
 export const aiSuggestor: Suggestor = {
     id: "ai",
-    label: "LLM brainstorm (brandables, translations, hacks); uses your default AI account",
+    label: "LLM brainstorm (brandables, translations, hacks); a subscription account first, warns on a paid one",
     online: true,
     defaultOn: false,
     async suggest(context) {
