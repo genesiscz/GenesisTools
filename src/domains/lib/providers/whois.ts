@@ -1,0 +1,284 @@
+import { connect } from "node:net";
+import { storage } from "@app/domains/lib/http";
+import { rdapBaseFor } from "@app/domains/lib/providers/rdap";
+import type { DomainProvider } from "@app/domains/lib/providers/types";
+import type { ParsedDomain, ProviderVerdict } from "@app/domains/lib/types";
+import { logger } from "@genesiscz/utils/logger";
+
+const IANA_WHOIS = "whois.iana.org";
+const TIMEOUT_MS = 12_000;
+
+/** Phrases registries use for "no such domain". Matched case-insensitively against the whole reply. */
+const NOT_FOUND_PATTERNS = [
+    /no match for/i,
+    /^no match/im,
+    /not found/i,
+    /no data found/i,
+    /no entries found/i,
+    /no object found/i,
+    /status:\s*(free|available)/i,
+    /domain (name )?not (found|registered)/i,
+    /is available for (registration|purchase)/i,
+    /the queried object does not exist/i,
+    /no information available/i,
+    /^%% no entries found/im,
+];
+
+/** Replies that mean "ask again later", which must never read as "available". */
+const THROTTLE_PATTERNS = [/limit exceeded/i, /too many (queries|requests)/i, /try again later/i, /quota/i];
+
+/** The registry blocks the name: nobody can register it at a registrar. */
+const RESERVED_PATTERNS = [
+    /reserved (by|for) the registry/i,
+    /^[ \t]*status:[ \t]*(reserved|not allowed|blocked)\b/im,
+    /(this|the) (domain|name)( name)? (is|has been) reserved/i,
+];
+
+/** Lines only a registered name's record carries. Without one, the reply proves nothing. */
+const REGISTERED_PATTERNS = [
+    /^[ \t]*registrar(?: name)?:/im,
+    /^[ \t]*registry domain id:/im,
+    /^[ \t]*(?:creation date|created|registered|registration date|registered on):[ \t]*\S/im,
+    /^[ \t]*(?:registry expiry date|expir\w* date|expire[sd]?|paid-till):[ \t]*\S/im,
+    /^[ \t]*(?:name server|nserver|nameservers?):[ \t]*\S/im,
+    /^[ \t]*status:[ \t]*(?:connect|registered|active|ok|client\w*|server\w*|locked)\b/im,
+];
+
+/** Some registries need a flag before the name to return the plain record. */
+const QUERY_FORMAT: Record<string, (domain: string) => string> = {
+    de: (domain) => `-T dn,ace ${domain}`,
+    jp: (domain) => `${domain}/e`,
+};
+
+/** A WHOIS record is a few KB; anything past this is not a record worth reading. */
+const MAX_REPLY_BYTES = 64 * 1024;
+
+/**
+ * One port-43 query. The deadline covers the whole exchange (a peer that trickles bytes cannot hold it open),
+ * and a reply longer than MAX_REPLY_BYTES is cut there.
+ */
+export function whoisQuery(server: string, query: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const socket = connect({ host: server, port: 43 });
+        const chunks: Buffer[] = [];
+        let size = 0;
+        let settled = false;
+        const finish = (error?: Error) => {
+            if (settled) {
+                return;
+            }
+
+            settled = true;
+            clearTimeout(deadline);
+            socket.destroy();
+            if (error) {
+                reject(error);
+            } else {
+                resolve(Buffer.concat(chunks).toString("utf8"));
+            }
+        };
+        const deadline = setTimeout(
+            () => finish(new Error(`WHOIS ${server}: no full reply in ${TIMEOUT_MS} ms`)),
+            TIMEOUT_MS
+        );
+        socket.on("connect", () => socket.write(`${query}\r\n`));
+        socket.on("data", (chunk: Buffer) => {
+            const room = MAX_REPLY_BYTES - size;
+            chunks.push(chunk.subarray(0, room));
+            size += Math.min(chunk.byteLength, room);
+            if (size >= MAX_REPLY_BYTES) {
+                logger.debug({ server, bytes: size }, "domains: WHOIS reply cut at the size limit");
+                finish();
+            }
+        });
+        socket.on("error", (error) => finish(error));
+        socket.on("close", () => finish());
+    });
+}
+
+const SERVERS_CACHE = "whois/servers.json";
+const SERVERS_TTL = "7 days";
+const serverLookups = new Map<string, Promise<string | null>>();
+let serverWrites: Promise<void> = Promise.resolve();
+
+function readServers(): Promise<Record<string, string | null>> {
+    return storage
+        .getCacheFile<Record<string, string | null>>(SERVERS_CACHE, SERVERS_TTL)
+        .then((servers) => servers ?? {});
+}
+
+/** Writes run one at a time, each on a fresh read, so two TLDs resolved together both stay cached. */
+function storeServer(tld: string, server: string | null): Promise<void> {
+    const write = serverWrites.then(async () => {
+        const servers = await readServers();
+        servers[tld] = server;
+        await storage.putCacheFile(SERVERS_CACHE, servers, SERVERS_TTL);
+    });
+    serverWrites = write.catch(() => undefined);
+    return write;
+}
+
+async function lookupWhoisServer(tld: string): Promise<string | null> {
+    const servers = await readServers();
+    if (tld in servers) {
+        return servers[tld];
+    }
+
+    const reply = await whoisQuery(IANA_WHOIS, tld);
+    // No "domain:" record means IANA did not answer for this TLD (an error or a cut reply): do not cache that.
+    if (!/^domain:/im.test(reply)) {
+        throw new Error(`whois.iana.org returned no record for .${tld}`);
+    }
+
+    const host = reply.match(/^whois:[ \t]*(\S+)/im)?.[1]?.toLowerCase();
+    const server = host?.includes(".") ? host : null;
+    await storeServer(tld, server);
+    logger.debug({ tld, server }, "domains: WHOIS server resolved");
+    return server;
+}
+
+/** The registry WHOIS host for a TLD, from IANA's own WHOIS (`whois:` line), cached for a week. */
+export function whoisServerFor(tld: string): Promise<string | null> {
+    let lookup = serverLookups.get(tld);
+    if (!lookup) {
+        lookup = lookupWhoisServer(tld).finally(() => serverLookups.delete(tld));
+        serverLookups.set(tld, lookup);
+    }
+
+    return lookup;
+}
+
+function stripComments(reply: string): string {
+    return reply
+        .split("\n")
+        .filter((line) => !/^\s*[%#]/.test(line))
+        .join("\n");
+}
+
+export type WhoisVerdict = "available" | "taken" | "reserved" | "throttled" | "unknown";
+
+/** Where a registry's legal boilerplate starts; it can say "not found" or "too many queries" in another sense. */
+const BOILERPLATE_MARKER = "(?:>>>|terms of use|terms and conditions|notice:|disclaimer|the data in this record)";
+const BOILERPLATE_START = new RegExp(`^[ \\t]*${BOILERPLATE_MARKER}`, "im");
+const COMMENTED_BOILERPLATE_START = new RegExp(`^[ \\t]*[%#][%# \\t]*${BOILERPLATE_MARKER}`, "im");
+
+/**
+ * The reply up to the boilerplate, comment lines included. A commented marker ("% Terms of Use: ...") ends the
+ * answer only after the answer has begun: a banner at the top (.de opens with "% Terms and Conditions of Use")
+ * comes before the answer, not after it.
+ */
+function beforeBoilerplate(reply: string): string {
+    const ends = [reply.search(BOILERPLATE_START)];
+    const answerStart = reply.search(/^[ \t]*[^%#\s]/m);
+    if (answerStart !== -1) {
+        const commented = reply.slice(answerStart).search(COMMENTED_BOILERPLATE_START);
+        ends.push(commented === -1 ? -1 : answerStart + commented);
+    }
+
+    const found = ends.filter((end) => end !== -1);
+    return found.length === 0 ? reply : reply.slice(0, Math.min(...found));
+}
+
+export function interpretWhois(reply: string): WhoisVerdict {
+    const region = beforeBoilerplate(reply);
+    // First, so a refusal that also says "no information available" never reads as free. Comment lines count
+    // here ("% Query limit exceeded"); the terms after the answer do not (.io, .me and .sh say "too many
+    // queries" in every reply's terms).
+    if (THROTTLE_PATTERNS.some((pattern) => pattern.test(region))) {
+        return "throttled";
+    }
+
+    // The answer itself: comment banners removed, at most 1500 characters.
+    const answer = stripComments(region).slice(0, 1500);
+
+    if (RESERVED_PATTERNS.some((pattern) => pattern.test(answer))) {
+        return "reserved";
+    }
+
+    if (NOT_FOUND_PATTERNS.some((pattern) => pattern.test(answer))) {
+        return "available";
+    }
+
+    // An empty close or an access-denied banner proves nothing either way.
+    return REGISTERED_PATTERNS.some((pattern) => pattern.test(answer)) ? "taken" : "unknown";
+}
+
+/** Fields worth showing from a raw record; each registry formats them differently. */
+export function whoisFields(reply: string): { registrar?: string; expiresAt?: string; nameservers: string[] } {
+    const pick = (...patterns: RegExp[]) =>
+        patterns.map((re) => reply.match(re)?.[1]?.trim()).find((value) => value !== undefined && value !== "");
+    const nameservers = [...reply.matchAll(/^[ \t]*(?:name server|nserver|nameserver)s?:[ \t]*(\S+)/gim)].map((m) =>
+        m[1].toLowerCase().replace(/\.$/, "")
+    );
+    return {
+        registrar: pick(/^[ \t]*registrar(?: name)?:[ \t]*(\S.*)$/im, /^registrar:[ \t]*\r?\n[ \t]+name:[ \t]*(.+)$/im),
+        expiresAt: pick(/^[ \t]*(?:registry expiry date|expir\w* date|expire[sd]?|paid-till):[ \t]*(\S.*)$/im),
+        nameservers: [...new Set(nameservers)],
+    };
+}
+
+export interface WhoisRecord {
+    server: string;
+    found: boolean;
+    registrar?: string;
+    expiresAt?: string;
+    nameservers: string[];
+}
+
+/** The raw registry record for a name, parsed; null when the TLD has no WHOIS server. */
+export async function whoisRecord(parsed: ParsedDomain): Promise<WhoisRecord | null> {
+    const server = await whoisServerFor(parsed.tld);
+    if (!server) {
+        return null;
+    }
+
+    const reply = await whoisQuery(server, QUERY_FORMAT[parsed.tld]?.(parsed.domain) ?? parsed.domain);
+    return { server, found: interpretWhois(reply) === "taken", ...whoisFields(reply) };
+}
+
+/** Port-43 WHOIS. Used for TLDs with no RDAP server (.io, .co, .sh, .eu, .gg ...). */
+export const whoisProvider: DomainProvider = {
+    id: "whois",
+    label: "WHOIS port 43 (fallback, no auth)",
+    capabilities: { availability: true, price: false, registration: true },
+
+    async status() {
+        return { configured: true, detail: "no auth; server from whois.iana.org" };
+    },
+
+    async supports(tld) {
+        if (await rdapBaseFor(tld)) {
+            return false;
+        }
+
+        return (await whoisServerFor(tld)) !== null;
+    },
+
+    async check(parsed: ParsedDomain): Promise<ProviderVerdict> {
+        const server = await whoisServerFor(parsed.tld);
+        if (!server) {
+            return { provider: "whois", status: "unknown", detail: "no WHOIS server" };
+        }
+
+        const reply = await whoisQuery(server, QUERY_FORMAT[parsed.tld]?.(parsed.domain) ?? parsed.domain);
+        const verdict = interpretWhois(reply);
+        if (verdict === "throttled") {
+            return { provider: "whois", status: "unknown", detail: `${server} rate limited` };
+        }
+
+        if (verdict === "unknown") {
+            const said = stripComments(reply).trim().split("\n")[0]?.slice(0, 80);
+            return { provider: "whois", status: "unknown", detail: `${server}: ${said || "empty reply"}` };
+        }
+
+        if (verdict === "reserved") {
+            return { provider: "whois", status: "reserved", detail: `${server}: reserved by the registry` };
+        }
+
+        if (verdict === "available") {
+            return { provider: "whois", status: "available", detail: `${server}: no record (premium unknown)` };
+        }
+
+        return { provider: "whois", status: "taken", ...whoisFields(reply), detail: server };
+    },
+};
