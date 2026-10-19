@@ -78,6 +78,28 @@ describe("pickCodesignIdentity", () => {
         expect(pickCodesignIdentity(FIND_IDENTITY, "My Cert")).toEqual({ kind: "custom", name: "My Cert" });
     });
 
+    // A certificate of another team, first in the keychain, re-signed the app under that team (every grant lost)
+    // and hung codesign on its key's prompt (2026-10-19).
+    it("keeps the identity the installed app carries while the keychain has it", () => {
+        const twoTeams = `  1) ${"C".repeat(40)} "Apple Development: other@example.com (TEAM3)"
+  2) ${"A".repeat(40)} "Apple Development: dev@example.com (TEAM1)"
+     2 valid identities found`;
+        expect(pickCodesignIdentity(twoTeams, undefined, "Apple Development: dev@example.com (TEAM1)")).toEqual({
+            kind: "apple-development",
+            name: "Apple Development: dev@example.com (TEAM1)",
+        });
+        expect(pickCodesignIdentity(twoTeams, undefined, "Apple Development: gone@example.com (TEAM9)")).toEqual({
+            kind: "apple-development",
+            name: "Apple Development: other@example.com (TEAM3)",
+        });
+        expect(pickCodesignIdentity(FIND_IDENTITY, undefined, "Apple Development: dev@example.com (TEAM1)").kind).toBe(
+            "apple-development"
+        );
+        expect(pickCodesignIdentity(FIND_IDENTITY, "My Cert", "Apple Development: dev@example.com (TEAM1)").kind).toBe(
+            "custom"
+        );
+    });
+
     // Two certificates with one name made `codesign --sign <name>` fail "ambiguous" after a 7-minute build.
     it("keeps the hash of every certificate that shares the picked name", () => {
         const twice = `  1) ${"A".repeat(40)} "Apple Development: dev@example.com (TEAM1)"

@@ -328,8 +328,17 @@ export function sourceHash(sourceDir = APP_SOURCE_DIR): string {
     return hash.digest("hex").slice(0, 16);
 }
 
-/** Pick the most durable signing identity present: Developer ID, then Apple Development, else ad-hoc. */
-export function pickCodesignIdentity(findIdentityOutput: string, override?: string): CodesignIdentity {
+/**
+ * Pick the signing identity: an override first; then the one the installed app carries, while the keychain still
+ * has it; else the most durable one present (Developer ID, then Apple Development), else ad-hoc. The grants
+ * follow the signing team, so a certificate of another team that lands first in the keychain (one Xcode made for
+ * another account, 2026-10-19) must not re-sign the app, and its unused key hung codesign on a keychain prompt.
+ */
+export function pickCodesignIdentity(
+    findIdentityOutput: string,
+    override?: string,
+    installed?: string
+): CodesignIdentity {
     const identities = listCodesignIdentities(findIdentityOutput);
 
     if (override) {
@@ -337,6 +346,16 @@ export function pickCodesignIdentity(findIdentityOutput: string, override?: stri
     }
 
     const names = identities.map((identity) => identity.name);
+
+    if (installed && names.includes(installed)) {
+        const kind = installed.startsWith("Developer ID Application:")
+            ? "developer-id"
+            : installed.startsWith("Apple Development:")
+              ? "apple-development"
+              : "custom";
+        return withHashes(kind, installed, identities);
+    }
+
     const developerId = names.find((n) => n.startsWith("Developer ID Application:"));
 
     if (developerId) {
@@ -1067,11 +1086,12 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     }
 
     const stagedBundle = join(staging, `${GENESIS_APP_NAME}.app`);
+    const installed = readSignature(bundlePath);
     const identity = pickCodesignIdentity(
         run(["security", "find-identity", "-v", "-p", "codesigning"]).stdout,
-        env.tools.getCodesignIdentity()
+        env.tools.getCodesignIdentity(),
+        installed && !installed.adhoc ? installed.authority : undefined
     );
-    const installed = readSignature(bundlePath);
 
     // No identity usually means the keychain was out of reach (a sandboxed shell), not that the
     // certificate is gone. An ad-hoc build over a Developer ID one is a new app to macOS: every
