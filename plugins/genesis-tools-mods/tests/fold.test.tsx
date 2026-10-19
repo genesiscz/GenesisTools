@@ -99,6 +99,35 @@ test("each file folds on its own, and the row's Button folds or opens them all",
     await ui.unmount();
 });
 
+test("a deleted file starts folded, and its [+] opens it", async ($, on) => {
+    const gone = ["## /repo/src/gone.ts (+0 -2)", "", "```diff", "@@ -1,2 +0,0 @@", "-one", "-two", "```"].join("\n");
+
+    engine(on, { [NOTE_PATH]: `${NOTE}\n\n${gone}` });
+
+    const ui = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolGroup",
+        props: GROUP,
+        requestId: "group-2",
+    });
+    const G = "group-2|toolu_a|/repo/src/gone.ts:fold";
+
+    expect((await ui.find({ key: G }))?.text).toBe("[+]");
+    expect(await ui.find({ text: "deleted" })).toBeDefined();
+    expect(await ui.findAll({ type: "Code" })).toHaveLength(2);
+
+    await ui.press({ key: G });
+
+    expect((await ui.find({ key: G }))?.text).toBe("[-]");
+    expect(await ui.findAll({ type: "Code" })).toHaveLength(3);
+
+    await ui.press({ key: "group-2:fold" });
+
+    expect(await ui.findAll({ type: "Code" })).toHaveLength(0);
+    await ui.unmount();
+});
+
 test("an expanded group draws no diffs of its own", async ($, on) => {
     engine(on, { [NOTE_PATH]: NOTE });
 

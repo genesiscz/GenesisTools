@@ -28,6 +28,8 @@ function hunksOf(patch: string): string {
 }
 
 export function sectionsOf(text: string): Section[] {
+    const seen = new Set<string>();
+
     return [...text.matchAll(SECTION)]
         .map((match) => ({
             path: match[1] ?? "",
@@ -35,7 +37,46 @@ export function sectionsOf(text: string): Section[] {
             removed: Number(match[3]),
             patch: hunksOf(match[4] ?? ""),
         }))
-        .filter((section) => section.patch.length > 0);
+        .filter((section) => {
+            // A file the note holds twice (its block and its overflow part) is drawn once.
+            const key = `${section.path}\n${section.patch}`;
+
+            if (section.patch.length === 0 || seen.has(key)) {
+                return false;
+            }
+
+            seen.add(key);
+            return true;
+        });
+}
+
+/** A file the call deleted whole: no line added, and its one hunk ends at line 0. */
+export function isDeletion(section: Section): boolean {
+    return section.added === 0 && /^@@ -\d+(?:,\d+)? \+0,0 @@/.test(section.patch);
+}
+
+/** A file over this many changed lines starts folded; so does every file once a row has opened this many. */
+export const OPEN_FILE_LINES = 120;
+export const OPEN_ROW_LINES = 300;
+
+/**
+ * Which files start open: not a whole deletion (its text is gone, the name says enough), not a file over
+ * `OPEN_FILE_LINES`, and only while the row's open files stay within `OPEN_ROW_LINES`. A click on `[+]` opens
+ * any of them (2026-10-18: a `git mv` call drew 1,300 deleted lines).
+ */
+export function openByDefault(sections: readonly Section[]): boolean[] {
+    let open = 0;
+
+    return sections.map((section) => {
+        const lines = section.added + section.removed;
+
+        if (isDeletion(section) || lines > OPEN_FILE_LINES || open + lines > OPEN_ROW_LINES) {
+            return false;
+        }
+
+        open += lines;
+        return true;
+    });
 }
 
 /**

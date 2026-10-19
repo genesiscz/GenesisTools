@@ -1,0 +1,2 @@
+# Claude Code writes this beside .claude-plugin/types/ (ignored there) while it watches the folder.
+/tsconfig.json

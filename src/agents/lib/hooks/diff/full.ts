@@ -51,7 +51,16 @@ export function writeFullDiff(options: {
         command.length > 4000 ? `${command.slice(0, 4000)}\n…` : command,
         fence,
         "",
-        ...options.parts.flatMap((part) => [`## ${part.label}`, "", `${fence}diff`, part.patch.trimEnd(), fence, ""]),
+        // Trailing newlines only: a blank context line is a lone space, and `trimEnd()` cut it, which left the hunk a
+        // line short of its header, so Claude Code drew the full-diff mod's copy as plain code (2026-10-19).
+        ...options.parts.flatMap((part) => [
+            `## ${part.label}`,
+            "",
+            `${fence}diff`,
+            part.patch.replace(/\n+$/, ""),
+            fence,
+            "",
+        ]),
         ...(options.notShown.length > 0
             ? ["## Changed, past the file cap", "", ...options.notShown.map((path) => `- ${path}`), ""]
             : []),

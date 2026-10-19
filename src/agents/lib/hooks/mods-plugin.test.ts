@@ -8,7 +8,14 @@ import {
     idleCompactSkip,
     idleNotice,
 } from "../../../../plugins/genesis-tools-mods/hooks/idle";
-import { fullDiffEnabled, sectionsOf, sectionsOfCalls } from "../../../../plugins/genesis-tools-mods/hooks/sections";
+import {
+    fullDiffEnabled,
+    isDeletion,
+    OPEN_FILE_LINES,
+    openByDefault,
+    sectionsOf,
+    sectionsOfCalls,
+} from "../../../../plugins/genesis-tools-mods/hooks/sections";
 
 const NOTE = [
     "# Diff of toolu_x",
@@ -79,6 +86,35 @@ describe("the full-diff mod's note reader", () => {
         const cut = await sectionsOfCalls({ ids: ["first", "third"], read, maxChars: 40 });
 
         expect(cut.map((section) => section.path)).toEqual(["/repo/src/a.ts"]);
+    });
+
+    it("draws a file the note holds twice once", () => {
+        const twice = [NOTE.split("## /repo/src/b.ts")[0], NOTE.split("## /repo/src/b.ts")[0]].join("");
+
+        expect(sectionsOf(twice).map((section) => section.path)).toEqual(["/repo/src/a.ts"]);
+    });
+
+    it("folds a whole deletion, a long file and what is past the row's budget by default", () => {
+        const file = (path: string, added: number, removed: number, patch = "@@ -1,2 +1,2 @@\n-a\n+b") => ({
+            path,
+            added,
+            removed,
+            patch,
+        });
+        const gone = file("gone.ts", 0, 782, "@@ -1,782 +0,0 @@\n-x");
+
+        expect(isDeletion(gone)).toBe(true);
+        expect(isDeletion(file("edit.ts", 0, 1, "@@ -3,2 +3,1 @@\n-x\n y"))).toBe(false);
+        expect(
+            openByDefault([
+                file("small.ts", 1, 1),
+                gone,
+                file("long.ts", OPEN_FILE_LINES, 1),
+                file("mid1.ts", 100, 0),
+                file("mid2.ts", 100, 0),
+                file("mid3.ts", 100, 0),
+            ])
+        ).toEqual([true, false, false, true, true, false]);
     });
 
     it("is on unless the hooks file sets mods.fullDiff to false", () => {

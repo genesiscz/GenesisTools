@@ -1,8 +1,8 @@
 import type { ElementTable, EngineInterface, Register, RenderElement, Timer } from "claude-code";
 import { atom, read, update } from "claude-code";
-import type { ClosedFiles } from "../types";
+import type { FlippedFiles } from "../types";
 import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice } from "./idle";
-import { type CallSection, fullDiffEnabled, sectionsOfCalls } from "./sections";
+import { type CallSection, fullDiffEnabled, isDeletion, openByDefault, sectionsOfCalls } from "./sections";
 
 // The full-diff mod. When the diff hook (`tools agents hooks`) cut a Bash call's message, it wrote the
 // whole diff to ~/.genesis-tools/agents/hook-diffs/<tool_use_id>.md. This draws those hunks with Claude
@@ -91,11 +91,11 @@ async function compactIfIdle($: EngineInterface): Promise<void> {
 }
 
 /**
- * The files whose diff is folded, each as `fileKey`: its row (a ToolGroup's `requestId`, or a call's
- * `tool_use_id` in an expanded group), its call and its path. Session state, so a fold survives a redraw and
- * a reload of the mod. The newest 500 are kept.
+ * The files the person folded or opened against their default (`openByDefault`), each as `fileKey`: its row
+ * (a ToolGroup's `requestId`, or a call's `tool_use_id` in an expanded group), its call and its path. Session
+ * state, so a fold survives a redraw and a reload of the mod. The newest 500 are kept.
  */
-const closed = atom({ plugin: "genesis-tools-mods", key: "closed" } as const, [] as ClosedFiles);
+const flipped = atom({ plugin: "genesis-tools-mods", key: "flipped" } as const, [] as FlippedFiles);
 
 function fileKey(row: string, section: CallSection): string {
     return `${row}|${section.call}|${section.path}`;
@@ -118,26 +118,29 @@ async function drawDiffs(
     drawn: RenderElement
 ): Promise<RenderElement> {
     const { Box, Button, Code, Text } = ui;
-    const folded = new Set(await read($, closed));
+    const flips = new Set(await read($, flipped));
     const keys = sections.map((section) => fileKey(row, section));
-    const isAllFolded = keys.every((key) => folded.has(key));
+    const defaults = openByDefault(sections);
+    const isOpen = (index: number) => (defaults[index] ?? true) !== flips.has(keys[index] ?? "");
+    const isAllFolded = keys.every((_, index) => !isOpen(index));
     const added = sections.reduce((sum, section) => sum + section.added, 0);
     const removed = sections.reduce((sum, section) => sum + section.removed, 0);
     const files = new Set(sections.map((section) => section.path)).size;
-    const setFolded = (targets: readonly string[], fold: boolean) => {
-        void update($, closed, (list) => {
-            const rest = list.filter((key) => !targets.includes(key));
+    /** Opens or folds the files at `indexes`: a file is flipped exactly when that differs from its default. */
+    const setOpen = (indexes: readonly number[], open: boolean) => {
+        const targets = indexes.map((index) => keys[index] ?? "");
+        const flip = indexes.filter((index) => open !== (defaults[index] ?? true)).map((index) => keys[index] ?? "");
 
-            return (fold ? [...rest, ...targets] : rest).slice(-500);
-        });
+        void update($, flipped, (list) => [...list.filter((key) => !targets.includes(key)), ...flip].slice(-500));
     };
+    const all = keys.map((_, index) => index);
 
     return (
         <Box flexDirection="column">
             {drawn}
             <Box flexDirection="column" width="100%">
                 <Box flexDirection="row" gap={1}>
-                    <Button key={`${row}:fold`} dimColor onPress={() => setFolded(keys, !isAllFolded)}>
+                    <Button key={`${row}:fold`} dimColor onPress={() => setOpen(all, isAllFolded)}>
                         {isAllFolded ? "show diff" : "files only"}
                     </Button>
                     <Text dimColor>
@@ -146,19 +149,20 @@ async function drawDiffs(
                     <Text color="diffAdded">+{added}</Text>
                     <Text color="diffRemoved">-{removed}</Text>
                 </Box>
-                {sections.map((section) => {
-                    const key = fileKey(row, section);
-                    const isFolded = folded.has(key);
+                {sections.map((section, index) => {
+                    const key = keys[index] ?? fileKey(row, section);
+                    const isFolded = !isOpen(index);
 
                     return (
                         <Box key={key} flexDirection="column">
                             <Box flexDirection="row" gap={1}>
-                                <Button key={`${key}:fold`} plain dimColor onPress={() => setFolded([key], !isFolded)}>
+                                <Button key={`${key}:fold`} plain dimColor onPress={() => setOpen([index], isFolded)}>
                                     {isFolded ? "[+]" : "[-]"}
                                 </Button>
                                 <Text dimColor={!isFolded}>{section.path}</Text>
                                 <Text color="diffAdded">+{section.added}</Text>
                                 <Text color="diffRemoved">-{section.removed}</Text>
+                                {isDeletion(section) ? <Text dimColor>deleted</Text> : null}
                             </Box>
                             {isFolded ? null : <Code source={section.patch} format="diff" path={section.path} />}
                         </Box>

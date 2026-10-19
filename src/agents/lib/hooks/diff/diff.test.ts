@@ -39,6 +39,7 @@ import { claimChange, claimFileName } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
+import { writeFullDiff } from "./full";
 import { covers, mentionsFrom, mentionsOf, textPaths } from "./mentions";
 import {
     assembleMessage,
@@ -4223,6 +4224,41 @@ describe("the misfires of 2026-10-14", () => {
         expect(decision.message ?? "").not.toContain("Deleted");
         expect(decision.message).toContain("mv-src.ts → mv-dst.ts");
         git(["commit", "-qm", "mv done"]);
+    });
+
+    it("keeps a blank context line at the end of a hunk in the full-diff note", () => {
+        const path = writeFullDiff({
+            toolUseId: `call-blank-${calls}`,
+            command: "perl -pi -e 1 a.ts",
+            parts: [{ label: "a.ts (+1 -0)", patch: "@@ -1,2 +1,3 @@\n one\n+two\n \n" }],
+            notShown: [],
+        });
+
+        try {
+            expect(readFileSync(path ?? "", "utf8")).toContain("@@ -1,2 +1,3 @@\n one\n+two\n \n```");
+        } finally {
+            rmSync(path ?? "", { force: true });
+        }
+    });
+
+    it("names a file with uncommitted edits, moved into a new folder, in one line and not as a deletion", () => {
+        writeFileSync(join(repo, "dirty-src.ts"), "committed\nbody\n");
+        git(["add", "dirty-src.ts"]);
+        git(["commit", "-qm", "dirty mv"]);
+        writeFileSync(join(repo, "dirty-src.ts"), "committed\nbody\nUNCOMMITTED-EDIT\n");
+        const past = new Date(Date.now() - 60_000);
+        utimesSync(join(repo, "dirty-src.ts"), past, past);
+
+        const current = begin({ command: "mkdir -p moved/deeper && git mv dirty-src.ts moved/deeper/dirty-dst.ts" });
+
+        mkdirSync(join(repo, "moved", "deeper"), { recursive: true });
+        git(["mv", "dirty-src.ts", "moved/deeper/dirty-dst.ts"]);
+
+        const decision = runDiffPost({ payload: current, config: plain });
+
+        expect(decision.message ?? "").not.toContain("Deleted");
+        expect(decision.message).toContain("dirty-src.ts → moved/deeper/dirty-dst.ts");
+        git(["commit", "-qam", "dirty mv done"]);
     });
 
     it("prints a block past maxBlockLines as its header and a count, and links the full diff", () => {

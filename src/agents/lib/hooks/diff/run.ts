@@ -248,11 +248,18 @@ export function renamesIn({
     base,
     files,
     entries,
+    beforeOf,
 }: {
     root: string;
     base: string;
     files: ChangedFile[];
     entries: StatusEntry[];
+    /**
+     * The file's copy from before the call (`beforeCopy`), when it was dirty then. Its blob in `base` lacks the
+     * earlier uncommitted edits, so a dirty file moved by `git mv` matched nothing and printed as a whole
+     * deletion (2026-10-18: three Swift files of 782, 305 and 218 lines).
+     */
+    beforeOf?: (absolute: string) => string | null;
 }): Array<{
     from: string;
     to: string;
@@ -327,8 +334,26 @@ export function renamesIn({
     }
 
     const blobs = new Map<string, string[]>();
+    const copies = gone.flatMap((file) => {
+        const copy = beforeOf?.(file.path) ?? null;
 
-    for (const chunk of inChunks(gone, RENAME_ARGS)) {
+        return copy ? [{ file, copy }] : [];
+    });
+    const fromHead = gone.filter((file) => !copies.some((item) => item.file === file));
+
+    for (const chunk of inChunks(copies, RENAME_ARGS)) {
+        const out = gitOut(root, ["hash-object", "--", ...chunk.map((item) => item.copy)], { quiet: true }).split("\n");
+
+        chunk.forEach((item, index) => {
+            const hash = out[index]?.trim();
+
+            if (hash) {
+                blobs.set(hash, [...(blobs.get(hash) ?? []), item.file.path]);
+            }
+        });
+    }
+
+    for (const chunk of inChunks(fromHead, RENAME_ARGS)) {
         const listing = gitOut(root, ["ls-tree", "-z", base, "--", ...chunk.map((file) => relative(root, file.path))], {
             quiet: true,
         });
@@ -1287,9 +1312,13 @@ export function runDiffPost({
         }
 
         const changed = changedFiles({ root, since, config: diff, source: { entries: summary.entries, committed } });
-        const renames = renamesIn({ root, base, files: changed, entries: summary.entries }).filter((pair) =>
-            ownedRename(pair, { dir, root, context: attribution })
-        );
+        const renames = renamesIn({
+            root,
+            base,
+            files: changed,
+            entries: summary.entries,
+            beforeOf: (absolute) => beforeCopy({ dir, root, absolute }),
+        }).filter((pair) => ownedRename(pair, { dir, root, context: attribution }));
         const renamed = new Set(renames.flatMap((pair) => [pair.from, pair.to]));
         const carried: string[] = [];
         const ownCommits = new Set(committed.map((name) => join(root, name)));
