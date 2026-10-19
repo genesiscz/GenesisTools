@@ -55,6 +55,7 @@ import {
     parseProposal,
     proposalKey,
     proposalMarkdown,
+    proposalsDir,
     saveProposal,
 } from "./lib/proposal";
 import { hubPr, hubPrProjects, hubPrs, PrRefError } from "./lib/prs";
@@ -314,7 +315,12 @@ proposal
         const all = listProposals();
 
         if (opts.json) {
-            out.result(all.map((item) => ({ key: proposalKey(item), ...item })));
+            out.result(
+                all.map((item) => {
+                    const key = proposalKey(item);
+                    return { key, path: join(proposalsDir(), `${key}.json`), ...item };
+                })
+            );
             return;
         }
 

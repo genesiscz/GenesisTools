@@ -436,6 +436,8 @@ final class ReviewModel: ObservableObject {
     @Published var chosenBase: String?
     /// An agent's review proposal shown on this diff (drafts + meta), when opened with --proposal.
     @Published var proposal: ProposalDocument?
+    /// The stored reviews of the PR, looked up once its threads name it, while no proposal is attached.
+    @Published private(set) var storedProposals: StoredProposalLookup = .idle
     /// Where the left panel keeps its tab, its fold and the thread filters: the shared store in the hub, a window's
     /// own in a review window (ReviewWindows), so two reviews never move each other's panel.
     var panelDefaults: UserDefaults = HubDefaults.store
@@ -756,6 +758,7 @@ final class ReviewModel: ObservableObject {
         store.onChange = { [weak self] in
             self?.pushComments()
             self?.checkForPush()
+            self?.lookupStoredProposals()
         }
         let pushes = PRVersionsStore(target: store.target)
         pushes.onChange = { [weak self] in self?.updateNews() }
@@ -779,6 +782,7 @@ final class ReviewModel: ObservableObject {
         if store.payload != nil, builtRenderer != nil {
             pushComments()
         }
+        lookupStoredProposals()
         if started, store.payload == nil, !store.loading {
             store.load()
         }
@@ -1091,6 +1095,58 @@ final class ReviewModel: ObservableObject {
         focusedCard = card
         HubPerf.log("review.reveal-thread \(card) focused")
         renderer.focusThread(cardID: card, reply: false)
+    }
+
+    /// The stored reviews of the PR on screen (`tools hub proposal list --json`), asked once per PR while
+    /// no proposal is attached. One match is attached by itself, as the hub's PR list does; several are
+    /// offered in the threads panel (StoredProposalsList).
+    func lookupStoredProposals() {
+        guard proposal == nil, let identity = pr?.payload?.pr.identity else { return }
+        switch storedProposals {
+        case .looking(let asked) where asked == identity: return
+        case .found(let asked, _) where asked == identity: return
+        default: break
+        }
+        storedProposals = .looking(identity)
+        Task.detached(priority: .utility) { [weak self] in
+            let choices: [StoredProposal]
+            do {
+                let capture = try ToolsCLIRunner.capture(["hub", "proposal", "list", "--json"], timeout: 20)
+                guard capture.status == 0 else {
+                    throw ReviewError.git("tools hub proposal list exited \(capture.status)")
+                }
+                choices = StoredProposal.matching(try StoredProposal.parse(capture.stdout), identity: identity)
+            } catch {
+                HubPerf.log("review.proposals lookup failed for \(identity.label): \(error)")
+                choices = []
+            }
+            await MainActor.run { [weak self] in
+                guard let self, case .looking(let asked) = self.storedProposals, asked == identity else { return }
+                self.storedProposals = .found(identity, choices)
+                if self.proposal == nil, choices.count == 1, let only = choices.first {
+                    HubPerf.log("review.proposals \(identity.label): one stored review, attached \(only.key)")
+                    self.attachProposal(path: only.path)
+                }
+            }
+        }
+    }
+
+    /// Shows a stored review on this diff: its drafts become cards, its banner appears, and the first
+    /// undecided draft comes into view, as a `--proposal` launch does.
+    func attachProposal(path: String) {
+        do {
+            let document = try ProposalDocument(url: URL(fileURLWithPath: path))
+            if let identity = pr?.payload?.pr.identity, document.number > 0, document.identity != identity {
+                notice = "\(document.agent)'s review is of \(document.label), not \(identity.label)."
+                return
+            }
+            proposal = document
+            if builtRenderer != nil {
+                pushComments()
+            }
+        } catch {
+            notice = "Could not read the stored review: \(error.localizedDescription)"
+        }
     }
 
     /// Opens the draft's file and marks its card: the drafts list, the banner, a fresh proposal.

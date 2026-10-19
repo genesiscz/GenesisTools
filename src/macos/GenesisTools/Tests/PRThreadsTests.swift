@@ -23,6 +23,31 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertEqual(some.map(\.count), some.map(\.count).sorted(by: >), "widest first")
     }
 
+    // MARK: stored proposals
+
+    func testStoredReviewsOfTheWindowsPRAreOfferedNewestFirst() throws {
+        let json = """
+        [
+          {"key":"gitlab__a-1__7","path":"/p/a.json","provider":"gitlab","host":"gitlab.example.org","project":"group/app","number":7,
+           "createdAt":"2026-10-19T08:00:00Z","author":{"agent":"codex"},"verdict":{"decision":"approve","summary":"fine"},
+           "drafts":[{"status":"proposed"},{"status":"rejected"}]},
+          {"key":"gitlab__a-1__7b","path":"/p/b.json","provider":"gitlab","host":"gitlab.example.org","project":"group/app","number":7,
+           "createdAt":"2026-10-18T08:00:00Z","updatedAt":"2026-10-19T09:00:00Z","author":{"agent":"claude"},
+           "verdict":{"decision":"request_changes","summary":"two bugs"},"drafts":[]},
+          {"key":"github__x__7","path":"/p/c.json","provider":"github","host":"github.com","project":"acme/shop","number":7,
+           "createdAt":"2026-10-19T10:00:00Z","author":{"agent":"grok"},"verdict":{"decision":"comment","summary":""}}
+        ]
+        """
+        let all = try StoredProposal.parse(Data(json.utf8))
+        XCTAssertEqual(all.map(\.drafts), [2, 0, 0])
+        XCTAssertEqual(all[0].openDrafts, 1)
+        let identity = PRIdentity(provider: "gitlab", host: "gitlab.example.org", project: "group/app", number: 7)
+        let mine = StoredProposal.matching(all, identity: identity)
+        XCTAssertEqual(mine.map(\.key), ["gitlab__a-1__7b", "gitlab__a-1__7"], "the later push first; the GitHub #7 is another PR")
+        XCTAssertEqual(mine.first?.path, "/p/b.json")
+        XCTAssertTrue(StoredProposal.matching(all, identity: PRIdentity(provider: "gitlab", host: "gitlab.example.org", project: "group/app", number: 8)).isEmpty)
+    }
+
     // MARK: argv
 
     func testAReplyIsADraftUnlessItIsPublished() {

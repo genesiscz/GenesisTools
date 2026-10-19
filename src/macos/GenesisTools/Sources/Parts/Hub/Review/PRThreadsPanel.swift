@@ -487,9 +487,10 @@ struct PRThreadsList: View {
             // The agent's drafts scroll with the threads: a proposal with many drafts would otherwise take the
             // panel's whole height and push its later drafts and every thread out of reach.
             if threads.isEmpty {
-                if model.proposal?.drafts.isEmpty == false {
+                if model.proposal?.drafts.isEmpty == false || (model.proposal == nil && model.pr != nil) {
                     ScrollView {
                         VStack(spacing: 0) {
+                            StoredProposalsList(model: model)
                             AgentDraftsList(model: model)
                             emptyThreads.padding(.vertical, 24)
                         }
@@ -500,6 +501,7 @@ struct PRThreadsList: View {
             } else {
                 ScrollView {
                     VStack(spacing: 0) {
+                        StoredProposalsList(model: model)
                         AgentDraftsList(model: model)
                         // A plain VStack: every row has its real height after one layout, so a width change (a panel
                         // drag's release) can put the reader back exactly (PRListAnchor). A lazy stack estimated the rows
