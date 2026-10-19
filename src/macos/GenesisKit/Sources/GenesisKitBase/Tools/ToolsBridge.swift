@@ -25,7 +25,7 @@ public enum ToolsBridgeError: Error, LocalizedError, Equatable {
     public var errorDescription: String? {
         switch self {
         case .binaryNotFound(let path):
-            return "tools binary not found at \(path) — run `tools --version` in a terminal first"
+            return "The tools command is not at \(path). Run ./install.sh in your GenesisTools checkout, then reopen the app."
         case .timeout(let seconds):
             return "tools call exceeded \(seconds)s"
         case .refused(let reason):
@@ -102,9 +102,11 @@ public struct ToolsBridge: Sendable {
         return FileManager.default.isExecutableFile(atPath: path)
     }
 
-    /// Same candidate list as `CompanionSettings.defaultToolsBinaryPath`.
+    /// Same candidate list as `CompanionSettings.defaultToolsBinaryPath`. `builtFrom` is the `tools` of the checkout
+    /// this app was built from (Info.plist `GenesisToolsSourceToolsPath`, written by `tools macos permissions build`).
     public static func defaultBinaryPath(
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
+        builtFrom: String? = Bundle.main.object(forInfoDictionaryKey: "GenesisToolsSourceToolsPath") as? String,
         isExecutable: (String) -> Bool = ToolsBridge.isExecutableFile
     ) -> String {
         if Bundle.main.object(forInfoDictionaryKey: "GenesisToolsPreview") as? Bool == true,
@@ -122,7 +124,16 @@ public struct ToolsBridge: Sendable {
             home.appendingPathComponent("Tresors/Projects/GenesisTools/tools").path,
             "/usr/local/bin/tools",
         ]
-        return candidates.first(where: isExecutable) ?? candidates[0]
+        if let found = candidates.first(where: isExecutable) {
+            return found
+        }
+        // A checkout anywhere else, with no `~/.bun/bin/tools` link: a clean install in ~/Desktop/GenesisTools got
+        // `binaryNotFound("~/.bun/bin/tools")` in every hub mode (2026-10-19). After the fixed places, so a worktree's
+        // build still calls the main checkout's `tools`.
+        if let builtFrom, builtFrom.hasPrefix("/"), isExecutable(builtFrom) {
+            return builtFrom
+        }
+        return candidates[0]
     }
 
     /// Settings / client.json path first when it is executable. Otherwise the

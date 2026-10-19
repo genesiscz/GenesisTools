@@ -67,6 +67,29 @@ final class ToolsBridgeTests: XCTestCase {
         XCTAssertEqual(path, "/Users/fixture/Tresors/Projects/GenesisTools/tools")
     }
 
+    func testDefaultBinaryPathUsesTheBuiltFromCheckoutWhenNoFixedPlaceHasTools() {
+        let home = URL(fileURLWithPath: "/Users/fixture")
+        let path = ToolsBridge.defaultBinaryPath(home: home, builtFrom: "/Users/fixture/Desktop/GenesisTools/tools") { candidate in
+            candidate == "/Users/fixture/Desktop/GenesisTools/tools"
+        }
+        XCTAssertEqual(path, "/Users/fixture/Desktop/GenesisTools/tools")
+    }
+
+    func testDefaultBinaryPathPrefersAFixedPlaceOverTheBuiltFromCheckout() {
+        // A worktree's build still calls the main checkout's tools.
+        let home = URL(fileURLWithPath: "/Users/fixture")
+        let path = ToolsBridge.defaultBinaryPath(home: home, builtFrom: "/tmp/worktree/tools") { candidate in
+            candidate == "/tmp/worktree/tools" || candidate == "/Users/fixture/.bun/bin/tools"
+        }
+        XCTAssertEqual(path, "/Users/fixture/.bun/bin/tools")
+    }
+
+    func testDefaultBinaryPathIgnoresAMissingOrRelativeBuiltFrom() {
+        let home = URL(fileURLWithPath: "/Users/fixture")
+        XCTAssertEqual(ToolsBridge.defaultBinaryPath(home: home, builtFrom: "/gone/tools") { _ in false }, "/Users/fixture/.bun/bin/tools")
+        XCTAssertEqual(ToolsBridge.defaultBinaryPath(home: home, builtFrom: "tools") { $0 == "tools" }, "/Users/fixture/.bun/bin/tools")
+    }
+
     func testDefaultBinaryPathKeepsLocalBinFallback() {
         let home = URL(fileURLWithPath: "/Users/fixture")
         let path = ToolsBridge.defaultBinaryPath(home: home) { candidate in

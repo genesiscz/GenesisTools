@@ -206,8 +206,11 @@ enum ToolsCLIRunner {
 
         let span = HubPerf.begin("tools.\(args.prefix(3).joined(separator: "."))")
         defer { span.end() }
+        // Said plainly, as ToolsBridge.run says it: a missing path reached the hub as Cocoa's "The file tools doesn't exist".
+        let binary = HubSource.bridge.binaryPath
+        guard ToolsBridge.isExecutableFile(binary) else { throw ToolsBridgeError.binaryNotFound(binary) }
         let process = Process()
-        let plan = ToolsBridge.launchPlan(binaryPath: HubSource.bridge.binaryPath, argv: args)
+        let plan = ToolsBridge.launchPlan(binaryPath: binary, argv: args)
         process.executableURL = plan.executable
         process.currentDirectoryURL = plan.workingDirectory
         process.arguments = plan.arguments

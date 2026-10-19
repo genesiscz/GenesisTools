@@ -206,11 +206,9 @@ public final class CLIToolChangeSource: ToolChangeSource, @unchecked Sendable {
     // MARK: Process
 
     private static func findTools() -> String? {
-        let fm = FileManager.default
-        let home = NSHomeDirectory()
-        var candidates = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { "\($0)/tools" }
-        candidates += ["\(home)/.bun/bin/tools", "\(home)/.local/bin/tools", "\(home)/Tresors/Projects/GenesisTools/tools", "/usr/local/bin/tools"]
-        return candidates.first { fm.isExecutableFile(atPath: $0) }
+        let onPath = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":").map { "\($0)/tools" }
+        let candidates = onPath + [ToolsBridge.defaultBinaryPath()]
+        return candidates.first(where: ToolsBridge.isExecutableFile)
     }
 
     /// stdout of a finished, successful run; nil on launch failure, non-zero exit or timeout.
