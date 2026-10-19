@@ -87,10 +87,23 @@ struct ReviewLaunch {
         }
     }
 
-    /// The arguments for the running review process. It has its own working directory, so a launch that names no
-    /// repository names this one's.
+    /// The arguments for the running review process. It has its own working directory, so every `--repo` and
+    /// `--proposal` path goes over absolute, and a launch always ends with this one's repository (the last `--repo`
+    /// wins; a proposal's own repository still wins over it).
     var forwarded: [String] {
-        args.contains("--repo") || args.contains("--proposal") ? args : args + ["--repo", repoPath]
+        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let absolute = { (path: String) in URL(fileURLWithPath: (path as NSString).expandingTildeInPath, relativeTo: cwd).standardizedFileURL.path }
+        var result: [String] = []
+        var index = 0
+        while index < args.count {
+            result.append(args[index])
+            if ["--repo", "--proposal"].contains(args[index]), index + 1 < args.count {
+                result.append(absolute(args[index + 1]))
+                index += 1
+            }
+            index += 1
+        }
+        return result + ["--repo", absolute(repoPath)]
     }
 }
 
@@ -142,10 +155,14 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
     static let shared = ReviewWindows()
 
     private struct Open {
+        /// `--review` and the arguments that reopen this window (`ReviewLaunch.forwarded`); the latest launch's.
+        var launch: [String]
         let key: String
         let window: NSWindow
         let model: ReviewModel
         let persistence: ReviewSessionPersistence?
+        /// The window's panel store slot (`panelStore`); nil for a snapshot, which uses the scratch settings.
+        let panelSlot: Int?
         let closeKey: KeymapRegistration
     }
 
@@ -183,6 +200,15 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
                                             launchScope: scope, session: launch.session)
         // The same review again comes forward: a second window would race the first one's saved place.
         if launch.snapshotPath == nil, let existing = windows.values.first(where: { $0.key == stateKey }) {
+            // The key leaves out a PR's range and a proposal's contents: a push, another range or a regenerated
+            // proposal reaches the open window instead of being dropped. An unchanged scope keeps the reader's place.
+            let model = existing.model
+            if let proposal { model.proposal = proposal }
+            model.setScope(scope)
+            if let head = ReviewRemoteHead(launchArguments: launch.args) { model.remoteHead = head }
+            // A rebuild reopens what is on screen now, not the window's first launch.
+            windows[ObjectIdentifier(existing.window)]?.launch = ["--review"] + launch.forwarded
+            recordWindows()
             if launch.activate {
                 existing.window.makeKeyAndOrderFront(nil)
                 NSApp.activate(ignoringOtherApps: true)
@@ -202,7 +228,11 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
             model.attachPR(target)
         }
         var persistence: ReviewSessionPersistence?
+        var panelSlot: Int?
         if launch.snapshotPath == nil {
+            let panel = Self.panelStore(excluding: Set(windows.values.compactMap(\.panelSlot)))
+            model.panelDefaults = panel.store
+            panelSlot = panel.slot
             // The window opens where this review was left: scope, file, scroll line, unsent text (Review/ReviewSessionState.swift).
             persistence = ReviewSessionPersistence.attach(model: model, key: stateKey, launchScope: scope)
         }
@@ -238,7 +268,7 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
             window.setFrameAutosaveName("GenesisToolsReview")
         }
         window.delegate = self
-        windows[ObjectIdentifier(window)] = Open(key: stateKey, window: window, model: model, persistence: persistence, closeKey: HubKeymap.registerCloseWindow(window))
+        windows[ObjectIdentifier(window)] = Open(launch: ["--review"] + launch.forwarded, key: stateKey, window: window, model: model, persistence: persistence, panelSlot: panelSlot, closeKey: HubKeymap.registerCloseWindow(window))
 
         if launch.snapshotPath == nil {
             window.makeKeyAndOrderFront(nil)
@@ -247,8 +277,15 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
             }
             model.start()
         }
+        if launch.snapshotPath == nil { recordWindows() }
         HubPerf.log("review: window \(windows.count) opened for \(model.repo.lastPathComponent) (\(launch.proposalPath ?? launch.prRef ?? "working tree"))")
         return (window, model)
+    }
+
+    /// The open windows into this process's face record, oldest first, so a rebuild reopens every one.
+    private func recordWindows() {
+        let open = NSApp.orderedWindows.reversed().compactMap { windows[ObjectIdentifier($0)]?.launch }
+        FaceRecord.writeWindows(argv: Array(CommandLine.arguments.dropFirst()), windows: open)
     }
 
     /// The review window in front: the key one, else the last one ordered in.
@@ -260,7 +297,30 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
         guard let window = notification.object as? NSWindow, let closing = windows.removeValue(forKey: ObjectIdentifier(window)) else { return }
         closing.persistence?.detach()
         closing.model.stop()
+        if let slot = closing.panelSlot {
+            UserDefaults.standard.removePersistentDomain(forName: Self.panelSuite(slot))
+        }
+        recordWindows()
         HubPerf.log("review: window closed for \(closing.model.repo.lastPathComponent), \(windows.count) left")
+    }
+
+    private static func panelSuite(_ slot: Int) -> String {
+        (Bundle.main.bundleIdentifier ?? "com.genesiscz.genesistools") + ".review.panel.\(slot)"
+    }
+
+    /// A review window's own store for the left panel, in the lowest free slot, so there are never more suites than
+    /// windows open at once. It starts from the shared values; `ReviewSessionPersistence.attach` then puts the
+    /// review's own saved ones on it, and the window's close empties it.
+    private static func panelStore(excluding used: Set<Int>) -> (store: UserDefaults, slot: Int) {
+        let slot = (1...).first { !used.contains($0) } ?? 1
+        let suite = panelSuite(slot)
+        guard let store = UserDefaults(suiteName: suite) else { return (HubDefaults.store, slot) }
+        store.removePersistentDomain(forName: suite)
+        store.register(defaults: [ReviewContextPanel.collapsedKey: true])
+        for key in ReviewSessionPersistence.DefaultsKey.panel {
+            if let value = HubDefaults.store.object(forKey: key) { store.set(value, forKey: key) }
+        }
+        return (store, slot)
     }
 
     /// Renders the window once, writes a PNG and exits (`--snapshot`).
@@ -376,6 +436,9 @@ final class ReviewModel: ObservableObject {
     @Published var chosenBase: String?
     /// An agent's review proposal shown on this diff (drafts + meta), when opened with --proposal.
     @Published var proposal: ProposalDocument?
+    /// Where the left panel keeps its tab, its fold and the thread filters: the shared store in the hub, a window's
+    /// own in a review window (ReviewWindows), so two reviews never move each other's panel.
+    var panelDefaults: UserDefaults = HubDefaults.store
     /// The PR/MR this diff belongs to, with its live review threads; nil for a plain working-tree diff.
     @Published private(set) var pr: PRThreadsStore?
     /// The PR's pushes (`tools hub pr versions`): loaded when the threads name a head the diff does not
@@ -2139,6 +2202,13 @@ struct ReviewRootView: View {
     var showsFileList = true
     /// The hub's own list in the file panel (changed files or the folders, Hub/HubFolders.swift); nil: the changed files.
     var fileList: (() -> AnyView)? = nil
+    init(model: ReviewModel, showsFileList: Bool = true, fileList: (() -> AnyView)? = nil) {
+        _model = ObservedObject(wrappedValue: model)
+        self.showsFileList = showsFileList
+        self.fileList = fileList
+        _contextCollapsed = AppStorage(wrappedValue: true, ReviewContextPanel.collapsedKey, store: model.panelDefaults)
+    }
+
     @State private var width: CGFloat = 0
     @State private var height: CGFloat = 0
 
@@ -2155,7 +2225,7 @@ struct ReviewRootView: View {
     @State private var innerWidth: CGFloat = 0
     /// The standalone window's left panel (Review/ReviewContextPanel.swift), folded by default. The
     /// hub shows its own transcript and PR panes around an embedded review, so it gets none.
-    @AppStorage(ReviewContextPanel.collapsedKey, store: HubDefaults.store) private var contextCollapsed = true
+    @AppStorage private var contextCollapsed: Bool
     private static let contextFraction: CGFloat = 0.4
     private static let contextMinWidth: CGFloat = 320
     /// Below this width long diff lines wrap, unless the reader chose (`ReviewModel.fitWrap`).
@@ -2174,7 +2244,7 @@ struct ReviewRootView: View {
                                    // their size until release: held, the panel drew over the diff and the
                                    // diff jumped sideways on release. The panel's own rows hold their width
                                    // too (ReviewContextPanelView), so they stop re-wrapping per step.
-                                   holdsLayout: false) {
+                                   holdsLayout: false, collapsedStore: model.panelDefaults) {
                     ReviewContextPanelView(model: model)
                 }
             }

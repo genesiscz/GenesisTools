@@ -46,6 +46,7 @@ public struct NoticePill: View {
                     }
                     .buttonStyle(.genHoverPlain())
                     .instantTooltip(showsMore ? "Hide the full message" : "Show the full message")
+                    .accessibilityValue(showsMore ? "Expanded" : "Collapsed")
                     if showsMore {
                         Text(more).font(.system(size: 11, design: .monospaced)).foregroundColor(KitPalette.dim)
                             .fixedSize(horizontal: false, vertical: true)

@@ -71,6 +71,14 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
 
     func close() { window.close() }
 
+    /// Prepares the window and notes the page it really shows: with no `--page` that is the saved selection, which
+    /// may be the Daemon or PR activity page (eve on #551).
+    func prepareForSnapshot(pageID: String?) -> NSWindow {
+        let prepared = window.prepare(pageID: pageID)
+        shownPageID = window.store.selectedPageID ?? pageID
+        return prepared
+    }
+
     /// `--features --page <id> --headless`: the live window, drawn but never on screen or key, so its controls can be
     /// driven through accessibility (`tools control act --by-identifier`) without taking the user's focus.
     func showHeadless(pageID: String?) {
@@ -85,8 +93,7 @@ final class FeatureSettingsShell: FeatureSettingsPluginHost {
     /// server's own composite (`WindowSnapshot`), because `cacheDisplay` leaves Liquid Glass and everything it covers
     /// transparent.
     func snapshot(pageID: String?, to path: String, delay: Double) {
-        shownPageID = pageID
-        let window = window.prepare(pageID: pageID)
+        let window = prepareForSnapshot(pageID: pageID)
         window.orderInForSnapshot()
         Task { @MainActor in
             let deadline = ContinuousClock.now + .seconds(45)

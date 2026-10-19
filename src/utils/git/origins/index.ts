@@ -2,7 +2,7 @@ export type { OriginInfo } from "./detector";
 export { classifyOriginUrl, detectOrigin, isLocalRemoteUrl, originDriver } from "./detector";
 export { ghDriver, parseGhPrList } from "./gh";
 export { glabDriver, parseGlabMrList } from "./glab";
-export { cleanHostError, summarizeHostError, unresolvedHostError } from "./host-errors";
+export { cleanHostError, createHostCheck, dnsName, summarizeHostError, unresolvedHostError } from "./host-errors";
 export type {
     CheckStatus,
     CiStatus,

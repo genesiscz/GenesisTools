@@ -252,6 +252,14 @@ struct PRListNotice: Hashable {
         self.more = more
     }
 
+    /// A failed call as one line after `lead`; a longer message (a CLI's whole stderr) goes under Details.
+    static func failure(_ lead: String, _ error: Error) -> PRListNotice {
+        let full = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+        let first = full.split(separator: "\n").first.map(String.init) ?? full
+        let line = first.count > 140 ? "\(first.prefix(139))…" : first
+        return PRListNotice("\(lead): \(line)", more: line == full ? nil : full)
+    }
+
     /// One notice per distinct failure: projects that failed the same way (every repo on a VPN-only host while the
     /// VPN is off) share a line, "shop-web, shop-api: Cannot resolve git.example.org. Is the VPN on?".
     fileprivate static func failures(_ repos: [HubPRList.Repo]) -> [PRListNotice] {
@@ -506,7 +514,7 @@ final class PRsModel: ObservableObject {
                 }
             case .failure(let error):
                 span.end("failed")
-                errors = [PRListNotice("\(error)")]
+                errors = [PRListNotice.failure("Could not list the PRs/MRs", error)]
             }
         }
     }
@@ -612,7 +620,7 @@ final class PRsModel: ObservableObject {
             case .failure(let error):
                 span.end("failed")
                 // Said, not swallowed: the list's own answer no longer reports a ref it handed here.
-                errors.append(PRListNotice("Could not open \(ref.label): \(error)"))
+                errors.append(PRListNotice.failure("Could not open \(ref.label)", error))
                 return
             }
             let (row, detail, data) = fresh
@@ -771,7 +779,7 @@ final class PRsModel: ObservableObject {
             case .failure(let error):
                 span.end("failed")
                 projectsRequested = false
-                errors.append(PRListNotice("Could not list the projects under the repo roots: \(error)"))
+                errors.append(PRListNotice.failure("Could not list the projects under the repo roots", error))
             }
         }
     }
@@ -837,7 +845,7 @@ final class PRsModel: ObservableObject {
                 }
             case .failure(let error):
                 span.end("failed")
-                errors.append(PRListNotice("Could not load \(project.repo)'s PRs/MRs: \(error)"))
+                errors.append(PRListNotice.failure("Could not load \(project.repo)'s PRs/MRs", error))
             }
         }
     }

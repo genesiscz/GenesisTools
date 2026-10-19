@@ -11,28 +11,44 @@ const RESOLVE_TTL_MS = 10_000;
 
 type Resolution = "resolves" | "unresolved" | "unknown";
 
-const recent = new Map<string, { at: number; answer: Promise<Resolution> }>();
+/** What the check depends on; a test passes its own resolver, clock and proxy answer. */
+export interface HostCheckDeps {
+    lookup: (name: string) => Promise<unknown>;
+    now: () => number;
+    proxied: () => boolean;
+    timeoutMs: number;
+    ttlMs: number;
+}
+
+const systemDeps: HostCheckDeps = {
+    lookup: (name) => lookup(name),
+    now: () => Date.now(),
+    proxied: () => env.getFirstValue(["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]) !== undefined,
+    timeoutMs: RESOLVE_TIMEOUT_MS,
+    ttlMs: RESOLVE_TTL_MS,
+};
 
 /**
- * Whether the system resolver knows `host`. glab and gh resolve with Go's own resolver, which asks a
+ * Whether the system resolver knows `name`. glab and gh resolve with Go's own resolver, which asks a
  * scoped DNS server (the VPN's server for `corp`) directly and waits about 7 s for it when the VPN is
  * off; the system resolver answers "not found" in milliseconds (2026-10-18). A proxy resolves names
  * itself, so with one set nothing is decided here.
  */
-async function resolution(host: string): Promise<Resolution> {
-    if (env.getFirstValue(["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"])) {
+async function resolution(name: string, deps: HostCheckDeps): Promise<Resolution> {
+    if (deps.proxied()) {
         return "unknown";
     }
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const deadline = new Promise<Resolution>((resolve) => {
-        timer = setTimeout(() => resolve("unknown"), RESOLVE_TIMEOUT_MS);
+        timer = setTimeout(() => resolve("unknown"), deps.timeoutMs);
     });
-    const answer = lookup(host).then(
+    const answer = deps.lookup(name).then(
         (): Resolution => "resolves",
-        (err: NodeJS.ErrnoException): Resolution => {
-            log.debug({ host, code: err.code }, "host does not resolve");
-            return err.code === "ENOTFOUND" ? "unresolved" : "unknown";
+        (err: unknown): Resolution => {
+            const code = err instanceof Error && "code" in err ? err.code : undefined;
+            log.debug({ name, code }, "host does not resolve");
+            return code === "ENOTFOUND" ? "unresolved" : "unknown";
         }
     );
 
@@ -44,19 +60,42 @@ async function resolution(host: string): Promise<Resolution> {
 }
 
 /**
- * The error to report instead of running a host query when `host` has no address, or null when the
- * query should run. Answers are kept for a few seconds per host.
+ * A host check with its own cache: the error to report instead of running a host query when the host has no
+ * address, or null when the query should run. One answer per host serves every caller for `ttlMs`.
  */
-export async function unresolvedHostError(host: string): Promise<string | null> {
-    const now = Date.now();
-    let entry = recent.get(host);
+export function createHostCheck(overrides: Partial<HostCheckDeps> = {}): (host: string) => Promise<string | null> {
+    const deps = { ...systemDeps, ...overrides };
+    const recent = new Map<string, { at: number; answer: Promise<Resolution> }>();
 
-    if (!entry || now - entry.at > RESOLVE_TTL_MS) {
-        entry = { at: now, answer: resolution(host) };
-        recent.set(host, entry);
+    return async (host) => {
+        const now = deps.now();
+        let entry = recent.get(host);
+
+        if (!entry || now - entry.at > deps.ttlMs) {
+            entry = { at: now, answer: resolution(dnsName(host), deps) };
+            recent.set(host, entry);
+        }
+
+        return (await entry.answer) === "unresolved" ? `lookup ${host}: no such host (the query was not sent)` : null;
+    };
+}
+
+/** The process's host check, on the system resolver (`createHostCheck`). */
+export const unresolvedHostError = createHostCheck();
+
+/**
+ * The name to resolve in a project host, which is a URL authority and may carry a port: `git.example.org:8443` is
+ * `git.example.org`, `[::1]:8443` is `::1`. Looked up with its port, a reachable host read as unresolved.
+ */
+export function dnsName(authority: string): string {
+    const bracketed = authority.match(/^\[([^\]]+)\](?::\d+)?$/);
+
+    if (bracketed) {
+        return bracketed[1];
     }
 
-    return (await entry.answer) === "unresolved" ? `lookup ${host}: no such host (the query was not sent)` : null;
+    const port = authority.match(/^([^:]+):\d+$/);
+    return port ? port[1] : authority;
 }
 
 /**
@@ -83,7 +122,12 @@ export function summarizeHostError(raw: string, host: string | null): string {
     const text = cleanHostError(raw);
     const lookupHost = text.match(/lookup ([\w.-]+?)(?::| on |$)/)?.[1] ?? host;
 
-    if (/no such host|lookup [\w.-]+.*(i\/o timeout|server misbehaving)|could not resolve host/i.test(text)) {
+    // Go's resolver: "lookup <host>: i/o timeout" or "lookup <host> on <server>: server misbehaving".
+    if (
+        /no such host|lookup [\w.-]+(?: on [\w.:[\]-]+)?: (?:i\/o timeout|server misbehaving)|could not resolve host/i.test(
+            text
+        )
+    ) {
         return `Cannot resolve ${lookupHost ?? "the host"}. Is the VPN on?`;
     }
 

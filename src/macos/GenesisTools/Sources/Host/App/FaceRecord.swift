@@ -6,7 +6,7 @@ import Foundation
 /// widget and Clicky again with the arguments they had (src/macos/lib/permissions/relaunch.ts). `ps` joins argv with
 /// spaces, so a path with a space (`--repo "/x/My Repo"`) cannot be read back from it; this record can.
 /// It goes at a normal exit; one left by a SIGTERM is pruned by the next rebuild.
-enum FaceRecord {
+package enum FaceRecord {
     static var directory: URL {
         // `genesisHome()`, as the TS side and the relay journal: a sandboxed GENESIS_TOOLS_HOME holds all three.
         URL(fileURLWithPath: genesisHome()).appendingPathComponent(".genesis-tools/app/faces", isDirectory: true)
@@ -22,13 +22,26 @@ enum FaceRecord {
         return first.isEmpty || first == "--window" || first.hasPrefix("-psn_") || first == "--hub" || first == "--review" || first == "--widget" || first == "--features" || first == "--clicky" || first == "--markdown"
     }
 
-    static func encode(pid: Int32, argv: [String]) -> Data? {
+    static func encode(pid: Int32, argv: [String], windows: [[String]]? = nil) -> Data? {
         struct Record: Encodable {
             let pid: Int32
             let argv: [String]
+            let windows: [[String]]?
             let startedAt: String
         }
-        return try? JSONEncoder().encode(Record(pid: pid, argv: argv, startedAt: ISO8601DateFormatter().string(from: Date())))
+        return try? JSONEncoder().encode(
+            Record(pid: pid, argv: argv, windows: windows, startedAt: ISO8601DateFormatter().string(from: Date())))
+    }
+
+    /// The review process holds every review window: its record lists them all, so a rebuild reopens each one
+    /// (`readFaceWindows` in relaunch.ts), not only the launch that started the process.
+    package static func writeWindows(argv: [String], windows: [[String]]) {
+        guard !NativePreview.enabled, let data = encode(pid: getpid(), argv: argv, windows: windows) else { return }
+        do {
+            try data.write(to: directory.appendingPathComponent("\(getpid()).json"), options: .atomic)
+        } catch {
+            FileHandle.standardError.write(Data("face record: \(error)\n".utf8))
+        }
     }
 
     /// Call once at launch with the arguments after the executable.

@@ -51,7 +51,12 @@ enum ReviewContextPanel {
 
 struct ReviewContextPanelView: View {
     @ObservedObject var model: ReviewModel
-    @AppStorage("review.context.tab", store: HubDefaults.store) private var saved = ReviewContextPanel.Tab.threads.rawValue
+    @AppStorage private var saved: String
+
+    init(model: ReviewModel) {
+        _model = ObservedObject(wrappedValue: model)
+        _saved = AppStorage(wrappedValue: ReviewContextPanel.Tab.threads.rawValue, "review.context.tab", store: model.panelDefaults)
+    }
 
     var body: some View {
         let tabs = ReviewContextPanel.tabs(model: model)

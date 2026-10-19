@@ -203,7 +203,8 @@ struct ResizableSidePanel<Content: View>: View {
 
     init(key: String, edge: Edge, title: String = "panel", defaultWidth: CGFloat = 300, minWidth: CGFloat = 180,
          maxWidth: CGFloat = 900, autoCollapse: Bool = false, fitWidth: CGFloat? = nil, holdsLayout: Bool = true,
-         holdsContent: Bool = false, railAccessory: AnyView? = nil, @ViewBuilder content: @escaping () -> Content) {
+         holdsContent: Bool = false, railAccessory: AnyView? = nil, collapsedStore: UserDefaults? = nil,
+         @ViewBuilder content: @escaping () -> Content) {
         self.key = key
         self.edge = edge
         self.title = title
@@ -217,7 +218,8 @@ struct ResizableSidePanel<Content: View>: View {
         self.railAccessory = railAccessory
         self.content = content
         _width = AppStorage(wrappedValue: Double(defaultWidth), "panel.\(key).width")
-        _collapsed = AppStorage(wrappedValue: false, "panel.\(key).collapsed")
+        // A review window folds its own panel (`ReviewModel.panelDefaults`); nil is the window's store.
+        _collapsed = AppStorage(wrappedValue: false, "panel.\(key).collapsed", store: collapsedStore)
     }
 
     /// The fitted width until the reader drags this panel in this window, then the saved one.

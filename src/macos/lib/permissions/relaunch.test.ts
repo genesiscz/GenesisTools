@@ -15,6 +15,7 @@ import {
     parseFrontmostPid,
     planRelaunch,
     readFaceRecords,
+    readFaceWindows,
     relaunchCommands,
     relaunchPlan,
     type WindowFace,
@@ -106,6 +107,28 @@ describe("windowFacesFromPs", () => {
         });
         expect(faces).toEqual([{ pid: 102, kind: "hub", argv: ["--hub", "--session", "s1"], lossless: false }]);
     });
+    it("brings back every window of the one review process", () => {
+        const proposal = "/Users/alice/.genesis-tools/review/proposals/my file.json";
+        const faces = windowFacesFromPs({
+            processes: processRows(ps),
+            launcherPath: LAUNCHER,
+            stalePids: new Set(["101"]),
+            records: new Map([[101, ["--review", "--proposal", proposal]]]),
+            windows: new Map([
+                [
+                    101,
+                    [
+                        ["--review", "--proposal", proposal],
+                        ["--review", "--repo", "/work/shop"],
+                    ],
+                ],
+            ]),
+        });
+        expect(faces).toEqual([
+            { pid: 101, kind: "review", argv: ["--review", "--proposal", proposal], lossless: true },
+            { pid: 101, kind: "review", argv: ["--review", "--repo", "/work/shop"], lossless: true },
+        ]);
+    });
 });
 
 describe("relaunchPlan", () => {
@@ -177,6 +200,24 @@ describe("readFaceRecords", () => {
         writeFileSync(join(dir, "12.json"), "{not json");
         writeFileSync(join(dir, "13.json"), '{"pid":13,"argv":[1]}');
         expect([...readFaceRecords(dir)]).toEqual([[11, ["--hub", "--session", "a b"]]]);
+    });
+
+    it("reads a review process's open windows", () => {
+        const dir = mkdtempSync(join(tmpdir(), "faces-"));
+        writeFileSync(
+            join(dir, "21.json"),
+            '{"pid":21,"argv":["--review","--repo","/a"],"windows":[["--review","--repo","/a"],["--review","--repo","/b"],[2]]}'
+        );
+        writeFileSync(join(dir, "22.json"), '{"pid":22,"argv":["--hub"]}');
+        expect([...readFaceWindows(dir)]).toEqual([
+            [
+                21,
+                [
+                    ["--review", "--repo", "/a"],
+                    ["--review", "--repo", "/b"],
+                ],
+            ],
+        ]);
     });
 
     it("answers no records, never an error, when the folder cannot be listed", () => {

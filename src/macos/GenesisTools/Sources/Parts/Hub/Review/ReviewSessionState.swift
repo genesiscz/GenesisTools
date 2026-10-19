@@ -176,6 +176,8 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
         static let threadsOpen = "review.prThreads.open"
         static let threadsThisFile = "review.prThreads.thisFile"
         static let threadsClosed = "review.prThreads.closed"
+        /// Every key a review window keeps in its own store.
+        static let panel = [contextTab, threadsOpen, threadsThisFile, threadsClosed, ReviewContextPanel.collapsedKey]
     }
 
     private weak var model: ReviewModel?
@@ -206,7 +208,7 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
     static func attach(model: ReviewModel, key: String, launchScope: DiffScope, cache: DiskCache = store) -> ReviewSessionPersistence {
         let saved = cache.read(ReviewSessionState.self, key: key)
         if let saved {
-            apply(saved, to: model, launchScope: launchScope, defaults: HubDefaults.store)
+            apply(saved, to: model, launchScope: launchScope, defaults: model.panelDefaults)
             HubPerf.log("review.state restored \(key): scope \(saved.scope?.kind ?? "-"), file \(saved.selectedFile ?? "-"), "
                 + "anchor \(saved.page?.anchor.map { "\($0.fileId):\($0.line ?? 0)" } ?? "-"), \(saved.page?.boxes.count ?? 0) open boxes")
         }
@@ -286,7 +288,7 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
             model.$worktrees.map { _ in () }.eraseToAnyPublisher(),
         ]
         Publishers.MergeMany(changes).dropFirst(changes.count).sink { [weak self] in self?.scheduleSave() }.store(in: &subscriptions)
-        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: HubDefaults.store, queue: .main) { [weak self] _ in
+        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: model.panelDefaults, queue: .main) { [weak self] _ in
             self?.scheduleSave()
         }
         // The page's half: its handler goes on the renderer's web view, which `runReview` builds anyway.
@@ -320,7 +322,7 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
 
     private func save() {
         guard let model else { return }
-        let state = Self.capture(model: model, defaults: HubDefaults.store, page: page)
+        let state = Self.capture(model: model, defaults: model.panelDefaults, page: page)
         guard state != lastWritten else { return }
         lastWritten = state
         let cache = cache

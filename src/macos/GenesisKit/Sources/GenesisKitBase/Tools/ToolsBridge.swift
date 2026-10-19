@@ -17,7 +17,8 @@ public struct ToolsRunResult: Equatable, Sendable {
     }
 }
 
-public enum ToolsBridgeError: Error, LocalizedError, Equatable {
+/// `CustomStringConvertible` too: callers show `"\(error)"`, which printed `binaryNotFound("…")` instead of the sentence.
+public enum ToolsBridgeError: Error, LocalizedError, Equatable, CustomStringConvertible {
     case binaryNotFound(String)
     case timeout(seconds: Int)
     case refused(String)
@@ -32,6 +33,8 @@ public enum ToolsBridgeError: Error, LocalizedError, Equatable {
             return reason
         }
     }
+
+    public var description: String { errorDescription ?? "tools call failed" }
 }
 
 /// Scrubbed `tools <sub> …` runner. Argv only, never a shell.

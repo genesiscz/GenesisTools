@@ -41,6 +41,18 @@ final class DaemonSettingsTests: XCTestCase {
     }
 
     @MainActor
+    func testASnapshotWithoutAPageWaitsForTheSavedPage() {
+        let key = "featureSettings.selectedPage"
+        let previous = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.set(DaemonSettingsPages.pageID, forKey: key)
+        defer { UserDefaults.standard.set(previous, forKey: key) }
+        let shell = FeatureSettingsShell(mode: .snapshot)
+        _ = shell.prepareForSnapshot(pageID: nil)
+        XCTAssertEqual(shell.shownPageID, DaemonSettingsPages.pageID)
+        XCTAssertFalse(shell.ready, "the saved page is the Daemon page, and it has no tasks yet")
+    }
+
+    @MainActor
     func testASnapshotOfAnotherPageDoesNotWaitForTheDaemon() {
         let shell = FeatureSettingsShell(mode: .snapshot)
         shell.shownPageID = "general"
@@ -49,16 +61,12 @@ final class DaemonSettingsTests: XCTestCase {
 
     @MainActor
     func testASnapshotOfThePRActivityPageWaitsForTheNotifyStatus() {
-        let plugin = HubSettingsPlugin()
-        let store = HubNotifyStore.shared
-        defer { store.message = nil }
+        let store = HubNotifyStore()
+        let plugin = HubSettingsPlugin(notify: store)
         XCTAssertTrue(plugin.settingsReady(page: "general"))
-        XCTAssertEqual(plugin.settingsReady(page: PRActivitySettingsPages.pageID), store.settled)
-        if store.status == nil {
-            XCTAssertFalse(plugin.settingsReady(page: PRActivitySettingsPages.pageID), "no notify status yet")
-            store.message = "tools hub notify status exited 1"
-            XCTAssertTrue(plugin.settingsReady(page: PRActivitySettingsPages.pageID), "an error the page shows ends the wait")
-        }
+        XCTAssertFalse(plugin.settingsReady(page: PRActivitySettingsPages.pageID), "no notify status yet")
+        store.message = "tools hub notify status exited 1"
+        XCTAssertTrue(plugin.settingsReady(page: PRActivitySettingsPages.pageID), "an error the page shows ends the wait")
     }
 
     func testStatusDecodesEveryTaskSetting() throws {

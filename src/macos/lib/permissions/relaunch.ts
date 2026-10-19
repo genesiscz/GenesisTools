@@ -40,6 +40,8 @@ export interface RelaunchStep {
 interface FaceRecord {
     pid: number;
     argv: string[];
+    /** The review process's open windows, one launch argv each (Parts/Hub/Review/ReviewWindow.swift). */
+    windows?: string[][];
 }
 
 /** Flags that make a face a one-shot scripted run: it ends on its own and must never come back. */
@@ -144,6 +146,7 @@ export function windowFacesFromPs(options: {
     launcherPath: string;
     stalePids: Set<string>;
     records: Map<number, string[]>;
+    windows?: Map<number, string[][]>;
 }): WindowFace[] {
     const { records } = options;
     const faces: WindowFace[] = [];
@@ -153,8 +156,12 @@ export function windowFacesFromPs(options: {
         const lossless = recorded !== undefined && recorded.join(" ") === rest;
         const argv = lossless ? recorded : argvFromPs(rest);
         const kind = windowFaceKind(argv);
+        // One review process holds every review window; its record lists them, and each comes back.
+        const windows = lossless && kind === "review" ? (options.windows?.get(pid) ?? []) : [];
 
-        if (kind) {
+        if (windows.length > 0) {
+            faces.push(...windows.map((window) => ({ pid, kind: "review" as const, argv: window, lossless })));
+        } else if (kind) {
             faces.push({ pid, kind, argv, lossless });
         }
     }
@@ -302,7 +309,11 @@ function isFaceRecord(value: unknown): value is FaceRecord {
     }
 
     const { pid, argv } = value;
-    return typeof pid === "number" && Array.isArray(argv) && argv.every((arg: unknown) => typeof arg === "string");
+    return typeof pid === "number" && isArgv(argv);
+}
+
+function isArgv(value: unknown): value is string[] {
+    return Array.isArray(value) && value.every((arg: unknown) => typeof arg === "string");
 }
 
 /**
@@ -310,7 +321,24 @@ function isFaceRecord(value: unknown): value is FaceRecord {
  * gives none: each face then comes back from its `ps` line, and the reap still knows whether a link relay ran.
  */
 export function readFaceRecords(dir = facesRecordDir()): Map<number, string[]> {
-    const records = new Map<number, string[]>();
+    return new Map(readFaceFiles(dir).map((record) => [record.pid, record.argv]));
+}
+
+/** The open review windows each review process recorded, by pid. */
+export function readFaceWindows(dir = facesRecordDir()): Map<number, string[][]> {
+    const windows = new Map<number, string[][]>();
+
+    for (const record of readFaceFiles(dir)) {
+        if (record.windows && record.windows.length > 0) {
+            windows.set(record.pid, record.windows);
+        }
+    }
+
+    return windows;
+}
+
+function readFaceFiles(dir: string): FaceRecord[] {
+    const records: FaceRecord[] = [];
 
     if (!existsSync(dir)) {
         return records;
@@ -333,7 +361,9 @@ export function readFaceRecords(dir = facesRecordDir()): Map<number, string[]> {
             const parsed: unknown = SafeJSON.parse(readFileSync(join(dir, name), "utf8"), { strict: true });
 
             if (isFaceRecord(parsed)) {
-                records.set(parsed.pid, parsed.argv);
+                const windows =
+                    "windows" in parsed && Array.isArray(parsed.windows) ? parsed.windows.filter(isArgv) : [];
+                records.push({ pid: parsed.pid, argv: parsed.argv, windows });
             }
         } catch (err) {
             logger.debug({ err, name }, "relaunch: face record unreadable, skipped");
@@ -389,6 +419,7 @@ export function planRelaunch(options: {
     launcherPath: string;
     stalePids: Set<string>;
     records: Map<number, string[]>;
+    windows?: Map<number, string[][]>;
     frontPid: () => number | null;
 }): RelaunchCapture {
     const faces = windowFacesFromPs(options);
@@ -407,6 +438,7 @@ export function captureRelaunch(options: {
         launcherPath: options.launcherPath,
         stalePids: new Set(options.stalePids),
         records: readFaceRecords(),
+        windows: readFaceWindows(),
         frontPid: frontmostPid,
     });
     logger.info(

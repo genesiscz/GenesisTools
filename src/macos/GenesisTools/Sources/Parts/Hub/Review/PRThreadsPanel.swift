@@ -10,12 +10,20 @@ struct PRReviewBar: View {
     @ObservedObject var store: PRThreadsStore
     /// The room the diff column has for the list; the diff under it keeps at least a few lines.
     var maxListHeight: CGFloat = 900
-    @AppStorage("review.prThreads.open", store: HubDefaults.store) private var open = false
+    @AppStorage private var open: Bool
     @AppStorage("review.prThreads.height", store: HubDefaults.store) private var listHeight = 260.0
     /// The standalone window's Context panel has a Threads tab: while it is open, a second list of the
     /// same threads above the diff only took the diff's room ("No thread matches" over 350 pt, 2026-10-02).
-    @AppStorage(ReviewContextPanel.collapsedKey, store: HubDefaults.store) private var contextCollapsed = true
+    @AppStorage private var contextCollapsed: Bool
     private var listInPanel: Bool { !model.embedded && !contextCollapsed }
+
+    init(model: ReviewModel, store: PRThreadsStore, maxListHeight: CGFloat = 900) {
+        _model = ObservedObject(wrappedValue: model)
+        _store = ObservedObject(wrappedValue: store)
+        self.maxListHeight = maxListHeight
+        _open = AppStorage(wrappedValue: false, "review.prThreads.open", store: model.panelDefaults)
+        _contextCollapsed = AppStorage(wrappedValue: true, ReviewContextPanel.collapsedKey, store: model.panelDefaults)
+    }
     @State private var submitting = false
     @State private var fixing = false
     /// The height the drag began with: the layout keeps it until release (see `threadsList`).
@@ -386,8 +394,8 @@ struct PRThreadFileGroup: Identifiable, Equatable {
 struct PRThreadsList: View {
     @ObservedObject var model: ReviewModel
     @ObservedObject var store: PRThreadsStore
-    @AppStorage("review.prThreads.thisFile", store: HubDefaults.store) private var onlyThisFile = false
-    @AppStorage("review.prThreads.closed", store: HubDefaults.store) private var showClosed = false
+    @AppStorage private var onlyThisFile: Bool
+    @AppStorage private var showClosed: Bool
     @State private var find = PanelFindModel(scope: "pr.threads", title: "the threads")
     /// Folded files and threads of this PR (`PRThreadFolds`), read when the PR's threads arrive.
     @State private var folded: Set<String> = []
@@ -404,6 +412,14 @@ struct PRThreadsList: View {
     /// A narrow side panel (the review window's Context panel, 320 pt at its minimum): the toolbar
     /// takes two rows, so nothing runs past the panel's edge.
     var compact = false
+
+    init(model: ReviewModel, store: PRThreadsStore, compact: Bool = false) {
+        _model = ObservedObject(wrappedValue: model)
+        _store = ObservedObject(wrappedValue: store)
+        self.compact = compact
+        _onlyThisFile = AppStorage(wrappedValue: false, "review.prThreads.thisFile", store: model.panelDefaults)
+        _showClosed = AppStorage(wrappedValue: false, "review.prThreads.closed", store: model.panelDefaults)
+    }
 
     private var shownHead: String? { model.scope.pinnedHead ?? model.remoteHead?.sha }
 

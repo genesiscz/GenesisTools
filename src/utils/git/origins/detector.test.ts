@@ -5,7 +5,7 @@ import { TestRepo } from "../test-repo";
 import { classifyOriginUrl, detectOrigin, isLocalRemoteUrl, originDriver } from "./detector";
 import { ghDriver, parseGhPrList } from "./gh";
 import { glabDriver, parseGlabMrList } from "./glab";
-import { cleanHostError, summarizeHostError } from "./host-errors";
+import { cleanHostError, createHostCheck, dnsName, summarizeHostError } from "./host-errors";
 import {
     ghCheckStatus,
     glabPipelineStatus,
@@ -922,6 +922,64 @@ describe("host query errors", () => {
     const dnsTimeout =
         'ERROR  \n          \n  Get "https://gitlab.example.invalid/api/v4/projects/group%2Fshop-                \n  web/merge_requests?state=all": dial tcp: lookup gitlab.example.invalid: i/o timeout.';
 
+    const notFound = () => Object.assign(new Error("getaddrinfo ENOTFOUND"), { code: "ENOTFOUND" });
+
+    it("skips the query for a name the resolver does not know, and only for that answer", async () => {
+        const unknown = createHostCheck({ lookup: async () => Promise.reject(notFound()), proxied: () => false });
+        expect(await unknown("git.example.org:8443")).toBe(
+            "lookup git.example.org:8443: no such host (the query was not sent)"
+        );
+        const failing = createHostCheck({
+            lookup: async () => Promise.reject(Object.assign(new Error("servfail"), { code: "ESERVFAIL" })),
+            proxied: () => false,
+        });
+        expect(await failing("git.example.org")).toBeNull();
+        const known = createHostCheck({ lookup: async () => ({ address: "10.0.0.5" }), proxied: () => false });
+        expect(await known("git.example.org")).toBeNull();
+    });
+
+    it("runs the query when the resolver is slow or a proxy resolves names", async () => {
+        let asked = 0;
+        const slow = createHostCheck({ lookup: () => new Promise(() => {}), proxied: () => false, timeoutMs: 5 });
+        expect(await slow("git.example.org")).toBeNull();
+        const proxied = createHostCheck({
+            lookup: async () => {
+                asked += 1;
+                throw notFound();
+            },
+            proxied: () => true,
+        });
+        expect(await proxied("git.example.org")).toBeNull();
+        expect(asked).toBe(0);
+    });
+
+    it("asks once per host while the answer is fresh, and again after it expires", async () => {
+        let clock = 1_000;
+        const asked: string[] = [];
+        const check = createHostCheck({
+            lookup: async (name) => {
+                asked.push(name);
+                throw notFound();
+            },
+            now: () => clock,
+            proxied: () => false,
+            ttlMs: 10_000,
+        });
+        await Promise.all([check("git.example.org"), check("git.example.org"), check("other.example.org")]);
+        clock += 9_000;
+        await check("git.example.org");
+        expect(asked).toEqual(["git.example.org", "other.example.org"]);
+        clock += 2_000;
+        await check("git.example.org");
+        expect(asked).toEqual(["git.example.org", "other.example.org", "git.example.org"]);
+    });
+
+    it("resolves the host name without its port", () => {
+        expect(
+            ["git.example.org", "git.example.org:8443", "[::1]:8443", "[::1]", "10.0.0.5:22", "::1"].map(dnsName)
+        ).toEqual(["git.example.org", "git.example.org", "::1", "::1", "10.0.0.5", "::1"]);
+    });
+
     it("joins the wrapped lines and drops the ERROR heading", () => {
         expect(cleanHostError(dnsTimeout)).toBe(
             'Get "https://gitlab.example.invalid/api/v4/projects/group%2Fshop-web/merge_requests?state=all": dial tcp: lookup gitlab.example.invalid: i/o timeout.'
@@ -935,6 +993,18 @@ describe("host query errors", () => {
         expect(summarizeHostError("lookup gitlab.example.invalid: no such host (the query was not sent)", null)).toBe(
             "Cannot resolve gitlab.example.invalid. Is the VPN on?"
         );
+    });
+
+    it("reads Go's resolver failures as unresolved, and nothing after an unrelated lookup", () => {
+        expect(
+            summarizeHostError("lookup git.example.org on 10.0.0.53:53: server misbehaving", "git.example.org")
+        ).toBe("Cannot resolve git.example.org. Is the VPN on?");
+        expect(
+            summarizeHostError(
+                "lookup git.example.org: ok; later: dial tcp 10.0.0.1:443: i/o timeout",
+                "git.example.org"
+            )
+        ).toBe("Cannot connect to git.example.org. Check the VPN or the network.");
     });
 
     it("tells a refused connection and a missing login apart", () => {

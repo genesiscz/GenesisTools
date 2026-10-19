@@ -11,7 +11,7 @@ import SwiftUI
 enum PRActivitySettingsPages {
     static let pageID = "notifications.prActivity"
 
-    static func section() -> NativeSettingsSection {
+    static func section(store: HubNotifyStore) -> NativeSettingsSection {
         NativeSettingsSection(
             id: "notifications", title: "Notifications",
             pages: [
@@ -19,7 +19,7 @@ enum PRActivitySettingsPages {
                     id: pageID, title: "PR activity", symbol: "bell.badge", tint: .red,
                     subtitle: "Banners for review threads, review requests, CI and merges, per project."
                 ) {
-                    PRActivitySettingsView(store: .shared)
+                    PRActivitySettingsView(store: store)
                 },
             ], order: 36)
     }

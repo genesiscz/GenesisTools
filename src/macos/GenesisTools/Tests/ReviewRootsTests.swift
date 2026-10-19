@@ -6,6 +6,16 @@ import XCTest
 /// One review over several repositories: every file under its root's folder name, one tree with one
 /// top-level folder per root, and every merged id back to its own repository.
 final class ReviewRootsTests: XCTestCase {
+    /// The running review process has another working directory: a forwarded launch names absolute paths.
+    func testAForwardedReviewLaunchNamesAbsolutePaths() {
+        let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let absolute = { (path: String) in URL(fileURLWithPath: path, relativeTo: cwd).standardizedFileURL.path }
+        let forwarded = ReviewLaunch(["--repo", "sub", "--proposal", "drafts/p.json", "--no-activate"]).forwarded
+        XCTAssertEqual(forwarded, ["--repo", absolute("sub"), "--proposal", absolute("drafts/p.json"), "--no-activate", "--repo", absolute("sub")])
+        XCTAssertEqual(absolute("sub"), cwd.appendingPathComponent("sub").standardizedFileURL.path)
+        XCTAssertEqual(ReviewLaunch(["--proposal", "/abs/p.json"]).forwarded, ["--proposal", "/abs/p.json", "--repo", absolute(cwd.path)])
+    }
+
     private func file(_ path: String, add: Int = 1, del: Int = 0) -> DiffFile {
         DiffFile(id: path, path: path, oldPath: nil, status: .modified, additions: add, deletions: del,
                  oldContents: "a\n", newContents: "b\n", skipped: nil)
