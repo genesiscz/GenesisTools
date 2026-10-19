@@ -167,8 +167,8 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
     static let store = DiskCache(directory: directory, namespace: "window")
     static let saveDelay = 1.0
     private static let writer = DispatchQueue(label: "review.state.writer", qos: .utility)
-    /// The window's one instance; the user content controller holds only a weak proxy.
-    private static var active: ReviewSessionPersistence?
+    /// One per open review window (ReviewWindows); the user content controller holds only a weak proxy.
+    private static var instances: [ReviewSessionPersistence] = []
 
     /// The `HubDefaults` keys of the left panel a window saves and puts back.
     enum DefaultsKey {
@@ -200,9 +200,10 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
     }
 
-    /// Call once in `runReview`, after the model has its launch scope and proposal and before `start()`:
-    /// the first load then already reads the saved scope.
-    static func attach(model: ReviewModel, key: String, launchScope: DiffScope, cache: DiskCache = store) {
+    /// Call once per review window, after the model has its launch scope and proposal and before `start()`:
+    /// the first load then already reads the saved scope. `detach()` when the window closes.
+    @discardableResult
+    static func attach(model: ReviewModel, key: String, launchScope: DiffScope, cache: DiskCache = store) -> ReviewSessionPersistence {
         let saved = cache.read(ReviewSessionState.self, key: key)
         if let saved {
             apply(saved, to: model, launchScope: launchScope, defaults: HubDefaults.store)
@@ -211,7 +212,14 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
         }
         let persistence = ReviewSessionPersistence(model: model, key: key, cache: cache, saved: saved)
         persistence.observe()
-        active = persistence
+        instances.append(persistence)
+        return persistence
+    }
+
+    /// The window closed: a save still waiting runs now, and nothing more is saved for it.
+    func detach() {
+        flushNow()
+        Self.instances.removeAll { $0 === self }
     }
 
     /// Puts the Swift side of `state` on `model` and in `defaults`.
@@ -299,7 +307,7 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
     /// Before the process exits: a save still waiting out `saveDelay` runs now, and every queued write
     /// finishes. Main thread only (`applicationWillTerminate`).
     static func flushBeforeExit() {
-        active?.flushNow()
+        instances.forEach { $0.flushNow() }
         writer.sync {}
     }
 

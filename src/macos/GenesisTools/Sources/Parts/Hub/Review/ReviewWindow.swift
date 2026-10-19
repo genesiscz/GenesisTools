@@ -13,7 +13,20 @@ import WebKit
 // change log (handoff h_p38uwgeo) becomes a second source behind the same model. `--snapshot`
 // renders once, writes a PNG of the window and exits, so a change can be checked without a screen.
 
-package func runReview(_ args: [String]) -> Never {
+/// One review process per login session (GenesisKit `SingleInstance`): every review is a window of it, so macOS
+/// "Move focus to next window" (⌘`, or Option+Tab where it is bound so) and the Window menu move between reviews.
+/// Each review in its own process could not be reached that way (Martin, 2026-10-19).
+private let reviewInstance = SingleInstance(
+    name: "review window",
+    lockFile: NativePreview.hubFile("review.lock"),
+    notificationPrefix: NativePreview.namespace + ".review",
+    retryHint: "quit GenesisTools' review windows, then open the review again.",
+    log: { HubPerf.log($0) }
+)
+
+/// One `--review` launch's arguments.
+struct ReviewLaunch {
+    var args: [String]
     var repoPath = FileManager.default.currentDirectoryPath
     var snapshotPath: String?
     var session: String?
@@ -28,137 +41,233 @@ package func runReview(_ args: [String]) -> Never {
     var snapshotHeight: CGFloat?
     var demo = ReviewSnapshotDemo()
     var settings: [String: Any] = [:]
-    var index = 0
-    while index < args.count {
-        let value = index + 1 < args.count ? args[index + 1] : nil
-        switch args[index] {
-        case "--repo": repoPath = value ?? repoPath; index += 1
-        case "--snapshot": snapshotPath = value; index += 1
-        case "--keys": demo.keys = true
-        case "--select-open": demo.selectOpen = Int(value ?? "") ?? 3; index += 1
-        case "--step-threads": demo.steps = Int(value ?? "") ?? 1; index += 1
-        case "--reply": demo.reply = true
-        case "--toggle": demo.toggle = true
-        case "--loading": demo.loading = true
-        case "--fix-form": demo.fixForm = true
-        case "--agent-send": demo.agentSend = true
-        case "--drag-context": demo.dragContext = Double(value ?? "").map { CGFloat($0) }; index += 1
-        case "--drag-scroll": demo.dragScroll = Double(value ?? "").map { CGFloat($0) } ?? 0; index += 1
-        case "--blame": demo.blame = ReviewSnapshotDemo.blameTarget(value); index += 1
-        case "--session": session = value; index += 1
-        case "--scope": scope = DiffScope(argument: value ?? "") ?? .uncommitted; index += 1
-        case "--proposal": proposalPath = value; index += 1
-        case "--pr": prRef = value; index += 1
-        case "--label": rangeLabel = value; index += 1
-        case "--commit": commit = value; index += 1
-        case "--range":
-            let ends = (value ?? "").components(separatedBy: "..")
-            if ends.count == 2, !ends[0].isEmpty, !ends[1].isEmpty { range = (ends[0], ends[1]) }
-            index += 1
-        case "--no-activate": activate = false
-        case "--snapshot-height": snapshotHeight = Double(value ?? "").map { CGFloat($0) }; index += 1
-        case "--style": style = DiffViewOptions.Style(rawValue: value ?? "") ?? .split; index += 1
-        case "--set":
-            // Snapshot runs only, on the scratch settings: `--set panel.review.context.collapsed=false`.
-            let pair = (value ?? "").split(separator: "=", maxSplits: 1).map(String.init)
-            if pair.count == 2 {
-                settings[pair[0]] = ["true", "false", "1", "0"].contains(pair[1]) ? (pair[1] == "true" || pair[1] == "1") : pair[1]
+
+    init(_ args: [String]) {
+        self.args = args
+        var index = 0
+        while index < args.count {
+            let value = index + 1 < args.count ? args[index + 1] : nil
+            switch args[index] {
+            case "--repo": repoPath = value ?? repoPath; index += 1
+            case "--snapshot": snapshotPath = value; index += 1
+            case "--keys": demo.keys = true
+            case "--select-open": demo.selectOpen = Int(value ?? "") ?? 3; index += 1
+            case "--step-threads": demo.steps = Int(value ?? "") ?? 1; index += 1
+            case "--reply": demo.reply = true
+            case "--toggle": demo.toggle = true
+            case "--loading": demo.loading = true
+            case "--fix-form": demo.fixForm = true
+            case "--agent-send": demo.agentSend = true
+            case "--drag-context": demo.dragContext = Double(value ?? "").map { CGFloat($0) }; index += 1
+            case "--drag-scroll": demo.dragScroll = Double(value ?? "").map { CGFloat($0) } ?? 0; index += 1
+            case "--blame": demo.blame = ReviewSnapshotDemo.blameTarget(value); index += 1
+            case "--session": session = value; index += 1
+            case "--scope": scope = DiffScope(argument: value ?? "") ?? .uncommitted; index += 1
+            case "--proposal": proposalPath = value; index += 1
+            case "--pr": prRef = value; index += 1
+            case "--label": rangeLabel = value; index += 1
+            case "--commit": commit = value; index += 1
+            case "--range":
+                let ends = (value ?? "").components(separatedBy: "..")
+                if ends.count == 2, !ends[0].isEmpty, !ends[1].isEmpty { range = (ends[0], ends[1]) }
+                index += 1
+            case "--no-activate": activate = false
+            case "--snapshot-height": snapshotHeight = Double(value ?? "").map { CGFloat($0) }; index += 1
+            case "--style": style = DiffViewOptions.Style(rawValue: value ?? "") ?? .split; index += 1
+            case "--set":
+                // Snapshot runs only, on the scratch settings: `--set panel.review.context.collapsed=false`.
+                let pair = (value ?? "").split(separator: "=", maxSplits: 1).map(String.init)
+                if pair.count == 2 {
+                    settings[pair[0]] = ["true", "false", "1", "0"].contains(pair[1]) ? (pair[1] == "true" || pair[1] == "1") : pair[1]
+                }
+                index += 1
+            default: break
             }
             index += 1
-        default: break
         }
-        index += 1
     }
 
-    if snapshotPath != nil {
+    /// The arguments for the running review process. It has its own working directory, so a launch that names no
+    /// repository names this one's.
+    var forwarded: [String] {
+        args.contains("--repo") || args.contains("--proposal") ? args : args + ["--repo", repoPath]
+    }
+}
+
+package func runReview(_ args: [String]) -> Never {
+    let launch = ReviewLaunch(args)
+    if launch.snapshotPath == nil, !reviewInstance.claim() {
+        exit(reviewInstance.forward(launch.forwarded) ? 0 : 1)
+    }
+
+    if launch.snapshotPath != nil {
         HubDefaults.isolate()
         ReviewCommentStore.readOnly = true
-        for (key, value) in settings { HubDefaults.store.set(value, forKey: key) }
+        for (key, value) in launch.settings { HubDefaults.store.set(value, forKey: key) }
     }
     ReviewContextPanel.registerDefaults()
-    var options = DiffViewOptions.remembered()
-    if let style {
-        options.diffStyle = style
-    }
 
     let app = NSApplication.shared
     // A snapshot run must never become the active app: it would take the keystrokes of whoever is typing.
     // A live review window is an accessory while the hub owns the Dock tile (App/DockTile.swift).
-    app.setActivationPolicy(snapshotPath == nil ? MainActor.assumeIsolated { DockTile.policy(for: .window) } : .prohibited)
+    app.setActivationPolicy(launch.snapshotPath == nil ? MainActor.assumeIsolated { DockTile.policy(for: .window) } : .prohibited)
     let delegate = ReviewAppDelegate()
     app.delegate = delegate
     installBrowserURLForwarder()
-    if snapshotPath == nil {
+    if launch.snapshotPath == nil {
         installNotificationClicksForWindowFace()
         MainActor.assumeIsolated { WindowCycle.install() }
     }
     MainActor.assumeIsolated { AppMainMenu.install() }
 
-    var proposal: ProposalDocument?
-    if let proposalPath {
-        do {
-            let document = try ProposalDocument(url: URL(fileURLWithPath: proposalPath))
-            repoPath = document.repoPath ?? repoPath
-            scope = .range(base: document.baseSha, head: document.headSha, label: "\(document.label) \(document.title.prefix(40))")
-            proposal = document
-        } catch {
-            FileHandle.standardError.write(Data("review: cannot read proposal \(proposalPath): \(error)\n".utf8))
-            exit(1)
-        }
-    }
-
-    if let range {
-        scope = .range(base: range.base, head: range.head, label: rangeLabel ?? "\(range.base.prefix(7))..\(range.head.prefix(7))")
-    } else if let commit, !commit.isEmpty {
-        scope = .commit(sha: commit, title: rangeLabel ?? String(commit.prefix(10)))
-    }
-    // A review window shows one review: its own renderer, and no spare kept for a next one.
-    let model = ReviewModel(repo: URL(fileURLWithPath: repoPath).standardizedFileURL, options: options, session: session, renderer: PierreWebDiffRenderer())
-    model.scope = scope
-    // A PR without a local worktree (`openInReviewWindow`): its files open on the host, as in the hub.
-    model.remoteHead = ReviewRemoteHead(launchArguments: args)
-    model.proposal = proposal
-    if let prRef {
-        model.attachPR(.ref(prRef))
-    } else if let target = proposal?.prTarget {
-        model.attachPR(target)
-    }
-    if snapshotPath == nil {
-        // The window opens where this review was left: scope, file, scroll line, unsent text (Review/ReviewSessionState.swift).
-        let stateKey = ReviewSessionKey.key(proposalPath: proposalPath, prTarget: prRef, repo: model.repo.path, launchScope: scope, session: session)
-        ReviewSessionPersistence.attach(model: model, key: stateKey, launchScope: scope)
-    }
-    let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 1320, height: 860),
-        styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-        backing: .buffered,
-        defer: false
-    )
-    window.title = "Review · \(model.repo.lastPathComponent)"
-    // The Context panel's tabs sit in the title bar row: AppKit's title drew over "Commits" (Martin,
-    // 2026-10-02). The title still names the window in the Window menu and Mission Control.
-    window.titleVisibility = .hidden
-    window.titlebarAppearsTransparent = true
-    window.appearance = NSAppearance(named: .darkAqua)
-    window.backgroundColor = ReviewPalette.background
-    // The title bar strip zooms on a double-click and drags the window (WindowTitlebar.swift).
-    window.contentView = NSHostingView(rootView: ReviewRootView(model: model).defaultAppStorage(HubDefaults.store).titlebarZone())
-    window.center()
-    if snapshotPath != nil, let snapshotHeight {
-        // A snapshot of a long thread card (`--snapshot-height <pt>`): a taller window, and no autosave
-        // name, so the size never reaches the frame the live window restores.
-        window.setContentSize(NSSize(width: window.frame.width, height: snapshotHeight))
-    } else {
-        window.setFrameAutosaveName("GenesisToolsReview")
-    }
-    delegate.window = window
     MainActor.assumeIsolated {
-        delegate.keymapRegistrations = [HubKeymap.registerCloseWindow(window)]
+        guard let opened = ReviewWindows.shared.open(launch) else { exit(1) }
+        if let snapshotPath = launch.snapshotPath {
+            ReviewWindows.snapshot(opened, launch: launch, to: snapshotPath)
+        } else {
+            DockTile.keep(.window)
+            reviewInstance.serve { forwarded in
+                MainActor.assumeIsolated { _ = ReviewWindows.shared.open(ReviewLaunch(forwarded)) }
+            }
+        }
+        HangWatch.start()
+    }
+    app.run()
+    exit(0)
+}
+
+/// The review windows of this process, each with its model, its saved place and its ⌘W.
+@MainActor
+final class ReviewWindows: NSObject, NSWindowDelegate {
+    static let shared = ReviewWindows()
+
+    private struct Open {
+        let key: String
+        let window: NSWindow
+        let model: ReviewModel
+        let persistence: ReviewSessionPersistence?
+        let closeKey: KeymapRegistration
     }
 
-    if let snapshotPath {
+    private var windows: [ObjectIdentifier: Open] = [:]
+
+    /// Builds and shows the window for `launch`; nil when its proposal cannot be read.
+    func open(_ launch: ReviewLaunch) -> (window: NSWindow, model: ReviewModel)? {
+        var options = DiffViewOptions.remembered()
+        if let style = launch.style {
+            options.diffStyle = style
+        }
+        var repoPath = launch.repoPath
+        var scope = launch.scope
+        var proposal: ProposalDocument?
+        if let proposalPath = launch.proposalPath {
+            do {
+                let document = try ProposalDocument(url: URL(fileURLWithPath: proposalPath))
+                repoPath = document.repoPath ?? repoPath
+                scope = .range(base: document.baseSha, head: document.headSha, label: "\(document.label) \(document.title.prefix(40))")
+                proposal = document
+            } catch {
+                FileHandle.standardError.write(Data("review: cannot read proposal \(proposalPath): \(error)\n".utf8))
+                HubPerf.log("review: cannot read proposal \(proposalPath): \(error)")
+                return nil
+            }
+        }
+
+        if let range = launch.range {
+            scope = .range(base: range.base, head: range.head, label: launch.rangeLabel ?? "\(range.base.prefix(7))..\(range.head.prefix(7))")
+        } else if let commit = launch.commit, !commit.isEmpty {
+            scope = .commit(sha: commit, title: launch.rangeLabel ?? String(commit.prefix(10)))
+        }
+        let repo = URL(fileURLWithPath: repoPath).standardizedFileURL
+        let stateKey = ReviewSessionKey.key(proposalPath: launch.proposalPath, prTarget: launch.prRef, repo: repo.path,
+                                            launchScope: scope, session: launch.session)
+        // The same review again comes forward: a second window would race the first one's saved place.
+        if launch.snapshotPath == nil, let existing = windows.values.first(where: { $0.key == stateKey }) {
+            if launch.activate {
+                existing.window.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            HubPerf.log("review: \(stateKey) is already open; \(launch.activate ? "brought it forward" : "left it where it is")")
+            return (existing.window, existing.model)
+        }
+        // A review window shows one review: its own renderer, and no spare kept for a next one.
+        let model = ReviewModel(repo: repo, options: options, session: launch.session, renderer: PierreWebDiffRenderer())
+        model.scope = scope
+        // A PR without a local worktree (`openInReviewWindow`): its files open on the host, as in the hub.
+        model.remoteHead = ReviewRemoteHead(launchArguments: launch.args)
+        model.proposal = proposal
+        if let prRef = launch.prRef {
+            model.attachPR(.ref(prRef))
+        } else if let target = proposal?.prTarget {
+            model.attachPR(target)
+        }
+        var persistence: ReviewSessionPersistence?
+        if launch.snapshotPath == nil {
+            // The window opens where this review was left: scope, file, scroll line, unsent text (Review/ReviewSessionState.swift).
+            persistence = ReviewSessionPersistence.attach(model: model, key: stateKey, launchScope: scope)
+        }
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1320, height: 860),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        // Released by `open` below, not by AppKit: a window released on close takes its model's last owner with it mid-teardown.
+        window.isReleasedWhenClosed = false
+        // The Window menu and Mission Control name each review by it, so two reviews of one repository differ.
+        let what = proposal.map { "\($0.label) \($0.title.prefix(50))" } ?? launch.prRef ?? launch.rangeLabel
+        window.title = "Review · \(model.repo.lastPathComponent)" + (what.map { " · \($0)" } ?? "")
+        // The Context panel's tabs sit in the title bar row: AppKit's title drew over "Commits" (Martin,
+        // 2026-10-02). The title still names the window in the Window menu and Mission Control.
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = ReviewPalette.background
+        // The title bar strip zooms on a double-click and drags the window (WindowTitlebar.swift).
+        window.contentView = NSHostingView(rootView: ReviewRootView(model: model).defaultAppStorage(HubDefaults.store).titlebarZone())
+        window.center()
+        if launch.snapshotPath != nil, let snapshotHeight = launch.snapshotHeight {
+            // A snapshot of a long thread card (`--snapshot-height <pt>`): a taller window, and no autosave
+            // name, so the size never reaches the frame the live window restores.
+            window.setContentSize(NSSize(width: window.frame.width, height: snapshotHeight))
+        } else if let front = frontWindow {
+            // One autosave name holds one window: a later review opens down and right of the front one.
+            window.setFrame(front.frame, display: false)
+            window.setFrameTopLeftPoint(window.cascadeTopLeft(from: NSPoint(x: front.frame.minX, y: front.frame.maxY)))
+        } else {
+            window.setFrameAutosaveName("GenesisToolsReview")
+        }
+        window.delegate = self
+        windows[ObjectIdentifier(window)] = Open(key: stateKey, window: window, model: model, persistence: persistence, closeKey: HubKeymap.registerCloseWindow(window))
+
+        if launch.snapshotPath == nil {
+            window.makeKeyAndOrderFront(nil)
+            if launch.activate {
+                NSApp.activate(ignoringOtherApps: true)
+            }
+            model.start()
+        }
+        HubPerf.log("review: window \(windows.count) opened for \(model.repo.lastPathComponent) (\(launch.proposalPath ?? launch.prRef ?? "working tree"))")
+        return (window, model)
+    }
+
+    /// The review window in front: the key one, else the last one ordered in.
+    private var frontWindow: NSWindow? {
+        NSApp.orderedWindows.first { windows[ObjectIdentifier($0)] != nil }
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow, let closing = windows.removeValue(forKey: ObjectIdentifier(window)) else { return }
+        closing.persistence?.detach()
+        closing.model.stop()
+        HubPerf.log("review: window closed for \(closing.model.repo.lastPathComponent), \(windows.count) left")
+    }
+
+    /// Renders the window once, writes a PNG and exits (`--snapshot`).
+    static func snapshot(_ opened: (window: NSWindow, model: ReviewModel), launch: ReviewLaunch, to snapshotPath: String) {
+        let (window, model) = opened
         model.onFirstRender = {
-            demo.apply(to: model) {
+            launch.demo.apply(to: model) {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
                     // Where a click on the title bar lands (WindowTitlebar.swift): the empty strip must reach the zone.
                     FileHandle.standardError.write(Data("review snapshot: titlebar \(WindowTitlebar.audit(window).line)\n".utf8))
@@ -174,24 +283,11 @@ package func runReview(_ args: [String]) -> Never {
             exit(1)
         }
         window.orderInForSnapshot()
-    } else {
-        window.makeKeyAndOrderFront(nil)
-        if activate {
-            app.activate(ignoringOtherApps: true)
-        }
-        MainActor.assumeIsolated { DockTile.keep(.window) }
+        model.start()
     }
-
-    MainActor.assumeIsolated { HangWatch.start() }
-    model.start()
-    app.run()
-    exit(0)
 }
 
 private final class ReviewAppDelegate: NSObject, NSApplicationDelegate {
-    var window: NSWindow?
-    /// ⌘W for this window only. Held for as long as the process lives.
-    var keymapRegistrations: [KeymapRegistration] = []
 
     /// A local `.html` file Launch Services handed to this running face (LocalFileHandoff).
     func application(_ application: NSApplication, open urls: [URL]) {
