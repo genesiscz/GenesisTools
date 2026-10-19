@@ -481,6 +481,9 @@ struct PRThreadsList: View {
         let fresh = newNotes(all)
         let query = headQuery(all)
         let atHead = query.flatMap { headFiles.status(repo: $0.repo, head: $0.head, shown: $0.shown, paths: $0.paths) } ?? [:]
+        // The agent's answer to each thread, by thread id: read once per render, not once per row.
+        let proposed = Dictionary((model.proposal?.threads ?? []).filter { $0.reply?.trimmed.isEmpty == false }.map { ($0.id, $0) },
+                                  uniquingKeysWith: { first, _ in first })
         VStack(spacing: 0) {
             toolbar(all: all, placed: placed, shown: threads, files: groups.count)
             PanelFindBar(find: find)
@@ -518,7 +521,8 @@ struct PRThreadsList: View {
                                                             selected: model.selectedThreads.contains(thread.id),
                                                             placement: placed[thread.id] ?? .onDiff(outdatedOnHost: false),
                                                             fresh: fresh, atHead: atHead[thread.path],
-                                                            headSha: query?.head, compact: compact, clicks: clicks,
+                                                            headSha: query?.head, compact: compact,
+                                                            proposed: proposed[thread.id], clicks: clicks,
                                                             editors: editors, folded: foldedThreads.contains(thread.id)) {
                                                     toggle(thread: thread.id)
                                                 }
@@ -989,6 +993,8 @@ private struct PRThreadRow: View {
     var atHead: PathAtHead?
     var headSha: String?
     var compact = false
+    /// The agent's suggested reply to this thread from the open proposal; its card in the diff sends it.
+    var proposed: ProposalDocument.Thread?
     @State private var replying = false
     @State private var replyText = ""
     @State private var editingID: String?
@@ -1043,6 +1049,9 @@ private struct PRThreadRow: View {
                 ForEach(Array(thread.comments.enumerated()), id: \.element.id) { index, comment in
                     commentView(comment, reply: index > 0)
                 }
+                if let proposed, let reply = proposed.reply {
+                    proposedReply(proposed, text: reply)
+                }
             }
             if folded {
                 EmptyView()
@@ -1096,6 +1105,47 @@ private struct PRThreadRow: View {
         // Room for the file's rail (PRFileRail) on the left. Resolved and outdated cards keep their
         // colours: a dimmed card read as a grey film over it (Martin, 2026-10-07).
         .padding(.leading, 10)
+    }
+
+    /// Where a sent reply went, as the diff card's badge says it (web/diff-viewer/main.ts `sentLabel`).
+    private static let sentLabel = ["sent": "Queued for agent", "drafted": "Review draft on PR", "posted": "Posted on PR"]
+
+    /// The agent's suggested reply under the notes. Read only here: a click on the card opens the thread's card in
+    /// the diff, where the reply is reworded and sent.
+    private func proposedReply(_ proposed: ProposalDocument.Thread, text: String) -> some View {
+        // Already a note on the thread (sent from here or posted by hand): one line, not the same text twice.
+        let posted = thread.comments.dropFirst().contains { $0.bodyMarkdown.trimmed == text.trimmed }
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 5) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundColor(ReviewPalette.renamed)
+                Text(proposed.editedReply == nil ? "Proposed reply" : "Proposed reply, edited")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(ReviewPalette.renamed)
+                    .fixedSize()
+                if let verdict = proposed.verdict, !verdict.isEmpty {
+                    Badge(verdict, color: ReviewPalette.dim, look: .tone, tooltip: proposed.proof ?? "The agent's verdict on this thread")
+                }
+                if posted {
+                    Badge("Posted on PR", color: ReviewPalette.added, look: .tone, tooltip: "A note above already says this")
+                } else if let status = proposed.replyStatus {
+                    Badge(Self.sentLabel[status] ?? status, color: ReviewPalette.added, look: .tone,
+                          tooltip: "Where this reply went")
+                }
+                Spacer(minLength: 0)
+            }
+            if !posted {
+                MarkdownContentView(markdown: text, style: Self.noteStyle)
+                    .findField("proposed:\(thread.id)")
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                    .clipped()
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(RoundedRectangle(cornerRadius: 6).fill(ReviewPalette.renamed.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 6).stroke(ReviewPalette.renamed.opacity(0.22)))
     }
 
     /// A folded thread: who opened it, its first line, and how many notes it has.
