@@ -266,6 +266,7 @@ package func runFeatures(_ args: [String] = []) -> Never {
         // A notification click that runs something hands focus back to the app it was clicked over.
         BrowserURLForwarder.shared.trackOtherApps()
         installNotificationClicksForWindowFace()
+        MainActor.assumeIsolated { WindowCycle.install() }
         app.setActivationPolicy(.accessory)
         app.run()
         withExtendedLifetime(delegate) {}

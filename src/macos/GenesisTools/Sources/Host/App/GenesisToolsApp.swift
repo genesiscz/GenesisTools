@@ -145,7 +145,10 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
         }
 
         quitAfterNotificationClick = false
-        MainActor.assumeIsolated { DockTile.keep(.window) }
+        MainActor.assumeIsolated {
+            DockTile.keep(.window)
+            WindowCycle.install()
+        }
 
         let controller = NSHostingController(rootView: RootView())
         let window = NSWindow(contentViewController: controller)
