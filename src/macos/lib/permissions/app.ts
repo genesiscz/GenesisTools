@@ -29,6 +29,7 @@ import {
 } from "@genesiscz/utils/macos/genesis-app";
 import { readStagingMarker } from "@genesiscz/utils/macos/native-inbox";
 import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "@genesiscz/utils/macos/xcode";
+import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { clearPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
 import { executableInode } from "@genesiscz/utils/process/process-files";
@@ -107,6 +108,8 @@ export interface AppManifest extends AppSourceInfo {
     sourceHash: string;
     sourceToolsPath?: string;
     signedWith: string;
+    /** The SHA-1 of the certificate that signed, when the name is shared by several: the next build tries it first. */
+    signedWithHash?: string;
     teamId?: string;
     /** The optional parts this build links (parts.ts). Absent in builds from before parts existed: every part. */
     parts?: string[];
@@ -828,7 +831,7 @@ async function runCodesign({
     const result = await runCommand({ command: ["codesign", ...args], timeoutMs });
     const failure = result.error
         ? result.error.code === "ETIMEDOUT"
-            ? `codesign attempt timed out after ${timeoutMs} ms and was terminated; retry or choose another certificate.`
+            ? `codesign attempt timed out after ${timeoutMs} ms and was terminated: it was most likely waiting on the keychain's password dialog. Click Always Allow there, or run ${CODESIGN_TRUST_COMMAND} once; otherwise choose another certificate.`
             : `codesign attempt could not complete: ${result.error.message}`
         : "";
     return {
@@ -837,30 +840,79 @@ async function runCodesign({
     };
 }
 
+/** A codesign that has not returned after this long is waiting on the keychain's password dialog. */
+const SIGN_PROMPT_NOTICE_MS = 2_500;
+
+/** The one-time command that lets codesign use the signing keys without the keychain dialog. */
+export const CODESIGN_TRUST_COMMAND = "tools macos permissions codesign-trust";
+
+/**
+ * Why the Mac is asking for a password, said where the user is looking: the keychain dialog names only
+ * "codesign", so a build that stalls on it looked like a hang ("every fucking time", 2026-10-19). Posted
+ * once per build, and only when an attempt has run past the dialog's usual appearance.
+ */
+export function codesignPromptNotice(identityName: string): Promise<boolean> {
+    return dispatchNotification({
+        app: "macos",
+        title: "GenesisTools build: codesign needs the keychain",
+        subtitle: identityName,
+        message: `Click Always Allow in the dialog, or run ${CODESIGN_TRUST_COMMAND} once to stop these prompts.`,
+        group: "genesis-app-codesign-prompt",
+    }).catch(() => false);
+}
+
 /**
  * Signs the staged bundle. A name two keychain certificates share is signed by hash, first one first; when it fails
  * the next one is tried, on the bundle already built, so nothing is compiled again. Once the attempts took more than
- * 10 s, a terminal asks which certificate to use instead of going on alone.
+ * 10 s, a terminal asks which certificate to use instead of going on alone. `preferHash` (the certificate the last
+ * build signed with) goes first, so the key macOS already lets codesign use is tried before one that prompts.
+ * Returns the hash that signed, when signing went by hash.
  */
 export async function signStagedBundle({
     stagedBundle,
     identity,
     step,
+    preferHash,
     timeoutMs = SIGN_ATTEMPTS_BUDGET_MS,
     runCommand = boundedCommand,
+    onPrompt = codesignPromptNotice,
 }: {
     stagedBundle: string;
     identity: CodesignIdentity;
     step: (message: string) => void;
+    preferHash?: string;
     timeoutMs?: number;
     runCommand?: typeof boundedCommand;
-}): Promise<void> {
-    const sign = (arg: string) =>
-        runCodesign({
-            args: ["--force", "--sign", arg, "--identifier", GENESIS_APP_BUNDLE_ID, "--timestamp=none", stagedBundle],
-            timeoutMs,
-            runCommand,
-        });
+    onPrompt?: (identityName: string) => Promise<boolean>;
+}): Promise<string | undefined> {
+    const name = identity.kind === "adhoc" ? "ad-hoc" : identity.name;
+    let noticed = false;
+    const sign = async (arg: string) => {
+        const timer = setTimeout(() => {
+            if (!noticed && identity.kind !== "adhoc") {
+                noticed = true;
+                void onPrompt(name);
+            }
+        }, SIGN_PROMPT_NOTICE_MS);
+
+        try {
+            return await runCodesign({
+                args: [
+                    "--force",
+                    "--sign",
+                    arg,
+                    "--identifier",
+                    GENESIS_APP_BUNDLE_ID,
+                    "--timestamp=none",
+                    stagedBundle,
+                ],
+                timeoutMs,
+                runCommand,
+            });
+        } finally {
+            clearTimeout(timer);
+        }
+    };
 
     if (identity.kind === "adhoc" || !identity.hashes) {
         const result = await sign(identity.kind === "adhoc" ? "-" : identity.name);
@@ -869,12 +921,12 @@ export async function signStagedBundle({
             throw new Error(`codesign failed (exit ${result.code}):\n${result.stderr}`);
         }
 
-        return;
+        return undefined;
     }
 
-    await signByHashes({
+    return await signByHashes({
         name: identity.name,
-        hashes: identity.hashes,
+        hashes: preferredFirst(identity.hashes, preferHash),
         sign,
         step,
         choose: isInteractive()
@@ -887,6 +939,13 @@ export async function signStagedBundle({
                   )
             : undefined,
     });
+}
+
+/** `hashes` with `preferred` moved to the front when it is among them; the list order otherwise. */
+export function preferredFirst(hashes: string[], preferred?: string): string[] {
+    return preferred && hashes.includes(preferred)
+        ? [preferred, ...hashes.filter((hash) => hash !== preferred)]
+        : hashes;
 }
 
 /**
@@ -1105,7 +1164,12 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     }
 
     step(`codesign (${identity.kind === "adhoc" ? "ad-hoc" : identity.name})`);
-    await signStagedBundle({ stagedBundle, identity, step });
+    const signedWithHash = await signStagedBundle({
+        stagedBundle,
+        identity,
+        step,
+        preferHash: readManifest()?.signedWithHash,
+    });
 
     const verify = await runCodesign({ args: ["--verify", "--strict", stagedBundle] });
 
@@ -1120,6 +1184,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         ...(await readSourceInfo()),
         sourceToolsPath: APP_TOOLS_PATH,
         signedWith: signature.authority,
+        signedWithHash,
         teamId: signature.teamId,
         parts: [...parts],
     };

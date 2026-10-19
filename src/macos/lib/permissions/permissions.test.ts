@@ -17,6 +17,7 @@ import {
     listRetiredStamps,
     parseCodesignInfo,
     pickCodesignIdentity,
+    preferredFirst,
     readSourceInfo,
     retiredStampsToDelete,
     signByHashes,
@@ -110,6 +111,14 @@ describe("pickCodesignIdentity", () => {
             name: "Apple Development: dev@example.com (TEAM1)",
             hashes: ["A".repeat(40), "B".repeat(40)],
         });
+    });
+});
+
+describe("preferredFirst", () => {
+    it("tries the certificate that signed last time first, and keeps the order otherwise", () => {
+        expect(preferredFirst(["A", "B", "C"], "B")).toEqual(["B", "A", "C"]);
+        expect(preferredFirst(["A", "B"], "Z")).toEqual(["A", "B"]);
+        expect(preferredFirst(["A", "B"])).toEqual(["A", "B"]);
     });
 });
 

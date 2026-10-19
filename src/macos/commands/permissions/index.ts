@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
@@ -15,7 +16,7 @@ import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import * as p from "@genesiscz/utils/prompts/p";
 import { truncateDisplay } from "@genesiscz/utils/table";
 import { Command } from "commander";
-import { buildApp, describeSource } from "../../lib/permissions/app";
+import { buildApp, CODESIGN_TRUST_COMMAND, describeSource, readManifest } from "../../lib/permissions/app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "../../lib/permissions/kinds";
 import {
     describePromptProcesses,
@@ -226,6 +227,36 @@ export function registerPermissionsCommand(program: Command): void {
             if (report.problems.length > 0) {
                 process.exitCode = 1;
             }
+        });
+
+    permissions
+        .command("codesign-trust")
+        .description(
+            "One-time: let codesign use the login keychain's signing keys without the password dialog on every build (asks for the login password once)"
+        )
+        .action(async () => {
+            const keychain = join(homedir(), "Library", "Keychains", "login.keychain-db");
+            const signedWith = readManifest()?.signedWith;
+            out.log.step(
+                `security set-key-partition-list marks every signing key in the login keychain as usable by Apple's tools (codesign included)${signedWith ? `; the app signs with ${signedWith}` : ""}. The password it asks for is the login keychain's (your macOS login).`
+            );
+            const proc = Bun.spawn({
+                cmd: ["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", keychain],
+                stdio: ["inherit", "inherit", "inherit"],
+            });
+            const code = await proc.exited;
+
+            if (code !== 0) {
+                out.log.error(
+                    `security exited ${code}: the keys are unchanged. Run ${toolCommand("macos permissions codesign-trust")} again, or click Always Allow in the next codesign dialog.`
+                );
+                process.exitCode = 1;
+                return;
+            }
+
+            out.log.success(
+                `Done: the next ${toolCommand("macos permissions build")} signs without the dialog. (${CODESIGN_TRUST_COMMAND} is idempotent.)`
+            );
         });
 
     permissions
