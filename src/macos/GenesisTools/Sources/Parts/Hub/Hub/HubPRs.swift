@@ -2126,7 +2126,10 @@ struct PRDetailView: View {
             // Lazy, rows included: every realized row is a focus responder, and SwiftUI walks all of
             // them whenever a sidebar group folds (1.1 s of main thread with #424's 92 commits shown).
             // The PR first (description, commits, checks), the agent sessions that touched it after.
-            LazyVStack(alignment: .leading, spacing: 0) {
+            // The description stays outside the lazy stack: as one lazy item, a long one (thousands of
+            // points of markdown) was made and dropped again on every layout pass once a link scrolled to
+            // the commit right under it, and the hub froze for good (!7553's newest commit, 2026-10-19).
+            VStack(alignment: .leading, spacing: 0) {
                 if let body = detail?.body?.trimmed, !body.isEmpty {
                     PRSection(title: "Description", folded: $foldDescription) {
                         MarkdownContentView(markdown: linkedDescription(body), style: .hub)
@@ -2149,28 +2152,30 @@ struct PRDetailView: View {
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("Loading the description")
                 }
-                if let commits = detail?.commits, !commits.isEmpty {
-                    if let review = prs.review {
-                        PRCommitsSection(prs: prs, review: review, pr: pr, commits: commits, folded: $foldCommits) {
-                            showDiff = true
-                        }
-                    } else {
-                        PRSection(title: "Commits", count: commits.count, folded: $foldCommits, flat: true) {
-                            let authors = PRCommitRow.showsAuthors(commits)
-                            ForEach(commits.reversed()) { commit in
-                                PRCommitRow(pr: pr, commit: commit, selected: false, inApp: false, showsAuthor: authors) {
-                                    if let url = pr.commitURL(commit.sha) { ExternalOpener.open(url) }
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if let commits = detail?.commits, !commits.isEmpty {
+                        if let review = prs.review {
+                            PRCommitsSection(prs: prs, review: review, pr: pr, commits: commits, folded: $foldCommits) {
+                                showDiff = true
+                            }
+                        } else {
+                            PRSection(title: "Commits", count: commits.count, folded: $foldCommits, flat: true) {
+                                let authors = PRCommitRow.showsAuthors(commits)
+                                ForEach(commits.reversed()) { commit in
+                                    PRCommitRow(pr: pr, commit: commit, selected: false, inApp: false, showsAuthor: authors) {
+                                        if let url = pr.commitURL(commit.sha) { ExternalOpener.open(url) }
+                                    }
                                 }
                             }
                         }
                     }
+                    if let checks = detail?.checks, !checks.isEmpty {
+                        PRChecksSection(model: model, pr: pr, checks: checks, folded: $foldChecks)
+                            .id(Self.checksID)
+                    }
+                    PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
+                        .id(Self.sessionsID)
                 }
-                if let checks = detail?.checks, !checks.isEmpty {
-                    PRChecksSection(model: model, pr: pr, checks: checks, folded: $foldChecks)
-                        .id(Self.checksID)
-                }
-                PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
-                    .id(Self.sessionsID)
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
