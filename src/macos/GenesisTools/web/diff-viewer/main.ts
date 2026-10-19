@@ -1149,24 +1149,14 @@ function richText(text: string): HTMLElement {
     return box;
 }
 
+/**
+ * The same inline grammar as a PR comment (`inline`): `code`, **bold**, *italic*, [links](url) and bare URLs,
+ * with the line breaks kept. Drafts only knew `code`, so an agent's "[281870](https://…)" showed as its
+ * brackets (2026-10-19, !7404).
+ */
 function proseText(text: string): HTMLElement {
     const body = element("div", css.body);
-    const lines = text.split("\n");
-
-    lines.forEach((line, index) => {
-        for (const part of line.split(/(`[^`]+`)/)) {
-            if (part.startsWith("`") && part.endsWith("`") && part.length > 2) {
-                body.appendChild(element("code", css.code, part.slice(1, -1)));
-            } else if (part) {
-                body.appendChild(document.createTextNode(part));
-            }
-        }
-
-        if (index < lines.length - 1) {
-            body.appendChild(document.createElement("br"));
-        }
-    });
-
+    inline(body, text);
     return body;
 }
 
