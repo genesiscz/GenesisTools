@@ -102,7 +102,7 @@ function isFullRef(model: string): boolean {
 /**
  * Decide which account pays for the brainstorm:
  *   `--account <name>`, a full `--model` ref, or the `domains` app default: the user's own choice, even a paid one;
- *   else `auto` (also `--account auto`): every enabled subscription account, ranked by usage room;
+ *   else `auto` (also `--account auto`): every enabled subscription account, ranked by provider and weekly room;
  *   else, only when no subscription account exists, the `ask` default (a paid account; the caller warns).
  * Resolves only: no credential is read and nothing is bound.
  */
@@ -218,7 +218,7 @@ async function brainstorm(context: SuggestContext) {
 
 export const aiSuggestor: Suggestor = {
     id: "ai",
-    label: "LLM brainstorm (brandables, translations, hacks); the subscription account with the most room, warns on a paid one",
+    label: "LLM brainstorm (brandables, translations, hacks); a subscription account (Claude, Codex, Grok), warns on a paid one",
     online: true,
     defaultOn: false,
     async suggest(context) {

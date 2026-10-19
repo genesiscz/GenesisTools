@@ -23,7 +23,7 @@ export function createSearchCommand(): Command {
         )
         .option(
             "--account <name>",
-            "AI account for the AI suggestor, or auto: the subscription account with the most room (default)"
+            "AI account for the AI suggestor, or auto: Claude, then Codex, then Grok, with over 10% weekly room (default)"
         )
         .option("--rounds <n>", "AI rounds; each later round learns from what was taken (needs --ai)", "1")
         .option("--offline", "skip suggestors that need the network")

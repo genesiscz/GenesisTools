@@ -398,6 +398,43 @@ describe("auto account", () => {
         expect(candidates.find((c) => c.target.account.id === "acc_max")?.why).toBe("5h 100% used (full)");
     });
 
+    test("prefers Claude, then Codex, then Grok while each keeps over 10% weekly room", async () => {
+        const sub = (id: string, provider: string) => account(id, id, { provider });
+        writeConfig({
+            accounts: [
+                sub("acc_grok", "grok-sub"),
+                sub("acc_codex", "openai-sub"),
+                sub("acc_claude_low", "anthropic-sub"),
+                sub("acc_claude_busy", "anthropic-sub"),
+                sub("acc_claude_idle", "anthropic-sub"),
+                sub("acc_claude_unknown", "anthropic-sub"),
+            ],
+        });
+        const weekly = (id: string, provider: string, percentUsed: number): AccountUsageSnapshot => ({
+            ...usage(id, [{ key: "seven_day", label: "Weekly", kind: "weekly", percentUsed }]),
+            provider,
+        });
+        const ranked = await autoAccountCandidates({
+            snapshots: [
+                weekly("acc_grok", "grok-sub", 0),
+                weekly("acc_codex", "openai-sub", 5),
+                weekly("acc_claude_low", "anthropic-sub", 90),
+                weekly("acc_claude_busy", "anthropic-sub", 70),
+                weekly("acc_claude_idle", "anthropic-sub", 20),
+            ],
+        });
+
+        expect(ranked.map((c) => c.target.account.id)).toEqual([
+            "acc_claude_idle",
+            "acc_claude_busy",
+            "acc_codex",
+            "acc_grok",
+            "acc_claude_unknown",
+            "acc_claude_low",
+        ]);
+        expect(ranked.at(-1)?.why).toBe("Weekly 90% used (10% weekly room or less)");
+    });
+
     test("isAccountRefusal: 401, 403 and 429, also wrapped in SDK retries; never a server error", () => {
         expect(isAccountRefusal(refusal(429))).toBe(true);
         expect(isAccountRefusal(refusal(403))).toBe(true);

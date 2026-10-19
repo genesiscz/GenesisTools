@@ -8,7 +8,8 @@ import { ModelResolutionError, resolveModelTarget } from "./resolve";
 import type { ResolvedBinding, ResolvedTarget, ResolveOptions } from "./types";
 
 /**
- * `--account auto`: pick the subscription account with the most room left, and move to the next one when an
+ * `--account auto`: pick a subscription account by provider order (Claude, Codex, Grok) among those with weekly room
+ * left, and move to the next one when an
  * account refuses. Paid accounts never enter the list: spending money is something a user names, not something
  * a ranking decides.
  */
@@ -26,6 +27,20 @@ export interface AutoCandidate {
     why: string;
 }
 
+/** Which subscriptions to spend first, and how much weekly room an account must keep to count as usable. */
+export interface AutoPolicy {
+    /** Plugin ids, best first; a provider not listed comes after the listed ones. */
+    providerOrder: readonly string[];
+    /** An account with this much weekly room or less waits until no other account is usable. */
+    minWeeklyLeftPct: number;
+}
+
+/** Martin, 2026-10-19: "claude better, then codex, then grok, whenever > 10% weekly left". */
+export const DEFAULT_AUTO_POLICY: AutoPolicy = {
+    providerOrder: ["anthropic-sub", "openai-sub", "grok-sub"],
+    minWeeklyLeftPct: 10,
+};
+
 function appliesTo(window: LimitWindow, modelId: string): boolean {
     if (window.kind === "credit") {
         return false;
@@ -38,38 +53,56 @@ function describe(windows: LimitWindow[]): string {
     return windows.map((window) => `${window.label} ${Math.round(window.percentUsed)}%`).join(", ");
 }
 
+/** Usable first, then unknown, then low on weekly room, then full. */
+type Tier = 0 | 1 | 2 | 3;
+
 /**
- * Order subscription targets by usage room. Accounts with usage data come first (least used first), then the ones
- * with none, then the ones whose window is full; ties keep config order. Pure, so a test needs no network.
+ * Order subscription targets. A usable account (usage data, no full window, more than `minWeeklyLeftPct` weekly
+ * room) comes first, by provider order and then by the least used window. Then accounts without usage data, then
+ * accounts low on weekly room, then full ones. Ties keep config order. Pure, so a test needs no network.
  */
 export function rankAutoAccounts(
     targets: readonly ResolvedTarget[],
-    snapshots: readonly AccountUsageSnapshot[]
+    snapshots: readonly AccountUsageSnapshot[],
+    policy: AutoPolicy = DEFAULT_AUTO_POLICY
 ): AutoCandidate[] {
     const byAccount = new Map(snapshots.map((snapshot) => [snapshot.accountId, snapshot]));
-    const candidates = targets.map((target, index) => {
+    const providerRank = (provider: string): number => {
+        const index = policy.providerOrder.indexOf(provider);
+        return index === -1 ? policy.providerOrder.length : index;
+    };
+    const ranked = targets.map((target, index) => {
         const windows = (byAccount.get(target.account.id)?.limits ?? []).filter(
             (window) => typeof window.percentUsed === "number" && appliesTo(window, target.model.id)
         );
 
         if (windows.length === 0) {
-            return { index, candidate: { target, why: "no usage data" } satisfies AutoCandidate };
+            return { index, tier: 1 as Tier, candidate: { target, why: "no usage data" } satisfies AutoCandidate };
         }
 
         const usedPct = Math.max(...windows.map((window) => window.percentUsed));
-        const why = `${describe(windows)} used${usedPct >= 100 ? " (full)" : ""}`;
-        return { index, candidate: { target, usedPct, why } satisfies AutoCandidate };
+        const weekly = windows.filter((window) => window.kind === "weekly" || window.kind === "scoped");
+        const weeklyLeftPct = 100 - Math.max(0, ...weekly.map((window) => window.percentUsed));
+        const tier: Tier = usedPct >= 100 ? 3 : weeklyLeftPct <= policy.minWeeklyLeftPct ? 2 : 0;
+        const note = ["", "", ` (${policy.minWeeklyLeftPct}% weekly room or less)`, " (full)"][tier];
+        return {
+            index,
+            tier,
+            candidate: { target, usedPct, why: `${describe(windows)} used${note}` } satisfies AutoCandidate,
+        };
     });
-    const rank = (candidate: AutoCandidate): number => {
-        if (candidate.usedPct === undefined) {
-            return 100;
-        }
 
-        return candidate.usedPct >= 100 ? 200 + candidate.usedPct : candidate.usedPct;
-    };
-
-    return candidates
-        .sort((a, b) => rank(a.candidate) - rank(b.candidate) || a.index - b.index)
+    return ranked
+        .sort(
+            (a, b) =>
+                a.tier - b.tier ||
+                (a.tier <= 1
+                    ? providerRank(a.candidate.target.account.provider) -
+                      providerRank(b.candidate.target.account.provider)
+                    : 0) ||
+                (a.candidate.usedPct ?? 0) - (b.candidate.usedPct ?? 0) ||
+                a.index - b.index
+        )
         .map((entry) => entry.candidate);
 }
 
@@ -80,6 +113,7 @@ export interface AutoAccountOptions {
     store?: AiConfigStore;
     /** Injected usage, for tests. Omitted reads the shared usage cache (`tools ai usage`), polling when stale. */
     snapshots?: readonly AccountUsageSnapshot[];
+    policy?: AutoPolicy;
 }
 
 async function readUsage(accounts: readonly AccountEntry[]): Promise<AccountUsageSnapshot[]> {
@@ -117,7 +151,7 @@ export async function autoAccountCandidates(options: AutoAccountOptions = {}): P
     }
 
     const snapshots = options.snapshots ?? (await readUsage(targets.map((target) => target.account)));
-    return rankAutoAccounts(targets, snapshots);
+    return rankAutoAccounts(targets, snapshots, options.policy);
 }
 
 /** A refusal that a different account may not get: 401, 403 or 429, also when the SDK wrapped it in retries. */
@@ -148,7 +182,7 @@ export async function runWithAutoAccount<T>(options: RunWithAutoAccountOptions<T
 
     for (const [index, candidate] of candidates.entries()) {
         const { account, model } = candidate.target;
-        const rank = index === 0 ? `most room of ${candidates.length} subscription accounts` : "next in line";
+        const rank = `pick ${index + 1} of ${candidates.length}: Claude, then Codex, then Grok, with weekly room left`;
         log.tee.log.info(`${app}: AI account "${account.name}" (${model.id}): ${candidate.why}; ${rank}`);
 
         const binding = await candidate.target.plugin.bind({ account });

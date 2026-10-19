@@ -21,7 +21,7 @@ export function createSuggestCommand(): Command {
         )
         .option(
             "--account <name>",
-            "AI account for the AI suggestor, or auto: the subscription account with the most room (default)"
+            "AI account for the AI suggestor, or auto: Claude, then Codex, then Grok, with over 10% weekly room (default)"
         )
         .option("--offline", "skip suggestors that need the network")
         .option("--list", "list the suggestors and exit")
