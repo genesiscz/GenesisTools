@@ -550,8 +550,8 @@ final class PRsModel: ObservableObject {
         pendingReveal = reveal
         pendingCommit = nil
         if let commit {
-            if let sha = HubCommitSha.normalized(commit) {
-                pendingCommit = PRCommitPick(ref: ref, sha: sha, asked: Date())
+            if let span = HubCommitSpan(commit) {
+                pendingCommit = PRCommitPick(ref: ref, sha: span.from, to: span.to, asked: Date())
             } else {
                 notice = PRNotice(ref: ref, text: HubCommitSha.invalid(commit))
             }
@@ -705,15 +705,63 @@ final class PRsModel: ObservableObject {
         let settled = (detailFetched[id].map { $0 >= pending.asked } ?? false) && reviewHeadSha == shown.headSha
         guard let commit = HubCommitSha.find(pending.sha, in: commits) else {
             if settled {
-                showMissingCommit(pending, in: shown, review: review)
+                showMissingCommit(pending, missing: pending.sha, in: shown, review: review)
             }
             return
+        }
+        var last: HubPRDetail.Commit?
+        if let to = pending.to {
+            guard let found = HubCommitSha.find(to, in: commits) else {
+                if settled {
+                    showMissingCommit(pending, missing: to, in: shown, review: review)
+                }
+                return
+            }
+            last = found
         }
         if settled {
             pendingCommit = nil
         }
-        HubPerf.log("prs.commit \(shown.label) \(commit.sha.prefix(10)) settled=\(settled)")
-        showLinkedCommit(commit, prID: id, review: review)
+        HubPerf.log("prs.commit \(shown.label) \(commit.sha.prefix(10))\(last.map { "..\($0.sha.prefix(10))" } ?? "") settled=\(settled)")
+        if let last {
+            showLinkedRange(commit, last, in: commits, pr: shown, review: review)
+        } else {
+            showLinkedCommit(commit, prID: id, review: review)
+        }
+    }
+
+    /// A link's `commit=<from>..<to>`: those commits of the PR, both ends included, in either order.
+    func showLinkedRange(_ one: HubPRDetail.Commit, _ other: HubPRDetail.Commit, in commits: [HubPRDetail.Commit], pr: HubPR, review: ReviewModel) {
+        guard let a = commits.firstIndex(of: one), let b = commits.firstIndex(of: other) else { return }
+        HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
+        HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
+        commitScroll = PRCommitScroll(prID: pr.id, sha: commits[max(a, b)].sha)
+        let scope = Self.rangeScope(commits, first: min(a, b), last: max(a, b), pr: pr, whole: Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)))
+        if review.scope == scope { return }
+        review.setScope(scope)
+    }
+
+    /// Commits `first...last` of a PR (oldest first, as the host lists them): from the commit before
+    /// `first`, or from the PR's own base when `first` is its first commit, to `last`.
+    nonisolated static func rangeScope(_ commits: [HubPRDetail.Commit], first: Int, last: Int, pr: HubPR, whole: DiffScope) -> DiffScope {
+        let head = commits[last].sha
+        let label = "\(pr.label) \(commits[first].sha.prefix(7))..\(head.prefix(7)) (\(Plural.count(last - first + 1, "commit")))"
+        if first > 0 {
+            return .range(base: commits[first - 1].sha, head: head, label: label)
+        }
+        if case .range(let base, _, _, let fallback) = whole {
+            return .range(base: base, head: head, label: label, fallbackBase: fallback)
+        }
+        return .range(base: "\(commits[first].sha)^", head: head, label: label)
+    }
+
+    /// The commits of `commits` a range scope shows (`rangeScope`), for the commits list to mark; empty for
+    /// one commit or the whole PR.
+    nonisolated static func rangeShas(_ scope: DiffScope, in commits: [HubPRDetail.Commit]) -> Set<String> {
+        guard case .range(let base, let head, _, _) = scope, let last = commits.firstIndex(where: { $0.sha == head }) else { return [] }
+        let first = commits.firstIndex(where: { $0.sha == base }).map { $0 + 1 } ?? 0
+        guard first <= last, first > 0 || last < commits.count - 1 else { return [] }
+        return Set(commits[first...last].map(\.sha))
     }
 
     /// A repeated link reveals the diff and scrolls again even when its commit is already selected.
@@ -727,11 +775,12 @@ final class PRsModel: ObservableObject {
     }
 
     /// A settled miss replaces any previously selected commit with the whole PR before saying so.
-    func showMissingCommit(_ pending: PRCommitPick, in shown: HubPR, review: ReviewModel) {
+    func showMissingCommit(_ pending: PRCommitPick, missing: String? = nil, in shown: HubPR, review: ReviewModel) {
         pendingCommit = nil
+        let sha = missing ?? pending.sha
         review.setScope(Self.scope(shown, detail: details[shown.id], fetch: fetchedHead(shown)))
-        HubPerf.log("prs.commit \(shown.label) \(pending.sha) not among its commits")
-        notice = PRNotice(ref: pending.ref, text: "\(pending.sha) is not a commit of \(shown.label), so the whole \(shown.isGitLab ? "MR" : "PR") shows")
+        HubPerf.log("prs.commit \(shown.label) \(sha) not among its commits")
+        notice = PRNotice(ref: pending.ref, text: "\(sha) is not a commit of \(shown.label), so the whole \(shown.isGitLab ? "MR" : "PR") shows")
     }
 
     /// The overview scrolled to `scroll`; a later appearance of the PR does not scroll again.
@@ -2301,7 +2350,9 @@ struct PRCommitsSection: View {
 
     var body: some View {
         let shown = shownSha
-        PRSection(title: "Commits", count: commits.count, folded: $folded, flat: true, trailing: shown == nil ? nil : AnyView(
+        // A range link's commits, all marked.
+        let range = PRsModel.rangeShas(review.scope, in: commits)
+        PRSection(title: "Commits", count: commits.count, folded: $folded, flat: true, trailing: shown == nil && range.isEmpty ? nil : AnyView(
             Button("Whole PR") { prs.showWholePR() }
                 .buttonStyle(.genHoverPlain())
                 .font(.system(size: 11.5))
@@ -2309,7 +2360,7 @@ struct PRCommitsSection: View {
         )) {
             let authors = PRCommitRow.showsAuthors(commits)
             ForEach(commits.reversed()) { commit in
-                PRCommitRow(pr: pr, commit: commit, selected: commit.sha == shown, inApp: true, showsAuthor: authors) {
+                PRCommitRow(pr: pr, commit: commit, selected: commit.sha == shown || range.contains(commit.sha), inApp: true, showsAuthor: authors) {
                     if prs.showCommit(commit) { revealDiff() }
                 }
             }

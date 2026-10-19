@@ -122,7 +122,7 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             title: "GenesisTools hub",
             kind: "installable",
             description:
-                "https://<link host>/hub?<query> opens genesis-tools://hub?<query>: a PR, a commit in it (pr=…&commit=…), a session.",
+                "https://<link host>/hub?<query> opens genesis-tools://hub?<query>: a PR, a commit or a range of commits in it (pr=…&commit=<sha> or <from>..<to>), a session.",
             enabledIf: ["browser-router:installed"],
             needsLinkHost: true,
             probe: linkHost ? `https://${linkHost}/hub?pr=1&commit=0000000` : undefined,

@@ -145,6 +145,31 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(HubCommitSha.find("abcdef9", in: commits))
     }
 
+    /// `commit=<from>..<to>`: a run of a PR's commits, both ends included, in either order.
+    func testACommitRangeLinkShowsItsCommitsFromTheParentOfTheFirst() throws {
+        XCTAssertEqual(HubCommitSpan("abcdef0"), HubCommitSpan(from: "abcdef0"))
+        XCTAssertEqual(HubCommitSpan("67AD51671E..3cac936e2f"), HubCommitSpan(from: "67ad51671e", to: "3cac936e2f"))
+        XCTAssertNil(HubCommitSpan("abcdef0..xyz"))
+        XCTAssertNil(HubCommitSpan("abcdef0...1234567"))
+        let commit = { (sha: String) in HubPRDetail.Commit(sha: sha, title: sha, author: nil, authorLogin: nil, date: nil, body: nil) }
+        let commits = ["a000000", "b000000", "c000000", "d000000"].map(commit)
+        let json = """
+        {"repo":"app","repoRoot":"/work/app","origin":{"kind":"gitlab","host":"git.example","web":"https://git.example/group/app"},
+         "number":7,"title":"t","state":"OPEN","draft":false,"author":"a","headBranch":"feat/x","baseBranch":"main",
+         "url":"https://git.example/group/app/-/merge_requests/7","labels":[],"reviewers":[],"headSha":"d000000","crossRepository":false,"headRepo":null}
+        """
+        let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        let whole = DiffScope.range(base: "base000", head: "d000000", label: "whole", fallbackBase: "origin/main")
+        let middle = PRsModel.rangeScope(commits, first: 1, last: 2, pr: pr, whole: whole)
+        XCTAssertEqual(middle, .range(base: "a000000", head: "c000000", label: "!7 b000000..c000000 (2 commits)"))
+        XCTAssertEqual(PRsModel.rangeShas(middle, in: commits), ["b000000", "c000000"])
+        let opening = PRsModel.rangeScope(commits, first: 0, last: 1, pr: pr, whole: whole)
+        XCTAssertEqual(opening, .range(base: "base000", head: "b000000", label: "!7 a000000..b000000 (2 commits)", fallbackBase: "origin/main"))
+        XCTAssertEqual(PRsModel.rangeShas(opening, in: commits), ["a000000", "b000000"])
+        XCTAssertEqual(PRsModel.rangeShas(whole, in: commits), [], "the whole PR marks no commit")
+        XCTAssertEqual(PRsModel.rangeShas(.commit(sha: "b000000", title: "b"), in: commits), [])
+    }
+
     func testAForgePathFindsItsCheckoutInAnyCaseAndForm() {
         let projects = [
             HubPRProject(project: "https://github.com/acme/App", repo: "App", root: "/fixture/app", kind: "github"),
@@ -181,6 +206,16 @@ final class HubLogicTests: XCTestCase {
             return XCTFail("a commit the checkout lacks must be said")
         }
         XCTAssertTrue(message.contains("is not in"), message)
+
+        // A range, named in either order: from the parent of the older end to the newer one.
+        for _ in 0..<2 {
+            XCTAssertNotNil(WorktreeDiscovery.git(path, commit))
+        }
+        let newest = try XCTUnwrap(WorktreeDiscovery.git(path, ["rev-parse", "HEAD"])?.trimmed)
+        let middle = try XCTUnwrap(WorktreeDiscovery.git(path, ["rev-parse", "HEAD^"])?.trimmed)
+        let range = HubCommitLookup.Found(root: root, sha: newest, title: "\(middle.prefix(10))..\(newest.prefix(10)) (2 commits)", base: head)
+        XCTAssertEqual(HubCommitLookup.resolve(repo: path, sha: String(middle.prefix(8)), to: String(newest.prefix(8)), known: []), .found(range))
+        XCTAssertEqual(HubCommitLookup.resolve(repo: path, sha: String(newest.prefix(8)), to: String(middle.prefix(8)), known: []), .found(range))
     }
 
     @MainActor
