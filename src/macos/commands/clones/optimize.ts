@@ -20,7 +20,7 @@ import {
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { discoverRoots, RepoNotFoundError } from "@app/macos/lib/clones/discover";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
-import { parseMinReal } from "@app/macos/lib/clones/min-real";
+import { BYTE_SIZE_FORMS, parseByteSize } from "@app/macos/lib/clones/min-real";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { emitClonesError } from "@app/macos/lib/clones/render/envelope";
 import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
@@ -130,7 +130,7 @@ export function createOptimizeCommand(): Command {
             "--targets [kinds]",
             `What to scan under --dir: ${TARGET_KIND_VALUES.join(", ")} (every file under each dir)`
         )
-        .option("--min-real <bytes>", "Minimum real size to consider", "10485760")
+        .option("--min-real <size>", `Minimum real size to consider (${BYTE_SIZE_FORMS})`, "10485760")
         .option("--include <glob>", "Include glob (repeatable)", collect, [])
         .option("--exclude <glob>", "Exclude glob (repeatable, wins over --include)", collect, [])
         .option("-v, --verbose", "Verbose logging", false)
@@ -340,9 +340,9 @@ export function createOptimizeCommand(): Command {
                 process.exit(2);
             }
 
-            const minReal = parseMinReal(opts.minReal);
+            const minReal = parseByteSize(opts.minReal);
             if (minReal === null) {
-                const message = `--min-real must be a positive whole number of bytes, got "${opts.minReal}".`;
+                const message = `--min-real must be a positive size (${BYTE_SIZE_FORMS}), got "${opts.minReal}".`;
                 await invalidArguments(opts, message);
                 console.error(message);
                 process.exitCode = 1;

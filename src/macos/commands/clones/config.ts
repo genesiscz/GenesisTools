@@ -1,6 +1,6 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
-import { parseMinReal } from "@app/macos/lib/clones/min-real";
+import { BYTE_SIZE_FORMS, parseByteSize } from "@app/macos/lib/clones/min-real";
 import {
     addWatchedDirs,
     loadClonesConfig,
@@ -61,7 +61,7 @@ export function createConfigCommand(): Command {
         .option("--add-dir <paths>", "Add watched dir(s) (repeatable / comma list)", collect, [])
         .option("--remove-dir <paths>", "Remove watched dir(s) (repeatable / comma list)", collect, [])
         .option("--list", "Print the current config as JSON", false)
-        .option("--set-min-real <bytes>", "Default min-real threshold")
+        .option("--set-min-real <size>", `Default min-real threshold (${BYTE_SIZE_FORMS})`)
         .option("--node-modules <on|off>", "Default node_modules focus mode")
         .action(async (opts: ConfigOpts) => {
             const adds = parseVariadic(opts.addDir);
@@ -79,10 +79,10 @@ export function createConfigCommand(): Command {
                 // beside a failure exit code.
                 let minReal: number | null = null;
                 if (opts.setMinReal !== undefined) {
-                    minReal = parseMinReal(opts.setMinReal);
+                    minReal = parseByteSize(opts.setMinReal);
                     if (minReal === null) {
                         console.error(
-                            `--set-min-real must be a positive whole number of bytes, got "${opts.setMinReal}".`
+                            `--set-min-real must be a positive size (${BYTE_SIZE_FORMS}), got "${opts.setMinReal}".`
                         );
                         process.exitCode = 1;
                         return;
@@ -169,15 +169,15 @@ export function createConfigCommand(): Command {
                 await setNodeModules(next);
                 p.log.success(`node_modules focus → ${next ? "on" : "off"}`);
             } else if (action === "min-real") {
-                const v = await p.text({ message: "min-real bytes", placeholder: "10485760" });
+                const v = await p.text({ message: `min-real (${BYTE_SIZE_FORMS})`, placeholder: "10MB" });
                 if (p.isCancel(v)) {
                     p.cancel("No changes.");
                     return;
                 }
 
-                const n = parseMinReal(v);
+                const n = parseByteSize(v);
                 if (n === null) {
-                    p.log.error(`min-real must be a positive whole number of bytes, got "${v}".`);
+                    p.log.error(`min-real must be a positive size (${BYTE_SIZE_FORMS}), got "${v}".`);
                 } else {
                     await setMinReal(n);
                     p.log.success(`min-real → ${n}`);

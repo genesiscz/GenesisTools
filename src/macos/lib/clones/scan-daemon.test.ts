@@ -6,9 +6,9 @@ import {
     type AutoReclaimDeps,
     formatAutoReclaimReport,
     limitPlan,
-    parseByteLimit,
     runAutoReclaims,
 } from "@app/macos/lib/clones/auto-reclaim";
+import { parseByteSize } from "@app/macos/lib/clones/min-real";
 import type { Preset, PresetAuto } from "@app/macos/lib/clones/presets";
 import type { ReclaimPlan } from "@app/macos/lib/clones/reclaim";
 import type { DuplicateSet } from "@app/macos/lib/clones/render/types";
@@ -303,10 +303,10 @@ describe("auto reclaim", () => {
         const limited = limitPlan(fakePlan(["/w/x"], sets), { maxBytes: 100 * GB, maxFiles: 2 });
         expect(limited.plan.sets.map((set) => set.what)).toEqual(["big", "mid"]);
         expect(limited.droppedSets).toBe(1);
-        expect(parseByteLimit("5GB")).toBe(5 * GB);
-        expect(parseByteLimit("500 mb")).toBe(500 * 1024 ** 2);
-        expect(parseByteLimit("1048576")).toBe(1048576);
-        expect(parseByteLimit("lots")).toBeNull();
-        expect(parseByteLimit("0")).toBeNull();
+        expect(parseByteSize("5GB")).toBe(5 * GB);
+        expect(parseByteSize("500 mb")).toBe(500 * 1024 ** 2);
+        expect(parseByteSize("1048576")).toBe(1048576);
+        expect(parseByteSize("lots")).toBeNull();
+        expect(parseByteSize("0")).toBeNull();
     });
 });

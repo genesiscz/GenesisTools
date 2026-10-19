@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
-import { parseMinReal } from "@app/macos/lib/clones/min-real";
+import { BYTE_SIZE_FORMS, parseByteSize } from "@app/macos/lib/clones/min-real";
 import { buildMeasureReport, expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
@@ -37,7 +37,7 @@ export function applySharedMeasureFlags(cmd: Command): Command {
             new Option("--format <format>", "Output format").choices(["auto", "table", "json", "jsonl"]).default("auto")
         )
         .option("--node-modules", "Expand each root to its node_modules dirs", false)
-        .option("--min-real <bytes>", "Hide subtrees whose real size is below this", "10485760")
+        .option("--min-real <size>", `Hide subtrees whose real size is below this (${BYTE_SIZE_FORMS})`, "10485760")
         .option("--top <N>", "Show only the top N rows (default: unlimited)")
         .option("--no-breakdown", "Totals + clone analysis only (no per-dir tree)")
         .option("--include <glob>", "Include glob (repeatable)", collect, [])
@@ -70,9 +70,9 @@ export function createMeasureCommand(): Command {
         // Same contract as every sibling command: a negative or truncated floor
         // is what disables the native walk and turns this into a walk-and-hash
         // of every file under every root.
-        const minReal = parseMinReal(opts.minReal);
+        const minReal = parseByteSize(opts.minReal);
         if (minReal === null) {
-            console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+            console.error(`--min-real must be a positive size (${BYTE_SIZE_FORMS}), got "${opts.minReal}".`);
             process.exitCode = 1;
             return;
         }
@@ -129,9 +129,9 @@ export function createDuCommand(): Command {
     cmd.action(async (folderArg: string | undefined, opts: DuOpts) => {
         applyLogLevel(opts);
         const folder = resolve(folderArg ?? process.cwd());
-        const minReal = parseMinReal(opts.minReal);
+        const minReal = parseByteSize(opts.minReal);
         if (minReal === null) {
-            console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+            console.error(`--min-real must be a positive size (${BYTE_SIZE_FORMS}), got "${opts.minReal}".`);
             process.exitCode = 1;
             return;
         }

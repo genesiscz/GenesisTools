@@ -1,6 +1,6 @@
 import { parseVariadic } from "@genesiscz/utils/cli";
 import { KEEP_PARTNER_IDS, type KeepPartnerId } from "./keep-partners";
-import { parseMinReal } from "./min-real";
+import { parseByteSize } from "./min-real";
 import type { ReclaimSelector } from "./reclaim";
 
 export interface SelectorInput {
@@ -35,7 +35,7 @@ export function resolveSelector(input: SelectorInput): SelectorResult {
         return { error: { kind: "unknown-keep-partners", given: unknownPartners } };
     }
 
-    const minReal = parseMinReal(input.minReal);
+    const minReal = parseByteSize(input.minReal);
     if (minReal === null) {
         return { error: { kind: "bad-min-real", given: input.minReal } };
     }

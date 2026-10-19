@@ -177,7 +177,7 @@ describe("measure --min-real contract", () => {
         const exitCode: unknown = process.exitCode;
         process.exitCode = undefined;
         expect(exitCode).toBe(1);
-        expect(errs.join("\n")).toContain("positive whole number");
+        expect(errs.join("\n")).toContain("positive size");
     });
 
     it("refuses a non-positive value on du too", async () => {
@@ -194,6 +194,6 @@ describe("measure --min-real contract", () => {
         const exitCode: unknown = process.exitCode;
         process.exitCode = undefined;
         expect(exitCode).toBe(1);
-        expect(errs.join("\n")).toContain("positive whole number");
+        expect(errs.join("\n")).toContain("positive size");
     });
 });

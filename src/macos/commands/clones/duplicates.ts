@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { collapseDuplicates } from "@app/macos/lib/clones/collapse";
 import { FileMetaCache } from "@app/macos/lib/clones/file-meta-cache";
-import { parseMinReal } from "@app/macos/lib/clones/min-real";
+import { BYTE_SIZE_FORMS, parseByteSize } from "@app/macos/lib/clones/min-real";
 import { expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
@@ -72,7 +72,7 @@ export function createDuplicatesCommand(): Command {
         )
         .option("--group", "List every member path under each set", false)
         .option("--node-modules", "Expand each root to its node_modules dirs", false)
-        .option("--min-real <bytes>", "Ignore duplicate sets smaller than this (per-file size)")
+        .option("--min-real <size>", `Ignore duplicate sets smaller than this (per-file size) (${BYTE_SIZE_FORMS})`)
         .option("--include <glob>", "Include glob (repeatable; matches relpath or any segment)", collect, [])
         .option("--exclude <glob>", "Exclude glob (repeatable, wins over --include)", collect, [])
         .option(
@@ -97,9 +97,9 @@ export function createDuplicatesCommand(): Command {
                 process.exit(2);
             }
 
-            const minSize = opts.minReal === undefined ? undefined : parseMinReal(opts.minReal);
+            const minSize = opts.minReal === undefined ? undefined : parseByteSize(opts.minReal);
             if (minSize === null) {
-                console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+                console.error(`--min-real must be a positive size (${BYTE_SIZE_FORMS}), got "${opts.minReal}".`);
                 process.exitCode = 1;
                 return;
             }

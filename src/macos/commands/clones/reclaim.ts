@@ -1,14 +1,9 @@
 import { resolveKinds } from "@app/macos/commands/clones/kinds";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
 import { createStoresCommand } from "@app/macos/commands/clones/reclaim-stores";
-import {
-    armedAuto,
-    DEFAULT_AUTO_MAX_BYTES,
-    DEFAULT_AUTO_MAX_FILES,
-    parseByteLimit,
-} from "@app/macos/lib/clones/auto-reclaim";
+import { armedAuto, DEFAULT_AUTO_MAX_BYTES, DEFAULT_AUTO_MAX_FILES } from "@app/macos/lib/clones/auto-reclaim";
 import { KEEP_PARTNER_IDS, type KeepPartnerId, REWRITABLE_STORE_IDS } from "@app/macos/lib/clones/keep-partners";
-import { parseMinReal } from "@app/macos/lib/clones/min-real";
+import { BYTE_SIZE_FORMS, parseByteSize, parseCount } from "@app/macos/lib/clones/min-real";
 import {
     applyReclaimPlan,
     type PlanRunHooks,
@@ -107,7 +102,11 @@ function applySelectorFlags(cmd: Command): Command {
         )
         .option("--keep-unfreeable", "Keep sets that free nothing (dropped by default, so apply skips them)", false)
         .option("--exclude <glob>", "Exclude glob (repeatable)", collect, [])
-        .option("--min-real <bytes>", "Minimum per-file size to consider", String(DEFAULT_MIN_REAL));
+        .option(
+            "--min-real <size>",
+            `Minimum per-file size to consider (${BYTE_SIZE_FORMS})`,
+            String(DEFAULT_MIN_REAL)
+        );
 }
 
 function applyOutputFlags(cmd: Command): Command {
@@ -141,7 +140,7 @@ async function reportSelectorError(error: SelectorError, opts: ReclaimOpts, subc
             ? "Nothing to search. Pass a directory, or --dir <path>."
             : error.kind === "unknown-keep-partners"
               ? `Unknown --keep-partners: ${error.given.join(", ")}`
-              : `--min-real must be a positive whole number of bytes, got "${opts.minReal}".`;
+              : `--min-real must be a positive size (${BYTE_SIZE_FORMS}), got "${opts.minReal}".`;
     await emitInvalidArguments(opts, subcommand, message);
     if (error.kind === "no-dirs") {
         console.error(message);
@@ -699,8 +698,8 @@ function createPresetsCommand(): Command {
                     return;
                 }
 
-                const maxBytes = opts.maxBytes === undefined ? undefined : parseByteLimit(opts.maxBytes);
-                const maxFiles = opts.maxFiles === undefined ? undefined : parseMinReal(opts.maxFiles);
+                const maxBytes = opts.maxBytes === undefined ? undefined : parseByteSize(opts.maxBytes);
+                const maxFiles = opts.maxFiles === undefined ? undefined : parseCount(opts.maxFiles);
                 if (maxBytes === null || maxFiles === null) {
                     console.error("--max-bytes takes a size such as 5GB or 500MB; --max-files a whole number above 0.");
                     process.exitCode = 1;

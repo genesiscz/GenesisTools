@@ -233,7 +233,7 @@ describe("createReclaimCommand", () => {
         const res = await run(["plan", "--dir", tmpdir(), "--min-real", "-1"]);
         expect(res.code).toBe(1);
         expect(res.err).toContain("--min-real");
-        expect(res.err).toContain("positive whole number");
+        expect(res.err).toContain("positive size");
     });
 
     it("an unknown --keep-partners value is refused with the possible values", async () => {

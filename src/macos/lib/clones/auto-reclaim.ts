@@ -26,30 +26,6 @@ const log = logger.child({ component: "clones:auto-reclaim" });
 export const DEFAULT_AUTO_MAX_BYTES = 5 * 1024 ** 3;
 export const DEFAULT_AUTO_MAX_FILES = 500;
 
-const UNITS: Record<string, number> = {
-    b: 1,
-    k: 1024,
-    kb: 1024,
-    m: 1024 ** 2,
-    mb: 1024 ** 2,
-    g: 1024 ** 3,
-    gb: 1024 ** 3,
-    t: 1024 ** 4,
-    tb: 1024 ** 4,
-};
-
-/** "5GB", "500 MB", "1048576": a positive byte count, or null. Units are binary, as `formatBytes` prints them. */
-export function parseByteLimit(raw: string): number | null {
-    const match = /^\s*(\d+(?:\.\d+)?)\s*([a-z]*)\s*$/i.exec(raw);
-    if (match === null) {
-        return null;
-    }
-
-    const unit = UNITS[(match[2] ?? "").toLowerCase() || "b"];
-    const value = Number(match[1]) * (unit ?? Number.NaN);
-    return Number.isFinite(value) && value >= 1 ? Math.floor(value) : null;
-}
-
 /** Files one set rewrites, counted from the same (keep, replace) pairs apply clones: a folder set counts every file
  *  under each replaced folder, and copies under a fixed store root stay as they are. */
 function filesOf(set: DuplicateSet, keepOnlyRoots: readonly string[]): number {
