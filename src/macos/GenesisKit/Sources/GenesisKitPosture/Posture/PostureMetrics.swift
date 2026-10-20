@@ -87,6 +87,15 @@ public enum PostureMeasure: String, CaseIterable, Codable, Sendable {
         }
     }
 
+    /// Whether the measure needs the shoulders: it is the shoulder line itself, or it is divided by the shoulder
+    /// width. These change meaning when the request behind the shoulders changes (`PoseShoulderSource`).
+    public var usesShoulders: Bool {
+        switch self {
+        case .headHeight, .shoulderWidth, .eyeSpanRatio, .faceWidthRatio, .shoulderTilt, .lateralOffset: true
+        case .faceCenterX, .faceCenterY, .faceWidth, .faceRoll, .facePitch, .headphonePitch: false
+        }
+    }
+
     var comparison: Comparison {
         switch self {
         case .headHeight: .falls

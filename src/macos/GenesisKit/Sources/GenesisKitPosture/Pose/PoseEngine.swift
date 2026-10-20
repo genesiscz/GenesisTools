@@ -107,8 +107,26 @@ public final class VisionBodyPoseEngine: FramePoseEngine {
                                                            cached: cachedShoulders, face: face)
         }
         joints = Self.trustedJoints(joints, current: current, cachedShoulders: cachedShoulders, face: face)
+        let shoulders = Self.shoulderStamp(joints, body3D: body3D, readAt: last3D?.time, time: frame.time)
         return PoseSample(time: frame.time, engine: kind, joints: joints, face: face,
-                          imageAspect: frame.imageAspect, lowLight: frame.isLowLight)
+                          imageAspect: frame.imageAspect, lowLight: frame.isLowLight,
+                          shoulderSource: shoulders?.source, shoulderAge: shoulders?.age)
+    }
+
+    /// Makes the next `analyze` run the 3D request even when the throttle says it is not due, so a shoulder fault
+    /// seen on a held reading is confirmed by a fresh one. Call it from the queue that calls `analyze`.
+    public func readShouldersOnNextFrame() {
+        last3DAttempt = nil
+    }
+
+    /// Which request placed the reading's shoulders and how many seconds ago it ran; nil without both shoulders.
+    /// With `body3D` on, the shoulders only ever come from the 3D candidates fetched at `readAt`.
+    static func shoulderStamp(_ joints: [PoseJoint: PoseJointPoint], body3D: Body3D, readAt: TimeInterval?,
+                              time: TimeInterval) -> (source: PoseShoulderSource, age: TimeInterval)? {
+        guard joints[.leftShoulder] != nil, joints[.rightShoulder] != nil else { return nil }
+        guard body3D != .never else { return (.body2D, 0) }
+        guard let readAt else { return nil }
+        return (.body3D, max(0, time - readAt))
     }
 
     /// Replaces 2D shoulders with a matching projected 3D candidate, refreshing the candidates when due.

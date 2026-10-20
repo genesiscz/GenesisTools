@@ -175,6 +175,8 @@ public struct PostureCalibrationSession: Sendable {
     public private(set) var slouch: [PostureMetrics] = []
     /// The upright sample with the most joints, for the overlay's target ghost.
     public private(set) var referencePose: PoseSample?
+    /// How many upright samples had their shoulders from each request.
+    public private(set) var shoulderSources: [PoseShoulderSource: Int] = [:]
 
     public init() {}
 
@@ -186,6 +188,7 @@ public struct PostureCalibrationSession: Sendable {
         switch phase {
         case .upright:
             upright.append(metrics)
+            if let source = sample.shoulderSource { shoulderSources[source, default: 0] += 1 }
             if sample.joints.count >= (referencePose?.joints.count ?? 0) { referencePose = sample }
         case .slouch:
             slouch.append(metrics)
@@ -194,9 +197,16 @@ public struct PostureCalibrationSession: Sendable {
 
     public var canFinish: Bool { upright.count >= PostureBaseline.minimumUprightReadings }
 
-    /// The baseline, or nil with too few upright readings.
+    /// The request most upright samples took their shoulders from; nil when none had shoulders.
+    public var shoulderSource: PoseShoulderSource? {
+        shoulderSources.max { lhs, rhs in
+            lhs.value == rhs.value ? lhs.key.rawValue < rhs.key.rawValue : lhs.value < rhs.value
+        }?.key
+    }
+
+    /// The baseline, or nil with too few upright readings. It records which request placed the shoulders.
     public func baseline() -> PostureBaseline? {
-        PostureBaseline.calibrate(upright: upright, slouch: slouch)
+        PostureBaseline.calibrate(upright: upright, slouch: slouch, shoulderSource: shoulderSource)
     }
 }
 
