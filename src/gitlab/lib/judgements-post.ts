@@ -97,6 +97,10 @@ function stepFor(
             return { error: `Action ${action} has no text` };
         }
 
+        if (action === "reply-resolve" && known.resolvable === false) {
+            return { error: "a plain comment has nothing to resolve; use Action reply" };
+        }
+
         return {
             id: item.id,
             kind: "reply",

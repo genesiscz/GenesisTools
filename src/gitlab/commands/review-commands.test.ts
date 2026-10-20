@@ -1374,3 +1374,81 @@ describe("runStep", () => {
         expect(drafts.map((d) => d.id)).toEqual([900]);
     });
 });
+
+describe("plain MR comments in the receive flow", () => {
+    const PLAIN = "a66e4394ad7f00000000000000000000000000aa";
+
+    /** A diff thread and the shape GitLab gives a plain MR comment: one note, not resolvable, `type: null`. */
+    function plainFake(iid: number): FakeGitLab {
+        const { fake } = reviewFake(iid);
+        fake.get(`${PROJECT_API}/merge_requests/${iid}/discussions`, [
+            rawDiscussion(THREAD, { path: "src/a.ts", line: 3 }),
+            {
+                id: PLAIN,
+                individual_note: true,
+                notes: [
+                    {
+                        id: 2000,
+                        type: null,
+                        author: { username: "dana" },
+                        body: "@me Remember to delete the migration skill before the merge",
+                        system: false,
+                        resolvable: false,
+                    },
+                ],
+            },
+        ]);
+
+        return fake;
+    }
+
+    test("the skeleton gives every comment `comments list --unresolved` lists its own item, and a plain one cannot be resolved", async () => {
+        const fake = plainFake(97);
+
+        const listed = await run(fake, "comments", "list", "97", "--unresolved", "--json", ...TARGET);
+        const skeleton = await run(
+            fake,
+            "review",
+            "skeleton",
+            "97",
+            "--receive",
+            "--format",
+            "json",
+            "--print",
+            ...TARGET
+        );
+        const items = (SafeJSON.parse(skeleton.stdout) as { items: Array<{ id: string }> }).items;
+        const text = await run(fake, "review", "skeleton", "97", "--receive", "--print", ...TARGET);
+
+        expect((SafeJSON.parse(listed.stdout) as unknown[]).length).toBe(2);
+        expect(items.map((item) => item.id)).toEqual(["T01", "T02"]);
+        expect(text.stdout).toContain(
+            "# T02 @me Remember to delete the migration skill before the merge · discussion a66e4394ad7f · plain comment"
+        );
+        expect(text.stdout).toContain("- Action: reply | none\n");
+
+        const file = join(dir, "j.md");
+        writeFileSync(
+            file,
+            [
+                filled(RECEIVE_FILE, 97),
+                "# T02 Remember · discussion a66e4394ad7f · plain comment",
+                "- Verdict: Valid [90%]",
+                "- Proposal: Delete it before the merge.",
+                "- Rationale:",
+                "  - The skill is only for this migration.",
+                "- Action: reply-resolve",
+                "- Proposed draft reply:",
+                "",
+                "```markdown",
+                "@dana Deleted before the merge.",
+                "```",
+                "",
+            ].join("\n")
+        );
+        const checked = await run(fake, "review", "check", "97", "--receive", "--file", file, ...TARGET);
+
+        expect(checked.stdout).toContain("T02 (line");
+        expect(checked.stdout).toContain("a plain comment has nothing to resolve; use Action reply");
+    });
+});

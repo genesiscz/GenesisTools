@@ -51,6 +51,32 @@ export function unresolvedTopLevelThreads(discussions: Discussion[]): Discussion
     });
 }
 
+/** The first note a person wrote; a discussion of system notes only has none. */
+export function firstHumanNote(d: Discussion): Note | undefined {
+    return (d.notes ?? []).find((n) => !n.system);
+}
+
+/**
+ * Plain comments (`individual_note`, or any discussion whose first note is not resolvable): nothing to
+ * resolve, so they are never resolved, and `comments list --unresolved` always lists them. The receive
+ * report and the skeleton (`reviewItems`) list those someone else wrote; the author's own are only counted.
+ */
+export function plainComments(discussions: Discussion[], me?: string): { others: Discussion[]; mine: number } {
+    const plain = discussions.filter((d) => {
+        const first = firstHumanNote(d);
+
+        return first !== undefined && !first.resolvable;
+    });
+    const isMine = (d: Discussion): boolean => Boolean(me) && firstHumanNote(d)?.author?.username === me;
+
+    return { others: plain.filter((d) => !isMine(d)), mine: plain.filter(isMine).length };
+}
+
+/** The note after a plain-comment count when the reader's own were left out. */
+function plainHidden(mine: number): string {
+    return mine > 0 ? ` (${mine} of your own not listed: you wrote them)` : "";
+}
+
 /** Diff-attached threads with at least one resolvable note still open. */
 export function unresolvedThreads(discussions: Discussion[]): Discussion[] {
     return discussions.filter((d) => {
@@ -212,6 +238,8 @@ export interface RenderMarkdownOpts {
     afterNotes?: (d: Discussion) => BlockInput;
     /** Extra bullets under "Next steps"; `{iid}` becomes the MR iid. */
     nextSteps?: string[];
+    /** The current user: their own plain comments are counted, not listed. */
+    me?: string;
 }
 
 export interface RenderMarkdownResult {
@@ -449,9 +477,10 @@ function threadBlocks(d: Discussion, idx: number, opts: RenderMarkdownOpts): Blo
 export function receiveIndex(discussions: Discussion[], opts: RenderMarkdownOpts, command: string): string {
     const threads = unresolvedThreads(discussions);
     const topLevel = unresolvedTopLevelThreads(discussions);
+    const plain = plainComments(discussions, opts.me);
     const lines = [
         `=== GitLab MR review received: ${opts.project}!${opts.mrIid} ===`,
-        `Unresolved threads: ${threads.length + topLevel.length} of ${discussions.length} discussions (${topLevel.length} top-level)${opts.tip ? ` | MR tip ${shortSha(opts.tip.sha)}` : ""}`,
+        `Unresolved threads: ${threads.length + topLevel.length} of ${discussions.length} discussions (${topLevel.length} top-level) | Plain comments: ${plain.others.length}${plainHidden(plain.mine)}${opts.tip ? ` | MR tip ${shortSha(opts.tip.sha)}` : ""}`,
         "",
     ];
 
@@ -482,7 +511,19 @@ export function receiveIndex(discussions: Discussion[], opts: RenderMarkdownOpts
         );
     });
 
-    const first = threads[0] ?? topLevel[0];
+    plain.others.forEach((d, idx) => {
+        const first = firstHumanNote(d);
+        const ref = (d.id && opts.refs?.get(d.id)) || `plain${idx + 1}`;
+        const body = String(first?.body ?? "")
+            .replace(/\s+/g, " ")
+            .trim();
+
+        lines.push(
+            `  ${ref}  plain comment  @${first?.author?.username ?? "?"}  ${d.notes?.length ?? 0}n  ${body.length > 60 ? `${body.slice(0, 59)}…` : body}`
+        );
+    });
+
+    const first = threads[0] ?? topLevel[0] ?? plain.others[0];
     const sample = first?.id ? (opts.refs?.get(first.id) ?? "T01") : "T01";
     lines.push("", `Expand: ${command} --expand ${sample}`, `Markdown: ${command} --md`);
 
@@ -491,7 +532,11 @@ export function receiveIndex(discussions: Discussion[], opts: RenderMarkdownOpts
 
 /** The full sections of the chosen threads, by review id (`T03`) or discussion id prefix. */
 export function expandThreads(discussions: Discussion[], opts: RenderMarkdownOpts, ids: string[]): string {
-    const threads = [...unresolvedThreads(discussions), ...unresolvedTopLevelThreads(discussions)];
+    const threads = [
+        ...unresolvedThreads(discussions),
+        ...unresolvedTopLevelThreads(discussions),
+        ...plainComments(discussions, opts.me).others,
+    ];
     const wanted = ids.map((id) => id.trim()).filter(Boolean);
     const blocks: BlockInput[] = wanted.map((id) => {
         const index = threads.findIndex(
@@ -516,7 +561,9 @@ export function threadSections(discussions: Discussion[], opts: RenderMarkdownOp
  */
 export function threadSectionsOf(threads: Discussion[], opts: RenderMarkdownOpts): BlockInput {
     return threads.map((d, idx) => {
-        if (d.notes?.[0]?.position) {
+        const plain = !firstHumanNote(d)?.resolvable;
+
+        if (d.notes?.[0]?.position && !plain) {
             return threadBlocks(d, idx, opts);
         }
 
@@ -524,8 +571,15 @@ export function threadSectionsOf(threads: Discussion[], opts: RenderMarkdownOpts
         const noteCount = d.notes?.length ?? 0;
 
         return [
-            { h2: `${ref} — top-level` },
-            { ul: [`**Discussion**: \`${d.id ?? "?"}\``] },
+            { h2: `${ref} — ${plain ? "plain comment" : "top-level"}` },
+            {
+                ul: [
+                    `**Discussion**: \`${d.id ?? "?"}\``,
+                    ...(plain
+                        ? ["**Not resolvable**: answer with a reply in this discussion; there is nothing to resolve."]
+                        : []),
+                ],
+            },
             { h3: `Discussion (${noteCount} note${noteCount === 1 ? "" : "s"}):` },
             (d.notes ?? []).map(noteBlock),
             opts.afterNotes?.(d) ?? [],
@@ -568,6 +622,7 @@ export async function collectThreadContext(options: {
 export function reviewBlocks(discussions: Discussion[], opts: RenderMarkdownOpts): BlockInput {
     const threads = unresolvedThreads(discussions);
     const topLevel = unresolvedTopLevelThreads(discussions);
+    const plain = plainComments(discussions, opts.me);
     const stats = threadStats(discussions);
 
     return [
@@ -578,6 +633,7 @@ export function reviewBlocks(discussions: Discussion[], opts: RenderMarkdownOpts
                 `**Discussions total**: ${discussions.length}`,
                 `**Unresolved diff-attached threads**: ${threads.length}`,
                 `**Unresolved top-level threads**: ${topLevel.length}`,
+                `**Plain comments (not resolvable)**: ${plain.others.length}${plainHidden(plain.mine)}`,
                 `**Files touched**: ${stats.files}`,
                 `**Distinct head_shas**: ${stats.headShas}  _(each comment may be anchored to a different commit — fetch / read at its own \`head_sha\`)_`,
                 `**Local cwd**: \`${opts.cwd}\``,
@@ -590,6 +646,9 @@ export function reviewBlocks(discussions: Discussion[], opts: RenderMarkdownOpts
         threads.map((d, idx) => threadBlocks(d, idx, opts)),
         threads.length === 0 ? "_No unresolved diff-attached threads._" : [],
         topLevel.length > 0 ? threadSectionsOf(topLevel, opts) : [],
+        plain.others.length > 0
+            ? [{ h2: "Plain comments (not resolvable)" }, threadSectionsOf(plain.others, opts)]
+            : [],
         { h2: "Next steps" },
         {
             ul: [
@@ -602,7 +661,11 @@ export function reviewBlocks(discussions: Discussion[], opts: RenderMarkdownOpts
 }
 
 export function renderMarkdown(discussions: Discussion[], opts: RenderMarkdownOpts): RenderMarkdownResult {
-    const threads = [...unresolvedThreads(discussions), ...unresolvedTopLevelThreads(discussions)];
+    const threads = [
+        ...unresolvedThreads(discussions),
+        ...unresolvedTopLevelThreads(discussions),
+        ...plainComments(discussions, opts.me).others,
+    ];
     const stats = threadStats(discussions);
 
     return {

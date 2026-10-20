@@ -22,6 +22,7 @@ import {
     expandThreads,
     fetchAnchorViews,
     fetchTipViews,
+    firstHumanNote,
     locateMovedLines,
     receiveIndex,
     renderMarkdown,
@@ -65,18 +66,28 @@ const status = {
     message: (msg: string) => (isTty() ? out.log.message(msg) : out.printlnErr(msg)),
 };
 
-/** Review ids for the MR's threads, from its stored map (new threads get new ids, the map is saved). */
-async function threadRefs(api: ProjectApi, iid: string, discussions: Discussion[]): Promise<Map<string, string>> {
+/**
+ * Review ids for the MR's threads, from its stored map (new threads get new ids, the map is saved). The
+ * same discussions `reviewItems` numbers (every one a person wrote in, plain comments too), in the same
+ * order, so the report and the skeleton give a thread the same id.
+ */
+async function threadRefs(
+    api: ProjectApi,
+    iid: string,
+    discussions: Discussion[]
+): Promise<{ refs: Map<string, string>; me: string }> {
     const me = await currentUser(api);
     const path = idMapPath({ host: api.host, project: api.project, iid: Number(iid) });
     const map = loadIdMap(path);
-    const threads = discussions
-        .filter((d) => !d.individual_note && d.id)
-        .map((d) => ({ id: d.id ?? "", author: d.notes?.[0]?.author?.username ?? "" }));
+    const threads = discussions.flatMap((d) => {
+        const first = firstHumanNote(d);
+
+        return d.id && first ? [{ id: d.id, author: first.author?.username ?? "unknown" }] : [];
+    });
     const refs = assignThreadRefs(map, threads, me.username);
     saveIdMap(path, map);
 
-    return refs;
+    return { refs, me: me.username };
 }
 
 export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): Promise<void> {
@@ -172,6 +183,7 @@ export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): P
             `Fetched ${views.size}/${total} anchor view(s) (${gitHits} from local git, ${views.size - gitHits} from the API).`
         );
 
+        const { refs, me } = await threadRefs(api, mrIid, discussions);
         const renderOpts = {
             mrIid,
             project: api.project,
@@ -179,7 +191,8 @@ export async function runFetchReview(mrIid: string, opts: FetchReviewOptions): P
             contextLines,
             anchorViews: views,
             tip,
-            refs: await threadRefs(api, mrIid, discussions),
+            refs,
+            me,
             nextSteps: config.review.nextSteps,
         };
 

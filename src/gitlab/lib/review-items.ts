@@ -72,6 +72,7 @@ export async function reviewItems(
         line: d.line,
         body: d.body,
         author: d.author,
+        resolvable: d.resolvable,
     });
     const draftItems: KnownItem[] = drafts.map((draft, i) => ({
         id: draftRefs[i],
@@ -100,8 +101,10 @@ export async function reviewItems(
     const publishedThreads = new Set(publishedItems.map((item) => item.pair.value));
     const known =
         mode === "receive"
-            ? // Top-level threads count too: a started discussion on the MR is as owed a verdict as a diff comment.
-              discussions.filter((d) => d.resolvable && !d.resolved && d.author !== me.username).map(threadItem)
+            ? // Every open discussion someone else started: diff threads, started discussions and plain comments
+              // (never resolved, as `comments list --unresolved` shows them). The receive report lists the same
+              // set (`plainComments` and the unresolved-thread filters in review-render.ts).
+              discussions.filter((d) => !d.resolved && d.author !== me.username).map(threadItem)
             : [
                   ...draftItems,
                   ...publishedItems,

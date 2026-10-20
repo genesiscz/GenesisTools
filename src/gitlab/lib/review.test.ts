@@ -19,9 +19,12 @@ import {
 import {
     collectUnresolvedAnchorPairs,
     type Discussion,
+    expandThreads,
     fetchAnchorViews,
     fetchTipViews,
     fileLines,
+    plainComments,
+    receiveIndex,
     renderMarkdown,
     unresolvedThreads,
     unresolvedTopLevelThreads,
@@ -694,7 +697,8 @@ describe("review render", () => {
             anchorViews: new Map([["a1b2c3d4e5f6a7b8:src/app.ts", ["one", "two", "three"]]]),
         });
 
-        expect(threadCount).toBe(1);
+        // The open diff thread and the plain comment ("top-level chat"), as `comments list --unresolved` counts them.
+        expect(threadCount).toBe(2);
         expect(totalDiscussions).toBe(3);
         expect(md).toContain("## Thread 1 — `src/app.ts`:2");
         expect(md).toContain("_(file not in current working tree)_");
@@ -820,6 +824,7 @@ describe("review render", () => {
           - **Discussions total**: 5
           - **Unresolved diff-attached threads**: 3
           - **Unresolved top-level threads**: 0
+          - **Plain comments (not resolvable)**: 1
           - **Files touched**: 3
           - **Distinct head_shas**: 3  _(each comment may be anchored to a different commit — fetch / read at its own \`head_sha\`)_
           - **Local cwd**: \`<cwd>\`
@@ -916,6 +921,20 @@ describe("review render", () => {
 
           ---
 
+          ## Plain comments (not resolvable)
+
+          ## Thread 1 — plain comment
+
+          - **Discussion**: \`chat\`
+          - **Not resolvable**: answer with a reply in this discussion; there is nothing to resolve.
+
+          ### Discussion (1 note):
+
+          **@(unknown)**:
+          > top-level chat
+
+          ---
+
           ## Next steps
 
           - Apply the fixes to the current working tree (not to the reviewer's frozen view).
@@ -931,6 +950,7 @@ describe("review render", () => {
               - **Discussions total**: 0
               - **Unresolved diff-attached threads**: 0
               - **Unresolved top-level threads**: 0
+              - **Plain comments (not resolvable)**: 0
               - **Files touched**: 0
               - **Distinct head_shas**: 0  _(each comment may be anchored to a different commit — fetch / read at its own \`head_sha\`)_
               - **Local cwd**: \`/x\`
@@ -1112,27 +1132,64 @@ describe("top-level threads in the receive report", () => {
                 { resolvable: true, resolved: false, author: { username: "bob" }, body: "About the MR as a whole" },
             ],
         },
+        // The shape GitLab gives a plain MR comment: one note, not resolvable, never resolved.
         {
             id: "note1",
             individual_note: true,
-            notes: [{ resolvable: false, author: { username: "bob" }, body: "LGTM" }],
+            notes: [
+                {
+                    resolvable: false,
+                    system: false,
+                    author: { username: "dana" },
+                    body: "@me Remember to delete the migration skill before the merge",
+                },
+            ],
         },
+        {
+            id: "note2",
+            individual_note: true,
+            notes: [{ resolvable: false, system: false, author: { username: "me" }, body: "Ready for review" }],
+        },
+        { id: "sys1", individual_note: true, notes: [{ system: true, body: "added 1 commit" }] },
         { id: "top2", notes: [{ resolvable: true, resolved: true, author: { username: "bob" }, body: "Done" }] },
     ];
+    const opts = { mrIid: "42", project: "group/app", cwd: "/nonexistent-checkout", contextLines: 1, me: "me" };
 
-    test("a started discussion without an anchor counts and is shown; a plain note and a resolved one are not", () => {
+    test("a started discussion without an anchor counts and is shown; a resolved one is not", () => {
         expect(unresolvedTopLevelThreads(discussions).map((d) => d.id)).toEqual(["top1"]);
 
-        const { md, threadCount } = renderMarkdown(discussions, {
-            mrIid: "42",
-            project: "group/app",
-            cwd: "/nonexistent-checkout",
-            contextLines: 1,
-        });
+        const { md } = renderMarkdown(discussions, opts);
 
-        expect(threadCount).toBe(2);
         expect(md).toContain("**Unresolved top-level threads**: 1");
         expect(md).toContain("About the MR as a whole");
-        expect(md).not.toContain("LGTM");
+        expect(md).not.toContain("Done");
+    });
+
+    test("a plain comment someone else wrote gets its own section and count, as `comments list --unresolved` lists it", () => {
+        expect(plainComments(discussions, "me")).toEqual({ others: [discussions[2]], mine: 1 });
+
+        const { md, threadCount } = renderMarkdown(discussions, {
+            ...opts,
+            refs: new Map([["note1", "T03"]]),
+        });
+
+        expect(threadCount).toBe(3);
+        expect(md).toContain("**Plain comments (not resolvable)**: 1 (1 of your own not listed: you wrote them)");
+        expect(md).toContain("## Plain comments (not resolvable)");
+        expect(md).toContain("## T03 — plain comment");
+        expect(md).toContain("Remember to delete the migration skill before the merge");
+        expect(md).not.toContain("Ready for review");
+        expect(md).not.toContain("added 1 commit");
+
+        const index = receiveIndex(
+            discussions,
+            { ...opts, refs: new Map([["note1", "T03"]]) },
+            "tools gitlab pr 42 review"
+        );
+        expect(index).toContain("Plain comments: 1 (1 of your own not listed: you wrote them)");
+        expect(index).toContain(
+            "  T03  plain comment  @dana  1n  @me Remember to delete the migration skill before the merge"
+        );
+        expect(expandThreads(discussions, opts, ["T03", "note1"])).toContain("## Thread 1 — plain comment");
     });
 });

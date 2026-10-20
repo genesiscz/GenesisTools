@@ -132,6 +132,26 @@ describe("comments post plan", () => {
         expect(describeStep(result.steps[0])).toBe('T01  reply+resolve thread aaaa1111 at src/a.ts:3  "Fixed."');
     });
 
+    test("a plain comment takes a reply but never a resolve", () => {
+        const plainKnown = KNOWN.map((item) => (item.id === "T01" ? { ...item, resolvable: false } : item));
+        const run = (judgements: string) =>
+            planPost({
+                judgements: parseJudgements(judgements),
+                known: plainKnown,
+                ids: ["T01"],
+                answers: [],
+                agent: "Opus",
+            });
+
+        expect(run(FILE).errors).toEqual([
+            { id: "T01", message: "a plain comment has nothing to resolve; use Action reply" },
+        ]);
+        expect(run(FILE.replace("- Action: reply-resolve", "- Action: reply")).steps[0]).toMatchObject({
+            kind: "reply",
+            resolve: false,
+        });
+    });
+
     test("a published draft cannot be deleted any more, but its answer goes into the thread it became, signed", () => {
         expect(plan(["D03"]).errors).toEqual([
             { id: "D03", message: "the draft was published; answer in its thread with --answers D03" },

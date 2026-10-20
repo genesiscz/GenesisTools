@@ -35,6 +35,8 @@ export interface KnownItem {
     author: string;
     /** A D item whose draft was published: the draft id its heading still names. */
     publishedFrom?: string;
+    /** For T and Y: false for a plain comment, which can be answered but never resolved. */
+    resolvable?: boolean;
 }
 
 export interface SkeletonInput {
@@ -55,6 +57,10 @@ function pairText(item: KnownItem): string {
 }
 
 function anchorText(item: KnownItem): string {
+    if (item.resolvable === false) {
+        return item.path ? `${item.path}:${item.line ?? 1} · plain comment` : "plain comment";
+    }
+
     return item.path ? `${item.path}:${item.line ?? 1}` : "top-level";
 }
 
@@ -65,7 +71,7 @@ function threadBlock(item: KnownItem): string[] {
         "- Proposal: ",
         "- Rationale:",
         "  - ",
-        `- Action: ${ACTIONS[item.kind].join(" | ")}`,
+        `- Action: ${ACTIONS[item.kind].filter((action) => item.resolvable !== false || action !== "reply-resolve").join(" | ")}`,
         "- Proposed draft reply:",
         "",
         "```markdown",
@@ -441,6 +447,15 @@ export function checkJudgements(input: CheckInput): CheckResult {
                 id: item.id,
                 line: item.line,
                 message: `Action must be one of ${allowed.join(", ")}, got "${action}"`,
+            });
+            continue;
+        }
+
+        if (action === "reply-resolve" && input.known.find((known) => known.id === item.id)?.resolvable === false) {
+            errors.push({
+                id: item.id,
+                line: item.line,
+                message: "a plain comment has nothing to resolve; use Action reply",
             });
             continue;
         }
