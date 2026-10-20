@@ -305,6 +305,18 @@ describe("helpers", () => {
             ].join("\n")
         );
     });
+
+    test("masks a browser's saved cookies and storage values, a cookie header, and a JWT with an encoded payload", () => {
+        const jar =
+            '{"cookies":[{"name":"JSESSIONID","value":"288F69E6","sameSite":"Lax"}],"localStorage":[{"name":"n","value":"v\\"x"}]}';
+
+        expect(redactSecretsInText(jar)).toBe(
+            '{"cookies":[{"name":"JSESSIONID","value":"[redacted]","sameSite":"Lax"}],"localStorage":[{"name":"n","value":"[redacted]"}]}'
+        );
+        expect(redactSecretsInText('{"name":"pkg","value":"1.0"}')).toBe('{"name":"pkg","value":"1.0"}');
+        expect(redactSecretsInText("Cookie: a=1; b=2")).toBe("Cookie: [redacted]");
+        expect(redactSecretsInText("x eyJhbGciOiJIUzUx.ZXlKaGJHY2lP.D5f5cyQknIoM y")).toBe("x [redacted] y");
+    });
 });
 
 describe("template collisions", () => {

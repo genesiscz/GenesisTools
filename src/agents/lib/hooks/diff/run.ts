@@ -16,6 +16,7 @@ import { basename, dirname, join, relative } from "node:path";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isTestProcess } from "@genesiscz/utils/test-process";
+import { redactSecretsInText } from "@genesiscz/utils/transclude/redact";
 import {
     type ChangeBytes,
     capBlob,
@@ -97,17 +98,26 @@ function patchFor({
     const context = `-U${config.contextLines}`;
 
     if (before) {
-        return gitOut(file.root, ["diff", "--no-index", context, "--", before, file.path]);
+        return gitPatch(file.root, ["--no-index", context, "--", before, file.path]);
     }
 
     if (file.untracked) {
-        return gitOut(file.root, ["diff", "--no-index", context, "--", "/dev/null", file.path]);
+        return gitPatch(file.root, ["--no-index", context, "--", "/dev/null", file.path]);
     }
 
     // `base` is the HEAD the command STARTED on, not today's HEAD. The two differ exactly
     // when the command committed, and diffing a just-committed file against the commit that
     // created it reports nothing at all.
-    return gitOut(file.root, ["diff", base, context, "--", file.path]);
+    return gitPatch(file.root, [base, context, "--", file.path]);
+}
+
+/**
+ * `git diff <args>` with every secret-shaped value masked. Every patch the hook shows or saves comes from here,
+ * so neither the model, the screen nor the full-diff note gets a token or a login cookie (a re-login rewrote a
+ * Playwright storageState, and its note kept the session cookies in plain text, 2026-10-20).
+ */
+function gitPatch(root: string, args: string[]): string {
+    return redactSecretsInText(gitOut(root, ["diff", ...args]));
 }
 
 /**
@@ -1545,8 +1555,7 @@ export function runDiffPost({
         // Always `--no-index`, in both directions: a named path may live outside every
         // repository, so `git diff HEAD` is not available to it. A deletion is the copy
         // against `/dev/null`, which is what gives the removed lines.
-        const patch = gitOut(file.root, [
-            "diff",
+        const patch = gitPatch(file.root, [
             "--no-index",
             `-U${diff.contextLines}`,
             "--",

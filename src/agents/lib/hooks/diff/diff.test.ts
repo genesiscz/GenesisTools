@@ -913,6 +913,19 @@ describe("files the command NAMES rather than works in", () => {
         expect(runDiffPost({ payload: current, config: plain }).message).toContain("HEREDOC-ADDED");
     });
 
+    it("masks the cookie values of a browser login it shows", () => {
+        const jar = join(outside, "localhost-3000.json");
+        const cookie = (value: string) => `{"cookies":[{"name":"JSESSIONID","value":"${value}","httpOnly":true}]}`;
+        writeFileSync(jar, cookie("OLD-SESSION-288F69E6"));
+        const current = begin({ command: `bun /x/login.mjs ${jar}` });
+
+        writeFileSync(jar, cookie("NEW-SESSION-4F456B42"));
+        const message = runDiffPost({ payload: current, config: plain }).message ?? "";
+
+        expect(message).toContain('"value":"[redacted]"');
+        expect(message).not.toContain("SESSION-");
+    });
+
     it("a read-only command that names an absolute path never claims a concurrent edit to it", () => {
         // `cat /abs/MEMORY.md` while another writer edits it: the change is not this session's.
         const note = join(outside, "MEMORY.md");
