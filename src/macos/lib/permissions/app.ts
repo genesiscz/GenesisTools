@@ -89,7 +89,7 @@ const ICON_NAME = "AppIcon";
 const BUILD_LOCK_TIMEOUT_MS = 240_000;
 const PLIST_VERSION_MARKER = "<string>0.0.0</string>";
 const PLIST_BUILD_MARKER = "<key>CFBundleVersion</key>\n\t<string>1</string>";
-const LSREGISTER =
+export const LSREGISTER =
     "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
 /** Which checkout and commit an install was built from, so "what is running?" is one `bun run app:status`. */
