@@ -68,7 +68,7 @@ export const SETTABLE_KEYS = [
     "decisions.injectAnswers",
     "decisions.staleness.<warnAfterMinutes|alarmAfterMinutes|notify>",
     "agentsTalk.hint",
-    "mods.fullDiff",
+    "mods.<fullDiff|collapseGitSync>",
     "mods.<idleCompact|idleCompactMinutes|idleCompactMinTokens>",
 ] as const;
 
@@ -422,7 +422,7 @@ export function applySetting(
         return next;
     }
 
-    if (key === "mods.fullDiff" || key === "mods.idleCompact") {
+    if (key === "mods.fullDiff" || key === "mods.collapseGitSync" || key === "mods.idleCompact") {
         next.mods = { ...config.mods, [key.slice("mods.".length)]: asBoolean(key, value) };
         return next;
     }

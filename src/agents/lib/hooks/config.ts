@@ -273,6 +273,12 @@ export interface ModsConfig {
      */
     fullDiff: boolean;
     /**
+     * Start the diff of a call that runs `git pull`, `merge`, `rebase`, `checkout`, `switch`, `reset`,
+     * `cherry-pick`, `revert`, `am` or `stash pop|apply` hidden behind one `show diff from git pull` button:
+     * those diffs are other people's work arriving, often hundreds of lines.
+     */
+    collapseGitSync: boolean;
+    /**
      * Compact an idle Claude session `idleCompactMinutes` after its last turn, before the 1-hour prompt
      * cache expires, when the engine's own idle compaction did not (it gives up at its first refused gate,
      * such as a rate-limit warning). Skips a context under `idleCompactMinTokens`.
@@ -426,7 +432,13 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         staleness: { warnAfterMinutes: 30, alarmAfterMinutes: 120, notify: true },
     },
     agentsTalk: { hint: true },
-    mods: { fullDiff: true, idleCompact: true, idleCompactMinutes: 56, idleCompactMinTokens: 200_000 },
+    mods: {
+        fullDiff: true,
+        collapseGitSync: true,
+        idleCompact: true,
+        idleCompactMinutes: 56,
+        idleCompactMinTokens: 200_000,
+    },
     unpushed: { enabled: true, maxCommits: 3, maxAgeMinutes: 60, remindEveryMinutes: 30 },
     logPath: defaultLogPath(),
     // 🛑 `shadow: true` AND `logCommands: "shadow"` together mean `keepsCommand()` is true out
@@ -1009,6 +1021,7 @@ function mergeMods(stored: Partial<ModsConfig> | undefined): ModsConfig {
 
     return {
         fullDiff: boolOr(stored?.fullDiff, base.fullDiff),
+        collapseGitSync: boolOr(stored?.collapseGitSync, base.collapseGitSync),
         idleCompact: boolOr(stored?.idleCompact, base.idleCompact),
         // The mod reads the file itself and drops 60 or more the same way.
         idleCompactMinutes: minutes < 60 ? minutes : base.idleCompactMinutes,

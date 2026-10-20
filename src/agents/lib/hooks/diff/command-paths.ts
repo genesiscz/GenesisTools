@@ -1,9 +1,10 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import {
     commandTokenIndex,
     commandWord,
+    lastSimpleCommandOnLine,
     nextRawArgument,
     rawToken,
     type ShellScan,
@@ -409,7 +410,117 @@ function gitDirectory({
  * produces no token of its own.
  */
 export function namedArguments(command: string, bases: string[]): string[] {
-    return walkNamed({ command, bases, readings: false }).found;
+    const found = walkNamed({ command, bases, readings: false }).found;
+
+    return [...new Set([...found, ...scriptPaths(command)])];
+}
+
+const INTERPRETER = /^(?:python[0-9.]*|node|bun|deno|perl|ruby|php)$/;
+const HEREDOC_OPENER = /<<(-?)[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/;
+const INLINE_SCRIPT =
+    /(?:^|[\s;&|(])(?:\S*\/)?(?:python[0-9.]*|node|bun|deno|perl|ruby|php)(?:\s+-[A-Za-z-]+)*?\s+(?:-c|-e|-r|--eval)\s+(['"])/g;
+const SCRIPT_LITERAL = /(["'`])((?:~\/|\/)[^"'`\n]+)\1/g;
+
+/**
+ * Existing files named by a quoted absolute or `~/` literal inside a script an interpreter RUNS:
+ * the body of `python3 - <<'EOF'` (no script file, so the heredoc is the program) and the
+ * argument of `-c`/`-e`/`-r`/`--eval`. The scanner blanks both, so `open(os.path.expanduser(
+ * '~/.ssh/config'),'w')` in a heredoc edited a file outside every repository with no diff
+ * (2026-10-20, session be21be54). A heredoc fed to a command with a script file (`bun cli.ts
+ * <<'SPEC'`) stays data. Only files that exist now: a literal that names nothing (`"/api/x"`)
+ * would only take one of the few named slots, and a creation found this way is not shown anyway.
+ */
+export function scriptPaths(command: string): string[] {
+    const found: string[] = [];
+
+    for (const script of [...interpreterHeredocs(command), ...inlineScripts(command)]) {
+        for (const match of script.matchAll(SCRIPT_LITERAL)) {
+            const value = match[2] ?? "";
+
+            if (/[$*?{}%\\]/.test(value) || value.includes("://")) {
+                continue;
+            }
+
+            const path = expandHome(value);
+
+            if (!found.includes(path) && isFile(path)) {
+                found.push(path);
+            }
+        }
+    }
+
+    return found;
+}
+
+function isFile(path: string): boolean {
+    return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+}
+
+function interpreterHeredocs(command: string): string[] {
+    const lines = command.split("\n");
+    const bodies: string[] = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i] ?? "";
+        const opener = HEREDOC_OPENER.exec(line);
+
+        if (!opener || !runsStdin(lastSimpleCommandOnLine(line.slice(0, opener.index)))) {
+            continue;
+        }
+
+        const body: string[] = [];
+        const delim = opener[3];
+        let j = i + 1;
+
+        for (; j < lines.length; j++) {
+            const text = lines[j] ?? "";
+
+            if ((opener[1] === "-" ? text.replace(/^\t+/, "") : text) === delim) {
+                break;
+            }
+
+            body.push(text);
+        }
+
+        bodies.push(body.join("\n"));
+        i = j;
+    }
+
+    return bodies;
+}
+
+/** `python3 -`, `node`, `env X=1 perl -w`: an interpreter whose arguments are all flags, so it reads its program from stdin. */
+function runsStdin(simple: string): boolean {
+    const words = simple.split(/\s+/).filter((word) => word && !ASSIGNMENT.test(word));
+
+    if (words[0] === "env") {
+        words.shift();
+    }
+
+    const program = words[0]?.split("/").pop() ?? "";
+
+    return (
+        INTERPRETER.test(program) && words.slice(1).every((word) => word.startsWith("-") && !/^-(c|e|r)$/.test(word))
+    );
+}
+
+function inlineScripts(command: string): string[] {
+    const scripts: string[] = [];
+
+    for (const match of command.matchAll(INLINE_SCRIPT)) {
+        const quote = match[1] ?? "'";
+        const start = (match.index ?? 0) + match[0].length;
+        let end = start;
+
+        // A single-quoted span has no escapes in the shell; a double-quoted one ends at the first unescaped quote.
+        while (end < command.length && command[end] !== quote) {
+            end += quote === '"' && command[end] === "\\" ? 2 : 1;
+        }
+
+        scripts.push(command.slice(start, end));
+    }
+
+    return scripts;
 }
 
 /**

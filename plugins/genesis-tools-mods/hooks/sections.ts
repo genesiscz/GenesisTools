@@ -123,11 +123,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * `mods.fullDiff` from the hooks file (`~/.genesis-tools/agents/hooks.json`), which
- * `tools agents hooks config set mods.fullDiff false` writes. A file that is missing, unreadable or
- * not JSON, and a value that is not a boolean, leave the default: on.
+ * A boolean of the `mods` section of the hooks file (`~/.genesis-tools/agents/hooks.json`), which
+ * `tools agents hooks config set mods.<key> false` writes. A file that is missing, unreadable or not JSON,
+ * and a value that is not a boolean, leave the default: on.
  */
-export function fullDiffEnabled(hooksFile: string | undefined): boolean {
+function modsSwitch(hooksFile: string | undefined, key: "fullDiff" | "collapseGitSync"): boolean {
     if (hooksFile === undefined) {
         return true;
     }
@@ -135,10 +135,41 @@ export function fullDiffEnabled(hooksFile: string | undefined): boolean {
     try {
         const stored: unknown = JSON.parse(hooksFile);
         const mods = isRecord(stored) ? stored.mods : undefined;
-        const value = isRecord(mods) ? mods.fullDiff : undefined;
+        const value = isRecord(mods) ? mods[key] : undefined;
 
         return typeof value === "boolean" ? value : true;
     } catch {
         return true;
     }
+}
+
+export function fullDiffEnabled(hooksFile: string | undefined): boolean {
+    return modsSwitch(hooksFile, "fullDiff");
+}
+
+export function collapseGitSyncEnabled(hooksFile: string | undefined): boolean {
+    return modsSwitch(hooksFile, "collapseGitSync");
+}
+
+/** The command of a Bash call's input, or an empty string. */
+export function commandOf(input: unknown): string {
+    return isRecord(input) && typeof input.command === "string" ? input.command : "";
+}
+
+const GIT_SYNC =
+    /(?:^|[\s;&|(])git(?:\s+-C\s+\S+)?\s+(pull|merge|rebase|checkout|switch|reset|cherry-pick|revert|am|stash\s+(?:pop|apply))(?=$|[\s;&|)])/m;
+
+/**
+ * `git pull` (or `git merge`, `git stash pop`, …) when the command runs one, else `undefined`. Its diff is other
+ * people's work arriving, so the mod starts it hidden behind one button (2026-10-20: a `git pull` in devulinka-infra
+ * drew every pulled line). Heredoc bodies and quoted text are dropped first: `git commit -m "after git pull"` runs
+ * no pull.
+ */
+export function gitSyncOf(command: string): string | undefined {
+    const bare = command
+        .replace(/<<-?[ \t]*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g, " ")
+        .replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, " ");
+    const verb = GIT_SYNC.exec(bare)?.[1];
+
+    return verb === undefined ? undefined : `git ${verb.replace(/\s+/g, " ")}`;
 }

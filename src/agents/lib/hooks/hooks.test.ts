@@ -661,6 +661,7 @@ describe("applySetting", () => {
         writeFileSync(path, SafeJSON.stringify({ mods: { idleCompactMinutes: 75, idleCompactMinTokens: 1000 } }));
         expect(loadHooksConfig(path).mods).toEqual({
             fullDiff: true,
+            collapseGitSync: true,
             idleCompact: true,
             idleCompactMinutes: 56,
             idleCompactMinTokens: 1000,

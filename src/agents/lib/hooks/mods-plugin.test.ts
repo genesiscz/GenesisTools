@@ -9,7 +9,9 @@ import {
     idleNotice,
 } from "../../../../plugins/genesis-tools-mods/hooks/idle";
 import {
+    collapseGitSyncEnabled,
     fullDiffEnabled,
+    gitSyncOf,
     isDeletion,
     OPEN_FILE_LINES,
     openByDefault,
@@ -123,6 +125,18 @@ describe("the full-diff mod's note reader", () => {
         expect(fullDiffEnabled('{"mods":{"fullDiff":"no"}}')).toBe(true);
         expect(fullDiffEnabled('{"mods":{"fullDiff":false}}')).toBe(false);
         expect(fullDiffEnabled('{"diff":{}}')).toBe(true);
+        expect(collapseGitSyncEnabled('{"mods":{"fullDiff":false}}')).toBe(true);
+        expect(collapseGitSyncEnabled('{"mods":{"collapseGitSync":false}}')).toBe(false);
+    });
+
+    it("names the git sync a command runs, and not one it only mentions", () => {
+        expect(gitSyncOf("cd /r && git pull -q --ff-only 2>&1 | tail -2; git log -5")).toBe("git pull");
+        expect(gitSyncOf("git -C /r stash pop")).toBe("git stash pop");
+        expect(gitSyncOf("git rebase origin/master")).toBe("git rebase");
+        expect(gitSyncOf("git log --oneline; git diff")).toBeUndefined();
+        expect(gitSyncOf('git commit -m "after git pull"')).toBeUndefined();
+        expect(gitSyncOf("git commit -F - <<'EOF'\ngit merge was clean\nEOF")).toBeUndefined();
+        expect(gitSyncOf("tools git pullout")).toBeUndefined();
     });
 });
 

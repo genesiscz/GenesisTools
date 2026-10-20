@@ -1,6 +1,6 @@
 {
     "name": "genesis-tools-mods",
-    "version": "1.4.0",
+    "version": "1.5.0",
     "description": "Claude Code mods for GenesisTools: draws the whole diff of a Bash call whose diff-hook message was cut, with Claude Code's own diff element, under the call's row, and compacts an idle session before its 1-hour prompt cache expires. Configured in the hooks file: tools agents hooks config set mods.fullDiff|mods.idleCompact true|false.",
     "author": {
         "name": "GenesisTools"

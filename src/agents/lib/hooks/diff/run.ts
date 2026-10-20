@@ -555,9 +555,14 @@ function taskEnded(output: string): boolean {
  */
 const DEFERRED_MIN_ROOM = 200;
 
-/** The line `hook-diff-post` prints above a background task's diff. Its length is part of the budget. */
+/**
+ * The line `hook-diff-post` prints above a background task's diff. Its length is part of the budget. A command
+ * cut short ends in `…`, so a chain like `mkdir … && mv … ; node login.mjs` does not read as if its first
+ * 80 characters made the change (2026-10-20).
+ */
 export function deferredTaskHeading(task: { id: string; command: string }): string {
-    const first = task.command.split("\n")[0]?.slice(0, 80) ?? "";
+    const [line = "", ...rest] = task.command.split("\n");
+    const first = line.length > 80 ? `${line.slice(0, 79)}…` : rest.length > 0 ? `${line}…` : line;
 
     return `background task ${task.id} ended (${first}):\n`;
 }

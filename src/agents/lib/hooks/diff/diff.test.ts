@@ -63,6 +63,7 @@ import {
     commandLines,
     composePostDiff,
     type DiffDecision,
+    deferredTaskHeading,
     flushDeferred,
     modDrawsDiffs,
     noteFileToolInput,
@@ -902,6 +903,16 @@ describe("files the command NAMES rather than works in", () => {
         expect(runDiffPost({ payload: current, config: plain }).message).toContain("TWO-OUTSIDE-GIT");
     });
 
+    it("renders an edit made by a python heredoc that names the file only in its body", () => {
+        const config = join(outside, "ssh-config");
+        writeFileSync(config, "Host a\n  HostName 10.0.0.1\n");
+        const current = begin({ command: `python3 - <<'EOF'\np='${config}'\nopen(p,'a').write('x')\nEOF` });
+
+        writeFileSync(config, "Host a\n  HostName 10.0.0.1\nHost HEREDOC-ADDED\n");
+
+        expect(runDiffPost({ payload: current, config: plain }).message).toContain("HEREDOC-ADDED");
+    });
+
     it("a read-only command that names an absolute path never claims a concurrent edit to it", () => {
         // `cat /abs/MEMORY.md` while another writer edits it: the change is not this session's.
         const note = join(outside, "MEMORY.md");
@@ -1027,6 +1038,20 @@ describe("files the command NAMES rather than works in", () => {
         const note = join(vault, "wrapup.md");
 
         expect(namedArguments(`bun /x/cli.ts <<'EOF'\n- see ${note}\nEOF`, [vault])).not.toContain(note);
+        expect(namedArguments(`bun /x/cli.ts <<'EOF'\nopen('${note}')\nEOF`, [vault])).not.toContain(note);
+    });
+
+    it("reads a quoted file out of a script an interpreter runs from a heredoc or -c/-e", () => {
+        const note = join(vault, "wrapup.md");
+        const missing = join(vault, "nope.md");
+
+        // Observed 2026-10-20: `python3 - <<'EOF'` rewrote ~/.ssh/config and the hook named nothing.
+        const heredoc = namedArguments(`python3 - <<'EOF'\np='${note}'\nq="${missing}"\nopen(p,'w')\nEOF`, [vault]);
+
+        expect(heredoc).toEqual([note]);
+        expect(namedArguments(`node -e 'require("fs").writeFileSync("${note}", "x")'`, [vault])).toEqual([note]);
+        expect(namedArguments(`python3 -c "open('${note}','a')"`, [vault])).toEqual([note]);
+        expect(namedArguments(`python3 - <<'EOF'\nopen(f'${vault}/{n}.md')\nEOF`, [vault])).toEqual([]);
     });
 
     it("finds a quoted path, which the scanner blanks out of the token stream", () => {
@@ -3958,6 +3983,20 @@ describe("tools agents hooks diff log", () => {
 
         expect(read.blocks).toEqual([{ verb: "Updated", path: "src/a.ts", added: 2, removed: 1, changedShown: 2 }]);
         expect(read.notes).toEqual(["1 file(s) changed by others in this root: b.ts"]);
+    });
+
+    it("marks a background task's command that the heading cuts short", () => {
+        const long = `mkdir -p /x/aside && mv ~/a/auth.json /x/aside/ ; node ${"/x/".repeat(20)}login.mjs`;
+
+        expect(deferredTaskHeading({ id: "bgA", command: "bun /x/long.ts" })).toBe(
+            "background task bgA ended (bun /x/long.ts):\n"
+        );
+        expect(deferredTaskHeading({ id: "bgA", command: long })).toBe(
+            `background task bgA ended (${long.slice(0, 79)}…):\n`
+        );
+        expect(deferredTaskHeading({ id: "bgA", command: "bun /x/a.ts\nbun /x/b.ts" })).toBe(
+            "background task bgA ended (bun /x/a.ts…):\n"
+        );
     });
 
     it("splits a message at background task headings: the call's own part first, then each task's", () => {

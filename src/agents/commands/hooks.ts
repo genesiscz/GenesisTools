@@ -767,6 +767,7 @@ function registerMods(hooks: Command): void {
             }
 
             ui.raw(`mods.fullDiff: ${config.mods.fullDiff ? pc.green("on") : pc.dim("off")}`);
+            ui.raw(`mods.collapseGitSync: ${config.mods.collapseGitSync ? pc.green("on") : pc.dim("off")}`);
             ui.raw(
                 `mods.idleCompact: ${config.mods.idleCompact ? pc.green("on") : pc.dim("off")}${pc.dim(` · after ${config.mods.idleCompactMinutes} min · floor ${config.mods.idleCompactMinTokens} tokens`)}`
             );

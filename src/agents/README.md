@@ -217,7 +217,10 @@ the hooks file). It draws nothing while `diff.fullDiff` is `off`. While the plug
 and `mods.fullDiff` is on, the diff hook prints no diff for Claude: it writes every diff to its note, and the mod
 draws it, so it is not drawn twice (Codex and Grok keep the hook's message). Each file has a `[-]` / `[+]` button
 that folds its diff to its name and back, and `[ files only ]` above them folds every file; a click on the diff
-itself still opens the group's calls. Its tests run with `claude plugin test plugins/genesis-tools-mods`. The mod API is early access in Claude Code
+itself still opens the group's calls. The diff of a call that runs `git pull`, `merge`, `rebase`, `checkout`,
+`switch`, `reset`, `cherry-pick`, `revert`, `am` or `stash pop|apply` starts hidden behind one
+`[ show diff from git pull ]` button, because it is other people's work arriving; `config set mods.collapseGitSync false
+--write` draws it like any other call. Its tests run with `claude plugin test plugins/genesis-tools-mods`. The mod API is early access in Claude Code
 (2.1.287 and later), so a release can change it; the mod then draws nothing and the hook message is unchanged.
 
 **The idle-compaction mod.** The same plugin compacts an idle Claude session 56 minutes after its last turn

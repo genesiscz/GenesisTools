@@ -25,17 +25,17 @@ const NOTE = [
     "```",
 ].join("\n");
 
+const CALL = {
+    tool_use_id: "toolu_a",
+    tool: "Bash",
+    input: { command: "perl -pi -e s/old/new/ src/a.ts" },
+    isRunning: false,
+    isErrored: false,
+    isInterrupted: false,
+};
+
 const GROUP = {
-    calls: [
-        {
-            tool_use_id: "toolu_a",
-            tool: "Bash",
-            input: { command: "perl -pi -e s/old/new/ src/a.ts" },
-            isRunning: false,
-            isErrored: false,
-            isInterrupted: false,
-        },
-    ],
+    calls: [CALL],
     isActive: false,
     isExpanded: false,
 };
@@ -139,5 +139,52 @@ test("an expanded group draws no diffs of its own", async ($, on) => {
     });
 
     expect(await ui.findAll({ type: "Code" })).toHaveLength(0);
+    await ui.unmount();
+});
+
+test("a git pull's diff starts hidden behind one button, which shows it and hides it again", async ($, on) => {
+    engine(on, { [NOTE_PATH]: NOTE });
+
+    const pull = { ...CALL, input: { command: "cd /repo && git pull -q --ff-only 2>&1 | tail -2" } };
+    const ui = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolGroup",
+        props: { ...GROUP, calls: [pull] },
+        requestId: "group-3",
+    });
+
+    expect((await ui.find({ key: "group-3|toolu_a:show" }))?.text).toBe("show diff from git pull");
+    expect(await ui.findAll({ type: "Code" })).toHaveLength(0);
+    expect(await ui.find({ text: "/repo/src/a.ts" })).toBeUndefined();
+
+    await ui.press({ key: "group-3|toolu_a:show" });
+
+    expect(await ui.findAll({ type: "Code" })).toHaveLength(2);
+    expect((await ui.find({ key: "group-3|toolu_a:hide" }))?.text).toBe("hide diff from git pull");
+
+    await ui.press({ key: "group-3|toolu_a:hide" });
+
+    expect(await ui.findAll({ type: "Code" })).toHaveLength(0);
+    await ui.unmount();
+});
+
+test("mods.collapseGitSync off draws a git pull like any other call", async ($, on) => {
+    engine(on, {
+        [NOTE_PATH]: NOTE,
+        "/home/test/.genesis-tools/agents/hooks.json": '{"mods":{"collapseGitSync":false}}',
+    });
+
+    const pull = { ...CALL, input: { command: "git pull" } };
+    const ui = await $.ui.mount({
+        plugin: "genesis-tools-mods",
+        surface: "terminal",
+        component: "ToolGroup",
+        props: { ...GROUP, calls: [pull] },
+        requestId: "group-4",
+    });
+
+    expect(await ui.find({ key: "group-4|toolu_a:show" })).toBeUndefined();
+    expect(await ui.findAll({ type: "Code" })).toHaveLength(2);
     await ui.unmount();
 });

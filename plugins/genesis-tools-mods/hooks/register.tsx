@@ -1,8 +1,17 @@
 import type { ElementTable, EngineInterface, Register, RenderElement, Timer } from "claude-code";
 import { atom, read, update } from "claude-code";
-import type { FlippedFiles } from "../types";
+import type { FlippedFiles, ShownCalls } from "../types";
 import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice } from "./idle";
-import { type CallSection, fullDiffEnabled, isDeletion, openByDefault, sectionsOfCalls } from "./sections";
+import {
+    type CallSection,
+    collapseGitSyncEnabled,
+    commandOf,
+    fullDiffEnabled,
+    gitSyncOf,
+    isDeletion,
+    openByDefault,
+    sectionsOfCalls,
+} from "./sections";
 
 // The full-diff mod. When the diff hook (`tools agents hooks`) cut a Bash call's message, it wrote the
 // whole diff to ~/.genesis-tools/agents/hook-diffs/<tool_use_id>.md. This draws those hunks with Claude
@@ -29,20 +38,45 @@ async function readHooksFile($: EngineInterface, dir: string | undefined): Promi
     return dir ? $.fs.read(`${dir}/hooks.json`).catch(() => undefined) : undefined;
 }
 
-async function fullDiffs($: EngineInterface, ids: readonly string[]): Promise<CallSection[]> {
-    const dir = ids.length > 0 ? await agentsDir($) : undefined;
+interface Diffs {
+    sections: CallSection[];
+    /** The calls that run a git sync (`git pull`, …), each with that command, while `mods.collapseGitSync` is on. */
+    syncs: Map<string, string>;
+}
+
+async function fullDiffs($: EngineInterface, calls: readonly { id: string; input: unknown }[]): Promise<Diffs> {
+    const none: Diffs = { sections: [], syncs: new Map() };
+    const dir = calls.length > 0 ? await agentsDir($) : undefined;
 
     if (!dir) {
-        return [];
+        return none;
     }
 
     const hooksFile = await readHooksFile($, dir);
 
     if (!fullDiffEnabled(hooksFile)) {
-        return [];
+        return none;
     }
 
-    return sectionsOfCalls({ ids, read: (id) => $.fs.read(`${dir}/hook-diffs/${id}.md`), maxChars: MAX_CHARS });
+    const ids = calls.map((call) => call.id);
+    const sections = await sectionsOfCalls({
+        ids,
+        read: (id) => $.fs.read(`${dir}/hook-diffs/${id}.md`),
+        maxChars: MAX_CHARS,
+    });
+    const syncs = new Map<string, string>();
+
+    if (collapseGitSyncEnabled(hooksFile)) {
+        for (const call of calls) {
+            const sync = gitSyncOf(commandOf(call.input));
+
+            if (sync !== undefined) {
+                syncs.set(call.id, sync);
+            }
+        }
+    }
+
+    return { sections, syncs };
 }
 
 // The idle-compaction mod. Claude Code's own idle compaction fires once, 54 minutes after the last
@@ -101,8 +135,12 @@ function fileKey(row: string, section: CallSection): string {
     return `${row}|${section.call}|${section.path}`;
 }
 
+/** The git-sync calls whose hidden diff the person opened, as `<row>|<call>`; the newest 500. */
+const shownCalls = atom({ plugin: "genesis-tools-mods", key: "shown" } as const, [] as ShownCalls);
+
 /**
- * The full diffs under a row. Each file has its own `[-]`/`[+]` Button that folds its diff to its name and
+ * The full diffs under a row. The diff of a call that runs a git sync (`git pull`, …) starts hidden behind one
+ * `show diff from git pull` Button, and a `hide diff from git pull` Button folds it back. Each file has its own `[-]`/`[+]` Button that folds its diff to its name and
  * back; the row's Button folds every file, or opens them all once every file is folded. A click elsewhere on the
  * drawing reaches the engine's row, which opens the group's calls (the person's "expansion in expansion").
  *
@@ -114,18 +152,43 @@ async function drawDiffs(
     $: EngineInterface,
     ui: ElementTable,
     row: string,
-    sections: readonly CallSection[],
+    diffs: Diffs,
     drawn: RenderElement
 ): Promise<RenderElement> {
     const { Box, Button, Code, Text } = ui;
+    const shown = new Set(await read($, shownCalls));
+    const callKey = (call: string) => `${row}|${call}`;
+    const isHidden = (call: string) => diffs.syncs.has(call) && !shown.has(callKey(call));
+    const sections = diffs.sections.filter((section) => !isHidden(section.call));
+    const hidden = [...new Set(diffs.sections.map((section) => section.call))].filter(isHidden);
+    const setShown = (call: string, on: boolean) => {
+        const key = callKey(call);
+
+        void update($, shownCalls, (list) =>
+            [...list.filter((item) => item !== key), ...(on ? [key] : [])].slice(-500)
+        );
+    };
     const flips = new Set(await read($, flipped));
     const keys = sections.map((section) => fileKey(row, section));
     const defaults = openByDefault(sections);
     const isOpen = (index: number) => (defaults[index] ?? true) !== flips.has(keys[index] ?? "");
     const isAllFolded = keys.every((_, index) => !isOpen(index));
-    const added = sections.reduce((sum, section) => sum + section.added, 0);
-    const removed = sections.reduce((sum, section) => sum + section.removed, 0);
-    const files = new Set(sections.map((section) => section.path)).size;
+    const totals = (of: readonly CallSection[]) => ({
+        files: new Set(of.map((section) => section.path)).size,
+        added: of.reduce((sum, section) => sum + section.added, 0),
+        removed: of.reduce((sum, section) => sum + section.removed, 0),
+    });
+    const counts = ({ files, added, removed }: ReturnType<typeof totals>) => [
+        <Text key="files" dimColor>
+            {files} {files === 1 ? "file" : "files"}
+        </Text>,
+        <Text key="added" color="diffAdded">
+            +{added}
+        </Text>,
+        <Text key="removed" color="diffRemoved">
+            -{removed}
+        </Text>,
+    ];
     /** Opens or folds the files at `indexes`: a file is flipped exactly when that differs from its default. */
     const setOpen = (indexes: readonly number[], open: boolean) => {
         const targets = indexes.map((index) => keys[index] ?? "");
@@ -139,22 +202,39 @@ async function drawDiffs(
         <Box flexDirection="column">
             {drawn}
             <Box flexDirection="column" width="100%">
-                <Box flexDirection="row" gap={1}>
-                    <Button key={`${row}:fold`} dimColor onPress={() => setOpen(all, isAllFolded)}>
-                        {isAllFolded ? "show diff" : "files only"}
-                    </Button>
-                    <Text dimColor>
-                        {files} {files === 1 ? "file" : "files"}
-                    </Text>
-                    <Text color="diffAdded">+{added}</Text>
-                    <Text color="diffRemoved">-{removed}</Text>
-                </Box>
+                {hidden.map((call) => (
+                    <Box key={`${callKey(call)}:sync`} flexDirection="row" gap={1}>
+                        <Button key={`${callKey(call)}:show`} dimColor onPress={() => setShown(call, true)}>
+                            show diff from {diffs.syncs.get(call)}
+                        </Button>
+                        {counts(totals(diffs.sections.filter((section) => section.call === call)))}
+                    </Box>
+                ))}
+                {sections.length === 0 ? null : (
+                    <Box flexDirection="row" gap={1}>
+                        <Button key={`${row}:fold`} dimColor onPress={() => setOpen(all, isAllFolded)}>
+                            {isAllFolded ? "show diff" : "files only"}
+                        </Button>
+                        {counts(totals(sections))}
+                    </Box>
+                )}
                 {sections.map((section, index) => {
                     const key = keys[index] ?? fileKey(row, section);
                     const isFolded = !isOpen(index);
+                    const sync = diffs.syncs.get(section.call);
+                    const isFirstOfCall = sections.findIndex((other) => other.call === section.call) === index;
 
                     return (
                         <Box key={key} flexDirection="column">
+                            {sync !== undefined && isFirstOfCall ? (
+                                <Button
+                                    key={`${callKey(section.call)}:hide`}
+                                    dimColor
+                                    onPress={() => setShown(section.call, false)}
+                                >
+                                    hide diff from {sync}
+                                </Button>
+                            ) : null}
                             <Box flexDirection="row" gap={1}>
                                 <Button key={`${key}:fold`} plain dimColor onPress={() => setOpen([index], isFolded)}>
                                     {isFolded ? "[+]" : "[-]"}
@@ -216,16 +296,18 @@ export const register: Register = (on) => {
             return drawn;
         }
 
-        const ids = e.props.calls.flatMap((call) =>
-            call.tool === "Bash" && !call.isRunning && call.tool_use_id ? [call.tool_use_id] : []
+        const calls = e.props.calls.flatMap((call) =>
+            call.tool === "Bash" && !call.isRunning && call.tool_use_id
+                ? [{ id: call.tool_use_id, input: call.input }]
+                : []
         );
-        const sections = await fullDiffs($, ids);
+        const diffs = await fullDiffs($, calls);
 
-        if (sections.length === 0) {
+        if (diffs.sections.length === 0) {
             return drawn;
         }
 
-        return drawDiffs($, $.ui.resolve(e), e.requestId, sections, drawn);
+        return drawDiffs($, $.ui.resolve(e), e.requestId, diffs, drawn);
     });
 
     on("ui.render", { component: "ToolUse" }, async ($, e, next) => {
@@ -235,12 +317,12 @@ export const register: Register = (on) => {
             return drawn;
         }
 
-        const sections = await fullDiffs($, [e.props.tool_use_id]);
+        const diffs = await fullDiffs($, [{ id: e.props.tool_use_id, input: e.props.input }]);
 
-        if (sections.length === 0) {
+        if (diffs.sections.length === 0) {
             return drawn;
         }
 
-        return drawDiffs($, $.ui.resolve(e), e.props.tool_use_id, sections, drawn);
+        return drawDiffs($, $.ui.resolve(e), e.props.tool_use_id, diffs, drawn);
     });
 };
