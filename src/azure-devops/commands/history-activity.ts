@@ -18,9 +18,10 @@ import {
 } from "@app/azure-devops/cache";
 import { buildWorkItemHistory, userMatches } from "@app/azure-devops/history";
 import {
+    formatWindowBound,
     groupEventsByDay,
+    historyCoversChange,
     isInvertedWindow,
-    localDay,
     parseDayBoundary,
     realDayCount,
     resolveUpdateDate,
@@ -226,8 +227,13 @@ async function scanCachedActivity(
 
 // ============= Discovery =============
 
-/** Discover work items changed by user but not in cache, sync their history + comments */
-async function discoverAndSync(api: Api, userName: string, fromDate?: Date, toDate?: Date): Promise<number[]> {
+/** Discover work items the user changed in the window and sync any history the cache does not already cover. */
+async function discoverAndSync(
+    api: Api,
+    userName: string,
+    fromDate?: Date,
+    toDate?: Date
+): Promise<{ syncedIds: number[]; changedCount: number }> {
     // Find existing cached IDs
     const cacheFiles = await storage.listCacheFiles(false);
     const cachedIds = new Set<number>();
@@ -243,10 +249,11 @@ async function discoverAndSync(api: Api, userName: string, fromDate?: Date, toDa
     const userValue = isMeMacro ? "@Me" : `'${escapeWiqlValue(userName)}'`;
 
     let wiql = `SELECT [System.Id] FROM WorkItems WHERE [System.ChangedBy] = ${userValue}`;
-    // The bounds carry their time, for the reason `findMentions` names: a bare `YYYY-MM-DD` means
-    // MIDNIGHT to WIQL, so `<= '<to>'` dropped everything changed on the --to day. The day part
-    // alone was also the wrong day, because these bounds are local moments and `toISOString()`
-    // reports them in UTC.
+    // The bounds carry their time. A bare `YYYY-MM-DD` means midnight to WIQL, so `<= '<to>'`
+    // dropped everything changed on the --to day, and the day part alone was also the wrong day:
+    // these bounds are local moments and `toISOString()` reports them in UTC. The clock is legal
+    // only with time precision, which `runWiql` turns on for a literal that contains one. Date
+    // precision rejects it: "You cannot supply a time with the date".
     if (fromDate) {
         wiql += ` AND [System.ChangedDate] >= '${fromDate.toISOString()}'`;
     }
@@ -257,22 +264,31 @@ async function discoverAndSync(api: Api, userName: string, fromDate?: Date, toDa
 
     const response = await api.runWiql(wiql, { top: 500 });
     const serverIds = response.workItems.map((wi) => wi.id);
+    const changedDates: Map<number, Record<string, unknown>> = serverIds.length > 0
+        ? await api.getWorkItemFields(serverIds, ["System.ChangedDate"])
+        : new Map();
 
-    // Find items that need history sync (not cached OR no history section)
+    // A history section only means we synced this item once. WIQL already named it as changed
+    // inside the window, so skip it only when the cached updates reach its current ChangedDate.
     const needSync: number[] = [];
     for (const id of serverIds) {
+        const changed = changedDates.get(id)?.["System.ChangedDate"];
+        const changedDate = typeof changed === "string" ? changed : undefined;
+
         if (!cachedIds.has(id)) {
             needSync.push(id);
             continue;
         }
+
         const cached = await loadWorkItemCache(id);
-        if (!cached?.history) {
+
+        if (!historyCoversChange(cached?.history?.updates, changedDate)) {
             needSync.push(id);
         }
     }
 
     if (needSync.length === 0) {
-        return [];
+        return { syncedIds: [], changedCount: serverIds.length };
     }
 
     // Sync history for discovered items
@@ -299,7 +315,7 @@ async function discoverAndSync(api: Api, userName: string, fromDate?: Date, toDa
     // comments" and `isCommentsFresh` suppressed the retry for seven days. `batchGetComments` logs
     // each failure; leaving the section unwritten is what lets the next run try again.
 
-    return needSync;
+    return { syncedIds: needSync, changedCount: serverIds.length };
 }
 
 // ============= Fetch Missing Comments =============
@@ -488,7 +504,10 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
     // Not `toISOString()`: these are LOCAL moments, so its UTC day is the day either side of the
     // one that was typed. Verified under TZ=Europe/Prague (--from read a day early) and
     // TZ=America/Chicago (--to read a day late).
-    const dateRangeStr = [fromDate ? localDay(fromDate) : "beginning", toDate ? localDay(toDate) : "now"].join(" → ");
+    const dateRangeStr = [
+        fromDate ? formatWindowBound(fromDate) : "beginning",
+        toDate ? formatWindowBound(toDate) : "now",
+    ].join(" → ");
     p.log.info(`Date range: ${pc.bold(dateRangeStr)}`);
 
     // Step 1: Discover uncached items (optional, requires --from)
@@ -513,11 +532,21 @@ export async function handleHistoryActivity(options: ActivityOptions): Promise<v
         // the one the roster returned. `@me` is the exception, because it becomes the `@Me` macro
         // rather than a name. Passing the raw `--user` searched Azure DevOps for a spelling the
         // roster had already corrected, so `--discover` found nothing while the scan found plenty.
-        const newIds = await discoverAndSync(api, isMeRequest ? userName : resolvedUserName, fromDate, toDate);
+        let discovered: { syncedIds: number[]; changedCount: number };
+
+        try {
+            discovered = await discoverAndSync(api, isMeRequest ? userName : resolvedUserName, fromDate, toDate);
+        } catch (err) {
+            spinner.stop("Discovery failed");
+            throw err;
+        }
+
         spinner.stop(
-            newIds.length > 0
-                ? `Discovered and synced ${newIds.length} new work items`
-                : "No new work items to discover"
+            discovered.syncedIds.length > 0
+                ? `Synced history for ${discovered.syncedIds.length} work items`
+                : discovered.changedCount > 0
+                  ? `${discovered.changedCount} changed work items already cached`
+                  : "No work items changed in this window"
         );
     }
 

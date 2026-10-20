@@ -53,6 +53,7 @@ import type {
     WorkItemTypeDefinition,
     WorkItemUpdate,
 } from "@app/azure-devops/types";
+import { wiqlTimePrecisionParam } from "@app/azure-devops/wiql-builder";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -1178,8 +1179,16 @@ export class Api {
      * Pass `team` to execute in a team context, which is required by macros such
      * as `@CurrentIteration`.
      */
-    async runWiql(wiql: string, options?: { top?: number; team?: string }): Promise<WiqlResponse> {
-        const queryParams = { $top: options?.top ? String(options.top) : undefined };
+    async runWiql(
+        wiql: string,
+        options?: { top?: number; team?: string; timePrecision?: boolean }
+    ): Promise<WiqlResponse> {
+        // A clock in a date literal is rejected unless the request opts into time precision.
+        // Date-only queries keep the default, so a bare day still means that whole day.
+        const queryParams = {
+            $top: options?.top ? String(options.top) : undefined,
+            timePrecision: wiqlTimePrecisionParam(wiql, options?.timePrecision),
+        };
         const url = options?.team
             ? Api.teamApiUrl(this.config, options.team, ["wit", "wiql"], queryParams)
             : Api.witUrl(this.config, "wiql", queryParams);

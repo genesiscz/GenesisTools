@@ -28,6 +28,23 @@ export function escapeWiqlValue(value: string): string {
     return value.replace(/'/g, "''");
 }
 
+/**
+ * Whether a WIQL statement contains a clock. The query endpoint runs in date
+ * precision unless `timePrecision=true`, and a clock then fails with
+ * "You cannot supply a time with the date when running a query using date precision."
+ * A bare `YYYY-MM-DD` stays on date precision: that mode is what makes the day mean the whole day.
+ */
+export function wiqlRequestsTimePrecision(wiql: string): boolean {
+    return /'\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(wiql);
+}
+
+/** `true` when this call must set the WIQL `timePrecision` query flag. An explicit false wins. */
+export function wiqlTimePrecisionParam(wiql: string, explicit?: boolean): "true" | undefined {
+    const on = explicit ?? wiqlRequestsTimePrecision(wiql);
+
+    return on ? "true" : undefined;
+}
+
 function toWiqlList(csv: string): string | null {
     const values = csv
         .split(",")

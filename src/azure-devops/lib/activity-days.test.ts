@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
+    formatWindowBound,
     groupEventsByDay,
+    historyCoversChange,
     isInvertedWindow,
     isSentinelDate,
     localDay,
@@ -24,6 +26,38 @@ function update(overrides: Partial<WorkItemUpdate>): WorkItemUpdate {
         ...overrides,
     };
 }
+
+describe("historyCoversChange", () => {
+    test("an empty cache does not cover a change", () => {
+        expect(historyCoversChange(undefined, "2026-10-15T02:12:15.000Z")).toBe(false);
+        expect(historyCoversChange([], "2026-10-15T02:12:15.000Z")).toBe(false);
+    });
+
+    test("a missing ChangedDate is not proof the cache is current", () => {
+        expect(historyCoversChange([update({})], undefined)).toBe(false);
+    });
+
+    test("covers the change when the newest update is that ChangedDate", () => {
+        const updates = [
+            update({
+                revisedDate: "9999-01-01T00:00:00Z",
+                fields: { "System.ChangedDate": { oldValue: "", newValue: "2026-10-15T02:12:15.000Z" } },
+            }),
+        ];
+
+        expect(historyCoversChange(updates, "2026-10-15T02:12:15.000Z")).toBe(true);
+    });
+
+    test("does not cover a later edit than the newest cached update", () => {
+        const updates = [
+            update({
+                fields: { "System.ChangedDate": { oldValue: "", newValue: "2026-10-14T08:00:00.000Z" } },
+            }),
+        ];
+
+        expect(historyCoversChange(updates, "2026-10-15T02:12:15.000Z")).toBe(false);
+    });
+});
 
 describe("resolveUpdateDate", () => {
     test("uses revisedDate only when the update carries no changed date", () => {
@@ -263,6 +297,23 @@ describe("localDay", () => {
 
     test("pads the month and the day to two digits", () => {
         expect(localDay(parseDayBoundary("2026-01-02"))).toBe("2026-01-02");
+    });
+
+    test("a clock stays on the status line, in local time", () => {
+        withTz("Europe/Prague", () => {
+            expect(formatWindowBound(parseDayBoundary("2026-10-15T02:12:15.000Z"))).toBe("2026-10-15 04:12");
+        });
+
+        withTz("America/Chicago", () => {
+            expect(formatWindowBound(parseDayBoundary("2026-10-15T02:12:15.000Z"))).toBe("2026-10-14 21:12");
+        });
+    });
+
+    test("midnight and end of day stay a calendar day", () => {
+        withTz("Europe/Prague", () => {
+            expect(formatWindowBound(parseDayBoundary("2026-10-15"))).toBe("2026-10-15");
+            expect(formatWindowBound(parseDayBoundary("2026-10-15", { endOfDay: true }))).toBe("2026-10-15");
+        });
     });
 
     test("covers a day either side of a UTC boundary, which is where the old form broke", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCombinedQuery } from "@app/azure-devops/wiql-builder";
+import { buildCombinedQuery, wiqlRequestsTimePrecision, wiqlTimePrecisionParam } from "@app/azure-devops/wiql-builder";
 
 describe("buildCombinedQuery", () => {
     test("scopes to the configured project and matches the current assignee with =", () => {
@@ -52,5 +52,29 @@ describe("buildCombinedQuery", () => {
         const wiql = buildCombinedQuery({ currentAssignedTo: "O'Neil", assigneeContains: true });
 
         expect(wiql).toContain("CONTAINS 'O''Neil'");
+    });
+});
+
+describe("wiql time precision", () => {
+    test("a clock in a ChangedDate literal asks for time precision", () => {
+        const wiql = "AND [System.ChangedDate] >= '2026-10-15T02:12:15.000Z'";
+
+        expect(wiqlRequestsTimePrecision(wiql)).toBe(true);
+        expect(wiqlTimePrecisionParam(wiql)).toBe("true");
+    });
+
+    test("a space-separated clock asks for time precision too", () => {
+        expect(wiqlRequestsTimePrecision("AND [System.ChangedDate] >= '2026-10-15 02:12:15'")).toBe(true);
+    });
+
+    test("a bare day stays on date precision", () => {
+        const wiql = "AND [System.ChangedDate] >= '2026-10-15' ORDER BY [System.ChangedDate] DESC";
+
+        expect(wiqlRequestsTimePrecision(wiql)).toBe(false);
+        expect(wiqlTimePrecisionParam(wiql)).toBeUndefined();
+    });
+
+    test("an explicit false keeps date precision even when the literal has a clock", () => {
+        expect(wiqlTimePrecisionParam("[System.ChangedDate] >= '2026-10-15T02:12:15.000Z'", false)).toBeUndefined();
     });
 });

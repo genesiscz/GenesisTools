@@ -39,6 +39,31 @@ export function resolveUpdateDate(update: WorkItemUpdate): string {
 }
 
 /**
+ * Whether these updates already contain the work item's current ChangedDate.
+ * A cached history section is not proof of that: discovery used to skip any item that had one,
+ * so a later edit in the requested window never reached the scan.
+ */
+export function historyCoversChange(updates: WorkItemUpdate[] | undefined, changedDate: string | undefined): boolean {
+    const changedAt = changedDate ? new Date(changedDate).getTime() : Number.NaN;
+
+    if (!updates || updates.length === 0 || Number.isNaN(changedAt)) {
+        return false;
+    }
+
+    let latest = Number.NEGATIVE_INFINITY;
+
+    for (const update of updates) {
+        const at = new Date(resolveUpdateDate(update)).getTime();
+
+        if (!Number.isNaN(at) && at > latest) {
+            latest = at;
+        }
+    }
+
+    return Number.isFinite(latest) && latest >= changedAt;
+}
+
+/**
  * One end of a `--from` / `--to` window, as a moment.
  *
  * A bare `YYYY-MM-DD` is a calendar day the way the person typing it means it: in their own
@@ -129,6 +154,31 @@ export function localDay(date: Date): string {
     const day = String(date.getDate()).padStart(2, "0");
 
     return `${date.getFullYear()}-${month}-${day}`;
+}
+
+/**
+ * A window bound for the status line. Midnight and end-of-day stay a calendar day.
+ * A bound that carries a clock shows that clock in local time, so an hour ago
+ * does not read as the whole day.
+ */
+export function formatWindowBound(date: Date): string {
+    const day = localDay(date);
+    const startOfDay =
+        date.getHours() === 0 && date.getMinutes() === 0 && date.getSeconds() === 0 && date.getMilliseconds() === 0;
+    const endOfDay =
+        date.getHours() === 23 &&
+        date.getMinutes() === 59 &&
+        date.getSeconds() === 59 &&
+        date.getMilliseconds() === 999;
+
+    if (startOfDay || endOfDay) {
+        return day;
+    }
+
+    const hours = String(date.getHours()).padStart(2, "0");
+    const minutes = String(date.getMinutes()).padStart(2, "0");
+
+    return `${day} ${hours}:${minutes}`;
 }
 
 export interface DatedEvent {
