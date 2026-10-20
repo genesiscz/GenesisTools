@@ -843,7 +843,8 @@ export function parseGlabMrView({
         // GitLab lists an MR's commits newest first, gh oldest first: every caller gets the oldest first.
         commits: commits
             ? records(parseJson(commits, "glab commits"))
-                  .toReversed()
+                  .slice()
+                  .reverse()
                   .map((commit) => ({
                       sha: str(commit.id) ?? "",
                       title: str(commit.title) ?? "",
