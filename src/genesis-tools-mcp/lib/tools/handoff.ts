@@ -61,8 +61,8 @@ const RUN_LINK_INFO = "Show paste.runLink.markdown to the user so they can open 
 
 /**
  * `postHandoff` is synchronous and the token file is written under an async lock, so the link id is
- * chosen during the post and the token is saved right after it (`settleRunLinks`). The account is left
- * out: `tools cmux launch` resolves the default Claude account when the link is clicked.
+ * chosen during the post and the token is saved right after it (`settleRunLinks`). The handoff passes
+ * account "auto", so `tools claude run auto` picks the account with headroom when the link is clicked.
  */
 function cmuxLaunchDeps(planned: PlannedLink[]): HandoffDeps {
     const status = routerStatus();

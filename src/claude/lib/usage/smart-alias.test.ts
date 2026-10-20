@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { scoreAccounts } from "./account-picker";
 import type { AccountUsage } from "./api";
-import { pickFable, pickOpus, smartAliasOf } from "./smart-alias";
+import { isAutoAccount, pickFable, pickOpus, smartAliasOf } from "./smart-alias";
 
 const NOW = new Date("2026-07-18T12:00:00Z");
 const WEEK_LATER = "2026-07-24T12:00:00Z";
@@ -171,5 +171,15 @@ describe("smartAliasOf", () => {
     test("anything else is a plain account name", () => {
         expect(smartAliasOf("genesis", ["genesis"])).toBeNull();
         expect(smartAliasOf(undefined, ["genesis"])).toBeNull();
+    });
+});
+
+describe("isAutoAccount", () => {
+    test("auto asks for the headroom pick, case-insensitively, unless a real account is called auto", () => {
+        expect(isAutoAccount("auto", ["work"])).toBe(true);
+        expect(isAutoAccount("Auto", ["work"])).toBe(true);
+        expect(isAutoAccount("auto", ["work", "AUTO"])).toBe(false);
+        expect(isAutoAccount("work", ["work"])).toBe(false);
+        expect(isAutoAccount(undefined, ["work"])).toBe(false);
     });
 });

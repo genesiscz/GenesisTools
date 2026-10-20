@@ -21,7 +21,7 @@ import {
     weeklyStatusForAccount,
 } from "@app/claude/lib/usage/fable-guard";
 import { getSharedAccountsUsage, peekSharedUsage } from "@app/claude/lib/usage/shared-cache";
-import { pickSmart, type SmartAlias, smartAliasOf } from "@app/claude/lib/usage/smart-alias";
+import { isAutoAccount, pickSmart, type SmartAlias, smartAliasOf } from "@app/claude/lib/usage/smart-alias";
 import { tableSelectAccount } from "@app/claude/lib/usage/table-select";
 import { TIER_BADGE } from "@app/claude/lib/usage/usage-table";
 import * as p from "@clack/prompts";
@@ -918,6 +918,13 @@ async function main(nameArg: string | undefined, opts: StartOptions, passthrough
         accountName =
             (await resolveSmartAlias(alias, withToken, modelId)) ??
             (await pickAccount(withToken, opts, modelId, aiConfig));
+    } else if (
+        isAutoAccount(
+            nameArg,
+            withToken.map((a) => a.name)
+        )
+    ) {
+        accountName = await pickAccount(withToken, { ...opts, autopick: true }, modelId, aiConfig);
     } else if (nameArg) {
         accountName = await resolveAccountName(nameArg, withToken, opts, modelId, aiConfig);
     } else {
@@ -1213,7 +1220,8 @@ export function registerStartCommand(program: Command): void {
         .command("start [name]")
         .description(
             "Launch Claude Code using a saved long-lived token (CLAUDE_CODE_OAUTH_TOKEN). " +
-                "[name] matches account names by exact or substring (TTY prompts when ambiguous). " +
+                "[name] matches account names by exact or substring (TTY prompts when ambiguous); " +
+                '"auto" picks the account with the most headroom, like --autopick. ' +
                 "Args after -- are passed through to claude."
         )
         .allowExcessArguments(true)

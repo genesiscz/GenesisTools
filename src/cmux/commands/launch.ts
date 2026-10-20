@@ -41,7 +41,10 @@ export function registerLaunchCommand(program: Command): void {
         .command("launch")
         .description("Print the quoted command that opens Claude in a new cmux surface, or run it there with --open")
         .argument("[claudeArgs...]", "Extra claude arguments, after --. Same destination as --claude-arg.")
-        .option("--account <name>", "Saved Claude account. Empty or omitted: the default Claude account.")
+        .option(
+            "--account <name>",
+            'Saved Claude account. "auto": the one with the most headroom when the surface starts. Empty or omitted: the default Claude account.'
+        )
         .option("--prompt <text>")
         .option("--prompt-file <path>", "Read the prompt from a file. Not subject to the 8 KB URL cap.")
         .option("--name <name>")

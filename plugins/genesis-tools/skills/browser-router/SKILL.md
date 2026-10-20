@@ -58,7 +58,7 @@ A link carries only the session id, the number and one letter. Anything else doe
 
 ## Run Claude in a new cmux surface
 
-`tools cmux launch --prompt <text>` prints the quoted command for a new cmux surface. With `--open` it opens the surface (`--surface new|split|workspace`) and runs the command there. `--account` defaults to the default Claude account. The cmux-claude preset passes `--open`. A raw link that starts an agent always asks; only a link minted on this machine (`handoff_post` adds one as `paste.runLink`) runs without the card, once.
+`tools cmux launch --prompt <text>` prints the quoted command for a new cmux surface. With `--open` it opens the surface (`--surface new|split|workspace`) and runs the command there. `--account` defaults to the default Claude account; `--account auto` runs `tools claude run auto`, which picks the account with the most headroom when the surface starts. A handoff's run link is minted with `account=auto`. The cmux-claude preset passes `--open`. A raw link that starts an agent always asks; only a link minted on this machine (`handoff_post` adds one as `paste.runLink`) runs without the card, once.
 
 ```bash
 tools browser-router route 'http://127.0.0.1:8787/add/:id' --run <program> --arg add --arg '{id}' --arg --qty --arg '{qty}' --notify 'Added' --approval allow

@@ -42,6 +42,7 @@ describe("handoff_post (§8.1)", () => {
     test("the launch link opens in the resolved actor's repo when no actor is injected", () => {
         const env = freshEnv();
         const seen: Array<string | null> = [];
+        const accounts: Array<string | null | undefined> = [];
         const link = { url: "https://links.example.test/cmux/claude/run", markdown: "cmux-claude" };
 
         postHandoff(
@@ -53,6 +54,7 @@ describe("handoff_post (§8.1)", () => {
                 linkFor: () => link,
                 mintLaunchLink: (input) => {
                     seen.push(input.cwd);
+                    accounts.push(input.account);
                     return link;
                 },
             }
@@ -60,6 +62,7 @@ describe("handoff_post (§8.1)", () => {
 
         expect(seen).toHaveLength(1);
         expect(typeof seen[0]).toBe("string");
+        expect(accounts).toEqual(["auto"]);
     });
 
     test("a Claude launch link is offered only when Claude may work the handoff", () => {

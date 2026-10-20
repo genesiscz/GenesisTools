@@ -31,6 +31,19 @@ describe("cmux claude launcher", () => {
         expect(command).not.toContain(" && $HOME");
     });
 
+    test("account auto reaches tools claude run as the account word, which picks by headroom there", () => {
+        expect(buildClaudeArgv({ account: "auto", name: "handoff", prompt: "go" })).toEqual([
+            "tools",
+            "claude",
+            "run",
+            "auto",
+            "--",
+            "-n",
+            "handoff",
+            "go",
+        ]);
+    });
+
     test("resume and model stay in front of --, and extra args pass through", () => {
         expect(
             buildClaudeArgv({

@@ -192,3 +192,11 @@ export function smartAliasOf(nameArg: string | undefined, accountNames: string[]
 
     return alias;
 }
+
+/**
+ * `tools claude run auto`: the same pick as `--autopick`, as an account name, so a link or a launcher that
+ * only fills the account slot can ask for it. A real account named "auto" still wins.
+ */
+export function isAutoAccount(nameArg: string | undefined, accountNames: string[]): boolean {
+    return nameArg?.toLowerCase() === "auto" && !accountNames.some((name) => name.toLowerCase() === "auto");
+}

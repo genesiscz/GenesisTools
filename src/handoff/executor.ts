@@ -335,7 +335,8 @@ function mintHandoffLaunch({
             name: `handoff ${name}`,
             prompt,
             cwd,
-            account: null,
+            // Picked when the link is clicked: `tools claude run auto` takes the account with the most headroom.
+            account: "auto",
         }) ?? null
     );
 }
