@@ -355,6 +355,45 @@ function foldChevron(path: string): HTMLElement {
     return chevron;
 }
 
+/** The SVG's switch between its code and its picture, after its name in the header. Nothing for other files. */
+function svgModeButton(path: string): HTMLElement | undefined {
+    // From the image map, not `files`: a batch's headers draw before its files join that list.
+    const file = [...imagesByFile.values()].find((entry) => entry.svg?.path === path)?.svg;
+
+    if (!file) {
+        return undefined;
+    }
+
+    const asImage = svgAsImage.has(file.id);
+    const button = element(
+        "button",
+        "margin-left:8px;font:11px -apple-system,sans-serif;color:rgba(255,255,255,.75);background:transparent;border:1px solid rgba(255,255,255,.15);border-radius:999px;padding:1px 8px;cursor:pointer;-webkit-user-select:none;user-select:none",
+        asImage ? "Show code" : "Show image"
+    );
+    button.title = asImage ? "Show this SVG's code diff" : "Show this SVG as a picture, before and after";
+    button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggleSvgImage(file.id);
+    });
+    return button;
+}
+
+function toggleSvgImage(fileId: string): void {
+    const svg = imagesByFile.get(fileId)?.svg;
+
+    if (!svg) {
+        return;
+    }
+
+    if (svgAsImage.has(fileId)) {
+        svgAsImage.delete(fileId);
+    } else {
+        svgAsImage.add(fileId);
+    }
+
+    viewer.updateItem(toItem(svg));
+}
+
 /**
  * Folding a file read from its middle keeps its header at the top of the pane; without it the rows
  * below moved up under the reader, who landed in a different file ("it should scroll to the top of the
@@ -477,6 +516,9 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
         },
         renderHeaderPrefix(fileDiff) {
             return foldChevron(fileDiff.name);
+        },
+        renderHeaderFilenameSuffix(fileDiff) {
+            return svgModeButton(fileDiff.name);
         },
     };
 }
@@ -648,8 +690,22 @@ host.addEventListener("contextmenu", (event) => {
     post({ type: "header.menu", fileId: file.id, selection: document.getSelection()?.toString() ?? "" });
 });
 
-/** Image files by id: their one line carries the picture instead of the "(binary file)" note alone. */
-const imagesByFile = new Map<string, BridgeImage>();
+/**
+ * Image files by id: their one line carries the picture instead of the "(binary file)" note alone. An SVG keeps its
+ * file here too, because it shows as code until the reader asks for the picture (`toggleSvgImage`).
+ */
+const imagesByFile = new Map<string, { image: BridgeImage; svg: BridgeFile | null }>();
+/** SVG files the reader switched to their picture, by id. Code is the default. */
+const svgAsImage = new Set<string>();
+
+function isSvg(path: string): boolean {
+    return path.toLowerCase().endsWith(".svg");
+}
+
+/** An SVG shown as its picture: one line under the header, with the picture under it, as a binary image has. */
+function svgShownAsImage(fileId: string): boolean {
+    return svgAsImage.has(fileId) && imagesByFile.get(fileId)?.svg != null;
+}
 
 function annotationsFor(fileId: string): DiffLineAnnotation<AnnotationMeta>[] {
     const grouped = new Map<string, BridgeComment[]>();
@@ -674,10 +730,10 @@ function annotationsFor(fileId: string): DiffLineAnnotation<AnnotationMeta>[] {
         lineNumber: group[0].endLine,
         metadata: { kind: "comments", comments: group },
     }));
-    const image = imagesByFile.get(fileId);
+    const entry = imagesByFile.get(fileId);
 
-    if (image) {
-        annotations.unshift({ side: "additions", lineNumber: 1, metadata: { kind: "image", image } });
+    if (entry && (!entry.svg || svgShownAsImage(fileId))) {
+        annotations.unshift({ side: "additions", lineNumber: 1, metadata: { kind: "image", image: entry.image } });
     }
 
     if (composer && composer.fileId === fileId) {
@@ -696,24 +752,29 @@ const parsed = new Map<string, { key: string; fileDiff: FileDiffMetadata }>();
 
 function toItem(file: BridgeFile): CodeViewItem<AnnotationMeta> {
     if (file.image) {
-        imagesByFile.set(file.id, file.image);
+        imagesByFile.set(file.id, { image: file.image, svg: isSvg(file.path) ? file : null });
     } else {
         imagesByFile.delete(file.id);
     }
 
+    // An SVG shown as its picture is a one-line file of its own, so its code rows give way to the picture.
+    const asImage = svgShownAsImage(file.id);
+    const key = asImage ? `${file.key}:image` : file.key;
     const cached = parsed.get(file.id);
     const existing = viewer.getItem(file.id);
 
     // Same text, same item: CodeView keeps its layout and its rendered rows (annotations follow setComments).
-    if (cached?.key === file.key && existing?.type === "diff") {
+    if (cached?.key === key && existing?.type === "diff") {
         return existing;
     }
 
-    let fileDiff = cached?.key === file.key ? cached.fileDiff : undefined;
+    let fileDiff = cached?.key === key ? cached.fileDiff : undefined;
 
     if (!fileDiff) {
-        fileDiff = parseFileDiff(file);
-        parsed.set(file.id, { key: file.key, fileDiff });
+        fileDiff = parseFileDiff(
+            asImage ? { ...file, key, oldContents: null, newContents: "(SVG shown as its picture)\n" } : file
+        );
+        parsed.set(file.id, { key, fileDiff });
     }
 
     return {

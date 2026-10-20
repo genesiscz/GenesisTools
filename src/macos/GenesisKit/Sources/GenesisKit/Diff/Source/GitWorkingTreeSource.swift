@@ -341,7 +341,7 @@ public struct GitWorkingTreeSource {
                 }
             }
 
-            if file.skipped != nil, DiffImage.isImage(entry.path) {
+            if file.skipped != nil && DiffImage.isImage(entry.path) || DiffImage.isSVG(entry.path) {
                 file.image = DiffImage(
                     old: entry.status == .added ? nil : .blob(repo: repo.path, object: "\(plan.old):\(entry.oldPath ?? entry.path)"),
                     new: entry.status == .deleted ? nil

@@ -18,7 +18,8 @@ public struct DiffFile: Codable, Identifiable, Hashable {
     public var newContents: String?
     /// Binary or too large to show; renderers show a placeholder instead of lines.
     public var skipped: String?
-    /// A skipped file that is an image: where its two sides' bytes are, so a renderer can show the picture.
+    /// A skipped file that is an image, or any SVG: where its two sides' bytes are, so a renderer can show the
+    /// picture (an SVG shows as code until the reader asks for the picture).
     public var image: DiffImage?
 
     public var name: String {
@@ -61,11 +62,15 @@ public struct DiffImage: Codable, Hashable {
         self.new = new
     }
 
-    /// What WebKit draws. SVG is text, so it never reaches here as a skipped file.
+    /// The binary formats WebKit draws. SVG is text: it has code to show, so it is asked for by `isSVG`.
     public static let extensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "avif", "bmp", "ico", "tif", "tiff"]
 
     public static func isImage(_ path: String) -> Bool {
         extensions.contains((path as NSString).pathExtension.lowercased())
+    }
+
+    public static func isSVG(_ path: String) -> Bool {
+        (path as NSString).pathExtension.lowercased() == "svg"
     }
 }
 

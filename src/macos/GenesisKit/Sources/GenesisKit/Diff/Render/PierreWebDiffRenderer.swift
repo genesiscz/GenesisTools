@@ -562,6 +562,8 @@ enum DiffImageRegistry {
         case "bmp": return "image/bmp"
         case "ico": return "image/x-icon"
         case "tif", "tiff": return "image/tiff"
+        // Shown through <img>, where an SVG's scripts never run.
+        case "svg": return "image/svg+xml"
         default: return "application/octet-stream"
         }
     }

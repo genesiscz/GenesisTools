@@ -29,12 +29,16 @@ final class GitFileDiffTests: XCTestCase {
         try after.write(to: repo.appendingPathComponent("logo.png"))
         try after.write(to: repo.appendingPathComponent("new.png"))
         try Data([0, 1]).write(to: repo.appendingPathComponent("blob.bin"))
+        try "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n".write(to: repo.appendingPathComponent("icon.svg"), atomically: true, encoding: .utf8)
 
         let files = try GitWorkingTreeSource(repo: repo).load(scope: .uncommitted).files
         let changed = try XCTUnwrap(files.first { $0.path == "logo.png" }?.image)
         let added = try XCTUnwrap(files.first { $0.path == "new.png" }?.image)
         XCTAssertNil(files.first { $0.path == "blob.bin" }?.image, "a binary file that is no image has no picture")
         XCTAssertNil(added.old, "an added image has no before side")
+        let svg = try XCTUnwrap(files.first { $0.path == "icon.svg" })
+        XCTAssertNotNil(svg.newContents, "an SVG keeps its code")
+        XCTAssertEqual(svg.image?.new, .file(repo.appendingPathComponent("icon.svg").path), "and names its picture too")
 
         let load = { (source: DiffImage.Source?) in try XCTUnwrap(source.flatMap(DiffImageRegistry.load)).data }
         XCTAssertEqual(try load(changed.old), before, "the before side comes from HEAD")
