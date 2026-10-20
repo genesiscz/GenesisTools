@@ -30,8 +30,68 @@ final class VaultUnlockTests: XCTestCase {
                     cwd: "/Users/alice/project", ancestors: ancestors.map { (pid: $0.0, command: $0.1) })
     }
 
+    private func fixtureIdentity(generation: Int32 = 9, executable: String = "/bin/client") -> VaultRecipient.Identity {
+        VaultRecipient.Identity(pid: 42, startSeconds: 100, startMicroseconds: 7, execGeneration: generation,
+                                imageUUID: UUID(uuidString: "4C4C447C-5555-3144-A138-DBD9C49417A3")!, executable: executable)
+    }
+
+    func testVaultRecipientIgnoresTheReportedNameButNotAnExec() {
+        let output = VaultRecipient.Endpoint.pipe(handle: 10, peer: 20)
+        let holder = [VaultRecipient.ProcessFDs(pid: 42, endpoints: [.pipe(handle: 20, peer: 10)])]
+        let renamed = fixtureIdentity(executable: "/Users/alice/.genesis-tools/bin/gt-ask")
+        XCTAssertNil(VaultRecipient.rejection(stdout: output, caller: fixtureIdentity(), current: renamed, processes: holder),
+                     "another name of the same hard-linked image is the same caller")
+        XCTAssertEqual(VaultRecipient.rejection(stdout: output, caller: fixtureIdentity(), current: fixtureIdentity(generation: 10),
+                                                processes: holder),
+                       "the caller's process instance or executable changed before key release")
+    }
+
+    /// The kernel behaviour the comparison relies on: a process started from one hard link reports the name looked up
+    /// last, while its exec generation and image UUID stay put; an exec in place changes the generation. bzcat and
+    /// bzip2 are one inode on the system volume, so the test makes no executable of its own (see tests.md: a new
+    /// executable started and then deleted crashed syspolicyd).
+    func testVaultRecipientIdentitySurvivesAHardLinkNameFlip() throws {
+        let waiting = Process()
+        waiting.executableURL = URL(fileURLWithPath: "/usr/bin/bzcat")
+        let stdin = Pipe()
+        waiting.standardInput = stdin
+        waiting.standardOutput = FileHandle.nullDevice
+        waiting.standardError = FileHandle.nullDevice
+        try waiting.run()
+        defer { stdin.fileHandleForWriting.closeFile(); waiting.terminate() }
+        Thread.sleep(forTimeInterval: 0.2)
+        let before = try XCTUnwrap(VaultRecipient.identity(waiting.processIdentifier))
+
+        let other = Process()
+        other.executableURL = URL(fileURLWithPath: "/usr/bin/bzip2")
+        other.arguments = ["--help"]
+        other.standardOutput = FileHandle.nullDevice
+        other.standardError = FileHandle.nullDevice
+        try other.run()
+        other.waitUntilExit()
+        let after = try XCTUnwrap(VaultRecipient.identity(waiting.processIdentifier))
+        XCTAssertNotEqual(before.executable, after.executable, "positive control: the reported name flipped")
+        XCTAssertEqual(before, after)
+
+        let shell = Process()
+        shell.executableURL = URL(fileURLWithPath: "/bin/sh")
+        shell.arguments = ["-c", "read line; exec /bin/sleep 5"]
+        let input = Pipe()
+        shell.standardInput = input
+        try shell.run()
+        defer { shell.terminate() }
+        Thread.sleep(forTimeInterval: 0.2)
+        let beforeExec = try XCTUnwrap(VaultRecipient.identity(shell.processIdentifier))
+        input.fileHandleForWriting.write(Data("go\n".utf8))
+        Thread.sleep(forTimeInterval: 0.3)
+        let afterExec = try XCTUnwrap(VaultRecipient.identity(shell.processIdentifier))
+        XCTAssertEqual(afterExec.executable, "/bin/sleep", "positive control: the exec happened")
+        XCTAssertNotEqual(beforeExec.execGeneration, afterExec.execGeneration)
+        XCTAssertNotEqual(beforeExec, afterExec)
+    }
+
     func testVaultRecipientRequiresTheCallerToBeTheOnlyPeerHolder() {
-        let identity = VaultRecipient.Identity(pid: 42, startSeconds: 100, startMicroseconds: 7, executable: "/bin/client")
+        let identity = fixtureIdentity()
         let channels: [(VaultRecipient.Endpoint, VaultRecipient.Endpoint)] = [
             (.pipe(handle: 10, peer: 20), .pipe(handle: 20, peer: 10)),
             (.socket(pcb: 10, peer: 20), .socket(pcb: 20, peer: 10)),
@@ -77,7 +137,7 @@ final class VaultUnlockTests: XCTestCase {
     }
 
     func testVaultRecipientSkipsOnlyExitedOrPermissionDeniedSystemProcesses() {
-        let identity = VaultRecipient.Identity(pid: 42, startSeconds: 100, startMicroseconds: 7, executable: "/bin/client")
+        let identity = fixtureIdentity()
         let output = VaultRecipient.Endpoint.pipe(handle: 10, peer: 20)
         let caller = VaultRecipient.ProcessFDs(pid: 42, endpoints: [.pipe(handle: 20, peer: 10)])
         let exited = VaultRecipient.ProcessFDs(pid: 43, endpoints: nil, failure: .exited)
@@ -106,25 +166,27 @@ final class VaultUnlockTests: XCTestCase {
     }
 
     func testVaultRecipientRejectsChangedOrUnknownProcessIdentity() {
-        let identity = VaultRecipient.Identity(pid: 42, startSeconds: 100, startMicroseconds: 7, executable: "/bin/client")
+        let identity = fixtureIdentity()
         let output = VaultRecipient.Endpoint.pipe(handle: 10, peer: 20)
         let processes = [VaultRecipient.ProcessFDs(pid: 42, endpoints: [.pipe(handle: 20, peer: 10)])]
         var changedSeconds = identity
         changedSeconds.startSeconds += 1
         var changedMicroseconds = identity
         changedMicroseconds.startMicroseconds += 1
-        var changedPath = identity
-        changedPath.executable = "/bin/other"
+        var changedGeneration = identity
+        changedGeneration.execGeneration += 1
+        var changedImage = identity
+        changedImage.imageUUID = UUID()
         var changedPid = identity
         changedPid.pid += 1
-        for current in [changedSeconds, changedMicroseconds, changedPath, changedPid, nil] {
+        for current in [changedSeconds, changedMicroseconds, changedGeneration, changedImage, changedPid, nil] {
             XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: identity, current: current, processes: processes))
         }
         XCTAssertNotNil(VaultRecipient.rejection(stdout: output, caller: nil, current: identity, processes: processes))
     }
 
     func testVaultRecipientRejectsUnsupportedDisconnectedAndWrongKindEndpoints() {
-        let identity = VaultRecipient.Identity(pid: 42, startSeconds: 100, startMicroseconds: 7, executable: "/bin/client")
+        let identity = fixtureIdentity()
         let processes = [VaultRecipient.ProcessFDs(pid: 42, endpoints: [.pipe(handle: 20, peer: 10)])]
         for output in [VaultRecipient.Endpoint.other, .pipe(handle: 10, peer: 0), .socket(pcb: 0, peer: 20),
                        .pipe(handle: 10, peer: 10), .socket(pcb: 10, peer: 20)] {
