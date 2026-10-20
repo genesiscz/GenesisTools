@@ -227,6 +227,7 @@ public enum MarkdownViewerMenu {
         keyed(file, "Go to Location…", #selector(MarkdownDocumentWindowController.goToLocation(_:)), "markdown.file.goto", keymap: keymap)
         file.addItem(.separator())
         keyed(file, "Save", #selector(MarkdownDocumentWindowController.saveSelected(_:)), "markdown.file.save", keymap: keymap)
+        keyed(file, "Copy Path", #selector(MarkdownDocumentWindowController.copyPath(_:)), "markdown.file.copyPath", keymap: keymap)
         menu.addItem(submenu(file, title: "File"))
 
         let edit = NSMenu(title: "Edit")

@@ -164,6 +164,11 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
         model.saveSelected()
     }
 
+    /// File → Copy Path (⌃⇧C). The same path a file row's menu copies.
+    @objc public func copyPath(_ sender: Any?) {
+        model.copySelectedPath()
+    }
+
     /// File → Go to Location… (⇧⌘G).
     @objc public func goToLocation(_ sender: Any?) {
         show(paths: [], focus: true)

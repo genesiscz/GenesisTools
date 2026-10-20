@@ -590,6 +590,23 @@ public struct FileTreeView: View {
     }
 }
 
+/// One click on a tree row. A double-click is a second button action with `clickCount >= 2`.
+/// A tap-count gesture never sees it: the first click expands or collapses the folder, that
+/// replaces the row, and the gesture counting the clicks is gone with it.
+enum FileTreeClick: Equatable {
+    case toggleFolder
+    case setRoot
+    case openFile
+    case keepFile
+
+    static func forRow(isFolder: Bool, clickCount: Int) -> FileTreeClick {
+        if clickCount >= 2 {
+            return isFolder ? .setRoot : .keepFile
+        }
+        return isFolder ? .toggleFolder : .openFile
+    }
+}
+
 /// One row. Equal while its row value, selection, icon, visual style, pulse and actions' revision are.
 struct FileTreeRowView: View, Equatable {
     let row: FileTreeRow
@@ -644,11 +661,16 @@ struct FileTreeRowView: View, Equatable {
         let _ = RenderProbe.hit("tree.row")
         let metrics = style.metrics
         Button {
-            if row.isFolder {
+            switch FileTreeClick.forRow(isFolder: row.isFolder, clickCount: NSApp.currentEvent?.clickCount ?? 1) {
+            case .toggleFolder:
                 model.reduceMotion = reduceMotion
                 GenMotion.perform(expanding: !row.expanded, reduceMotion: reduceMotion) { model.toggle(row.id) }
-            } else {
+            case .setRoot:
+                actions.setRoot(row.url)
+            case .openFile:
                 actions.open(row.url)
+            case .keepFile:
+                actions.openKept?(row.url)
             }
         } label: {
             HStack(spacing: metrics.spacing) {
@@ -694,16 +716,6 @@ struct FileTreeRowView: View, Equatable {
             .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverPlain())
-        // The first click opens or closes the folder at once; the second click of a double-click
-        // re-roots the tree there (the open and close in between are undone by the new root). On a file
-        // the first click opened it already; the second keeps it (`openKept`).
-        .simultaneousGesture(TapGesture(count: 2).onEnded {
-            if row.isFolder {
-                actions.setRoot(row.url)
-            } else {
-                actions.openKept?(row.url)
-            }
-        })
         .contextMenu {
             if let menu = actions.menu {
                 configuredMenu(menu)

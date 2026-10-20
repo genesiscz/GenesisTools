@@ -55,6 +55,14 @@ final class FileTreeTests: XCTestCase {
         XCTAssertTrue(view(style) == view(sameFont), "font values, not closure identities, decide equality")
     }
 
+    func testDoubleClickOnAFolderSetsTheRootAndASingleClickToggles() {
+        XCTAssertEqual(FileTreeClick.forRow(isFolder: true, clickCount: 1), .toggleFolder)
+        XCTAssertEqual(FileTreeClick.forRow(isFolder: true, clickCount: 2), .setRoot)
+        XCTAssertEqual(FileTreeClick.forRow(isFolder: true, clickCount: 3), .setRoot)
+        XCTAssertEqual(FileTreeClick.forRow(isFolder: false, clickCount: 1), .openFile)
+        XCTAssertEqual(FileTreeClick.forRow(isFolder: false, clickCount: 2), .keepFile)
+    }
+
     func testListingPutsFoldersFirstInFinderOrderAndSkipsHiddenFiles() {
         let names = FileTreeListing.entries(of: root.path).map(\.name)
         XCTAssertEqual(names, ["Alpha", "beta", "note 2.md", "note 10.md"])

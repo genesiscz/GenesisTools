@@ -38,6 +38,7 @@ public enum MarkdownKeymap {
         KeymapCommand("markdown.file.save", "Save", group: "Files", keys: [.character("s", .command)]),
         KeymapCommand("markdown.file.reload", "Reload from Disk", group: "Files", keys: [.character("r", .command)]),
         KeymapCommand("markdown.file.reveal", "Reveal in Finder", group: "Files", keys: [.character("r", [.shift, .command])]),
+        KeymapCommand("markdown.file.copyPath", "Copy Path", group: "Files", keys: [.character("c", [.control, .shift])]),
         KeymapCommand("markdown.file.goto", "Go to Location…", group: "Files", keys: [.character("g", [.shift, .command])]),
         KeymapCommand("markdown.file.pdf", "Save as PDF…", group: "Files", keys: [.character("s", [.shift, .command])]),
         KeymapCommand("markdown.file.print", "Print…", group: "Files", keys: [.character("p", .command)]),
@@ -134,6 +135,7 @@ public enum MarkdownKeymap {
             ("markdown.file.reveal", {
                 if let url = model.selected?.url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
             }),
+            ("markdown.file.copyPath", { model.copySelectedPath() }),
             ("markdown.file.goto", { model.goToOpen = true }),
             ("markdown.view.files", { withAnimation(GenAnimation.quick) { model.showFiles.toggle() } }),
             ("markdown.view.outline", { withAnimation(GenAnimation.quick) { model.showOutline.toggle() } }),

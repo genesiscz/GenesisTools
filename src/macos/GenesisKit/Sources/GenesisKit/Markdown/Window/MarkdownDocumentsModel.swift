@@ -724,6 +724,12 @@ final class MarkdownDocumentsModel: ObservableObject {
         select(docs[next].id)
     }
 
+    /// ⌃⇧C, the toolbar, and a file row's Copy Path: the open note's path.
+    func copySelectedPath() {
+        guard let path = selected?.url.path else { return }
+        Clipboard.copy(path, what: "path")
+    }
+
     /// ⌘S on the selected tab. A refused save surfaces through the banner,
     /// which is already on screen whenever `diskChange` is set.
     func saveSelected() {

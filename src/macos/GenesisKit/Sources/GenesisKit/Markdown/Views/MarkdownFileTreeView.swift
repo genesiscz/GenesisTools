@@ -818,8 +818,33 @@ private struct MarkdownFileTreeResultRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverPlain())
+        .contextMenu {
+            let url = URL(fileURLWithPath: hit.path)
+            PathActionsMenu(entries: MarkdownSearchResultMenu.entries(
+                url: url,
+                actions: model.pathActions(for: .file),
+                handlers: model.pathHandlers(for: url, kind: .file),
+                open: action
+            ))
+        }
         .instantTooltip(hit.path)
         .accessibilityIdentifier("markdown-files-result")
+    }
+}
+
+/// The right-click menu of a search hit: the same file verbs as a row in the listing, with Open first.
+@MainActor
+enum MarkdownSearchResultMenu {
+    static func entries(
+        url: URL,
+        actions: [PathAction],
+        handlers: PathMenuHandlers,
+        environment: PathMenuEnvironment? = nil,
+        open: @escaping () -> Void
+    ) -> [PathMenuEntry] {
+        let leading = [PathMenuItem(id: "open", title: "Open", systemImage: "doc.text", run: open)]
+        let verbs = PathMenu.entries(for: url, kind: .file, actions: actions, handlers: handlers, environment: environment ?? .system)
+        return leading.map(PathMenuEntry.item) + (verbs.isEmpty ? [] : [.divider(id: "divider-leading")]) + verbs
     }
 }
 
