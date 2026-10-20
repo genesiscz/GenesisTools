@@ -40,6 +40,14 @@ interface BridgeFile {
     newContents: string | null;
     /** Changes when either side's text changes: an unchanged file keeps its parsed diff and its item. */
     key: string;
+    /** An image file's two sides as URLs the page's own scheme serves; null for a side the file lacks. */
+    image?: BridgeImage | null;
+}
+
+/** Swift leaves a nil side out, so a missing side is undefined here. */
+interface BridgeImage {
+    old?: string | null;
+    new?: string | null;
 }
 
 /** What the page keeps of a file once its diff is parsed: the text lives in the parsed diff only. */
@@ -159,7 +167,10 @@ interface Composer {
     body: string;
 }
 
-type AnnotationMeta = { kind: "comments"; comments: BridgeComment[] } | { kind: "composer"; composer: Composer };
+type AnnotationMeta =
+    | { kind: "comments"; comments: BridgeComment[] }
+    | { kind: "composer"; composer: Composer }
+    | { kind: "image"; image: BridgeImage };
 
 /** The part of pierre's per-item callback context this page reads; both item kinds carry an id. */
 interface ItemContext {
@@ -637,6 +648,9 @@ host.addEventListener("contextmenu", (event) => {
     post({ type: "header.menu", fileId: file.id, selection: document.getSelection()?.toString() ?? "" });
 });
 
+/** Image files by id: their one line carries the picture instead of the "(binary file)" note alone. */
+const imagesByFile = new Map<string, BridgeImage>();
+
 function annotationsFor(fileId: string): DiffLineAnnotation<AnnotationMeta>[] {
     const grouped = new Map<string, BridgeComment[]>();
 
@@ -660,6 +674,11 @@ function annotationsFor(fileId: string): DiffLineAnnotation<AnnotationMeta>[] {
         lineNumber: group[0].endLine,
         metadata: { kind: "comments", comments: group },
     }));
+    const image = imagesByFile.get(fileId);
+
+    if (image) {
+        annotations.unshift({ side: "additions", lineNumber: 1, metadata: { kind: "image", image } });
+    }
 
     if (composer && composer.fileId === fileId) {
         annotations.push({
@@ -676,6 +695,12 @@ function annotationsFor(fileId: string): DiffLineAnnotation<AnnotationMeta>[] {
 const parsed = new Map<string, { key: string; fileDiff: FileDiffMetadata }>();
 
 function toItem(file: BridgeFile): CodeViewItem<AnnotationMeta> {
+    if (file.image) {
+        imagesByFile.set(file.id, file.image);
+    } else {
+        imagesByFile.delete(file.id);
+    }
+
     const cached = parsed.get(file.id);
     const existing = viewer.getItem(file.id);
 
@@ -2327,6 +2352,49 @@ function renderComposer(current: Composer): HTMLElement {
     return card;
 }
 
+/**
+ * An image file's picture, before and after side by side when both exist. CodeView builds an annotation only near
+ * the viewport, and `loading="lazy"` waits for the viewport again, so a diff of many images loads only what is seen.
+ * The box has a fixed height: the row never changes height when the picture arrives.
+ */
+function renderImage(image: BridgeImage): HTMLElement {
+    const box = element(
+        "div",
+        "display:flex;gap:12px;margin:6px 12px 10px 12px;-webkit-user-select:none;user-select:none"
+    );
+    const sides: Array<[string, string | null | undefined]> = [
+        ["Before", image.old],
+        ["After", image.new],
+    ];
+    const shown = sides.flatMap(([label, url]) => (typeof url === "string" ? [{ label, url }] : []));
+
+    for (const { label, url } of shown) {
+        const panel = element("div", "flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:4px");
+
+        if (shown.length > 1) {
+            panel.appendChild(element("div", css.dim, label));
+        }
+
+        const frame = element(
+            "div",
+            "height:220px;border:1px solid rgba(255,255,255,.10);border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:repeating-conic-gradient(#202226 0% 25%,#17181b 0% 50%) 50%/16px 16px"
+        );
+        const picture = element("img", "max-width:100%;max-height:100%;object-fit:contain");
+        picture.loading = "lazy";
+        picture.decoding = "async";
+        picture.alt = label;
+        picture.addEventListener("error", () => {
+            frame.replaceChildren(element("div", css.dim, "This image cannot be shown"));
+        });
+        picture.src = url;
+        frame.appendChild(picture);
+        panel.appendChild(frame);
+        box.appendChild(panel);
+    }
+
+    return box;
+}
+
 function renderAnnotation(meta: AnnotationMeta | undefined): HTMLElement | undefined {
     if (!meta) {
         return undefined;
@@ -2334,6 +2402,10 @@ function renderAnnotation(meta: AnnotationMeta | undefined): HTMLElement | undef
 
     if (meta.kind === "composer") {
         return renderComposer(meta.composer);
+    }
+
+    if (meta.kind === "image") {
+        return renderImage(meta.image);
     }
 
     const card = element("div", css.card);

@@ -18,6 +18,8 @@ public struct DiffFile: Codable, Identifiable, Hashable {
     public var newContents: String?
     /// Binary or too large to show; renderers show a placeholder instead of lines.
     public var skipped: String?
+    /// A skipped file that is an image: where its two sides' bytes are, so a renderer can show the picture.
+    public var image: DiffImage?
 
     public var name: String {
         (path as NSString).lastPathComponent
@@ -28,7 +30,7 @@ public struct DiffFile: Codable, Identifiable, Hashable {
         return dir.isEmpty ? "" : dir
     }
 
-    public init(id: String, path: String, oldPath: String? = nil, status: Status, additions: Int, deletions: Int, oldContents: String? = nil, newContents: String? = nil, skipped: String? = nil) {
+    public init(id: String, path: String, oldPath: String? = nil, status: Status, additions: Int, deletions: Int, oldContents: String? = nil, newContents: String? = nil, skipped: String? = nil, image: DiffImage? = nil) {
         self.id = id
         self.path = path
         self.oldPath = oldPath
@@ -38,6 +40,32 @@ public struct DiffFile: Codable, Identifiable, Hashable {
         self.oldContents = oldContents
         self.newContents = newContents
         self.skipped = skipped
+        self.image = image
+    }
+}
+
+/// The two sides of an image in a diff. Nil for the side a file does not have (added: no old, deleted: no new).
+public struct DiffImage: Codable, Hashable {
+    public enum Source: Codable, Hashable {
+        /// A file on disk (the working tree).
+        case file(String)
+        /// `git -C <repo> cat-file blob <object>`, the object as `<rev>:<path>` (an empty rev is the index).
+        case blob(repo: String, object: String)
+    }
+
+    public var old: Source?
+    public var new: Source?
+
+    public init(old: Source?, new: Source?) {
+        self.old = old
+        self.new = new
+    }
+
+    /// What WebKit draws. SVG is text, so it never reaches here as a skipped file.
+    public static let extensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "avif", "bmp", "ico", "tif", "tiff"]
+
+    public static func isImage(_ path: String) -> Bool {
+        extensions.contains((path as NSString).pathExtension.lowercased())
     }
 }
 

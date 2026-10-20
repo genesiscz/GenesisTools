@@ -350,6 +350,13 @@ private struct BridgeFile: Encodable {
     public let newContents: String?
     /// Changes when either side's text changes; the page keeps the parsed diff of a file whose key it has.
     public let key: String
+    /// An image file's two sides as `genesis-diff://viewer/_image/<token>` URLs; the page shows the pictures.
+    public let image: BridgeImage?
+
+    public struct BridgeImage: Encodable {
+        public let old: String?
+        public let new: String?
+    }
 
     public init(_ file: DiffFile) {
         id = file.id
@@ -363,7 +370,9 @@ private struct BridgeFile: Encodable {
         hasher.combine(file.oldPath)
         hasher.combine(oldContents)
         hasher.combine(newContents)
+        hasher.combine(file.image)
         key = String(hasher.finalize(), radix: 36)
+        image = file.image.map { BridgeImage(old: $0.old.map(DiffImageRegistry.url), new: $0.new.map(DiffImageRegistry.url)) }
     }
 }
 
@@ -502,11 +511,73 @@ extension PierreWebDiffRenderer {
     }
 }
 
-/// Serves `PierreWebDiffRenderer.viewerRoot`.
+/// The image sources the page may ask for, by token. A token names its source for the whole process, so a page
+/// that kept an old URL still gets its picture.
+enum DiffImageRegistry {
+    static let prefix = "/_image/"
+    private static let lock = NSLock()
+    private static var sources: [String: DiffImage.Source] = [:]
+
+    static func url(_ source: DiffImage.Source) -> String {
+        var hasher = Hasher()
+        hasher.combine(source)
+        let token = String(UInt(bitPattern: hasher.finalize()), radix: 36)
+        lock.withLock { sources[token] = source }
+        return "\(PierreWebDiffRenderer.scheme)://viewer\(prefix)\(token)"
+    }
+
+    static func source(_ token: String) -> DiffImage.Source? {
+        lock.withLock { sources[token] }
+    }
+
+    /// The bytes and the path whose extension names their type. Runs git or reads the disk, so off the main thread.
+    static func load(_ source: DiffImage.Source) -> (data: Data, path: String)? {
+        switch source {
+        case .file(let path):
+            return (try? Data(contentsOf: URL(fileURLWithPath: path))).map { ($0, path) }
+        case .blob(let repo, let object):
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-C", repo, "cat-file", "blob", object]
+            let out = Pipe()
+            process.standardOutput = out
+            process.standardError = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return nil }
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return nil }
+            return (data, object)
+        }
+    }
+
+    static func mimeType(for path: String) -> String {
+        switch (path as NSString).pathExtension.lowercased() {
+        case "png": return "image/png"
+        case "jpg", "jpeg": return "image/jpeg"
+        case "gif": return "image/gif"
+        case "webp": return "image/webp"
+        case "heic": return "image/heic"
+        case "heif": return "image/heif"
+        case "avif": return "image/avif"
+        case "bmp": return "image/bmp"
+        case "ico": return "image/x-icon"
+        case "tif", "tiff": return "image/tiff"
+        default: return "application/octet-stream"
+        }
+    }
+}
+
+/// Serves `PierreWebDiffRenderer.viewerRoot`, and the diff's images under `DiffImageRegistry.prefix`.
 private final class DiffViewerSchemeHandler: NSObject, WKURLSchemeHandler {
     private let root = PierreWebDiffRenderer.viewerRoot
+    /// Tasks WebKit stopped (the image row scrolled away): they must get no more calls.
+    private var stopped = Set<ObjectIdentifier>()
 
     public func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        if let url = urlSchemeTask.request.url, url.path.hasPrefix(DiffImageRegistry.prefix) {
+            serveImage(url, task: urlSchemeTask)
+            return
+        }
         guard let url = urlSchemeTask.request.url, let root else {
             urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
             return
@@ -530,7 +601,37 @@ private final class DiffViewerSchemeHandler: NSObject, WKURLSchemeHandler {
         urlSchemeTask.didFinish()
     }
 
-    public func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+    public func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {
+        stopped.insert(ObjectIdentifier(urlSchemeTask))
+    }
+
+    private func serveImage(_ url: URL, task: WKURLSchemeTask) {
+        let id = ObjectIdentifier(task)
+        stopped.remove(id)
+        guard let source = DiffImageRegistry.source(String(url.path.dropFirst(DiffImageRegistry.prefix.count))) else {
+            task.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        Task.detached(priority: .userInitiated) {
+            let loaded = DiffImageRegistry.load(source)
+            await MainActor.run {
+                guard self.stopped.remove(id) == nil else { return }
+                guard let loaded else {
+                    task.didFailWithError(URLError(.fileDoesNotExist))
+                    return
+                }
+                let response = HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: "HTTP/1.1",
+                    headerFields: ["Content-Type": DiffImageRegistry.mimeType(for: loaded.path), "Content-Length": String(loaded.data.count)]
+                )!
+                task.didReceive(response)
+                task.didReceive(loaded.data)
+                task.didFinish()
+            }
+        }
+    }
 
     private static func mimeType(for ext: String) -> String {
         switch ext {

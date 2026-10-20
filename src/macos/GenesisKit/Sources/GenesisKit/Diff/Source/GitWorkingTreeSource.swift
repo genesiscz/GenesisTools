@@ -341,6 +341,14 @@ public struct GitWorkingTreeSource {
                 }
             }
 
+            if file.skipped != nil, DiffImage.isImage(entry.path) {
+                file.image = DiffImage(
+                    old: entry.status == .added ? nil : .blob(repo: repo.path, object: "\(plan.old):\(entry.oldPath ?? entry.path)"),
+                    new: entry.status == .deleted ? nil
+                        : plan.new.map { .blob(repo: repo.path, object: "\($0):\(entry.path)") } ?? .file(repo.appendingPathComponent(entry.path).path)
+                )
+            }
+
             if let count = counts[entry.path] {
                 file.additions = count.additions
                 file.deletions = count.deletions
