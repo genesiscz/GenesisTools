@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import * as p from "@clack/prompts";
-import { AIConfig } from "@genesiscz/utils/ai/AIConfig";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { defaultAccountName } from "@genesiscz/utils/ai/config/store-bridge";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { focusedPlace, launchTarget, openCommandAt } from "@genesiscz/utils/cmux/open-command";
@@ -159,17 +160,19 @@ export function assertLauncherExists(agent: string | true | undefined): void {
 /**
  * The account a link that names none launches under: the default Claude account, the same one
  * `tools claude` picks. A minted handoff link carries no account, so the click resolves it here.
+ * Only the name is needed, so this reads config metadata: `AIConfig.load()` resolves every secret,
+ * which asked GenesisTools.app for the vault key on each click before the new surface asked again.
  */
 async function defaultClaudeAccount(): Promise<string> {
-    const config = await AIConfig.load();
-    const account = config.getDefaultAccount("claude");
+    const store = await AiConfigStore.load();
+    const account = defaultAccountName(store.data(), "claude");
 
     if (!account) {
         throw new Error("no default Claude account; pass --account <name>");
     }
 
-    logger.debug({ account: account.name }, "cmux launch: using the default Claude account");
-    return account.name;
+    logger.debug({ account }, "cmux launch: using the default Claude account");
+    return account;
 }
 
 /**

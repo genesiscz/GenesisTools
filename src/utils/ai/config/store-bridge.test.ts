@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { type AccountEntry, type AiConfigData, CONFIG_VERSION } from "./schema";
-import { projectToV3, syncV3IntoStore } from "./store-bridge";
+import { defaultAccountName, projectToV3, syncV3IntoStore } from "./store-bridge";
 
 function account(provider: string): AccountEntry {
     return {
@@ -98,4 +98,28 @@ test("explicitly switching the legacy account drops the old account's model pin"
     v3.defaultAccounts.fixture = "shop";
     await syncV3IntoStore(store, v3);
     expect(store.defaults.app.fixture?.chat?.model).toBe("@account/acc_openai-sub");
+});
+
+describe("defaultAccountName reads the default without the vault", () => {
+    test("it names the same account as the projection, by task, by app, then the first account", () => {
+        const store = config(["anthropic-sub", "openai-sub"]);
+        store.accounts[1].name = "personal";
+        store.defaults.account = { claude: "@account/acc_openai-sub" };
+        store.defaults.app = { fixture: { chat: { model: "@account/acc_openai-sub:fixture-model" } } };
+        const v3 = projectToV3(store);
+
+        expect(defaultAccountName(store, "claude")).toBe("personal");
+        expect(v3.defaultAccounts.claude).toBe("personal");
+        expect(defaultAccountName(store, "fixture")).toBe("personal");
+        expect(v3.defaultAccounts.fixture).toBe("personal");
+        expect(defaultAccountName(store, "ask")).toBe("work");
+    });
+
+    test("a default naming a removed account falls back to the first account, and no accounts is none", () => {
+        const store = config(["anthropic-sub"]);
+        store.defaults.account = { claude: "@account/acc_gone" };
+
+        expect(defaultAccountName(store, "claude")).toBe("work");
+        expect(defaultAccountName(config([]), "claude")).toBeUndefined();
+    });
 });

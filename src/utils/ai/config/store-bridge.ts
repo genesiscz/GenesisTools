@@ -2,7 +2,7 @@ import type { AIConfigData as V3ConfigData } from "@genesiscz/utils/config/ai.ty
 import { logger } from "@genesiscz/utils/logger";
 import { secretSnapshotResolver } from "@genesiscz/utils/security/SecretStore";
 import { slugifyAccountId } from "./migrations/2026-08-configV4";
-import { type AccountRef, accountRef, accountRefIn, isAccountRef, refToId } from "./refs";
+import { accountRef, accountRefIn, isAccountRef, refToId } from "./refs";
 import { type AccountEntry, type AiConfigData, isTaskName } from "./schema";
 import { applyV3Secondary, applyV3Tokens, appsFor, toV3Account } from "./v3-adapter";
 
@@ -12,20 +12,44 @@ import { applyV3Secondary, applyV3Tokens, appsFor, toV3Account } from "./v3-adap
  * the facade can be swapped underneath without touching its 30-odd methods.
  */
 
-export function projectToV3(config: AiConfigData): V3ConfigData {
-    const defaultAccounts: Record<string, string> = {};
-
-    for (const [task, ref] of Object.entries(config.defaults.account ?? {})) {
+/**
+ * v3's `defaultAccounts`: the account name per task, then per app (an app's chat model that names an account).
+ * Metadata only, so a caller that needs just a name never unlocks the vault the way `AIConfig.load()` does.
+ */
+export function defaultAccountNames(config: AiConfigData): Record<string, string> {
+    const names: Record<string, string> = {};
+    const nameOf = (ref: unknown) => {
         if (!isAccountRef(ref)) {
-            continue;
+            return undefined;
         }
 
-        const account = config.accounts.find((entry) => entry.id === refToId(ref));
-        if (account) {
-            defaultAccounts[task] = account.name;
+        return config.accounts.find((entry) => entry.id === refToId(ref))?.name;
+    };
+
+    for (const [task, ref] of Object.entries(config.defaults.account ?? {})) {
+        const name = nameOf(ref);
+        if (name) {
+            names[task] = name;
         }
     }
 
+    for (const [app, appDefaults] of Object.entries(config.defaults.app ?? {})) {
+        const name = nameOf(appDefaults?.chat?.model?.split(":")[0]);
+        if (name) {
+            names[app] = name;
+        }
+    }
+
+    return names;
+}
+
+/** `AIConfig.getDefaultAccount(context)?.name` without the vault: the context's default, else the first account. */
+export function defaultAccountName(config: AiConfigData, context: string): string | undefined {
+    return defaultAccountNames(config)[context] ?? config.accounts[0]?.name;
+}
+
+export function projectToV3(config: AiConfigData): V3ConfigData {
+    const defaultAccounts = defaultAccountNames(config);
     const apps: V3ConfigData["apps"] = {};
 
     for (const [app, appDefaults] of Object.entries(config.defaults.app ?? {})) {
@@ -35,16 +59,7 @@ export function projectToV3(config: AiConfigData): V3ConfigData {
 
         const { chat, embed, temperature, maxTokens, streaming } = appDefaults;
 
-        // An app default that names an account is v3's defaultAccounts entry.
         const chatModel = chat?.model;
-        const chatAccountRef = chatModel?.split(":")[0];
-        if (isAccountRef(chatAccountRef)) {
-            const account = config.accounts.find((entry) => entry.id === refToId(chatAccountRef as AccountRef));
-            if (account) {
-                defaultAccounts[app] = account.name;
-            }
-        }
-
         const defaults = {
             ...(chat?.provider ? { provider: chat.provider } : {}),
             ...(chatModel && !chatModel.startsWith("@account/") ? { model: chatModel } : {}),
