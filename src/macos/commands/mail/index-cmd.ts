@@ -4,6 +4,7 @@ import { MailSource } from "@app/indexer/lib/sources/mail-source";
 import type { IndexConfig } from "@app/indexer/lib/types";
 import { formatLocalDay, parseMailDate } from "@app/macos/lib/mail/command-helpers";
 import * as p from "@clack/prompts";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
 import {
     getDefaultModel,
     logProviderChoice,
@@ -73,13 +74,14 @@ export function registerIndexCommand(program: Command): void {
 
                 // Fall back to stored defaults from previous run
                 if (!resolvedProvider && !opts.provider) {
-                    const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-                    const aiConfig = await AIConfig.load();
-                    const stored = aiConfig.getAppDefaults("mail");
+                    // The plain store, not AIConfig: AIConfig decrypts every account's tokens, which raised the
+                    // vault-key approval for a choice that holds no secret.
+                    const store = await AiConfigStore.load();
+                    const stored = store.data().defaults.app?.mail?.embed;
 
-                    if (stored?.embeddingProvider) {
-                        resolvedProvider = stored.embeddingProvider;
-                        resolvedModel ??= stored.embeddingModel;
+                    if (stored?.provider) {
+                        resolvedProvider = stored.provider;
+                        resolvedModel ??= stored.model;
                     }
                 }
 
@@ -219,11 +221,16 @@ export function registerIndexCommand(program: Command): void {
                     }
                     // Persist chosen provider/model for next run
                     if (resolvedProvider) {
-                        const { AIConfig } = await import("@genesiscz/utils/ai/AIConfig");
-                        const aiConfig = await AIConfig.load();
-                        await aiConfig.setAppDefaults("mail", {
-                            embeddingProvider: resolvedProvider,
-                            embeddingModel: resolvedModel ?? getDefaultModel(resolvedProvider, "mail"),
+                        const embed = {
+                            provider: resolvedProvider,
+                            model: resolvedModel ?? getDefaultModel(resolvedProvider, "mail"),
+                        };
+                        const store = await AiConfigStore.load();
+                        await store.mutate((data) => {
+                            data.defaults.app = {
+                                ...data.defaults.app,
+                                mail: { ...data.defaults.app?.mail, embed },
+                            };
                         });
                     }
                 } finally {
