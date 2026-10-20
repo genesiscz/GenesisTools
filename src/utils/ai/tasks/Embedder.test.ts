@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, it, test } from "bun:test";
-import type { AIEmbeddingProvider, AITask, EmbeddingResult } from "../types";
+import { afterEach, describe, expect, it, spyOn, test } from "bun:test";
+import { AIConfig } from "../AIConfig";
+import * as providers from "../providers/index";
+import type { AIEmbeddingProvider, AIProvider, AITask, EmbeddingResult } from "../types";
 import { Embedder } from "./Embedder";
 
 const isDarwin = process.platform === "darwin";
@@ -95,6 +97,31 @@ describe("Embedder", () => {
         embedder = await Embedder.create({ provider: "darwinkit" });
         expect(() => embedder!.dispose()).not.toThrow();
         embedder = null; // Already disposed
+    });
+});
+
+describe("Embedder.create and the AI config", () => {
+    afterEach(() => {
+        spyOn(AIConfig, "load").mockRestore();
+        spyOn(providers, "getProvider").mockRestore();
+        spyOn(providers, "getProviderForTask").mockRestore();
+    });
+
+    // Loading the config decrypts every account's secrets, which raises the vault-key approval.
+    test("an explicit provider never loads the config, and the default path still does", async () => {
+        const load = spyOn(AIConfig, "load").mockImplementation(() => {
+            throw new Error("AIConfig.load reached");
+        });
+        const mock = createSequentialMockProvider(8) as unknown as AIProvider;
+        spyOn(providers, "getProvider").mockReturnValue(mock);
+        spyOn(providers, "getProviderForTask").mockResolvedValue(mock);
+
+        const embedder = await Embedder.create({ provider: "local-hf", model: "m" });
+        expect(embedder.dimensions).toBe(8);
+        expect(load).not.toHaveBeenCalled();
+
+        await expect(Embedder.create()).rejects.toThrow("AIConfig.load reached");
+        await expect(Embedder.create({ provider: "local-hf", persist: true })).rejects.toThrow("AIConfig.load reached");
     });
 });
 

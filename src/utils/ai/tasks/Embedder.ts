@@ -33,8 +33,8 @@ export class Embedder {
     }
 
     static async create(options?: { provider?: string; model?: string; persist?: boolean }): Promise<Embedder> {
-        const config = await AIConfig.load();
-
+        // An explicit provider needs the config only to persist the choice. Loading it decrypts every account's
+        // secrets, so a local embedder (Ollama) would raise the vault-key approval for a token it never uses.
         if (options?.provider) {
             // User explicitly chose a provider — fail if unavailable, don't silently fall back
             const { getProvider } = await import("../providers/index");
@@ -67,6 +67,7 @@ export class Embedder {
             }
 
             if (options.persist) {
+                const config = await AIConfig.load();
                 await config.setTask("embed", {
                     provider: options.provider as AIProviderType,
                     model: options.model,
@@ -76,6 +77,7 @@ export class Embedder {
             return new Embedder(explicit as AIEmbeddingProvider, options.model);
         }
 
+        const config = await AIConfig.load();
         const provider = await getProviderForTask("embed", config);
 
         if (!("embed" in provider)) {
