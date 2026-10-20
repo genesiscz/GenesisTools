@@ -107,7 +107,7 @@ enum HubCommitLookup {
             } catch {
                 return .failed("Could not list the projects to find \(text): \(error)")
             }
-            guard let root = PRsModel.projectRoot(text, in: projects) else {
+            guard let root = PRsModel.projectRoot(text, in: projects) ?? sameName(text, holding: sha, in: projects) else {
                 return .failed("No checkout of \(text) under the repo roots, so commit \(sha) cannot open")
             }
             folder = root
@@ -140,6 +140,21 @@ enum HubCommitLookup {
         let count = WorktreeDiscovery.git(root, ["rev-list", "--count", "\(older)^..\(newer)"])?.trimmed ?? "?"
         let label = "\(older.prefix(10))..\(newer.prefix(10)) (\(count) commits)"
         return .found(Found(root: root, sha: newer, title: label, base: base?.isEmpty == false ? base : emptyTree))
+    }
+
+    /// A fork or a mirror: the link names one path (the upstream `group/sub/app`), the checkout clones another
+    /// (`me/app`). The projects with the same last name are the candidates, and the first that holds the commit wins.
+    static func sameName(_ repo: String, holding sha: String, in projects: [HubPRProject]) -> String? {
+        let name = { (path: String) -> String in
+            var last = path.lowercased().split(separator: "/").last.map(String.init) ?? ""
+            if last.hasSuffix(".git") { last.removeLast(4) }
+            return last
+        }
+        let wanted = name(repo)
+        guard !wanted.isEmpty else { return nil }
+        return projects.first { candidate in
+            name(candidate.project) == wanted && WorktreeDiscovery.git(candidate.root, ["cat-file", "-e", "\(sha)^{commit}"]) != nil
+        }?.root
     }
 
     /// Git's empty tree: the base of a range that starts at a root commit.

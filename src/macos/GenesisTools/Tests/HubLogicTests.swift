@@ -202,6 +202,13 @@ final class HubLogicTests: XCTestCase {
         XCTAssertEqual(HubCommitLookup.resolve(repo: path + "/", sha: short, known: []), found)
         let projects = [HubPRProject(project: "https://example.test/acme/app", repo: "app", root: path, kind: "github")]
         XCTAssertEqual(HubCommitLookup.resolve(repo: "acme/app", sha: short, known: projects), found)
+        // The link names the upstream, the checkout is a fork: the same last name with the commit is the checkout.
+        let fork = [HubPRProject(project: "https://example.test/other/app", repo: "app", root: "/fixture/none", kind: "gitlab"),
+                    HubPRProject(project: "https://example.test/me/app", repo: "app", root: path, kind: "gitlab")]
+        XCTAssertEqual(HubCommitLookup.resolve(repo: "group/sub/app", sha: short, known: fork), found)
+        guard case .failed = HubCommitLookup.resolve(repo: "group/sub/app", sha: "0000000", known: fork) else {
+            return XCTFail("a same-name project without the commit is no match")
+        }
         guard case .failed(let message) = HubCommitLookup.resolve(repo: path, sha: "0000000", known: []) else {
             return XCTFail("a commit the checkout lacks must be said")
         }
