@@ -27,6 +27,23 @@ export async function videoDigest(input: string): Promise<string> {
     return hash.digest("hex");
 }
 
+/**
+ * ffmpeg `select` expression that keeps exactly these source frames. ffmpeg's parser refuses a flat sum of more than
+ * 100 terms (exit 244, "Error while parsing expression"), so the sum is a balanced tree that nests log2(n) deep.
+ */
+export function frameSelectExpression(indices: readonly number[]): string {
+    if (indices.length === 0) {
+        return "0";
+    }
+
+    if (indices.length === 1) {
+        return `eq(n,${indices[0]})`;
+    }
+
+    const middle = Math.floor(indices.length / 2);
+    return `(${frameSelectExpression(indices.slice(0, middle))}+${frameSelectExpression(indices.slice(middle))})`;
+}
+
 export async function prepareVideoEvidence({
     input,
     outputRoot,
@@ -62,7 +79,7 @@ export async function prepareVideoEvidence({
     let published = false;
     try {
         progress?.({ phase: "extracting", completed: 0, total: samples.length });
-        const expression = indices.map((index) => `eq(n,${index})`).join("+");
+        const expression = frameSelectExpression(indices);
         await runVideoCommand({
             command: [
                 "ffmpeg",
