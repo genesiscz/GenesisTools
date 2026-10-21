@@ -86,8 +86,14 @@ enum VaultRecipient {
         guard stdout.connected else { return "vault stdout must be a connected pipe or Unix-domain socket" }
         guard let caller, let current else { return "the caller's process identity could not be read" }
         guard current == caller else { return "the caller's process instance or executable changed before key release" }
-        guard processes.allSatisfy({ $0.endpoints != nil || $0.maySkip }) else {
-            return "the vault recipient could not be verified because a process fd table was unreadable"
+        if let unreadable = processes.first(where: { $0.endpoints == nil && !$0.maySkip }) {
+            // Name the process: 37 refusals on 2026-10-20 and 21 said only "a process", so nobody could tell which.
+            var detail = "pid \(unreadable.pid)"
+            if case let .unavailable(code, executable) = unreadable.failure {
+                detail += ", \(String(cString: strerror(code)))"
+                if let executable { detail += ", \(executable)" }
+            }
+            return "the vault recipient could not be verified because a process fd table was unreadable (\(detail))"
         }
         let holders = Set(processes.filter { process in
             process.endpoints?.contains(where: { $0.isPeer(of: stdout) }) == true
