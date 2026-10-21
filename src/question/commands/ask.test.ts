@@ -69,6 +69,13 @@ describe("parseItems", () => {
         expect(() => parseItems({ json })).toThrow(/Run tools question ask --help/);
     });
 
+    test("a post-level wait or a source inside an item names where it belongs", () => {
+        const json = '[{"type":"decision","promptMarkdown":"Keep?","wait":true,"source":"a.ts"}]';
+
+        expect(() => parseItems({ json })).toThrow(/unknown key "wait" \(did you mean the post's own "wait"/);
+        expect(() => parseItems({ json })).toThrow(/unknown key "source" \(did you mean refs\?\)/);
+    });
+
     test("an item without promptMarkdown is refused, also inside a question_post payload", () => {
         expect(() => parseItems({ json: '{"items":[{"type":"todo","title":"Rerun"}]}' })).toThrow(
             /item 1: promptMarkdown must be a non-empty string/

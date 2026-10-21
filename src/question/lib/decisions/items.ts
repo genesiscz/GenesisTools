@@ -73,6 +73,10 @@ const KEY_HINTS: Record<string, string> = {
     options: "choices",
     images: "attachments",
     screenshots: "attachments",
+    // `source` and `wait` inside an item both failed a post on 2026-10-21; `wait` belongs to the post itself.
+    source: "refs",
+    sources: "refs",
+    wait: 'the post\'s own "wait", next to "items"',
 };
 
 const ITEM_TYPES = new Set(["question", "decision", "todo"]);
