@@ -180,8 +180,10 @@ const NEXT: Record<DecisionKind, Record<DecisionState, DecisionState[]>> = {
         // Saving a draft again replaces it: the user edits a draft more than once before sending.
         // Clearing the last pick puts it back to open; Dismiss drops it without an answer.
         drafted: ["answered", "drafted", "open", "dismissed"],
-        answered: ["sent"],
-        sent: ["acknowledged"],
+        // An agent that got the answer in chat records its progress without a send (patched() refuses it while a
+        // queued delivery holds the row).
+        answered: ["sent", "acknowledged", "implemented"],
+        sent: ["acknowledged", "implemented"],
         acknowledged: ["implemented"],
         implemented: [],
         dismissed: [],
@@ -510,6 +512,10 @@ function patched(row: DecisionRecord, patch: DecisionPatch, ts: string): Decisio
 
     if (patch.state && !canMove(row, patch.state)) {
         throw new Error(`cannot move ${row.id} from ${row.state} to ${patch.state}`);
+    }
+
+    if (row.state === "answered" && patch.state && patch.state !== "sent" && row.delivery?.queueId) {
+        throw new Error(`${row.id} is reserved by a queued delivery; wait for its consumer acknowledgement`);
     }
 
     // A queued answer is matched by revision on ACK, and these fields do not bump it; the ACK must not confirm new text.

@@ -1675,6 +1675,29 @@ test("an answer reserved by a queued delivery cannot be changed under its queue 
     }
     expect(readDecisions(file)[0].option).toBe("a");
     await updateDecision(file, events, row.id, { comment: "a note is still fine" });
+    await expect(updateDecision(file, events, row.id, { state: "implemented" })).rejects.toThrow(
+        "reserved by a queued delivery"
+    );
+});
+
+test("an answer the agent got in chat moves to acknowledged and implemented without a send", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decision-chat-answer-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [first, second] = await postDecisions(file, events, {
+        sessionId: "test-session",
+        decisions: [
+            { prompt: "First?", options: ["yes"] },
+            { prompt: "Second?", options: ["no"] },
+        ],
+    });
+    for (const row of [first, second]) {
+        await updateDecision(file, events, row.id, { state: "answered", answer: "yes" });
+    }
+
+    expect((await updateDecision(file, events, first.id, { state: "acknowledged" })).state).toBe("acknowledged");
+    expect((await updateDecision(file, events, first.id, { state: "implemented" })).state).toBe("implemented");
+    expect((await updateDecision(file, events, second.id, { state: "implemented" })).state).toBe("implemented");
 });
 
 test("decision revisions preserve the source turn of each posted version", async () => {
