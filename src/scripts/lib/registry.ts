@@ -92,7 +92,7 @@ function writeJson(path: string, value: unknown): void {
 export interface LoadRegistryOptions {
     /** Re-scan the provider configs instead of reading the cache. */
     refresh?: boolean;
-    /** Skip the cache write. Diagnostics (`doctor`) and `--dry-run` paths must not mutate durable state. */
+    /** Write the cache and mint the gateway token. Default false: a load that does not ask for it must not mutate durable state or touch the vault. */
     persist?: boolean;
 }
 
@@ -136,7 +136,7 @@ export async function loadRegistry(options: LoadRegistryOptions = {}): Promise<R
             // Permission repair is a mutation, so the read-only (`persist:
             // false`) path reports it via doctor instead of doing it. On the
             // normal path an unverifiable cache is treated as a miss.
-            if (options.persist === false || (await repairCacheMode(registryCachePath()))) {
+            if (!options.persist || (await repairCacheMode(registryCachePath()))) {
                 return cached;
             }
         }
@@ -150,11 +150,11 @@ export async function loadRegistry(options: LoadRegistryOptions = {}): Promise<R
     // token if one exists and shows the redaction mark if not, and it dials nothing.
     const payload = await buildListJson(defaultProviders(), {
         internal: true,
-        mint: options.persist !== false,
+        mint: options.persist === true,
     });
     const registry: Registry = { ...payload, fetchedAt: new Date().toISOString(), schema: REGISTRY_SCHEMA };
 
-    if (options.persist !== false) {
+    if (options.persist === true) {
         writeJson(registryCachePath(), registry);
     }
 

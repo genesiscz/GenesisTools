@@ -40,7 +40,7 @@ export interface KitOptions {
     servers?: string[];
     /** Re-read the registry from the provider configs instead of the cache. */
     refresh?: boolean;
-    /** Skip registry cache writes; dry-run and diagnostic callers must not mutate durable state. */
+    /** Write the registry cache and mint the gateway token. Default false; a script that dials gateway servers sets it. */
     persist?: boolean;
     /** Never start an interactive OAuth flow. Default true: scripts are headless. */
     disableOAuth?: boolean;
@@ -154,7 +154,7 @@ export async function createKit(options: KitOptions = {}): Promise<Kit> {
 
 /** Creates a kit, runs fn, always closes. Use this, not createKit, in scripts. */
 export async function withKit<T>(fn: (kit: Kit) => Promise<T>, options: KitOptions = {}): Promise<T> {
-    const kit = await createKit(options);
+    const kit = await createKit({ persist: true, ...options });
 
     try {
         return await fn(kit);

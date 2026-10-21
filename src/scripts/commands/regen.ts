@@ -22,7 +22,7 @@ export function registerRegen(program: Command): void {
                 throw new Error(`'${name}' has no imported selectors, so there are no bindings to regenerate.`);
             }
 
-            const { matched, errors } = await resolveSelectors(entry.imports, { refresh: true });
+            const { matched, errors } = await resolveSelectors(entry.imports, { refresh: true, persist: true });
 
             if (matched.length === 0) {
                 throw new Error(`No tools matched ${entry.imports.join(", ")} any more. Bindings left untouched.`);

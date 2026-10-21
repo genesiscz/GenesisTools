@@ -94,7 +94,7 @@ export interface DiscoverResult {
 export interface DiscoverOptions {
     /** Re-probe servers instead of using the tool cache. */
     refresh?: boolean;
-    /** Skip cache writes. `--dry-run` promises "write nothing", which includes caches. */
+    /** Write the tool cache (and the registry cache and gateway token). Default false: reads and `--dry-run` write nothing. */
     persist?: boolean;
     /** Operation-scoped snapshot already used to match selectors. */
     registry?: Registry;
@@ -117,7 +117,7 @@ export async function discoverTools(servers: string[], options: DiscoverOptions 
 
     if (stale.length > 0) {
         ui.dim(`probing ${stale.length} server(s): ${stale.join(", ")}`);
-        logger.debug({ stale, persist: options.persist !== false }, "probing mcp servers");
+        logger.debug({ stale, persist: options.persist === true }, "probing mcp servers");
         const kit = await createKit({
             servers: stale,
             refresh: options.refresh,
@@ -153,7 +153,7 @@ export async function discoverTools(servers: string[], options: DiscoverOptions 
             await kit.close();
         }
 
-        if (options.persist !== false) {
+        if (options.persist === true) {
             await saveToolCache(cache);
         }
     }

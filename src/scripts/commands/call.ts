@@ -50,7 +50,7 @@ export function registerCall(program: Command): void {
                 argsJson: string | undefined,
                 opts: { argsFile?: string; json?: boolean; timeout: string }
             ) => {
-                const registry = await loadRegistry();
+                const registry = await loadRegistry({ persist: true });
                 const available = enabledServers(registry).map((s) => s.name);
                 const selector = parseSelector(ref, available);
 
@@ -65,7 +65,7 @@ export function registerCall(program: Command): void {
                 }
 
                 const args = await resolveArgs(argsJson, opts.argsFile);
-                const kit = await createKit({ servers: [selector.server], timeoutMs });
+                const kit = await createKit({ servers: [selector.server], timeoutMs, persist: true });
 
                 try {
                     const result = await kit.call(selector.server, selector.tool, args);

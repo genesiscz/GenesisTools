@@ -11,7 +11,7 @@ export function registerDescribe(program: Command): void {
         .option("--json", "Machine-readable output")
         .option("--refresh", "Re-probe the server instead of using the tool cache")
         .action(async (ref: string, opts: { json?: boolean; refresh?: boolean }) => {
-            const { matched, errors } = await resolveSelectors([ref], { refresh: opts.refresh });
+            const { matched, errors } = await resolveSelectors([ref], { refresh: opts.refresh, persist: true });
 
             if (matched.length === 0) {
                 const detail =

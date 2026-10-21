@@ -130,7 +130,7 @@ export function registerDoctor(program: Command): void {
                 }
             }
 
-            const registry = await loadRegistry({ persist: false });
+            const registry = await loadRegistry();
             const known = new Set(registry.servers.map((s) => s.name));
 
             for (const entry of journal.scripts) {

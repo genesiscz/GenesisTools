@@ -23,7 +23,7 @@ export function registerTools(program: Command): void {
                 opts: { json?: boolean; schema?: boolean; names?: boolean; grep?: string; refresh?: boolean }
             ) => {
                 const wanted = selectors.length > 0 ? selectors : ["*.*"];
-                const resolved = await resolveSelectors(wanted, { refresh: opts.refresh });
+                const resolved = await resolveSelectors(wanted, { refresh: opts.refresh, persist: true });
                 const needle = opts.grep?.toLowerCase();
                 const matched = needle
                     ? resolved.matched.filter(

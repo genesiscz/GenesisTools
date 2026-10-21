@@ -111,8 +111,8 @@ describe("registry cache versioning", () => {
                 }
             );
 
-            // persist:false so this stays a read and cannot mint a gateway token.
-            const loaded = await loadRegistry({ persist: false });
+            // persist defaults to false, so this stays a read and cannot mint a gateway token.
+            const loaded = await loadRegistry();
 
             // Rebuilt from the providers, so it carries the current schema and NOT the
             // sentinel that only the stale file contained.
