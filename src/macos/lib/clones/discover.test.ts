@@ -137,6 +137,46 @@ describe("discoverRoots", () => {
         }
     });
 
+    it("with worktreesOf, a dir that is not a worktree stays its own root, and one inside a worktree adds nothing", async () => {
+        const outer = fleet();
+        try {
+            mkdirSync(join(outer, "main", "node_modules", "dep"), { recursive: true });
+            mkdirSync(join(outer, "main-alive", "node_modules", "dep"), { recursive: true });
+            mkdirSync(join(outer, "other", "node_modules", "dep"), { recursive: true });
+            mkdirSync(join(outer, "plain", "node_modules", "dep"), { recursive: true });
+
+            const real = realpathSync(outer);
+            const res = await discoverRoots({
+                dirs: [join(outer, "main"), join(outer, "main-alive", "node_modules"), join(outer, "plain")],
+                worktreesOf: join(outer, "main"),
+                targets: ["node_modules"],
+            });
+            expect(res.roots.sort()).toEqual(
+                [
+                    join(real, "main", "node_modules"),
+                    join(real, "main-alive", "node_modules"),
+                    join(real, "plain", "node_modules"),
+                ].sort()
+            );
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("with worktreesOf, a dir that holds the repo only narrows the search", async () => {
+        const outer = fleet();
+        try {
+            mkdirSync(join(outer, "main", "node_modules", "dep"), { recursive: true });
+            mkdirSync(join(outer, "other", "node_modules", "dep"), { recursive: true });
+
+            const real = realpathSync(outer);
+            const res = await discoverRoots({ dirs: [outer], worktreesOf: "main", targets: ["node_modules"] });
+            expect(res.roots).toEqual([join(real, "main", "node_modules")]);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
     it("without worktreesOf it scans every install tree under the dirs", async () => {
         const outer = fleet();
         try {
