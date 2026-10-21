@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { listAgentSessionRows, POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
+import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { logger } from "@genesiscz/utils/logger";
 import { ownLineage, readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { parseLaunchctlList } from "@genesiscz/utils/process/launchctl";
@@ -30,7 +31,10 @@ function realpathOr(path: string): string {
     try {
         return realpathSync(path);
     } catch (err) {
-        log.debug({ err, path }, "realpath failed; comparing the path as given");
+        if (!isMissingPathError(err)) {
+            log.debug({ err, path }, "realpath failed; comparing the path as given");
+        }
+
         return path;
     }
 }

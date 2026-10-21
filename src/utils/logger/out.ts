@@ -108,16 +108,34 @@ export interface Out {
 // facade — safe to reference at call time even though logger.ts statically
 // imports makeOut (the ESM cycle resolves because makeOut is hoisted and
 // `logger` is only touched inside these closures, never at module-eval).
-function emitResult(text: string): void {
-    writeStdout(text).catch((err) => {
-        logger.debug({ err }, "out: stdout write failed");
+// A reader that went away (`| head`, a killed parent) closes the pipe for good. One process kept writing and logged
+// 3,082 EPIPE lines on 2026-10-21, so after the first EPIPE the stream takes no more writes.
+const closedStreams = new Set<"stdout" | "stderr">();
+
+function emitTo(stream: "stdout" | "stderr", text: string): void {
+    if (closedStreams.has(stream)) {
+        return;
+    }
+
+    (stream === "stdout" ? writeStdout : writeStderr)(text).catch((err) => {
+        if (closedStreams.has(stream)) {
+            return;
+        }
+
+        if (err instanceof Error && "code" in err && err.code === "EPIPE") {
+            closedStreams.add(stream);
+        }
+
+        logger.debug({ err }, `out: ${stream} write failed`);
     });
 }
 
+function emitResult(text: string): void {
+    emitTo("stdout", text);
+}
+
 function emitStderr(text: string): void {
-    writeStderr(text).catch((err) => {
-        logger.debug({ err }, "out: stderr write failed");
-    });
+    emitTo("stderr", text);
 }
 
 /**

@@ -102,6 +102,13 @@ function parentRow(row: AgentSessionRow): ParentRow {
     };
 }
 
+/**
+ * A parent that no transcript backs (deleted, or on another machine) stays missing. The widget roster asks again
+ * every few seconds, and on 2026-10-21 that searched both providers 21,000 times for the same few ids.
+ */
+const PARENT_MISS_REUSE_MS = 10 * 60_000;
+const parentMisses = new Map<string, number>();
+
 /** Missing parents share folder reads and one metadata listing, bounded to their transcript paths. */
 async function parentsByIds({
     ids,
@@ -123,6 +130,15 @@ async function parentsByIds({
         }
     }
 
+    const now = Date.now();
+    for (const id of missing) {
+        const missedAt = parentMisses.get(id);
+
+        if (missedAt !== undefined && now - missedAt < PARENT_MISS_REUSE_MS) {
+            missing.delete(id);
+        }
+    }
+
     const resolved = new Map<string, ParentRow>();
     for (const provider of ["claude", "codex"] as const) {
         if (missing.size === 0) {
@@ -132,7 +148,6 @@ async function parentsByIds({
         const transcripts = await resolveTranscripts([...missing], {}, provider);
         for (const [id, transcript] of transcripts) {
             if (transcript instanceof Error) {
-                logger.debug({ error: transcript, id, provider }, "[hub agents] parent session not found");
                 continue;
             }
 
@@ -149,6 +164,11 @@ async function parentsByIds({
             });
             missing.delete(id);
         }
+    }
+
+    for (const id of missing) {
+        logger.debug({ id }, "[hub agents] parent session not found");
+        parentMisses.set(id, now);
     }
 
     if (resolved.size > 0) {

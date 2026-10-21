@@ -18,7 +18,7 @@ export function openHistoryReadOnly(options: { path?: string } = {}): Database |
         return undefined;
     }
 
-    logger.debug({ path }, "Opening cached history for read-only lookup");
+    logger.trace({ path }, "Opening cached history for read-only lookup");
     return new Database(path, { readonly: true });
 }
 

@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
+import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { logger } from "@genesiscz/utils/logger";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 
@@ -21,7 +22,10 @@ export function workerSourceHome(value: string): string {
     try {
         return realpathSync(value);
     } catch (error) {
-        logger.debug({ error, path: value }, "Worker source home has no canonical filesystem path");
+        if (!isMissingPathError(error)) {
+            logger.debug({ error, path: value }, "Worker source home has no canonical filesystem path");
+        }
+
         return resolve(value);
     }
 }

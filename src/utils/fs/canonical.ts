@@ -3,6 +3,16 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
+ * True for the errors a path lookup gives when the path is simply not there (ENOENT, ENOTDIR).
+ * Callers that expect missing paths skip logging these: the hub's roster refresh hit them about
+ * 70,000 times a day, and each debug line with its stack made the day log grow by 120 MB.
+ */
+export function isMissingPathError(err: unknown): boolean {
+    const code = err instanceof Error && "code" in err ? err.code : undefined;
+    return code === "ENOENT" || code === "ENOTDIR";
+}
+
+/**
  * Absolute, symlink-free form of a directory path. A path that does not exist
  * cannot be realpath'd, so it is returned resolved but uncanonicalized.
  * Shared because several tools key state by directory and must agree on the
@@ -34,7 +44,10 @@ export function canonicalPath(path: string): string {
     try {
         return realpathSync(abs);
     } catch (err) {
-        logger.debug({ err, path: abs }, "canonicalPath: realpath failed, resolving the parent");
+        if (!isMissingPathError(err)) {
+            logger.debug({ err, path: abs }, "canonicalPath: realpath failed, resolving the parent");
+        }
+
         return join(canonicalDir(dirname(abs)), basename(abs));
     }
 }

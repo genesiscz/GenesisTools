@@ -8,6 +8,7 @@
  */
 import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { isMissingPathError } from "@genesiscz/utils/fs/canonical";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { scanClaudeToolCalls } from "./file-scan";
@@ -253,7 +254,10 @@ function metaIdentity(path: string): { mtimeMs: number; size: number } {
         const status = statSync(path);
         return { mtimeMs: status.mtimeMs, size: status.size };
     } catch (error) {
-        logger.debug({ error, path }, "[transcripts] sub-agent meta identity unavailable");
+        if (!isMissingPathError(error)) {
+            logger.debug({ error, path }, "[transcripts] sub-agent meta identity unavailable");
+        }
+
         return { mtimeMs: -1, size: -1 };
     }
 }
@@ -416,6 +420,6 @@ export function listSubagents(resolved: ResolvedTranscript, options: ListSubagen
         )
         .filter((agent): agent is SessionSubagent => agent !== null)
         .sort((a, b) => (a.startedAt ?? a.lastAt).localeCompare(b.startedAt ?? b.lastAt));
-    logger.debug({ dir, count: subagents.length }, "[transcripts] listed sub-agents");
+    logger.trace({ dir, count: subagents.length }, "[transcripts] listed sub-agents");
     return { sessionId: resolved.sessionId, subagents };
 }

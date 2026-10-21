@@ -430,7 +430,7 @@ export class HistoryService {
         let synchronized: { report: NativeIndexSyncResult; reindexed: boolean };
 
         if (recent || options.refresh === false || filters.filePaths?.length === 0) {
-            logger.debug(
+            logger.trace(
                 { provider: this.options.providerId, ageMs: age === null ? null : Math.round(age) },
                 recent ? "[history] listing reuses a recent refresh" : "[history] listing reads the index unrefreshed"
             );
