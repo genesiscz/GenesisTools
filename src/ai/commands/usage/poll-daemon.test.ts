@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
-import { anthropicRows, notifiableWindows } from "./poll-daemon";
+import { anthropicRows, notifiableWindows, rowsOfAnswer, sessionRowsArgv } from "./poll-daemon";
 
 /**
  * The daemon fans one poll round out to three consumers with different rules: threshold
@@ -84,5 +84,43 @@ describe("anthropicRows", () => {
 
         expect(rows[0].stale?.reason).toBe("429");
         expect(rows.filter((r) => !r.stale)).toEqual([]);
+    });
+});
+
+describe("sessionRowsArgv", () => {
+    test("the child and the hub server get the same cache-safe command, providers included", () => {
+        expect(sessionRowsArgv({ hours: 24, minRows: 10 })).toEqual([
+            "ai",
+            "usage",
+            "sessions",
+            "--json",
+            "--fresh",
+            "--no-cache-write",
+            "--journal-only",
+            "--hours",
+            "24",
+            "--min",
+            "10",
+        ]);
+        expect(sessionRowsArgv({ providers: ["claude", "codex"], limit: 5 })).toEqual([
+            "ai",
+            "usage",
+            "sessions",
+            "--json",
+            "--fresh",
+            "--no-cache-write",
+            "--journal-only",
+            "--provider",
+            "claude",
+            "codex",
+            "--limit",
+            "5",
+        ]);
+    });
+
+    test("rowsOfAnswer reads the rows and refuses an answer without them", () => {
+        expect(rowsOfAnswer(`{"rows":[{"sessionId":"a"}],"fetchedAt":1}`)?.map((row) => row.sessionId)).toEqual(["a"]);
+        expect(rowsOfAnswer(`{"error":"busy"}`)).toBeNull();
+        expect(() => rowsOfAnswer("not json")).toThrow();
     });
 });

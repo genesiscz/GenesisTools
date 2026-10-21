@@ -10,7 +10,7 @@ import { NotificationManager } from "@genesiscz/utils/ai/usage-poll/notification
 import { pollAccounts } from "@genesiscz/utils/ai/usage-poll/poll";
 import { usagePollStorage } from "@genesiscz/utils/ai/usage-poll/storage";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/usage-poll/types";
-import { withTimeout } from "@genesiscz/utils/async";
+import { execTool } from "@genesiscz/utils/cli";
 import { recordRunOnExit } from "@genesiscz/utils/cli/run-record";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -75,6 +75,34 @@ export function anthropicRows(snapshots: readonly AccountUsageSnapshot[]) {
 
 const prof = profiler.scope("ai-usage");
 
+/** The `usage sessions` argv that recomputes `query`. `--journal-only`: these rows go into the cache file, which must
+ *  never hold a live tmux tab. */
+export function sessionRowsArgv(query: AgentSessionRowsOptions): string[] {
+    const argv = ["ai", "usage", "sessions", "--json", "--fresh", "--no-cache-write", "--journal-only"];
+    if (query.providers && query.providers.length > 0) {
+        argv.push("--provider", ...query.providers);
+    }
+
+    for (const [flag, value] of [
+        ["--hours", query.hours],
+        ["--min", query.minRows],
+        ["--limit", query.limit],
+    ] as const) {
+        if (value !== undefined) {
+            argv.push(flag, String(value));
+        }
+    }
+
+    return argv;
+}
+
+/** The rows of a `usage sessions --json` answer, or null when it holds none. */
+export function rowsOfAnswer(stdout: string): AgentSessionRow[] | null {
+    const parsed: unknown = SafeJSON.parse(stdout, { strict: true });
+    const rows = isObject(parsed) ? parsed.rows : null;
+    return Array.isArray(rows) ? rows : null;
+}
+
 /**
  * Genesis.app asks `usage sessions --json --hours 24 --min 10` every 35 s, and a fresh answer costs about 1.1 s of
  * CPU (1,130 ms median on 2026-10-12, `scripts/benchmarks/agent-sessions/session-listing.ts`): process start, every
@@ -86,12 +114,16 @@ const prof = profiler.scope("ai-usage");
  * 60 s timeout SIGTERMed the tick 20 times that day, losing its "completed" line. A walk cut short leaves the
  * previous file for the next tick. The budget counts from process start, because the runner's clock starts at
  * spawn and on 2026-10-12 the first line of `main` reached it 5-38 s after spawn. Never throws.
+ *
+ * The walk runs in a child, never in this process: its SQLite reads are synchronous, so on a loaded disk they held
+ * the event loop past the budget timer, and the runner SIGTERMed the tick 9 times on 2026-10-21 (twice the SIGTERM
+ * handler could not run either, and it took a SIGKILL). A child is killed at the budget, whatever it is doing.
  */
 async function refreshSessionRows(): Promise<void> {
-    const budgetMs = TICK_BUDGET_MS - (Date.now() - performance.timeOrigin);
+    const remainingMs = () => TICK_BUDGET_MS - (Date.now() - performance.timeOrigin);
+    const budgetMs = remainingMs();
 
     try {
-        const { listAgentSessionRows } = await import("@app/ai/lib/sessions/agent-session-rows");
         const { refreshSessionRowsCache } = await import("@app/ai/lib/sessions/rows-cache");
         const { callHubServer } = await import("@app/hub/server/client");
         // The resident hub server answers with warm caches (directory walk, metadata, rows); this process
@@ -101,20 +133,11 @@ async function refreshSessionRows(): Promise<void> {
                 return null;
             }
 
-            // `--journal-only`: these rows go into the cache file, which must never hold a live tmux tab.
-            const argv = ["ai", "usage", "sessions", "--json", "--fresh", "--no-cache-write", "--journal-only"];
-            for (const [flag, value] of [
-                ["--hours", query.hours],
-                ["--min", query.minRows],
-                ["--limit", query.limit],
-            ] as const) {
-                if (value !== undefined) {
-                    argv.push(flag, String(value));
-                }
-            }
-
             // Short: a stalled server must not eat the budget the local walk needs (a cold walk is ~2 s CPU).
-            const answer = await callHubServer({ argv, timeoutMs: Math.max(1000, Math.min(5_000, budgetMs / 4)) });
+            const answer = await callHubServer({
+                argv: sessionRowsArgv(query),
+                timeoutMs: Math.max(1000, Math.min(5_000, budgetMs / 4)),
+            });
             if (!answer) {
                 // This tick builds the rows itself. A server that is not running is started for the next tick;
                 // the hub window is not needed for that (238 of 644 refreshes on 2026-10-12 found no server).
@@ -128,24 +151,49 @@ async function refreshSessionRows(): Promise<void> {
             }
 
             try {
-                const parsed: unknown = SafeJSON.parse(answer.stdout, { strict: true });
-                const rows = isObject(parsed) ? parsed.rows : null;
-                return Array.isArray(rows) ? rows : null;
+                return rowsOfAnswer(answer.stdout);
             } catch (err) {
                 logger.debug({ err }, "[ai-usage] hub server rows unreadable; computing locally");
                 return null;
             }
         };
-        const outcome = await withTimeout(
-            prof.measureAsync(
+        let cut = false;
+        const local = async (query: AgentSessionRowsOptions): Promise<AgentSessionRow[]> => {
+            const timeout = remainingMs();
+            const child = timeout > 0 ? await execTool(sessionRowsArgv(query), { timeout }) : null;
+            if (!child || child.timedOut) {
+                cut = true;
+                throw new Error(`session rows walk passed the tick's budget (${Math.round(budgetMs / 1000)} s left)`);
+            }
+
+            const rows = child.success ? rowsOfAnswer(child.stdout) : null;
+            if (!rows) {
+                throw new Error(`usage sessions exited ${child.exitCode} without rows: ${child.stderr.slice(-300)}`);
+            }
+
+            return rows;
+        };
+
+        try {
+            const outcome = await prof.measureAsync(
                 "tick.session-rows",
-                () => refreshSessionRowsCache(listAgentSessionRows, { remote }),
+                () => refreshSessionRowsCache(local, { remote }),
                 cpuMeta()
-            ),
-            Math.max(0, budgetMs),
-            new Error(`session rows walk passed the tick's budget (${Math.round(budgetMs / 1000)} s left)`)
-        );
-        logger.info(outcome, "[ai-usage] session rows cache");
+            );
+            logger.info(outcome, "[ai-usage] session rows cache");
+        } catch (err) {
+            if (!cut) {
+                throw err;
+            }
+
+            // The designed outcome on a loaded machine, not a fault: in all 7 cuts on 2026-10-21 every read was slow
+            // (the Claude projects walk 8 to 25 s for 3,600 files, the history catalog 30 to 40 s), while 1,317
+            // finished walks that day took under 1 s each.
+            logger.info(
+                { budgetMs: Math.round(budgetMs) },
+                "[ai-usage] session rows walk cut at the tick's budget; the previous rows stay"
+            );
+        }
     } catch (err) {
         logger.warn({ err }, "[ai-usage] session rows cache refresh failed");
     }
