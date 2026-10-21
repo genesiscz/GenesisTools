@@ -1,10 +1,11 @@
 import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, parse, relative, resolve } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];
 const SKIP_DIRECTORIES = new Set(["node_modules", "dist", "build", "coverage", ".next", ".git"]);
 const TEST_FILE = /[._](test|spec)\.[cm]?tsx?$/;
+const GLOB_CHARS = /[*?[{]/;
 
 export interface CollectOptions {
     /** Include `*.test.ts` and `*.spec.ts`, which are skipped by default. */
@@ -36,6 +37,18 @@ function isSource(path: string, includeTests: boolean): boolean {
  */
 export function collectFiles(input: string, options: CollectOptions = {}): string[] {
     const absolute = resolve(input);
+
+    // A quoted pattern reaches us unexpanded: agents pass `'src/utils/repos*.ts'`, which logged "No TypeScript source
+    // found" twice on 2026-10-21. A path that exists as typed is never read as a pattern.
+    if (!existsSync(absolute) && GLOB_CHARS.test(input)) {
+        const [cwd, pattern] = isAbsolute(input)
+            ? [parse(input).root, input.slice(parse(input).root.length)]
+            : [process.cwd(), input];
+        const matches = [...new Bun.Glob(pattern).scanSync({ cwd, absolute: true, onlyFiles: false })];
+        const found = matches.flatMap((match) => collectFiles(match, options));
+        return [...new Set(found)].filter((file) => isSource(file, options.tests === true)).sort();
+    }
+
     const ignore = options.ignore ?? [];
     // 🛑 A needle matches the path BELOW what the user named, never the directories above it.
     // Tested against the absolute path, `--ignore test` under `/Users/me/test-projects/app`

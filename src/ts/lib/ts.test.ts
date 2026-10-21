@@ -624,6 +624,21 @@ describe("the skeleton command's filters and rendering", () => {
             chmodSync(join(root, "walk/locked"), 0o755);
         }
     });
+
+    it("expands a quoted glob, keeps sources only, and never reads an existing path as a pattern", () => {
+        write("glob/repos.ts", "export const a = 1;\n");
+        write("glob/repos-cache.ts", "export const b = 2;\n");
+        write("glob/repos.test.ts", "export const c = 3;\n");
+        write("glob/other.ts", "export const d = 4;\n");
+        write("glob/[x].ts", "export const e = 5;\n");
+
+        expect(collectFiles(join(root, "glob/repos*.ts"))).toEqual([
+            join(root, "glob/repos-cache.ts"),
+            join(root, "glob/repos.ts"),
+        ]);
+        expect(collectFiles(join(root, "glob/[x].ts"))).toEqual([join(root, "glob/[x].ts")]);
+        expect(collectFiles(join(root, "glob/none*.ts"))).toEqual([]);
+    });
 });
 
 describe("an exported const that is really an API", () => {
