@@ -18,7 +18,15 @@ import {
     timedSteps,
 } from "./app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
-import { type AppProcess, groupOldBuilds, localNetworkAnswer, parseLocalNetworkRules } from "./local-network";
+import {
+    type AppProcess,
+    groupOldBuilds,
+    localNetworkAnswer,
+    parseLocalNetworkPrompts,
+    parseLocalNetworkRules,
+    retiredAtOf,
+    withoutPreloads,
+} from "./local-network";
 import {
     ALL_PART_IDS,
     bundleStepsFor,
@@ -682,6 +690,25 @@ describe("Local Network answers", () => {
         expect(parseLocalNetworkRules("GenesisTools: unknown face")).toBeNull();
         expect(parseLocalNetworkRules(`{"rules":[]}`)).toBeNull();
         expect(localNetworkAnswer(null)).toBe("unknown");
+    });
+
+    it("reads the prompting pid and build from nehelper's log", () => {
+        const log = [
+            "Timestamp               Ty Process[PID:TID]",
+            "2026-10-21 22:16:06.926 I  nehelper[419:2a66e2b] [com.apple.networkextension:] Found new path /Users/x/.genesis-tools/app/retired.noindex/1792613086315/GenesisTools.app/Contents/MacOS/GenesisTools for PID 97417, allowing a new prompt",
+            "2026-10-21 22:16:06.930 I  nehelper[419:2a66e2b] [com.apple.networkextension:] Local network preference not yet set, prompting for GenesisTools (com.genesiscz.genesistools)",
+        ].join("\n");
+        const [prompt, ...rest] = parseLocalNetworkPrompts(log);
+        expect(rest).toEqual([]);
+        expect(prompt).toEqual({
+            at: "2026-10-21 22:16:06",
+            pid: 97417,
+            executable:
+                "/Users/x/.genesis-tools/app/retired.noindex/1792613086315/GenesisTools.app/Contents/MacOS/GenesisTools",
+        });
+        expect(retiredAtOf(prompt.executable)?.getTime()).toBe(1792613086315);
+        expect(retiredAtOf("/Users/x/Applications/GenesisTools.app/Contents/MacOS/GenesisTools")).toBeNull();
+        expect(withoutPreloads("gt-cc --preload /a.ts --preload /b.ts --resume abc")).toBe("gt-cc --resume abc");
     });
 });
 

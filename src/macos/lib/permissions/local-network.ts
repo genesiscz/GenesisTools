@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_NAME, genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
+import { readProcessCwd } from "@genesiscz/utils/process/cwd";
 import { executableInode } from "@genesiscz/utils/process/process-files";
 import { listProcesses } from "@genesiscz/utils/process/processes";
 import { retiredRootFor } from "./app";
@@ -173,6 +174,112 @@ function retiredBinaries(): RetiredBinary[] {
     });
 }
 
+/** What a launcher command line runs: the face flags, or the program with its arguments. */
+function launcherProgram(launcherPath: string, command: string): string {
+    const rest = command.slice(launcherPath.length).trim();
+    const [program, ...args] = rest.split(" ");
+    return !program ? "(window)" : program.startsWith("-") ? rest : [basename(program), ...args].join(" ");
+}
+
+/** One Local Network prompt macOS raised for GenesisTools, from nehelper's log. */
+export interface LocalNetworkPrompt {
+    /** local time as the log prints it, `2026-10-21 22:16:06` */
+    at: string;
+    /** the responsible process: the launcher whose tree reached the network */
+    pid: number;
+    /** the GenesisTools binary it runs; a path under `retired.noindex/` is an old build */
+    executable: string;
+}
+
+const PROMPT_LINE = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.\d+ .*Found new path (.+) for PID (\d+), allowing a new prompt/;
+
+/**
+ * The dialog itself cannot name the program: its text is the fixed `NSLocalNetworkUsageDescription`. nehelper logs
+ * the responsible pid and its executable one line before it prompts (2026-10-21 22:16:06: pid 97417, a Claude session
+ * launcher on the build a rebuild had retired twelve minutes before).
+ */
+export function parseLocalNetworkPrompts(logText: string): LocalNetworkPrompt[] {
+    return logText.split("\n").flatMap((line): LocalNetworkPrompt[] => {
+        const match = PROMPT_LINE.exec(line);
+        return match ? [{ at: match[1], pid: Number(match[3]), executable: match[2] }] : [];
+    });
+}
+
+/** Prompts in the last `since` (a `log show --last` value: `30m`, `2h`, `1d`); empty when `log show` fails (logged). */
+export function readLocalNetworkPrompts(since: string): LocalNetworkPrompt[] {
+    const proc = Bun.spawnSync(
+        [
+            "/usr/bin/log",
+            "show",
+            "--last",
+            since,
+            "--style",
+            "compact",
+            "--info",
+            "--predicate",
+            'process == "nehelper" AND eventMessage CONTAINS "allowing a new prompt"',
+        ],
+        { stdout: "pipe", stderr: "pipe", timeout: 120_000 }
+    );
+
+    if (proc.exitCode !== 0) {
+        logger.warn(
+            { since, exitCode: proc.exitCode, stderr: new TextDecoder().decode(proc.stderr).slice(0, 300) },
+            "local network: log show failed"
+        );
+        return [];
+    }
+
+    return parseLocalNetworkPrompts(new TextDecoder().decode(proc.stdout));
+}
+
+/** What the prompting process was, while it still runs. */
+export interface PromptProcess {
+    started: Date;
+    /** the program the launcher runs (`gt-cc …` is a Claude session) */
+    command: string;
+    cwd: string | null;
+    children: string[];
+}
+
+/** Every `tools` program carries the same `--preload <file>` pairs, which hide what it runs. */
+export function withoutPreloads(command: string): string {
+    return command.replace(/ --preload \S+/g, "");
+}
+
+/** The live process behind each prompt pid; a pid that has exited is absent. */
+export function describePromptProcesses(launcherPath: string, pids: number[]): Map<number, PromptProcess> {
+    const wanted = new Set(pids);
+    const entries = listProcesses();
+    const described = new Map<number, PromptProcess>();
+    for (const entry of entries) {
+        if (!wanted.has(entry.pid) || entry.startMs === null || !entry.command) {
+            continue;
+        }
+
+        const command = withoutPreloads(
+            entry.command.startsWith(launcherPath) ? launcherProgram(launcherPath, entry.command) : entry.command
+        );
+        const children = entries
+            .filter((child) => child.ppid === entry.pid && child.command)
+            .map((child) => withoutPreloads(child.command ?? child.name));
+        described.set(entry.pid, {
+            started: new Date(entry.startMs),
+            command,
+            cwd: readProcessCwd(entry.pid),
+            children,
+        });
+    }
+
+    return described;
+}
+
+/** When the build behind `executable` was retired, or null for the installed app. */
+export function retiredAtOf(executable: string): Date | null {
+    const match = /retired(?:\.noindex)?\/(\d+)\//.exec(executable);
+    return match ? new Date(Number(match[1])) : null;
+}
+
 /**
  * Old builds a running process still executes: one `ps`, then one `lsof` over the GenesisTools processes only.
  * Empty when nothing runs an old build, or when either listing fails (logged).
@@ -192,10 +299,9 @@ export function oldBuildsInUse(launcherPath: string, rules: LocalNetworkRules | 
         ) {
             return [];
         }
-        const rest = entry.command.slice(launcherPath.length).trim();
-        const [program, ...args] = rest.split(" ");
-        const command = !program ? "(window)" : program.startsWith("-") ? rest : [basename(program), ...args].join(" ");
-        return [{ pid: entry.pid, started: new Date(entry.startMs), command }];
+        return [
+            { pid: entry.pid, started: new Date(entry.startMs), command: launcherProgram(launcherPath, entry.command) },
+        ];
     });
     const inodesByPid = new Map<number, Set<number>>();
     for (const entry of processes) {
