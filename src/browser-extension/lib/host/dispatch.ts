@@ -1,6 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import { runAction } from "../actions";
-import { buildExtension, extensionFreshness } from "../build";
+import { buildExtension, extensionFreshness, updateRange } from "../build";
 import { ConfigError, configPath, saveConfig } from "../config";
 import type { Deps } from "../deps";
 import { FeatureError } from "../errors";
@@ -56,9 +56,14 @@ const HANDLERS: Record<HostCommand, Handler> = {
         runAction(deps, { actionId: params.actionId, url: params.url, fields: params.fields }),
     "router.explain": (deps, params) => explainLink(deps, params.url),
     "router.route": (deps, params) => routeLink(deps, params.url),
-    "extension.status": async (): Promise<ExtensionStatusData> => {
+    "extension.status": async (_deps, params): Promise<ExtensionStatusData> => {
         const freshness = await extensionFreshness();
-        return { distBuildId: freshness.dist?.buildId ?? null, stale: freshness.stale };
+        const running = typeof params.running === "string" ? params.running : null;
+        return {
+            distBuildId: freshness.dist?.buildId ?? null,
+            stale: freshness.stale,
+            ...(await updateRange({ dist: freshness.dist, stale: freshness.stale, running })),
+        };
     },
     "extension.build": async (): Promise<ExtensionStatusData> => {
         const built = await buildExtension();

@@ -1,7 +1,13 @@
 import type { Freshness } from "@genesiscz/utils/browser-extension/runtime/freshness";
 import { ext } from "../chrome";
 
-export { type Freshness, freshnessFromReply } from "@genesiscz/utils/browser-extension/runtime/freshness";
+export {
+    describeUpdateRange,
+    type Freshness,
+    freshnessFromReply,
+    RUNNING_BUILD,
+    updateRangeFromReply,
+} from "@genesiscz/utils/browser-extension/runtime/freshness";
 
 const TITLES: Record<Freshness, string> = {
     current: "GenesisTools",

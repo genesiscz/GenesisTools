@@ -6,21 +6,39 @@
     <title>GenesisTools</title>
     <style>
         body { width: 360px; }
+        main { padding: 14px; gap: 10px; }
+        header.gt-row { padding: 2px 2px 4px; }
+        section.gt-surface { gap: 10px; padding: 12px 14px; background: var(--card); border-color: var(--border); box-shadow: none; backdrop-filter: none; }
+        section h2 { font: 600 10.5px/1 var(--gt-mono); letter-spacing: 0.12em; }
+        #update { border-color: color-mix(in oklch, var(--primary) 45%, var(--border)); }
+        #update-range:empty { display: none; }
+        #update-range { font-variant-numeric: tabular-nums; word-break: normal; }
+        #update .gt-btn { width: 100%; padding: 8px 10px; }
+        #page-info { gap: 8px; flex-wrap: nowrap; }
+        #page-info .gt-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+        #page-info .gt-chip { flex: none; }
+        #page-buttons, #action-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        #page-buttons .gt-btn, #action-buttons .gt-btn { width: 100%; padding: 7px 10px; }
+        #page-buttons .gt-btn.primary { grid-column: 1 / -1; padding: 9px 10px; }
+        #page-buttons .gt-btn:last-child:nth-child(even), #action-buttons .gt-btn:last-child:nth-child(odd) { grid-column: 1 / -1; }
+        #result { padding: 8px 10px; background: var(--card); border: 1px solid var(--border); border-radius: calc(var(--radius) - 4px); }
         #result:empty { display: none; }
-        footer { display: flex; justify-content: space-between; align-items: center; }
+        .gt-empty { margin: 0; padding: 22px 12px; text-align: center; line-height: 1.5; }
+        footer { display: flex; justify-content: space-between; align-items: center; padding: 10px 2px 0; border-top: 1px solid var(--border); font-size: 12px; }
     </style>
 </head>
 <body>
     <main>
-        <div class="gt-row">
+        <header class="gt-row">
             <h1 class="gt-title"><span class="mark">GT</span> GenesisTools</h1>
             <span class="gt-spacer"></span>
             <span id="host"><span class="gt-chip busy"><span class="gt-dot"></span>host</span></span>
-        </div>
+        </header>
         <section id="update" class="gt-surface" hidden>
             <h2>Update</h2>
             <div id="update-text" class="gt-muted"></div>
-            <div class="gt-row"><button id="update-button" class="gt-btn primary"></button></div>
+            <div id="update-range"></div>
+            <button id="update-button" class="gt-btn primary" type="button"></button>
         </section>
         <section id="host-help" class="gt-surface" hidden>
             <h2>Native host</h2>
@@ -37,6 +55,7 @@
             <h2>Actions</h2>
             <div id="action-buttons" class="gt-row"></div>
         </section>
+        <p id="empty" class="gt-empty gt-muted" hidden>Nothing to do on this page.<br>Open a GitHub pull request or a GitLab merge request to review it here.</p>
         <pre id="result" class="gt-pre" role="status" aria-live="polite"></pre>
         <footer class="gt-muted">
             <a href="#" id="options">Options</a>

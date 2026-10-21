@@ -10,14 +10,17 @@ import {
     readBuildInfo,
     writeBuildInfo,
 } from "@genesiscz/utils/browser-extension/build-info";
+import type { UpdateRange } from "@genesiscz/utils/browser-extension/runtime/freshness";
 import { readRouterConfig } from "@genesiscz/utils/browser-router/config";
 import { browserHosts } from "@genesiscz/utils/browser-router/services";
+import { createGit } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { EXTENSION_SOURCE_DIR } from "./host/install";
 import { isRecord } from "./values";
 
-export const DIST_DIR = resolve(import.meta.dirname, "..", "..", "..", "dist", "browser-extension");
+const REPO_ROOT = resolve(import.meta.dirname, "..", "..", "..");
+export const DIST_DIR = resolve(REPO_ROOT, "dist", "browser-extension");
 
 const MODULE_ENTRIES = ["background.ts", "popup.ts", "options.ts", "route.ts"];
 const STATIC_FILES = ["manifest.json", "popup.html", "options.html", "route.html"];
@@ -100,6 +103,40 @@ async function grantRouterHosts(outDir: string): Promise<string> {
     return hostsPath;
 }
 
+/** Short sha of this checkout's HEAD, or null outside a git checkout. */
+async function headCommit(): Promise<string | null> {
+    try {
+        return await createGit({ cwd: REPO_ROOT }).getShortSha("HEAD");
+    } catch (error) {
+        log.debug({ error }, "no git HEAD for the extension build");
+        return null;
+    }
+}
+
+/**
+ * The commits an update would pull in. `running` is the build id the browser runs. A rebuild carries
+ * the checkout HEAD; a reload carries the build already in `dist`.
+ */
+export async function updateRange({
+    dist,
+    stale,
+    running,
+}: {
+    dist: BuildInfo | null;
+    stale: boolean;
+    running: string | null;
+}): Promise<UpdateRange> {
+    const fromCommit = running ? (dist?.commits[running] ?? null) : null;
+    const toCommit = stale ? await headCommit() : (dist?.commit ?? null);
+
+    if (!fromCommit || !toCommit || fromCommit === toCommit) {
+        return { fromCommit, toCommit, behind: null };
+    }
+
+    const behind = await createGit({ cwd: REPO_ROOT }).countCommits(fromCommit, toCommit);
+    return { fromCommit, toCommit, behind };
+}
+
 export interface Freshness {
     /** The build in `dist`, or null when there is none. */
     dist: BuildInfo | null;
@@ -153,7 +190,7 @@ export async function buildExtension({ outDir = DIST_DIR }: { outDir?: string } 
         throw new Error(`the manifest points at files the build did not write: ${missing.join(", ")}`);
     }
 
-    const info = await writeBuildInfo(outDir, buildId);
+    const info = await writeBuildInfo(outDir, buildId, await headCommit());
     log.info({ outDir, files: files.length, buildId }, "extension built");
     return { outDir, files, info };
 }

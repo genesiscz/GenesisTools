@@ -5,6 +5,7 @@ import { THEME_CSS } from "./theme";
 export function mountPage(): void {
     const style = document.createElement("style");
     style.textContent = `${THEME_CSS}
+[hidden] { display: none !important; }
 body { margin: 0; background: var(--background); color: var(--foreground); }
 main { padding: 14px 16px; display: grid; gap: 12px; }
 section { display: grid; gap: 8px; padding: 12px; }

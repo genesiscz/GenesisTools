@@ -2,7 +2,14 @@ import type { HostResponse } from "../lib/host/messages";
 import { parseForgeUrl } from "../lib/page-url";
 import { ext } from "./chrome";
 import { callHost, isRecord } from "./shared/bridge";
-import { type Freshness, freshnessFromReply, showFreshness } from "./shared/freshness";
+import {
+    describeUpdateRange,
+    type Freshness,
+    freshnessFromReply,
+    RUNNING_BUILD,
+    showFreshness,
+    updateRangeFromReply,
+} from "./shared/freshness";
 import { describe, mountPage, required } from "./shared/page";
 import { chip, el } from "./shared/theme";
 
@@ -189,6 +196,10 @@ async function main(): Promise<void> {
         result.textContent = `Skipped actions with an invalid match:\n${refused.join("\n")}`;
     }
 
+    if (!page && matching.length === 0) {
+        required<HTMLElement>("#empty").hidden = false;
+    }
+
     if (matching.length === 0 || tab?.id === undefined) {
         return;
     }
@@ -243,7 +254,8 @@ const UPDATE_TEXT: Record<"reload" | "rebuild", { text: string; button: string }
 
 /** Asks the host whether this build is current, and offers the one click that fixes it. */
 async function offerUpdate(show: (reply: HostResponse, ok: (data: unknown) => string) => void): Promise<void> {
-    const state: Freshness = freshnessFromReply(await callHost("extension.status"));
+    const reply = await callHost("extension.status", { running: RUNNING_BUILD });
+    const state: Freshness = freshnessFromReply(reply);
     await showFreshness(state);
 
     if (state !== "reload" && state !== "rebuild") {
@@ -254,6 +266,7 @@ async function offerUpdate(show: (reply: HostResponse, ok: (data: unknown) => st
     const button = required<HTMLButtonElement>("#update-button");
     required<HTMLElement>("#update").hidden = false;
     required<HTMLElement>("#update-text").textContent = copy.text;
+    required<HTMLElement>("#update-range").textContent = describeUpdateRange(updateRangeFromReply(reply)) ?? "";
     button.textContent = copy.button;
     button.addEventListener("click", async () => {
         button.disabled = true;

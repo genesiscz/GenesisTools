@@ -2,10 +2,14 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { OpenHubOptions, OpenHubResult } from "@app/hub/lib/open";
-import { buildStamp } from "@genesiscz/utils/browser-extension/build-info";
+import { buildStamp, readBuildInfo, writeBuildInfo } from "@genesiscz/utils/browser-extension/build-info";
 import { extensionProfiles } from "@genesiscz/utils/browser-extension/profiles";
 import { GENESIS_EXTENSION_ID } from "@genesiscz/utils/browser-extension/registry";
-import { freshnessOf } from "@genesiscz/utils/browser-extension/runtime/freshness";
+import {
+    describeUpdateRange,
+    freshnessOf,
+    updateRangeFromReply,
+} from "@genesiscz/utils/browser-extension/runtime/freshness";
 import type { LocalCheckout } from "@genesiscz/utils/git/local-checkouts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { EditorTarget, RunResult, TerminalTarget } from "@genesiscz/utils/open-in";
@@ -695,6 +699,36 @@ describe("extension freshness", () => {
         expect(freshnessOf("b1", { distBuildId: "b1", stale: true })).toBe("rebuild");
         expect(freshnessOf("b1", { distBuildId: "b2", stale: false })).toBe("reload");
         expect(freshnessOf("b1", { distBuildId: "b1", stale: false })).toBe("current");
+    });
+
+    it("names the commit range of an update, with the count behind", () => {
+        const range = updateRangeFromReply({
+            ok: true,
+            data: { fromCommit: "a1b2c3d", toCommit: "e4f5a6b", behind: 12 },
+        });
+        expect(describeUpdateRange(range)).toBe("a1b2c3d → e4f5a6b (12 commits behind)");
+        expect(describeUpdateRange({ fromCommit: "a1b2c3d", toCommit: "e4f5a6b", behind: 1 })).toBe(
+            "a1b2c3d → e4f5a6b (1 commit behind)"
+        );
+        expect(describeUpdateRange({ fromCommit: "a1b2c3d", toCommit: "a1b2c3d", behind: null })).toBe(
+            "a1b2c3d (local changes)"
+        );
+        expect(describeUpdateRange(updateRangeFromReply({ ok: false }))).toBeNull();
+    });
+
+    it("a build id maps to its commit through the history in build.json, and the history is capped", async () => {
+        const dir = makeTempDir("gt-ext-commits-");
+        writeFileSync(join(dir, "a.js"), "x");
+
+        for (let i = 0; i < 32; i++) {
+            await writeBuildInfo(dir, `build-${i}`, `sha${i}`);
+        }
+
+        const info = await readBuildInfo(dir);
+        expect(info?.commit).toBe("sha31");
+        expect(Object.keys(info?.commits ?? {})).toHaveLength(30);
+        expect(info?.commits["build-2"]).toBe("sha2");
+        expect(info?.commits["build-1"]).toBeUndefined();
     });
 
     it("two builds of the same inputs have the same stamp, and a changed file does not", async () => {

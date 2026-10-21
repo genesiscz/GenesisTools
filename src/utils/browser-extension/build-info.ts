@@ -12,6 +12,16 @@ export interface BuildInfo {
     /** sha256 of every file the build wrote, the build id taken out, so two builds of the same inputs match. */
     stamp: string;
     builtAt: string;
+    /** Short sha of the checkout HEAD the build was made from; null outside a git checkout. */
+    commit: string | null;
+    /** Build id to commit for this build and the ones before it (newest 30), so a running build can name its own commit. */
+    commits: Record<string, string>;
+}
+
+const COMMIT_HISTORY = 30;
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function newBuildId(): string {
@@ -40,8 +50,22 @@ export async function buildStamp(outDir: string, buildId: string): Promise<strin
 }
 
 /** Stamps a finished build folder and writes its `build.json`. */
-export async function writeBuildInfo(outDir: string, buildId: string): Promise<BuildInfo> {
-    const info: BuildInfo = { buildId, stamp: await buildStamp(outDir, buildId), builtAt: new Date().toISOString() };
+export async function writeBuildInfo(
+    outDir: string,
+    buildId: string,
+    commit: string | null = null
+): Promise<BuildInfo> {
+    const previous = await readBuildInfo(outDir);
+    const commits = Object.entries({ ...previous?.commits, ...(commit ? { [buildId]: commit } : {}) }).slice(
+        -COMMIT_HISTORY
+    );
+    const info: BuildInfo = {
+        buildId,
+        stamp: await buildStamp(outDir, buildId),
+        builtAt: new Date().toISOString(),
+        commit,
+        commits: Object.fromEntries(commits),
+    };
     await Bun.write(join(outDir, BUILD_INFO_FILE), `${SafeJSON.stringify(info, null, 4)}\n`);
     return info;
 }
@@ -60,8 +84,22 @@ export async function readBuildInfo(outDir: string): Promise<BuildInfo | null> {
     }
 
     const record: Record<string, unknown> = { ...value };
+    const commits: Record<string, string> = {};
+
+    for (const [id, sha] of Object.entries(isPlainRecord(record.commits) ? record.commits : {})) {
+        if (typeof sha === "string") {
+            commits[id] = sha;
+        }
+    }
+
     return typeof record.buildId === "string" && typeof record.stamp === "string" && typeof record.builtAt === "string"
-        ? { buildId: record.buildId, stamp: record.stamp, builtAt: record.builtAt }
+        ? {
+              buildId: record.buildId,
+              stamp: record.stamp,
+              builtAt: record.builtAt,
+              commit: typeof record.commit === "string" ? record.commit : null,
+              commits,
+          }
         : null;
 }
 
