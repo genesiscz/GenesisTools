@@ -93,7 +93,7 @@ enum VaultRecipient {
                 detail += ", \(String(cString: strerror(code)))"
                 if let executable { detail += ", \(executable)" }
             }
-            return "the vault recipient could not be verified because a process fd table was unreadable (\(detail))"
+            return "\(unreadableTable) (\(detail))"
         }
         let holders = Set(processes.filter { process in
             process.endpoints?.contains(where: { $0.isPeer(of: stdout) }) == true
@@ -264,13 +264,34 @@ enum VaultRecipient {
         return nil
     }
 
+    static let unreadableTable = "the vault recipient could not be verified because a process fd table was unreadable"
+    static let unsettledList = "the user's process list changed during vault recipient inspection"
+
+    /// Runs the whole inspection again, up to `attempts` times, while it fails only because a table could not be read
+    /// or the list did not settle. Those are moments, not holders: 7 releases in the logs of 2026-10-20 and 21 met one,
+    /// and each failed a whole usage poll, and a probe of all 1,726 user processes later found only login and ps,
+    /// which the check skips. Every attempt is the full check, so a release still needs one that passes completely.
+    static func retryingTransient(attempts: Int, pause: () -> Void, _ inspect: () -> String?) -> String? {
+        var reason = inspect()
+        for _ in 1..<max(1, attempts) {
+            guard let current = reason, current.hasPrefix(unreadableTable) || current == unsettledList else { break }
+            pause()
+            reason = inspect()
+        }
+        return reason
+    }
+
     static func releaseRejection(caller: Identity?) -> String? {
+        retryingTransient(attempts: 3, pause: { usleep(50_000) }) { inspectRelease(caller: caller) }
+    }
+
+    private static func inspectRelease(caller: Identity?) -> String? {
         do {
             let output = try stdoutEndpoint()
             guard output.connected else { return "vault stdout must be a connected pipe or Unix-domain socket" }
             guard let tables = try settledTables(rounds: 16, list: userPids,
                                                  inspect: { processFDs($0, output: output) }, exited: hasExited) else {
-                return "the user's process list changed during vault recipient inspection"
+                return unsettledList
             }
             guard try stdoutEndpoint() == output else { return "vault stdout changed during recipient inspection" }
             return rejection(stdout: output, caller: caller, current: caller.flatMap { identity($0.pid) }, processes: tables)

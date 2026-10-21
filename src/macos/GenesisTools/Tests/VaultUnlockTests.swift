@@ -136,6 +136,26 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertNil(neverSettles, "a list that keeps growing past the rounds still denies")
     }
 
+    func testVaultRecipientRetriesOnlyTransientRefusals() {
+        var answers: [String?] = ["\(VaultRecipient.unreadableTable) (pid 7)", VaultRecipient.unsettledList, nil]
+        var pauses = 0
+        XCTAssertNil(VaultRecipient.retryingTransient(attempts: 3, pause: { pauses += 1 }) { answers.removeFirst() },
+                     "a table that reads on the next try releases")
+        XCTAssertEqual(pauses, 2)
+
+        var holder: [String?] = ["another process holds the output", nil]
+        XCTAssertEqual(VaultRecipient.retryingTransient(attempts: 3, pause: {}) { holder.removeFirst() },
+                       "another process holds the output", "a holder is never retried")
+
+        var stuck = 0
+        let reason = VaultRecipient.retryingTransient(attempts: 3, pause: {}) { () -> String? in
+            stuck += 1
+            return VaultRecipient.unsettledList
+        }
+        XCTAssertEqual(reason, VaultRecipient.unsettledList)
+        XCTAssertEqual(stuck, 3, "the attempts are a ceiling")
+    }
+
     func testVaultRecipientSkipsOnlyExitedOrPermissionDeniedSystemProcesses() {
         let identity = fixtureIdentity()
         let output = VaultRecipient.Endpoint.pipe(handle: 10, peer: 20)
