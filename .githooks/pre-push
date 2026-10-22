@@ -89,6 +89,22 @@ if ! bun run typecheck; then
 fi
 stage_done
 
+# Every Vite dashboard this push can reach boots its dev server and must render `/` (scripts/ci/dashboard-smoke.ts,
+# about 5 s for all eight). `tools clarity ui` answered 500 on every page for a day (2026-10-22) while tsc, the tests
+# and its own launch all passed. Shared code (src/utils) reaches every dashboard.
+echo "▶ dashboard smoke..."
+if [ -n "$range_base" ]; then
+    smoke_args="--base $range_base --head $local_sha"
+else
+    smoke_args=""
+fi
+# shellcheck disable=SC2086 # two refs, split on purpose
+if ! bun scripts/ci/dashboard-smoke.ts $smoke_args; then
+    echo "✖ a dashboard does not render: push refused. The lines above name its server error and log."
+    exit 1
+fi
+stage_done
+
 # The repo guards from the CI "checks" job (ci.yml, after the TypeScript check). They used to run on
 # CI only, so a pid probe or a hard-coded command name reached every PR of a stack before anything
 # said so (2026-10-09). They run in parallel: about 13 s, the time of check-tool-commands alone.

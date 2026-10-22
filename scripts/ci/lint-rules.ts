@@ -33,7 +33,7 @@
 
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import { findInFiles, Lang, parse, type SgNode } from "@ast-grep/napi";
+import { findInFiles, Lang, type NapiConfig, parse, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 
@@ -55,6 +55,11 @@ interface Rule {
     message: string;
     /** Node kinds this rule inspects. Cheaper than walking the whole tree per rule. */
     kinds: string[];
+    /**
+     * The rule's own ast-grep matcher, for a rule that is not about string literals. Without one the rule rides the
+     * shared literal walk, which visits only `string` and `template_string` nodes.
+     */
+    matcher?: NapiConfig;
     /** Given the node's source text (and the node, for a rule that needs its parent), does it violate? */
     test: (text: string, node: SgNode) => boolean;
     /** Files where the pattern is the implementation, not a violation. */
@@ -152,6 +157,24 @@ export function namesToolCommand(text: string, node: SgNode): boolean {
     );
 }
 
+/** `import.meta` members only Bun sets; Vite's SSR runner and Node leave them undefined. */
+const BUN_ONLY_IMPORT_META = /^import\.meta\.(?:dir|dirname|filename|path)$/;
+/** Code a Vite dashboard can load server-side: the shared utils and the dashboards' own sources. */
+const SSR_REACHABLE = /(?:^|\/)src\/(?:utils\/|[^/]+\/ui\/|dashboard\/)/;
+/**
+ * Files under src/utils that still call a bare `require()`, each inside a function (a lazy load), counted 2026-10-22
+ * when lint-rules `no-bare-require-in-utils` was added. A ratchet: no file joins, and lint-rules.test.ts fails when a
+ * listed file no longer calls it.
+ */
+export const BARE_REQUIRE_RATCHET: ReadonlySet<string> = new Set<string>([
+    "src/utils/ai/local/runtimes/sherpa/diarize.ts",
+    "src/utils/browser-router/link-gate.ts",
+    "src/utils/date.ts",
+    "src/utils/search/drivers/sqlite-fts5/index.ts",
+    "src/utils/search/stores/sqlite-vec-loader.ts",
+    "src/utils/tokens.ts",
+]);
+
 const RULES: Rule[] = [
     {
         ...STORAGE_ROOT_RULE,
@@ -203,6 +226,34 @@ const RULES: Rule[] = [
         onlyIn: /(^|\/)src\/utils\//,
         allowedIn: /(^|\/)src\/utils\/genesis-tools\/tools\/hints\.ts$/,
         allowedFiles: TOOL_COMMAND_RATCHET,
+    },
+    {
+        name: "no-bun-only-import-meta",
+        severity: "error",
+        kinds: ["member_expression"],
+        matcher: { rule: { kind: "member_expression", regex: "^import\\.meta\\.(?:dir|dirname|filename|path)$" } },
+        message:
+            "`import.meta.dir`, `.dirname`, `.filename` and `.path` exist only in Bun. Vite's SSR runner loads these " +
+            "modules into every dashboard without them, and a module-level use broke `tools clarity ui` with a 500 " +
+            "(2026-10-22). Use `moduleDir(import.meta)` or `requireSibling(import.meta, name)` from " +
+            "@genesiscz/utils/fs/module-dir.",
+        test: (text) => BUN_ONLY_IMPORT_META.test(text),
+        onlyIn: SSR_REACHABLE,
+        allowedIn: /(?:^|\/)src\/utils\/fs\/module-dir\.ts$|\.test\.tsx?$|(?:^|\/)vite\.config\.ts$/,
+    },
+    {
+        name: "no-bare-require-in-utils",
+        severity: "error",
+        kinds: ["call_expression"],
+        matcher: { rule: { kind: "call_expression", has: { field: "function", regex: "^require$" } } },
+        message:
+            "A bare `require()` throws a ReferenceError under Vite's SSR runner, which has no `require`. Use a static " +
+            "import, or `requireSibling(import.meta, name)` / `createRequire(import.meta.url)` for a lazy load. " +
+            "BARE_REQUIRE_RATCHET lists the files not migrated yet.",
+        test: (_text, node) => node.field("function")?.text() === "require",
+        onlyIn: /(?:^|\/)src\/utils\//,
+        allowedIn: /\.test\.tsx?$|(?:^|\/)src\/utils\/test\//,
+        allowedFiles: BARE_REQUIRE_RATCHET,
     },
 ];
 
@@ -831,7 +882,19 @@ export function checkSource(file: string, source: string): Finding[] {
         const text = node.text();
 
         for (const rule of RULES) {
-            if (ruleApplies(rule, file) && rule.test(text, node)) {
+            if (!rule.matcher && ruleApplies(rule, file) && rule.test(text, node)) {
+                record(node, rule);
+            }
+        }
+    }
+
+    for (const rule of RULES) {
+        if (!rule.matcher || !ruleApplies(rule, file)) {
+            continue;
+        }
+
+        for (const node of root.findAll(rule.matcher)) {
+            if (rule.test(node.text(), node)) {
                 record(node, rule);
             }
         }
@@ -1050,13 +1113,39 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
                         const text = node.text();
 
                         for (const rule of RULES) {
-                            if (ruleApplies(rule, node.getRoot().filename()) && rule.test(text, node)) {
+                            if (
+                                !rule.matcher &&
+                                ruleApplies(rule, node.getRoot().filename()) &&
+                                rule.test(text, node)
+                            ) {
                                 push(node, rule);
                             }
                         }
                     }
                 })
             ),
+            ...RULES.flatMap((rule) => {
+                const matcher = rule.matcher;
+                const scoped = paths.filter((path) => ruleApplies(rule, path));
+
+                if (!matcher || scoped.length === 0) {
+                    return [];
+                }
+
+                return [
+                    findInFiles(
+                        lang,
+                        { paths: scoped, matcher },
+                        guard((nodes) => {
+                            for (const node of nodes) {
+                                if (rule.test(node.text(), node)) {
+                                    push(node, rule);
+                                }
+                            }
+                        })
+                    ),
+                ];
+            }),
             findInFiles(
                 lang,
                 { paths, matcher: INTERVAL_CALL_MATCHER },
@@ -1175,7 +1264,7 @@ if (import.meta.main) {
     const timing = `boot ${boot}ms, list ${listed - started}ms, scan ${scanned - listed}ms`;
 
     if (findings.length === 0) {
-        console.log(`lint-rules: OK (${files.length} files, 12 repo rules) [${timing}]`);
+        console.log(`lint-rules: OK (${files.length} files, 14 repo rules) [${timing}]`);
     } else {
         console.log(`\nlint-rules: ${errors} error(s), ${warnings} warning(s) across ${files.length} files`);
     }

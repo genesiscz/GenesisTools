@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Lang, parse } from "@ast-grep/napi";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
-import { checkSource, namesToolCommand, pluginsDisabledFor } from "./lint-rules";
+import { BARE_REQUIRE_RATCHET, checkSource, namesToolCommand, pluginsDisabledFor } from "./lint-rules";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 
 /**
@@ -424,6 +424,56 @@ describe("no-tool-command-in-utils", () => {
             const literals = root.findAll({ rule: { any: [{ kind: "string" }, { kind: "template_string" }] } });
 
             if (!literals.some((node) => namesToolCommand(node.text(), node))) {
+                stale.push(file);
+            }
+        }
+
+        expect(stale).toEqual([]);
+    });
+});
+
+describe("no-bun-only-import-meta", () => {
+    const rule = "no-bun-only-import-meta";
+
+    test("flags the line that broke tools clarity ui, and every Bun-only member, in shared and dashboard code", () => {
+        const broke = 'const PASS_SCRIPT = path.join(import.meta.dir, "..", "compress", "daily-pass.ts");';
+        expect(rules(broke, "src/utils/logger/daily-trigger.ts")).toContain(rule);
+        for (const member of ["dir", "dirname", "filename", "path"]) {
+            expect(rules(`const a = import.meta.${member};`, "src/clarity/ui/src/server.ts")).toContain(rule);
+        }
+    });
+
+    test("passes module-dir.ts, tests, vite configs, import.meta.url and code no dashboard loads", () => {
+        expect(rules("const a = import.meta.dir;", "src/utils/fs/module-dir.ts")).not.toContain(rule);
+        expect(rules("const a = import.meta.dir;", "src/utils/x/a.test.ts")).not.toContain(rule);
+        expect(rules("const a = import.meta.dirname;", "src/monitor/ui/vite.config.ts")).not.toContain(rule);
+        expect(rules("const a = import.meta.url;", "src/utils/x/a.ts")).not.toContain(rule);
+        expect(rules("const a = import.meta.dir;", "src/du/index.ts")).not.toContain(rule);
+    });
+});
+
+describe("no-bare-require-in-utils", () => {
+    const rule = "no-bare-require-in-utils";
+
+    test("flags a bare require under src/utils, and passes createRequire, member calls and other folders", () => {
+        expect(rules('function f() { return require("./x"); }', "src/utils/x/a.ts")).toContain(rule);
+        expect(rules('const load = createRequire(import.meta.url); load("./x");', "src/utils/x/a.ts")).not.toContain(
+            rule
+        );
+        expect(rules('const r = module.require("./x");', "src/utils/x/a.ts")).not.toContain(rule);
+        expect(rules('const r = require("./x");', "src/du/index.ts")).not.toContain(rule);
+    });
+
+    test("every ratchet entry still calls require, so a migrated file leaves the list", async () => {
+        const stale: string[] = [];
+
+        for (const file of BARE_REQUIRE_RATCHET) {
+            const root = parse(Lang.TypeScript, await Bun.file(file).text()).root();
+            const calls = root.findAll({
+                rule: { kind: "call_expression", has: { field: "function", regex: "^require$" } },
+            });
+
+            if (calls.length === 0) {
                 stale.push(file);
             }
         }

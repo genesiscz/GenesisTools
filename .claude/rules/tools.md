@@ -27,6 +27,7 @@ When creating a new tool and writing helper functions, check if the utility is *
 - `src/utils/string.ts` - String utilities (glob matching, ANSI stripping)
 - `src/utils/cli/executor.ts` - CLI helpers: `suggestCommand()`, `isInteractive()`, `buildCommand()`, `Executor`, `enhanceHelp()`
 - `src/utils/storage/storage.ts` - Config & cache management
+- `src/utils/fs/module-dir.ts` - `moduleDir(import.meta)` (this module's folder) and `requireSibling(import.meta, name)` (a lazy load beside it). Bun-only `import.meta.dir`/`.dirname` and a bare `require()` break every Vite dashboard that loads the module; lint-rules `no-bun-only-import-meta` and `no-bare-require-in-utils` fail them
 - `src/utils/storage/root.ts` - `toolDataDir(tool, ...)` / `genesisToolsDir(...)`: every `~/.genesis-tools/...` path (honours `GENESIS_TOOLS_HOME`, no logger import); `genesisToolsDirIn(home, ...)` for an explicit sandbox or fixture home. Never hand-join any home with `".genesis-tools"`: lint-rules `no-hand-joined-genesis-tools` fails it outside tests and `plugins/**`
 - `src/utils/async.ts` - Async helpers (concurrency, retry, etc.)
 - `src/utils/json-schema.ts` - JSON schema inference: `inferSchema()`, `formatSchema(value, "skeleton"|"typescript"|"schema")`

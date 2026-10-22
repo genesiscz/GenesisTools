@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 
-const TOOLS_PATH = resolve(import.meta.dir, "..", "..", "..", "tools");
+const TOOLS_PATH = resolve(moduleDir(import.meta), "..", "..", "..", "tools");
 
 // \x1B (ESC) is excluded from the control-char class so the CSI alternatives can match full sequences
 // biome-ignore lint/suspicious/noControlCharactersInRegex: needed for stripping ANSI

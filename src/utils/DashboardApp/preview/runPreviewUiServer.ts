@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { logger, out } from "@genesiscz/utils/logger";
 import { PROJECT_ROOT } from "@genesiscz/utils/paths";
 import type { RolldownWatcher } from "rolldown";
@@ -26,7 +27,7 @@ function resolveBindHost(opts: DashboardPreviewUiOptions): DashboardBindHost {
     return DEFAULT_BIND_HOST;
 }
 
-const BUILD_ONCE_ENTRY = resolve(import.meta.dirname, "buildOnce.ts");
+const BUILD_ONCE_ENTRY = resolve(moduleDir(import.meta), "buildOnce.ts");
 
 /**
  * The one-off build of the static mode runs in a child, so its working set never lands in the

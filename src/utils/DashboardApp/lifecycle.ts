@@ -63,7 +63,7 @@ import {
 } from "./pidFile";
 import { checkPortConflict, killPortOwner, waitForPortFree } from "./portConflict";
 import { readPreferences, writePreferences } from "./preferences";
-import { waitForReady, waitForUrlReady } from "./readiness";
+import { reportBrokenDashboard, waitForReady, waitForUrlReady } from "./readiness";
 import type {
     DashboardAppConfig,
     DependencyStatus,
@@ -189,7 +189,9 @@ export async function up(ctx: LifecycleContext, opts: UpOptions = {}): Promise<U
         return { started: false, port, mode, pid, logPath: ctx.logFile };
     }
 
-    if (!readiness.ready) {
+    if (readiness.broken) {
+        reportBrokenDashboard(config, readiness.broken, ctx.logFile, pid);
+    } else if (!readiness.ready) {
         out.warn(
             `Readiness check failed: ${readiness.detail ?? "(no detail)"}\n  Started anyway — tail the log: tools ${config.key} ${config.commandName} attach`
         );
@@ -366,7 +368,9 @@ async function finishLaunchdStart(ctx: LifecycleContext, port: number, opts: UpO
         writePid(config.key, owner.pid);
     }
 
-    if (ok.ready) {
+    if (ok.broken) {
+        reportBrokenDashboard(config, ok.broken, ctx.logFile, pid);
+    } else if (ok.ready) {
         out.log.success(
             `${config.name ?? config.key} ready on http://localhost:${port}${pid ? ` (pid ${pid})` : ""} · launchd\n  logs → ${ctx.logFile}`
         );

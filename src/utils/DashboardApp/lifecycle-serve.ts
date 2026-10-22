@@ -11,7 +11,7 @@ import type { LifecycleContext } from "./lifecycle";
 import { clearPid, writePid } from "./pidFile";
 import { waitForPortFree } from "./portConflict";
 import { readPreferences, writePreferences } from "./preferences";
-import { waitForReady } from "./readiness";
+import { reportBrokenDashboard, waitForReady } from "./readiness";
 import type { DashboardAppConfig, DownOptions, DownResult, StatusResult, UpOptions, UpResult } from "./types";
 
 export function resolveSpawnCmd(config: DashboardAppConfig, opts: UpOptions = {}): string[] {
@@ -100,7 +100,9 @@ export async function runDev(input: {
             await startLaunchd(ctx.plistLabel);
             const ok = await waitForReady(config.readiness, { port, logFile: ctx.logFile });
 
-            if (ok.ready) {
+            if (ok.broken) {
+                reportBrokenDashboard(config, ok.broken, ctx.logFile);
+            } else if (ok.ready) {
                 out.log.success(`${config.name ?? config.key} back on http://localhost:${port} · launchd`);
             } else {
                 out.warn(
