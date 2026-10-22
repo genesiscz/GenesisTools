@@ -51,8 +51,9 @@ public struct DiffImage: Codable, Hashable {
         /// A file on disk (the working tree).
         case file(String)
         /// `git -C <repo> cat-file blob <object>`: the object id the diff read, or `<rev>:<path>` (an empty rev is the
-        /// index) when it had none. `path` names the file, whose extension is the picture's type.
-        case blob(repo: String, object: String, path: String)
+        /// index) when it had none. `path` names the file, whose extension is the picture's type. `gitDirectory` reads
+        /// the object from another store (the agents change log's) instead of the repository's.
+        case blob(repo: String, object: String, path: String, gitDirectory: String? = nil)
     }
 
     public var old: Source?

@@ -549,10 +549,10 @@ enum DiffImageRegistry {
                   values.isSymbolicLink != true, values.isRegularFile == true,
                   let size = values.fileSize, size <= maxBytes else { return nil }
             return (try? Data(contentsOf: url)).map { ($0, path) }
-        case .blob(let repo, let object, let path):
+        case .blob(let repo, let object, let path, let gitDirectory):
             let folder = URL(fileURLWithPath: repo)
             let git = { (args: [String]) in
-                try? GenesisKitGT.provider.git(args, in: folder, input: nil, gitDirectory: nil, environment: nil)
+                try? GenesisKitGT.provider.git(args, in: folder, input: nil, gitDirectory: gitDirectory, environment: nil)
             }
             guard let sized = git(["cat-file", "-s", object]), sized.status == 0,
                   let size = Int(String(decoding: sized.stdout, as: UTF8.self).trimmed), size <= maxBytes,

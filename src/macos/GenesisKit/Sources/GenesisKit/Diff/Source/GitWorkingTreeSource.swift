@@ -342,10 +342,7 @@ public struct GitWorkingTreeSource {
             }
 
             let working = repo.appendingPathComponent(entry.path)
-            // A working-tree symlink shows as its target path, like any symlink: its picture would be a file outside.
-            let workingIsLink = plan.new == nil && entry.status != .deleted
-                && (try? working.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
-            if file.skipped != nil && DiffImage.isImage(entry.path) || DiffImage.isSVG(entry.path), !workingIsLink {
+            if showsPicture(file, newOnDisk: plan.new == nil) {
                 let oldPath = entry.oldPath ?? entry.path
                 let oldName = "\(plan.old):\(oldPath)"
                 // `HEAD:` and the index move: each side loads the object id it had when the diff was read.
@@ -442,6 +439,18 @@ public struct GitWorkingTreeSource {
             if file.skipped == nil, file.oldContents == file.newContents {
                 return nil
             }
+            if showsPicture(file, newOnDisk: true) {
+                // The before side is the change log's blob, read from its store; a before-state the store does not
+                // hold (or nobody recorded) has no picture.
+                let before = entry.beforeOid.flatMap { olds.oids[$0] }
+                let working = repo.appendingPathComponent(path)
+                let workingRevision = exists ? DiffImage.revision(ofFile: working.path) : nil
+                file.image = DiffImage(
+                    old: before.map { .blob(repo: repo.path, object: $0, path: path, gitDirectory: log.objects) },
+                    new: exists ? .file(working.path) : nil,
+                    revision: "\(before ?? "-") \(workingRevision ?? "-")"
+                )
+            }
             let counts = Self.lineCounts(old: file.oldContents ?? "", new: file.newContents ?? "")
             file.additions = counts.additions
             file.deletions = counts.deletions
@@ -450,6 +459,16 @@ public struct GitWorkingTreeSource {
 
         PerfSpans.log("review.lastTurns session=\(session.prefix(8)) turns=\(count) logged=\(log.files.count) inRepo=\(files.count)")
         return Snapshot(branch: branch, base: nil, files: files.sorted { $0.path < $1.path })
+    }
+
+    /// Whether `file` gets a picture: a binary image (its text diff skipped) or an SVG. With its new side on disk, a
+    /// working-tree symlink gets none: it shows as its target path, like any symlink, and its picture would be a file
+    /// outside.
+    private func showsPicture(_ file: DiffFile, newOnDisk: Bool) -> Bool {
+        guard file.skipped != nil && DiffImage.isImage(file.path) || DiffImage.isSVG(file.path) else { return false }
+        guard newOnDisk, file.status != .deleted else { return true }
+        let working = repo.appendingPathComponent(file.path)
+        return (try? working.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true
     }
 
     /// `path` with every symlink resolved (`/var` is `/private/var`). A part that no longer exists (a

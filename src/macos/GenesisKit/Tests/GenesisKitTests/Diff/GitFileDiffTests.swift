@@ -74,6 +74,48 @@ final class GitFileDiffTests: XCTestCase {
         XCTAssertEqual(DiffImageRegistry.load(try XCTUnwrap(reread.old))?.path, "logo.png", "named by its file, for its type")
     }
 
+    /// A last-turn review shows a changed image too: its before side is the change log's blob, read from the log's
+    /// own object store, and its after side is the working-tree file.
+    func testALastTurnImageShowsBothSides() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gk-diff-turns-\(UUID().uuidString)")
+        let store = FileManager.default.temporaryDirectory.appendingPathComponent("gk-diff-turns-store-\(UUID().uuidString)")
+        let loose = FileManager.default.temporaryDirectory.appendingPathComponent("gk-diff-turns-\(UUID().uuidString).png")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer {
+            for url in [repo, store, loose] { try? FileManager.default.removeItem(at: url) }
+        }
+        let before = Data([0x89, 0x50, 0x4E, 0x47, 0, 1, 2])
+        let after = Data([0x89, 0x50, 0x4E, 0x47, 0, 3, 4, 5])
+        _ = try git(["init", "-q"], in: repo)
+        _ = try git(["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "start"],
+                    in: repo)
+        _ = try git(["init", "-q", "--bare", store.path], in: repo)
+        try before.write(to: loose)
+        let oid = try git(["--git-dir", store.path, "hash-object", "-w", loose.path], in: repo)
+        try after.write(to: repo.appendingPathComponent("logo.png"))
+
+        final class TurnsProvider: GenesisKitGTCLIProvider {
+            var changes = GitWorkingTreeSource.TurnChanges(files: [], objects: "")
+            override func agentTurnChanges(session: String, lastTurns: Int) throws -> GitWorkingTreeSource.TurnChanges {
+                changes
+            }
+        }
+        let provider = TurnsProvider()
+        provider.changes = GitWorkingTreeSource.TurnChanges(
+            files: [.init(path: repo.appendingPathComponent("logo.png").path, beforeOid: oid, skipped: nil)],
+            objects: store.path)
+        let previous = GenesisKitGT.provider
+        GenesisKitGT.provider = provider
+        defer { GenesisKitGT.provider = previous }
+
+        let files = try GitWorkingTreeSource(repo: repo).load(scope: .lastTurns(1), session: "s1").files
+        let image = try XCTUnwrap(files.first { $0.path == "logo.png" }?.image, "a last-turn image has a picture")
+        let load = { (source: DiffImage.Source?) in try XCTUnwrap(source.flatMap { DiffImageRegistry.load($0) }) }
+        XCTAssertEqual(try load(image.old).data, before, "the before side comes from the change log's store")
+        XCTAssertEqual(try load(image.old).path, "logo.png")
+        XCTAssertEqual(try load(image.new).data, after)
+    }
+
     /// A picture over the budget is not read, from disk or from git; under it, the same call reads it through the
     /// provider (the host's, when it set one).
     func testAnImageOverTheBudgetIsNotLoaded() throws {
