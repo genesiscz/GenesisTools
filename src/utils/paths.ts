@@ -7,6 +7,7 @@
 import { mkdtempSync, realpathSync } from "node:fs";
 import { homedir, tmpdir as osTmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { env } from "./env.client";
 import { SafeJSON } from "./json";
 import { collapsePathForDisplay as collapsePathHeuristic } from "./paths.client";
@@ -124,7 +125,7 @@ export function canonicalPath(p: string): string {
 /**
  * Absolute path to the GenesisTools project root (where package.json lives).
  */
-export const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
+export const PROJECT_ROOT = resolve(moduleDir(import.meta), "../..");
 
 /**
  * Replace the user's home directory prefix with `~`.

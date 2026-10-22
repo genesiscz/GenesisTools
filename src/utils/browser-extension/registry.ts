@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 
 /** The checkout, which holds every extension's sources and `dist`. */
-const REPO = join(import.meta.dir, "..", "..", "..");
+const REPO = join(moduleDir(import.meta), "..", "..", "..");
 
 /**
  * An unpacked extension without a `key` gets its id from its folder: the first 32 hex digits of the

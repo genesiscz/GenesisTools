@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { out } from "@genesiscz/utils/logger";
 
-const root = resolve(import.meta.dir, "../../..");
+const root = resolve(moduleDir(import.meta), "../../..");
 
 const cacheDirs = [
     resolve(root, "node_modules/.vite"),

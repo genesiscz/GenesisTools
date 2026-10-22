@@ -1,4 +1,5 @@
 import { env } from "@genesiscz/utils/env";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { logger } from "@genesiscz/utils/logger";
 
 /**
@@ -23,7 +24,7 @@ const WORKTREE_MARKERS = ["/.worktrees/", "/.claude/worktrees/"];
  * innocent-looking cwd — which is exactly how the cwd-only version of this
  * guard let a worktree build migrate the real config anyway.
  */
-let codeDir = import.meta.dir;
+let codeDir = moduleDir(import.meta);
 
 export function isWorktreeCheckout(cwd: string = process.cwd()): boolean {
     return [cwd, codeDir].some((dir) => WORKTREE_MARKERS.some((marker) => dir.includes(marker)));
@@ -31,7 +32,7 @@ export function isWorktreeCheckout(cwd: string = process.cwd()): boolean {
 
 /** Test seam: fake the build location. Pass undefined to restore the real one. */
 export function _setCodeDirForTest(dir: string | undefined): void {
-    codeDir = dir ?? import.meta.dir;
+    codeDir = dir ?? moduleDir(import.meta);
 }
 
 /**

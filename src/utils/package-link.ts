@@ -38,6 +38,7 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
@@ -54,7 +55,7 @@ const WILDCARD_KEY = `${PACKAGE_NAME}/*`;
  * makes the mapping point at the running checkout rather than at a path written down once.
  */
 export function utilsPackageDir(): string {
-    return import.meta.dir;
+    return moduleDir(import.meta);
 }
 
 /** `<root>/tsconfig.json` — the one file this module writes. */

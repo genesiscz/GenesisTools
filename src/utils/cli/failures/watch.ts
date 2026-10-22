@@ -1,5 +1,6 @@
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { format } from "node:util";
+import { moduleDir, requireSibling } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { stripAnsi } from "@genesiscz/utils/string";
@@ -8,7 +9,7 @@ import { redactSecretsInText } from "@genesiscz/utils/transclude/redact";
 import { appendFailure, type FailureCaller, type FailureKind, type ToolFailure } from "./record";
 
 const TAIL_CHARS = 4000;
-const TOOLS_ROOT = resolve(import.meta.dir, "../../../..");
+const TOOLS_ROOT = resolve(moduleDir(import.meta), "../../../..");
 const SECRET_FLAG = /^--?[\w-]*(?:token|secret|password|passwd|api[-_]?key|auth|cookie|credential)[\w-]*$/i;
 /** Commander's own refusals; each starts a stderr write with `error: `. */
 const USAGE_LINE =
@@ -219,7 +220,7 @@ function tapStderr(): void {
  * without that module records failures with no caller.
  */
 function agentCaller(): FailureCaller | null {
-    const loaded: unknown = require(join(import.meta.dir, "agent-caller"));
+    const loaded: unknown = requireSibling(import.meta, "agent-caller");
     const lookup = (loaded as { agentFailureCaller?: unknown } | null)?.agentFailureCaller;
     if (typeof lookup !== "function") {
         return null;

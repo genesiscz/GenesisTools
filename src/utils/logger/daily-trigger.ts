@@ -2,9 +2,10 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 
-const PASS_SCRIPT = path.join(import.meta.dir, "..", "compress", "daily-pass.ts");
+const PASS_SCRIPT = path.join(moduleDir(import.meta), "..", "compress", "daily-pass.ts");
 
 /**
  * Starts the daily compression pass (old day logs and ai-proxy transcripts become `.zst`) at most once per day per log

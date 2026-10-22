@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
+import { moduleDir, requireSibling } from "@genesiscz/utils/fs/module-dir";
 import { logger } from "@genesiscz/utils/logger";
 import { escapeJxa } from "@genesiscz/utils/macos/jxa";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
@@ -386,9 +387,9 @@ function appBackend(): NotificationAppBackend | null {
         return appBackendCache;
     }
 
-    const path = join(import.meta.dir, "notifications-app");
+    const path = join(moduleDir(import.meta), "notifications-app");
     try {
-        const loaded: unknown = require(path);
+        const loaded: unknown = requireSibling(import.meta, "notifications-app");
         const backend = (loaded as { appNotificationBackend?: unknown } | null)?.appNotificationBackend;
         appBackendCache = isAppBackend(backend) ? backend : null;
     } catch (error) {

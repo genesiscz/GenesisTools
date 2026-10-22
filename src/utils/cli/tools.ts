@@ -1,6 +1,6 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { logger } from "@genesiscz/utils/logger";
 import { namedBunExecPath } from "./bun-link";
 import { DETACHED_ENV } from "./detached";
@@ -15,9 +15,7 @@ export function toolsEntrypoint(): string {
 }
 
 function getToolsPath(): string {
-    // import.meta.dir is Bun-specific; fall back to import.meta.url for Node/Vite SSR
-    const dir = typeof import.meta.dir === "string" ? import.meta.dir : dirname(fileURLToPath(import.meta.url));
-    return resolve(dir, "../../../tools");
+    return resolve(moduleDir(import.meta), "../../../tools");
 }
 
 export interface RunToolOptions {

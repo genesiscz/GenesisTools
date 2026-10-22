@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import * as p from "@clack/prompts";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { env } from "@genesiscz/utils/env";
+import { moduleDir } from "@genesiscz/utils/fs/module-dir";
 import { logger } from "@genesiscz/utils/logger";
 import {
     isStorePackage,
@@ -15,7 +16,7 @@ import {
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
-const PROJECT_ROOT = resolve(import.meta.dirname, "../..");
+const PROJECT_ROOT = resolve(moduleDir(import.meta), "../..");
 
 const inflight = new Map<string, Promise<void>>();
 

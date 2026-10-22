@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { moduleDir, requireSibling } from "@genesiscz/utils/fs/module-dir";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
@@ -79,10 +80,10 @@ interface RouterStatusFacts {
  * profiles behind it.
  */
 function loadRouterStatus(): () => RouterStatusFacts {
-    const loaded: unknown = require(join(import.meta.dir, "status"));
+    const loaded: unknown = requireSibling(import.meta, "status");
     const routerStatus = (loaded as { routerStatus?: unknown } | null)?.routerStatus;
     if (typeof routerStatus !== "function") {
-        throw new Error(`link gate: ${join(import.meta.dir, "status")} exports no routerStatus`);
+        throw new Error(`link gate: ${join(moduleDir(import.meta), "status")} exports no routerStatus`);
     }
 
     return routerStatus as () => RouterStatusFacts;
