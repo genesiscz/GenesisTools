@@ -27,7 +27,7 @@ mock.module("@genesiscz/utils/notifications", () => ({
     },
 }));
 
-mock.module("@genesiscz/utils/macos/notifications", () => ({
+mock.module("@genesiscz/utils/macos/notifications-app", () => ({
     removeNotifications: async (target: { ids?: string[] }) => {
         removed.push(target);
 

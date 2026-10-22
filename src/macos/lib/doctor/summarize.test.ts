@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import type { NotificationCenterStatus } from "@genesiscz/utils/macos/notifications";
+import type { NotificationCenterStatus } from "@genesiscz/utils/macos/notifications-app";
 import type { PermissionsReport } from "../permissions/report";
 import {
     combineDoctorChecks,

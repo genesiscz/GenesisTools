@@ -8,18 +8,20 @@ import { logger, out } from "@genesiscz/utils/logger";
 import type { GenesisAppRpcFailure, GenesisAppRpcOutcome } from "@genesiscz/utils/macos/genesis-app-rpc";
 import type { NotificationAction, NotificationOptions } from "@genesiscz/utils/macos/notifications";
 import {
+    launchdSession,
+    parseNotificationOptions,
+    postNotification,
+    resolveNotificationFallbackState,
+} from "@genesiscz/utils/macos/notifications";
+import {
     askNotification,
     authorizeNotifications,
-    launchdSession,
     listNotifications,
     notificationStatus,
     openNotificationSettings,
-    parseNotificationOptions,
-    postNotification,
     readNotificationReply,
     removeNotifications,
-    resolveNotificationFallbackState,
-} from "@genesiscz/utils/macos/notifications";
+} from "@genesiscz/utils/macos/notifications-app";
 import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import type { ChannelConfigs } from "@genesiscz/utils/notifications";
 import { dispatchNotification, notificationsConfig } from "@genesiscz/utils/notifications";

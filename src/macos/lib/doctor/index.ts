@@ -1,10 +1,6 @@
 import type { GenesisAppRpcOutcome } from "@genesiscz/utils/macos/genesis-app-rpc";
-import {
-    type NotificationCenterStatus,
-    type NotificationFallbackState,
-    notificationStatus,
-    resolveNotificationFallbackState,
-} from "@genesiscz/utils/macos/notifications";
+import { type NotificationFallbackState, resolveNotificationFallbackState } from "@genesiscz/utils/macos/notifications";
+import { type NotificationCenterStatus, notificationStatus } from "@genesiscz/utils/macos/notifications-app";
 import { type CalendarDoctorReport, runCalendarDoctor } from "../calendar/doctor";
 import { type PermissionsReport, permissionsReport } from "../permissions/report";
 import { type RemindersDoctorReport, runRemindersDoctor } from "../reminders/doctor";

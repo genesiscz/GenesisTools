@@ -1,7 +1,7 @@
 import { buildQaDeepLink } from "@app/dev-dashboard/lib/qa-deep-link";
 import { logger } from "@genesiscz/utils/logger";
 import type { NotificationAction } from "@genesiscz/utils/macos/notifications";
-import { removeNotifications } from "@genesiscz/utils/macos/notifications";
+import { removeNotifications } from "@genesiscz/utils/macos/notifications-app";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { shellCommandLine } from "@genesiscz/utils/shell/quote";
 import { hubItemClickCommand } from "../hub-link";

@@ -4,6 +4,7 @@ import * as fullDiskAccess from "@genesiscz/utils/macos/full-disk-access";
 import * as genesisAppRpc from "@genesiscz/utils/macos/genesis-app-rpc";
 import * as jxa from "@genesiscz/utils/macos/jxa";
 import * as macosNotifications from "@genesiscz/utils/macos/notifications";
+import * as macosNotificationsApp from "@genesiscz/utils/macos/notifications-app";
 import { settings as macosSettings } from "@genesiscz/utils/macos/system-settings";
 import type { NotificationEvent, WebhookChannelConfig } from "@genesiscz/utils/notifications";
 import * as notifications from "@genesiscz/utils/notifications";
@@ -109,6 +110,7 @@ function installHostEffectGuards(): void {
     const realJxa = { ...jxa };
     const realGenesisAppRpc = { ...genesisAppRpc };
     const realMacosNotifications = { ...macosNotifications };
+    const realMacosNotificationsApp = { ...macosNotificationsApp };
     const realNotifications = { ...notifications };
     const realFullDiskAccess = { ...fullDiskAccess };
     const realTrashStaging = { ...trashStaging };
@@ -156,6 +158,14 @@ function installHostEffectGuards(): void {
         ...realMacosNotifications,
         sendNotification: blockedAsync("sendNotification", "Assert the notification payload instead of delivering it."),
         postNotification: blockedAsync("postNotification", "Assert the notification payload instead of delivering it."),
+    }));
+
+    mock.module("@genesiscz/utils/macos/notifications-app", () => ({
+        ...realMacosNotificationsApp,
+        sendViaGenesisApp: blockedAsync(
+            "sendViaGenesisApp",
+            "Assert the notification payload instead of delivering it."
+        ),
         // These reach GenesisTools.app, which mutates Notification Center for the whole user
         // session. A test that removes "its own" notification would clear the user's real ones.
         removeNotifications: blockedAsync("removeNotifications", "Assert the removal target instead of running it."),

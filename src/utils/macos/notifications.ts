@@ -1,20 +1,10 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { env } from "@genesiscz/utils/env";
-import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
 import { logger } from "@genesiscz/utils/logger";
-import { genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
-import {
-    type GenesisAppRpcOutcome,
-    genesisAppRpc,
-    isGenesisAppRpcAvailable,
-    isNotifyPostResult,
-} from "@genesiscz/utils/macos/genesis-app-rpc";
 import { escapeJxa } from "@genesiscz/utils/macos/jxa";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -326,7 +316,7 @@ export async function sendViaTerminalNotifier(
 
         if (exitCode !== 0) {
             logger.warn(
-                `terminal-notifier failed to deliver (exit ${exitCode}): ${stderr.trim() || "no stderr"}. Fix: open System Settings > Notifications > terminal-notifier, or install GenesisTools.app (${genesisAppBuildHint()})`
+                `terminal-notifier failed to deliver (exit ${exitCode}): ${stderr.trim() || "no stderr"}. Fix: open System Settings > Notifications > terminal-notifier${appBackend()?.terminalNotifierFixHint() ?? ""}`
             );
             return false;
         }
@@ -360,49 +350,50 @@ function sendViaOsascript(opts: NotificationOptions): void {
     });
 }
 
-/**
- * Post through GenesisTools.app, so the banner carries our icon and identity.
- * Returns the notification id, or null when the app could not take it and the chain should move on.
- */
-async function sendViaGenesisApp(opts: NotificationOptions): Promise<string | null> {
-    const outcome = await genesisAppRpc(
-        "notify.post",
-        {
-            message: opts.message,
-            title: opts.title,
-            subtitle: opts.subtitle,
-            sound: opts.sound,
-            group: opts.group,
-            open: opts.open,
-            execute: opts.execute,
-            appIcon: opts.appIcon,
-            attachments: opts.attachments,
-            ignoreDnD: opts.ignoreDnD,
-            id: opts.id,
-            actions: opts.actions,
-            replyDir: join(genesisAppDir(), "replies"),
-            genesisHome: env.tools.getHome(),
-        },
-        { isResult: isNotifyPostResult }
+/** The `genesis-app` backend as notifications-app.ts provides it. */
+export interface NotificationAppBackend {
+    available: () => boolean;
+    /** The notification id, or null when the app could not take it and the chain moves on. */
+    send: (opts: NotificationOptions) => Promise<string | null>;
+    /** Appended to the terminal-notifier failure's fix line. */
+    terminalNotifierFixHint: () => string;
+}
+
+let appBackendCache: NotificationAppBackend | null | undefined;
+
+function isAppBackend(value: unknown): value is NotificationAppBackend {
+    return (
+        isObject(value) &&
+        typeof value.available === "function" &&
+        typeof value.send === "function" &&
+        typeof value.terminalNotifierFixHint === "function"
     );
+}
 
-    if (outcome.ok) {
-        return outcome.result.id;
+/**
+ * notifications-app.ts, loaded on first use by a path built at run time, so neither a bundler nor the type checker
+ * follows it into GenesisTools.app's RPC, its build hints and `tools notify authorize`. A copy of this module
+ * without that file posts through terminal-notifier and osascript only.
+ */
+function appBackend(): NotificationAppBackend | null {
+    if (appBackendCache !== undefined) {
+        return appBackendCache;
     }
 
-    if (outcome.error.code === "denied" || outcome.error.code === "not_determined") {
-        // Falling through means another bundle delivers instead, so the user still gets the banner
-        // and never learns the grant is missing. That is the documented contract for this function,
-        // so the warning is how the problem stays visible.
-        logger.warn(
-            { error: outcome.error },
-            outcome.error.code === "not_determined"
-                ? `GenesisTools.app has never been granted notifications; run ${toolCommand("notify authorize")}. Falling back to terminal-notifier.`
-                : "GenesisTools.app may not post notifications; grant it in System Settings > Notifications. Falling back to terminal-notifier."
+    const path = join(import.meta.dir, "notifications-app");
+    try {
+        const loaded: unknown = require(path);
+        const backend = (loaded as { appNotificationBackend?: unknown } | null)?.appNotificationBackend;
+        appBackendCache = isAppBackend(backend) ? backend : null;
+    } catch (error) {
+        logger.debug(
+            { error, path },
+            "notifications: no GenesisTools.app backend here; terminal-notifier and osascript only"
         );
+        appBackendCache = null;
     }
 
-    return null;
+    return appBackendCache;
 }
 
 /**
@@ -410,7 +401,8 @@ async function sendViaGenesisApp(opts: NotificationOptions): Promise<string | nu
  * Always ends with osascript so a notification is always delivered.
  */
 function backendChain(preferred?: NotificationBackend): NotificationBackend[] {
-    const all = [NotificationBackend.GenesisApp, NotificationBackend.TerminalNotifier, NotificationBackend.Osascript];
+    const classic = [NotificationBackend.TerminalNotifier, NotificationBackend.Osascript];
+    const all = appBackend() ? [NotificationBackend.GenesisApp, ...classic] : classic;
 
     if (!preferred) {
         return all;
@@ -447,12 +439,14 @@ export async function postNotification(opts: NotificationOptions): Promise<Poste
 
     for (const backend of chain) {
         if (backend === NotificationBackend.GenesisApp) {
-            if (!isGenesisAppRpcAvailable()) {
+            const app = appBackend();
+
+            if (!app?.available()) {
                 logger.debug("GenesisTools.app unavailable; skipping the genesis-app backend");
                 continue;
             }
 
-            const id = await sendViaGenesisApp(opts);
+            const id = await app.send(opts);
 
             if (id) {
                 logger.debug(`Notification sent via GenesisTools.app: ${opts.message}`);
@@ -483,122 +477,6 @@ export async function postNotification(opts: NotificationOptions): Promise<Poste
     // Unreachable in practice: osascript is always last and always runs. Kept so a future
     // reordering cannot silently return a backend that never ran.
     return { backend: NotificationBackend.Osascript, id: null, confirmed: false };
-}
-
-/**
- * Retract delivered notifications. Only notifications posted through GenesisTools.app can be
- * addressed, since the other backends post under a different bundle.
- *
- * Returns the ids actually removed, `"all"`, or null when the app is unavailable.
- */
-export async function removeNotifications(target: {
-    ids?: string[];
-    group?: string;
-    all?: boolean;
-}): Promise<string[] | "all" | null> {
-    const outcome = await genesisAppRpc<{ removed: string[] | "all" }>("notify.remove", target);
-
-    if (!outcome.ok) {
-        logger.debug({ error: outcome.error, target }, "Could not remove notifications");
-        return null;
-    }
-
-    return outcome.result.removed;
-}
-
-export interface DeliveredNotification {
-    id: string;
-    title: string;
-    subtitle: string;
-    message: string;
-    group: string;
-    /** Seconds since the epoch. */
-    deliveredAt: number;
-}
-
-/**
- * Notifications still in Notification Center, posted by GenesisTools.app. Null when unavailable.
- *
- * ⚠️ A notification does not appear here the instant {@link postNotification} resolves. `usernoted`
- * takes roughly a second to publish it, so a list taken straight after a post comes back without
- * it. Measured 2026-09-16: absent immediately, present after 1s. Do not use this to confirm a post.
- */
-export async function listNotifications(): Promise<DeliveredNotification[] | null> {
-    const outcome = await genesisAppRpc<{ notifications: DeliveredNotification[] }>("notify.list");
-
-    if (!outcome.ok) {
-        logger.debug({ error: outcome.error }, "Could not list notifications");
-        return null;
-    }
-
-    return outcome.result.notifications;
-}
-
-/**
- * The answer to a notification, if the user has given one. Null when unanswered or unavailable.
- *
- * Non-blocking. Pass `consume` to delete the answer as you read it, so two callers cannot act on
- * the same reply.
- */
-export async function readNotificationReply(
-    id: string,
-    opts: { consume?: boolean } = {}
-): Promise<NotificationReply | null> {
-    const outcome = await genesisAppRpc<{ answered: boolean } & NotificationReply>("notify.reply", {
-        id,
-        consume: opts.consume,
-        replyDir: join(genesisAppDir(), "replies"),
-    });
-
-    if (!outcome.ok || !outcome.result.answered) {
-        return null;
-    }
-
-    return outcome.result;
-}
-
-/**
- * Ask a question in a notification and wait for the answer.
- *
- * Give one action an `input` field and the user gets a text box; give plain buttons and you learn
- * which was pressed. Resolves null on timeout, on a dismissed notification, or when the app is
- * unavailable — an unanswered question is a normal outcome, not an error.
- *
- * ⚠️ The wait uses `watchFileFeed` (directory/file watch plus a poll fallback). bun 1.3.13 goes
- * deaf after the first `FSWatcher.close()` in a process; a watch without a poll sits out the
- * full timeout even though the user answered. The answer arrives from a process macOS launches,
- * minutes later, so this must not spin a tight loop while they think.
- */
-export async function askNotification(
-    opts: NotificationOptions,
-    waitOpts: { timeoutMs?: number } = {}
-): Promise<NotificationReply | null> {
-    const replyDir = join(genesisAppDir(), "replies");
-    mkdirSync(replyDir, { recursive: true });
-
-    if (opts.id) {
-        // A leftover reply for a reused id would satisfy the watch at once.
-        rmSync(join(replyDir, `${opts.id}.json`), { force: true });
-    }
-
-    const posted = await postNotification(opts);
-
-    if (posted.backend !== NotificationBackend.GenesisApp || !posted.id) {
-        logger.debug({ backend: posted.backend }, "askNotification: only the genesis-app backend can carry a reply");
-        return null;
-    }
-
-    const timeoutMs = waitOpts.timeoutMs ?? 5 * 60_000;
-    const replyPath = join(replyDir, `${posted.id}.json`);
-    await watchFileFeed({
-        path: replyPath,
-        deadlineAt: Date.now() + timeoutMs,
-        debounceMs: 0,
-        pollFallbackMs: 500,
-        onChange: () => (existsSync(replyPath) ? { done: true } : undefined),
-    });
-
-    return readNotificationReply(posted.id, { consume: true });
 }
 
 /**
@@ -644,7 +522,7 @@ export interface ResolveNotificationFallbackStateDeps {
 export async function resolveNotificationFallbackState(
     deps: ResolveNotificationFallbackStateDeps = {}
 ): Promise<NotificationFallbackState> {
-    const isAppAvailable = deps.isAppAvailable ?? isGenesisAppRpcAvailable;
+    const isAppAvailable = deps.isAppAvailable ?? (() => appBackend()?.available() ?? false);
 
     if (isAppAvailable()) {
         return { kind: "genesis-app" };
@@ -690,42 +568,8 @@ function readLaunchdManagerName(): string | null {
     }
 }
 
-export interface NotificationCenterStatus {
-    authorization: string;
-    alertSetting: string;
-    alertStyle: string;
-    soundSetting: string;
-    badgeSetting: string;
-    notificationCenterSetting: string;
-    lockScreenSetting: string;
-    criticalAlertSetting: string;
-    timeSensitiveSetting: string;
-    bundleId: string;
-    bundlePath: string;
-    temporary: boolean;
-    settingsUrl: string;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
+export function isObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNotificationCenterStatus(value: unknown): value is NotificationCenterStatus {
-    return isObject(value) && typeof value.authorization === "string" && typeof value.temporary === "boolean";
-}
-
-export async function notificationStatus(): Promise<GenesisAppRpcOutcome<NotificationCenterStatus>> {
-    return genesisAppRpc("notify.status", undefined, { isResult: isNotificationCenterStatus });
-}
-
-export async function authorizeNotifications(): Promise<GenesisAppRpcOutcome<Record<string, unknown>>> {
-    return genesisAppRpc("notify.authorize", undefined, { timeoutMs: 120_000 });
-}
-
-export async function openNotificationSettings(): Promise<GenesisAppRpcOutcome<{ opened: string }>> {
-    return genesisAppRpc("notify.settings", undefined, {
-        isResult: (value: unknown): value is { opened: string } => isObject(value) && typeof value.opened === "string",
-    });
 }
 
 function optionalString(value: unknown): string | undefined {
