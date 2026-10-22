@@ -188,6 +188,29 @@ describe("discoverRoots", () => {
         }
     });
 
+    it("resolves an absolute worktreesOf repo with no search dirs", async () => {
+        const outer = fleet();
+        try {
+            mkdirSync(join(outer, "main", "node_modules", "dep"), { recursive: true });
+            mkdirSync(join(outer, "main-alive", "node_modules", "dep"), { recursive: true });
+            mkdirSync(join(outer, "other", "node_modules", "dep"), { recursive: true });
+
+            const real = realpathSync(outer);
+            const res = await discoverRoots({ dirs: [], worktreesOf: join(outer, "main"), targets: ["node_modules"] });
+            expect(res.roots.sort()).toEqual(
+                [join(real, "main", "node_modules"), join(real, "main-alive", "node_modules")].sort()
+            );
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("refuses a bare worktreesOf name with no search dirs instead of scanning nothing", async () => {
+        await expect(discoverRoots({ dirs: [], worktreesOf: "main", targets: ["node_modules"] })).rejects.toThrow(
+            RepoNotFoundError
+        );
+    });
+
     it("without worktreesOf it scans every install tree under the dirs", async () => {
         const outer = fleet();
         try {

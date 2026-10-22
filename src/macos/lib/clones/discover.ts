@@ -78,7 +78,9 @@ export function resolveRepoRoot(dirs: string[], name: string): string {
     throw new RepoNotFoundError(
         prefixed.length > 1
             ? `"${name}" matches ${prefixed.length} repositories: ${prefixed.sort().join(", ")}`
-            : `no git repository named "${name}" under ${dirs.join(", ")}`,
+            : dirs.length === 0
+              ? `no git repository at "${name}"; give an absolute repository path or a --dir to search`
+              : `no git repository named "${name}" under ${dirs.join(", ")}`,
         unique
     );
 }
@@ -178,8 +180,11 @@ export async function discoverRoots(args: DiscoverArgs): Promise<DiscoverResult>
         searchDirs.push(realpathSync(abs));
     }
 
+    // With no --dir at all, `--worktrees-of` is the whole selector: an absolute
+    // repo path resolves by itself, and a bare name fails loudly instead of
+    // scanning nothing. Search dirs that were all missing still scan nothing.
     let scanDirs = searchDirs;
-    if (args.worktreesOf !== undefined && searchDirs.length > 0) {
+    if (args.worktreesOf !== undefined && (searchDirs.length > 0 || args.dirs.length === 0)) {
         const repoRoot = resolveRepoRoot(searchDirs, args.worktreesOf);
         const worktrees = await worktreeDirs(repoRoot);
         const extra = extraRootDirs({ searchDirs, repoRoot, worktrees });
