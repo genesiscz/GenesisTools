@@ -1,11 +1,11 @@
 import { relative } from "node:path";
 import { formatCostLine } from "@app/ai-spend/lib/workers/cost";
-import { recordWorkerTurnCost } from "@app/ai-spend/lib/workers/ledger";
+import { recordWorkerTurnCost, type WorkerCostRow } from "@app/ai-spend/lib/workers/ledger";
 import { withTimeout } from "@genesiscz/utils/async";
 import { type CodexFinishedTurn, CodexTurnCostTracker } from "@genesiscz/utils/codex/turn-cost";
 import { codexTurnOutcome } from "@genesiscz/utils/codex/turn-outcome";
 import { logger } from "@genesiscz/utils/logger";
-import { buildWorkerContract } from "@genesiscz/utils/worker/contract";
+import { buildWorkerContract, type ReviewEffort } from "@genesiscz/utils/worker/contract";
 import { WorkerDeliveryRejectedError, workerSourceHome } from "@genesiscz/utils/worker/delivery";
 import type {
     InitializeParams,
@@ -26,6 +26,7 @@ import type { RpcNotification, RpcServerRequest } from "./app-server-client";
 import { isOwnBusCommand, isReadOnlyCommand } from "./bus-approval";
 import type { CodexControl } from "./control";
 import { assignThreadToProject, type CodexProject, resolveProjectSelector } from "./desktop-project";
+import { markReviewShallow, recordReviewTurn } from "./review/controller";
 import { buildAgentInstructions, contractSandbox } from "./seed-instructions";
 import type { CodexSessionMeta, CodexSessionStore } from "./store";
 
@@ -46,6 +47,16 @@ interface RuntimeOptions {
     unsubscribeTimeoutMs?: number;
     /** `tools codex spawn --project`: a Desktop project id, name or root. Without it the cwd decides. */
     project?: string;
+    /** Starts the escalated review session the depth gate asked for; the daemon wires it to `spawnCodexSession`. */
+    escalateReview?: (request: EscalateReviewRequest) => Promise<void>;
+    /** Told about every gate decision, so the daemon can put it on the agents bus. */
+    onReviewGate?: (event: Record<string, unknown>) => void | Promise<void>;
+}
+
+export interface EscalateReviewRequest {
+    meta: CodexSessionMeta;
+    effort: ReviewEffort;
+    name: string;
 }
 
 interface ThreadStartResult {
@@ -119,6 +130,10 @@ export class CodexSessionRuntime {
     private readonly costTracker: CodexTurnCostTracker;
     /** The cost line of the last booked turn, for the lead's `turn_completed` bus event. */
     private lastTurnCost: { turnId?: string; line: string } | null = null;
+    /** The current turn's last agent message: a review's report, which the depth gate reads. */
+    private turnMessage = "";
+    private readonly escalateReview: RuntimeOptions["escalateReview"];
+    private readonly onReviewGate: RuntimeOptions["onReviewGate"];
 
     constructor(options: RuntimeOptions) {
         this.account = options.account;
@@ -128,6 +143,8 @@ export class CodexSessionRuntime {
         this.onApprovalRequest = options.onApprovalRequest;
         this.unsubscribeTimeoutMs = options.unsubscribeTimeoutMs ?? 1000;
         this.projectSelector = options.project;
+        this.escalateReview = options.escalateReview;
+        this.onReviewGate = options.onReviewGate;
         // A pinned account is a ChatGPT login; `account/updated` confirms or corrects it.
         this.costTracker = new CodexTurnCostTracker({
             model: options.meta.model ?? null,
@@ -159,23 +176,28 @@ export class CodexSessionRuntime {
             this.chosenProject = resolveProjectSelector(projects.data ?? [], this.projectSelector);
         }
 
+        const review = this.meta.review
+            ? { effort: this.meta.review.effort, manifest: this.meta.review.manifest }
+            : null;
         const threadParams: ThreadStartParams = {
             cwd: this.meta.cwd,
             sandbox: this.meta.sandbox,
             approvalPolicy: this.meta.approvalPolicy,
             ...(this.meta.model ? { model: this.meta.model } : {}),
-            // Every worker gets the shared contract (checkpoints, report shape);
-            // the bus identity and commands only when the swarm is enabled.
+            // Every worker gets the shared contract (checkpoints, report shape); the bus identity and
+            // commands only when the swarm is enabled; a reviewer its tier rules and the diff manifest.
             developerInstructions: this.meta.agentsEnabled
                 ? buildAgentInstructions({
                       agentName: this.meta.agentName,
                       rendezvousSession: this.meta.rendezvousSession,
                       leadName: "lead",
                       sandbox: this.meta.sandbox,
+                      review,
                   })
                 : buildWorkerContract({
                       backend: "codex",
                       sandbox: contractSandbox(this.meta.sandbox),
+                      review,
                   }),
         };
         const thread = await this.client.request<ThreadStartResult>("thread/start", threadParams);
@@ -198,7 +220,9 @@ export class CodexSessionRuntime {
             ...(this.meta.effort ? { effort: this.meta.effort } : {}),
         };
         const result = await this.client.request<TurnStartResult>("turn/start", params);
-        await this.updateMeta({ activeTurnId: result.turn.id, status: "running" });
+        // A review keeps its first prompt, so an escalated session can rerun the same review one tier higher.
+        const review = this.meta.review && !this.meta.review.prompt ? { ...this.meta.review, prompt: body } : undefined;
+        await this.updateMeta({ activeTurnId: result.turn.id, status: "running", ...(review ? { review } : {}) });
         return result.turn.id;
     }
 
@@ -222,10 +246,9 @@ export class CodexSessionRuntime {
         await this.fileUnderProject(notification);
         this.trackFileChange(notification);
 
+        this.trackAgentMessage(notification);
         const finished = this.costTracker.observe(notification, new Date());
-        if (finished) {
-            await this.bookTurnCost(finished);
-        }
+        const booked = finished ? await this.bookTurnCost(finished) : null;
 
         if (notification.method === "turn/started") {
             await this.updateMeta({
@@ -238,6 +261,12 @@ export class CodexSessionRuntime {
 
         const terminal = codexTurnOutcome(notification);
         if (terminal) {
+            // A steered review keeps running: the session never reads as ready between the turn and its steer.
+            if (finished && this.meta.review && (await this.gateReviewTurn(finished, booked))) {
+                await this.updateMeta({ lastEventAt });
+                return;
+            }
+
             await this.updateMeta({ activeTurnId: undefined, status: "ready", lastEventAt });
             if (terminal.outcome !== "interrupted") {
                 await this.deliverQueuedSteer();
@@ -505,8 +534,99 @@ export class CodexSessionRuntime {
         }
     }
 
+    /** The last agent message of the current turn, which a review's gate parses. */
+    private trackAgentMessage(notification: RpcNotification): void {
+        if (notification.method === "turn/started") {
+            this.turnMessage = "";
+            return;
+        }
+
+        const item = nestedRecord(notification.params, "item");
+
+        if (
+            notification.method === "item/completed" &&
+            item?.type === "agentMessage" &&
+            typeof item.text === "string"
+        ) {
+            this.turnMessage = item.text;
+        }
+    }
+
+    /**
+     * Runs the depth gate on a finished review turn and takes its step. True when the review continues in this
+     * session (the steer started a turn). An escalation starts a new session and this one ends; a step the runtime
+     * cannot take ends the review `shallow` with the reason.
+     */
+    private async gateReviewTurn(finished: CodexFinishedTurn, booked: WorkerCostRow | null): Promise<boolean> {
+        const current = this.meta.review;
+
+        if (!current) {
+            return false;
+        }
+
+        const outcome = recordReviewTurn({
+            name: this.meta.name,
+            ...(this.meta.label ? { label: this.meta.label } : {}),
+            review: current,
+            finished,
+            report: this.turnMessage,
+            costUsd: booked?.cost.apiEquivalentUsd ?? null,
+        });
+        this.turnMessage = "";
+        await this.updateMeta({ review: outcome.review });
+
+        if (outcome.decision) {
+            await this.publishReviewGate(outcome.review);
+        }
+
+        const action = outcome.action;
+
+        try {
+            if (action.kind === "steer") {
+                await this.startTurn(action.text);
+                return true;
+            }
+
+            if (action.kind === "escalate") {
+                if (!this.escalateReview) {
+                    throw new Error("this runtime has no way to start an escalated session");
+                }
+
+                await this.escalateReview({ meta: this.meta, effort: action.effort, name: action.name });
+            }
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            log.warn({ err, name: this.meta.name, action: action.kind }, "review gate step failed");
+            const review = markReviewShallow({
+                name: this.meta.name,
+                ...(this.meta.label ? { label: this.meta.label } : {}),
+                review: outcome.review,
+                reason: `${outcome.review.reason}; the ${action.kind} failed: ${message}`,
+            });
+            await this.updateMeta({ review });
+            await this.publishReviewGate(review);
+        }
+
+        return false;
+    }
+
+    private async publishReviewGate(review: NonNullable<CodexSessionMeta["review"]>): Promise<void> {
+        try {
+            await this.onReviewGate?.({
+                event: "review_gate",
+                name: this.meta.name,
+                verdict: review.verdict,
+                reason: review.reason,
+                step: review.step,
+                ...(review.escalatedTo ? { escalatedTo: review.escalatedTo } : {}),
+            });
+        } catch (err) {
+            log.warn({ err, name: this.meta.name }, "publishing the review gate decision failed");
+        }
+    }
+
     /** Never throws: `recordWorkerTurnCost` logs its own failure and the turn goes on without a cost line. */
-    private async bookTurnCost(finished: CodexFinishedTurn): Promise<void> {
+    private async bookTurnCost(finished: CodexFinishedTurn): Promise<WorkerCostRow | null> {
         const row = await recordWorkerTurnCost({
             backend: "codex",
             name: this.meta.name,
@@ -529,6 +649,7 @@ export class CodexSessionRuntime {
         this.lastTurnCost = row
             ? { ...(finished.turnId ? { turnId: finished.turnId } : {}), line: formatCostLine(row.cost, "codex") }
             : null;
+        return row;
     }
 
     /** `{ cost }` for the bus event of the turn just booked; undefined for any other notification. */

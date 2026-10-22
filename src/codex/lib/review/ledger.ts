@@ -1,0 +1,129 @@
+import { join } from "node:path";
+import { codexRoot } from "@genesiscz/utils/codex/worker-paths";
+import { readJsonlRows } from "@genesiscz/utils/jsonl";
+import { JsonlWriter } from "@genesiscz/utils/log-session/jsonl-writer";
+import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
+import { manifestChangedLines, type ReviewEffort } from "@genesiscz/utils/worker/contract";
+import type { CodexReviewConfig, CodexReviewSpent, ReviewVerdict } from "./types";
+
+const log = logger.child({ component: "codex:review-ledger" });
+
+/** `~/.genesis-tools/codex/reviews.jsonl`: one line per review start, review turn and gate decision. */
+export function reviewLedgerPath(): string {
+    return join(codexRoot(), "reviews.jsonl");
+}
+
+interface ReviewLedgerBase {
+    v: 1;
+    ts: string;
+    name: string;
+    chain: string;
+    label?: string;
+    pr?: number;
+    branch?: string;
+    base: string;
+    files: number;
+    lines: number;
+    effort: ReviewEffort;
+}
+
+export interface ReviewStartRecord extends ReviewLedgerBase {
+    kind: "start";
+    cwd: string;
+    effortSource: CodexReviewConfig["effortSource"];
+    allowShallow: boolean;
+    parent?: string;
+}
+
+export interface ReviewTurnRecord extends ReviewLedgerBase {
+    kind: "turn";
+    turn: number;
+    outcome: "completed" | "failed" | "interrupted";
+    model: string | null;
+    durationMs: number | null;
+    toolCalls: number;
+    reasoningTokens: number | null;
+    outputTokens: number | null;
+    costUsd: number | null;
+    /** The `Files reviewed: n of N` line of the turn's final message; null when it had none. */
+    coverage: { reviewed: number; total: number } | null;
+}
+
+export interface ReviewGateRecord extends ReviewLedgerBase {
+    kind: "gate";
+    step: number;
+    verdict: ReviewVerdict;
+    reason: string;
+    coverage: { reviewed: number | null; total: number };
+    reasoningPer100Lines: number | null;
+    floor: number;
+    findings: number;
+    malformedFindings: number;
+    /** The unread files the gate named, first 40. */
+    unread: string[];
+    escalatedTo?: string;
+    spent: CodexReviewSpent;
+}
+
+export type ReviewLedgerRecord = ReviewStartRecord | ReviewTurnRecord | ReviewGateRecord;
+
+type Distribute<T> = T extends ReviewLedgerRecord ? Omit<T, keyof ReviewLedgerBase> : never;
+export type ReviewLedgerEntry = Distribute<ReviewLedgerRecord>;
+
+/** The fields every record of one review session repeats, so a single line answers the reviews filters. */
+export function reviewLedgerBase(input: { name: string; review: CodexReviewConfig; label?: string; at?: Date }) {
+    const { review } = input;
+    return {
+        v: 1,
+        ts: (input.at ?? new Date()).toISOString(),
+        name: input.name,
+        chain: review.chain,
+        ...(input.label ? { label: input.label } : {}),
+        ...(review.pr === undefined ? {} : { pr: review.pr }),
+        ...(review.branch ? { branch: review.branch } : {}),
+        base: review.base,
+        files: review.manifest.files.length,
+        lines: manifestChangedLines(review.manifest),
+        effort: review.effort,
+    } satisfies ReviewLedgerBase;
+}
+
+/**
+ * Appends one record. Never throws: the ledger is a record of the review, and a failed write must not fail the
+ * review turn it describes. The failure is logged with the record's kind and session.
+ */
+export function appendReviewRecord(
+    base: ReturnType<typeof reviewLedgerBase>,
+    entry: ReviewLedgerEntry,
+    path = reviewLedgerPath()
+): ReviewLedgerRecord | null {
+    const record: ReviewLedgerRecord = { ...base, ...entry };
+
+    try {
+        new JsonlWriter(path).append({ ...record });
+        log.debug({ path, kind: record.kind, name: record.name }, "review ledger record written");
+        return record;
+    } catch (err) {
+        log.warn({ err, path, kind: record.kind, name: record.name }, "review ledger write failed");
+        return null;
+    }
+}
+
+function isLedgerRecord(value: unknown): value is ReviewLedgerRecord {
+    return (
+        isObject(value) &&
+        value.v === 1 &&
+        (value.kind === "start" || value.kind === "turn" || value.kind === "gate") &&
+        typeof value.name === "string" &&
+        typeof value.ts === "string" &&
+        typeof value.base === "string"
+    );
+}
+
+/** Every well-formed record, oldest first; torn or foreign lines are counted in `skipped`. */
+export function readReviewRecords(path = reviewLedgerPath()): { records: ReviewLedgerRecord[]; skipped: number } {
+    const { rows, skipped } = readJsonlRows<unknown>(path);
+    const records = rows.filter(isLedgerRecord);
+    return { records, skipped: skipped + rows.length - records.length };
+}

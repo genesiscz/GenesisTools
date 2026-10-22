@@ -8,6 +8,7 @@ import { WorkerDeliveryRejectedError, workerSourceHome } from "@genesiscz/utils/
 import type { WorkerDriver, WorkerVerbOutcome } from "@genesiscz/utils/worker/driver";
 import { type CodexControl, parseControlTarget } from "./control";
 import { sendControlRequest } from "./control-channel";
+import { prepareReview } from "./review/prepare";
 import { isCodexDaemonPid, parseWritePolicy, schemaDriftWarning, spawnCodexSession } from "./spawn";
 import { type CodexSessionMeta, CodexSessionStore, deriveSessionStatus } from "./store";
 import { followSessionEvents } from "./tail-events";
@@ -52,12 +53,28 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
         command
             .option("--computer-use", "Configure installed official Mac Computer Use for this worker")
             .option("--home <path>", "CODEX_HOME override")
-            .option("--effort <effort>", "Reasoning effort")
+            .option(
+                "--effort <effort>",
+                "Reasoning effort; for --mode review a tier (high | xhigh | max, or low | medium with --allow-shallow), default from the diff size"
+            )
             .option(
                 "--write <policy>",
                 "ask | allow | deny | full (full = no sandbox, refused in a main checkout: use a throwaway worktree)"
             )
-            .option("--mode <mode>", "review | task", "task")
+            .option(
+                "--mode <mode>",
+                "review | task. review: injects the diff manifest and the tier's review contract, then gates the depth after each turn",
+                "task"
+            )
+            .option(
+                "--base <ref>",
+                "--mode review: the ref to diff against (git diff <base>...HEAD); default the branch's PR target, else its upstream"
+            )
+            .option("--allow-shallow", "--mode review: accept --effort low or medium, which the gate never tunes up")
+            .option(
+                "--paths <path...>",
+                "--mode review: limit the manifest to these paths (one slice of a split review)"
+            )
             .option("--no-agents", `Disable ${toolCommand("agents")} integration`)
             .option("--session <id>", `Parent ${toolCommand("agents")} session id`)
             .option("--writable-root <path...>", "Additional writable roots")
@@ -95,10 +112,17 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             session?: string;
             writableRoot?: string[];
             project?: string;
+            base?: string;
+            allowShallow?: boolean;
+            paths?: string[];
         };
 
         if (extras.mode !== "review" && extras.mode !== "task") {
             throw new Error("--mode must be review or task");
+        }
+
+        if (extras.mode === "task" && (extras.base || extras.allowShallow || extras.paths)) {
+            throw new Error("--base, --allow-shallow and --paths apply to --mode review only");
         }
 
         // A silent no-op here reads as isolation that was applied. It never was, so this
@@ -116,6 +140,25 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             );
         }
 
+        const prepared =
+            extras.mode === "review"
+                ? await prepareReview({
+                      cwd: input.cwd,
+                      ...(extras.base ? { base: extras.base } : {}),
+                      ...(extras.effort === undefined ? {} : { effort: extras.effort }),
+                      allowShallow: extras.allowShallow === true,
+                      ...(extras.paths ? { paths: extras.paths } : {}),
+                  })
+                : null;
+
+        for (const note of prepared?.notes ?? []) {
+            out.log.info(note);
+        }
+
+        for (const warning of prepared?.warnings ?? []) {
+            out.log.warn(warning);
+        }
+
         const meta = await spawnCodexSession({
             name: input.name,
             cwd: input.cwd,
@@ -125,6 +168,7 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             ...(extras.computerUse === undefined ? {} : { computerUse: extras.computerUse }),
             ...(extras.home === undefined ? {} : { home: extras.home }),
             ...(extras.effort === undefined ? {} : { effort: extras.effort }),
+            ...(prepared ? { review: { ...prepared.config, step: 0, chain: input.name } } : {}),
             write: parseWritePolicy(extras.write),
             mode: extras.mode,
             agents: extras.agents,
