@@ -5,7 +5,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { namedBunExecPath } from "@genesiscz/utils/cli/bun-link";
 import { takeDetachedMarker } from "@genesiscz/utils/cli/detached";
-import { RUN_ID_ENV } from "@genesiscz/utils/cli/failures/run-id";
+import { RUN_ID_ENV, RUN_ROOT_ENV, RUN_TOOL_ENV } from "@genesiscz/utils/cli/failures/run-id";
 import { planToolExec, terminateOrphanedChild } from "@genesiscz/utils/cli/tool-exec";
 import { skipWorktreeInstall } from "@genesiscz/utils/cli/worktree-install";
 import { env } from "@genesiscz/utils/env";
@@ -352,6 +352,13 @@ async function spawnAndCaptureStderr(
     const childEnv = env.withoutProxy({ INIT_CWD: process.cwd() });
     // An id inherited from an outer wrapper would make that wrapper take this run's records for its own.
     delete childEnv[RUN_ID_ENV];
+    delete childEnv[RUN_TOOL_ENV];
+    delete childEnv[RUN_ROOT_ENV];
+    if (launcher) {
+        // The launcher is the parent that waits on the default (exec) path; it records the tool's signal death.
+        childEnv[RUN_TOOL_ENV] = tool;
+        childEnv[RUN_ROOT_ENV] = workspaceRoot;
+    }
     // Replace this wrapper with the launcher (or, under an app face, the worker) instead of waiting
     // as its parent; see src/utils/cli/tool-exec.ts for what moves where and when it still spawns.
     const plan = planToolExec({
@@ -377,7 +384,8 @@ async function spawnAndCaptureStderr(
 
     const command = launcher ? launcher : execPath;
     const commandArgs = launcher ? [execPath, ...args] : args;
-    // Only a waiting wrapper sees a signal death, so only a spawned tool gets a run id (failures/launcher.ts).
+    // A spawned child gets the wrapper's run id: a launcher child records under it, and the wrapper then finds that
+    // record and adds none (failures/launcher.ts). On the exec path the launcher makes the id itself.
     const runId = `${process.pid}-${Date.now().toString(36)}`;
     childEnv[RUN_ID_ENV] = runId;
     const startedAt = new Date();

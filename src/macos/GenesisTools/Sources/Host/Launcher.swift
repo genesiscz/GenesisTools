@@ -22,6 +22,8 @@ let inodeVariable = "GENESIS_TOOLS_APP_INODE"
 let fallbackBundleId = "com.genesiscz.genesistools"
 
 var childPid: pid_t = 0
+/// Set when the launcher stopped its child because its own parent died: cleanup after a dead shell, not a failed run.
+var stoppedForParentDeath = false
 
 func bundleVersion() -> String {
     Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "dev"
@@ -120,12 +122,14 @@ func watchParentDeath() {
         )
         var event = kevent()
         if kevent(kq, &change, 1, &event, 1, nil) > 0, childPid > 0 {
+            stoppedForParentDeath = true
             kill(childPid, SIGTERM)
         }
     }
 }
 
-func waitAndExit(_ pid: pid_t) -> Never {
+/// With `run` (a tool run `tools` handed over), a signal death is written to the failures log before the exit.
+func waitAndExit(_ pid: pid_t, run: LauncherFailures.Run? = nil) -> Never {
     var status: Int32 = 0
     while waitpid(pid, &status, 0) == -1 {
         if errno != EINTR {
@@ -136,6 +140,9 @@ func waitAndExit(_ pid: pid_t) -> Never {
 
     let signalNumber = status & 0x7f
     if signalNumber != 0 {
+        if let run, !stoppedForParentDeath {
+            LauncherFailures.recordSignalDeath(run: run, signal: signalNumber)
+        }
         exit(128 + signalNumber)
     }
 
@@ -144,6 +151,7 @@ func waitAndExit(_ pid: pid_t) -> Never {
 
 func runLauncher(_ arguments: [String]) -> Never {
     var environment = ProcessInfo.processInfo.environment
+    var run: LauncherFailures.Run?
     let bundleId = Bundle.main.bundleIdentifier ?? fallbackBundleId
 
     // Handlers go in before the spawn: a child inherits SIG_IGN but resets handlers to SIG_DFL,
@@ -166,9 +174,11 @@ func runLauncher(_ arguments: [String]) -> Never {
         if let me = Bundle.main.executablePath, stat(me, &info) == 0 {
             environment[inodeVariable] = String(info.st_ino)
         }
+        run = LauncherFailures.prepare(&environment)
         childPid = spawnChild(path: arguments[0], arguments: arguments, environment: environment, disclaim: false)
+        run?.childPid = childPid
     }
 
     watchParentDeath()
-    waitAndExit(childPid)
+    waitAndExit(childPid, run: run)
 }

@@ -14,8 +14,10 @@ import { agentCaller } from "./watch";
 
 /**
  * A run the default SIGINT or SIGTERM action kills never reaches the tool's exit event, so watch.ts cannot record it.
- * The `tools` wrapper records it instead, when it spawned the tool and waited for it. When the wrapper exec'd into
- * the tool (the default, tool-exec.ts), no parent of ours is left to see the death, and such a run stays unrecorded.
+ * Its waiting parent records it instead: the GenesisTools.app launcher (LauncherFailures.swift, which mirrors this
+ * table and the record shape) when one runs the tool, which covers the default path where `tools` exec'd into it,
+ * and the `tools` wrapper below when it spawned a plain bun child. Both share the run id, so one run gets one record.
+ * A run exec'd straight into bun (GENESIS_TOOLS_NO_APP=1, Linux) has no waiting parent and stays unrecorded.
  *
  * - `crash`: a signal a process raises on itself when it faults (a segfault, a Bun panic's abort or trap). The
  *   runtime died, which is a bug.

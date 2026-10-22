@@ -16,11 +16,13 @@ JSON line per failed run to `~/.genesis-tools/logs/<date>-failures.jsonl`
 | `exit` | a non-zero exit with none of the above (the tool printed its own message) |
 | `interrupt` | Ctrl-C or SIGTERM (130, 143), often a harness timeout; hidden unless `--interrupts` |
 
-A run the default signal action kills never reaches its own watcher. When the `tools` wrapper spawned the tool and
-waited for it, the wrapper writes that record (`src/utils/cli/failures/launcher.ts`): `interrupt` for SIGINT, SIGTERM,
-SIGHUP, SIGQUIT and SIGKILL, `crash` for a fault signal (SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGABRT, SIGTRAP). The
-wrapper has no command definition, so the arguments read `[withheld]` and the command is empty. A run the wrapper
-exec'd into (the default) has no waiting parent, so its signal death stays unrecorded.
+A run the default signal action kills never reaches its own watcher. Its waiting parent writes that record instead:
+the GenesisTools.app launcher (`src/macos/GenesisTools/Sources/Host/LauncherFailures.swift`) on the default path, or
+the `tools` wrapper when it spawned a plain bun child (`src/utils/cli/failures/launcher.ts`). The kind is `interrupt`
+for SIGINT, SIGTERM, SIGHUP, SIGQUIT and SIGKILL, and `crash` for a fault signal (SIGSEGV, SIGBUS, SIGILL, SIGFPE,
+SIGABRT, SIGTRAP). Neither parent has the command definition, so the arguments read `[withheld]` and the command is
+empty; the launcher's record has no caller. Both use the run id in `GENESIS_TOOLS_RUN_ID`, so one run gets one record.
+A run exec'd straight into bun (`GENESIS_TOOLS_NO_APP=1`, Linux) has no waiting parent and stays unrecorded.
 
 Each record carries the tool, the command path, the arguments with secrets masked, the exit code, the message, the
 stack, the last 4 KB of stderr, the cwd, the pid, the run time, the app trace id when GenesisTools.app started it, the

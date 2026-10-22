@@ -6,6 +6,14 @@
 export const RUN_ID_ENV = "GENESIS_TOOLS_RUN_ID";
 
 /**
+ * Set by the `tools` wrapper when it hands a tool to the GenesisTools.app launcher (exec'd or spawned): the tool's
+ * name and checkout. The launcher records a signal death only for a run that carries them, removes both before it
+ * starts the tool, and makes a run id when none is set (LauncherFailures.swift).
+ */
+export const RUN_TOOL_ENV = "GENESIS_TOOLS_RUN_TOOL";
+export const RUN_ROOT_ENV = "GENESIS_TOOLS_RUN_ROOT";
+
+/**
  * The run id the wrapper gave this process. It is removed from the env, so a tool this one starts does not write
  * records under the same id and make the wrapper skip a signal death it should record.
  */
