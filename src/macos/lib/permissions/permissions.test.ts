@@ -1,15 +1,19 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import * as processes from "@genesiscz/utils/process/processes";
 import { skip } from "@genesiscz/utils/test/skip";
 import {
+    deleteRetiredStamps,
     describeSource,
+    listRetiredStamps,
     parseCodesignInfo,
     pickCodesignIdentity,
     readSourceInfo,
+    retiredStampsToDelete,
     signByHashes,
     signStagedBundle,
     staleAppFacePids,
@@ -20,10 +24,12 @@ import {
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
 import {
     type AppProcess,
+    describePromptProcesses,
     groupOldBuilds,
     localNetworkAnswer,
     parseLocalNetworkPrompts,
     parseLocalNetworkRules,
+    promptsFromLogShow,
     retiredAtOf,
     withoutPreloads,
 } from "./local-network";
@@ -646,6 +652,53 @@ describe("staleRegistrations", () => {
     });
 });
 
+describe("retired copies", () => {
+    it("lists a missing root as empty and an unreadable one as unknown", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-retired-"));
+        try {
+            mkdirSync(join(dir, "root", "100"), { recursive: true });
+            mkdirSync(join(dir, "root", "300"));
+            mkdirSync(join(dir, "root", "notes"));
+            writeFileSync(join(dir, "file"), "");
+            expect(listRetiredStamps(join(dir, "root"))).toEqual(["300", "100"]);
+            expect(listRetiredStamps(join(dir, "missing"))).toEqual([]);
+            expect(listRetiredStamps(join(dir, "file"))).toBeNull();
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("never deletes a copy a running process still executes, nor any when the processes are unknown", () => {
+        const inodes: Record<string, number | null> = { "4": 40, "3": 30, "2": 20, "1": 10, "0": null };
+        const plan = (running: Set<number> | null) =>
+            retiredStampsToDelete({ stamps: ["4", "3", "2", "1", "0"], keep: 2, running, inodeOf: (s) => inodes[s] });
+        expect(plan(new Set([10]))).toEqual(["2"]);
+        expect(plan(new Set())).toEqual(["2", "1"]);
+        expect(plan(null)).toEqual([]);
+    });
+
+    it("keeps deleting after one copy fails", () => {
+        if (process.getuid?.() === 0) {
+            return;
+        }
+
+        const root = mkdtempSync(join(tmpdir(), "gt-retired-rm-"));
+        const locked = join(root, "2", "inner");
+        try {
+            mkdirSync(locked, { recursive: true });
+            writeFileSync(join(locked, "file"), "");
+            mkdirSync(join(root, "1"));
+            chmodSync(locked, 0o500);
+            expect(deleteRetiredStamps(root, ["2", "1"])).toEqual(["1"]);
+            expect(existsSync(join(root, "1"))).toBe(false);
+            expect(existsSync(join(root, "2"))).toBe(true);
+        } finally {
+            chmodSync(locked, 0o700);
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
 describe("timedSteps", () => {
     it("times each step until the next one and lists them slowest first", () => {
         let clock = 0;
@@ -710,6 +763,28 @@ describe("Local Network answers", () => {
         expect(retiredAtOf(prompt.executable)?.getTime()).toBe(1792613086315);
         expect(retiredAtOf("/Users/x/Applications/GenesisTools.app/Contents/MacOS/GenesisTools")).toBeNull();
         expect(withoutPreloads("gt-cc --preload /a.ts --preload /b.ts --resume abc")).toBe("gt-cc --resume abc");
+    });
+
+    it("tells a failed log show from a quiet one", () => {
+        const bytes = (text: string) => new TextEncoder().encode(text);
+        const failed = { since: "2x", exitCode: 64, stdout: bytes(""), stderr: bytes("log: invalid duration") };
+        expect(promptsFromLogShow(failed)).toBeNull();
+        expect(promptsFromLogShow({ ...failed, exitCode: null })).toBeNull();
+        expect(
+            promptsFromLogShow({ since: "5m", exitCode: 0, stdout: bytes("Timestamp\n"), stderr: bytes("") })
+        ).toEqual([]);
+    });
+
+    it("reads no process table when no prompt names a pid", () => {
+        const list = spyOn(processes, "listProcesses").mockImplementation(() => {
+            throw new Error("the process table was read");
+        });
+        try {
+            expect(describePromptProcesses("/x/GenesisTools", []).size).toBe(0);
+            expect(() => describePromptProcesses("/x/GenesisTools", [1])).toThrow("the process table was read");
+        } finally {
+            list.mockRestore();
+        }
     });
 });
 

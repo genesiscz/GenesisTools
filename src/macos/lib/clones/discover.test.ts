@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     discoverRoots,
+    extraRootDirs,
     partitionApfs,
     RepoNotFoundError,
     resolveRepoRoot,
@@ -174,6 +175,16 @@ describe("discoverRoots", () => {
             expect(res.roots).toEqual([join(real, "main", "node_modules")]);
         } finally {
             rmSync(outer, { recursive: true, force: true });
+        }
+    });
+
+    it("with worktreesOf, the filesystem root holds the repo and only narrows the search", () => {
+        const repo = mkdtempSync(join(tmpdir(), "gt-clones-root-"));
+        try {
+            expect(extraRootDirs({ searchDirs: ["/"], repoRoot: repo, worktrees: [] })).toEqual([]);
+            expect(extraRootDirs({ searchDirs: ["/"], repoRoot: repo, worktrees: ["/"] })).toEqual([]);
+        } finally {
+            rmSync(repo, { recursive: true, force: true });
         }
     });
 

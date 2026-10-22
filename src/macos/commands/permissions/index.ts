@@ -359,6 +359,15 @@ export function registerPermissionsCommand(program: Command): void {
         .option("--json", "Print the prompts as JSON")
         .action((options: { since: string; json?: boolean }) => {
             const prompts = readLocalNetworkPrompts(options.since);
+
+            if (prompts === null) {
+                ui.err(
+                    `Could not read the Local Network prompts: log show --last ${options.since} failed (see the log).`
+                );
+                process.exitCode = 1;
+                return;
+            }
+
             const launcher = genesisAppLauncherPath();
             const live = describePromptProcesses(
                 launcher,

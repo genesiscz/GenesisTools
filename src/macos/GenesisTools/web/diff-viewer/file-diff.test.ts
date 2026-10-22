@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { getFiletypeFromFileName } from "@pierre/diffs";
-import { parseFileDiff } from "./file-diff";
+import { keepOnlyFiles, parseFileDiff } from "./file-diff";
 
 function sides(path: string, oldPath: string | null = null) {
     return { path, oldPath, oldContents: "{\n}\n", newContents: '{\n  "a": 1\n}\n', key: path };
@@ -41,5 +41,20 @@ describe("parseFileDiff", () => {
         expect(fileDiff.name).toBe("Ďábel/nový.md");
         expect(fileDiff.prevName).toBeUndefined();
         expect(fileDiff.type).toBe("new");
+    });
+});
+
+describe("keepOnlyFiles", () => {
+    test("drops the files that left the diff from every cache", () => {
+        const parsed = new Map([
+            ["a.ts", 1],
+            ["gone.svg", 2],
+        ]);
+        const images = new Map([["gone.svg", { svg: "<svg/>" }]]);
+        const asImage = new Set(["gone.svg", "a.svg"]);
+        keepOnlyFiles(new Set(["a.ts", "a.svg"]), parsed, images, asImage);
+        expect([...parsed.keys()]).toEqual(["a.ts"]);
+        expect(images.size).toBe(0);
+        expect([...asImage]).toEqual(["a.svg"]);
     });
 });

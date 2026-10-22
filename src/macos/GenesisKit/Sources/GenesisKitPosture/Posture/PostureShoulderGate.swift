@@ -15,13 +15,17 @@ struct PostureShoulderGate: Equatable, Sendable {
     private(set) var confirmed: Set<PostureMetricKind> = []
     /// Faults only the last fresh reading found bad.
     private(set) var pending: Set<PostureMetricKind> = []
+    /// Where the last frame with shoulders took them from.
+    private(set) var lastSource: PoseShoulderSource?
 
     /// Judges one reading. `score` is the smoothed score the monitor acts on; `fresh` is this frame's unsmoothed
     /// score, given only when the 3D request ran on this frame. Returns the score to act on and whether the
-    /// engine should read the shoulders again on the next frame.
+    /// engine should read the shoulders again on the next frame. A frame without shoulders (`source` nil) still
+    /// carries the smoother's shoulder measures from the 3D frames before it, so it is judged as those were.
     mutating func apply(_ score: PostureScore, fresh: PostureScore?, source: PoseShoulderSource?,
                         scorer: PostureScorer) -> (score: PostureScore, readAgain: Bool) {
-        guard source == .body3D else { return (score, false) }
+        if let source { lastSource = source }
+        guard (source ?? lastSource) == .body3D else { return (score, false) }
         if let fresh {
             let bad = Self.badShoulderKinds(fresh)
             let agreed = bad.intersection(confirmed.union(pending))
@@ -36,6 +40,7 @@ struct PostureShoulderGate: Equatable, Sendable {
     mutating func reset() {
         confirmed = []
         pending = []
+        lastSource = nil
     }
 
     static func badShoulderKinds(_ score: PostureScore) -> Set<PostureMetricKind> {

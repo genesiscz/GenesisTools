@@ -19,8 +19,16 @@ struct LocalNetworkPrompt: Decodable, Equatable, Identifiable {
     let executable: String
     let retiredAt: String?
     let process: Program?
+    /// Set by the relay when it could not look the pid up; `tools` never sends it.
+    var note: String? = nil
 
     var id: String { "\(pid) \(at)" }
+
+    /// The row's first line: the program, or why there is none.
+    var headline: String {
+        if let process { return LocalNetworkPromptRow.short(process.command) }
+        return "pid \(pid) (\(note ?? "it has already exited"))"
+    }
 }
 
 struct LocalNetworkPromptList: Decodable {
@@ -35,7 +43,8 @@ enum LocalNetworkWatch {
     private static let restartSeconds = 15.0
     private static var stream: Process?
     private static var panel: LocalNetworkPanel?
-    private nonisolated(unsafe) static var streamPid: pid_t = 0
+    /// The running `log stream`, 0 when none runs; the exit hook signals it.
+    nonisolated(unsafe) static var streamPid: pid_t = 0
     private static var reapsOnExit = false
     /// The `--local-network-panel` face ends with its panel.
     static var onPanelClosed: (() -> Void)?
@@ -74,6 +83,7 @@ enum LocalNetworkWatch {
         }
         process.terminationHandler = { ended in
             let status = ended.terminationStatus
+            streamEnded()
             Task { @MainActor in
                 stream = nil
                 HubPerf.log("localNetwork: log stream ended (status \(status)); again in \(Int(restartSeconds)) s")
@@ -96,19 +106,32 @@ enum LocalNetworkWatch {
         HubPerf.log("localNetwork: following nehelper prompts (log stream pid \(process.processIdentifier))")
     }
 
+    /// The `log stream` child ended: its pid may belong to another process soon, so the exit hook must not signal it.
+    nonisolated static func streamEnded() {
+        streamPid = 0
+    }
+
     /// Asks `tools` who the pid is; the prompt line comes before the dialog, so the program usually still runs.
     private static func announce(pid: Int) async {
         HubPerf.log("localNetwork: prompt for pid \(pid)")
-        var prompt: LocalNetworkPrompt?
+        var list: LocalNetworkPromptList?
         do {
+            // Longer than the 120 s `log show` limit on the tools side, so its own failure is the one reported.
             let result = try await ToolsBridge(binaryPath: ToolsBridge.defaultBinaryPath()).run(
-                subcommand: "macos", args: ["permissions", "local-network", "--since", "5m", "--json"], timeoutSeconds: 60)
-            let list = try JSONDecoder().decode(LocalNetworkPromptList.self, from: Data(result.stdout.utf8))
-            prompt = list.prompts.last { $0.pid == pid }
+                subcommand: "macos", args: ["permissions", "local-network", "--since", "5m", "--json"], timeoutSeconds: 130)
+            list = try JSONDecoder().decode(LocalNetworkPromptList.self, from: Data(result.stdout.utf8))
         } catch {
             HubPerf.log("localNetwork: could not describe pid \(pid): \(error)")
         }
-        show(prompt ?? LocalNetworkPrompt(at: "", pid: pid, executable: "", retiredAt: nil, process: nil))
+        show(prompt(for: pid, in: list))
+    }
+
+    /// The prompt `list` has for `pid`. Without one (the lookup failed, or the log did not have the line yet) the
+    /// panel says so, rather than that the process exited: that is known only from a prompt without a process.
+    nonisolated static func prompt(for pid: Int, in list: LocalNetworkPromptList?) -> LocalNetworkPrompt {
+        list?.prompts.last { $0.pid == pid }
+            ?? LocalNetworkPrompt(at: "", pid: pid, executable: "", retiredAt: nil, process: nil,
+                                  note: "could not look up this process")
     }
 
     static func show(_ prompt: LocalNetworkPrompt) {
@@ -306,7 +329,7 @@ struct LocalNetworkPromptRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(verbatim: prompt.process.map { Self.short($0.command) } ?? "pid \(prompt.pid) (it has already exited)")
+            Text(verbatim: prompt.headline)
                 .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .lineLimit(3)
                 .textSelection(.enabled)

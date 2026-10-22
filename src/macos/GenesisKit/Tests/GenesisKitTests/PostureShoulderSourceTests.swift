@@ -164,6 +164,29 @@ final class PostureShoulderSourceTests: XCTestCase {
         XCTAssertFalse(result.readAgain)
     }
 
+    /// The confirming frame came back without shoulders: the smoothed score still carries the first reading's tilt,
+    /// and it stays held, not bad. A 2D engine's frame without shoulders passes as before.
+    func testAFrameWithoutShouldersKeepsAnUnconfirmedFaultHeld() throws {
+        let base = try baseline(.body3D)
+        let scorer = PostureScorer()
+        var gate = PostureShoulderGate()
+        let bad = scorer.score(PostureMetrics(sample: shoulderSample(tilt: 0.1)), against: base, shoulderSource: .body3D)
+        XCTAssertTrue(gate.apply(bad, fresh: bad, source: .body3D, scorer: scorer).readAgain)
+        let smoothed = scorer.score(PostureMetrics(sample: shoulderSample(tilt: 0.1)), against: base, shoulderSource: nil)
+        XCTAssertTrue(smoothed.isBad, "positive control: the smoothed shoulders alone are bad")
+        let faceOnly = gate.apply(smoothed, fresh: nil, source: nil, scorer: scorer)
+        XCTAssertFalse(faceOnly.score.isBad)
+        XCTAssertEqual(faceOnly.score.held, [.shoulderTilt])
+
+        var flat = PostureShoulderGate()
+        let base2D = try baseline(.body2D)
+        let bad2D = scorer.score(PostureMetrics(sample: shoulderSample(tilt: 0.1, source: .body2D)), against: base2D,
+                                 shoulderSource: .body2D)
+        _ = flat.apply(bad2D, fresh: nil, source: .body2D, scorer: scorer)
+        let missed = scorer.score(PostureMetrics(sample: shoulderSample(tilt: 0.1)), against: base2D, shoulderSource: nil)
+        XCTAssertEqual(flat.apply(missed, fresh: nil, source: nil, scorer: scorer).score, missed)
+    }
+
     /// The smoother still holds the old shoulders for a moment after a fresh level reading; that reading wins.
     func testAFreshLevelReadingHoldsAStillBadSmoothedScore() throws {
         let base = try baseline(.body3D)

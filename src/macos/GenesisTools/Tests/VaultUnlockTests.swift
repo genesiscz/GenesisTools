@@ -80,11 +80,17 @@ final class VaultUnlockTests: XCTestCase {
         shell.standardInput = input
         try shell.run()
         defer { shell.terminate() }
-        Thread.sleep(forTimeInterval: 0.2)
+        // run() returns after posix_spawn, so /bin/sh is already the running image.
         let beforeExec = try XCTUnwrap(VaultRecipient.identity(shell.processIdentifier))
-        input.fileHandleForWriting.write(Data("go\n".utf8))
-        Thread.sleep(forTimeInterval: 0.3)
-        let afterExec = try XCTUnwrap(VaultRecipient.identity(shell.processIdentifier))
+        try input.fileHandleForWriting.write(contentsOf: Data("go\n".utf8))
+        // A loaded machine can take a while to run the exec: wait for it, up to 5 s.
+        let deadline = Date().addingTimeInterval(5)
+        var current = VaultRecipient.identity(shell.processIdentifier)
+        while current?.executable != "/bin/sleep", Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+            current = VaultRecipient.identity(shell.processIdentifier)
+        }
+        let afterExec = try XCTUnwrap(current)
         XCTAssertEqual(afterExec.executable, "/bin/sleep", "positive control: the exec happened")
         XCTAssertNotEqual(beforeExec.execGeneration, afterExec.execGeneration)
         XCTAssertNotEqual(beforeExec, afterExec)

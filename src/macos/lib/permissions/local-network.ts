@@ -215,8 +215,8 @@ export function isGenesisToolsBinary(executable: string): boolean {
     return executable.endsWith("/GenesisTools.app/Contents/MacOS/GenesisTools");
 }
 
-/** Prompts in the last `since` (a `log show --last` value: `30m`, `2h`, `1d`); empty when `log show` fails (logged). */
-export function readLocalNetworkPrompts(since: string): LocalNetworkPrompt[] {
+/** Prompts in the last `since` (a `log show --last` value: `30m`, `2h`, `1d`); null when `log show` fails (logged). */
+export function readLocalNetworkPrompts(since: string): LocalNetworkPrompt[] | null {
     const proc = Bun.spawnSync(
         [
             "/usr/bin/log",
@@ -231,16 +231,33 @@ export function readLocalNetworkPrompts(since: string): LocalNetworkPrompt[] {
         ],
         { stdout: "pipe", stderr: "pipe", timeout: 120_000 }
     );
+    return promptsFromLogShow({ since, exitCode: proc.exitCode, stdout: proc.stdout, stderr: proc.stderr });
+}
 
-    if (proc.exitCode !== 0) {
+/**
+ * The prompts in a `log show` run's output. A failed run (a bad `--since`, the timeout) is null, never an empty list:
+ * "no prompt" is an answer the caller prints, and a failure is not one.
+ */
+export function promptsFromLogShow({
+    since,
+    exitCode,
+    stdout,
+    stderr,
+}: {
+    since: string;
+    exitCode: number | null;
+    stdout: Uint8Array;
+    stderr: Uint8Array;
+}): LocalNetworkPrompt[] | null {
+    if (exitCode !== 0) {
         logger.warn(
-            { since, exitCode: proc.exitCode, stderr: new TextDecoder().decode(proc.stderr).slice(0, 300) },
+            { since, exitCode, stderr: new TextDecoder().decode(stderr).slice(0, 300) },
             "local network: log show failed"
         );
-        return [];
+        return null;
     }
 
-    return parseLocalNetworkPrompts(new TextDecoder().decode(proc.stdout));
+    return parseLocalNetworkPrompts(new TextDecoder().decode(stdout));
 }
 
 /** What the prompting process was, while it still runs. */
@@ -259,6 +276,10 @@ export function withoutPreloads(command: string): string {
 
 /** The live process behind each prompt pid; a pid that has exited is absent. */
 export function describePromptProcesses(launcherPath: string, pids: number[]): Map<number, PromptProcess> {
+    if (pids.length === 0) {
+        return new Map();
+    }
+
     const wanted = new Set(pids);
     const entries = listProcesses();
     const described = new Map<number, PromptProcess>();

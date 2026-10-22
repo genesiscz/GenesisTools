@@ -15,7 +15,7 @@ import {
 } from "@pierre/diffs";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
 import { fenceCloses, fencedParts, fenceLanguage, fenceMarker } from "./code-lang";
-import { parseFileDiff } from "./file-diff";
+import { keepOnlyFiles, parseFileDiff } from "./file-diff";
 import { createGlide } from "./glide";
 import { installReviewState } from "./review-state";
 
@@ -3393,14 +3393,8 @@ function addFiles(batch: FilesBatch): void {
     applyPendingReveal();
 
     if (batch.last) {
-        const ids = new Set(files.map((file) => file.id));
-
-        for (const id of parsed.keys()) {
-            if (!ids.has(id)) {
-                parsed.delete(id);
-            }
-        }
-
+        // The image map keeps an SVG's whole file, so it goes with the files that left, as the parsed diffs do.
+        keepOnlyFiles(new Set(files.map((file) => file.id)), parsed, imagesByFile, svgAsImage);
         post({
             type: "log",
             message: `diff.files ${batch.total} files in ${loadBatches} batches, ${loadProgressive ? "shown as they came" : "swapped in at the end"}: parse ${Math.round(loadParseMs)}ms, all on the page ${Math.round(performance.now() - loadStarted)}ms`,

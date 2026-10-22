@@ -56,8 +56,9 @@ public struct DiffImage: Codable, Hashable {
 
     public var old: Source?
     public var new: Source?
-    /// What the working-tree file was when the diff was read (modification time and size). A source names a place,
-    /// not its bytes, so an image overwritten while its diff stays open is a new `DiffImage` only through this.
+    /// What both sides were when the diff was read: a blob side's object id, a working-tree side's modification time
+    /// and size. A source names a place (`HEAD:logo.png`, a path), not its bytes, so an image overwritten, staged or
+    /// committed while its diff stays open is a new `DiffImage` only through this.
     public var revision: String?
 
     public init(old: Source?, new: Source?, revision: String? = nil) {

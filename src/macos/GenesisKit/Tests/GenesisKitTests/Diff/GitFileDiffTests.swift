@@ -40,7 +40,7 @@ final class GitFileDiffTests: XCTestCase {
         XCTAssertNotNil(svg.newContents, "an SVG keeps its code")
         XCTAssertEqual(svg.image?.new, .file(repo.appendingPathComponent("icon.svg").path), "and names its picture too")
 
-        let load = { (source: DiffImage.Source?) in try XCTUnwrap(source.flatMap(DiffImageRegistry.load)).data }
+        let load = { (source: DiffImage.Source?) in try XCTUnwrap(source.flatMap { DiffImageRegistry.load($0) }).data }
         XCTAssertEqual(try load(changed.old), before, "the before side comes from HEAD")
         XCTAssertEqual(try load(changed.new), after, "the after side is the working-tree file")
         XCTAssertEqual(try load(added.new), after)
@@ -57,6 +57,74 @@ final class GitFileDiffTests: XCTestCase {
         XCTAssertNotEqual(reread, changed, "but another revision")
         XCTAssertNotEqual(DiffImageRegistry.url(try XCTUnwrap(reread.new), revision: reread.revision),
                           DiffImageRegistry.url(try XCTUnwrap(changed.new), revision: changed.revision))
+
+        // HEAD moves while the working file stays: the before side `HEAD:logo.png` names other bytes now.
+        let other = repo.deletingLastPathComponent().appendingPathComponent("gk-diff-other-\(UUID().uuidString).png")
+        // A zero byte keeps it binary, as the text diff decides.
+        try Data([0x89, 0x50, 0x4E, 0x47, 0, 7, 7]).write(to: other)
+        defer { try? FileManager.default.removeItem(at: other) }
+        let oid = try git(["hash-object", "-w", other.path], in: repo)
+        _ = try git(["update-index", "--cacheinfo", "100644,\(oid),logo.png"], in: repo)
+        _ = try git(["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "logo 2"], in: repo)
+        let moved = try XCTUnwrap(GitWorkingTreeSource(repo: repo).load(scope: .uncommitted).files.first { $0.path == "logo.png" }?.image)
+        XCTAssertEqual(moved.old, reread.old, "the same name")
+        XCTAssertNotEqual(moved.revision, reread.revision, "but another object")
+        XCTAssertEqual(try load(moved.old), Data([0x89, 0x50, 0x4E, 0x47, 0, 7, 7]))
+    }
+
+    /// A picture over the budget is not read, from disk or from git; under it, the same call reads it through the
+    /// provider (the host's, when it set one).
+    func testAnImageOverTheBudgetIsNotLoaded() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gk-diff-budget-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let bytes = Data([0x89, 0x50, 0x4E, 0x47, 1, 2, 3, 4, 5])
+        _ = try git(["init", "-q"], in: repo)
+        try bytes.write(to: repo.appendingPathComponent("big.png"))
+        _ = try git(["add", "big.png"], in: repo)
+        let file = DiffImage.Source.file(repo.appendingPathComponent("big.png").path)
+        let blob = DiffImage.Source.blob(repo: repo.path, object: ":big.png")
+        XCTAssertNil(DiffImageRegistry.load(file, maxBytes: 4))
+        XCTAssertNil(DiffImageRegistry.load(blob, maxBytes: 4))
+        XCTAssertEqual(DiffImageRegistry.load(file, maxBytes: 9)?.data, bytes)
+
+        final class RecordingGitProvider: GenesisKitGTCLIProvider {
+            var calls: [[String]] = []
+            override func git(_ arguments: [String], in repo: URL, input: Data? = nil, gitDirectory: String? = nil,
+                              environment: [String: String]? = nil) throws -> GitRunResult {
+                calls.append(arguments)
+                return try super.git(arguments, in: repo, input: input, gitDirectory: gitDirectory, environment: environment)
+            }
+        }
+        let recording = RecordingGitProvider()
+        let previous = GenesisKitGT.provider
+        GenesisKitGT.provider = recording
+        defer { GenesisKitGT.provider = previous }
+        XCTAssertEqual(DiffImageRegistry.load(blob, maxBytes: 9)?.data, bytes)
+        XCTAssertEqual(recording.calls, [["cat-file", "-s", ":big.png"], ["cat-file", "blob", ":big.png"]])
+    }
+
+    /// An SVG symlinked out of the repository shows its target path as code and has no picture: the picture would
+    /// be the file outside.
+    func testASymlinkedSVGHasNoPicture() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gk-diff-link-\(UUID().uuidString)")
+        let outside = repo.deletingLastPathComponent().appendingPathComponent("gk-diff-outside-\(UUID().uuidString).svg")
+        try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: repo)
+            try? FileManager.default.removeItem(at: outside)
+        }
+        try "<svg xmlns=\"http://www.w3.org/2000/svg\"><title>outside</title></svg>\n"
+            .write(to: outside, atomically: true, encoding: .utf8)
+        _ = try git(["init", "-q"], in: repo)
+        _ = try git(["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "start"],
+                    in: repo)
+        try FileManager.default.createSymbolicLink(at: repo.appendingPathComponent("icon.svg"), withDestinationURL: outside)
+
+        let svg = try XCTUnwrap(GitWorkingTreeSource(repo: repo).load(scope: .uncommitted).files.first { $0.path == "icon.svg" })
+        XCTAssertEqual(svg.newContents, outside.path, "the code diff is the link's target")
+        XCTAssertNil(svg.image)
+        XCTAssertNil(DiffImageRegistry.load(.file(repo.appendingPathComponent("icon.svg").path)), "served bytes refuse it too")
     }
 
     func testUntrackedColorContrastsWithBothPageSchemes() throws {

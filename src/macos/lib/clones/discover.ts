@@ -138,8 +138,9 @@ export function partitionApfs(
     return { apfs, skipped };
 }
 
+/** A filesystem root (`/`) already ends with the separator, so it gets none appended. */
 function isSameOrInside(dir: string, parent: string): boolean {
-    return dir === parent || dir.startsWith(parent + sep);
+    return dir === parent || dir.startsWith(parent.endsWith(sep) ? parent : parent + sep);
 }
 
 /**

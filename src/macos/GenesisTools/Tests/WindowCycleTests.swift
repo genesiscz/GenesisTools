@@ -80,4 +80,28 @@ final class WindowCycleTests: XCTestCase {
         XCTAssertFalse(WindowCycle.cameByCommandTab(sinceFlags: 2, sinceMouse: 4, sinceKey: 0.1), "a typed key (a launcher)")
         XCTAssertFalse(WindowCycle.cameByCommandTab(sinceFlags: 0.3, sinceMouse: 0.02, sinceKey: 5), "a click (Dock, link, notification)")
     }
+
+    /// Any process can post the raise and focus notifications: a payload that does not fit is a plain raise or is
+    /// ignored, and never traps the face.
+    func testAMalformedRaiseOrFocusPayloadIsRejected() {
+        let option = Int(NSEvent.ModifierFlags.option.rawValue)
+        func request(_ order: [Int], index: Int, modifiers: Int = option) -> [AnyHashable: Any] {
+            ["order": order, "index": index, "modifiers": modifiers]
+        }
+        XCTAssertEqual(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 1), pid: 2, window: 20),
+                       WindowCycle.Session(order: [.init(pid: 1, number: 10), .init(pid: 2, number: 20)], index: 1, modifiers: .option))
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: -1), pid: 2, window: 20), "a negative index")
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 2), pid: 2, window: 20), "past the end")
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 1, modifiers: -1), pid: 2, window: 20))
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 1, modifiers: 0), pid: 2, window: 20),
+                     "no modifier: no release would end the run")
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, Int(Int32.max) + 1, 20], index: 1), pid: 2, window: 20))
+        XCTAssertNil(WindowCycle.requestedSession(request([], index: 0), pid: 2, window: 20))
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 0), pid: 2, window: 20),
+                     "the landed window is not the one to raise")
+
+        XCTAssertEqual(WindowCycle.focusedWindow(["pid": 2, "window": 20], own: 1), .init(pid: 2, number: 20))
+        XCTAssertNil(WindowCycle.focusedWindow(["pid": 1, "window": 20], own: 1), "this face's own broadcast")
+        XCTAssertNil(WindowCycle.focusedWindow(["pid": Int(Int32.max) + 1, "window": 20], own: 1))
+    }
 }

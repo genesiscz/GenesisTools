@@ -307,9 +307,9 @@ public struct GitWorkingTreeSource {
 
         let counts = parseNumstat((try? gitData(["diff", "--numstat", "-z", "--find-renames"] + plan.diffArgs)) ?? Data())
         let olds = catFile(entries.filter { $0.status != .added }.map { (plan.old, $0.oldPath ?? $0.path) })
-        let news: [String: Content] = plan.new.map { rev in
+        let news: Blobs = plan.new.map { rev in
             catFile(entries.filter { $0.status != .deleted }.map { (rev, $0.path) })
-        } ?? [:]
+        } ?? Blobs()
 
         let files: [DiffFile] = entries.map { entry in
             var file = DiffFile(
@@ -341,13 +341,19 @@ public struct GitWorkingTreeSource {
                 }
             }
 
-            if file.skipped != nil && DiffImage.isImage(entry.path) || DiffImage.isSVG(entry.path) {
-                let working = repo.appendingPathComponent(entry.path).path
+            let working = repo.appendingPathComponent(entry.path)
+            // A working-tree symlink shows as its target path, like any symlink: its picture would be a file outside.
+            let workingIsLink = plan.new == nil && entry.status != .deleted
+                && (try? working.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
+            if file.skipped != nil && DiffImage.isImage(entry.path) || DiffImage.isSVG(entry.path), !workingIsLink {
+                let oldName = "\(plan.old):\(entry.oldPath ?? entry.path)"
+                // `HEAD:` and the index move: the object ids pin what each side was when the diff was read.
+                let newRevision = plan.new.map { news.oids["\($0):\(entry.path)"] } ?? DiffImage.revision(ofFile: working.path)
                 file.image = DiffImage(
-                    old: entry.status == .added ? nil : .blob(repo: repo.path, object: "\(plan.old):\(entry.oldPath ?? entry.path)"),
+                    old: entry.status == .added ? nil : .blob(repo: repo.path, object: oldName),
                     new: entry.status == .deleted ? nil
-                        : plan.new.map { .blob(repo: repo.path, object: "\($0):\(entry.path)") } ?? .file(working),
-                    revision: plan.new == nil ? DiffImage.revision(ofFile: working) : nil
+                        : plan.new.map { .blob(repo: repo.path, object: "\($0):\(entry.path)") } ?? .file(working.path),
+                    revision: "\(olds.oids[oldName] ?? "-") \(newRevision ?? "-")"
                 )
             }
 
@@ -652,24 +658,34 @@ public struct GitWorkingTreeSource {
         case skipped(String)
     }
 
+    /// What `catFileBatch` read, by object name: each blob's content, and the object id the name resolved to (a large
+    /// file gets an id but no content).
+    private struct Blobs {
+        var contents: [String: Content] = [:]
+        var oids: [String: String] = [:]
+
+        subscript(name: String) -> Content? { contents[name] }
+    }
+
     /// One `git cat-file --batch` for every `rev:path` (rev "" = the index): `<oid> blob <size>\n<bytes>\n`
     /// or `<name> missing\n`. Keys of the result are `rev:path`.
-    private func catFile(_ specs: [(rev: String, path: String)]) -> [String: Content] {
+    private func catFile(_ specs: [(rev: String, path: String)]) -> Blobs {
         catFileBatch(specs.map { "\($0.rev):\($0.path)" })
     }
 
     /// One `git cat-file --batch` for these object names (`rev:path` or a bare oid), keyed by name.
-    private func catFileBatch(_ names: [String], gitDir: String? = nil) -> [String: Content] {
-        guard !names.isEmpty else { return [:] }
+    private func catFileBatch(_ names: [String], gitDir: String? = nil) -> Blobs {
+        guard !names.isEmpty else { return Blobs() }
         let request = names.map { "\($0)\n" }.joined()
-        guard let metadata = try? gitData(["cat-file", "--batch-check"], input: Data(request.utf8), gitDir: gitDir) else { return [:] }
-        var result: [String: Content] = [:]
+        guard let metadata = try? gitData(["cat-file", "--batch-check"], input: Data(request.utf8), gitDir: gitDir) else { return Blobs() }
+        var result = Blobs()
         var eligible: [(name: String, oid: String)] = []
         for (name, line) in zip(names, String(decoding: metadata, as: UTF8.self).split(separator: "\n")) {
             let fields = line.split(separator: " ")
             guard fields.count == 3, fields[1] == "blob", let size = Int(fields[2]), size >= 0 else { continue }
+            result.oids[name] = String(fields[0])
             if size > Self.maxBytes {
-                result[name] = .skipped("large file, \(size / 1024) KB")
+                result.contents[name] = .skipped("large file, \(size / 1024) KB")
             } else {
                 eligible.append((name, String(fields[0])))
             }
@@ -687,7 +703,7 @@ public struct GitWorkingTreeSource {
             guard fields.count == 3, fields[1] == "blob", let size = Int(fields[2]), size >= 0,
                   size < data.distance(from: cursor, to: data.endIndex) else { break }
             let end = data.index(cursor, offsetBy: size)
-            result[name] = decode(data[cursor..<end], size: size)
+            result.contents[name] = decode(data[cursor..<end], size: size)
             cursor = data.index(after: end)
         }
 

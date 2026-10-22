@@ -146,7 +146,7 @@ final class PostureCore: @unchecked Sendable {
                                             usesCamera: usesCamera, at: time)
             if !machine.state.isPosturePhase {
                 smoother.reset()
-            shoulderGate.reset()
+                shoulderGate.reset()
                 lastScore = nil
                 pendingRows += minutes.flush()
             }

@@ -101,10 +101,9 @@ package enum WindowCycle {
             MainActor.assumeIsolated { raiseRequested(info) }
         })
         tokens.append(distributed.addObserver(forName: focusName, object: nil, queue: .main) { note in
-            guard let pid = note.userInfo?["pid"] as? Int, pid != Int(getpid()),
-                  let number = note.userInfo?["window"] as? Int else { return }
+            guard let window = focusedWindow(note.userInfo, own: getpid()) else { return }
             MainActor.assumeIsolated {
-                recent = promote(Candidate(pid: pid_t(pid), number: number), in: recent)
+                recent = promote(window, in: recent)
                 // A window of another face took focus: GenesisTools is in use, so a Cmd+Tab back is not pending.
                 leftFrom = nil
             }
@@ -249,22 +248,43 @@ package enum WindowCycle {
         guard let pid = info?["pid"] as? Int, pid == Int(getpid()), let number = info?["window"] as? Int else { return }
         lastCycleRaise = Date()
         leftFrom = nil
-        guard let flat = info?["order"] as? [Int], let index = info?["index"] as? Int, let raw = info?["modifiers"] as? Int,
-              flat.count.isMultiple(of: 2), index < flat.count / 2 else {
+        guard let requested = requestedSession(info, pid: getpid(), window: number) else {
             raise(number, reason: "asked by another face", cycling: false)
             return
         }
-        let order = stride(from: 0, to: flat.count, by: 2).map { Candidate(pid: pid_t(flat[$0]), number: flat[$0 + 1]) }
-        let modifiers = NSEvent.ModifierFlags(rawValue: UInt(raw))
         // The modifier went up while the activation was on its way: this face never sees that release.
         let held = NSEvent.ModifierFlags(rawValue: UInt(CGEventSource.flagsState(.combinedSessionState).rawValue))
-        guard held.contains(modifiers) else {
+        guard held.contains(requested.modifiers) else {
             session = nil
             raise(number, reason: "asked by another face, run ended", cycling: false)
             return
         }
-        session = Session(order: order, index: index, modifiers: modifiers)
+        session = requested
         raise(number, reason: "asked by another face", cycling: true)
+    }
+
+    /// The run a raise request carries: pairs of pid and window number, the index of the landed window, which must
+    /// be `window` of `pid`, and the modifiers whose release ends the run. Any process may post the notification, so
+    /// a payload that does not fit (a negative index, a pid outside `pid_t`, no modifier) is nil, a plain raise.
+    package static func requestedSession(_ info: [AnyHashable: Any]?, pid: pid_t, window: Int) -> Session? {
+        guard let flat = info?["order"] as? [Int], !flat.isEmpty, flat.count.isMultiple(of: 2),
+              let index = info?["index"] as? Int, (0..<(flat.count / 2)).contains(index),
+              let raw = info?["modifiers"] as? Int, let bits = UInt(exactly: raw) else { return nil }
+        var order: [Candidate] = []
+        for at in stride(from: 0, to: flat.count, by: 2) {
+            guard let owner = pid_t(exactly: flat[at]) else { return nil }
+            order.append(Candidate(pid: owner, number: flat[at + 1]))
+        }
+        let modifiers = NSEvent.ModifierFlags(rawValue: bits).intersection(relevant)
+        guard !modifiers.isEmpty, order[index] == Candidate(pid: pid, number: window) else { return nil }
+        return Session(order: order, index: index, modifiers: modifiers)
+    }
+
+    /// The window a focus broadcast names, when it is another face's and its pid fits `pid_t`.
+    nonisolated package static func focusedWindow(_ info: [AnyHashable: Any]?, own: pid_t) -> Candidate? {
+        guard let raw = info?["pid"] as? Int, let pid = pid_t(exactly: raw), pid != own,
+              let number = info?["window"] as? Int else { return nil }
+        return Candidate(pid: pid, number: number)
     }
 
     /// The modifier of a run went up: the landed window becomes the most recent one everywhere.

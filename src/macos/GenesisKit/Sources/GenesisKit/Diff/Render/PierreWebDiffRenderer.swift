@@ -535,23 +535,29 @@ enum DiffImageRegistry {
         lock.withLock { sources[token] }
     }
 
-    /// The bytes and the path whose extension names their type. Runs git or reads the disk, so off the main thread.
-    static func load(_ source: DiffImage.Source) -> (data: Data, path: String)? {
+    /// The largest picture a diff loads. The text diff skips files over `GitWorkingTreeSource.maxBytes`, and those
+    /// are the images shown here, so the read needs a bound of its own.
+    static let maxBytes = 20_000_000
+
+    /// The bytes and the path whose extension names their type; nil for a side over `maxBytes`, and for a symlink
+    /// (it would read a file outside the repository). Runs git or reads the disk, so off the main thread.
+    static func load(_ source: DiffImage.Source, maxBytes: Int = maxBytes) -> (data: Data, path: String)? {
         switch source {
         case .file(let path):
-            return (try? Data(contentsOf: URL(fileURLWithPath: path))).map { ($0, path) }
+            let url = URL(fileURLWithPath: path)
+            guard let values = try? url.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey, .fileSizeKey]),
+                  values.isSymbolicLink != true, values.isRegularFile == true,
+                  let size = values.fileSize, size <= maxBytes else { return nil }
+            return (try? Data(contentsOf: url)).map { ($0, path) }
         case .blob(let repo, let object):
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = ["-C", repo, "cat-file", "blob", object]
-            let out = Pipe()
-            process.standardOutput = out
-            process.standardError = FileHandle.nullDevice
-            guard (try? process.run()) != nil else { return nil }
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            guard process.terminationStatus == 0 else { return nil }
-            return (data, object)
+            let folder = URL(fileURLWithPath: repo)
+            let git = { (args: [String]) in
+                try? GenesisKitGT.provider.git(args, in: folder, input: nil, gitDirectory: nil, environment: nil)
+            }
+            guard let sized = git(["cat-file", "-s", object]), sized.status == 0,
+                  let size = Int(String(decoding: sized.stdout, as: UTF8.self).trimmed), size <= maxBytes,
+                  let blob = git(["cat-file", "blob", object]), blob.status == 0 else { return nil }
+            return (blob.stdout, object)
         }
     }
 

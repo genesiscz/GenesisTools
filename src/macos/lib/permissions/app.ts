@@ -1365,6 +1365,63 @@ export function readRunningExecutableInodes(): Set<number> | null {
 }
 
 /**
+ * The retired copies under `root` (folders named by their retirement time in ms), newest first. Empty when `root` does
+ * not exist yet; null when it could not be read (logged with `root`), so a caller deletes nothing on a guess.
+ */
+export function listRetiredStamps(root: string): string[] | null {
+    try {
+        return readdirSync(root, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && Number.isFinite(Number(entry.name)))
+            .map((entry) => entry.name)
+            .sort((a, b) => Number(b) - Number(a));
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return [];
+        }
+
+        logger.warn({ error, root }, "retired copies not listed; none deleted");
+        return null;
+    }
+}
+
+/**
+ * The retired copies to delete, from `stamps` newest first: those past the newest `keep`, except a pinned one
+ * ({@link pinnedRetiredBundles}: a running process still executes its binary, or the binary cannot be stat'ed).
+ * Running processes that could not be listed (`running` null) delete nothing.
+ */
+export function retiredStampsToDelete({
+    stamps,
+    keep,
+    running,
+    inodeOf,
+}: {
+    stamps: string[];
+    keep: number;
+    running: Set<number> | null;
+    inodeOf: (stamp: string) => number | null;
+}): string[] {
+    if (running === null) {
+        return [];
+    }
+
+    const pinned = pinnedRetiredBundles({ entries: stamps, inodeOf, running });
+    return stamps.slice(keep).filter((stamp) => !pinned.has(stamp));
+}
+
+/** Deletes each stamp folder under `root`; a failure is logged and the rest still go. Returns the deleted stamps. */
+export function deleteRetiredStamps(root: string, stamps: string[]): string[] {
+    return stamps.filter((stamp) => {
+        try {
+            rmSync(join(root, stamp), { recursive: true, force: true });
+            return true;
+        } catch (error) {
+            logger.warn({ error, root, stamp }, "retired copy not deleted");
+            return false;
+        }
+    });
+}
+
+/**
  * Keeps the newest {@link RETIRED_KEEP_FOLDERS} retired bundles and every pinned one as folders, packs the
  * other idle ones into `<ms>.zst` (tar inside seekable zstd, checked file by file before the folder goes;
  * restore with `tools compress unpack`), and removes packed copies past the count or age cap. Runs after
