@@ -145,16 +145,20 @@ export function mergeExtentClusters(
  * keeps the main thread's readdir work tiny (a few hundred dirs) — the deep,
  * expensive part of the walk happens in parallel inside the workers.
  */
-interface CloudProbe {
+export interface CloudProbe {
     /** The File Provider domain `path` roots, or null. */
     domain(path: string): CloudDomain | null;
     isDataless(path: string): boolean;
+    /** Turns dataless materialization OFF for this thread, and returns what puts the previous policy back. */
+    guard(): () => void;
 }
 
 function openCloudProbe(shim: string): CloudProbe & { close(): void } {
     const lib = dlopen(shim, {
         cs_fp_domain: { args: [FFIType.ptr, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
         cs_is_dataless: { args: [FFIType.ptr], returns: FFIType.i32 },
+        cs_materialize_guard: { args: [], returns: FFIType.i32 },
+        cs_materialize_restore: { args: [FFIType.i32], returns: FFIType.i32 },
     });
     const provBuf = new Uint8Array(128);
     return {
@@ -168,6 +172,12 @@ function openCloudProbe(shim: string): CloudProbe & { close(): void } {
         },
         isDataless(path) {
             return lib.symbols.cs_is_dataless(ptr(Buffer.from(`${path}\0`, "utf8"))) !== 0;
+        },
+        guard() {
+            const prev = lib.symbols.cs_materialize_guard();
+            return () => {
+                lib.symbols.cs_materialize_restore(prev);
+            };
         },
         close() {
             lib.close();
@@ -193,7 +203,7 @@ function rootDomain(root: string, probe: CloudProbe): CloudDomain | null {
     }
 }
 
-interface PlanCloud {
+export interface PlanCloud {
     includeCloud: boolean;
     probe: CloudProbe;
     domains: CloudDomain[];
@@ -201,12 +211,27 @@ interface PlanCloud {
     folders: Map<string, CloudBackedFolder>;
 }
 
-function planWork(
-    root: string,
-    excludes: Set<string>,
-    target: number,
-    cloud: PlanCloud
-): { frontier: string[]; interior: string[]; groupIndex: Map<string, number>; groupNames: string[] } {
+export interface WorkPlan {
+    frontier: string[];
+    interior: string[];
+    groupIndex: Map<string, number>;
+    groupNames: string[];
+}
+
+/**
+ * The breadth-first split, run with dataless materialization OFF unless the scan includes cloud content, so no
+ * listing it reads makes a provider fetch a folder.
+ */
+export function planWork(root: string, excludes: Set<string>, target: number, cloud: PlanCloud): WorkPlan {
+    const restore = cloud.includeCloud ? null : cloud.probe.guard();
+    try {
+        return planWorkGuarded(root, excludes, target, cloud);
+    } finally {
+        restore?.();
+    }
+}
+
+function planWorkGuarded(root: string, excludes: Set<string>, target: number, cloud: PlanCloud): WorkPlan {
     const groupNames: string[] = [];
     const groupIndex = new Map<string, number>();
     const intern = (name: string): void => {
@@ -221,6 +246,11 @@ function planWork(
         }
     };
 
+    // The dataless folders found under each listed directory. Only an interior directory's are counted here: the
+    // workers count a frontier directory's own when they recurse it, and a leaf stays in the frontier and is
+    // listed again on every later round, so counting at listing time counted one folder several times.
+    const skipped = new Map<string, { key: string; owner: CloudDomain | null }[]>();
+
     const subDirs = (dir: string): string[] => {
         let entries: Dirent<string>[];
         try {
@@ -229,6 +259,8 @@ function planWork(
             return [];
         }
         const out: string[] = [];
+        const dataless: { key: string; owner: CloudDomain | null }[] = [];
+        skipped.set(dir, dataless);
         for (const e of entries) {
             if (!e.isDirectory()) {
                 continue;
@@ -250,14 +282,7 @@ function planWork(
             // Same rule as the walk: a dataless folder is counted, never entered.
             if (!cloud.includeCloud && cloud.probe.isDataless(p)) {
                 const owner = childDomain ?? null;
-                const key = owner ? owner.path : dir;
-                let b = cloud.folders.get(key);
-                if (!b) {
-                    b = emptyFolder(key, owner);
-                    cloud.folders.set(key, b);
-                }
-
-                b.dataless_dirs++;
+                dataless.push({ key: owner ? owner.path : dir, owner });
                 continue;
             }
 
@@ -265,6 +290,11 @@ function planWork(
         }
         return out;
     };
+
+    // Listing a dataless root is what makes its provider fetch it; the C engine's guarded open fails there too.
+    if (!cloud.includeCloud && cloud.probe.isDataless(root)) {
+        return { frontier: [], interior: [], groupIndex, groupNames };
+    }
 
     // Every immediate child of root (file OR dir) is a group.
     for (const e of readdirSync(root, { withFileTypes: true })) {
@@ -296,6 +326,18 @@ function planWork(
             break;
         }
         frontier = next;
+    }
+
+    for (const dir of interior) {
+        for (const { key, owner } of skipped.get(dir) ?? []) {
+            let b = cloud.folders.get(key);
+            if (!b) {
+                b = emptyFolder(key, owner);
+                cloud.folders.set(key, b);
+            }
+
+            b.dataless_dirs++;
+        }
     }
 
     return { frontier, interior, groupIndex, groupNames };

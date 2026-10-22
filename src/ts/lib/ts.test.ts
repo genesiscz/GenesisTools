@@ -639,6 +639,34 @@ describe("the skeleton command's filters and rendering", () => {
         expect(collectFiles(join(root, "glob/[x].ts"))).toEqual([join(root, "glob/[x].ts")]);
         expect(collectFiles(join(root, "glob/none*.ts"))).toEqual([]);
     });
+
+    it("applies --ignore to a glob's matches below its literal folders, also outside the cwd", () => {
+        write("glob-ignore/keep.ts", "export const a = 1;\n");
+        write("glob-ignore/out.ts", "export const b = 2;\n");
+
+        expect(collectFiles(join(root, "glob-ignore/*.ts"), { ignore: ["out"] })).toEqual([
+            join(root, "glob-ignore/keep.ts"),
+        ]);
+        // A needle that names a folder above the matches skips nothing, as for a named directory.
+        expect(collectFiles(join(root, "glob-ignore/*.ts"), { ignore: ["glob-ignore"] })).toHaveLength(2);
+    });
+
+    it("keeps a glob's matches inside the cwd when the needle names a folder above them", () => {
+        write("glob-cwd/keep.ts", "export const a = 1;\n");
+        write("glob-cwd/out.ts", "export const b = 2;\n");
+        const previous = process.cwd();
+        process.chdir(root);
+
+        try {
+            expect(collectFiles("glob-cwd/*.ts", { ignore: ["glob-cwd"] })).toEqual([
+                join(root, "glob-cwd/keep.ts"),
+                join(root, "glob-cwd/out.ts"),
+            ]);
+            expect(collectFiles("glob-cwd/*.ts", { ignore: ["out"] })).toEqual([join(root, "glob-cwd/keep.ts")]);
+        } finally {
+            process.chdir(previous);
+        }
+    });
 });
 
 describe("an exported const that is really an API", () => {

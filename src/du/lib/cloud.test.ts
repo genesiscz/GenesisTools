@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { scanWithBun } from "./bun-scan";
+import { type CloudProbe, type PlanCloud, planWork, scanWithBun } from "./bun-scan";
 import { type CloneFixture, makeCloneFixture } from "./clone-fixture";
 import {
     domainOf,
@@ -61,6 +61,70 @@ describe("cloud path rules", () => {
         expect(domainOf("/u/Docs/x", domains)?.provider).toBe("a");
         expect(domainOf("/u/Docs/inner/y", domains)?.provider).toBe("b");
         expect(domainOf("/u/Docsx", domains)).toBeNull();
+    });
+});
+
+// The planner's own listings, against a fake probe that names which real folders count as dataless.
+describe("the Bun engine's planning walk", () => {
+    let root: string;
+
+    beforeAll(() => {
+        root = mkdtempSync(join(tmpdir(), "gt-du-plan-"));
+        for (const dir of ["ghost", "leaf/ghost", "deep/x/y/z"]) {
+            mkdirSync(join(root, dir), { recursive: true });
+        }
+        writeFileSync(join(root, "top.txt"), "x");
+    });
+
+    afterAll(() => {
+        rmSync(root, { recursive: true, force: true });
+    });
+
+    function fakeProbe(dataless: string[]): CloudProbe & { events: string[] } {
+        const events: string[] = [];
+        return {
+            events,
+            domain: () => null,
+            isDataless: (path) => {
+                events.push(`dataless? ${path}`);
+                return dataless.includes(path);
+            },
+            guard: () => {
+                events.push("guard");
+                return () => {
+                    events.push("restore");
+                };
+            },
+        };
+    }
+
+    const plan = (probe: CloudProbe, includeCloud = false) => {
+        const cloud: PlanCloud = { includeCloud, probe, domains: [], folders: new Map() };
+        return { result: planWork(root, new Set(), 1000, cloud), cloud };
+    };
+
+    it("counts a dataless folder once: an interior parent's here, a frontier leaf's by the workers", () => {
+        const { result, cloud } = plan(fakeProbe([join(root, "ghost"), join(root, "leaf/ghost")]));
+        // `leaf` lists nothing to split, so it stays in the frontier for every round while `deep` expands.
+        expect(result.frontier).toContain(join(root, "leaf"));
+        expect(result.interior).not.toContain(join(root, "leaf"));
+        expect(cloud.folders.get(root)?.dataless_dirs).toBe(1);
+        expect(cloud.folders.has(join(root, "leaf"))).toBe(false);
+    });
+
+    it("never lists a dataless scan root, and plans with materialization off from the first probe to the last", () => {
+        const probe = fakeProbe([root]);
+        const { result, cloud } = plan(probe);
+        expect(result).toEqual({ frontier: [], interior: [], groupIndex: new Map(), groupNames: [] });
+        expect(cloud.folders.size).toBe(0);
+        expect(probe.events).toEqual(["guard", `dataless? ${root}`, "restore"]);
+    });
+
+    it("with --include-cloud plans the whole tree and leaves the materialization policy alone", () => {
+        const probe = fakeProbe([root]);
+        const { result } = plan(probe, true);
+        expect(result.groupNames.sort()).toEqual(["deep", "ghost", "leaf", "top.txt"]);
+        expect(probe.events).not.toContain("guard");
     });
 });
 
@@ -242,6 +306,18 @@ describe("eviction safety", () => {
         expect(pickCloudCtlHelper(deps(false, true, false)).kind).toBe("osascript");
         expect(calls).toEqual(["compile", "compile"]);
     });
+
+    it("stops a helper that never answers at its deadline, and says an evict may have partly run", async () => {
+        const hung = { kind: "osascript" as const, command: ["/bin/sh", "-c", "exec sleep 30", "sh"] };
+        const started = Date.now();
+        const outcome = await runCloudCtl("evict", ["/u/Documents/a"], { helper: hung, timeoutMs: 200 }).catch(
+            (error: unknown) => error
+        );
+        expect(Date.now() - started).toBeLessThan(4000);
+        expect(outcome instanceof Error && outcome.message).toBe(
+            "cloudctl (osascript) evict did not finish within 0.2 s and was stopped; some files may already be evicted, so list them again with tools du downloaded"
+        );
+    });
 });
 
 describeOnDarwin("osascript cloudctl helper", () => {
@@ -254,12 +330,12 @@ describeOnDarwin("osascript cloudctl helper", () => {
                 kind: "osascript" as const,
                 command: ["osascript", "-l", "JavaScript", join(import.meta.dir, "..", "native", "cloudctl.js")],
             };
-            const rows = await runCloudCtl<CloudItemStatus>("status", [local, join(dir, "missing.txt")], helper);
+            const rows = await runCloudCtl<CloudItemStatus>("status", [local, join(dir, "missing.txt")], { helper });
             expect(rows.map((r) => [r.path, r.ubiquitous, r.uploaded])).toEqual([
                 [local, false, false],
                 [join(dir, "missing.txt"), false, false],
             ]);
-            const evicted = await runCloudCtl<EvictOutcome>("evict", [local], helper);
+            const evicted = await runCloudCtl<EvictOutcome>("evict", [local], { helper });
             expect(evicted).toEqual([{ path: local, evicted: false, reason: "not an iCloud item" }]);
         } finally {
             rmSync(dir, { recursive: true, force: true });

@@ -13,8 +13,10 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
 import { ICLOUD_PROVIDER, TRESORIT_PROVIDER } from "./cloud";
 import type { CloudFileEntry } from "./types";
 
@@ -218,21 +220,55 @@ function helper(): CloudCtlHelper {
     return picked;
 }
 
-/** Runs one helper verb over `paths`; exported so a check can run either helper directly. */
+/** A helper run may take this long, plus the per-path share below, before it is stopped. */
+const CLOUDCTL_BASE_MS = 60_000;
+/** Each path asks File Provider for its resource values, and an evict waits on the provider too. */
+const CLOUDCTL_PER_PATH_MS = 2_000;
+
+/**
+ * Runs one helper verb over `paths`; exported so a check can run either helper directly. An unresponsive provider
+ * would hold the helper forever, so the run has a deadline: past it the helper is stopped and the call throws.
+ */
 export async function runCloudCtl<T>(
     verb: "status" | "evict",
     paths: string[],
-    chosen: CloudCtlHelper = helper()
+    options: { helper?: CloudCtlHelper; timeoutMs?: number } = {}
 ): Promise<T[]> {
-    logger.debug({ helper: chosen.kind, verb, paths: paths.length }, "du: running cloudctl");
+    const chosen = options.helper ?? helper();
+    const timeoutMs = options.timeoutMs ?? CLOUDCTL_BASE_MS + CLOUDCTL_PER_PATH_MS * paths.length;
+    logger.debug({ helper: chosen.kind, verb, paths: paths.length, timeoutMs }, "du: running cloudctl");
     const proc = Bun.spawn([...chosen.command, verb], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
-    proc.stdin.write(paths.join("\0"));
-    proc.stdin.end();
-    const [stdout, stderr, code] = await Promise.all([
-        new Response(proc.stdout).text(),
-        new Response(proc.stderr).text(),
-        proc.exited,
-    ]);
+    let expired = false;
+    const timer = setTimeout(() => {
+        expired = true;
+        void killWithEscalation(proc);
+    }, timeoutMs);
+    let stdout: string;
+    let stderr: string;
+    let code: number;
+    try {
+        proc.stdin.write(paths.join("\0"));
+        proc.stdin.end();
+        [stdout, stderr, code] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+        ]);
+    } finally {
+        clearTimeout(timer);
+    }
+
+    if (expired) {
+        const partial =
+            verb === "evict"
+                ? `; some files may already be evicted, so list them again with ${toolCommand("du downloaded")}`
+                : "";
+        logger.warn({ helper: chosen.kind, verb, paths: paths.length, timeoutMs }, "du: cloudctl stopped at deadline");
+        throw new Error(
+            `cloudctl (${chosen.kind}) ${verb} did not finish within ${timeoutMs / 1000} s and was stopped${partial}`
+        );
+    }
+
     if (code !== 0) {
         throw new Error(`cloudctl (${chosen.kind}) ${verb} exited with ${code}: ${stderr.trim()}`);
     }

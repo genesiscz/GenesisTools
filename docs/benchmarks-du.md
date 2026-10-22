@@ -1396,3 +1396,14 @@ reads leave out the upload error that the batched Swift read returns.
 | `evict ~/Desktop --all --top 1000`, dry run | 45 eligible (180 KB), 231 refused | 45 eligible (180 KB), 231 refused (194 not uploaded, 37 not iCloud) |
 | `evict --apply` on a probe file created in iCloud Drive | — | evicted: 176 blocks → 0, flags `compressed,dataless` |
 
+## 2026-10-22 21:52 — PR #558 review: the Bun planner counts dataless folders once, and `evict` has a deadline
+
+No hot-loop code changed: the C engine is untouched, and in the Bun engine only the planning walk (a few hundred
+directory listings on the main thread) moved, so no benchmark was rerun. One total moves, in the Bun engine only:
+`cloud_backed.dataless_dirs` goes down to the C engine's count. The planner counted a dataless folder when it listed
+its parent, so a frontier leaf was counted again by the worker that recursed it, and once more on every later
+planning round. It now counts only the dataless folders of interior directories, which no worker lists.
+
+The planning walk also runs with dataless materialization off, and a dataless scan root is never listed. The scan
+then finds nothing, as the C engine's guarded open of that root does. `cloudctl` runs stop after 60 s plus 2 s per
+path, and the call fails with that reason (an `evict` names that some files may already be evicted).

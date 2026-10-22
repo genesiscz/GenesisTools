@@ -1,11 +1,12 @@
 import { logger } from "@genesiscz/utils/logger";
 import { APICallError, RetryError } from "ai";
+import { byId } from "../catalog";
 import { AiConfigStore } from "../config/AiConfigStore";
 import type { AccountEntry } from "../config/schema";
 import type { AccountUsageSnapshot, LimitWindow } from "../providers/account-features";
 import { pollAccounts } from "../usage-poll/poll";
 import { ModelResolutionError, resolveModelTarget } from "./resolve";
-import type { ResolvedBinding, ResolvedTarget, ResolveOptions } from "./types";
+import { isUnlisted, type ResolvedBinding, type ResolvedTarget, type ResolveOptions } from "./types";
 
 /**
  * `--account auto`: pick a subscription account by provider order (Claude, Codex, Grok) among those with weekly room
@@ -135,12 +136,23 @@ export async function autoAccountCandidates(options: AutoAccountOptions = {}): P
     const store = options.store ?? (await AiConfigStore.load());
     const task = options.task ?? "chat";
     const targets: ResolvedTarget[] = [];
+    // A model the catalog knows belongs to the providers that list it. Another provider resolves it only as an
+    // unlisted id (a Claude model offered to Codex), and its "unknown model" answer is no refusal, so it would
+    // stop the call before the account that can serve it is tried.
+    const knownModel = options.model !== undefined && byId(options.model) !== undefined;
 
     for (const account of store.accounts({ billing: "subscription", enabled: true })) {
         const ref = options.model ? `@account/${account.id}:${options.model}` : `@account/${account.id}`;
 
         try {
-            targets.push(await resolveModelTarget(ref, { task, store }));
+            const target = await resolveModelTarget(ref, { task, store });
+
+            if (knownModel && isUnlisted(target.model)) {
+                log.debug({ account: account.name, model: options.model }, "auto account: provider does not list it");
+                continue;
+            }
+
+            targets.push(target);
         } catch (error) {
             if (!(error instanceof ModelResolutionError)) {
                 throw error;
@@ -173,7 +185,8 @@ export interface RunWithAutoAccountOptions<T> {
 }
 
 /**
- * Run `run` on the best candidate; when an account refuses (401, 403, 429), say so and try the next. Every pick
+ * Run `run` on the best candidate; when an account refuses (401, 403, 429) or its credential does not bind, say so
+ * and try the next. Every pick
  * and every switch is told on stderr and in the day log, with the reason. The last refusal is rethrown.
  */
 export async function runWithAutoAccount<T>(options: RunWithAutoAccountOptions<T>): Promise<T> {
@@ -185,7 +198,18 @@ export async function runWithAutoAccount<T>(options: RunWithAutoAccountOptions<T
         const rank = `pick ${index + 1} of ${candidates.length}: Claude, then Codex, then Grok, with weekly room left`;
         log.tee.log.info(`${app}: AI account "${account.name}" (${model.id}): ${candidate.why}; ${rank}`);
 
-        const binding = await candidate.target.plugin.bind({ account });
+        // A bind resolves this account's own credential (an expired or revoked grant throws here), so its
+        // failure says nothing about the next account: try that one, and rethrow only when none is left.
+        let binding: ResolvedBinding["binding"];
+        try {
+            binding = await candidate.target.plugin.bind({ account });
+        } catch (error) {
+            lastError = error;
+            log.tee.log.warn(
+                `${app}: AI account "${account.name}" has no usable credential (${String(error)}); trying the next one`
+            );
+            continue;
+        }
 
         try {
             return await options.run({ ...candidate.target, binding });

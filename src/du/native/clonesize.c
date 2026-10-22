@@ -247,11 +247,14 @@ static int   g_nforeign = 0;
 static char *g_cloud_roots[MAX_CLOUD_ROOTS];
 static int   g_ncloud = 0;
 static int   g_skip_cloud = 1;
+// `downloaded --include-cloud` walks the provider roots but keeps every dataless guard on: it lists files that are
+// already on disk, so it must still never enter a dataless folder or let an open materialize one.
+static int   g_walk_cloud_roots = 0;
 static pthread_mutex_t g_cloud_mtx = PTHREAD_MUTEX_INITIALIZER;
 
 /** True when `dirpath` is a `Library` whose child `name` is a cloud-provider root. */
 static int is_cloud_root(const char *dirpath, const char *name) {
-    if (!g_skip_cloud) return 0;
+    if (!g_skip_cloud || g_walk_cloud_roots) return 0;
     if (strcmp(name, "CloudStorage") != 0 && strcmp(name, "Mobile Documents") != 0) return 0;
     size_t dl = strlen(dirpath);
     return dl >= 8 && strcmp(dirpath + dl - 8, "/Library") == 0;
@@ -1884,6 +1887,7 @@ char *clonesize_run_json(const char *path, int threads, int freeable,
     g_cache_dir = (cache_dir && cache_dir[0]) ? cache_dir : NULL;
     g_cache_read = cache_read;
     g_skip_cloud = include_cloud ? 0 : 1;
+    g_walk_cloud_roots = 0;
     if (g_freeable_tree && g_maxdepth < 0) g_maxdepth = 1;
     g_profile = getenv("PROFILE") ? 1 : 0;
     g_nexcludes = 0;
@@ -2431,17 +2435,20 @@ __attribute__((visibility("default")))
 char *clonesize_bigfiles_json(const char *const *roots, int nroots, int threads,
                               unsigned long long min_bytes,
                               const char *const *prune_names, int nprune) {
+    g_walk_cloud_roots = 0;
     return big_run_json(roots, nroots, threads, min_bytes, prune_names, nprune, 0);
 }
 
 /**
  * `tools du downloaded`: every cloud-backed file under `root` that is on disk
  * (inside a File Provider domain, not dataless, allocated >= min_bytes). A
- * listing only: no file is opened. include_cloud walks the skipped provider roots too.
+ * listing only: no file is opened. include_cloud walks the skipped provider roots too,
+ * with the dataless-folder pruning and the kernel materialize guard still on.
  */
 __attribute__((visibility("default")))
 char *clonesize_cloudfiles_json(const char *root, int threads, unsigned long long min_bytes, int include_cloud) {
-    g_skip_cloud = include_cloud ? 0 : 1;
+    g_skip_cloud = 1;
+    g_walk_cloud_roots = include_cloud ? 1 : 0;
     g_nexcludes = 0;
     const char *roots[1] = { root };
     return big_run_json(roots, 1, threads, min_bytes, NULL, 0, 1);

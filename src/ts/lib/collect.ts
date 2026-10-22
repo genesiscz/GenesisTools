@@ -44,8 +44,22 @@ export function collectFiles(input: string, options: CollectOptions = {}): strin
         const [cwd, pattern] = isAbsolute(input)
             ? [parse(input).root, input.slice(parse(input).root.length)]
             : [process.cwd(), input];
-        const matches = [...new Bun.Glob(pattern).scanSync({ cwd, absolute: true, onlyFiles: false })];
-        const found = matches.flatMap((match) => collectFiles(match, options));
+        // Ignores match below the pattern's literal folders, the way they match below a named directory, inside the cwd
+        // and outside it. Each match is walked from that base, never re-checked as a root: a root check would test
+        // the literal folders above the matches again and drop every match inside the cwd.
+        const segments = pattern.split("/");
+        const base = join(
+            cwd,
+            ...segments.slice(
+                0,
+                segments.findIndex((segment) => GLOB_CHARS.test(segment))
+            )
+        );
+        const ignore = options.ignore ?? [];
+        const matches = [...new Bun.Glob(pattern).scanSync({ cwd, absolute: true, onlyFiles: false })].filter(
+            (match) => !ignore.some((needle) => relative(base, match).includes(needle))
+        );
+        const found = matches.flatMap((match) => walk(match, { base, includeTests: options.tests === true, ignore }));
         return [...new Set(found)].filter((file) => isSource(file, options.tests === true)).sort();
     }
 

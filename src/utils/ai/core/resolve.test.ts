@@ -435,6 +435,29 @@ describe("auto account", () => {
         expect(ranked.at(-1)?.why).toBe("Weekly 90% used (10% weekly room or less)");
     });
 
+    test("a named model the catalog knows is offered only to the providers that list it", async () => {
+        const sub = (id: string, provider: string) => account(id, id, { provider });
+        writeConfig({
+            accounts: [sub("acc_codex", "openai-sub"), sub("acc_grok", "grok-sub"), sub("acc_claude", "anthropic-sub")],
+        });
+        const weekly = (id: string, provider: string, percentUsed: number): AccountUsageSnapshot => ({
+            ...usage(id, [{ key: "seven_day", label: "Weekly", kind: "weekly", percentUsed }]),
+            provider,
+        });
+        const snapshots = [
+            weekly("acc_codex", "openai-sub", 5),
+            weekly("acc_grok", "grok-sub", 0),
+            weekly("acc_claude", "anthropic-sub", 90),
+        ];
+        const ids = async (model?: string) =>
+            (await autoAccountCandidates({ model, snapshots })).map((c) => c.target.account.id);
+
+        expect(await ids("claude-sonnet-5-5")).toEqual(["acc_claude"]);
+        // An id no catalog lists cannot be judged, so every account keeps its turn.
+        expect(await ids("custom-model-x")).toEqual(["acc_codex", "acc_grok", "acc_claude"]);
+        expect(await ids()).toEqual(["acc_codex", "acc_grok", "acc_claude"]);
+    });
+
     test("isAccountRefusal: 401, 403 and 429, also wrapped in SDK retries; never a server error", () => {
         expect(isAccountRefusal(refusal(429))).toBe(true);
         expect(isAccountRefusal(refusal(403))).toBe(true);
@@ -487,6 +510,37 @@ describe("auto account", () => {
         expect(result).toBe("ok");
         expect(asked).toEqual(["acc_max", "acc_max2"]);
         expect(disposed).toEqual(["acc_max", "acc_max2"]);
+    });
+
+    test("runWithAutoAccount tries the next account when one's credential does not bind, and rethrows when none binds", async () => {
+        const { candidates } = await fakeCandidates();
+        const expired = (candidate: AutoCandidate): AutoCandidate => ({
+            ...candidate,
+            target: {
+                ...candidate.target,
+                plugin: {
+                    ...candidate.target.plugin,
+                    bind: async () => {
+                        throw new Error("OAuth grant rejected: invalid_grant");
+                    },
+                },
+            },
+        });
+        const asked: string[] = [];
+        const run = async (resolved: { account: { id: string } }) => {
+            asked.push(resolved.account.id);
+            return "ok";
+        };
+
+        expect(
+            await runWithAutoAccount({ candidates: [expired(candidates[0]), candidates[1]], app: "test", run })
+        ).toBe("ok");
+        expect(asked).toEqual(["acc_max2"]);
+
+        const outcome = await runWithAutoAccount({ candidates: candidates.map(expired), app: "test", run }).catch(
+            (error: unknown) => error
+        );
+        expect(outcome instanceof Error && outcome.message).toBe("OAuth grant rejected: invalid_grant");
     });
 
     test("runWithAutoAccount rethrows an error another account would not fix, without trying the next", async () => {

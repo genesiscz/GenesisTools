@@ -115,25 +115,38 @@ export function workItemPatch(input: {
     return operations;
 }
 
+/** How a read-back is compared: Markdown keeps its lines, HTML ignores insignificant space, plain text is exact. */
+export type StoredTextFormat = "markdown" | "html" | "plain";
+
+const HTML_TAG = /<[a-zA-Z!/][^>]*>/;
+
 /**
- * True when the stored markdown is the markdown that was sent, up to the rewrites the server applies:
+ * True when the stored text is the text that was sent, up to the rewrites the server applies to rich text:
  * an emoji becomes a numeric (or hex) character reference, a quoted integer attribute loses its quotes
- * (`width="375"` stored as `width=375`; `width="48%"` keeps the quotes), and a local image src is the
- * attachment URL from `images`. Comments, added semicolons and insignificant space are ignored too.
+ * (`width="375"` stored as `width=375`; `width="48%"` keeps the quotes), a declaration inside a tag gains a
+ * closing semicolon, and a local image src is the attachment URL from `images`. Comments are ignored too.
+ * Markdown keeps its line breaks and indentation, which carry meaning; HTML ignores insignificant space.
+ * A plain field (a title, a tag list) must match exactly.
  */
-export function sameStoredMarkdown(
-    stored: string,
-    sent: string,
-    images: ReadonlyMap<string, string> = new Map()
-): boolean {
+export function sameStoredText(input: {
+    stored: string;
+    sent: string;
+    format: StoredTextFormat;
+    images?: ReadonlyMap<string, string>;
+}): boolean {
+    if (input.format === "plain") {
+        return input.stored === input.sent;
+    }
+
+    const images = input.images ?? new Map<string, string>();
     return (
-        normalizeAdoMarkdown(replaceImageSources(stored, images)) ===
-        normalizeAdoMarkdown(replaceImageSources(sent, images))
+        normalizeAdoText(replaceImageSources(input.stored, images), input.format) ===
+        normalizeAdoText(replaceImageSources(input.sent, images), input.format)
     );
 }
 
-function normalizeAdoMarkdown(value: string): string {
-    return value
+function normalizeAdoText(value: string, format: "markdown" | "html"): string {
+    const text = value
         .replace(/<!--[\s\S]*?-->/g, "")
         .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
         .replace(/&#x([0-9a-fA-F]+);/g, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
@@ -143,10 +156,37 @@ function normalizeAdoMarkdown(value: string): string {
         .replace(/&gt;/g, ">")
         .replace(/&amp;/g, "&")
         .replace(/(\s[\w:-]+)="(\d+)"/g, "$1=$2")
-        .replace(/;/g, "")
-        .replace(/\s*(<[^>]+>)\s*/g, "$1")
-        .replace(/\s+/g, " ")
+        .replace(/<[^>]+>/g, (tag) => tag.replace(/;(?=\s*["'>])/g, ""));
+
+    if (format === "html") {
+        return text
+            .replace(/\s*(<[^>]+>)\s*/g, "$1")
+            .replace(/\s+/g, " ")
+            .trim();
+    }
+
+    return text
+        .replace(/\r\n?/g, "\n")
+        .replace(/[ \t]+$/gm, "")
         .trim();
+}
+
+/** Markdown when the field is (or is being switched to) Markdown, HTML when the field or either value is HTML. */
+function storedTextFormat(input: {
+    name: string;
+    sent: string;
+    stored: unknown;
+    markdownFields: readonly string[];
+    formats: Readonly<Record<string, string | undefined>>;
+}): StoredTextFormat {
+    const format = (input.formats[input.name] ?? "").toLowerCase();
+
+    if (format === "markdown" || input.markdownFields.includes(input.name)) {
+        return "markdown";
+    }
+
+    const stored = typeof input.stored === "string" ? input.stored : "";
+    return format === "html" || HTML_TAG.test(input.sent) || HTML_TAG.test(stored) ? "html" : "plain";
 }
 
 export function parseFieldSpec(spec: string, readFile: (path: string) => string): { name: string; value: string } {
@@ -199,8 +239,49 @@ export function parseReuseFile(text: string): Map<string, UploadedImage> {
     return uploaded;
 }
 
+/** A stored field value as text: a number or boolean as written, an identity as `Name <unique name>`. */
 function fieldText(value: unknown): string {
-    return typeof value === "string" ? value : "";
+    if (typeof value === "string") {
+        return value;
+    }
+
+    if (typeof value === "number" || typeof value === "boolean") {
+        return String(value);
+    }
+
+    const identity = identityNames(value);
+    return identity.length > 0 ? identity.join(" ") : "";
+}
+
+/** The names an identity field answers to: its display name, unique name, and `Name <unique name>`. */
+function identityNames(value: unknown): string[] {
+    if (value === null || typeof value !== "object") {
+        return [];
+    }
+
+    const display = "displayName" in value && typeof value.displayName === "string" ? value.displayName : null;
+    const unique = "uniqueName" in value && typeof value.uniqueName === "string" ? value.uniqueName : null;
+    return [display, unique, display && unique ? `${display} <${unique}>` : null].filter(
+        (name): name is string => name !== null
+    );
+}
+
+/** Whether the read-back holds what was sent, compared by the stored value's own type and a text field's format. */
+function storedMatches(stored: unknown, sent: string, format: StoredTextFormat): boolean {
+    if (typeof stored === "number") {
+        return sent.trim() !== "" && Number(sent) === stored;
+    }
+
+    if (typeof stored === "boolean") {
+        return sent.trim().toLowerCase() === String(stored);
+    }
+
+    const identity = identityNames(stored);
+    if (identity.length > 0) {
+        return identity.some((name) => name.toLowerCase() === sent.trim().toLowerCase());
+    }
+
+    return sameStoredText({ stored: fieldText(stored), sent, format });
 }
 
 /** Read, substitute images, and either describe the patch or send it and compare the read-back. */
@@ -265,20 +346,27 @@ export async function executeWorkItemUpdate(
     const mismatches: { field: string; sent: string; stored: string }[] = [];
 
     for (const field of fields) {
-        const stored = fieldText(after.fields[field.name]);
+        const raw = after.fields[field.name];
+        const format = storedTextFormat({
+            name: field.name,
+            sent: field.value,
+            stored: raw,
+            markdownFields: input.markdownFields,
+            formats: after.multilineFieldsFormat,
+        });
 
-        if (!sameStoredMarkdown(stored, field.value)) {
-            mismatches.push({ field: field.name, sent: field.value, stored });
+        if (!storedMatches(raw, field.value, format)) {
+            mismatches.push({ field: field.name, sent: field.value, stored: fieldText(raw) });
         }
+    }
 
-        const wantsMarkdown = input.markdownFields.includes(field.name) && field.value !== "";
+    // On its own loop: `--markdown <field>` may switch a field it does not also set.
+    for (const name of new Set(input.markdownFields)) {
+        const sent = fields.find((field) => field.name === name);
+        const value = sent ? sent.value : fieldText(after.fields[name]);
 
-        if (wantsMarkdown && (after.multilineFieldsFormat[field.name] ?? "").toLowerCase() !== "markdown") {
-            mismatches.push({
-                field: field.name,
-                sent: "Markdown",
-                stored: after.multilineFieldsFormat[field.name] ?? "",
-            });
+        if (value !== "" && (after.multilineFieldsFormat[name] ?? "").toLowerCase() !== "markdown") {
+            mismatches.push({ field: name, sent: "Markdown", stored: after.multilineFieldsFormat[name] ?? "" });
         }
     }
 

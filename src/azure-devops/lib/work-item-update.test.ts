@@ -5,7 +5,7 @@ import {
     imageReuseMap,
     parseFieldSpec,
     parseReuseFile,
-    sameStoredMarkdown,
+    sameStoredText,
     sha256Hex,
     type WorkItemUpdateClient,
     type WorkItemUpdateImage,
@@ -171,22 +171,25 @@ describe("the rev test and the format switch", () => {
 });
 
 describe("read-back rewrites", () => {
+    const same = (stored: string, sent: string, images?: ReadonlyMap<string, string>) =>
+        sameStoredText({ stored, sent, format: "markdown", images });
+
     test("an emoji stored as a character reference matches the emoji that was sent", () => {
-        expect(sameStoredMarkdown("see &#128279; this", "see 🔗 this")).toBe(true);
-        expect(sameStoredMarkdown("see &#x1F517; this", "see 🔗 this")).toBe(true);
+        expect(same("see &#128279; this", "see 🔗 this")).toBe(true);
+        expect(same("see &#x1F517; this", "see 🔗 this")).toBe(true);
     });
 
     test("a quoted integer attribute may lose its quotes, and a percent value keeps them", () => {
-        expect(sameStoredMarkdown('<img width="375">', "<img width=375>")).toBe(true);
-        expect(sameStoredMarkdown('<img width="48%">', '<img width="48%">')).toBe(true);
-        expect(sameStoredMarkdown('<img width="48%">', "<img width=48%>")).toBe(false);
+        expect(same('<img width="375">', "<img width=375>")).toBe(true);
+        expect(same('<img width="48%">', '<img width="48%">')).toBe(true);
+        expect(same('<img width="48%">', "<img width=48%>")).toBe(false);
     });
 
     test("a local image src matches the attachment URL it was replaced with", () => {
         const images = new Map([["shots/a.png", ATTACHMENT]]);
 
-        expect(sameStoredMarkdown(`<img src="${ATTACHMENT}">`, '<img src="shots/a.png">', images)).toBe(true);
-        expect(sameStoredMarkdown(`<img src="${ATTACHMENT}">`, '<img src="shots/a.png">')).toBe(false);
+        expect(same(`<img src="${ATTACHMENT}">`, '<img src="shots/a.png">', images)).toBe(true);
+        expect(same(`<img src="${ATTACHMENT}">`, '<img src="shots/a.png">')).toBe(false);
     });
 });
 
@@ -218,6 +221,128 @@ describe("command input", () => {
 
         for (const option of command?.options ?? []) {
             expect(option.description.length, option.long).toBeGreaterThan(0);
+        }
+    });
+});
+
+describe("the read-back of typed fields", () => {
+    function typedClient(stored: Record<string, unknown>): WorkItemUpdateClient {
+        let rev = 6;
+        return {
+            async read() {
+                return { id: 100, rev, fields: rev > 6 ? stored : {}, multilineFieldsFormat: {} };
+            },
+            async upload() {
+                return ATTACHMENT;
+            },
+            async update() {
+                rev += 1;
+            },
+        };
+    }
+
+    const update = (ado: WorkItemUpdateClient, name: string, value: string) =>
+        executeWorkItemUpdate(ado, {
+            id: 100,
+            fields: [{ name, value }],
+            markdownFields: [],
+            images: [],
+            reuse: new Map(),
+            confirm: true,
+        });
+
+    test("a number, a boolean and an identity the server stores in its own type match what was sent", async () => {
+        const identity = { displayName: "Alice Example", uniqueName: "alice@example.com" };
+        const ado = typedClient({
+            "Microsoft.VSTS.Scheduling.RemainingWork": 5,
+            "Custom.Blocked": false,
+            "System.AssignedTo": identity,
+        });
+
+        expect((await update(ado, "Microsoft.VSTS.Scheduling.RemainingWork", "5")).ok).toBe(true);
+        expect((await update(ado, "Custom.Blocked", "False")).ok).toBe(true);
+        expect((await update(ado, "System.AssignedTo", "alice@example.com")).ok).toBe(true);
+        expect((await update(ado, "System.AssignedTo", "Alice Example <alice@example.com>")).ok).toBe(true);
+    });
+
+    test("a different stored number is still a mismatch, reported as text", async () => {
+        const result = await update(
+            typedClient({ "Microsoft.VSTS.Scheduling.RemainingWork": 4 }),
+            "Microsoft.VSTS.Scheduling.RemainingWork",
+            "5"
+        );
+
+        expect(result).toMatchObject({
+            ok: false,
+            mismatches: [{ field: "Microsoft.VSTS.Scheduling.RemainingWork", sent: "5", stored: "4" }],
+        });
+    });
+});
+
+describe("what the read-back may forgive", () => {
+    test("a plain field matches exactly: a semicolon or a space the server dropped is a mismatch", async () => {
+        const ado = client(live({ fields: { "System.Title": "old" }, multilineFieldsFormat: {} }));
+        ado.update = async () => {};
+        const read = ado.read;
+        ado.read = async (id) => ({ ...(await read(id)), rev: 7, fields: { "System.Title": "ab" } });
+        const result = await executeWorkItemUpdate(ado, {
+            id: 100,
+            fields: [{ name: "System.Title", value: "a;b" }],
+            markdownFields: [],
+            images: [],
+            reuse: new Map(),
+            confirm: true,
+        });
+
+        expect(result).toMatchObject({ ok: false, mismatches: [{ field: "System.Title", sent: "a;b", stored: "ab" }] });
+        expect(sameStoredText({ stored: "a  b", sent: "a b", format: "plain" })).toBe(false);
+    });
+
+    test("Markdown keeps semicolons, paragraph breaks and code indentation", () => {
+        const md = (stored: string, sent: string) => sameStoredText({ stored, sent, format: "markdown" });
+
+        expect(md("ab", "a;b")).toBe(false);
+        expect(md("one two", "one\n\ntwo")).toBe(false);
+        expect(md("```\ncode\n```", "```\n    code\n```")).toBe(false);
+        expect(md("one\r\n\r\ntwo  \n", "one\n\ntwo")).toBe(true);
+    });
+
+    test("HTML forgives insignificant space and the semicolon the server adds to a style", () => {
+        const html = (stored: string, sent: string) => sameStoredText({ stored, sent, format: "html" });
+
+        expect(html('<p>\n  <span style="color:red;">a</span>\n</p>', '<p><span style="color:red">a</span></p>')).toBe(
+            true
+        );
+        expect(html("<p>a;b</p>", "<p>ab</p>")).toBe(false);
+    });
+
+    test("--markdown without --field still checks that the field became Markdown", async () => {
+        const ado = client(live({ fields: { "System.Description": "body", "System.Title": "t" } }));
+        ado.update = async () => {};
+        const read = ado.read;
+        ado.read = async (id) => ({ ...(await read(id)), rev: 7 });
+        const formatOnly = await executeWorkItemUpdate(ado, {
+            id: 100,
+            fields: [],
+            markdownFields: ["System.Description"],
+            images: [],
+            reuse: new Map(),
+            confirm: true,
+        });
+        const otherField = await executeWorkItemUpdate(ado, {
+            id: 100,
+            fields: [{ name: "System.Title", value: "t" }],
+            markdownFields: ["System.Description"],
+            images: [],
+            reuse: new Map(),
+            confirm: true,
+        });
+
+        for (const result of [formatOnly, otherField]) {
+            expect(result).toMatchObject({
+                ok: false,
+                mismatches: [{ field: "System.Description", sent: "Markdown", stored: "html" }],
+            });
         }
     });
 });
