@@ -1,8 +1,8 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, sep } from "node:path";
 import { runOptimize } from "@app/macos/lib/clones/audit";
 import { collapseDuplicates, isUnderAny } from "@app/macos/lib/clones/collapse";
 import { getCloneId, getPrivateSize } from "@genesiscz/utils/macos/apfs";
@@ -206,6 +206,34 @@ describe("collapseDuplicates across roots", () => {
             rmSync(outer, { recursive: true, force: true });
         }
     });
+
+    it("applies --exclude when the scan root is the filesystem root", async () => {
+        const outer = realpathSync(mkdtempSync(join(tmpdir(), "gt-cl-fsroot-")));
+        try {
+            // An odd size as the floor, so the other files beside the fixture are not hashed.
+            const payload = Buffer.alloc(1_234_567, 0x55);
+            for (const name of ["x", "y", "skipme"]) {
+                mkdirSync(join(outer, name), { recursive: true });
+                writeFileSync(join(outer, name, "a.bin"), payload);
+            }
+
+            // Walk only the dirs on the way to the fixture and the fixture itself.
+            const shouldEnter = (dir: string): boolean =>
+                dir === outer || outer.startsWith(`${dir}${sep}`) || dir.startsWith(`${outer}${sep}`);
+            const report = await collapseDuplicates({
+                roots: ["/"],
+                shouldEnter,
+                minSize: payload.length,
+                nativeWalk: false,
+                include: [basename(outer)],
+                exclude: ["skipme"],
+            });
+            expect(report.sets.length).toBe(1);
+            expect(report.sets[0].members.sort()).toEqual([join(outer, "x", "a.bin"), join(outer, "y", "a.bin")]);
+        } finally {
+            rmSync(outer, { recursive: true, force: true });
+        }
+    });
 });
 
 describe("collapseDuplicates keep-only roots", () => {
@@ -268,6 +296,7 @@ describe("isUnderAny", () => {
         expect(isUnderAny("/a/bb/c", ["/a/b"])).toBe(false);
         expect(isUnderAny("/x", ["/a/b"])).toBe(false);
         expect(isUnderAny("/a/b", [])).toBe(false);
+        expect(isUnderAny("/a/b", ["/"])).toBe(true);
     });
 });
 

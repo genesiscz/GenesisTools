@@ -62,16 +62,22 @@ export interface CollapseArgs {
     partnerFor?: (path: string, size: number) => string[];
 }
 
+/** True when `path` equals `root` or sits below it. The filesystem root `/`
+ *  already ends in the separator, so it contains every absolute path. */
+function contains(root: string, path: string): boolean {
+    return path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
+}
+
 /** True when `path` equals one of `roots` or sits below it. */
 export function isUnderAny(path: string, roots: readonly string[]): boolean {
-    return roots.some((r) => path === r || path.startsWith(`${r}${sep}`));
+    return roots.some((r) => contains(r, path));
 }
 
 /** Which root contains `absPath`? Used to relativize for glob matching across
  *  multi-root scans. Returns the first root that's an ancestor. */
 function rootOf(absPath: string, roots: string[]): string | null {
     for (const r of roots) {
-        if (absPath === r || absPath.startsWith(`${r}${sep}`)) {
+        if (contains(r, absPath)) {
             return r;
         }
     }
