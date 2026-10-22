@@ -298,7 +298,7 @@ async function importOne(name: string, input: ReviewImportInput, readers: Review
         },
         ledgerPath
     );
-    log.info({ name, verdict, files: base.files, base: base.base, head: base.head }, "review imported");
+    log.debug({ name, verdict, files: base.files, base: base.base, head: base.head }, "review imported");
 
     return {
         name,
