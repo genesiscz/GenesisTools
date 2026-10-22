@@ -58,7 +58,7 @@
 	<key>NSSystemAdministrationUsageDescription</key>
 	<string>Full Disk Access lets tools macos mail, messages and voice-memos read the Mail, Messages and Voice Memos databases. Nothing else in GenesisTools needs it.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>A program you started through tools (a dev server, a language server, a Claude session) reaches a device on your network. Every tools command runs inside GenesisTools, so macOS asks in its name. After a rebuild, a program still running the old build asks once more. To see which program asked, run: tools macos permissions local-network</string>
+	<string>A program you started through tools (a dev server, a language server, a Claude session) reaches a device on your network. Every tools command runs inside GenesisTools, so macOS asks in its name. After a rebuild, a program still running the old build asks once more. A GenesisTools panel beside this dialog names the program; tools macos permissions local-network lists earlier ones.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
