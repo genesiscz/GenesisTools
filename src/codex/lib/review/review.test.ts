@@ -2,14 +2,17 @@ import { describe, expect, test } from "bun:test";
 import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { WorkerCostRow } from "@app/ai-spend/lib/workers/ledger";
 import type { CodexFinishedTurn } from "@genesiscz/utils/codex/turn-cost";
 import type { NumstatEntry, PrInfo } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ReviewManifest } from "@genesiscz/utils/worker/contract";
 import { codexDriver } from "../driver";
 import { spawnCodexSession } from "../spawn";
+import type { CodexSessionMeta } from "../store";
 import { escalatedReviewName, markReviewShallow, recordReviewTurn } from "./controller";
 import { checkReview, decideGate, parseReviewReport } from "./gate";
+import { importReviewSessions, type ReviewImportReaders } from "./import";
 import { type ReviewLedgerRecord, readReviewRecords } from "./ledger";
 import { prepareReview, type ReviewGitReaders } from "./prepare";
 import { filterReviews, parseReviewSince, reviewTotals, summarizeReviews } from "./report";
@@ -25,6 +28,7 @@ function readers(options: {
     upstream?: string | null;
     numstat?: NumstatEntry[];
     refs?: string[];
+    commitBefore?: (at: string) => string | null;
 }): ReviewGitReaders & { calls: string[] } {
     const calls: string[] = [];
     return {
@@ -35,10 +39,11 @@ function readers(options: {
         refExists: async (_cwd, ref) => (options.refs ?? ["origin/master"]).includes(ref),
         pullRequest: async () => options.pr ?? null,
         upstream: async () => options.upstream ?? null,
-        numstat: async (_cwd, base, paths) => {
-            calls.push(`numstat ${base}${paths ? ` ${paths.join(",")}` : ""}`);
+        numstat: async (_cwd, base, paths, head) => {
+            calls.push(`numstat ${base}${head ? `...${head}` : ""}${paths ? ` ${paths.join(",")}` : ""}`);
             return options.numstat ?? [entry("src/a.ts", 40, 2)];
         },
+        commitBefore: async (_cwd, at) => (options.commitBefore ? options.commitBefore(at) : null),
     };
 }
 
@@ -564,5 +569,173 @@ describe("spawn guards", () => {
         await expect(spawnCodexSession({ name: "x", mode: "task", review: reviewConfig() })).rejects.toThrow(
             "needs its review record"
         );
+    });
+});
+
+function importedMeta(name: string, over: Partial<CodexSessionMeta> = {}): CodexSessionMeta {
+    return {
+        name,
+        daemonPid: 0,
+        cwd: `/wt/${name}`,
+        sandbox: "read-only",
+        approvalPolicy: "never",
+        writePolicy: "deny",
+        status: "closed",
+        agentName: `codex_${name}`,
+        rendezvousSession: "s",
+        agentsEnabled: true,
+        startedAt: "2026-10-22T19:08:07.954Z",
+        lastEventAt: "2026-10-22T19:30:24.784Z",
+        codexVersion: "0.162.1",
+        pendingApprovals: {},
+        effort: "medium",
+        label: `pr-split-review ${name}`,
+        threadId: `thread-${name}`,
+        ...over,
+    };
+}
+
+function costRow(name: string, turn: number, over: Partial<WorkerCostRow> = {}): WorkerCostRow {
+    return {
+        v: 1,
+        ts: `2026-10-22T19:1${turn}:00.000Z`,
+        backend: "codex",
+        name,
+        sessionId: `thread-${name}`,
+        turn,
+        model: "gpt-6.1-sol",
+        effort: "medium",
+        auth: "subscription",
+        account: null,
+        durationMs: 100_000,
+        toolCalls: 10,
+        tokens: { input: 1000, cacheRead: 0, cacheWrite: 0, output: 400, reasoning: 300 },
+        cost: {
+            apiEquivalentUsd: 0.5,
+            basis: "catalog",
+            pricedAs: ["gpt-6.1-sol"],
+            longContextRequests: 0,
+            auth: "subscription",
+            billedUsd: 0,
+            claudeEquivalent: { estimate: true, opusModel: "o", sonnetModel: "s", opusUsd: 1, sonnetUsd: 0.5 },
+        },
+        cwd: `/wt/${name}`,
+        outcome: "completed",
+        ...over,
+    };
+}
+
+function importReaders(ledgerPath: string, options: { gone?: string[]; noBase?: boolean } = {}) {
+    const git = readers({
+        pr: options.noBase ? null : PR,
+        numstat: [entry("src/a.ts", 30, 5), entry("src/b.ts", 10)],
+        commitBefore: (at) => (at.startsWith("2026-10-22") ? "abc1234567890" : null),
+    });
+    const messages: Record<string, string> = {
+        "rv-full":
+            "1. [High] src/a.ts:3 - bug. Scenario: x. Fix: y.\nRan: bun test\nFiles reviewed: 2 of 2\nNot reviewed: none",
+        "rv-part": "Findings: none\nRan: nothing\nFiles reviewed: 1 of 2\nNot reviewed: src/b.ts (time)",
+        "rv-gone": "a summary without the coverage line",
+    };
+    const fake: ReviewImportReaders = {
+        readMeta: async (name) => (name in messages ? importedMeta(name) : null),
+        costRows: (meta) =>
+            meta.name === "rv-part" ? [costRow(meta.name, 1), costRow(meta.name, 2)] : [costRow(meta.name, 1)],
+        lastAgentMessage: async (meta) => messages[meta.name] ?? "",
+        cwdExists: (path) => !(options.gone ?? []).some((name) => path.endsWith(name)),
+        git,
+        ledgerRecords: () => readReviewRecords(ledgerPath).records,
+    };
+    return { fake, git };
+}
+
+describe("reviews import", () => {
+    test("backfills start, turns and a gate whose verdict the coverage line implies, diffing up to the commit the review saw", async () => {
+        const ledgerPath = join(mkdtempSync(join(tmpdir(), "gt-review-import-")), "reviews.jsonl");
+        const { fake, git } = importReaders(ledgerPath, { gone: ["rv-gone"] });
+        const results = await importReviewSessions({
+            names: ["rv-full", "rv-part", "rv-gone", "rv-none", "rv-full"],
+            base: "origin/master",
+            readers: fake,
+            ledgerPath,
+        });
+
+        expect(results.map((result) => [result.name, result.status, result.verdict ?? null])).toEqual([
+            ["rv-full", "imported", "pass"],
+            ["rv-part", "imported", "shallow"],
+            ["rv-gone", "imported", "imported"],
+            ["rv-none", "missing", null],
+        ]);
+        expect(results[0].manifest).toEqual({ base: "origin/master", head: "abc1234567890", files: 2, lines: 45 });
+        expect(results[2].manifest).toBeNull();
+        expect(results[2].notes[0]).toContain("/wt/rv-gone is gone");
+        expect(git.calls).toEqual(["numstat origin/master...abc1234567890", "numstat origin/master...abc1234567890"]);
+
+        const records = readReviewRecords(ledgerPath).records;
+        expect(records.map((record) => `${record.name}:${record.kind}`)).toEqual([
+            "rv-full:start",
+            "rv-full:turn",
+            "rv-full:gate",
+            "rv-part:start",
+            "rv-part:turn",
+            "rv-part:turn",
+            "rv-part:gate",
+            "rv-gone:start",
+            "rv-gone:turn",
+            "rv-gone:gate",
+        ]);
+        expect(records.every((record) => record.imported === true)).toBe(true);
+        expect(records[2]).toMatchObject({
+            kind: "gate",
+            pr: 12,
+            files: 2,
+            lines: 45,
+            effort: "medium",
+            head: "abc1234567890",
+        });
+        expect(records[6]).toMatchObject({
+            kind: "gate",
+            reason: "imported: Files reviewed 1 of 2, 1 unread",
+            unread: ["src/b.ts"],
+        });
+        expect(records[9]).toMatchObject({
+            base: "origin/master",
+            files: null,
+            lines: null,
+            reasoningPer100Lines: null,
+        });
+
+        const summaries = summarizeReviews(records);
+        expect(summaries.find((review) => review.name === "rv-part")).toMatchObject({
+            turns: 2,
+            toolCalls: 20,
+            costUsd: 1,
+            coverage: "1/2",
+            reasoningPer100Lines: 1333,
+            verdict: "shallow",
+        });
+        expect(summaries.find((review) => review.name === "rv-gone")?.reasoningPer100Lines).toBeNull();
+
+        // A second import of the same names adds nothing.
+        const again = await importReviewSessions({ names: ["rv-full", "rv-part"], readers: fake, ledgerPath });
+        expect(again.map((result) => result.status)).toEqual(["skipped", "skipped"]);
+        expect(readReviewRecords(ledgerPath).records).toHaveLength(10);
+    });
+
+    test("without a base or with --no-cwd-from-session the manifest is null and the note says why", async () => {
+        const ledgerPath = join(mkdtempSync(join(tmpdir(), "gt-review-import-")), "reviews.jsonl");
+        const { fake } = importReaders(ledgerPath, { noBase: true });
+        const [derived] = await importReviewSessions({ names: ["rv-full"], readers: fake, ledgerPath });
+        expect(derived.manifest).toBeNull();
+        expect(derived.notes[0]).toContain("no base: --mode review needs --base <ref>");
+
+        const [skipped] = await importReviewSessions({
+            names: ["rv-part"],
+            cwdFromSession: false,
+            readers: fake,
+            ledgerPath,
+        });
+        expect(skipped.notes[0]).toContain("manifest skipped");
+        expect(readReviewRecords(ledgerPath).records.filter((record) => record.kind === "gate")).toHaveLength(2);
     });
 });

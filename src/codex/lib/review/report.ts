@@ -1,6 +1,5 @@
 import { parseSince } from "@genesiscz/utils/date";
 import { parseDuration } from "@genesiscz/utils/format";
-import type { ReviewEffort } from "@genesiscz/utils/worker/contract";
 import type { ReviewLedgerRecord } from "./ledger";
 import type { ReviewVerdict } from "./types";
 
@@ -11,10 +10,11 @@ export interface ReviewSummary {
     label?: string;
     pr?: number;
     branch?: string;
-    base: string;
-    files: number;
-    lines: number;
-    effort: ReviewEffort;
+    base: string | null;
+    files: number | null;
+    lines: number | null;
+    effort: string;
+    imported?: true;
     startedAt: string;
     lastAt: string;
     turns: number;
@@ -65,6 +65,7 @@ function emptySummary(record: ReviewLedgerRecord): ReviewSummary {
         files: record.files,
         lines: record.lines,
         effort: record.effort,
+        ...(record.imported ? { imported: true as const } : {}),
         startedAt: record.ts,
         lastAt: record.ts,
         turns: 0,
@@ -120,7 +121,10 @@ export function summarizeReviews(records: readonly ReviewLedgerRecord[]): Review
                 summary.coverage = `${record.coverage.reviewed}/${record.coverage.total}`;
             }
 
-            summary.reasoningPer100Lines = Math.round((summary.reasoningTokens * 100) / Math.max(1, summary.lines));
+            summary.reasoningPer100Lines =
+                summary.lines === null
+                    ? null
+                    : Math.round((summary.reasoningTokens * 100) / Math.max(1, summary.lines));
             continue;
         }
 

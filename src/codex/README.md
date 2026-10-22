@@ -293,7 +293,15 @@ Every review start, review turn and gate decision is one line of `~/.genesis-too
 tools codex reviews [--since 24h] [--pr <n>] [--label <text>] [--effort <tier>] [--verdict pass|steered|escalated|shallow|open] [--name <text>] [--json]
 tools codex review-depth <name> [--json]        # one review: manifest, spend, coverage, reasoning per 100 lines, verdict, gate history
 tools codex review-depth <name> --base <ref>    # the same checks for a session spawned without --mode review
+tools codex reviews import <name...> [--base <ref>] [--no-cwd-from-session] [--json]
 ```
+
+`reviews import` backfills sessions that ran before the ledger: a start line, one turn line per booked turn of the
+worker cost ledger, and a gate line marked `imported: true`. Its verdict comes from the final agent message (from the
+session's event log): `pass` for `Files reviewed: n of n`, `shallow` for fewer, `imported` with no such line. The
+manifest is `<base>...<the last commit before the session started>` in the session's cwd, so fix commits made after
+the review do not count; with no base (no `--base`, no PR target, no upstream) or a removed cwd its counts are null.
+A session already in the ledger is skipped, so a repeated import adds nothing.
 
 `login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider codex` and `tools ai usage --provider codex`. `tools ai accounts discover --provider codex` lists every `~/.codex*` profile on the machine and `--bind` turns the unbound ones into accounts.
 
