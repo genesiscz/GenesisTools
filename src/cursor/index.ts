@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { noteUsageError, watchToolRun } from "@genesiscz/utils/cli/failures/watch";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { out } from "@genesiscz/utils/logger";
 import { handleReadmeFlag } from "@genesiscz/utils/readme";
@@ -8,12 +9,15 @@ import { parseCursorArgs } from "./lib/args";
 import { streamCursorAgent } from "./lib/stream-agent";
 
 handleReadmeFlag(import.meta.url);
+// The parser below is stricter than commander on purpose (lib/args.ts), so this entry records its failures itself.
+watchToolRun({ tool: "cursor" });
 
 // ─── CLI argument parsing ──────────────────────────────────────────────────
 
 const parsed = parseCursorArgs(process.argv.slice(2), process.cwd());
 
 if (!parsed.ok) {
+    noteUsageError(parsed.message);
     out.error(pc.red(parsed.message));
     out.error(pc.dim(`Run ${toolCommand("cursor")} --help for the options.`));
     process.exit(1);
@@ -42,6 +46,7 @@ Each option also takes its value as --option=value. A question that starts with 
 }
 
 if (!question) {
+    noteUsageError("No question provided.");
     out.error(pc.red("No question provided."));
     out.error(pc.dim(`Usage: ${toolCommand("cursor")} "which service creates the reservation?"`));
     process.exit(1);

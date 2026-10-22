@@ -2,6 +2,7 @@
 
 import "@genesiscz/utils/ink/react-production";
 import { parseArgs } from "node:util";
+import { noteUsageError, watchToolRun } from "@genesiscz/utils/cli/failures/watch";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { requireInteractiveTty } from "@genesiscz/utils/ink/lib/tty-guard";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -602,12 +603,15 @@ const App: React.FC<{ options: AppOptions }> = ({ options }) => {
 export default App;
 
 if (import.meta.main) {
+    // An Ink app with a node:util parser: it records its failures itself, as runTool does for commander tools.
+    watchToolRun({ tool: "macos-resources" });
     let options: AppOptions | "help";
 
     try {
         options = parseCliOptions(process.argv.slice(2));
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
+        noteUsageError(message);
         logger.error(message);
         process.exit(1);
     }

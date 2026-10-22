@@ -6,8 +6,9 @@ import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
 import { type Command, CommanderError } from "commander";
 import { setCurrentCommand } from "./current-command";
 import { enhanceHelp, markRequiredOptionsDeep, setSuggestCommandProgram, showHelpAfterErrorDeep } from "./executor";
+import { commandPathFromArgv, noteToolError, watchToolRun } from "./failures/watch";
 import { observeInterrupts } from "./interrupt";
-import { recordRunOnExit, setRunLabel } from "./run-record";
+import { currentRunLabel, recordRunOnExit, setRunLabel } from "./run-record";
 
 export type Verbosity = 0 | 1 | 2 | 3;
 
@@ -207,6 +208,7 @@ function launchedByTestRunner(): boolean {
 export function reportUnhandledToolError(error: unknown): void {
     const message = error instanceof Error ? error.message : String(error);
     logger.debug({ err: error }, "unhandled tool error");
+    noteToolError(error);
     process.stderr.write(`ERROR: ${message}\n`);
     process.exitCode = 1;
 }
@@ -263,6 +265,11 @@ export async function runTool(
 
     if (argv === process.argv) {
         recordRunOnExit(tool);
+        watchToolRun({
+            tool,
+            argv: argv.slice(2),
+            commandPath: () => currentRunLabel() ?? commandPathFromArgv(program, argv.slice(2)),
+        });
     }
 
     if (!opts.ignoreParams?.includes("verbose")) {

@@ -8,6 +8,10 @@ export function setRunLabel(label: string): void {
     runLabel = label;
 }
 
+export function currentRunLabel(): string | null {
+    return runLabel;
+}
+
 /**
  * One `[profile:cli]` line per command run, written at exit: wall time since the process started (Bun
  * startup and imports included, which is what a caller waits for), CPU time, peak memory, and

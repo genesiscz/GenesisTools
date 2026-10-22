@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it, spyOn } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readFailures, type ToolFailure } from "@genesiscz/utils/cli/failures/record";
 import { env } from "@genesiscz/utils/env";
 import { setConsoleLevel } from "@genesiscz/utils/logger";
+import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { Command } from "commander";
 import {
     addGlobalVerboseOption,
@@ -163,9 +166,13 @@ describe("addGlobalVerboseOption trace gate", () => {
 // runTool: a real run (a child process, because runTool refuses process.argv under the test runner) and a caller
 // that passes its own argv.
 describe("runTool error boundary", () => {
-    async function runFixture(...args: string[]): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+    // Each run gets its own home, so the failure record it writes can be read back.
+    async function runFixture(
+        ...args: string[]
+    ): Promise<{ exitCode: number; stdout: string; stderr: string; failures: ToolFailure[] }> {
+        const home = mkdtempSync(join(tmpdir(), "gt-run-tool-"));
         const proc = Bun.spawn(["bun", "run", BOUNDARY_FIXTURE, ...args], {
-            env: process.env,
+            env: { ...process.env, GENESIS_TOOLS_HOME: home },
             stdout: "pipe",
             stderr: "pipe",
         });
@@ -175,7 +182,10 @@ describe("runTool error boundary", () => {
             proc.exited,
         ]);
 
-        return { exitCode, stdout, stderr };
+        const failures = [
+            ...readFailures({ fromDay: "0000-00-00", toDay: "9999-99-99", dir: genesisToolsDirIn(home, "logs") }),
+        ];
+        return { exitCode, stdout, stderr, failures };
     }
 
     it("reports an action error from a real run as one ERROR line and exits 1", async () => {
@@ -185,6 +195,10 @@ describe("runTool error boundary", () => {
         expect(run.stderr.match(/^ERROR: boom$/gm)?.length).toBe(1);
         expect(run.stderr).not.toContain("run-tool-boundary.ts");
         expect(run.stdout).toBe("");
+        expect(run.failures.map((failure) => [failure.kind, failure.tool, failure.command, failure.message])).toEqual([
+            ["error", "boundary", "boundary boom", "boom"],
+        ]);
+        expect(run.failures[0].stack).toContain("Error: boom");
     });
 
     it("leaves a Commander error to Commander's own exit path", async () => {
@@ -193,6 +207,9 @@ describe("runTool error boundary", () => {
         expect(run.exitCode).toBe(1);
         expect(run.stderr).toContain("unknown command 'nope'");
         expect(run.stderr).not.toContain("ERROR:");
+        expect(run.failures.map((failure) => [failure.kind, failure.argv, failure.message, failure.exitCode])).toEqual([
+            ["usage", ["nope"], "error: unknown command 'nope'", 1],
+        ]);
     });
 
     it("hands an action error back to a caller that passes its own argv", async () => {

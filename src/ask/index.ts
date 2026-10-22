@@ -18,6 +18,7 @@ import { expandAtMentions } from "@ask/utils/at-mentions";
 import { webSearchTool } from "@ask/utils/websearch";
 import * as p from "@clack/prompts";
 import { transcriptionManager } from "@genesiscz/utils/ai/transcription/TranscriptionManager";
+import { watchToolRun } from "@genesiscz/utils/cli/failures/watch";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger, out } from "@genesiscz/utils/logger";
 import { input } from "@genesiscz/utils/prompts/clack";
@@ -845,7 +846,8 @@ class ASKTool {
     }
 }
 
-// Run the tool
+// Run the tool. Its argument parser is its own (ask/utils/cli), so it records its failures itself, as runTool does.
+watchToolRun({ tool: "ask" });
 const askTool = new ASKTool();
 askTool.main().catch((err) => {
     logger.error(`Unexpected error: ${err}`);
