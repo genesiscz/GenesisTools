@@ -20,6 +20,10 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<!-- Every face starts as an accessory, so a link or a reopen never makes it regular. Those flips left
+	     stale Dock tiles behind; the hub, the window faces and the markdown viewer turn regular in code. -->
+	<key>LSUIElement</key>
+	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<!-- macOS 13 reads the pre-14 keys; PermissionsModel calls requestAccess(to:) there. -->
