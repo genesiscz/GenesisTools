@@ -1,10 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, sep } from "node:path";
+import { join, sep } from "node:path";
 import { runOptimize } from "@app/macos/lib/clones/audit";
 import { collapseDuplicates, isUnderAny } from "@app/macos/lib/clones/collapse";
+import type { FileMetaCacheLike } from "@genesiscz/utils/fs/disk-usage";
 import { getCloneId, getPrivateSize } from "@genesiscz/utils/macos/apfs";
 import { skip } from "@genesiscz/utils/test/skip";
 
@@ -210,8 +211,8 @@ describe("collapseDuplicates across roots", () => {
     it("applies --exclude when the scan root is the filesystem root", async () => {
         const outer = realpathSync(mkdtempSync(join(tmpdir(), "gt-cl-fsroot-")));
         try {
-            // An odd size as the floor, so the other files beside the fixture are not hashed.
-            const payload = Buffer.alloc(1_234_567, 0x55);
+            // An odd exact size as the floor: few files beside the fixture reach it.
+            const payload = Buffer.alloc(104_729, 0x55);
             for (const name of ["x", "y", "skipme"]) {
                 mkdirSync(join(outer, name), { recursive: true });
                 writeFileSync(join(outer, name, "a.bin"), payload);
@@ -220,14 +221,38 @@ describe("collapseDuplicates across roots", () => {
             // Walk only the dirs on the way to the fixture and the fixture itself.
             const shouldEnter = (dir: string): boolean =>
                 dir === outer || outer.startsWith(`${dir}${sep}`) || dir.startsWith(`${outer}${sep}`);
+            // The walk still lists the files of each ancestor dir. A file outside the
+            // fixture answers from this cache with a sha of its own, so it is never read;
+            // `set` runs once per hashed file and records it.
+            const hashed: string[] = [];
+            const cache: FileMetaCacheLike = {
+                get: (path) => {
+                    if (path.startsWith(`${outer}${sep}`)) {
+                        return null;
+                    }
+
+                    const st = statSync(path, { bigint: true });
+                    return {
+                        size: st.size,
+                        mtimeNs: st.mtimeNs,
+                        sha256: `outside:${path}`,
+                        cloneId: "",
+                        lastSeenAt: 0,
+                    };
+                },
+                set: (path) => {
+                    hashed.push(path);
+                },
+            };
             const report = await collapseDuplicates({
                 roots: ["/"],
                 shouldEnter,
                 minSize: payload.length,
                 nativeWalk: false,
-                include: [basename(outer)],
+                cache,
                 exclude: ["skipme"],
             });
+            expect(hashed.sort()).toEqual(["skipme", "x", "y"].map((name) => join(outer, name, "a.bin")));
             expect(report.sets.length).toBe(1);
             expect(report.sets[0].members.sort()).toEqual([join(outer, "x", "a.bin"), join(outer, "y", "a.bin")]);
         } finally {
