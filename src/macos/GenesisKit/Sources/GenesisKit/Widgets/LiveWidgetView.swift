@@ -199,7 +199,8 @@ public struct LiveWidgetView: View {
                         // Outermost, so the scroll view's own anchor modifiers still sit directly on it.
                         .scrollOverflowHints()
                 }
-                if section != "Sessions" { composer }
+                // While a decision card holds the composer for an own answer, the bottom one would edit the same draft.
+                if section != "Sessions" && !(section == "Inbox" && model.ownAnswerCard != nil) { composer }
             }
         }
         .mediaPreviewHost()
@@ -461,6 +462,9 @@ public struct LiveWidgetView: View {
             if !card.attachments.isEmpty {
                 WidgetCardAttachments(card: card, height: 110, maxWidth: 260, compare: true, showMedia: showMedia)
             }
+            if card.kind == "decision" && !card.needsAnswer {
+                WidgetDecisionOutcome(card: card) { model.openDecision(id: $0.id, sessionKey: $0.sessionKey) }
+            }
             if card.needsAnswer {
                 if card.kind == "form" {
                     ForEach(card.formItems ?? []) { item in
@@ -495,6 +499,7 @@ public struct LiveWidgetView: View {
                                         + (index < 9 ? " · key \(index + 1)" : ""))
                         .accessibilityLabel("Answer \(choice.id): " + Self.choiceText(choice))
                     }
+                    ownAnswer(card)
                 }
             }
             HStack(spacing: 8) {
@@ -532,6 +537,29 @@ public struct LiveWidgetView: View {
         }
     }
 
+    /// "Write my own answer": a row under the options that opens the full composer (text, media, screenshot, voice)
+    /// inside the card; Send delivers the draft as the answer with no option picked.
+    @ViewBuilder private func ownAnswer(_ card: WidgetCard) -> some View {
+        if model.ownAnswerCard?.id == card.id {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Your own answer").font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Button("Back to the options") {
+                        GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { model.ownAnswerCardID = nil }
+                    }.buttonStyle(.genHoverPlain()).font(.caption)
+                }
+                composer(ownAnswer: card).disabled(model.cardPending)
+            }
+            .transition(.genReveal)
+            .onAppear { editing = true }
+        } else {
+            WidgetOwnAnswerRow {
+                GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { model.ownAnswerCardID = card.id }
+            }.disabled(model.importing > 0 || model.cardPending)
+        }
+    }
+
     static func kindSymbol(_ kind: String) -> String {
         switch kind {
         case "answer": return "text.bubble"
@@ -554,6 +582,12 @@ public struct LiveWidgetView: View {
         case "answer": return card.read ? "Answer" : "New answer"
         case "result": return card.read ? "Agent result" : "New agent result"
         case "todo": return "Task · " + WidgetTask.label(for: card.status)
+        case "decision":
+            if let replacement = card.supersededBy { return "Decision · Superseded by DECISION \(replacement.number)" }
+            if let option = card.option, !option.isEmpty, ["acknowledged", "implemented", "sent", "answered"].contains(card.status) {
+                return "Decision · Answered \(option) · " + card.status.capitalized
+            }
+            return "Decision · " + card.status.capitalized
         default: return card.kind.capitalized + " · " + card.status.capitalized
         }
     }
@@ -809,7 +843,10 @@ public struct LiveWidgetView: View {
             .background(.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
     }
 
-    private var composer: some View {
+    private var composer: some View { composer(ownAnswer: nil) }
+
+    /// The reply composer. With `ownAnswer` it sits in that decision's card and sends the draft as the answer.
+    private func composer(ownAnswer: WidgetCard?) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if !model.draft.assetIds.isEmpty {
                 attachments(model.draft.assetIds, tile: CGSize(width: 88, height: 60), removable: true)
@@ -829,7 +866,8 @@ public struct LiveWidgetView: View {
                 ProgressView("Saving attachment…").controlSize(.small).font(.caption)
             }
             HStack(alignment: .bottom, spacing: 8) {
-                let placeholder = "Reply to " + (model.selected?.target.provider.capitalized ?? "agent") + "…"
+                let placeholder = ownAnswer.map { "Your own answer to DECISION \($0.number ?? 0)…" }
+                    ?? "Reply to " + (model.selected?.target.provider.capitalized ?? "agent") + "…"
                 if panelMoving, !editing, composerFieldHeight > 0 {
                     // While the panel's outline moves the composer rides its bottom edge; a drawn stand-in moves for
                     // free, the AppKit field would lay out and rebuild the key view loop on every frame.
@@ -842,7 +880,7 @@ public struct LiveWidgetView: View {
                     TextField(placeholder, text: Binding(get: { model.draft.text }, set: model.setText), axis: .vertical)
                         .textFieldStyle(.plain).font(.system(size: 12)).lineLimit(1...4).focused($editing)
                         .onSubmit { model.send() }
-                        .accessibilityLabel("Reply to selected agent")
+                        .accessibilityLabel(ownAnswer == nil ? "Reply to selected agent" : "Your own answer")
                         .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { composerFieldHeight = $0 }
                 }
                 Button {
@@ -850,7 +888,8 @@ public struct LiveWidgetView: View {
                 } label: {
                     Image(systemName: "arrow.up.circle.fill").font(.system(size: 23)).foregroundStyle(.blue)
                 }.buttonStyle(.genHoverIcon(accent: .blue, diameter: 28)).disabled(model.importing > 0)
-                    .instantTooltip("Send (Return)").accessibilityLabel("Send reply")
+                    .instantTooltip(ownAnswer == nil ? "Send (Return)" : "Send as your answer (Return)")
+                    .accessibilityLabel(ownAnswer == nil ? "Send reply" : "Send your answer")
             }
             HStack(spacing: 15) {
                 Button(action: model.chooseFiles) { Image(systemName: "paperclip") }.instantTooltip(

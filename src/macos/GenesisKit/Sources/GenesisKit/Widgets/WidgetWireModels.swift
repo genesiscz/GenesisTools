@@ -154,6 +154,19 @@ public struct WidgetCard: Codable, Identifiable, Equatable, Sendable {
     public var refs: [WidgetReference]
     public var read: Bool
     public var entryId: String?
+    /// The decision that replaced this one (`question_update` with `supersededBy`).
+    public struct SupersededBy: Codable, Equatable, Sendable {
+        public var id: String
+        public var number: Int
+        public var sessionKey: String?
+        public var title: String?
+    }
+    /// A decision's recorded answer: the option letters, the text, and who recorded it ("inbox" or "agent").
+    public var option: String? = nil
+    public var answer: String? = nil
+    public var answeredVia: String? = nil
+    public var comments: [String]? = nil
+    public var supersededBy: SupersededBy? = nil
     public var needsAnswer: Bool {
         (kind == "decision" && ["open", "drafted"].contains(status))
             || (kind == "form" && status == "pending")
@@ -268,6 +281,11 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var glassEffect: Bool?
     public var display: String?
     public var providers: [String]?
+    /// Widget alerts for new items: a chime (`alertSound`, a system sound name or "none") and a popup.
+    public var alertDecisions: Bool?
+    public var alertAnswers: Bool?
+    public var alertSound: String?
+    public var alertPopup: Bool?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(
@@ -354,6 +372,9 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     public var key: String
     public var at: Double
     public var needsAnswer: Bool
+    /// A short title (a decision's title or prompt, an answer's question) and a decision's number, for alerts.
+    public var title: String? = nil
+    public var number: Int? = nil
 }
 public struct WidgetInboxSession: Codable, Equatable, Sendable {
     public var key: String

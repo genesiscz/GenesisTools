@@ -460,6 +460,43 @@ struct WarmPaneVisibility: ViewModifier {
     }
 }
 
+/// The alert popup: what arrived and from which session. A click opens it in the inbox.
+struct WidgetPeekView: View {
+    @ObservedObject var model: WidgetModel
+    let item: WidgetInboxItem
+
+    var body: some View {
+        Button {
+            guard let surface = model.hoveredSurface else { return }
+            model.openInboxNotification(on: surface, key: item.key, needsAnswer: item.needsAnswer)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: item.needsAnswer ? "questionmark.bubble.fill" : "text.bubble.fill")
+                        .foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.blue)
+                    Text(WidgetAlerts.kicker(item)).font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(item.needsAnswer ? Color.orange : .secondary)
+                    Spacer(minLength: 0)
+                    LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
+                Text(item.title ?? "Open the inbox to see it.").font(.system(size: 12.5, weight: .medium))
+                    .lineLimit(3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                if let session = model.session(forKey: item.key) {
+                    Text(session.title + " · " + session.project).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
+                Text(item.needsAnswer ? "Click to answer" : "Click to read").font(.system(size: 10))
+                    .foregroundStyle(.tertiary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RowButtonStyle(cornerRadius: 10))
+        .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + (item.title ?? ""))
+    }
+}
+
 struct AgentWidgetModuleView: View {
     @ObservedObject var model: WidgetModel
     let presentation: WidgetModulePresentation
@@ -467,6 +504,8 @@ struct AgentWidgetModuleView: View {
     var body: some View {
         if presentation == .expanded {
             LiveWidgetView(model: model, edge: model.expanded ?? model.side, embedded: true)
+        } else if presentation == .preview, let item = model.peekItem {
+            WidgetPeekView(model: model, item: item)
         } else {
             VStack(alignment: .leading, spacing: 10) {
                 Text(model.selected?.title ?? "Your agent inbox").font(.system(size: 13, weight: .semibold))

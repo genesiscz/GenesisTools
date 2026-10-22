@@ -167,6 +167,35 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         }
         model.showSettings = { [weak self] in self?.showSettings() }
         model.showMedia = { [weak self] selection in self?.showMedia(selection) }
+        model.inboxArrived = { [weak self] items in self?.alert(items) }
+    }
+
+    /// Plays the alert chime. Tests replace it.
+    var playChime: (String?) -> Void = { WidgetAlerts.chime($0) }
+
+    /// New decisions, questions and answers: one chime, and the newest item pops up in the agents preview.
+    func alert(_ items: [WidgetInboxItem]) {
+        guard panelsEnabled else { return }
+        let preferences = model.snapshot?.state.preferences
+        let wanted = WidgetAlerts.wanted(items, preferences: preferences)
+        guard let item = WidgetAlerts.popupItem(wanted) else { return }
+        PerfLog.mark("widget.alert items=\(wanted.count) id=\(item.id) kind=\(item.kind)")
+        playChime(preferences?.alertSound)
+        guard preferences?.alertPopup ?? true, let surface = peekSurface() else { return }
+        if moduleIDs(for: surface).contains("agents"), model.moduleSelections[surface.key] != "agents" {
+            model.moduleSelections[surface.key] = "agents"
+        }
+        model.showPeek(item, on: surface)
+    }
+
+    /// The visible edge whose selected module is the agents inbox, else the first visible edge that has it.
+    private func peekSurface() -> WidgetSurfaceID? {
+        let visible = panels.keys.filter { surface in
+            let top = surface.edge == .top
+            return (model.placement == "both" || (model.placement == "top" ? top : !top))
+                && moduleIDs(for: surface).contains("agents")
+        }.sorted { $0.key < $1.key }
+        return visible.first { selectedModule(for: $0)?.id == "agents" } ?? visible.first
     }
 
     /// Without `showSettings`, a widget that is off opens the settings once the first snapshot arrives,

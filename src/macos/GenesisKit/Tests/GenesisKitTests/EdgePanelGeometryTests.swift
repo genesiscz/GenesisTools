@@ -1,4 +1,5 @@
 import SwiftUI
+import Vision
 import XCTest
 
 @testable import GenesisKitBase
@@ -579,6 +580,179 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.model.updatePreferences(["showWidget": .bool(false)])
         XCTAssertEqual(coordinator.panelCount, 0)
         XCTAssertFalse(coordinator.panelMonitorsInstalled)
+    }
+
+    /// "Visible edges" decides whether the top notch panel shows; the "Top notch" module card alone never does.
+    @MainActor
+    func testVisibleEdgesShowAndHideTheTopNotchPanel() async throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "Edge panels need a display")
+        let fixture = try fixture()
+        defer { cleanUp(fixture) }
+        let coordinator = fixture.coordinator
+        var shown: [EdgePanelPlacement] = []
+        coordinator.settingsPresenter = { _ in }
+        coordinator.orderFront = { shown.append($0.placement) }
+        coordinator.start(showSettings: true)
+        defer { coordinator.stop() }
+        try await waitFor { coordinator.model.snapshot != nil }
+
+        coordinator.model.updatePreferences(["showWidget": .bool(true), "placement": .string("both")])
+        XCTAssertTrue(shown.contains(.top), "placement both orders the top panel front")
+        XCTAssertTrue(shown.contains(.right), "placement both orders the side panels front")
+
+        shown = []
+        coordinator.model.updatePreferences(["placement": .string("top")])
+        XCTAssertTrue(shown.contains(.top))
+        XCTAssertFalse(shown.contains(.right), "placement top shows no side panel")
+
+        shown = []
+        coordinator.model.updatePreferences(["placement": .string("side")])
+        XCTAssertFalse(shown.contains(.top), "placement side shows no top panel")
+
+        shown = []
+        coordinator.model.updatePreferences(["placement": .string("both"), "topModules": .array([.string("capture")])])
+        XCTAssertTrue(shown.contains(.top), "a new top module set keeps the top panel")
+    }
+
+    /// A new decision chimes once and pops up in the agents preview; the preferences turn each part off.
+    @MainActor
+    func testANewDecisionChimesAndPopsUpUnlessTheAlertPreferencesSayNo() async throws {
+        try XCTSkipIf(NSScreen.screens.isEmpty, "Edge panels need a display")
+        let fixture = try fixture()
+        defer { cleanUp(fixture) }
+        let coordinator = fixture.coordinator
+        var chimes: [String?] = []
+        coordinator.settingsPresenter = { _ in }
+        coordinator.orderFront = { _ in }
+        coordinator.playChime = { chimes.append($0) }
+        coordinator.start(showSettings: true)
+        defer { coordinator.stop() }
+        try await waitFor { coordinator.model.snapshot != nil }
+        coordinator.model.updatePreferences(["showWidget": .bool(true), "placement": .string("side")])
+
+        let decision = WidgetInboxItem(id: "decision:d_4_s", sourceId: "d_4_s", kind: "decision", key: "local:claude:s:",
+            at: 2_000, needsAnswer: true, title: "Ship it?", number: 4)
+        let result = WidgetInboxItem(id: "result:x", sourceId: "x", kind: "result", key: "local:claude:s:",
+            at: 3_000, needsAnswer: false)
+        coordinator.alert([result])
+        XCTAssertEqual(chimes.count, 0, "an agent result never alerts")
+        XCTAssertNil(coordinator.model.peekItem)
+
+        coordinator.alert([result, decision])
+        XCTAssertEqual(chimes, [nil], "one chime with the default sound")
+        XCTAssertEqual(coordinator.model.peekItem, decision, "the item that waits for an answer pops up")
+        XCTAssertEqual(coordinator.model.hoveredSurface?.edge, .right)
+        XCTAssertEqual(coordinator.model.presentation(for: try XCTUnwrap(coordinator.model.hoveredSurface)), .preview)
+
+        coordinator.model.collapse()
+        XCTAssertNil(coordinator.model.peekItem)
+        coordinator.model.updatePreferences(["alertPopup": .bool(false), "alertSound": .string("Ping")])
+        coordinator.alert([decision])
+        XCTAssertEqual(chimes, [nil, "Ping"])
+        XCTAssertNil(coordinator.model.peekItem, "alertPopup off shows no popup")
+
+        coordinator.model.updatePreferences(["alertDecisions": .bool(false)])
+        coordinator.alert([decision])
+        XCTAssertEqual(chimes.count, 2, "alertDecisions off: a decision is silent")
+    }
+
+    /// What the inbox shows for an open decision with the own-answer composer, and for a superseded one with the
+    /// answer an agent recorded. Read back from an offscreen render; `GENESIS_WIDGET_RENDER_DIR` keeps the PNGs.
+    @MainActor
+    func testDecisionCardsShowTheOwnAnswerComposerAndTheRecordedOutcome() async throws {
+        let fixture = try fixture()
+        defer { cleanUp(fixture) }
+        let key = "local:claude:fixture-session:"
+        let session: [String: Any] = ["key": key, "target": ["hostId": "local", "provider": "claude",
+            "sessionId": "fixture-session", "sourceHome": "", "cwd": "/fixture"], "title": "Fixture session",
+            "project": "Fixture", "activityAt": 0, "status": "waiting", "pinned": true, "visible": true,
+            "hiddenByFilter": false]
+        func decision(_ number: Int, _ fields: [String: Any]) -> [String: Any] {
+            ["id": "decision:d_\(number)_fixture-session", "kind": "decision", "sourceId": "d_\(number)_fixture-session",
+             "sessionKey": key, "at": 1_000 * Double(number), "title": "Pick a parser for DECISION \(number)", "body": "",
+             "status": "open", "number": number, "revision": 1,
+             "choices": [["id": "a", "title": "Keep the current one", "recommended": true], ["id": "b", "title": "Switch now", "recommended": false]],
+             "attachments": [], "refs": [], "read": true].merging(fields) { _, new in new }
+        }
+        let cards = [
+            decision(7, ["status": "superseded", "option": "a", "answer": "Keep it until the next release.",
+                         "answeredVia": "agent", "comments": ["Replaced by a narrower question."],
+                         "supersededBy": ["id": "d_8_fixture-session", "number": 8, "sessionKey": key,
+                                          "title": "Pick a parser for DECISION 8"]]),
+            decision(8, [:]),
+        ]
+        let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
+            "selectedKey": key, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+                "showWidget": false, "placement": "side", "side": "right", "quietSeconds": 60, "voiceProvider": "xai",
+                "voiceLanguage": ""], "assets": [:], "drafts": [:], "outgoing": []],
+            "sessions": [session], "cards": cards, "manifests": [:], "errors": [], "selectedKey": key])
+        try data.write(to: fixture.directory.appendingPathComponent("saved.json"))
+        let model = fixture.coordinator.model
+        model.start()
+        defer { model.stop() }
+        try await waitFor { model.cards.count == 2 }
+        XCTAssertEqual(model.cards.count, 2)
+
+        func read<V: View>(_ name: String, _ content: V) throws -> String {
+            let renderer = ImageRenderer(content: content.frame(width: 440).padding(12)
+                .environment(\.colorScheme, .dark).background(Color.black))
+            renderer.scale = 2
+            let image = try XCTUnwrap(renderer.cgImage)
+            if let folder = ProcessInfo.processInfo.environment["GENESIS_WIDGET_RENDER_DIR"] {
+                try NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(
+                    to: URL(fileURLWithPath: folder).appendingPathComponent(name + ".png"))
+            }
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: image).perform([request])
+            return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+        }
+
+        model.selectedCardID = "decision:d_8_fixture-session"
+        XCTAssertNil(model.ownAnswerCard, "the options show until the user asks for an own answer")
+        var seen = try read("own-answer-row", WidgetOwnAnswerRow {})
+        XCTAssertTrue(seen.contains("Write my own answer"), "read: \(seen)")
+        model.ownAnswerCardID = "decision:d_8_fixture-session"
+        XCTAssertEqual(model.ownAnswerCard?.number, 8)
+        model.submitOwnAnswer()
+        XCTAssertEqual(model.error, "Write your answer or attach media first.", "an empty own answer is refused")
+        model.foldedCardIDs.insert("decision:d_8_fixture-session")
+        XCTAssertNil(model.ownAnswerCard, "a folded card gives the composer back to the bottom of the panel")
+        model.foldedCardIDs.remove("decision:d_8_fixture-session")
+        model.ownAnswerCardID = nil
+
+        let superseded = try XCTUnwrap(model.cards.first { $0.number == 7 })
+        var opened: [String] = []
+        seen = try read("superseded", WidgetDecisionOutcome(card: superseded) { opened.append($0.id) })
+        XCTAssertTrue(seen.contains("Superseded by DECISION 8"), "read: \(seen)")
+        XCTAssertTrue(seen.contains("Answer recorded by the agent"), "read: \(seen)")
+        XCTAssertTrue(seen.contains("Keep the current one"), "the picked option is named: \(seen)")
+        XCTAssertTrue(seen.contains("Replaced by a narrower question."), "read: \(seen)")
+
+        let peek = WidgetInboxItem(id: "decision:d_8_fixture-session", sourceId: "d_8_fixture-session",
+            kind: "decision", key: key, at: Date().timeIntervalSince1970 * 1000, needsAnswer: true,
+            title: "Pick a parser for DECISION 8", number: 8)
+        seen = try read("peek", WidgetPeekView(model: model, item: peek))
+        XCTAssertTrue(seen.contains("New decision"), "read: \(seen)")
+        XCTAssertTrue(seen.contains("Pick a parser"), "read: \(seen)")
+
+        model.openDecision(id: "d_8_fixture-session", sessionKey: key)
+        XCTAssertEqual(model.card?.id, "decision:d_8_fixture-session", "the link opens the newer decision")
+    }
+
+    func testAlertKickerAndOwnAnswerCardStates() {
+        let item = WidgetInboxItem(id: "a", sourceId: "a", kind: "decision", key: "k", at: 1, needsAnswer: true, number: 9)
+        XCTAssertEqual(WidgetAlerts.kicker(item), "New decision · DECISION 9")
+        var card = WidgetCard(id: "decision:d_9_s", kind: "decision", sessionKey: "k", sourceId: "d_9_s", at: 1,
+            title: "T", body: "", status: "superseded", choices: [], attachments: [], refs: [], read: true)
+        card.supersededBy = .init(id: "d_12_s", number: 12, sessionKey: "k", title: "Newer")
+        XCTAssertFalse(card.needsAnswer)
+        XCTAssertEqual(LiveWidgetView.kindLabel(card), "Decision · Superseded by DECISION 12")
+        card.supersededBy = nil
+        card.status = "acknowledged"
+        card.option = "a"
+        XCTAssertEqual(LiveWidgetView.kindLabel(card), "Decision · Answered a · Acknowledged")
     }
 
     @MainActor

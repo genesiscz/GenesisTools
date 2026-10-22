@@ -43,6 +43,8 @@ Do all of these before the first dispatch, in this order:
 5. The owner check of every PR (step 3.1).
 6. Decisions: every ❓ DECISION of the run goes into the decision log under its chat number and into the chat, and
    gets a `decision` event in the run ledger (review-loop, "Decisions during a loop"). A later mention is a link.
+   Its answer is recorded in the same turn (`question_update`, state `acknowledged`, or `superseded` with
+   `supersededBy`), so the widget stops asking for it.
 
 ## 1. The run card: what to configure
 

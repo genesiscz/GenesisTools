@@ -50,6 +50,15 @@ public final class WidgetModel: ObservableObject {
     @Published public var expanded: EdgePanelPlacement?
     @Published public var activeSideGroup = 0
     @Published public var hoveredSurface: WidgetSurfaceID?
+    /// A new inbox item the widget pops up by itself (an alert). The agents preview shows it until `showPeek`'s
+    /// timer ends, or until the pointer leaves the panel when the user moved onto it.
+    @Published public private(set) var peekItem: WidgetInboxItem?
+    private var peekTask: Task<Void, Never>?
+    /// Surfaces the pointer is in now, without the hover delay: a popup never opens under the user's pointer.
+    private var pointerInside: Set<String> = []
+    /// Called with the items that arrived in a complete inbox snapshot (never the first one).
+    public var inboxArrived: (([WidgetInboxItem]) -> Void)?
+    public func session(forKey key: String) -> WidgetSession? { sessionIndex[key] }
     @Published public var moduleSelections: [String: String] = [:]
     @Published public var draggedSidePosition: Double?
     @Published public var draggingSide = false
@@ -258,6 +267,13 @@ public final class WidgetModel: ObservableObject {
         guard let card, card.kind == "decision", card.needsAnswer, !foldedCardIDs.contains(card.id) else { return nil }
         return card
     }
+    /// The decision whose card shows the composer for the user's own answer instead of the options.
+    @Published public var ownAnswerCardID: String?
+    /// `ownAnswerCardID` while that decision is still the one the composer answers.
+    public var ownAnswerCard: WidgetCard? {
+        guard let card = answerCard, card.id == ownAnswerCardID else { return nil }
+        return card
+    }
     public var draft: WidgetDraft { drafts[selectedKey] ?? WidgetDraft() }
     public var outgoing: [WidgetOutgoing] {
         WidgetOutgoing.shown(snapshot?.state.outgoing.filter { $0.target.hasSameIdentity(as: selected?.target) } ?? [])
@@ -398,6 +414,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func stop() {
+        peekTask?.cancel()
         preferenceTask?.cancel()
         flushPreferences()
         settingsTask?.cancel()
@@ -539,6 +556,8 @@ public final class WidgetModel: ObservableObject {
         activeSideGroup = surface.group
         hoveredSurface = nil
         hoverTask?.cancel()
+        peekTask?.cancel()
+        peekItem = nil
         open(surface.edge)
     }
 
@@ -569,8 +588,46 @@ public final class WidgetModel: ObservableObject {
         hoveredSession = nil
     }
 
+    /// Pops `item` up in `surface`'s preview for `seconds`, unless the user is in a panel, a window or a drag.
+    func showPeek(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, seconds: Double = 7) {
+        guard !stopping, expanded == nil, !dialogOpen, !draggingSide, pointerInside.isEmpty,
+              hoveredSurface == nil || hoveredSurface == surface else { return }
+        hoverTask?.cancel()
+        peekItem = item
+        hoveredSurface = surface
+        presentationChanged?()
+        peekTask?.cancel()
+        peekTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+            guard let self, self.peekItem == item, !self.pointerInside.contains(surface.key) else { return }
+            self.endPeek()
+        }
+    }
+
+    private func endPeek() {
+        peekTask?.cancel()
+        peekTask = nil
+        guard let item = peekItem else { return }
+        peekItem = nil
+        if expanded == nil, let surface = hoveredSurface, !pointerInside.contains(surface.key) {
+            hoveredSurface = nil
+        }
+        PerfLog.mark("widget.peek end id=\(item.id)")
+        presentationChanged?()
+    }
+
     public func hover(_ surface: WidgetSurfaceID, inside: Bool) {
+        if inside { pointerInside.insert(surface.key) } else { pointerInside.remove(surface.key) }
         pointerChanged?(surface, inside)
+        if !inside, peekItem != nil, hoveredSurface == surface {
+            // The user moved onto the popup and away again: it closes like a hover preview.
+            hoverTask?.cancel()
+            hoverTask = Task { [weak self] in
+                do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
+                self?.endPeek()
+            }
+            return
+        }
         guard layout.hoverPreviews, !dialogOpen else { return }
         if draggingSide {
             exitedDuringDrag = inside ? nil : surface
@@ -638,6 +695,7 @@ public final class WidgetModel: ObservableObject {
     func updateInbox(_ value: WidgetInboxSummary) {
         var arrived = false
         var arrivedKeys: Set<String> = []
+        var arrivals: [WidgetInboxItem] = []
         if !inboxObserved, value.complete { inboxStartedAt = Date().timeIntervalSince1970 * 1000 }
         for entry in value.sessions {
             for item in [entry.unreadItem, entry.pendingItem].compactMap({ $0 }) {
@@ -648,7 +706,7 @@ public final class WidgetModel: ObservableObject {
                 let previous = inboxWatermarks[token]
                 if previous == nil || item.at > previous!.at || (item.at == previous!.at && item.id > previous!.id) {
                     let isArrival = inboxObserved && value.complete && item.at > inboxStartedAt
-                    if isArrival { arrived = true; arrivedKeys.insert(entry.key) }
+                    if isArrival { arrived = true; arrivedKeys.insert(entry.key); arrivals.append(item) }
                     inboxWatermarks[token] = (item.at, item.id)
                     if isArrival, item.kind != "result", value.profile?.hostId == "local",
                         snapshot?.sessions.first(where: { $0.key == item.key })?.target.hostId == "local" {
@@ -660,6 +718,7 @@ public final class WidgetModel: ObservableObject {
         }
         inboxObserved = inboxObserved || value.complete
         if arrived { inboxPulse += 1 }
+        if !arrivals.isEmpty { inboxArrived?(arrivals) }
         for key in arrivedKeys { inboxSessionPulses[key, default: 0] += 1 }
         if inboxWatermarks.count > 4096 {
             let removed = inboxWatermarks.sorted { $0.value.at < $1.value.at }.prefix(inboxWatermarks.count - 3072)
@@ -702,6 +761,19 @@ public final class WidgetModel: ObservableObject {
                 "kind": .string(card.kind), "at": .number(card.at)], failed: { [weak self] in
             self?.inboxReadRequests.remove(token)
         })
+    }
+
+    /// Opens a decision's card by its id (`d_<n>_<session>`), in its own session when that is another one: the
+    /// "Superseded by" link. The card arrives with that session's snapshot, so the selection is set after `select`.
+    public func openDecision(id: String, sessionKey: String?) {
+        guard let sessionKey else {
+            notice = "That decision's session is not in the widget."
+            return
+        }
+        if sessionKey != selectedKey { select(sessionKey) }
+        section = "Inbox"
+        foldedCardIDs.remove("decision:" + id)
+        selectedCardID = "decision:" + id
     }
 
     /// "Mark all read": every answer up to now is read, and older questions, decisions and results stop counting in
@@ -763,6 +835,8 @@ public final class WidgetModel: ObservableObject {
         followedTranscript = nil
         hoveredSurface = nil
         hoverTask?.cancel()
+        peekTask?.cancel()
+        peekItem = nil
         voice?.finishInput()
         speechTask?.cancel()
         reading = false
@@ -1117,7 +1191,22 @@ public final class WidgetModel: ObservableObject {
 
     /// The composer's Send (Return): it answers the open decision, else it is a follow-up to the session.
     public func send() {
+        if ownAnswerCard != nil {
+            submitOwnAnswer()
+            return
+        }
         submit(answering: answerCard != nil && !cardPending)
+    }
+
+    /// Sends the draft (text and media) as the answer to `ownAnswerCard`, with no option picked.
+    public func submitOwnAnswer() {
+        guard let card = ownAnswerCard else { return }
+        guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draft.assetIds.isEmpty else {
+            error = "Write your answer or attach media first."
+            return
+        }
+        submit(answering: true)
+        if submittedCards.contains(card.id) { ownAnswerCardID = nil }
     }
 
     public func submit(choice: String? = nil, answering: Bool = false) {

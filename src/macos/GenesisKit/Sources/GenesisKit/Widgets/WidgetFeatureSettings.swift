@@ -220,6 +220,31 @@ private struct WidgetGeneralSettings: View {
                     "Changed files", detail: "Show a session's working changes alongside its conversation.",
                     isOn: boolean("showChanges", prefs?.showChanges ?? true))
             }
+            NativeSettingsCard("Alerts", subtitle: "When an agent asks or answers while the widget is closed.") {
+                NativeSettingsToggle(
+                    "Decisions and questions", detail: "A new ❓ DECISION or question that waits for your answer.",
+                    identifier: "widget.alertDecisions", isOn: boolean("alertDecisions", prefs?.alertDecisions ?? true))
+                Divider()
+                NativeSettingsToggle(
+                    "Answers and messages", detail: "A new logged answer or a message an agent sent you.",
+                    identifier: "widget.alertAnswers", isOn: boolean("alertAnswers", prefs?.alertAnswers ?? true))
+                Divider()
+                NativeSettingsRow("Sound", detail: "One chime per burst of new items.") {
+                    HStack(spacing: 6) {
+                        Picker("Alert sound", selection: string("alertSound", prefs?.alertSound ?? WidgetAlerts.defaultSound)) {
+                            Text("None").tag("none")
+                            ForEach(WidgetAlerts.sounds, id: \.self) { Text($0).tag($0) }
+                        }.labelsHidden().frame(width: 140, alignment: .trailing)
+                        IconButton(systemName: "speaker.wave.2", tooltip: "Play the alert sound") {
+                            WidgetAlerts.preview(prefs?.alertSound ?? WidgetAlerts.defaultSound)
+                        }.disabled((prefs?.alertSound ?? WidgetAlerts.defaultSound) == "none")
+                    }
+                }
+                Divider()
+                NativeSettingsToggle(
+                    "Popup", detail: "The widget opens a short preview of the new item; a click on it answers.",
+                    identifier: "widget.alertPopup", isOn: boolean("alertPopup", prefs?.alertPopup ?? true))
+            }
             }
         }.task { model.refreshSettings() }
     }
@@ -437,7 +462,24 @@ private struct WidgetModuleSettings: View {
         }.task { model.refreshSettings() }
     }
     private func group(_ title: String, index: Int?) -> some View {
-        NativeSettingsCard(title) {
+        let placement = model.snapshot?.state.preferences.placement ?? "both"
+        // "Visible edges" hides this edge, so a module change here showed nothing (Martin, 2026-10-22).
+        let hidden = index == nil ? placement == "side" : placement == "top"
+        return NativeSettingsCard(title) {
+            if hidden {
+                HStack(spacing: 10) {
+                    Image(systemName: "eye.slash").foregroundStyle(.orange)
+                    Text(index == nil
+                         ? "The top notch is hidden: Visible edges is set to Side."
+                         : "The side groups are hidden: Visible edges is set to Top.")
+                        .font(.caption).frame(maxWidth: .infinity, alignment: .leading)
+                    Button(index == nil ? "Show the top notch" : "Show the side groups") {
+                        model.action(["action": "preferences", "patch": ["placement": "both"]])
+                    }.buttonStyle(.bordered).nativeSettingsPointer()
+                        .accessibilityIdentifier("widget.modules.\(index == nil ? "top" : "side").show")
+                }
+                Divider()
+            }
             ForEach(modules) { module in
                 let selected = index.map { model.layout.sideGroups[$0] } ?? model.layout.topModules
                 NativeSettingsToggle(
