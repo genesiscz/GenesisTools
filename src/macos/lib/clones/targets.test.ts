@@ -136,6 +136,16 @@ describe("targets", () => {
         expect(res.skipped).toEqual([]);
     });
 
+    it("all drops every dir under the filesystem root when / is selected", async () => {
+        const res = await expandTargets({ dirs: ["/r/app", "/", "/r/..app"], targets: ["all"] });
+        expect(res.roots).toEqual(["/"]);
+    });
+
+    it("all keeps a sibling whose name starts with two dots", async () => {
+        const res = await expandTargets({ dirs: ["/r/app", "/r/..app"], targets: ["all"] });
+        expect(res.roots).toEqual(["/r/..app", "/r/app"]);
+    });
+
     it("checkIgnoreBatch answers every candidate of one repository in one git call", async () => {
         const outer = fixture();
         try {

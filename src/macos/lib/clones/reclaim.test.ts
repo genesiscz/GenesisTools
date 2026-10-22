@@ -1,7 +1,8 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { defaultSelector, planReclaim } from "@app/macos/lib/clones/reclaim";
 import { readReclaimEvents, reclaimRunPath } from "@app/macos/lib/clones/reclaim-run";
 
@@ -47,8 +48,20 @@ describe("planReclaim", () => {
                 writeFileSync(join(outer, name, ".git", "pack"), Buffer.alloc(50_000, 4));
             }
 
-            const plan = await planReclaim({ ...defaultSelector([outer]), targets: ["all"], minReal: 1024 });
+            const reads = spyOn(fs, "readdirSync");
+            let plan: Awaited<ReturnType<typeof planReclaim>>;
+            let listed: string[];
+            try {
+                plan = await planReclaim({ ...defaultSelector([outer]), targets: ["all"], minReal: 1024 });
+            } finally {
+                // mockRestore clears mock.calls, so read them first.
+                listed = reads.mock.calls.map((c) => String(c[0]));
+                reads.mockRestore();
+            }
             runId = plan.runId;
+            // The rollup climbs to w1 and w2 themselves; it must not list their .git.
+            expect(listed).toContain(join(realpathSync(outer), "w1"));
+            expect(listed.filter((p) => p.split(sep).includes(".git"))).toEqual([]);
             expect(plan.roots).toEqual([realpathSync(outer)]);
             expect(plan.sets.length).toBe(1);
             expect(plan.sets[0].copies).toBe(2);

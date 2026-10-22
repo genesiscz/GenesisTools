@@ -102,9 +102,17 @@ function commonAncestor(paths: string[]): string {
     return first.slice(0, i).join(sep) || "/";
 }
 
-/** Recursively gather every regular file under `dir` (no symlinks). */
-function listFiles(dir: string): string[] {
-    const out: string[] = [];
+interface ListedFiles {
+    files: string[];
+    /** A dir named in `pruneNames` sits somewhere below: its contents are
+     *  unknown, so the listing can never prove two dirs identical. */
+    pruned: boolean;
+}
+
+/** Recursively gather every regular file under `dir` (no symlinks), never
+ *  entering a dir whose name is in `prune` (the walk's own `pruneNames`). */
+function listFiles(dir: string, prune: ReadonlySet<string>): ListedFiles {
+    const out: ListedFiles = { files: [], pruned: false };
     let entries: Dirent[];
     try {
         entries = readdirSync(dir, { withFileTypes: true });
@@ -120,16 +128,32 @@ function listFiles(dir: string): string[] {
         }
 
         if (e.isDirectory()) {
-            out.push(...listFiles(p));
+            if (prune.has(e.name)) {
+                out.pruned = true;
+                continue;
+            }
+
+            const sub = listFiles(p, prune);
+            out.files.push(...sub.files);
+            out.pruned ||= sub.pruned;
         } else if (e.isFile()) {
-            out.push(p);
+            out.files.push(p);
         }
     }
 
     return out;
 }
 
-function dirInfo(dir: string, files: string[], shaOf: Map<string, string>, sizeOf: Map<string, number>): DirInfo {
+function dirInfo(
+    dir: string,
+    { files, pruned }: ListedFiles,
+    shaOf: Map<string, string>,
+    sizeOf: Map<string, number>
+): DirInfo {
+    if (pruned) {
+        return { fileCount: files.length, hash: null, bytes: 0 };
+    }
+
     let bytes = 0;
     const h = createHash("sha256");
     for (const f of files) {
@@ -372,17 +396,22 @@ export async function collapseDuplicates({
     // The ancestor walk re-enumerates the same dirs many times — once per
     // file group, once per cursor level. Memoise both the sorted file list
     // and the derived DirInfo so each dir is walked exactly once.
-    const filesCache = new Map<string, string[]>();
-    const listFilesCached = (dir: string): string[] => {
+    // The rollup honours the walk's pruneNames: under `--targets all` it climbs
+    // to whole checkouts, and must never read their `.git` databases.
+    const prune = new Set(pruneNames ?? []);
+    const filesCache = new Map<string, ListedFiles>();
+    const listedCached = (dir: string): ListedFiles => {
         const hit = filesCache.get(dir);
         if (hit) {
             return hit;
         }
 
-        const out = listFiles(dir).sort();
+        const out = listFiles(dir, prune);
+        out.files.sort();
         filesCache.set(dir, out);
         return out;
     };
+    const listFilesCached = (dir: string): string[] => listedCached(dir).files;
 
     const dirCache = new Map<string, DirInfo>();
     const infoFor = (dir: string): DirInfo => {
@@ -391,7 +420,7 @@ export async function collapseDuplicates({
             return cached;
         }
 
-        const info = dirInfo(dir, listFilesCached(dir), shaOf, sizeOf);
+        const info = dirInfo(dir, listedCached(dir), shaOf, sizeOf);
         dirCache.set(dir, info);
         return info;
     };

@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { minimatch } from "minimatch";
@@ -202,11 +202,16 @@ function matchesExplicit(name: string, explicit: readonly string[]): boolean {
 
 /** The dirs with every dir inside another one dropped: a repo's worktrees
  *  often live under its own `.worktrees/`, and a nested root would be walked
- *  twice. */
+ *  twice. Containment goes through `relative`, so `/` contains every dir (a
+ *  `${root}/` prefix would be `//`). */
 function outermostDirs(dirs: string[]): string[] {
+    const contains = (root: string, dir: string): boolean => {
+        const rel = relative(root, dir);
+        return rel !== ".." && !rel.startsWith(`..${sep}`);
+    };
     const out: string[] = [];
     for (const dir of [...new Set(dirs)].sort()) {
-        if (!out.some((root) => dir.startsWith(`${root}/`))) {
+        if (!out.some((root) => contains(root, dir))) {
             out.push(dir);
         }
     }

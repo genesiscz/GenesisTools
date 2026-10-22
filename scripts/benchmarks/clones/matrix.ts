@@ -21,7 +21,7 @@ const REPO = resolve(import.meta.dir, "../../..");
 const TOOLS = join(REPO, "tools");
 const BASELINES = join(REPO, "scripts/benchmarks/clones/baselines");
 
-interface Case {
+export interface Case {
     id: string;
     group: "du" | "macos";
     /** argv after `tools`; `{T}` is replaced by the target, `{FX}` by the fixture root. */
@@ -32,7 +32,7 @@ interface Case {
     heavy?: boolean;
 }
 
-function cases(): Case[] {
+export function cases(): Case[] {
     const A = "{FX}/a-noclones";
     const B = "{FX}/b-realclones";
     const C = "{FX}/c-worktrees";
@@ -77,7 +77,7 @@ function cases(): Case[] {
         "clonesize",
         A,
         "--min-bytes",
-        "4096B",
+        "4096",
         "--no-cache",
         "--format",
         "json",
@@ -541,7 +541,9 @@ const flag = (name: string, def?: string): string | undefined => {
     return i >= 0 ? rest[i + 1] : def;
 };
 
-if (verb === "run") {
+if (!import.meta.main) {
+    // Imported by matrix.test.ts, which checks cases(): run no verb.
+} else if (verb === "run") {
     const label = flag("label");
     const fixture = flag("fixture");
     if (!label || !fixture) {
