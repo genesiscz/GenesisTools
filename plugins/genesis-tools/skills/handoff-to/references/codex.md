@@ -15,6 +15,8 @@ The `tools codex spawn` command accepts an explicit model string. Availability s
 depends on the selected account and backend. Verify the recorded model after dispatch;
 do not treat a requested model or the parent's config as proof of what ran.
 Code-review workers should explicitly select Sol; `review_model` does not route arbitrary workers.
+Give a review `--effort high`, or `xhigh` above about 50 changed files: at `medium` a review spends about
+two thousand reasoning tokens however large the diff is (parent skill, "Effort is the review's depth").
 
 ## Choose the orchestration layer
 

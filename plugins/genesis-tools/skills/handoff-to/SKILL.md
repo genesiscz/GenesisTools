@@ -83,10 +83,19 @@ Set a model explicitly; an Astra parent should not make every worker Astra.
 |---|---|---|
 | Mechanical extraction, formatting, simple lookups, or a fully specified small edit | `gpt-6-luna` | low |
 | Bounded repository exploration, tracing an established call path, or gathering evidence | `gpt-6-luna` | medium |
-| Normal implementation, reproducible debugging, and code review | `gpt-6.1-sol` | medium; high for complex reviews |
+| Normal implementation and reproducible debugging | `gpt-6.1-sol` | medium |
+| Code review of a PR or branch | `gpt-6.1-sol` | high; xhigh above about 50 changed files |
 | Difficult cross-system reasoning, ambiguous failures, or an evidence-backed escalation | `gpt-6-astra` | high |
 
 `gpt-6.1-sol` accepts `low` to `max` effort only; `none` and `minimal` return an error, as on Astra.
+
+**Effort is the review's depth: set it from the diff size, never leave a review at medium.** Measured on
+2026-10-22 with nine Sol reviews at `medium`: 1 to 4 minutes each, 8 to 26 tool calls, and 358 to 2,399
+reasoning tokens, also for a 125-file, 6,200-line PR. The findings were real, but no worker could have read
+every file. Pass `--effort high` for a review, `xhigh` above about 50 changed files, `max` only for a risky
+cross-system PR, and tell the worker in the brief to read every changed file and to end with `Files reviewed:
+<n> of <total>`. Check the depth afterwards: `tools codex status --name <name> --json` carries the turn's
+`durationMs`, `toolCalls` and `tokens.reasoning` under `cost.lastTurn`.
 Astra is the escalation tier, not the default for exploration. Keep the cheaper worker's
 findings and failed verification when escalating. If a model is unavailable, disclose the
 fallback and select the nearest suitable tier instead of silently choosing Astra.
