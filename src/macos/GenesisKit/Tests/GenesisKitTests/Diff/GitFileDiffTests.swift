@@ -67,9 +67,11 @@ final class GitFileDiffTests: XCTestCase {
         _ = try git(["update-index", "--cacheinfo", "100644,\(oid),logo.png"], in: repo)
         _ = try git(["-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "logo 2"], in: repo)
         let moved = try XCTUnwrap(GitWorkingTreeSource(repo: repo).load(scope: .uncommitted).files.first { $0.path == "logo.png" }?.image)
-        XCTAssertEqual(moved.old, reread.old, "the same name")
-        XCTAssertNotEqual(moved.revision, reread.revision, "but another object")
+        XCTAssertNotEqual(moved.old, reread.old, "another object")
+        XCTAssertNotEqual(moved.revision, reread.revision)
         XCTAssertEqual(try load(moved.old), Data([0x89, 0x50, 0x4E, 0x47, 0, 7, 7]))
+        XCTAssertEqual(try load(reread.old), before, "a side read before HEAD moved still loads the bytes it showed")
+        XCTAssertEqual(DiffImageRegistry.load(try XCTUnwrap(reread.old))?.path, "logo.png", "named by its file, for its type")
     }
 
     /// A picture over the budget is not read, from disk or from git; under it, the same call reads it through the
@@ -83,7 +85,7 @@ final class GitFileDiffTests: XCTestCase {
         try bytes.write(to: repo.appendingPathComponent("big.png"))
         _ = try git(["add", "big.png"], in: repo)
         let file = DiffImage.Source.file(repo.appendingPathComponent("big.png").path)
-        let blob = DiffImage.Source.blob(repo: repo.path, object: ":big.png")
+        let blob = DiffImage.Source.blob(repo: repo.path, object: ":big.png", path: "big.png")
         XCTAssertNil(DiffImageRegistry.load(file, maxBytes: 4))
         XCTAssertNil(DiffImageRegistry.load(blob, maxBytes: 4))
         XCTAssertEqual(DiffImageRegistry.load(file, maxBytes: 9)?.data, bytes)

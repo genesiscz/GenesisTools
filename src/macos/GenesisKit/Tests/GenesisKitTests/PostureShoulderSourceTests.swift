@@ -257,4 +257,36 @@ final class PostureShoulderGateMonitorTests: XCTestCase {
         XCTAssertEqual(monitor.feed.score?.shoulderSourceMismatch, true)
         XCTAssertEqual(monitor.feed.score?.unjudged.contains(.shoulderTilt), true)
     }
+
+    /// 2D shoulders against a 3D baseline are not judged, and the face-only frame after them must not judge them
+    /// either: that frame names no source, and the smoother still holds the frames before it.
+    func testAFaceOnlyFrameDoesNotJudgeShouldersFromAnotherRequest() throws {
+        let clock = ClockBox()
+        let monitor = PostureMonitor(configuration: PostureMonitor.Configuration(), camera: nil,
+                                     cameraControl: RecordingCamera(), engine: NoEngine(), history: nil,
+                                     clock: { clock.now }, wallClock: { Date(timeIntervalSince1970: 1_800_000_000 + clock.now) })
+        let face = PoseFace(box: CGRect(x: 0.4, y: 0.3, width: 0.2, height: 0.25))
+        func withFace(_ sample: PoseSample) -> PoseSample {
+            var sample = sample
+            sample.face = face
+            return sample
+        }
+        monitor.setBaseline(try XCTUnwrap(PostureBaseline.calibrate(
+            upright: (0..<4).map { _ in PostureMetrics(sample: withFace(shoulderSample())) }, shoulderSource: .body3D)))
+        monitor.enable()
+        monitor.feed.beginWatching()
+        defer { monitor.feed.endWatching() }
+        for time in [0, 0.25] {
+            clock.now = time
+            monitor.ingest(withFace(shoulderSample(tilt: 0.1, time: time, source: .body2D)))
+        }
+        clock.now = 0.5
+        var faceOnly = PoseSample(time: 0.5, engine: .visionBody, joints: [:], imageAspect: 1)
+        faceOnly.face = face
+        monitor.ingest(faceOnly)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        let score = try XCTUnwrap(monitor.feed.score)
+        XCTAssertFalse(score.signals.contains { $0.measure.usesShoulders }, "\(score.signals)")
+        XCTAssertFalse(score.isBad)
+    }
 }

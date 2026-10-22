@@ -34,6 +34,7 @@ import {
     localNetworkAnswer,
     parseLocalNetworkPrompts,
     parseLocalNetworkRules,
+    promptProcess,
     promptsFromLogShow,
     withoutPreloads,
 } from "./local-network";
@@ -792,6 +793,17 @@ describe("Local Network answers", () => {
         } finally {
             list.mockRestore();
         }
+    });
+
+    it("does not blame a process that took the pid after the prompt", () => {
+        const at = "2026-10-21 22:16:06";
+        const running = (started: string) =>
+            new Map([[97417, { started: new Date(started), command: "gt-cc", cwd: null, children: [] }]]);
+        expect(promptProcess({ at, pid: 97417 }, running("2026-10-21T21:00:00"))?.command).toBe("gt-cc");
+        // the log drops the fraction: a process started within the prompt's own second still asked
+        expect(promptProcess({ at, pid: 97417 }, running("2026-10-21T22:16:06.900"))?.command).toBe("gt-cc");
+        expect(promptProcess({ at, pid: 97417 }, running("2026-10-21T22:16:07"))).toBeNull();
+        expect(promptProcess({ at, pid: 97417 }, new Map())).toBeNull();
     });
 });
 

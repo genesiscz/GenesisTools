@@ -257,13 +257,16 @@ final class PostureCore: @unchecked Sendable {
                 return []
             }
             if scoringHeld { return [] }
-            let metrics = PostureMetrics(sample: sample)
+            var metrics = PostureMetrics(sample: sample)
             if let baseline, !metrics.isEmpty, !sample.lowLight {
+                let source = sample.shoulderSource
+                // Shoulders the baseline cannot judge stay out of the smoother: a later frame without shoulders has
+                // no source, so it would score them as comparable.
+                if baseline.shoulderSourceDiffers(from: source) { metrics.removeShoulderMeasures() }
                 let smoothed = smoother.add(metrics, at: sample.time)
                 var scorer = configuration.scorer
                 // The face engine never sees shoulders: the face width is its own Forward head measure.
                 if sample.engine == .visionFace { scorer.forwardHeadWithoutShoulders = nil }
-                let source = sample.shoulderSource
                 let smoothedScore = scorer.score(smoothed, against: baseline, shoulderSource: source)
                 let fresh = sample.hasFreshShoulders && source == .body3D
                     ? scorer.score(metrics, against: baseline, shoulderSource: source) : nil

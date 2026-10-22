@@ -295,9 +295,7 @@ public struct PostureScorer: Equatable, Sendable {
         var unjudged: Set<PostureMetricKind> = []
         let mismatch = baseline.shoulderSourceDiffers(from: shoulderSource)
         var metrics = metrics
-        if mismatch {
-            for measure in PostureMeasure.allCases where measure.usesShoulders { metrics[measure] = nil }
-        }
+        if mismatch { metrics.removeShoulderMeasures() }
         for kind in PostureMetricKind.allCases where enabled.contains(kind) {
             if kind == .headDrop, let lost = headLost(metrics, baseline: baseline, zone: zone) {
                 signals.append(lost)

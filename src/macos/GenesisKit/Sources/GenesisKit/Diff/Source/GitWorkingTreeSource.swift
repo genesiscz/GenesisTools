@@ -346,13 +346,18 @@ public struct GitWorkingTreeSource {
             let workingIsLink = plan.new == nil && entry.status != .deleted
                 && (try? working.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
             if file.skipped != nil && DiffImage.isImage(entry.path) || DiffImage.isSVG(entry.path), !workingIsLink {
-                let oldName = "\(plan.old):\(entry.oldPath ?? entry.path)"
-                // `HEAD:` and the index move: the object ids pin what each side was when the diff was read.
+                let oldPath = entry.oldPath ?? entry.path
+                let oldName = "\(plan.old):\(oldPath)"
+                // `HEAD:` and the index move: each side loads the object id it had when the diff was read.
                 let newRevision = plan.new.map { news.oids["\($0):\(entry.path)"] } ?? DiffImage.revision(ofFile: working.path)
                 file.image = DiffImage(
-                    old: entry.status == .added ? nil : .blob(repo: repo.path, object: oldName),
+                    old: entry.status == .added ? nil
+                        : .blob(repo: repo.path, object: olds.oids[oldName] ?? oldName, path: oldPath),
                     new: entry.status == .deleted ? nil
-                        : plan.new.map { .blob(repo: repo.path, object: "\($0):\(entry.path)") } ?? .file(working.path),
+                        : plan.new.map { rev in
+                            let name = "\(rev):\(entry.path)"
+                            return .blob(repo: repo.path, object: news.oids[name] ?? name, path: entry.path)
+                        } ?? .file(working.path),
                     revision: "\(olds.oids[oldName] ?? "-") \(newRevision ?? "-")"
                 )
             }

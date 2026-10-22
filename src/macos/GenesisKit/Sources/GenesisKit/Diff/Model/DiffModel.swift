@@ -50,15 +50,16 @@ public struct DiffImage: Codable, Hashable {
     public enum Source: Codable, Hashable {
         /// A file on disk (the working tree).
         case file(String)
-        /// `git -C <repo> cat-file blob <object>`, the object as `<rev>:<path>` (an empty rev is the index).
-        case blob(repo: String, object: String)
+        /// `git -C <repo> cat-file blob <object>`: the object id the diff read, or `<rev>:<path>` (an empty rev is the
+        /// index) when it had none. `path` names the file, whose extension is the picture's type.
+        case blob(repo: String, object: String, path: String)
     }
 
     public var old: Source?
     public var new: Source?
     /// What both sides were when the diff was read: a blob side's object id, a working-tree side's modification time
-    /// and size. A source names a place (`HEAD:logo.png`, a path), not its bytes, so an image overwritten, staged or
-    /// committed while its diff stays open is a new `DiffImage` only through this.
+    /// and size. A file source names a place, not its bytes, so an image overwritten while its diff stays open is a new
+    /// `DiffImage` only through this.
     public var revision: String?
 
     public init(old: Source?, new: Source?, revision: String? = nil) {

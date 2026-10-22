@@ -299,6 +299,25 @@ export function describePromptProcesses(launcherPath: string, pids: number[]): M
 }
 
 /**
+ * The live process behind `prompt`, or null when its pid now belongs to a process that started after the prompt (the
+ * prompting one exited and the pid was reused). The log time drops its fraction, so the prompt fell inside
+ * `[at, at + 1 s)`, and a process that asked started before `at + 1 s`.
+ */
+export function promptProcess(
+    prompt: Pick<LocalNetworkPrompt, "at" | "pid">,
+    live: Map<number, PromptProcess>
+): PromptProcess | null {
+    const process = live.get(prompt.pid);
+    const promptMs = new Date(prompt.at.replace(" ", "T")).getTime();
+
+    if (!process || (Number.isFinite(promptMs) && process.started.getTime() >= promptMs + 1000)) {
+        return null;
+    }
+
+    return process;
+}
+
+/**
  * Old builds a running process still executes: one `ps`, then one `lsof` over the GenesisTools processes only.
  * Empty when nothing runs an old build, or when either listing fails (logged).
  */

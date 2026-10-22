@@ -168,6 +168,11 @@ public struct PostureMetrics: Equatable, Codable, Sendable {
 
     public var isEmpty: Bool { values.isEmpty }
 
+    /// Leaves out every measure that divides by or reads the shoulders.
+    public mutating func removeShoulderMeasures() {
+        values = values.filter { !$0.key.usesShoulders }
+    }
+
     /// Reads every measure the sample supports. Horizontal distances are scaled by the image aspect
     /// first, so every length is in image heights and angles are true angles (a 4:3 frame no longer
     /// shrinks widths by a quarter). Shoulders narrower than 2% of the image height are treated as

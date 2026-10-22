@@ -21,6 +21,7 @@ import {
     describePromptProcesses,
     type LocalNetworkAnswer,
     type OldBuild,
+    promptProcess,
     readLocalNetworkPrompts,
 } from "../../lib/permissions/local-network";
 import {
@@ -376,7 +377,7 @@ export function registerPermissionsCommand(program: Command): void {
             const rows = prompts.map((prompt) => ({
                 ...prompt,
                 retiredAt: retiredAtOf(prompt.executable)?.toISOString() ?? null,
-                process: live.get(prompt.pid) ?? null,
+                process: promptProcess(prompt, live),
             }));
 
             if (options.json) {
