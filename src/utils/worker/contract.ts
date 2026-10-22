@@ -17,6 +17,109 @@ export interface WorkerContractInput {
     bus?: WorkerBus | null;
     /** Which personal surfaces the worker loaded; on by default for every backend that can honour it. */
     surfaces?: { skills: boolean; rules: boolean };
+    /** Present when the worker is a code reviewer: the tier rules, the diff manifest and the review output shape. */
+    review?: WorkerReviewInput | null;
+}
+
+/** Review depth tiers, shallowest first. They reuse the reasoning-effort names the workers already take. */
+export const REVIEW_EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type ReviewEffort = (typeof REVIEW_EFFORTS)[number];
+
+export function isReviewEffort(value: unknown): value is ReviewEffort {
+    return typeof value === "string" && (REVIEW_EFFORTS as readonly string[]).includes(value);
+}
+
+/** One changed file of `git diff --numstat <base>...HEAD`. */
+export interface ReviewManifestFile {
+    path: string;
+    added: number;
+    deleted: number;
+    /** git printed `-` for both counts: there is no text to read. */
+    binary?: boolean;
+}
+
+/** The files a review must cover, computed by the harness before the worker starts. */
+export interface ReviewManifest {
+    base: string;
+    files: ReviewManifestFile[];
+    added: number;
+    deleted: number;
+}
+
+export interface WorkerReviewInput {
+    effort: ReviewEffort;
+    manifest: ReviewManifest;
+}
+
+/** Added plus deleted lines: the size the reasoning floor is measured against. */
+export function manifestChangedLines(manifest: Pick<ReviewManifest, "added" | "deleted">): number {
+    return manifest.added + manifest.deleted;
+}
+
+/** `Files to review (3, +40 -2):` and one `path +a -d` line per file. */
+export function manifestLines(manifest: ReviewManifest): string[] {
+    return [
+        `Base: ${manifest.base}. Read each change with \`git diff ${manifest.base}...HEAD -- <path>\`.`,
+        `Files to review (${manifest.files.length}, +${manifest.added} -${manifest.deleted}):`,
+        ...manifest.files.map((file) =>
+            file.binary ? `- ${file.path} (binary)` : `- ${file.path} +${file.added} -${file.deleted}`
+        ),
+    ];
+}
+
+/** What each tier adds over the one below it; `reviewLines` stacks them up to the chosen tier. */
+const TIER_RULES: Record<ReviewEffort, string[]> = {
+    low: ["Triage only: name the three riskiest files of the manifest and why each one is risky."],
+    medium: [
+        "Read every hunk of every file in the manifest.",
+        "Every finding names a concrete scenario that triggers it.",
+    ],
+    high: [
+        "Open the callers and the tests of every changed function.",
+        "Run the focused tests your sandbox allows.",
+        "Label each finding observed (name the command that showed it) or inferred.",
+    ],
+    xhigh: [
+        "Make a per-file pass over correctness, error paths, security, platform differences and tests.",
+        "Probe each finding (`bun -e`, a test) before you report it, or mark it inferred.",
+        "Make a second pass over every file that touches secrets, processes, concurrency or I/O.",
+        "Check the change's own follow-up fixes for new defects.",
+    ],
+    max: [
+        "Read the area rules of every touched folder.",
+        "Trace interactions across files: process lifecycle, stacked branches, shared state.",
+        "Make an adversarial pass: how does this change break in production?",
+    ],
+};
+
+/**
+ * The review contract of one tier: the rules of every tier up to it (high includes medium's), then the
+ * output shape the depth gate parses. `low` is triage and has no medium rules under it. The shape lines
+ * come before the five report lines of {@link reportShapeLines}, which still end the message.
+ */
+export function reviewLines(effort: ReviewEffort): string[] {
+    const upTo = REVIEW_EFFORTS.indexOf(effort);
+    const rules =
+        effort === "low" ? TIER_RULES.low : REVIEW_EFFORTS.slice(1, upTo + 1).flatMap((tier) => TIER_RULES[tier]);
+
+    return [
+        `You are a code REVIEWER at the ${effort} tier. Do not change any file; report defects.`,
+        ...rules,
+        "Before the five report lines, your final message has this shape:",
+        "Numbered findings, one per item: `1. [Severity] path:line - defect. Scenario: <what triggers it>. Fix: <the change>.`",
+        "Severity is Critical, High, Medium or Low. With no findings, write the line `Findings: none`.",
+        "Then the line `Ran: <the commands you ran, or: nothing>`.",
+        "Then the line `Files reviewed: <n> of <N>`, where N counts every file of the manifest.",
+        "Then the line `Not reviewed: <path> (<reason>), ...` naming every file you did not read, or `Not reviewed: none`.",
+    ];
+}
+
+function reviewBlock(input: WorkerContractInput): string[] {
+    if (!input.review) {
+        return [];
+    }
+
+    return [...reviewLines(input.review.effort), ...manifestLines(input.review.manifest)];
 }
 
 /** The keys every worker's final message carries, in this order. `tools <backend> …` printers read RESULT. */
@@ -154,6 +257,7 @@ export function buildWorkerContract(input: WorkerContractInput): string {
         ...checkpointLines(),
         ...sandboxLines(input),
         ...reportShapeLines(),
+        ...reviewBlock(input),
         ...surfaceLines(input),
     ].join("\n");
 }
