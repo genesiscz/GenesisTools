@@ -96,12 +96,12 @@ export async function kitApiDts(): Promise<string> {
         )
     );
 
-    const tsgo = join(REPO_ROOT, "node_modules", ".bin", "tsgo");
-    const proc = Bun.spawnSync([tsgo, "-p", tsconfigPath], { cwd: cacheDir, stdout: "pipe", stderr: "pipe" });
+    const tsc = join(REPO_ROOT, "node_modules", ".bin", "tsc");
+    const proc = Bun.spawnSync([tsc, "-p", tsconfigPath], { cwd: cacheDir, stdout: "pipe", stderr: "pipe" });
 
     if (proc.exitCode !== 0) {
         const detail = `${proc.stdout.toString()}\n${proc.stderr.toString()}`.trim();
-        throw new Error(`kit declaration emit failed (tsgo exit ${proc.exitCode}):\n${detail}`);
+        throw new Error(`kit declaration emit failed (tsc exit ${proc.exitCode}):\n${detail}`);
     }
 
     const parts: string[] = [

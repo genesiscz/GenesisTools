@@ -971,7 +971,7 @@ resolve against the main repo's dependency tree and fabricate failures.
 bun run lint                     # biome check .
 bun run lint:fix                 # biome check --write .
 bun run format                   # biome format --write .
-bun run tsgo                     # tsgo --noEmit
+bun run tsgo                     # tsc --noEmit (TypeScript 7; `bun run tsc` is the same)
 bun run typecheck:all            # plus the dashboard tsconfig
 ```
 

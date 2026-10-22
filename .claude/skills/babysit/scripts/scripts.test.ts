@@ -3160,7 +3160,7 @@ describe("round 15 review regressions", () => {
                 mode === "correct" ? 0 : 1
             );
             if (mode !== "correct") {
-                expect(result.stdout.toString()).toContain(`${mode === "broken" ? "tsgo" : mode} failed`);
+                expect(result.stdout.toString()).toContain(`${mode === "broken" ? "tsc" : mode} failed`);
             } else {
                 expect(result.stdout.toString()).toContain("dry: push skipped");
             }

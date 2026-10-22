@@ -244,8 +244,12 @@ async function main(): Promise<void> {
     }
 
     if (!skipGates && oldHead !== newHead) {
-        const tsgo = join(executionRoot, "node_modules/@typescript/native-preview-darwin-arm64/lib/tsgo");
-        must(existsSync(tsgo) ? [tsgo, "--noEmit"] : ["bunx", "tsgo", "--noEmit"], "tsgo");
+        // TypeScript 7's native compiler, called directly: `bunx` hangs in /tmp worktrees.
+        const tsc = join(
+            executionRoot,
+            `node_modules/@typescript/typescript-${process.platform}-${process.arch}/lib/tsc`
+        );
+        must(existsSync(tsc) ? [tsc, "--noEmit"] : ["bunx", "tsc", "--noEmit"], "tsc");
         // Biome by its exit code over the round's changed files: judging it by the tail of its output let a formatting
         // error through to the pre-push hook (2026-10-14, #502 round 6). The main checkout's binary is already assessed.
         const changed = must(

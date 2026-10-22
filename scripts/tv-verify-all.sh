@@ -56,8 +56,8 @@ if bun scripts/test.ts src/tradingview 2>&1 | tee /tmp/tv-verify-V1.1.log | tail
   record V1.1 "$CMD_LABEL" PASS ""
 else record V1.1 "$CMD_LABEL" FAIL ""; fi
 
-CMD_LABEL="tsgo --noEmit"
-if tsgo --noEmit 2>&1 | rg "src/tradingview" >/dev/null 2>&1; then
+CMD_LABEL="tsc --noEmit"
+if bunx tsc --noEmit 2>&1 | rg "src/tradingview" >/dev/null 2>&1; then
   record V1.2 "$CMD_LABEL" FAIL "type errors"
 else record V1.2 "$CMD_LABEL" PASS ""; fi
 
@@ -215,7 +215,7 @@ else record V5.3 "$CMD_LABEL" FAIL ""; fi
 
 echo "=== V6 Final ==="
 # V6.1 re-run V1 subset
-if bun scripts/test.ts src/tradingview 2>&1 | tail -3 | rg -q "0 fail" && ! tsgo --noEmit 2>&1 | rg -q "src/tradingview"; then record V6.1 "re-run V1" PASS ""
+if bun scripts/test.ts src/tradingview 2>&1 | tail -3 | rg -q "0 fail" && ! bunx tsc --noEmit 2>&1 | rg -q "src/tradingview"; then record V6.1 "re-run V1" PASS ""
 else record V6.1 "re-run V1" FAIL ""; fi
 
 COMMITS=$(git log --oneline master..feat/tradingview 2>/dev/null | wc -l | tr -d ' ')

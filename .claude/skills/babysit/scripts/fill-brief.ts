@@ -44,7 +44,7 @@ const verify = run.verify ? run.verify.map((line) => `   - ${line}`).join("\n") 
 function defaultVerify(): string {
     return [
         "   - `bun scripts/test.ts <the test file of every file you changed>` (never bare `bun test`; it must end with `[test] suite complete`)",
-        "   - `./node_modules/@typescript/native-preview-darwin-arm64/lib/tsgo --noEmit` (not `bunx tsgo`: it hangs in /tmp worktrees)",
+        "   - `./node_modules/@typescript/typescript-darwin-arm64/lib/tsc --noEmit` (TypeScript 7; not `bunx tsc`: it hangs in /tmp worktrees)",
         "   - `bunx biome check <each changed file>`",
         "   - `bun run lint:rules` and `bun scripts/ci/check-tool-commands.ts`",
         ...(has("--swift") && codexWorker()

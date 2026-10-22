@@ -10,9 +10,9 @@ export class TypeScriptCompiler implements LanguageCompiler {
             root,
             "node_modules",
             "@typescript",
-            `native-preview-${process.platform}-${process.arch}`,
+            `typescript-${process.platform}-${process.arch}`,
             "lib",
-            process.platform === "win32" ? "tsgo.exe" : "tsgo"
+            process.platform === "win32" ? "tsc.exe" : "tsc"
         );
         if (!(await Bun.file(checker).exists())) {
             throw new Error("TypeScript checker is missing. Run bun install in GenesisTools.");
