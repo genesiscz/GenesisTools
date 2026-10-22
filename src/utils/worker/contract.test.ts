@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildWorkerContract, WORKER_REPORT_KEYS } from "./contract";
+import { buildWorkerContract, type ReviewManifest, reviewLines, WORKER_REPORT_KEYS } from "./contract";
 
 const bus = { agentName: "codex_task", leadName: "lead", rendezvousSession: "s-1" };
 
@@ -77,5 +77,66 @@ describe("buildWorkerContract", () => {
         expect(buildWorkerContract({ backend: "grok", surfaces: { skills: false, rules: false } })).not.toContain(
             "loaded for reference"
         );
+    });
+
+    test("review: each tier stacks the rules below it, and low is triage without them", () => {
+        const low = reviewLines("low").join("\n");
+        const medium = reviewLines("medium").join("\n");
+        const high = reviewLines("high").join("\n");
+        const xhigh = reviewLines("xhigh").join("\n");
+        const max = reviewLines("max").join("\n");
+
+        expect(low).toContain("Triage only: name the three riskiest files");
+        expect(low).not.toContain("Read every hunk");
+        expect(medium).toContain("Read every hunk of every file in the manifest.");
+        expect(medium).not.toContain("Open the callers");
+        expect(high).toContain("Read every hunk");
+        expect(high).toContain("Open the callers and the tests of every changed function.");
+        expect(high).toContain("Label each finding observed");
+        expect(high).not.toContain("per-file pass");
+        expect(xhigh).toContain("Label each finding observed");
+        expect(xhigh).toContain("Probe each finding (`bun -e`, a test) before you report it, or mark it inferred.");
+        expect(xhigh).toContain("second pass over every file that touches secrets, processes, concurrency or I/O");
+        expect(xhigh).not.toContain("adversarial pass");
+        expect(max).toContain("Probe each finding");
+        expect(max).toContain("Read the area rules of every touched folder.");
+        expect(max).toContain("Make an adversarial pass");
+
+        for (const text of [low, medium, high, xhigh, max]) {
+            expect(text).toContain(
+                "`1. [Severity] path:line - defect. Scenario: <what triggers it>. Fix: <the change>.`"
+            );
+            expect(text).toContain("`Files reviewed: <n> of <N>`");
+            expect(text).toContain("`Not reviewed: none`");
+        }
+    });
+
+    test("review: the manifest and tier ride after the report shape; without review the text is unchanged", () => {
+        const manifest: ReviewManifest = {
+            base: "origin/master",
+            files: [
+                { path: "src/a.ts", added: 40, deleted: 2 },
+                { path: "assets/logo.png", added: 0, deleted: 0, binary: true },
+            ],
+            added: 40,
+            deleted: 2,
+        };
+
+        for (const backend of ["codex", "grok", "claude"] as const) {
+            const plain = buildWorkerContract({ backend, sandbox: "read-only" });
+            const reviewer = buildWorkerContract({
+                backend,
+                sandbox: "read-only",
+                review: { effort: "high", manifest },
+            });
+
+            expect(buildWorkerContract({ backend, sandbox: "read-only", review: null })).toBe(plain);
+            // Without surfaces the review block is the only addition, appended after the report shape.
+            expect(reviewer.startsWith(`${plain}\n`)).toBe(true);
+            expect(reviewer).toContain("You are a code REVIEWER at the high tier.");
+            expect(reviewer).toContain("Files to review (2, +40 -2):\n- src/a.ts +40 -2\n- assets/logo.png (binary)");
+            expect(reviewer).toContain("`git diff origin/master...HEAD -- <path>`");
+            expect(reviewer.indexOf("OPEN: ")).toBeLessThan(reviewer.indexOf("code REVIEWER"));
+        }
     });
 });
