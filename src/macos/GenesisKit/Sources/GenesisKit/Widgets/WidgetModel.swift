@@ -54,6 +54,9 @@ public final class WidgetModel: ObservableObject {
     /// timer ends, or until the pointer leaves the panel when the user moved onto it.
     @Published public private(set) var peekItem: WidgetInboxItem?
     private var peekTask: Task<Void, Never>?
+    /// The module a peek replaced on its surface (`previous`, nil when none was chosen) and the one it showed. The
+    /// end of the peek puts `previous` back, unless the selection is no longer `shown`: the user picked a module.
+    private var peekReplaced: (surface: WidgetSurfaceID, previous: String?, shown: String)?
     /// Surfaces the pointer is in now, without the hover delay: a popup never opens under the user's pointer.
     private var pointerInside: Set<String> = []
     /// Called with the items that arrived in a complete inbox snapshot (never the first one).
@@ -551,6 +554,8 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func openModule(_ moduleID: String, on surface: WidgetSurfaceID) {
+        // The user picked this module (also by clicking the peek itself): it stays after the peek.
+        peekReplaced = nil
         moduleSelections[surface.key] = moduleID
         defaults.set(moduleSelections, forKey: "widget.moduleSelections")
         activeSideGroup = surface.group
@@ -594,9 +599,16 @@ public final class WidgetModel: ObservableObject {
             && (hoveredSurface == nil || hoveredSurface == surface)
     }
 
-    /// Pops `item` up in `surface`'s preview for `seconds`, unless the user is in a panel, a window or a drag.
-    func showPeek(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, seconds: Double = 7) {
+    /// Pops `item` up in `surface`'s preview for `seconds`, unless the user is in a panel, a window or a drag. With
+    /// `module`, the surface shows that module for the peek and gets the user's own module back when the peek ends.
+    func showPeek(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, module: String? = nil, seconds: Double = 7) {
         guard canPeek(on: surface) else { return }
+        if let module, moduleSelections[surface.key] != module {
+            if let replaced = peekReplaced, replaced.surface != surface { restorePeekModule() }
+            // A second alert during a peek keeps the module from before the first one.
+            peekReplaced = peekReplaced ?? (surface, moduleSelections[surface.key], module)
+            moduleSelections[surface.key] = module
+        }
         hoverTask?.cancel()
         peekItem = item
         hoveredSurface = surface
@@ -617,8 +629,19 @@ public final class WidgetModel: ObservableObject {
         if expanded == nil, let surface = hoveredSurface, !pointerInside.contains(surface.key) {
             hoveredSurface = nil
         }
+        // An open panel keeps the peek's module under the user; `collapse` restores it once the panel closes.
+        if expanded == nil { restorePeekModule() }
         PerfLog.mark("widget.peek end id=\(item.id)")
         presentationChanged?()
+    }
+
+    /// Puts back the module a peek replaced, unless the user chose another one since. Not saved to the defaults:
+    /// the peek's own switch never was either.
+    private func restorePeekModule() {
+        guard let replaced = peekReplaced else { return }
+        peekReplaced = nil
+        guard moduleSelections[replaced.surface.key] == replaced.shown else { return }
+        moduleSelections[replaced.surface.key] = replaced.previous
     }
 
     public func hover(_ surface: WidgetSurfaceID, inside: Bool) {
@@ -842,6 +865,7 @@ public final class WidgetModel: ObservableObject {
         hoverTask?.cancel()
         peekTask?.cancel()
         peekItem = nil
+        restorePeekModule()
         voice?.finishInput()
         speechTask?.cancel()
         reading = false

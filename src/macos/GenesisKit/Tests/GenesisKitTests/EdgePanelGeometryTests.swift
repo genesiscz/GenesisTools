@@ -450,6 +450,58 @@ final class WidgetInteractionTests: XCTestCase {
         XCTAssertNil(value.hoveredSurface)
         XCTAssertEqual(value.presentation(for: side), .compact)
     }
+
+    /// An alert peek shows the agents module and gives the user's own module back when it ends, unless the user
+    /// picked a module during the peek.
+    @MainActor
+    func testAPeekRestoresTheModuleTheUserHadUnlessTheyPickedAnother() async throws {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        let item = WidgetInboxItem(id: "decision:d_5_s", sourceId: "d_5_s", kind: "decision", key: "local:claude:s:",
+            at: 2_000, needsAnswer: true, title: "Ship it?", number: 5)
+        func peekEnded() async throws {
+            let deadline = ContinuousClock.now + .seconds(5)
+            while value.peekItem != nil && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            XCTAssertNil(value.peekItem, "the peek did not end within 5 s")
+        }
+
+        value.moduleSelections[side.key] = "capture"
+        value.showPeek(item, on: side, module: "agents", seconds: 0.1)
+        XCTAssertEqual(value.peekItem, item)
+        XCTAssertEqual(value.moduleSelections[side.key], "agents", "the peek shows the agents module")
+        try await peekEnded()
+        XCTAssertEqual(value.moduleSelections[side.key], "capture", "the end of the peek gives the user's module back")
+
+        value.showPeek(item, on: side, module: "agents", seconds: 60)
+        value.showPeek(item, on: side, module: "agents", seconds: 60)
+        value.collapse()
+        XCTAssertEqual(value.moduleSelections[side.key], "capture", "a collapse ends a repeated peek the same way")
+
+        value.moduleSelections[side.key] = nil
+        value.showPeek(item, on: side, module: "agents", seconds: 60)
+        value.collapse()
+        XCTAssertNil(value.moduleSelections[side.key], "no module chosen before the peek: none after it")
+
+        value.moduleSelections[side.key] = "capture"
+        value.showPeek(item, on: side, module: "agents", seconds: 60)
+        value.openModule("tasks", on: side)
+        value.collapse()
+        XCTAssertEqual(value.moduleSelections[side.key], "tasks", "a module the user picked during the peek stays")
+
+        value.moduleSelections[side.key] = "capture"
+        value.showPeek(item, on: side, module: "agents", seconds: 0.1)
+        value.open(.right)
+        try await peekEnded()
+        XCTAssertEqual(value.moduleSelections[side.key], "agents", "an open panel keeps the peek's module under the user")
+        value.collapse()
+        XCTAssertEqual(value.moduleSelections[side.key], "capture", "closing that panel gives the user's module back")
+    }
 }
 
 /// "Show the widget": the coordinator builds and orders front edge panels only while the switch is on.
@@ -643,9 +695,19 @@ final class WidgetVisibilityTests: XCTestCase {
         XCTAssertEqual(coordinator.model.peekItem, decision, "the item that waits for an answer pops up")
         XCTAssertEqual(coordinator.model.hoveredSurface?.edge, .right)
         XCTAssertEqual(coordinator.model.presentation(for: try XCTUnwrap(coordinator.model.hoveredSurface)), .preview)
+        let peeked = try XCTUnwrap(coordinator.model.hoveredSurface)
+        XCTAssertEqual(coordinator.model.moduleSelections[peeked.key], "agents", "the popup shows the agents module")
 
         coordinator.model.collapse()
         XCTAssertNil(coordinator.model.peekItem)
+        // Another module was selected there: the popup switches to agents and gives that module back when it ends.
+        coordinator.model.moduleSelections[peeked.key] = "capture"
+        coordinator.alert([decision])
+        XCTAssertEqual(coordinator.model.hoveredSurface, peeked)
+        XCTAssertEqual(coordinator.model.moduleSelections[peeked.key], "agents", "the popup switched to agents")
+        coordinator.model.collapse()
+        XCTAssertEqual(coordinator.model.moduleSelections[peeked.key], "capture", "the end of the popup gives it back")
+        chimes.removeLast()
         // The pointer is in a panel and another module is selected: the popup is refused and the pane stays.
         let side = WidgetSurfaceID(edge: .right)
         coordinator.model.moduleSelections[side.key] = "capture"

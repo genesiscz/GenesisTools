@@ -183,10 +183,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         playChime(preferences?.alertSound)
         // Checked before the module switch: a popup the user's interaction refuses must not swap the pane they use.
         guard preferences?.alertPopup ?? true, let surface = peekSurface(), model.canPeek(on: surface) else { return }
-        if moduleIDs(for: surface).contains("agents"), model.moduleSelections[surface.key] != "agents" {
-            model.moduleSelections[surface.key] = "agents"
-        }
-        model.showPeek(item, on: surface)
+        // The peek shows the agents module and gives the user's own module back when it ends.
+        model.showPeek(item, on: surface, module: moduleIDs(for: surface).contains("agents") ? "agents" : nil)
     }
 
     /// The visible edge whose selected module is the agents inbox, else the first visible edge that has it.
