@@ -33,7 +33,7 @@ test("a spawn that names its model shows it in the description", async ($, on) =
     await $.agent.spawn(spawn("Pair one", { model: "sonnet" }));
     await $.agent.spawn(spawn("Pair two", { model: "claude-haiku-4-5-20251001" }));
 
-    expect(seen).toEqual(["Pair one · sonnet", "Pair two · haiku-4-5"]);
+    expect(seen).toEqual(["sonnet · Pair one", "haiku-4-5 · Pair two"]);
 });
 
 test("a fork shows the parent's model, which it always inherits", async ($, on) => {
@@ -42,7 +42,7 @@ test("a fork shows the parent's model, which it always inherits", async ($, on) 
 
     await $.agent.spawn(spawn("Fork it", { fork: true, model: "haiku" }));
 
-    expect(seen).toEqual(["Fork it · opus-5-5[1m]"]);
+    expect(seen).toEqual(["opus-5-5[1m] · Fork it"]);
 });
 
 test("a spawn that names no model keeps its description", async ($, on) => {
@@ -97,7 +97,7 @@ test("an Agent call's streamed arguments carry its model in the description, so 
         chunks.map((chunk) => (chunk.kind === "input" ? `input ${chunk.index}: ${chunk.json}` : chunk.kind))
     ).toEqual([
         "tool",
-        'input 0: {"description":"Pair one · sonnet","prompt":"ok","model":"sonnet"}',
+        'input 0: {"description":"sonnet · Pair one","prompt":"ok","model":"sonnet"}',
         "tool",
         'input 1: {"description":"Explore","prompt":"ok"}',
         "tool",

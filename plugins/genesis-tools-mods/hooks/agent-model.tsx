@@ -1,6 +1,8 @@
-// The model a subagent runs on, added to its description. Two hooks, because the places that draw a description
+// The model a subagent runs on, put in front of its description, so the agents panel row reads
+// `general-purpose  sonnet · Pair one`: the model right after the agent's type, which no hook can rename (a
+// `subagentType` rewrite starts another agent) and the panel draws itself. Two hooks, because the places that draw a description
 // read it at two different moments (live probes, 2026-10-22):
-// - The `N background agents launched` block (`├ Pair one · sonnet`) and the Agent row draw the arguments the
+// - The `N background agents launched` block (`├ sonnet · Pair one`) and the Agent row draw the arguments the
 //   model's response recorded. A `tool.call` or `agent.spawn` rewrite comes too late for them, so `turn.step`
 //   rewrites the Agent call's argument JSON as it streams: what leaves the outermost hook is shown and recorded.
 // - The agents panel row and the `Agent "…" finished` line draw the description `agent.spawn` passes on, which
@@ -17,9 +19,9 @@ function modelLabel(id: string): string {
 }
 
 function withModel(description: string, label: string): string {
-    const suffix = ` · ${label}`;
+    const prefix = `${label} · `;
 
-    return description.endsWith(suffix) ? description : `${description}${suffix}`;
+    return description.startsWith(prefix) ? description : `${prefix}${description}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
