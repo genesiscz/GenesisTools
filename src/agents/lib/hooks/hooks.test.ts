@@ -642,38 +642,50 @@ describe("applySetting", () => {
         expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "rules.find-from-root", "loud")).toThrow("takes one of");
     });
 
-    it("diff.commandLines and mods.fullDiff are set, checked and loaded", () => {
+    it("diff.commandLines and mods.diff.fullDiff are set, checked and loaded", () => {
         expect(DEFAULT_HOOKS_CONFIG.diff.commandLines).toBe(3);
-        expect(DEFAULT_HOOKS_CONFIG.mods.fullDiff).toBe(true);
+        expect(DEFAULT_HOOKS_CONFIG.mods.diff.fullDiff).toBe(true);
         expect(applySetting(DEFAULT_HOOKS_CONFIG, "diff.commandLines", "0").diff.commandLines).toBe(0);
-        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.fullDiff", "false").mods.fullDiff).toBe(false);
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.diff.fullDiff", "false").mods.diff.fullDiff).toBe(false);
+        // The flat key of before 2026-10-23 is an alias.
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.fullDiff", "false").mods.diff.fullDiff).toBe(false);
         expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "diff.commandLines", "-1")).toThrow();
-        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "mods.fullDiff", "off")).toThrow("true or false");
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "mods.diff.fullDiff", "off")).toThrow("true or false");
 
         const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-mods-")), "hooks.json");
 
-        writeFileSync(path, SafeJSON.stringify({ diff: { commandLines: 5 }, mods: { fullDiff: false } }));
+        writeFileSync(path, SafeJSON.stringify({ diff: { commandLines: 5 }, mods: { diff: { fullDiff: false } } }));
         expect(loadHooksConfig(path).diff.commandLines).toBe(5);
-        expect(loadHooksConfig(path).mods.fullDiff).toBe(false);
+        expect(loadHooksConfig(path).mods.diff.fullDiff).toBe(false);
     });
 
-    it("mods.idleCompact* are set, checked and loaded", () => {
-        expect(DEFAULT_HOOKS_CONFIG.mods.idleCompactMinutes).toBe(56);
-        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompact", "false").mods.idleCompact).toBe(false);
-        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompactMinutes", "50").mods.idleCompactMinutes).toBe(50);
-        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompactMinTokens", "0").mods.idleCompactMinTokens).toBe(0);
-        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompactMinutes", "60")).toThrow("1 to 59");
+    it("mods.idleCompact.* are set, checked and loaded, and the flat keys of before still read", () => {
+        expect(DEFAULT_HOOKS_CONFIG.mods.idleCompact.minutes).toBe(56);
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompact", "false").mods.idleCompact.enabled).toBe(false);
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompact.minutes", "50").mods.idleCompact.minutes).toBe(50);
+        expect(applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompactMinTokens", "0").mods.idleCompact.minTokens).toBe(0);
+        expect(() => applySetting(DEFAULT_HOOKS_CONFIG, "mods.idleCompact.minutes", "60")).toThrow("1 to 59");
 
         const path = join(mkdtempSync(join(tmpdir(), "gt-cfg-idle-")), "hooks.json");
 
-        writeFileSync(path, SafeJSON.stringify({ mods: { idleCompactMinutes: 75, idleCompactMinTokens: 1000 } }));
-        expect(loadHooksConfig(path).mods).toEqual({
-            fullDiff: true,
-            collapseGitSync: true,
-            idleCompact: true,
-            idleCompactMinutes: 56,
-            idleCompactMinTokens: 1000,
-        });
+        writeFileSync(
+            path,
+            SafeJSON.stringify({ mods: { idleCompact: false, idleCompactMinutes: 75, idleCompactMinTokens: 1000 } })
+        );
+        expect(loadHooksConfig(path).mods.idleCompact).toEqual({ enabled: false, minutes: 56, minTokens: 1000 });
+    });
+
+    it("the other mods keys are set and checked by the type of their default", () => {
+        const set = (key: string, value: string) => applySetting(DEFAULT_HOOKS_CONFIG, key, value).mods;
+
+        expect(set("mods.agentModel.format", "short").agentModel).toEqual({ enabled: true, format: "short" });
+        expect(() => set("mods.agentModel.format", "tiny")).toThrow("label or short");
+        expect(set("mods.links", "false").links.enabled).toBe(false);
+        expect(set("mods.cacheBand.warnMinutes", "15").cacheBand.warnMinutes).toBe(15);
+        expect(() => set("mods.cacheBand.warnMinutes", "75")).toThrow("1 to 59");
+        expect(set("mods.hooks.dedupe", "false").hooks).toEqual({ tokens: true, dedupe: false });
+        expect(() => set("mods.nonsense.enabled", "true")).toThrow("Unknown mods key");
+        expect(() => set("mods.links.colour", "red")).toThrow("Unknown mods key");
     });
 
     it("reads the mods plugin's row from claude plugin list --json", () => {

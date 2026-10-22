@@ -729,7 +729,7 @@ export function registerHooksCommands(program: Command): void {
 
 /**
  * `hooks mods`: the Claude Code mods of this repository (the `genesis-tools-mods` plugin). They share the
- * hooks file: `mods.fullDiff` switches the full-diff mod, which reads the diff hook's `hook-diffs` notes, and
+ * hooks file: `mods.diff.fullDiff` switches the full-diff mod, which reads the diff hook's `hook-diffs` notes, and
  * `mods.idleCompact` the idle-compaction mod.
  */
 function registerMods(hooks: Command): void {
@@ -766,13 +766,38 @@ function registerMods(hooks: Command): void {
                 );
             }
 
-            ui.raw(`mods.fullDiff: ${config.mods.fullDiff ? pc.green("on") : pc.dim("off")}`);
-            ui.raw(`mods.collapseGitSync: ${config.mods.collapseGitSync ? pc.green("on") : pc.dim("off")}`);
-            ui.raw(
-                `mods.idleCompact: ${config.mods.idleCompact ? pc.green("on") : pc.dim("off")}${pc.dim(` · after ${config.mods.idleCompactMinutes} min · floor ${config.mods.idleCompactMinTokens} tokens`)}`
-            );
+            const onOff = (on: boolean) => (on ? pc.green("on") : pc.dim("off"));
+            const mods = config.mods;
+            const rows: [string, boolean, string][] = [
+                ["mods.diff.fullDiff", mods.diff.fullDiff, ""],
+                ["mods.diff.collapseGitSync", mods.diff.collapseGitSync, ""],
+                [
+                    "mods.idleCompact",
+                    mods.idleCompact.enabled,
+                    `after ${mods.idleCompact.minutes} min · floor ${mods.idleCompact.minTokens} tokens`,
+                ],
+                ["mods.agentModel", mods.agentModel.enabled, `format ${mods.agentModel.format}`],
+                ["mods.decisions", mods.decisions.enabled, ""],
+                ["mods.links", mods.links.enabled, ""],
+                ["mods.git", mods.git.enabled, ""],
+                ["mods.askRow", mods.askRow.enabled, ""],
+                ["mods.spinner", mods.spinner.enabled, ""],
+                [
+                    "mods.cacheBand",
+                    mods.cacheBand.enabled,
+                    `red under ${mods.cacheBand.warnMinutes} min · others ${mods.cacheBand.others ? "on" : "off"}`,
+                ],
+                ["mods.tmpUsage", mods.tmpUsage.enabled, `every ${mods.tmpUsage.minutes} min`],
+                ["mods.agentsBand", mods.agentsBand.enabled, `red past ${mods.agentsBand.warnMinutes} min`],
+                ["mods.hooks.tokens", mods.hooks.tokens, ""],
+                ["mods.hooks.dedupe", mods.hooks.dedupe, ""],
+            ];
 
-            if (config.mods.fullDiff && fullDiff === "off") {
+            for (const [name, on, detail] of rows) {
+                ui.raw(`${name}: ${onOff(on)}${detail ? pc.dim(` · ${detail}`) : ""}`);
+            }
+
+            if (mods.diff.fullDiff && fullDiff === "off") {
                 ui.raw(pc.yellow(`diff.fullDiff is off, so no call has a full-diff note for the mod to draw.`));
             }
 

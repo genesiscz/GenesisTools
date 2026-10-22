@@ -263,30 +263,55 @@ export interface AgentsTalkConfig {
 }
 
 /**
- * The Claude Code mods of the `genesis-tools-mods` plugin (`tools agents hooks mods install`). The plugin
- * reads this section of the hooks file itself, so a change here needs no reinstall.
+ * The Claude Code mods of the `genesis-tools-mods` plugin (`tools agents hooks mods install`), one object per
+ * feature (`mods.<feature>.<field>`). The plugin reads this section of the hooks file itself, so a change here
+ * needs no reinstall. It keeps the same shape and defaults in its own `hooks/shared.ts` (`ModsSettings`), since it
+ * runs outside this repository; `mods-plugin.test.ts` holds the two equal.
  */
 export interface ModsConfig {
+    diff: {
+        /**
+         * Draw the whole diff of a call whose hook message was cut, with Claude Code's own diff element,
+         * under the call's row. Reads `hook-diffs/<call>.md`, so it needs `diff.fullDiff` not `off`.
+         */
+        fullDiff: boolean;
+        /**
+         * Start the diff of a call that runs `git pull`, `merge`, `rebase`, `checkout`, `switch`, `reset`,
+         * `cherry-pick`, `revert`, `am` or `stash pop|apply` hidden behind one `show diff from git pull` button:
+         * those diffs are other people's work arriving, often hundreds of lines.
+         */
+        collapseGitSync: boolean;
+    };
     /**
-     * Draw the whole diff of a call whose hook message was cut, with Claude Code's own diff element,
-     * under the call's row. Reads `hook-diffs/<call>.md`, so it needs `diff.fullDiff` not `off`.
+     * Compact an idle Claude session `minutes` after its last turn, before the 1-hour prompt cache expires, when
+     * the engine's own idle compaction did not (it gives up at its first refused gate, such as a rate-limit
+     * warning). Skips a context under `minTokens`. `minutes` is 1 to 59: after the engine's own try at 54
+     * minutes, before the cache expires at 60.
      */
-    fullDiff: boolean;
+    idleCompact: { enabled: boolean; minutes: number; minTokens: number };
+    /** A subagent's model in front of its description: `sonnet · Pair one` (`label`) or `(S) Pair one` (`short`). */
+    agentModel: { enabled: boolean; format: "label" | "short" };
+    /** `/decisions`: the open decisions of the session in a pane, an answer staged per decision, sent in one message. */
+    decisions: { enabled: boolean };
+    /** Bare paths, folders, commits and repeated decisions in the main loop's reply become links as it streams. */
+    links: { enabled: boolean };
+    /** The git band above the prompt: branch, unpushed, dirty, PRs with CI; `/mod-git` switches it per session. */
+    git: { enabled: boolean };
+    /** `[ask]` beside a finished tool row: quotes the row into the prompt. */
+    askRow: { enabled: boolean };
+    /** The running tool, its time and the working subagents on the spinner line. */
+    spinner: { enabled: boolean };
+    /** The prompt cache countdown in the band, red under `warnMinutes`; `others` adds other sessions under it. */
+    cacheBand: { enabled: boolean; warnMinutes: number; others: boolean };
+    /** The size of the session's /tmp/cc scratch folder and the free disk, every `minutes`. */
+    tmpUsage: { enabled: boolean; minutes: number };
+    /** One band row per working subagent: model, age, idle time, tool calls; red past `warnMinutes`. */
+    agentsBand: { enabled: boolean; warnMinutes: number };
     /**
-     * Start the diff of a call that runs `git pull`, `merge`, `rebase`, `checkout`, `switch`, `reset`,
-     * `cherry-pick`, `revert`, `am` or `stash pop|apply` hidden behind one `show diff from git pull` button:
-     * those diffs are other people's work arriving, often hundreds of lines.
+     * What the classic hooks hand the model: `tokens` pins the estimate as the plugin's status line, `dedupe`
+     * replaces a context block already given to the same loop since its last compaction with a one-line receipt.
      */
-    collapseGitSync: boolean;
-    /**
-     * Compact an idle Claude session `idleCompactMinutes` after its last turn, before the 1-hour prompt
-     * cache expires, when the engine's own idle compaction did not (it gives up at its first refused gate,
-     * such as a rate-limit warning). Skips a context under `idleCompactMinTokens`.
-     */
-    idleCompact: boolean;
-    /** 1 to 59: after the engine's own try at 54 minutes, before the cache expires at 60. */
-    idleCompactMinutes: number;
-    idleCompactMinTokens: number;
+    hooks: { tokens: boolean; dedupe: boolean };
 }
 
 /**
@@ -433,11 +458,18 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
     },
     agentsTalk: { hint: true },
     mods: {
-        fullDiff: true,
-        collapseGitSync: true,
-        idleCompact: true,
-        idleCompactMinutes: 56,
-        idleCompactMinTokens: 200_000,
+        diff: { fullDiff: true, collapseGitSync: true },
+        idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
+        agentModel: { enabled: true, format: "label" },
+        decisions: { enabled: true },
+        links: { enabled: true },
+        git: { enabled: true },
+        askRow: { enabled: true },
+        spinner: { enabled: true },
+        cacheBand: { enabled: true, warnMinutes: 10, others: true },
+        tmpUsage: { enabled: true, minutes: 5 },
+        agentsBand: { enabled: true, warnMinutes: 60 },
+        hooks: { tokens: true, dedupe: true },
     },
     unpushed: { enabled: true, maxCommits: 3, maxAgeMinutes: 60, remindEveryMinutes: 30 },
     logPath: defaultLogPath(),
@@ -1010,28 +1042,89 @@ export function mergeStoredConfig(stored: StoredHooksConfig): HooksConfig {
 
 const STOP_HOOK_MODES: readonly DecisionStopHook[] = ["off", "warn", "block"];
 
-/** Field by field, like `diff`: a stored value of the wrong type falls back to the default. */
-function mergeMods(stored: Partial<ModsConfig> | undefined): ModsConfig {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function partOf(value: unknown): Record<string, unknown> {
+    return isPlainObject(value) ? value : {};
+}
+
+/**
+ * Field by field, like `diff`: a stored value of the wrong type falls back to the default. The flat keys of before
+ * 2026-10-23 (`mods.fullDiff`, `mods.collapseGitSync`, `mods.idleCompact` as a boolean, `mods.idleCompactMinutes`,
+ * `mods.idleCompactMinTokens`) still count where the object leaves a field out; the next write stores the objects.
+ */
+export function mergeMods(stored: unknown): ModsConfig {
     const base = DEFAULT_HOOKS_CONFIG.mods;
+    const held = partOf(stored);
+    const diff = partOf(held.diff);
+    const idle = partOf(held.idleCompact);
+    const legacyIdle = typeof held.idleCompact === "boolean" ? held.idleCompact : undefined;
+    const model = partOf(held.agentModel);
+    const cache = partOf(held.cacheBand);
+    const tmp = partOf(held.tmpUsage);
+    const agents = partOf(held.agentsBand);
+    const hooks = partOf(held.hooks);
+    const enabled = (key: string, fallback: boolean) => boolOr(partOf(held[key]).enabled, fallback);
     const minutes = countOr({
-        field: "mods.idleCompactMinutes",
-        value: stored?.idleCompactMinutes,
-        fallback: base.idleCompactMinutes,
+        field: "mods.idleCompact.minutes",
+        value: idle.minutes ?? held.idleCompactMinutes,
+        fallback: base.idleCompact.minutes,
     });
 
     return {
-        fullDiff: boolOr(stored?.fullDiff, base.fullDiff),
-        collapseGitSync: boolOr(stored?.collapseGitSync, base.collapseGitSync),
-        idleCompact: boolOr(stored?.idleCompact, base.idleCompact),
-        // The mod reads the file itself and drops 60 or more the same way.
-        idleCompactMinutes: minutes < 60 ? minutes : base.idleCompactMinutes,
-        idleCompactMinTokens: countOr({
-            field: "mods.idleCompactMinTokens",
-            value: stored?.idleCompactMinTokens,
-            fallback: base.idleCompactMinTokens,
-            min: 0,
-        }),
+        diff: {
+            fullDiff: boolOr(diff.fullDiff, boolOr(held.fullDiff, base.diff.fullDiff)),
+            collapseGitSync: boolOr(diff.collapseGitSync, boolOr(held.collapseGitSync, base.diff.collapseGitSync)),
+        },
+        idleCompact: {
+            enabled: boolOr(idle.enabled, legacyIdle ?? base.idleCompact.enabled),
+            // The mod reads the file itself and drops 60 or more the same way.
+            minutes: minutes < 60 ? minutes : base.idleCompact.minutes,
+            minTokens: countOr({
+                field: "mods.idleCompact.minTokens",
+                value: idle.minTokens ?? held.idleCompactMinTokens,
+                fallback: base.idleCompact.minTokens,
+                min: 0,
+            }),
+        },
+        agentModel: {
+            enabled: boolOr(model.enabled, base.agentModel.enabled),
+            format: model.format === "short" || model.format === "label" ? model.format : base.agentModel.format,
+        },
+        decisions: { enabled: enabled("decisions", base.decisions.enabled) },
+        links: { enabled: enabled("links", base.links.enabled) },
+        git: { enabled: enabled("git", base.git.enabled) },
+        askRow: { enabled: enabled("askRow", base.askRow.enabled) },
+        spinner: { enabled: enabled("spinner", base.spinner.enabled) },
+        cacheBand: {
+            enabled: boolOr(cache.enabled, base.cacheBand.enabled),
+            warnMinutes: minutesOr("mods.cacheBand.warnMinutes", cache.warnMinutes, base.cacheBand.warnMinutes, 59),
+            others: boolOr(cache.others, base.cacheBand.others),
+        },
+        tmpUsage: {
+            enabled: boolOr(tmp.enabled, base.tmpUsage.enabled),
+            minutes: minutesOr("mods.tmpUsage.minutes", tmp.minutes, base.tmpUsage.minutes, 120),
+        },
+        agentsBand: {
+            enabled: boolOr(agents.enabled, base.agentsBand.enabled),
+            warnMinutes: minutesOr(
+                "mods.agentsBand.warnMinutes",
+                agents.warnMinutes,
+                base.agentsBand.warnMinutes,
+                24 * 60
+            ),
+        },
+        hooks: { tokens: boolOr(hooks.tokens, base.hooks.tokens), dedupe: boolOr(hooks.dedupe, base.hooks.dedupe) },
     };
+}
+
+/** A whole number of minutes from 1 to `max`, as the plugin reads it; else the default. */
+function minutesOr(field: string, value: unknown, fallback: number, max: number): number {
+    const minutes = countOr({ field, value, fallback });
+
+    return minutes <= max ? minutes : fallback;
 }
 
 function mergeUnpushed(stored: Partial<UnpushedConfig> | undefined): UnpushedConfig {

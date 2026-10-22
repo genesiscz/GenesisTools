@@ -1,0 +1,122 @@
+// The `mods` section of the hooks file as this plugin reads it. No engine types here: the CLI's own tests import
+// this file to hold its defaults equal to `src/agents/lib/hooks/config.ts`, outside the plugin's type world.
+
+export function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The `mods` section of the hooks file, one object per feature (`tools agents hooks config set mods.<feature>.<field>`).
+ * The CLI keeps the same shape and defaults in `src/agents/lib/hooks/config.ts` (`ModsConfig`); a test holds the two
+ * equal, since this plugin runs outside the repository and cannot import it.
+ */
+export interface ModsSettings {
+    diff: { fullDiff: boolean; collapseGitSync: boolean };
+    idleCompact: { enabled: boolean; minutes: number; minTokens: number };
+    agentModel: { enabled: boolean; format: "label" | "short" };
+    decisions: { enabled: boolean };
+    links: { enabled: boolean };
+    git: { enabled: boolean };
+    askRow: { enabled: boolean };
+    spinner: { enabled: boolean };
+    cacheBand: { enabled: boolean; warnMinutes: number; others: boolean };
+    tmpUsage: { enabled: boolean; minutes: number };
+    agentsBand: { enabled: boolean; warnMinutes: number };
+    hooks: { tokens: boolean; dedupe: boolean };
+}
+
+export const MODS_DEFAULTS: ModsSettings = {
+    diff: { fullDiff: true, collapseGitSync: true },
+    idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
+    agentModel: { enabled: true, format: "label" },
+    decisions: { enabled: true },
+    links: { enabled: true },
+    git: { enabled: true },
+    askRow: { enabled: true },
+    spinner: { enabled: true },
+    cacheBand: { enabled: true, warnMinutes: 10, others: true },
+    tmpUsage: { enabled: true, minutes: 5 },
+    agentsBand: { enabled: true, warnMinutes: 60 },
+    hooks: { tokens: true, dedupe: true },
+};
+
+function whole(value: unknown, min: number, max: number, fallback: number): number {
+    return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max ? value : fallback;
+}
+
+function bool(value: unknown, fallback: boolean): boolean {
+    return typeof value === "boolean" ? value : fallback;
+}
+
+/**
+ * The `mods` section of a hooks file. A missing or broken file, and a value of the wrong kind, keep the default.
+ * The flat keys of before 2026-10-23 (`mods.fullDiff`, `mods.collapseGitSync`, `mods.idleCompact` as a boolean,
+ * `mods.idleCompactMinutes`, `mods.idleCompactMinTokens`) still count where the object leaves a field out.
+ */
+export function modsSettings(hooksFile: string | undefined): ModsSettings {
+    let held: Record<string, unknown> = {};
+
+    try {
+        const stored: unknown = hooksFile === undefined ? undefined : JSON.parse(hooksFile);
+        const mods = isRecord(stored) ? stored.mods : undefined;
+        held = isRecord(mods) ? mods : {};
+    } catch {
+        held = {};
+    }
+
+    const part = (key: string): Record<string, unknown> => {
+        const value = held[key];
+
+        return isRecord(value) ? value : {};
+    };
+    const d = MODS_DEFAULTS;
+    const diff = part("diff");
+    const idle = part("idleCompact");
+    const legacyIdle = typeof held.idleCompact === "boolean" ? held.idleCompact : undefined;
+    const model = part("agentModel");
+    const cache = part("cacheBand");
+    const tmp = part("tmpUsage");
+    const agents = part("agentsBand");
+    const hooks = part("hooks");
+    const enabled = (key: string, fallback: boolean) => bool(part(key).enabled, fallback);
+
+    return {
+        diff: {
+            fullDiff: bool(diff.fullDiff, bool(held.fullDiff, d.diff.fullDiff)),
+            collapseGitSync: bool(diff.collapseGitSync, bool(held.collapseGitSync, d.diff.collapseGitSync)),
+        },
+        idleCompact: {
+            enabled: bool(idle.enabled, legacyIdle ?? d.idleCompact.enabled),
+            minutes: whole(idle.minutes, 1, 59, whole(held.idleCompactMinutes, 1, 59, d.idleCompact.minutes)),
+            minTokens: whole(
+                idle.minTokens,
+                0,
+                Number.MAX_SAFE_INTEGER,
+                whole(held.idleCompactMinTokens, 0, Number.MAX_SAFE_INTEGER, d.idleCompact.minTokens)
+            ),
+        },
+        agentModel: {
+            enabled: bool(model.enabled, d.agentModel.enabled),
+            format: model.format === "short" || model.format === "label" ? model.format : d.agentModel.format,
+        },
+        decisions: { enabled: enabled("decisions", d.decisions.enabled) },
+        links: { enabled: enabled("links", d.links.enabled) },
+        git: { enabled: enabled("git", d.git.enabled) },
+        askRow: { enabled: enabled("askRow", d.askRow.enabled) },
+        spinner: { enabled: enabled("spinner", d.spinner.enabled) },
+        cacheBand: {
+            enabled: bool(cache.enabled, d.cacheBand.enabled),
+            warnMinutes: whole(cache.warnMinutes, 1, 59, d.cacheBand.warnMinutes),
+            others: bool(cache.others, d.cacheBand.others),
+        },
+        tmpUsage: {
+            enabled: bool(tmp.enabled, d.tmpUsage.enabled),
+            minutes: whole(tmp.minutes, 1, 120, d.tmpUsage.minutes),
+        },
+        agentsBand: {
+            enabled: bool(agents.enabled, d.agentsBand.enabled),
+            warnMinutes: whole(agents.warnMinutes, 1, 24 * 60, d.agentsBand.warnMinutes),
+        },
+        hooks: { tokens: bool(hooks.tokens, d.hooks.tokens), dedupe: bool(hooks.dedupe, d.hooks.dedupe) },
+    };
+}

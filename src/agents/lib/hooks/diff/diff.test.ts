@@ -4125,7 +4125,7 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         expect(modDrawsDiffs({ config: on, harness: "codex", isEnabled: yes })).toBe(false);
         expect(
             modDrawsDiffs({
-                config: { ...on, mods: { ...on.mods, fullDiff: false } },
+                config: { ...on, mods: { ...on.mods, diff: { ...on.mods.diff, fullDiff: false } } },
                 harness: "claude",
                 isEnabled: yes,
             })

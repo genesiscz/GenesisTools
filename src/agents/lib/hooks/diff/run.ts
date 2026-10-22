@@ -768,7 +768,7 @@ function installedMod(sessionId: string | undefined): boolean {
 }
 
 /**
- * Claude Code with the full-diff mod (`genesis-tools-mods`) loaded in this session and `mods.fullDiff` on: the mod
+ * Claude Code with the full-diff mod (`genesis-tools-mods`) loaded in this session and `mods.diff.fullDiff` on: the mod
  * draws each call's diff from its note, so the hook's own message would draw it twice. Codex and Grok have no mods.
  */
 export function modDrawsDiffs({
@@ -784,7 +784,7 @@ export function modDrawsDiffs({
 }): boolean {
     return (
         harness === "claude" &&
-        config.mods.fullDiff &&
+        config.mods.diff.fullDiff &&
         diffFor(config, harness).fullDiff !== "off" &&
         isEnabled(sessionId)
     );

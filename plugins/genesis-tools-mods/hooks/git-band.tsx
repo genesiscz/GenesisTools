@@ -1,0 +1,306 @@
+// The git band: one line above the prompt with the branch, unpushed and unpulled commits, the dirty count, and
+// the pull requests that matter here (the current branch's, plus the ones `/mod-git pr add` tracks) with their
+// CI counts. It refreshes when the session starts, after a Bash call that ran git or gh, every 3 minutes, and on
+// `/mod-git refresh`; `gh` answers are reused for 2 minutes. `/mod-git on|off|toggle` switches it for this
+// session, `mods.git.enabled` for every session. Each refresh and command goes to `mods-log/git.jsonl`.
+import type { ElementTable, RenderElement } from "claude-code";
+import type { BandPr, GitBand, GitBandLine, GitBandSwitch } from "../types";
+import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
+
+/** The last refresh; null until one finished. */
+let line: GitBandLine = null;
+/** `/mod-git on|off` for this session; null follows `mods.git.enabled`. */
+let turnedOn: GitBandSwitch = null;
+
+const GH_TTL_MS = 2 * 60_000;
+const EVERY_MS = 3 * 60_000;
+const ghCache = new Map<string, { at: number; pr: BandPr | null }>();
+let refreshing: Promise<void> | undefined;
+
+async function run(host: Host, argv: string[], cwd: string): Promise<string | undefined> {
+    const done = await host.run(argv, { cwd, timeoutMs: 15_000 }).catch(() => undefined);
+
+    return done?.exitCode === 0 ? done.stdout : undefined;
+}
+
+async function rootOf(host: Host): Promise<string | undefined> {
+    const cwd = await host.cwd();
+
+    return (await run(host, ["git", "rev-parse", "--show-toplevel"], cwd))?.trim() || undefined;
+}
+
+const storeKey = (root: string) => `git-band-prs:${root}`;
+
+export async function trackedPrs(host: Host, root: string): Promise<number[]> {
+    const held = await host.storeGet(storeKey(root));
+
+    return Array.isArray(held) ? held.filter((n): n is number => typeof n === "number") : [];
+}
+
+/** CI counts out of `statusCheckRollup`: a check run has `conclusion`, a commit status has `state`. */
+export function checkCounts(rollup: unknown): { passed: number; failed: number; pending: number } {
+    const counts = { passed: 0, failed: 0, pending: 0 };
+
+    for (const check of Array.isArray(rollup) ? rollup : []) {
+        if (!isRecord(check)) {
+            continue;
+        }
+
+        const verdict = String(check.conclusion || check.state || "").toUpperCase();
+
+        if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(verdict)) {
+            counts.passed++;
+        } else if (
+            ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"].includes(verdict)
+        ) {
+            counts.failed++;
+        } else {
+            counts.pending++;
+        }
+    }
+
+    return counts;
+}
+
+async function prOf(host: Host, root: string, which: string, tracked: boolean): Promise<BandPr | null> {
+    const key = `${root}|${which}`;
+    const held = ghCache.get(key);
+
+    if (held && Date.now() - held.at < GH_TTL_MS) {
+        return held.pr ? { ...held.pr, tracked } : null;
+    }
+
+    const argv = [
+        "gh",
+        "pr",
+        "view",
+        ...(which ? [which] : []),
+        "--json",
+        "number,title,url,state,isDraft,statusCheckRollup",
+    ];
+    const text = await run(host, argv, root);
+    let pr: BandPr | null = null;
+
+    try {
+        const parsed: unknown = text ? JSON.parse(text) : undefined;
+
+        if (isRecord(parsed) && typeof parsed.number === "number") {
+            pr = {
+                number: parsed.number,
+                title: String(parsed.title ?? ""),
+                url: String(parsed.url ?? ""),
+                state: String(parsed.state ?? ""),
+                draft: parsed.isDraft === true,
+                tracked,
+                ...checkCounts(parsed.statusCheckRollup),
+            };
+        }
+    } catch {
+        pr = null;
+    }
+
+    ghCache.set(key, { at: Date.now(), pr });
+
+    return pr;
+}
+
+/** `## branch...origin/branch [ahead 2, behind 1]` and one line per changed path, from `git status --porcelain --branch`. */
+export function parseStatus(text: string): Pick<GitBand, "branch" | "ahead" | "behind" | "dirty"> {
+    const [head = "", ...rest] = text.split("\n");
+    const branch = /^## (?:No commits yet on )?([^.\s]+(?:\.(?!\.)[^.\s]*)*)/.exec(head)?.[1] ?? "?";
+
+    return {
+        branch: branch === "HEAD" ? "detached" : branch,
+        ahead: Number(/ahead (\d+)/.exec(head)?.[1] ?? 0),
+        behind: Number(/behind (\d+)/.exec(head)?.[1] ?? 0),
+        dirty: rest.filter((row) => row.trim()).length,
+    };
+}
+
+async function isOn(host: Host): Promise<boolean> {
+    const held = turnedOn;
+
+    return held ?? (await settingsOf(host)).git.enabled;
+}
+
+async function refreshNow(host: Host, why: string): Promise<void> {
+    const root = await rootOf(host);
+
+    if (!root) {
+        line = null;
+        host.redraw();
+        return;
+    }
+
+    const started = Date.now();
+    const status = await run(host, ["git", "status", "--porcelain", "--branch"], root);
+
+    if (status === undefined) {
+        return;
+    }
+
+    const tracked = await trackedPrs(host, root);
+    const own = await prOf(host, root, "", false);
+    const others = await Promise.all(
+        tracked.filter((n) => n !== own?.number).map((n) => prOf(host, root, String(n), true))
+    );
+    const prs = [own ? { ...own, tracked: tracked.includes(own.number) } : null, ...others].filter(
+        (pr): pr is BandPr => pr !== null
+    );
+    const band: GitBand = { at: Date.now(), ...parseStatus(status), prs };
+
+    line = band;
+    host.redraw();
+    await logMod(host, "git", {
+        event: "refresh",
+        why,
+        root,
+        branch: band.branch,
+        ahead: band.ahead,
+        behind: band.behind,
+        dirty: band.dirty,
+        prs: prs.map((pr) => ({ n: pr.number, passed: pr.passed, failed: pr.failed, pending: pr.pending })),
+        ms: Date.now() - started,
+    });
+}
+
+/** One refresh at a time; a call while one runs waits for it instead of starting a second `gh`. */
+export function refresh(host: Host, why: string): Promise<void> {
+    refreshing ??= refreshNow(host, why).finally(() => {
+        refreshing = undefined;
+    });
+
+    return refreshing;
+}
+
+const USAGE = "/mod-git on | off | toggle | refresh | status | pr add <n…> | pr rm <n…> | pr list";
+
+/** The answer to `/mod-git <args>`. */
+async function command(host: Host, args: string): Promise<string> {
+    const [verb = "status", sub, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+
+    if (verb === "on" || verb === "off" || verb === "toggle") {
+        const now = verb === "toggle" ? !(await isOn(host)) : verb === "on";
+        turnedOn = now;
+        host.redraw();
+
+        if (now) {
+            await refresh(host, "command");
+        }
+
+        return `Git band ${now ? "on" : "off"} for this session.`;
+    }
+
+    if (verb === "refresh") {
+        ghCache.clear();
+        await refresh(host, "command");
+
+        return "Git band refreshed.";
+    }
+
+    const root = await rootOf(host);
+
+    if (!root) {
+        return "Not in a git repository.";
+    }
+
+    if (verb === "pr") {
+        const numbers = rest.map((n) => Number(n.replace(/^#/, ""))).filter((n) => Number.isInteger(n) && n > 0);
+        const held = await trackedPrs(host, root);
+
+        if (sub === "list" || sub === undefined) {
+            return held.length ? `Tracked here: ${held.map((n) => `#${n}`).join(", ")}` : "No tracked PRs here.";
+        }
+
+        if ((sub !== "add" && sub !== "rm") || numbers.length === 0) {
+            return USAGE;
+        }
+
+        const next = sub === "add" ? [...new Set([...held, ...numbers])] : held.filter((n) => !numbers.includes(n));
+        await host.storeSet(storeKey(root), next);
+        await refresh(host, `pr ${sub}`);
+
+        return `Tracked here: ${next.length ? next.map((n) => `#${n}`).join(", ") : "none"}`;
+    }
+
+    if (verb === "status") {
+        const band = line;
+        const on = await isOn(host);
+
+        return `Git band ${on ? "on" : "off"}; last refresh ${band ? new Date(band.at).toLocaleTimeString() : "never"}.`;
+    }
+
+    return USAGE;
+}
+
+export const gitBand: Feature = {
+    async start(host) {
+        host.every(EVERY_MS, () => {
+            void isOn(host).then((yes) => (yes ? refresh(host, "timer") : undefined));
+        });
+
+        if (await isOn(host)) {
+            void refresh(host, "start");
+        }
+    },
+    commands: [
+        {
+            name: "mod-git",
+            description: "The git band: on, off, toggle, refresh, status, pr add <n>, pr rm <n>, pr list",
+            argumentHint: "on|off|toggle|refresh|status|pr add <n>",
+            async run(host, args) {
+                const text = await command(host, args);
+                await logMod(host, "git", { event: "command", args, answer: text });
+
+                return { text };
+            },
+        },
+    ],
+    async afterTool(host, e) {
+        if (e.tool === "Bash" && /(^|[\s;&|(])(git|gh)\s/.test(e.command) && (await isOn(host))) {
+            void refresh(host, "tool");
+        }
+    },
+};
+
+function ciText(pr: BandPr): string {
+    const parts = [
+        pr.passed ? `✓${pr.passed}` : "",
+        pr.failed ? `✗${pr.failed}` : "",
+        pr.pending ? `…${pr.pending}` : "",
+    ];
+
+    return parts.filter(Boolean).join(" ") || "no CI";
+}
+
+/** The band's git row, or null while the band is off or has nothing yet. */
+export async function gitRow(host: Host, ui: ElementTable): Promise<RenderElement | null> {
+    const band = line;
+
+    if (!band || !(await isOn(host))) {
+        return null;
+    }
+
+    const { Box, Link, Text } = ui;
+    const sync = [band.ahead ? `↑${band.ahead}` : "", band.behind ? `↓${band.behind}` : ""].filter(Boolean).join(" ");
+
+    return (
+        <Box key="git-band" flexDirection="row" gap={1}>
+            <Text dimColor>⎇</Text>
+            <Text bold>{band.branch}</Text>
+            {sync ? <Text color="yellow">{sync}</Text> : null}
+            {band.dirty ? <Text color="magenta">●{band.dirty}</Text> : <Text dimColor>clean</Text>}
+            {band.prs.map((pr) => (
+                // A Link, so a click on `#507` opens the PR (asked for on 2026-10-23: "the PR is again not clickable").
+                <Link key={`pr-${pr.number}`} href={pr.url}>
+                    <Text
+                        color={pr.failed ? "red" : pr.pending ? "yellow" : pr.state === "MERGED" ? "magenta" : "green"}
+                        wrap="truncate-end"
+                    >
+                        {`· #${pr.number}${pr.draft ? " draft" : ""}${pr.state === "OPEN" ? "" : ` ${pr.state.toLowerCase()}`} ${ciText(pr)}`}
+                    </Text>
+                </Link>
+            ))}
+        </Box>
+    );
+}

@@ -169,7 +169,7 @@ test("a git pull's diff starts hidden behind one button, which shows it and hide
     await ui.unmount();
 });
 
-test("mods.collapseGitSync off draws a git pull like any other call", async ($, on) => {
+test("mods.diff.collapseGitSync off (the flat key of before) draws a git pull like any other call", async ($, on) => {
     engine(on, {
         [NOTE_PATH]: NOTE,
         "/home/test/.genesis-tools/agents/hooks.json": '{"mods":{"collapseGitSync":false}}',

@@ -1,3 +1,5 @@
+import { modsSettings } from "./settings";
+
 /** The idle-compaction mod's settings, from the `mods` section of the hooks file. */
 export interface IdleCompactSettings {
     enabled: boolean;
@@ -17,38 +19,14 @@ export const IDLE_COMPACT_DEFAULTS: IdleCompactSettings = { enabled: true, minut
 /** The start of the notice the mod appends. GenesisClaude's session-analyzer `idle-compact.ts scan` counts it. */
 export const IDLE_NOTICE = "Compacted while idle";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
-function wholeIn(value: unknown, min: number, max: number): value is number {
-    return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
-}
-
 /**
- * `mods.idleCompact`, `mods.idleCompactMinutes` and `mods.idleCompactMinTokens` from the hooks file
- * (`tools agents hooks config set mods.idleCompact false --write`). A missing or broken file, and a value
+ * `mods.idleCompact` of the hooks file: `{ enabled, minutes, minTokens }`, or the flat `mods.idleCompact`,
+ * `mods.idleCompactMinutes` and `mods.idleCompactMinTokens` of before 2026-10-23
+ * (`tools agents hooks config set mods.idleCompact.enabled false --write`). A missing or broken file, and a value
  * of the wrong kind, leave that value's default.
  */
 export function idleCompactSettings(hooksFile: string | undefined): IdleCompactSettings {
-    let mods: unknown;
-
-    try {
-        const stored: unknown = hooksFile === undefined ? undefined : JSON.parse(hooksFile);
-        mods = isRecord(stored) ? stored.mods : undefined;
-    } catch {
-        mods = undefined;
-    }
-
-    const held = isRecord(mods) ? mods : {};
-
-    return {
-        enabled: typeof held.idleCompact === "boolean" ? held.idleCompact : IDLE_COMPACT_DEFAULTS.enabled,
-        minutes: wholeIn(held.idleCompactMinutes, 1, 59) ? held.idleCompactMinutes : IDLE_COMPACT_DEFAULTS.minutes,
-        minTokens: wholeIn(held.idleCompactMinTokens, 0, Number.MAX_SAFE_INTEGER)
-            ? held.idleCompactMinTokens
-            : IDLE_COMPACT_DEFAULTS.minTokens,
-    };
+    return modsSettings(hooksFile).idleCompact;
 }
 
 /**
@@ -79,7 +57,7 @@ export function idleCompactSkip({
     tokens: number | undefined;
 }): string | undefined {
     if (!settings.enabled) {
-        return "mods.idleCompact is off";
+        return "mods.idleCompact.enabled is off";
     }
 
     if (surfaces === 0) {

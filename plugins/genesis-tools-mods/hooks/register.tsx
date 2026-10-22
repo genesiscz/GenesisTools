@@ -1,8 +1,25 @@
-import type { ElementTable, EngineInterface, Register, RenderElement, Timer } from "claude-code";
+import type {
+    ElementTable,
+    EngineInterface,
+    HookStream,
+    Register,
+    RenderElement,
+    Timer,
+    TurnStepChunk,
+    TurnStepResult,
+} from "claude-code";
 import { atom, read, update } from "claude-code";
 import type { FlippedFiles, ShownCalls } from "../types";
-import { agentModelHooks } from "./agent-model";
+import { agentModelStep, spawnWithModel } from "./agent-model";
+import { agentsBand, agentsRow, recordSpawn } from "./agents-band";
+import { askOnRow } from "./ask-row";
+import { bandTree } from "./band";
+import { cacheBand, cacheRow, markEnded } from "./cache-band";
+import { DECISIONS_PANE, decisions, decisionsPane } from "./decisions";
+import { gitBand, gitRow } from "./git-band";
+import { hookLedger, ledgerClassic } from "./hook-ledger";
 import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice } from "./idle";
+import { linksStep, rememberToolPaths } from "./links";
 import {
     type CallSection,
     collapseGitSyncEnabled,
@@ -13,6 +30,9 @@ import {
     openByDefault,
     sectionsOfCalls,
 } from "./sections";
+import { agentsDir, type Feature, type Host, readHooksFile, settingsOf } from "./shared";
+import { progressSuffix, spinner } from "./spinner";
+import { tmpRow, tmpUsage } from "./tmp-usage";
 
 // The full-diff mod. When the diff hook (`tools agents hooks`) cut a Bash call's message, it wrote the
 // whole diff to ~/.genesis-tools/agents/hook-diffs/<tool_use_id>.md. This draws those hunks with Claude
@@ -28,20 +48,9 @@ import {
 // One drawing may hold 100,000 characters in all (CodeProps.source); stay well inside it.
 const MAX_CHARS = 60_000;
 
-/** `<home>/.genesis-tools/agents`; `GENESIS_TOOLS_HOME` replaces the home, as it does for every tool. */
-async function agentsDir($: EngineInterface): Promise<string | undefined> {
-    const home = (await $.env.get("GENESIS_TOOLS_HOME")) ?? (await $.env.get("HOME"));
-
-    return home ? `${home}/.genesis-tools/agents` : undefined;
-}
-
-async function readHooksFile($: EngineInterface, dir: string | undefined): Promise<string | undefined> {
-    return dir ? $.fs.read(`${dir}/hooks.json`).catch(() => undefined) : undefined;
-}
-
 interface Diffs {
     sections: CallSection[];
-    /** The calls that run a git sync (`git pull`, …), each with that command, while `mods.collapseGitSync` is on. */
+    /** The calls that run a git sync (`git pull`, …), each with that command, while `mods.diff.collapseGitSync` is on. */
     syncs: Map<string, string>;
     /** The notes of the calls past `MAX_CHARS` (`sectionsOfCalls`), named under the diffs so none goes without a trace. */
     omitted: string[];
@@ -49,13 +58,14 @@ interface Diffs {
 
 async function fullDiffs($: EngineInterface, calls: readonly { id: string; input: unknown }[]): Promise<Diffs> {
     const none: Diffs = { sections: [], syncs: new Map(), omitted: [] };
-    const dir = calls.length > 0 ? await agentsDir($) : undefined;
+    const host = hostOf($);
+    const dir = calls.length > 0 ? await agentsDir(host) : undefined;
 
     if (!dir) {
         return none;
     }
 
-    const hooksFile = await readHooksFile($, dir);
+    const hooksFile = await readHooksFile(host, dir);
 
     if (!fullDiffEnabled(hooksFile)) {
         return none;
@@ -86,7 +96,7 @@ async function fullDiffs($: EngineInterface, calls: readonly { id: string; input
 // The idle-compaction mod. Claude Code's own idle compaction fires once, 54 minutes after the last
 // request, and gives up at the first gate that refuses (`near_limit` refuses while the account's last reply
 // carried a rate-limit warning, even after the window reset). Then the 1-hour cache expires and the next
-// prompt pays for the whole context again. This timer compacts at `mods.idleCompactMinutes` (56) after the
+// prompt pays for the whole context again. This timer compacts at `mods.idleCompact.minutes` (56) after the
 // last main-loop turn, unless a compaction already happened. A reload of the mod drops the timer; the next
 // turn arms it again.
 let idleTimer: Timer | undefined;
@@ -99,8 +109,9 @@ function stopIdleTimer(): void {
 async function compactIfIdle($: EngineInterface): Promise<void> {
     idleTimer = undefined;
 
-    // Read again at the fire time, so `config set mods.idleCompact false` stops a timer already armed.
-    const settings = idleCompactSettings(await readHooksFile($, await agentsDir($)));
+    // Read again at the fire time, so `config set mods.idleCompact.enabled false` stops a timer already armed.
+    const host = hostOf($);
+    const settings = idleCompactSettings(await readHooksFile(host, await agentsDir(host)));
     const [surfaces, usage] = await Promise.all([$.session.surfaces(), $.session.usage()]);
 
     if (idleCompactSkip({ settings, surfaces: surfaces.length, tokens: usage.context.tokens }) !== undefined) {
@@ -284,8 +295,151 @@ async function announceSession($: EngineInterface): Promise<void> {
     }
 }
 
+/** A stage's generator as a stream the next stage reads, with the `result` a `next(e)` stream carries. */
+function streamOf<C, R>(stage: AsyncGenerator<C, R>): HookStream<C, R> {
+    let settle: (value: R) => void = () => undefined;
+    let fail: (error: unknown) => void = () => undefined;
+    const result = new Promise<R>((resolve, reject) => {
+        settle = resolve;
+        fail = reject;
+    });
+
+    // An unread result must not surface as an unhandled rejection; a stage that reads it still sees the error.
+    result.catch(() => undefined);
+
+    async function* run(): AsyncGenerator<C, R> {
+        try {
+            const value = yield* stage;
+            settle(value);
+
+            return value;
+        } catch (error) {
+            fail(error);
+            throw error;
+        }
+    }
+
+    return Object.assign(run(), { result });
+}
+
+/**
+ * The engine as the feature files reach it. Built here because only this file may hand `$` on (see `shared.ts`);
+ * each closure spells the call it makes, so `claude plugin validate` reads every capability the plugin uses.
+ */
+function hostOf($: EngineInterface): Host {
+    return {
+        run: (argv, init) => $.process.run(argv, init),
+        read: (path) => $.fs.read(path),
+        write: (path, text) => $.fs.write(path, text),
+        list: (path) => $.fs.list(path),
+        exists: (path) => $.fs.exists(path),
+        stat: (path) => $.fs.stat(path),
+        env: (name) => (name === "HOME" ? $.env.get("HOME") : $.env.get("GENESIS_TOOLS_HOME")),
+        cwd: () => $.session.cwd(),
+        sessionId: () => $.session.id(),
+        messages: () => $.session.messages(),
+        agents: () => $.agent.list(),
+        every: (ms, fn) => {
+            $.clock.every(ms, fn);
+        },
+        storeGet: (key) => $.store.get(key),
+        storeSet: (key, value) => $.store.set(key, value),
+        status: (text) => $.ui.status(text),
+        fill: (args) => $.prompt.fill(args),
+        submit: (text) => $.prompt.submit({ text }),
+        openPane: (id, title) => $.ui.open({ id, title, focus: true }),
+        closePane: (id) => $.ui.close({ id }),
+        redraw: () => $.ui.invalidate("ui.render"),
+    };
+}
+
+// The features that share events. The engine takes one unmatched hook per event from a plugin, so each event
+// below has one hook that calls every feature's part in this order.
+const FEATURES: Feature[] = [decisions, gitBand, spinner, cacheBand, tmpUsage, agentsBand, hookLedger];
+
 export const register: Register = (on) => {
-    agentModelHooks(on);
+    on("session.start", async ($, e, next) => {
+        const host = hostOf($);
+
+        for (const feature of FEATURES) {
+            for (const command of feature.commands ?? []) {
+                await $.command.register({
+                    name: command.name,
+                    description: command.description,
+                    ...(command.argumentHint ? { argumentHint: command.argumentHint } : {}),
+                });
+            }
+
+            await feature.start?.(host);
+        }
+
+        return next(e);
+    });
+
+    on("session.end", async ($, e, next) => {
+        await markEnded(hostOf($));
+
+        return next(e);
+    });
+
+    on("command.run", async ($, e, next) => {
+        const command = FEATURES.flatMap((feature) => feature.commands ?? []).find((held) => held.name === e.command);
+
+        return command ? command.run(hostOf($), e.args ?? "") : next(e);
+    });
+
+    on("tool.call", async ($, e, next) => {
+        const host = hostOf($);
+        rememberToolPaths(e);
+        const ends = FEATURES.flatMap((feature) => feature.beforeTool?.(host, e) ?? []);
+
+        try {
+            const result = await next(e);
+
+            for (const feature of FEATURES) {
+                await feature.afterTool?.(host, e);
+            }
+
+            return result;
+        } finally {
+            for (const end of ends) {
+                end();
+            }
+        }
+    });
+
+    // Two stages over the model's stream: the Agent arguments get the model, the main loop's reply text its links.
+    on("turn.step", async function* ($, e, next) {
+        const host = hostOf($);
+        const settings = await settingsOf(host);
+        let stream: HookStream<TurnStepChunk, TurnStepResult | undefined> = next(e);
+
+        if (settings.agentModel.enabled) {
+            stream = streamOf(agentModelStep(stream, settings.agentModel.format));
+        }
+
+        if (settings.links.enabled && e.agentId === undefined) {
+            stream = streamOf(linksStep(host, e, stream));
+        }
+
+        return yield* stream;
+    });
+
+    on("agent.spawn", async ($, e, next) => {
+        const host = hostOf($);
+        const settings = (await settingsOf(host)).agentModel;
+        const result = await next(settings.enabled ? spawnWithModel(e, settings.format) : e);
+        recordSpawn(host, e, result);
+
+        return result;
+    });
+
+    on("classic.*", async ($, e, next) => {
+        const result = await next(e);
+        const kept = await ledgerClassic(hostOf($), e, result);
+
+        return kept ? { ...result, additionalContext: kept } : result;
+    });
 
     on("turn.start", async ($, e, next) => {
         stopIdleTimer();
@@ -296,17 +450,22 @@ export const register: Register = (on) => {
 
     on("turn.complete", async ($, e, next) => {
         const done = await next(e);
+        const host = hostOf($);
 
         if (e.agentId === undefined) {
             stopIdleTimer();
 
-            const settings = idleCompactSettings(await readHooksFile($, await agentsDir($)));
+            const settings = idleCompactSettings(await readHooksFile(host, await agentsDir(host)));
 
             if (settings.enabled) {
                 idleTimer = $.clock.after(settings.minutes * 60_000, () => {
                     void compactIfIdle($);
                 });
             }
+        }
+
+        for (const feature of FEATURES) {
+            await feature.afterTurn?.(host, e);
         }
 
         return done;
@@ -320,43 +479,100 @@ export const register: Register = (on) => {
             stopIdleTimer();
         }
 
+        if (result.skip === undefined) {
+            for (const feature of FEATURES) {
+                feature.compacted?.(e.agentId);
+            }
+        }
+
         return result;
     });
 
+    on("ui.render", { component: "AbovePrompt" }, async ($, e, next) => {
+        if (e.props.hasSurvey) {
+            return next(e);
+        }
+
+        const host = hostOf($);
+        const ui = $.ui.resolve(e);
+        const rows = await Promise.all([gitRow(host, ui), cacheRow(host, ui), agentsRow(host, ui), tmpRow(host, ui)]);
+
+        return bandTree(ui, rows, await next(e));
+    });
+
+    on("ui.render", { component: "Pane", requestId: DECISIONS_PANE }, async ($, e) => {
+        return decisionsPane(hostOf($), $.ui.resolve(e));
+    });
+
+    on("ui.render", { component: "Spinner" }, async ($, e, next) => {
+        if (!(await settingsOf(hostOf($))).spinner.enabled) {
+            return next(e);
+        }
+
+        return next({ ...e, props: { ...e.props, suffix: progressSuffix(e.props.suffix, Date.now()) } });
+    });
+
     on("ui.render", { component: "ToolGroup" }, async ($, e, next) => {
-        const drawn = await next(e);
+        const ui = $.ui.resolve(e);
+        const drawn = await withGroupDiffs($, e.props, e.requestId, ui, await next(e));
+        const calls = e.props.calls.map((call) => ({ tool: call.tool, input: call.input }));
 
-        if (e.props.isExpanded) {
-            return drawn;
-        }
-
-        const calls = e.props.calls.flatMap((call) =>
-            call.tool === "Bash" && !call.isRunning && call.tool_use_id
-                ? [{ id: call.tool_use_id, input: call.input }]
-                : []
-        );
-        const diffs = await fullDiffs($, calls);
-
-        if (diffs.sections.length === 0 && diffs.omitted.length === 0) {
-            return drawn;
-        }
-
-        return drawDiffs($, $.ui.resolve(e), e.requestId, diffs, drawn);
+        return askOnRow(hostOf($), ui, drawn, {
+            id: e.requestId,
+            isRunning: e.props.isActive || e.props.isExpanded,
+            calls,
+        });
     });
 
     on("ui.render", { component: "ToolUse" }, async ($, e, next) => {
-        const drawn = await next(e);
+        const ui = $.ui.resolve(e);
+        const { tool, input, output, tool_use_id, isRunning } = e.props;
+        const drawn = await withCallDiffs($, e.props, ui, await next(e));
 
-        if (e.props.tool !== "Bash" || e.props.isRunning) {
-            return drawn;
-        }
-
-        const diffs = await fullDiffs($, [{ id: e.props.tool_use_id, input: e.props.input }]);
-
-        if (diffs.sections.length === 0 && diffs.omitted.length === 0) {
-            return drawn;
-        }
-
-        return drawDiffs($, $.ui.resolve(e), e.props.tool_use_id, diffs, drawn);
+        return askOnRow(hostOf($), ui, drawn, { id: tool_use_id, isRunning, calls: [{ tool, input, output }] });
     });
 };
+async function withGroupDiffs(
+    $: EngineInterface,
+    props: {
+        isExpanded: boolean;
+        calls: readonly { tool: string; input: unknown; isRunning: boolean; tool_use_id?: string }[];
+    },
+    row: string,
+    ui: ElementTable,
+    drawn: RenderElement
+): Promise<RenderElement> {
+    if (props.isExpanded) {
+        return drawn;
+    }
+
+    const calls = props.calls.flatMap((call) =>
+        call.tool === "Bash" && !call.isRunning && call.tool_use_id ? [{ id: call.tool_use_id, input: call.input }] : []
+    );
+    const diffs = await fullDiffs($, calls);
+
+    if (diffs.sections.length === 0 && diffs.omitted.length === 0) {
+        return drawn;
+    }
+
+    return drawDiffs($, ui, row, diffs, drawn);
+}
+
+async function withCallDiffs(
+    $: EngineInterface,
+    props: { tool: string; isRunning: boolean; tool_use_id: string; input: unknown },
+    ui: ElementTable,
+    drawn: RenderElement
+): Promise<RenderElement> {
+    if (props.tool !== "Bash" || props.isRunning) {
+        return drawn;
+    }
+
+    const diffs = await fullDiffs($, [{ id: props.tool_use_id, input: props.input }]);
+
+    if (diffs.sections.length === 0 && diffs.omitted.length === 0) {
+        return drawn;
+    }
+
+    return drawDiffs($, ui, props.tool_use_id, diffs, drawn);
+}

@@ -212,10 +212,10 @@ from this repository's marketplace (`plugins/genesis-tools-mods/`). It is a Clau
 message cut lines, it draws the call's whole diff (the `hook-diffs/<call>.md` note) with Claude Code's own
 diff element under the call's row, so the 10,000-character message limit no longer hides the rest. A running
 session needs `/reload-plugins`. `tools agents hooks mods` shows whether it is installed;
-`tools agents hooks config set mods.fullDiff false --write` turns it off without an uninstall (the mod reads
+`tools agents hooks config set mods.diff.fullDiff false --write` turns it off without an uninstall (the mod reads
 the hooks file). It draws nothing while `diff.fullDiff` is `off`. Installing the plugin is not what makes the
 diff hook stand down: on every turn the loaded mod sets `GENESIS_TOOLS_MODS_SESSION` to the id of its session, and
-only a Claude call whose session id equals that value, with `mods.fullDiff` on, gets no diff printed by the hook.
+only a Claude call whose session id equals that value, with `mods.diff.fullDiff` on, gets no diff printed by the hook.
 The hook then writes every diff to its note and the mod draws it, so it is not drawn twice. The mod may be loaded
 from any settings scope or with `--plugin-dir`. A session that has not loaded it (started before the install and not
 reloaded with `/reload-plugins`, or a nested session that inherited another session's id) keeps the hook's own
@@ -224,18 +224,43 @@ always keep the hook's message. Each file has a `[-]` / `[+]` button
 that folds its diff to its name and back, and `[ files only ]` above them folds every file; a click on the diff
 itself still opens the group's calls. The diff of a call that runs `git pull`, `merge`, `rebase`, `checkout`,
 `switch`, `reset`, `cherry-pick`, `revert`, `am` or `stash pop|apply` starts hidden behind one
-`[ show diff from git pull ]` button, because it is other people's work arriving; `config set mods.collapseGitSync false
+`[ show diff from git pull ]` button, because it is other people's work arriving; `config set mods.diff.collapseGitSync false
 --write` draws it like any other call. Its tests run with `claude plugin test plugins/genesis-tools-mods`. The mod API is early access in Claude Code
 (2.1.287 and later), so a release can change it; the mod then draws nothing and the hook message is unchanged.
 
 **The idle-compaction mod.** The same plugin compacts an idle Claude session 56 minutes after its last turn
-(`mods.idleCompactMinutes`, 1 to 59), while the 1-hour prompt cache is still warm, so the next prompt does not
+(`mods.idleCompact.minutes`, 1 to 59), while the 1-hour prompt cache is still warm, so the next prompt does not
 pay for the whole context again. Claude Code's own idle compaction tries once at 54 minutes and gives up at its
 first refused check (a rate-limit warning on the last reply is enough); the mod does not run that check, so a
 compaction can be spent while the account is in its warning. It skips a session that compacted after its last
-turn, a context under `mods.idleCompactMinTokens` (200,000) and a session with no screen (`claude -p`), and it
+turn, a context under `mods.idleCompact.minTokens` (200,000) and a session with no screen (`claude -p`), and it
 appends a notice that starts `Compacted while idle`. `tools agents hooks config set mods.idleCompact false --write`
 turns it off, also for a timer already armed. A reload of the mod drops the timer until the next turn ends.
+
+**The daily mods.** The same plugin carries more features, each an object under `mods` in the hooks file, all on
+by default; `config set mods.<feature> false --write` turns one off (it means `mods.<feature>.enabled`), and the
+flat keys of before 2026-10-23 (`mods.fullDiff`, `mods.idleCompactMinutes`, …) are still read and still set.
+Each feature appends what it did to `~/.genesis-tools/agents/mods-log/<feature>.jsonl`, so its heuristics can be
+checked against real use.
+
+- `mods.agentModel` (`format` `label` or `short`): `sonnet · Pair one` or `(S) Pair one` on a subagent's rows.
+- `mods.decisions`: `/decisions` opens the open `❓ DECISION N` questions in a pane. A press stages an option, a
+  field stages your own words, and `send` submits `D16: a)` per decision in one message.
+- `mods.links`: the main loop's reply is linked as it streams, one line at a time. A path that exists (absolute,
+  `~/`, relative to the working folder or the repository, or a bare file name a tool of the session named), with
+  an optional `:line` or `:line-line`, a commit SHA that `git cat-file` knows, and a repeated `❓ DECISION N` become
+  links; code fences, inline code that does not resolve, existing links and URLs stay as they are.
+- `mods.git`: a band line above the prompt with the branch, unpushed and unpulled commits, the dirty count and the
+  PRs (the branch's own and the ones `/mod-git pr add 123` tracks) with CI counts. `/mod-git on|off|toggle|refresh`.
+- `mods.askRow`: `[ask]` beside a finished tool row puts the row, quoted, into the prompt.
+- `mods.spinner`: the spinner line names the running tool, its time and the working subagents.
+- `mods.cacheBand` (`warnMinutes` 10, `others`): the prompt cache countdown, red under `warnMinutes`, and the other
+  sessions whose cache runs out within it.
+- `mods.tmpUsage` (`minutes` 5): the size of the session's `/tmp/cc` folder and the free disk.
+- `mods.agentsBand` (`warnMinutes` 60): one band row per working subagent with model, age, idle time and tool calls.
+- `mods.hooks` (`tokens`, `dedupe`): the status line counts what the settings and plugin hooks handed the model
+  (`hooks ~38.2k tok · 41 fires`, characters / 4), and a block already handed to the same loop since its last
+  compaction is replaced with a one-line receipt.
 
 A file or a whole folder moved with `mv` or
 `git mv` is one line, `old/ → new/ (284 files)`, when the new copies match the old ones byte for byte

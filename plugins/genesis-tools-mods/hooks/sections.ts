@@ -1,3 +1,5 @@
+import { isRecord, modsSettings } from "./settings";
+
 /** One file of a diff-hook full-diff note: its path, its line counts and its unified-diff hunks. */
 export interface Section {
     path: string;
@@ -132,37 +134,14 @@ export async function sectionsOfCalls({
     return { sections, omitted };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
-/**
- * A boolean of the `mods` section of the hooks file (`~/.genesis-tools/agents/hooks.json`), which
- * `tools agents hooks config set mods.<key> false` writes. A file that is missing, unreadable or not JSON,
- * and a value that is not a boolean, leave the default: on.
- */
-function modsSwitch(hooksFile: string | undefined, key: "fullDiff" | "collapseGitSync"): boolean {
-    if (hooksFile === undefined) {
-        return true;
-    }
-
-    try {
-        const stored: unknown = JSON.parse(hooksFile);
-        const mods = isRecord(stored) ? stored.mods : undefined;
-        const value = isRecord(mods) ? mods[key] : undefined;
-
-        return typeof value === "boolean" ? value : true;
-    } catch {
-        return true;
-    }
-}
-
+/** `mods.diff.fullDiff` of the hooks file (the flat `mods.fullDiff` of before still counts); on by default. */
 export function fullDiffEnabled(hooksFile: string | undefined): boolean {
-    return modsSwitch(hooksFile, "fullDiff");
+    return modsSettings(hooksFile).diff.fullDiff;
 }
 
+/** `mods.diff.collapseGitSync` of the hooks file (the flat `mods.collapseGitSync` of before still counts). */
 export function collapseGitSyncEnabled(hooksFile: string | undefined): boolean {
-    return modsSwitch(hooksFile, "collapseGitSync");
+    return modsSettings(hooksFile).diff.collapseGitSync;
 }
 
 /** The command of a Bash call's input, or an empty string. */

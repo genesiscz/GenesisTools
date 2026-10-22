@@ -1,10 +1,11 @@
 import type { AgentSpawnInput, On, TurnStepChunk } from "claude-code";
-import { expect, test } from "claude-code/testing";
+import { expect, mock, test } from "claude-code/testing";
 
 // Run with `claude plugin test plugins/genesis-tools-mods`, with the fold tests.
 
 /** The engine's own spawn, beneath the plugin: records the description the plugin passed down. */
 function engine(on: On, seen: string[]): void {
+    mock.env(on, { HOME: "/home/test" });
     on("agent.spawn", async (_$, e) => {
         seen.push(e.description);
 
@@ -56,6 +57,7 @@ test("a spawn that names no model keeps its description", async ($, on) => {
 
 /** The model's response beneath the plugin: an Agent call that names a model, an Agent call that does not, a Bash call. */
 function response(on: On): void {
+    mock.env(on, { HOME: "/home/test" });
     on("turn.step", async function* () {
         yield { kind: "tool", index: 0, id: "toolu_a", name: "Agent" };
         yield { kind: "input", index: 0, json: '{"description":"Pair one",' };

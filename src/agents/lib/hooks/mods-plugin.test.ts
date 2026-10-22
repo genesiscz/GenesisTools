@@ -20,6 +20,8 @@ import {
     sectionsOf,
     sectionsOfCalls,
 } from "../../../../plugins/genesis-tools-mods/hooks/sections";
+import { MODS_DEFAULTS, modsSettings } from "../../../../plugins/genesis-tools-mods/hooks/settings";
+import { DEFAULT_HOOKS_CONFIG } from "./config";
 import { overflowPart } from "./diff/full";
 import { MOD_MAX_PATCH_CHARS, MODS_SESSION_VAR } from "./diff/run";
 
@@ -217,7 +219,7 @@ describe("idle compaction", () => {
 
         expect(idleCompactSkip({ settings, surfaces: 1, tokens: 300_000 })).toBeUndefined();
         expect(idleCompactSkip({ settings: { ...settings, enabled: false }, surfaces: 1, tokens: 300_000 })).toBe(
-            "mods.idleCompact is off"
+            "mods.idleCompact.enabled is off"
         );
         expect(idleCompactSkip({ settings, surfaces: 0, tokens: 300_000 })).toContain("no surface");
         expect(idleCompactSkip({ settings, surfaces: 1, tokens: 199_999 })).toContain("under the floor");
@@ -238,5 +240,35 @@ describe("idle compaction", () => {
         expect(text.startsWith(IDLE_NOTICE)).toBe(true);
         expect(text).toContain("550,000 to 40,000 tokens");
         expect(idleNotice({ minutes: 56, tokensBefore: undefined, tokensAfter: 1 })).not.toContain("tokens)");
+    });
+});
+
+describe("the mods section", () => {
+    it("the plugin's defaults are the CLI's, field for field", () => {
+        expect(MODS_DEFAULTS).toEqual(DEFAULT_HOOKS_CONFIG.mods);
+    });
+
+    it("the plugin reads the nested keys, and the flat keys of before where the object leaves a field out", () => {
+        const read = modsSettings(
+            SafeJSON.stringify({
+                mods: {
+                    fullDiff: false,
+                    idleCompact: false,
+                    idleCompactMinutes: 40,
+                    diff: { collapseGitSync: false },
+                    agentModel: { format: "short" },
+                    cacheBand: { warnMinutes: 99 },
+                    hooks: { dedupe: false },
+                },
+            })
+        );
+
+        expect(read.diff).toEqual({ fullDiff: false, collapseGitSync: false });
+        expect(read.idleCompact).toEqual({ enabled: false, minutes: 40, minTokens: 200_000 });
+        expect(read.agentModel).toEqual({ enabled: true, format: "short" });
+        // Out of range keeps the default, as the CLI does.
+        expect(read.cacheBand.warnMinutes).toBe(10);
+        expect(read.hooks).toEqual({ tokens: true, dedupe: false });
+        expect(modsSettings("{ not json")).toEqual(MODS_DEFAULTS);
     });
 });

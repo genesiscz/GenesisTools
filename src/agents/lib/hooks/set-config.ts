@@ -1,6 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
 import {
+    DEFAULT_HOOKS_CONFIG,
     FILL_MODES,
     type HarnessName,
     HIGHLIGHT_MODES,
@@ -11,6 +12,8 @@ import {
     isCount,
     isMegabytes,
     loadHooksConfigForWrite,
+    type ModsConfig,
+    mergeMods,
     OTHERS_SUMMARIES,
 } from "./config";
 import { FULL_DIFF_MODES } from "./diff/full";
@@ -68,9 +71,72 @@ export const SETTABLE_KEYS = [
     "decisions.injectAnswers",
     "decisions.staleness.<warnAfterMinutes|alarmAfterMinutes|notify>",
     "agentsTalk.hint",
-    "mods.<fullDiff|collapseGitSync>",
-    "mods.<idleCompact|idleCompactMinutes|idleCompactMinTokens>",
+    "mods.diff.<fullDiff|collapseGitSync>",
+    "mods.idleCompact.<enabled|minutes|minTokens>",
+    "mods.agentModel.<enabled|format>",
+    "mods.<decisions|links|git|askRow|spinner>.enabled",
+    "mods.cacheBand.<enabled|warnMinutes|others>",
+    "mods.tmpUsage.<enabled|minutes>",
+    "mods.agentsBand.<enabled|warnMinutes>",
+    "mods.hooks.<tokens|dedupe>",
 ] as const;
+
+/** The flat keys of before 2026-10-23, still taken; `mods.<feature>` alone means its `enabled`. */
+const MOD_ALIASES: Record<string, string> = {
+    "mods.fullDiff": "mods.diff.fullDiff",
+    "mods.collapseGitSync": "mods.diff.collapseGitSync",
+    "mods.idleCompactMinutes": "mods.idleCompact.minutes",
+    "mods.idleCompactMinTokens": "mods.idleCompact.minTokens",
+};
+
+/** The highest whole number each numeric mods field takes, and the lowest when it is not 1. */
+const MOD_NUMBER_LIMITS: Record<string, { max: number; min?: number; why: string }> = {
+    "idleCompact.minutes": { max: 59, why: "at 60 the 1-hour prompt cache has expired" },
+    "idleCompact.minTokens": { max: Number.MAX_SAFE_INTEGER, min: 0, why: "" },
+    "cacheBand.warnMinutes": { max: 59, why: "the cache lives 60 minutes" },
+    "tmpUsage.minutes": { max: 120, why: "a reading older than 2 hours says little" },
+    "agentsBand.warnMinutes": { max: 24 * 60, why: "a day" },
+};
+
+function isFields(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** One `mods.<feature>.<field>` key, checked against the type of the field's default. */
+function withMods(mods: ModsConfig, key: string, value: string): ModsConfig {
+    const path = MOD_ALIASES[key] ?? key;
+    const [, feature = "", field = "enabled"] = path.split(".");
+    const base = new Map<string, unknown>(Object.entries(DEFAULT_HOOKS_CONFIG.mods)).get(feature);
+    const held = new Map<string, unknown>(Object.entries(mods)).get(feature);
+
+    if (!isFields(base) || !isFields(held) || !(field in base)) {
+        throw new Error(`Unknown mods key ${SafeJSON.stringify(key)}; see the mods.* keys in --help`);
+    }
+
+    const part = { ...held };
+    const sample = base[field];
+
+    if (typeof sample === "boolean") {
+        part[field] = asBoolean(key, value);
+    } else if (typeof sample === "number") {
+        const limit = MOD_NUMBER_LIMITS[`${feature}.${field}`];
+        const count = asCount(key, value, limit?.min ?? 1);
+
+        if (limit && count > limit.max) {
+            throw new Error(`${key} takes ${limit.min ?? 1} to ${limit.max}: ${limit.why}`);
+        }
+
+        part[field] = count;
+    } else if (feature === "agentModel" && field === "format") {
+        if (value !== "label" && value !== "short") {
+            throw new Error(`${key} takes label or short, not ${SafeJSON.stringify(value)}`);
+        }
+
+        part[field] = value;
+    }
+
+    return mergeMods({ ...mods, [feature]: part });
+}
 
 /** One `decisions.*` key. The stop hook takes off|warn|block; `harnesses` a comma list. */
 function withDecisions(next: HooksConfig, key: string, value: string): HooksConfig {
@@ -422,24 +488,8 @@ export function applySetting(
         return next;
     }
 
-    if (key === "mods.fullDiff" || key === "mods.collapseGitSync" || key === "mods.idleCompact") {
-        next.mods = { ...config.mods, [key.slice("mods.".length)]: asBoolean(key, value) };
-        return next;
-    }
-
-    if (key === "mods.idleCompactMinutes") {
-        const minutes = asCount(key, value);
-
-        if (minutes > 59) {
-            throw new Error(`${key} takes 1 to 59: at 60 the 1-hour prompt cache has expired`);
-        }
-
-        next.mods = { ...config.mods, idleCompactMinutes: minutes };
-        return next;
-    }
-
-    if (key === "mods.idleCompactMinTokens") {
-        next.mods = { ...config.mods, idleCompactMinTokens: asCount(key, value, 0) };
+    if (key.startsWith("mods.")) {
+        next.mods = withMods(config.mods, key, value);
         return next;
     }
 
