@@ -5,6 +5,7 @@ import { configuredCheckouts } from "@app/browser-extension/lib/deps";
 import { type LocalCheckout, rankCheckouts } from "@genesiscz/utils/git/local-checkouts";
 import { parsePrRef } from "@genesiscz/utils/git/origins";
 import { logger } from "@genesiscz/utils/logger";
+import { expandTilde } from "@genesiscz/utils/paths";
 
 const log = logger.child({ component: "hub/pr/project-ref" });
 
@@ -37,12 +38,19 @@ export async function resolveHubPrRef(
 
     // A folder named like `./app!12` is that folder, as `./app#12` is: `parsePrRef` reads only the `#` form.
     if (named && !url && named[2] === "!" && /^[~./]/.test(named[1])) {
-        return { path: named[1], number: Number(named[3]) };
+        return { path: expandTilde(named[1]), number: Number(named[3]) };
     }
 
     if (!named || url || /^[~./]/.test(named[1]) || (named[2] === "#" && existsSync(named[1]))) {
+        const parsed = parsePrRef(trimmed);
+
+        // `~/work/app#12` is a folder in the home directory: the checkout readers take `~` literally.
+        if (parsed && "path" in parsed) {
+            return { path: expandTilde(parsed.path), number: parsed.number };
+        }
+
         return (
-            parsePrRef(trimmed) ?? {
+            parsed ?? {
                 problem: `expected a PR/MR URL, <repoPath>#<number> or <project>!<number>, got "${ref}"`,
             }
         );

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultReviewCommentClient, type ReviewCommentClient } from "@app/github/lib/review-comments";
 import type { LocalCheckout } from "@genesiscz/utils/git/local-checkouts";
@@ -1386,7 +1386,14 @@ describe("resolveHubPrRef", () => {
 
     test("a folder written as a path takes ! as a folder, never as a project name", async () => {
         expect(await resolveHubPrRef("./app!12", { source })).toEqual({ path: "./app", number: 12 });
-        expect(await resolveHubPrRef("~/work/app!12", { source })).toEqual({ path: "~/work/app", number: 12 });
+        expect(await resolveHubPrRef("~/work/app!12", { source })).toEqual({
+            path: join(homedir(), "work/app"),
+            number: 12,
+        });
+        expect(await resolveHubPrRef("~/work/app#12", { source })).toEqual({
+            path: join(homedir(), "work/app"),
+            number: 12,
+        });
     });
 
     test("a failed checkout scan leaves owner/repo#42 a github.com PR and says why a project is missing", async () => {

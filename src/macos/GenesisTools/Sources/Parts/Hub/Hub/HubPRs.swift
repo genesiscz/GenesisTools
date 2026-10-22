@@ -543,9 +543,26 @@ final class PRsModel: ObservableObject {
                 }
             case .failure(let error):
                 span.end("failed")
-                errors = [PRListNotice.failure("Could not list the PRs/MRs", error)]
+                listFailed(error)
             }
         }
+    }
+
+    /// A list load answered with its `own` notices: they replace the last list's, and a deep link's failure
+    /// stays beside them until dismissed or the next link, the only word on why that link opened nothing.
+    func listAnswered(_ own: [PRListNotice]) {
+        errors = own + (directFailure.map { [$0] } ?? [])
+    }
+
+    /// The list command failed: said in place of the last list's notices, beside a deep link's failure.
+    func listFailed(_ error: Error) {
+        listAnswered([PRListNotice.failure("Could not list the PRs/MRs", error)])
+    }
+
+    /// Why a deep link opened nothing, kept apart from the list's own notices (`listAnswered`).
+    func directFailed(_ notice: PRListNotice) {
+        directFailure = notice
+        errors.append(notice)
     }
 
     /// Selects the PR `ref` names, now when the list has it, else once it loads. `reveal` opens a file
@@ -663,16 +680,13 @@ final class PRsModel: ObservableObject {
                 } else {
                     notice = PRListNotice.failure("Could not open \(ref.label)", error)
                 }
-                directFailure = notice
-                errors.append(notice)
+                directFailed(notice)
                 return
             }
             let (row, detail, data) = fresh
             guard ref.matches(row) else {
                 span.end("another PR")
-                let notice = PRListNotice("\(arg) answered \(row.label), not \(ref.label)")
-                directFailure = notice
-                errors.append(notice)
+                directFailed(PRListNotice("\(arg) answered \(row.label), not \(ref.label)"))
                 return
             }
             span.end(row.label)
@@ -1038,7 +1052,7 @@ final class PRsModel: ObservableObject {
             fullProjects = Set(list.repos.compactMap { repo in (repo.count ?? 0) >= limit ? repo.origin?.web : nil })
             changed = moved
         }
-        errors = PRListNotice.failures(list.repos) + (directFailure.map { [$0] } ?? [])
+        listAnswered(PRListNotice.failures(list.repos))
         SWR.fade(moved, current: { [weak self] in self?.changed }, clear: { [weak self] in self?.changed = [] })
     }
 

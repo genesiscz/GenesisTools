@@ -479,6 +479,28 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(model.notice, "a cached commit is already selectable, so nothing is missing")
     }
 
+    /// A deep link's failure is the only word on why the link opened nothing: a list load that lands after it,
+    /// answered or failed, replaces the list's own notices and keeps that one until it is dismissed.
+    @MainActor
+    func testADeepLinkFailureSurvivesAnsweredAndFailedListLoads() {
+        struct ListDown: LocalizedError { var errorDescription: String? { "gh: network down" } }
+        let model = PRsModel()
+        let direct = PRListNotice("Could not open #7: no such PR")
+        let stale = PRListNotice("app: rate limited")
+        model.listAnswered([stale])
+        model.directFailed(direct)
+
+        model.listAnswered([PRListNotice("web: Cannot resolve git.example.org")])
+        XCTAssertEqual(model.errors.map(\.text), ["web: Cannot resolve git.example.org", direct.text])
+
+        model.listFailed(ListDown())
+        XCTAssertEqual(model.errors.map(\.text), ["Could not list the PRs/MRs: gh: network down", direct.text])
+
+        model.dismissError(direct)
+        model.listFailed(ListDown())
+        XCTAssertEqual(model.errors.map(\.text), ["Could not list the PRs/MRs: gh: network down"])
+    }
+
     func testALiveLaunchIsNotScripted() {
         let request = HubRequest(["--session", "abc", "--no-activate"])
         XCTAssertFalse(request.isScripted)
