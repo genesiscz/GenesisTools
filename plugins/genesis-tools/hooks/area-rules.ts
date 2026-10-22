@@ -8,13 +8,26 @@
 //
 // PostToolUse on Grep, Glob and Bash: this hook finds the project paths the call touched and adds each matching
 // area file to the context once per agent. On Read, Write and Edit it only records the areas Claude Code loads by
-// itself, so it does not add them a second time. SessionStart after a compaction forgets what was added, because
-// the compaction summary does not carry the files.
+// itself, so it does not add them a second time. After a compaction the agent that compacted forgets what was
+// added, because the compaction summary does not carry the files.
 
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+    appendFileSync,
+    closeSync,
+    existsSync,
+    fstatSync,
+    mkdirSync,
+    openSync,
+    readdirSync,
+    readFileSync,
+    readSync,
+    statSync,
+    writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseLenientJson } from "./agents-talk-hint";
+import { harnessOf } from "./harness";
 import { lockWorktreesForToolUse } from "./worktree-lock";
 
 const SafeJSON = JSON;
@@ -22,9 +35,16 @@ const SafeJSON = JSON;
 /** A response spanning more areas than this is a broad search: only the areas its input names are added. */
 const BROAD_SEARCH_AREAS = 2;
 const MAX_SCAN_CHARS = 200_000;
+/** State key prefix: `@compact:<agent>` holds the time of a compaction that agent has not been checked against. */
+const COMPACT_MARK = "@compact:";
+/** How much of a transcript's end the compaction check reads. A boundary sat up to 670 KB before the next rows. */
+const TRANSCRIPT_TAIL_BYTES = 4_000_000;
+/** A compact_boundary row was stamped at most 0.8 s before its SessionStart hook (146 compactions); the margin. */
+const COMPACT_SLACK_MS = 10_000;
 
 export interface HookPayload {
     session_id?: string;
+    transcript_path?: string;
     cwd?: string;
     hook_event_name?: string;
     source?: string;
@@ -248,6 +268,98 @@ function writeState(sessionId: string, state: Record<string, string[]>): void {
     writeFileSync(file, SafeJSON.stringify(state));
 }
 
+/**
+ * SessionStart `compact` names the session but not the agent that compacted: a subagent's compaction carries the
+ * parent's session id and transcript and no `agent_id` (the hook log of 2026-10-13 18:12, session 4578e02a). So
+ * every agent is marked here and checked against its own transcript at its next tool call. Wiping every agent
+ * caused 59 of the 60 repeated injections measured from 2026-10-13 to 2026-10-23.
+ */
+export function markCompaction(state: Record<string, string[]>, now: number): Record<string, string[]> {
+    const marked = { ...state };
+    for (const agent of Object.keys(state)) {
+        if (!agent.startsWith(COMPACT_MARK) && !marked[`${COMPACT_MARK}${agent}`]) {
+            marked[`${COMPACT_MARK}${agent}`] = [String(now)];
+        }
+    }
+
+    return marked;
+}
+
+/** The agent's own Claude Code transcript; undefined for another harness, whose transcript has no boundary rows. */
+export function agentTranscript(payload: HookPayload): string | undefined {
+    const transcript = payload.transcript_path;
+    if (!transcript || harnessOf({ transcript_path: transcript }) !== "claude") {
+        return undefined;
+    }
+
+    if (!payload.agent_id) {
+        return transcript;
+    }
+
+    return join(dirname(transcript), basename(transcript, ".jsonl"), "subagents", `agent-${payload.agent_id}.jsonl`);
+}
+
+/**
+ * Whether the transcript holds a compaction at or after `since`. When the read tail does not reach back past
+ * `since`, or the file cannot be read, the answer is true: a repeated area costs context, a lost one costs rules.
+ */
+export function compactedSince(transcript: string | undefined, since: number): boolean {
+    if (!transcript) {
+        return true;
+    }
+
+    let fd: number;
+
+    try {
+        fd = openSync(transcript, "r");
+    } catch {
+        // No transcript at this path: assume the compaction was this agent's.
+        return true;
+    }
+
+    try {
+        const size = fstatSync(fd).size;
+        const length = Math.min(size, TRANSCRIPT_TAIL_BYTES);
+        const buffer = Buffer.alloc(length);
+        readSync(fd, buffer, 0, length, size - length);
+        // The first line of a partial tail is cut; the rest are whole rows.
+        const start = length < size ? buffer.indexOf(10) + 1 : 0;
+        const from = since - COMPACT_SLACK_MS;
+        for (let at = buffer.indexOf('"compact_boundary"', start); at !== -1; ) {
+            const lineStart = buffer.lastIndexOf(10, at) + 1;
+            const lineEnd = buffer.indexOf(10, at);
+            const end = lineEnd === -1 ? length : lineEnd;
+            const row = parseRow(buffer.toString("utf8", Math.max(lineStart, start), end));
+            if (
+                row?.type === "system" &&
+                row.subtype === "compact_boundary" &&
+                Date.parse(String(row.timestamp)) >= from
+            ) {
+                return true;
+            }
+
+            at = buffer.indexOf('"compact_boundary"', end);
+        }
+
+        const firstStamp = Date.parse(
+            buffer.toString("utf8", start, Math.min(length, start + 64_000)).match(/"timestamp":"([^"]+)"/)?.[1] ?? ""
+        );
+        return length < size && !(firstStamp <= from);
+    } finally {
+        closeSync(fd);
+    }
+}
+
+function parseRow(line: string): Record<string, unknown> | null {
+    try {
+        const row: unknown = SafeJSON.parse(line);
+        return isRecord(row) ? row : null;
+    } catch {
+        // A row cut by a concurrent append.
+        return null;
+    }
+}
+
 function textOf(value: unknown): string {
     return typeof value === "string" ? value : SafeJSON.stringify(value ?? "");
 }
@@ -322,8 +434,10 @@ if (import.meta.main) {
     }
 
     if (payload.hook_event_name === "SessionStart") {
-        if (payload.source === "compact" || payload.source === "clear") {
+        if (payload.source === "clear") {
             writeState(sessionId, {});
+        } else if (payload.source === "compact") {
+            writeState(sessionId, markCompaction(readState(sessionId), Date.now()));
         }
 
         process.exit(0);
@@ -337,9 +451,13 @@ if (import.meta.main) {
     const rules = readRules(root);
     const state = readState(sessionId);
     const agent = payload.agent_id ?? "main";
-    const seen = state[agent] ?? [];
+    const mark = `${COMPACT_MARK}${agent}`;
+    const compactedAt = state[mark] ? Number(state[mark][0]) : null;
+    delete state[mark];
+    const seen =
+        compactedAt !== null && compactedSince(agentTranscript(payload), compactedAt) ? [] : (state[agent] ?? []);
     const decision = decide({ payload, root, rules, seen, aliases: tsconfigAliases(root) });
-    if (decision.add.length === 0 && decision.native.length === 0) {
+    if (decision.add.length === 0 && decision.native.length === 0 && compactedAt === null) {
         process.exit(0);
     }
 

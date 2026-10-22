@@ -2,7 +2,17 @@ import { afterAll, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { decide, frontmatterPaths, isBroadGlob, pathTokens, readRules, tsconfigAliases } from "./area-rules.ts";
+import {
+    agentTranscript,
+    compactedSince,
+    decide,
+    frontmatterPaths,
+    isBroadGlob,
+    markCompaction,
+    pathTokens,
+    readRules,
+    tsconfigAliases,
+} from "./area-rules.ts";
 
 const root = mkdtempSync(join(tmpdir(), "area-rules-"));
 mkdirSync(join(root, ".git"));
@@ -133,5 +143,99 @@ describe("decide", () => {
             seen: [],
         });
         expect(decision).toEqual({ add: [], native: [] });
+    });
+});
+
+const row = (fields: Record<string, unknown>) => `${JSON.stringify(fields)}\n`;
+
+describe("compaction", () => {
+    const transcripts = join(root, "transcripts");
+    mkdirSync(join(transcripts, "s1", "subagents"), { recursive: true });
+    const at = Date.parse("2026-10-13T18:12:20.000Z");
+    const stamp = (offsetMs: number) => new Date(at + offsetMs).toISOString();
+
+    it("maps a subagent to its own transcript and another harness to none", () => {
+        const main = join(transcripts, "s1.jsonl");
+        expect(agentTranscript({ transcript_path: main })).toBe(main);
+        expect(agentTranscript({ transcript_path: main, agent_id: "a1" })).toBe(
+            join(transcripts, "s1", "subagents", "agent-a1.jsonl")
+        );
+        expect(agentTranscript({ transcript_path: "/x/.codex/sessions/rollout-1.jsonl" })).toBeUndefined();
+    });
+
+    it("finds the agent's own boundary, and keeps state only when the transcript proves there was none", () => {
+        const compacted = join(transcripts, "compacted.jsonl");
+        writeFileSync(
+            compacted,
+            row({ type: "user", timestamp: stamp(-600_000) }) +
+                row({ type: "system", subtype: "compact_boundary", timestamp: stamp(80) }) +
+                row({ type: "user", timestamp: stamp(5_000) })
+        );
+        const other = join(transcripts, "other.jsonl");
+        writeFileSync(
+            other,
+            row({ type: "user", timestamp: stamp(-600_000) }) + row({ type: "user", timestamp: stamp(5_000) })
+        );
+        const older = join(transcripts, "older.jsonl");
+        writeFileSync(older, row({ type: "system", subtype: "compact_boundary", timestamp: stamp(-3_600_000) }));
+
+        expect(compactedSince(compacted, at)).toBe(true);
+        expect(compactedSince(other, at)).toBe(false);
+        expect(compactedSince(older, at)).toBe(false);
+        expect(compactedSince(join(transcripts, "missing.jsonl"), at)).toBe(true);
+        expect(compactedSince(undefined, at)).toBe(true);
+    });
+
+    it("marks every agent once and keeps the earliest compaction", () => {
+        const once = markCompaction({ main: ["a.md"], a1: ["b.md"] }, 1);
+        expect(markCompaction(once, 2)).toEqual({
+            main: ["a.md"],
+            a1: ["b.md"],
+            "@compact:main": ["1"],
+            "@compact:a1": ["1"],
+        });
+    });
+
+    it("a compaction re-adds the areas of the agent that compacted, and only of it (real hook processes)", async () => {
+        const mainSearch = {
+            hook_event_name: "PostToolUse",
+            tool_name: "Bash",
+            tool_input: { command: "rg x src/du" },
+        };
+        const subSearch = { ...mainSearch, agent_id: "a1", tool_input: { command: "rg x src/utils/ai" } };
+
+        for (const compacting of ["subagent", "main"]) {
+            const session = `s-${compacting}`;
+            const main = join(transcripts, `${session}.jsonl`);
+            const sub = join(transcripts, session, "subagents", "agent-a1.jsonl");
+            mkdirSync(join(transcripts, session, "subagents"), { recursive: true });
+            for (const file of [main, sub]) {
+                writeFileSync(file, row({ type: "user", timestamp: new Date(Date.now() - 600_000).toISOString() }));
+            }
+
+            const run = async (payload: Record<string, unknown>) => {
+                const child = Bun.spawn(["bun", join(import.meta.dir, "area-rules.ts")], {
+                    stdin: new TextEncoder().encode(
+                        JSON.stringify({ session_id: session, transcript_path: main, cwd: root, ...payload })
+                    ),
+                    stdout: "pipe",
+                    env: { ...process.env, GENESIS_TOOLS_HOME: join(root, "home") },
+                });
+                const out = await new Response(child.stdout).text();
+                await child.exited;
+                return [...out.matchAll(/Contents of \S+?([^/\s]+\/CLAUDE\.md|[^/\s]+\.md) \(area rules\)/g)].map(
+                    (m) => m[1]
+                );
+            };
+
+            expect(await run(mainSearch)).toEqual(["du/CLAUDE.md"]);
+            expect(await run(subSearch)).toEqual(["ai.md"]);
+            await run({ hook_event_name: "SessionStart", source: "compact" });
+            const boundary = row({ type: "system", subtype: "compact_boundary", timestamp: new Date().toISOString() });
+            writeFileSync(compacting === "main" ? main : sub, boundary, { flag: "a" });
+
+            expect(await run(mainSearch)).toEqual(compacting === "main" ? ["du/CLAUDE.md"] : []);
+            expect(await run(subSearch)).toEqual(compacting === "main" ? [] : ["ai.md"]);
+        }
     });
 });
