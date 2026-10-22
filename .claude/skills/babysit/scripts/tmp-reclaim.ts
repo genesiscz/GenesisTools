@@ -438,7 +438,10 @@ export function ownSessionDirs(id: string, ccRoot: string): string[] {
         throw new Error(`--own-session needs the full session uuid, got ${SafeJSON.stringify(id)}`);
     }
 
+    // `/tmp/cc` also holds plain files (a stray install log): `lstat` of `<file>/<id>` throws ENOTDIR,
+    // which `throwIfNoEntry` does not cover, so only real project folders are joined.
     return (childNames(ccRoot) ?? [])
+        .filter((project) => lstatSync(join(ccRoot, project), { throwIfNoEntry: false })?.isDirectory() === true)
         .map((project) => join(ccRoot, project, id))
         .filter((dir) => {
             const st = lstatSync(dir, { throwIfNoEntry: false });

@@ -5259,6 +5259,9 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         const { cc, dir } = plantSession();
         expect(ownSessionDirs(session, cc)).toEqual([dir]);
         expect(() => ownSessionDirs("1b4001ba", cc)).toThrow("full session uuid");
+        // A plain file beside the project folders (a stray install log) is no project: lstat of `<file>/<id>` is ENOTDIR.
+        fs.writeFileSync(join(cc, "stray-install.log"), "log");
+        expect(ownSessionDirs(session, cc)).toEqual([dir]);
     });
 
     test("apply removes the planned build output and refuses an entry that is no longer build output", () => {
