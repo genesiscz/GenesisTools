@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
@@ -62,6 +62,32 @@ function gateDiag(reason: string, err: unknown): void {
     logger.warn({ err, path: linkGatePath() }, reason);
 }
 
+/** The part of `routerStatus()` (./status) a gate keeps. */
+interface RouterStatusFacts {
+    installed: boolean;
+    defaultHandler: boolean;
+    httpsHandler: string | null;
+    configured: boolean;
+    linkHost: string | null;
+    presets: Array<{ id: string; available: boolean; enabled: boolean; routed: boolean; missing: string[] }>;
+}
+
+/**
+ * `routerStatus` from ./status, loaded only for a stale gate: it saves 32-70 ms of imports on every hook call
+ * (measured 2026-10-15). The path is built at run time so a bundler or the type checker that follows this file (a
+ * copy of the link helpers in another repo) does not pull in the router, its presets and the browser-extension
+ * profiles behind it.
+ */
+function loadRouterStatus(): () => RouterStatusFacts {
+    const loaded: unknown = require(join(import.meta.dir, "status"));
+    const routerStatus = (loaded as { routerStatus?: unknown } | null)?.routerStatus;
+    if (typeof routerStatus !== "function") {
+        throw new Error(`link gate: ${join(import.meta.dir, "status")} exports no routerStatus`);
+    }
+
+    return routerStatus as () => RouterStatusFacts;
+}
+
 function isGate(value: unknown): value is LinkGate {
     return (
         typeof value === "object" &&
@@ -94,9 +120,7 @@ export function linkGate({ now = Date.now() }: { now?: number } = {}): LinkGate 
         }
     }
 
-    // lazy: saves 32-70 ms of imports on every hook call (require of ./status, measured 2026-10-15) — only a stale gate needs them
-    const { routerStatus } = require("./status") as typeof import("./status");
-    const status = routerStatus();
+    const status = loadRouterStatus()();
     const gate: LinkGate = {
         version: 2,
         at: now,
