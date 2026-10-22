@@ -26,7 +26,7 @@ import { appendEvent, readEvents, renderMarkdown } from "./ledger";
 import { continueVersionPick } from "./pick-unified";
 import { summarize, testEvidence } from "./plant";
 import { hitsInAddedLines, probeAddedLines } from "./probe";
-import { reviewBrief } from "./review-brief";
+import { reviewBrief, reviewSpawnCommand } from "./review-brief";
 import { loadRun, runPaths } from "./run";
 import { trySwiftSlot } from "./swift-slot";
 import { parseSwiftTargets, typecheckPackage } from "./swift-typecheck";
@@ -655,6 +655,35 @@ describe("independent review brief", () => {
         expect(fresh).not.toContain("found nothing more");
         expect(fresh).not.toContain("already answered");
         expect(reviewBrief(input)).toContain("found nothing more");
+    });
+
+    test("the reviewer starts in --mode review against the PR base, and the brief leaves depth to its contract", () => {
+        const input = {
+            pr: 498,
+            title: "t",
+            wt: "/w",
+            base: "feat/parent",
+            scratch: "/s",
+            postMerge: false,
+            swift: false,
+        };
+        expect(reviewBrief(input)).not.toContain("A finding without evidence is a guess");
+        expect(reviewBrief(input)).toContain("`Files reviewed` and `Not reviewed` lines");
+
+        expect(
+            reviewSpawnCommand({ pr: 498, wt: "/w", base: "feat/parent", briefPath: "/run/steer-review-498.md" })
+        ).toBe(
+            'tools codex spawn --mode review --base origin/feat/parent --name bs-498-review --model gpt-6.1-sol --write ask --cwd /w --label "babysit pr498 review" --prompt-file /run/steer-review-498.md'
+        );
+        expect(
+            reviewSpawnCommand({
+                pr: 498,
+                wt: "/w",
+                base: "master",
+                briefPath: "/b.md",
+                postMerge: { mergeCommit: "abc123", files: ["src/a.ts", "src/b.ts"] },
+            })
+        ).toContain("--mode review --base abc123^ --paths src/a.ts src/b.ts --name bs-498-review");
     });
 });
 describe("planted-regression summary", () => {

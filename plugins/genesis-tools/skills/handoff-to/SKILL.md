@@ -84,18 +84,25 @@ Set a model explicitly; an Astra parent should not make every worker Astra.
 | Mechanical extraction, formatting, simple lookups, or a fully specified small edit | `gpt-6-luna` | low |
 | Bounded repository exploration, tracing an established call path, or gathering evidence | `gpt-6-luna` | medium |
 | Normal implementation and reproducible debugging | `gpt-6.1-sol` | medium |
-| Code review of a PR or branch | `gpt-6.1-sol` | high; xhigh above about 50 changed files |
+| Code review of a PR or branch | `gpt-6.1-sol` | `--mode review --base <ref>`: high up to 15 files and 800 lines, xhigh above |
 | Difficult cross-system reasoning, ambiguous failures, or an evidence-backed escalation | `gpt-6-astra` | high |
 
 `gpt-6.1-sol` accepts `low` to `max` effort only; `none` and `minimal` return an error, as on Astra.
 
-**Effort is the review's depth: set it from the diff size, never leave a review at medium.** Measured on
+**Effort is the review's depth: spawn every Codex review with `--mode review --base <ref>`.** Measured on
 2026-10-22 with nine Sol reviews at `medium`: 1 to 4 minutes each, 8 to 26 tool calls, and 358 to 2,399
 reasoning tokens, also for a 125-file, 6,200-line PR. The findings were real, but no worker could have read
-every file. Pass `--effort high` for a review, `xhigh` above about 50 changed files, `max` only for a risky
-cross-system PR, and tell the worker in the brief to read every changed file and to end with `Files reviewed:
-<n> of <total>`. Check the depth afterwards: `tools codex status --name <name> --json` carries the turn's
-`durationMs`, `toolCalls` and `tokens.reasoning` under `cost.lastTurn`.
+every file. `--mode review` now does the depth work the brief used to ask for: it computes the manifest
+(`git diff --numstat <base>...HEAD`), gives the worker its tier's review contract (read every hunk, callers and
+tests, probes, the `Files reviewed: n of N` line), picks the tier from the diff size when `--effort` is omitted
+(high up to about 15 files and 800 lines, xhigh above; `max` only when you name it for a risky cross-system PR;
+`low` and `medium` need `--allow-shallow`), and proposes a split by folder above about 60 files (`--paths`).
+After each turn it gates the depth (coverage against the manifest, reasoning tokens per 100 changed lines,
+finding shape): a miss steers the same session once with the unread files, a second miss reruns one tier higher
+in a new session (`<name>-<tier>`), and after that the review is `shallow`, never done. The brief names the
+milestone, the PR and the negative constraints; it no longer restates depth rules. See every review run with
+`tools codex reviews [--since 24h] [--pr <n>] [--label <text>] [--verdict shallow]`, and one in depth with
+`tools codex review-depth <name>`.
 Astra is the escalation tier, not the default for exploration. Keep the cheaper worker's
 findings and failed verification when escalating. If a model is unavailable, disclose the
 fallback and select the nearest suitable tier instead of silently choosing Astra.
