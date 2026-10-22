@@ -87,10 +87,11 @@ struct HubPRRef: Equatable {
 
     /// What `tools hub pr show` takes: the page, else `<project>!<n>` / `<project>#<n>`, which the CLI
     /// looks up among every checkout under the repo roots (and reads an unknown `owner/repo#n` as a
-    /// github.com PR). Nil for a bare number: only the list's rows can name its project.
+    /// github.com PR). Nil for a bare number: only the list's rows can name its project. Nil for a project
+    /// starting with `-` too: the CLI's parser would read `--flag#12` as an option, not as the ref.
     var showArg: String? {
         if let pageURL { return pageURL }
-        guard let project else { return nil }
+        guard let project, !project.hasPrefix("-") else { return nil }
         return "\(project)\(isMergeRequest ? "!" : "#")\(number)"
     }
 
@@ -339,6 +340,9 @@ final class PRsModel: ObservableObject {
     private(set) var pendingCommit: PRCommitPick?
     /// The commit row the overview scrolls to, set when a link selected it.
     @Published private(set) var commitScroll: PRCommitScroll?
+    /// The range a link's `commit=<from>..<to>` set, so the commits list marks its commits even when it spans
+    /// the whole PR; any other scope (the whole PR, one commit) is not it.
+    @Published private(set) var linkedRange: DiffScope?
     /// What a link asked of a PR and could not get (its commit is not in the PR), in that PR's header until
     /// dismissed or another PR opens. Not in `errors`: every list load replaces those.
     @Published var notice: PRNotice?
@@ -749,6 +753,7 @@ final class PRsModel: ObservableObject {
         HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
         commitScroll = PRCommitScroll(prID: pr.id, sha: commits[max(a, b)].sha)
         let scope = Self.rangeScope(commits, first: min(a, b), last: max(a, b), pr: pr, whole: Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)))
+        linkedRange = scope
         if review.scope == scope { return }
         review.setScope(scope)
     }
@@ -767,12 +772,13 @@ final class PRsModel: ObservableObject {
         return .range(base: "\(commits[first].sha)^", head: head, label: label)
     }
 
-    /// The commits of `commits` a range scope shows (`rangeScope`), for the commits list to mark; empty for
-    /// one commit or the whole PR.
-    nonisolated static func rangeShas(_ scope: DiffScope, in commits: [HubPRDetail.Commit]) -> Set<String> {
-        guard case .range(let base, let head, _, _) = scope, let last = commits.firstIndex(where: { $0.sha == head }) else { return [] }
+    /// The commits of `commits` the range a link set (`linked`, from `rangeScope`) shows, for the commits list
+    /// to mark, all of them for a range over the whole PR; empty for any scope the link did not set.
+    nonisolated static func rangeShas(_ scope: DiffScope, linked: DiffScope?, in commits: [HubPRDetail.Commit]) -> Set<String> {
+        guard scope == linked, case .range(let base, let head, _, _) = scope,
+              let last = commits.firstIndex(where: { $0.sha == head }) else { return [] }
         let first = commits.firstIndex(where: { $0.sha == base }).map { $0 + 1 } ?? 0
-        guard first <= last, first > 0 || last < commits.count - 1 else { return [] }
+        guard first <= last else { return [] }
         return Set(commits[first...last].map(\.sha))
     }
 
@@ -784,6 +790,17 @@ final class PRsModel: ObservableObject {
         commitScroll = PRCommitScroll(prID: prID, sha: commit.sha)
         if case .commit(let sha, _) = review.scope, sha == commit.sha { return }
         review.setScope(.commit(sha: commit.sha, title: commit.title))
+    }
+
+    /// The detail of `pr` could not load: a link's commit waiting on it is said, not left waiting, unless the
+    /// cached commits hold it (a cached list may already have selected it), both ends of a range.
+    func detailFailed(_ pr: HubPR, cached commits: [HubPRDetail.Commit]?) {
+        guard let pending = pendingCommit, pending.ref.matches(pr) else { return }
+        pendingCommit = nil
+        let ends = [pending.sha] + (pending.to.map { [$0] } ?? [])
+        if let missing = ends.first(where: { end in commits.flatMap { HubCommitSha.find(end, in: $0) } == nil }) {
+            notice = PRNotice(ref: pending.ref, text: "Could not load the commits of \(pr.label) to select \(missing)")
+        }
     }
 
     /// A settled miss replaces any previously selected commit with the whole PR before saying so.
@@ -1295,13 +1312,7 @@ final class PRsModel: ObservableObject {
                 if let detail = details[key] {
                     sessions.load(pr, detail: detail)
                 }
-                if let pending = pendingCommit, pending.ref.matches(pr) {
-                    // Said, not left waiting: a cached list may already have selected it, nothing else will.
-                    pendingCommit = nil
-                    if details[key]?.commits.flatMap({ HubCommitSha.find(pending.sha, in: $0) }) == nil {
-                        notice = PRNotice(ref: pending.ref, text: "Could not load the commits of \(pr.label) to select \(pending.sha)")
-                    }
-                }
+                detailFailed(pr, cached: details[key]?.commits)
                 return
             }
             let current = prs.first { $0.id == key } ?? pr
@@ -2371,7 +2382,7 @@ struct PRCommitsSection: View {
     var body: some View {
         let shown = shownSha
         // A range link's commits, all marked.
-        let range = PRsModel.rangeShas(review.scope, in: commits)
+        let range = PRsModel.rangeShas(review.scope, linked: prs.linkedRange, in: commits)
         PRSection(title: "Commits", count: commits.count, folded: $folded, flat: true, trailing: shown == nil && range.isEmpty ? nil : AnyView(
             Button("Whole PR") { prs.showWholePR() }
                 .buttonStyle(.genHoverPlain())

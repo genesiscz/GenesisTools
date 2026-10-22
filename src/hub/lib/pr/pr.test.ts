@@ -9,6 +9,7 @@ import type { CommandRunner } from "@genesiscz/utils/git/origins";
 import type { RepoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage";
+import { localCheckoutOf } from "../prs";
 import { draftDatesFor, stampDraftDates } from "./draft-dates";
 import { findBranchPr, findPrByRef } from "./find";
 import { githubBackend, githubThread, githubVersions } from "./github";
@@ -1365,6 +1366,38 @@ describe("resolveHubPrRef", () => {
             ],
         });
         expect(await resolveHubPrRef("acme/site#4", { source: clones })).toEqual({ path: "/work/site", number: 4 });
+    });
+
+    test("a page URL opens the same clone a named ref does: the folder named like the project", async () => {
+        const clones = async () => ({
+            roots: ["/work"],
+            checkouts: [
+                checkout("/work/aaa/site-v2", "github.com", "acme/site"),
+                checkout("/work/site", "github.com", "acme/site"),
+            ],
+        });
+        expect(
+            await localCheckoutOf(
+                { kind: "github", host: "github.com", path: "acme/site", web: "https://github.com/acme/site" },
+                clones
+            )
+        ).toBe("/work/site");
+    });
+
+    test("a folder written as a path takes ! as a folder, never as a project name", async () => {
+        expect(await resolveHubPrRef("./app!12", { source })).toEqual({ path: "./app", number: 12 });
+        expect(await resolveHubPrRef("~/work/app!12", { source })).toEqual({ path: "~/work/app", number: 12 });
+    });
+
+    test("a failed checkout scan leaves owner/repo#42 a github.com PR and says why a project is missing", async () => {
+        const broken = async (): Promise<{ roots: string[]; checkouts: LocalCheckout[] }> => {
+            throw new Error("config unreadable");
+        };
+        expect(await resolveHubPrRef("acme/other#5", { source: broken })).toEqual({
+            url: "https://github.com/acme/other/pull/5",
+        });
+        const missing = await resolveHubPrRef("group/none!3", { source: broken });
+        expect("problem" in missing && missing.problem).toContain("no checkout of group/none");
     });
 
     test("a URL never scans the checkouts", async () => {

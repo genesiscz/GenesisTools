@@ -15,7 +15,7 @@ export interface CheckoutSource {
     checkouts: LocalCheckout[];
 }
 
-async function liveCheckouts(): Promise<CheckoutSource> {
+export async function liveCheckouts(): Promise<CheckoutSource> {
     const config = await loadConfig();
     return { roots: config.repoRoots, checkouts: configuredCheckouts(config) };
 }
@@ -33,12 +33,14 @@ export async function resolveHubPrRef(
     const trimmed = ref.trim();
     const named = /^([^\s#!]+)([#!])(\d+)$/.exec(trimmed);
 
-    if (
-        !named ||
-        /^https?:\/\//i.test(trimmed) ||
-        /^[~./]/.test(named[1]) ||
-        (named[2] === "#" && existsSync(named[1]))
-    ) {
+    const url = /^https?:\/\//i.test(trimmed);
+
+    // A folder named like `./app!12` is that folder, as `./app#12` is: `parsePrRef` reads only the `#` form.
+    if (named && !url && named[2] === "!" && /^[~./]/.test(named[1])) {
+        return { path: named[1], number: Number(named[3]) };
+    }
+
+    if (!named || url || /^[~./]/.test(named[1]) || (named[2] === "#" && existsSync(named[1]))) {
         return (
             parsePrRef(trimmed) ?? {
                 problem: `expected a PR/MR URL, <repoPath>#<number> or <project>!<number>, got "${ref}"`,
@@ -47,7 +49,16 @@ export async function resolveHubPrRef(
     }
 
     const [, name, sign, digits] = named;
-    const { roots, checkouts } = await source();
+    let roots: string[] = [];
+    let checkouts: LocalCheckout[] = [];
+
+    // A config or scan failure must not break `owner/repo#42`, which needs no checkout to read as a github.com PR.
+    try {
+        ({ roots, checkouts } = await source());
+    } catch (err) {
+        log.warn({ err, ref }, "hub pr: could not list the local checkouts; reading the ref without them");
+    }
+
     const found = checkoutOf(name, checkouts);
 
     if ("root" in found) {
@@ -93,10 +104,18 @@ function checkoutOf(name: string, checkouts: LocalCheckout[]): { root: string } 
         return { projects };
     }
 
-    // Of two clones of one project, the folder named like the project (`app`, not `app-v2`).
-    const ranked = rankCheckouts({ project: pool[0].project, checkouts: pool });
-    const best = ranked.find((checkout) => namedLikeProject(checkout.root, checkout.project.path)) ?? ranked[0];
+    const best = preferredCheckout(rankCheckouts({ project: pool[0].project, checkouts: pool }));
     return best ? { root: best.root } : { projects };
+}
+
+/**
+ * The checkout a link of one project opens, from its checkouts best first (`rankCheckouts`): a main checkout
+ * before a worktree, and of two clones the folder named like the project (`app`, not `app-v2`).
+ */
+export function preferredCheckout(ranked: LocalCheckout[]): LocalCheckout | undefined {
+    const mains = ranked.filter((checkout) => checkout.isMain);
+    const pool = mains.length > 0 ? mains : ranked;
+    return pool.find((checkout) => namedLikeProject(checkout.root, checkout.project.path)) ?? pool[0];
 }
 
 /** Whether a checkout's folder carries its project's name (the last segment of the web path), in any case. */

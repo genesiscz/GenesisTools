@@ -107,7 +107,11 @@ enum HubCommitLookup {
             } catch {
                 return .failed("Could not list the projects to find \(text): \(error)")
             }
-            guard let root = PRsModel.projectRoot(text, in: projects) ?? sameName(text, holding: [sha] + (to.map { [$0] } ?? []), in: projects) else {
+            let shas = [sha] + (to.map { [$0] } ?? [])
+            // The checkout of the path the link names, while it holds the link's commits; else a fork that does.
+            // With neither, that checkout still answers, so the miss names where the commit was looked for.
+            let exact = PRsModel.projectRoot(text, in: projects)
+            guard let root = exact.flatMap({ holds($0, shas) ? $0 : nil }) ?? sameName(text, holding: shas, in: projects) ?? exact else {
                 return .failed("No checkout of \(text) under the repo roots, so commit \(sha) cannot open")
             }
             folder = root
@@ -136,10 +140,20 @@ enum HubCommitLookup {
         guard let (older, newer) = ordered else {
             return .failed("\(sha) and \(to) are not on one line of history in \(place), so they make no range")
         }
-        let base = WorktreeDiscovery.git(root, ["rev-parse", "--verify", "--quiet", "\(older)^"])?.trimmed
-        let count = WorktreeDiscovery.git(root, ["rev-list", "--count", "\(older)^..\(newer)"])?.trimmed ?? "?"
+        let parent = WorktreeDiscovery.git(root, ["rev-parse", "--verify", "--quiet", "\(older)^"])?.trimmed
+        let base = parent?.isEmpty == false ? parent : nil
+        // No parent: a root commit starts from the empty tree, but a shallow clone only hides the parent.
+        if base == nil, WorktreeDiscovery.git(root, ["rev-parse", "--is-shallow-repository"])?.trimmed != "false" {
+            return .failed("The parent of \(older.prefix(10)) is not in \(place), a shallow clone (fetch more history first)")
+        }
+        let count = WorktreeDiscovery.git(root, ["rev-list", "--count", base.map { "\($0)..\(newer)" } ?? newer])?.trimmed ?? "?"
         let label = "\(older.prefix(10))..\(newer.prefix(10)) (\(count) commits)"
-        return .found(Found(root: root, sha: newer, title: label, base: base?.isEmpty == false ? base : emptyTree))
+        return .found(Found(root: root, sha: newer, title: label, base: base ?? emptyTree))
+    }
+
+    /// Whether the checkout at `root` holds every one of `shas` as a commit.
+    static func holds(_ root: String, _ shas: [String]) -> Bool {
+        shas.allSatisfy { sha in WorktreeDiscovery.git(root, ["cat-file", "-e", "\(sha)^{commit}"]) != nil }
     }
 
     /// A fork or a mirror: the link names one path (the upstream `group/sub/app`), the checkout clones another
@@ -154,13 +168,11 @@ enum HubCommitLookup {
         let wanted = name(repo)
         guard !wanted.isEmpty else { return nil }
         return projects.first { candidate in
-            name(candidate.project) == wanted && shas.allSatisfy { sha in
-                WorktreeDiscovery.git(candidate.root, ["cat-file", "-e", "\(sha)^{commit}"]) != nil
-            }
+            name(candidate.project) == wanted && holds(candidate.root, shas)
         }?.root
     }
 
-    /// Git's empty tree: the base of a range that starts at a root commit.
+    /// Git's empty tree: the base of a range that starts at a root commit (`GitWorkingTreeSource` diffs from it).
     static let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 }
 

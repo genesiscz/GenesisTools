@@ -850,6 +850,22 @@ describe("GitLab MR list and view", () => {
         });
     });
 
+    it("asks for every page of an MR's commits, so the oldest one listed is the MR's first", async () => {
+        if (!project) {
+            throw new Error("fixture remote did not parse");
+        }
+
+        const asked: string[][] = [];
+        const runner: CommandRunner = async (cmd) => {
+            asked.push(cmd);
+            return { code: 0, stdout: cmd[4].includes("/commits") ? "[]" : "{}", stderr: "" };
+        };
+        await viewPr({ project, number: 9, runner });
+        const commits = asked.find((cmd) => cmd[4].includes("/commits"));
+        expect(commits).toContain("--paginate");
+        expect(asked.filter((cmd) => cmd.includes("--paginate"))).toHaveLength(1);
+    });
+
     it("keeps a commit's message body without the title line GitLab repeats", () => {
         const detail = parseGlabMrView({
             mr: SafeJSON.stringify(SafeJSON.parse(GL_MRS, { strict: true })[0]),

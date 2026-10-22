@@ -223,6 +223,13 @@ public struct GitWorkingTreeSource {
         case .range(let preferred, let head, _, let fallback):
             // A newer push of a PR (the window's Reload) is fetched by id when no ref brought it yet.
             if Self.isFullObjectID(head) { try? ensureCommit(head) }
+            // A range from a root commit (a link's `<root>..<sha>`): every file of the head is added.
+            if preferred == Self.emptyTree {
+                guard (try? git(["cat-file", "-e", "\(head)^{commit}"])) != nil else {
+                    throw ReviewError.git("commit \(head.prefix(10)) is not in \(repo.path); fetch the PR branch first (git fetch origin <branch>)")
+                }
+                return (Self.emptyTree, head, [Self.emptyTree, head], false, nil)
+            }
             let base = [preferred, fallback].compactMap { $0 }.first { (try? git(["cat-file", "-e", "\($0)^{commit}"])) != nil } ?? preferred
             for sha in [base, head] where (try? git(["cat-file", "-e", "\(sha)^{commit}"])) == nil {
                 throw ReviewError.git("commit \(sha.prefix(10)) is not in \(repo.path); fetch the PR branch first (git fetch origin <branch>)")
