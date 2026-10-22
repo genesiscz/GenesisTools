@@ -242,6 +242,25 @@ private struct HubPRList: Decodable {
     }
 }
 
+/// A `tools hub pr show` that failed: it prints `{ref, error, errorSummary}` (src/hub/cli.ts) and exits 1.
+struct PRShowFailure: Error, LocalizedError {
+    let message: String
+    let summary: String?
+
+    init(_ capture: ProcessCapture) {
+        struct Answer: Decodable {
+            let error: String?
+            let errorSummary: String?
+        }
+        let answer = try? JSONDecoder().decode(Answer.self, from: capture.stdout)
+        let stderr = String(decoding: capture.stderr, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        message = answer?.error ?? (stderr.isEmpty ? "tools hub pr show exited \(capture.status)" : stderr)
+        summary = answer?.errorSummary
+    }
+
+    var errorDescription: String? { message }
+}
+
 /// One message above the PR list. `more` keeps the CLI's full error for the pill's "Details".
 struct PRListNotice: Hashable {
     let text: String
@@ -605,7 +624,9 @@ final class PRsModel: ObservableObject {
             let span = HubPerf.begin("prs.show.direct", arg, awaits: true)
             let answer = await Task.detached(priority: .userInitiated) { () -> Result<(HubPR, HubPRDetail, Data), Error> in
                 Result {
-                    let data = try ToolsCLIRunner.run(["hub", "pr", "show", arg])
+                    let capture = try ToolsCLIRunner.capture(["hub", "pr", "show", arg])
+                    guard capture.status == 0 else { throw PRShowFailure(capture) }
+                    let data = capture.stdout
                     return (try JSONDecoder().decode(HubPR.self, from: data), try JSONDecoder().decode(HubPRDetail.self, from: data), data)
                 }
             }.value
@@ -620,7 +641,11 @@ final class PRsModel: ObservableObject {
             case .failure(let error):
                 span.end("failed")
                 // Said, not swallowed: the list's own answer no longer reports a ref it handed here.
-                errors.append(PRListNotice.failure("Could not open \(ref.label)", error))
+                if let failure = error as? PRShowFailure, let summary = failure.summary {
+                    errors.append(PRListNotice("Could not open \(ref.label): \(summary)", more: failure.message))
+                } else {
+                    errors.append(PRListNotice.failure("Could not open \(ref.label)", error))
+                }
                 return
             }
             let (row, detail, data) = fresh

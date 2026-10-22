@@ -2,7 +2,7 @@ import SwiftUI
 
 /// One stored agent review (`tools hub proposal list --json`): enough to name it in the threads panel and
 /// to open its file. A review window launched from a PR link carried no `--proposal`, so the panel said
-/// "No open threads" while the agent's review for that very MR sat on disk, or nowhere (2026-10-19, !7561).
+/// "No open threads" while the agent's review for that very MR sat on disk, or nowhere (2026-10-19).
 struct StoredProposal: Decodable, Identifiable, Equatable {
     struct Author: Decodable, Equatable {
         let agent: String
@@ -61,6 +61,12 @@ struct StoredProposal: Decodable, Identifiable, Equatable {
         try JSONDecoder().decode([StoredProposal].self, from: data)
     }
 
+    /// `tools hub proposal list` for one PR: it reads only that PR's keyed file, never the whole archive.
+    static func listArguments(for identity: PRIdentity) -> [String] {
+        ["hub", "proposal", "list", "--json", "--provider", identity.provider, "--host", identity.host,
+         "--project", identity.project, "--number", String(identity.number)]
+    }
+
     /// The stored reviews of one PR, newest push first. A proposal of another PR never fits this diff.
     static func matching(_ all: [StoredProposal], identity: PRIdentity) -> [StoredProposal] {
         all.filter { $0.identity == identity }.sorted { $0.pushedAt > $1.pushedAt }
@@ -72,6 +78,18 @@ enum StoredProposalLookup: Equatable {
     case idle
     case looking(PRIdentity)
     case found(PRIdentity, [StoredProposal])
+    /// The list could not be read; the next PR update asks again.
+    case failed(PRIdentity, String)
+
+    /// Whether `identity` needs a lookup now: not while one runs for it, and not once its reviews were found. "None
+    /// stored" asks again on the next PR update or Reload, so a review an agent pushes while the window is open shows up.
+    func needsLookup(for identity: PRIdentity) -> Bool {
+        switch self {
+        case .looking(let asked): return asked != identity
+        case .found(let asked, let choices): return asked != identity || choices.isEmpty
+        case .idle, .failed: return true
+        }
+    }
 }
 
 /// The threads panel's "Agent reviews" section while no proposal is attached: the stored reviews of this
@@ -88,13 +106,23 @@ struct StoredProposalsList: View {
                     Spacer(minLength: 0)
                 }
                 switch model.storedProposals {
-                case .idle, .looking:
+                case .failed(_, let reason):
+                    Text("Could not read the stored reviews: \(reason)")
+                        .font(.system(size: 11))
+                        .foregroundColor(ReviewPalette.removed)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .looking:
                     Text("Looking for a stored review…")
+                        .font(.system(size: 11))
+                        .foregroundColor(ReviewPalette.dim)
+                case .idle:
+                    // The lookup needs the PR's identity, which comes with its threads.
+                    Text("Stored reviews show once the PR's threads load.")
                         .font(.system(size: 11))
                         .foregroundColor(ReviewPalette.dim)
                 case .found(let identity, let choices):
                     if choices.isEmpty {
-                        Text("No agent review stored for \(identity.label). An agent adds one with tools hub proposal push.")
+                        Text("No agent review stored for \(identity.label). An agent adds one with tools hub proposal push; Reload looks again.")
                             .font(.system(size: 11))
                             .foregroundColor(ReviewPalette.dim)
                             .fixedSize(horizontal: false, vertical: true)

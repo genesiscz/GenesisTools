@@ -140,7 +140,9 @@ package func runReview(_ args: [String]) -> Never {
         } else {
             DockTile.keep(.window)
             reviewInstance.serve { forwarded in
-                MainActor.assumeIsolated { _ = ReviewWindows.shared.open(ReviewLaunch(forwarded)) }
+                MainActor.assumeIsolated {
+                    if ReviewWindows.shared.open(ReviewLaunch(forwarded)) == nil { ReviewWindows.shared.showOpenFailure() }
+                }
             }
         }
         HangWatch.start()
@@ -164,9 +166,29 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
         /// The window's panel store slot (`panelStore`); nil for a snapshot, which uses the scratch settings.
         let panelSlot: Int?
         let closeKey: KeymapRegistration
+        /// When the window opened, so the face record lists windows oldest first whatever their z-order.
+        let opened: Int
     }
 
     private var windows: [ObjectIdentifier: Open] = [:]
+    private var openedCount = 0
+    /// Why the last `open` returned nil (an unreadable proposal), for a launch the running process got by forward.
+    private var lastFailure: String?
+
+    /// A forwarded launch that opened nothing says so in this process, where the user is looking: the launcher
+    /// that forwarded it has already exited 0.
+    func showOpenFailure() {
+        let alert = NSAlert()
+        alert.messageText = "The review did not open"
+        alert.informativeText = lastFailure ?? "The review's launch could not be read."
+        alert.alertStyle = .warning
+        NSApp.activate(ignoringOtherApps: true)
+        if let front = frontWindow {
+            alert.beginSheetModal(for: front)
+        } else {
+            alert.runModal()
+        }
+    }
 
     /// Builds and shows the window for `launch`; nil when its proposal cannot be read.
     func open(_ launch: ReviewLaunch) -> (window: NSWindow, model: ReviewModel)? {
@@ -186,6 +208,7 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
             } catch {
                 FileHandle.standardError.write(Data("review: cannot read proposal \(proposalPath): \(error)\n".utf8))
                 HubPerf.log("review: cannot read proposal \(proposalPath): \(error)")
+                lastFailure = "Cannot read the proposal \(proposalPath): \(error.localizedDescription)"
                 return nil
             }
         }
@@ -203,11 +226,20 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
             // The key leaves out a PR's range and a proposal's contents: a push, another range or a regenerated
             // proposal reaches the open window instead of being dropped. An unchanged scope keeps the reader's place.
             let model = existing.model
-            if let proposal { model.proposal = proposal }
-            model.setScope(scope)
+            if let proposal {
+                model.replaceProposal(proposal)
+                // A push that names another checkout (the agent's old worktree removed) and another PR reaches it too.
+                model.adoptProposalCheckout(repo, prTarget: launch.prRef.map { .ref($0) } ?? proposal.prTarget)
+            }
+            // A launch that names no scope (a plain PR link) keeps the one on screen: the default is the working tree.
+            let namesScope = launch.range != nil || !(launch.commit ?? "").isEmpty || proposal != nil || launch.args.contains("--scope")
+            if namesScope { model.setScope(scope) }
             if let head = ReviewRemoteHead(launchArguments: launch.args) { model.remoteHead = head }
-            // A rebuild reopens what is on screen now, not the window's first launch.
-            windows[ObjectIdentifier(existing.window)]?.launch = ["--review"] + launch.forwarded
+            // A rebuild reopens what is on screen now, not the window's first launch. A plain link names neither
+            // the scope nor the remote head, so it keeps the record that does: its own would reopen the working tree.
+            if namesScope {
+                windows[ObjectIdentifier(existing.window)]?.launch = ["--review"] + launch.forwarded
+            }
             recordWindows()
             if launch.activate {
                 existing.window.makeKeyAndOrderFront(nil)
@@ -245,7 +277,7 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
         // Released by `open` below, not by AppKit: a window released on close takes its model's last owner with it mid-teardown.
         window.isReleasedWhenClosed = false
         // The Window menu and Mission Control name each review by it, so two reviews of one repository differ.
-        let what = proposal.map { "\($0.label) \($0.title.prefix(50))" } ?? launch.prRef ?? launch.rangeLabel
+        let what = proposal.map { "\($0.label) \($0.title.prefix(50))" } ?? launch.prRef ?? launch.rangeLabel ?? Self.titleLabel(scope)
         window.title = "Review · \(model.repo.lastPathComponent)" + (what.map { " · \($0)" } ?? "")
         // The Context panel's tabs sit in the title bar row: AppKit's title drew over "Commits" (Martin,
         // 2026-10-02). The title still names the window in the Window menu and Mission Control.
@@ -260,6 +292,9 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
             // A snapshot of a long thread card (`--snapshot-height <pt>`): a taller window, and no autosave
             // name, so the size never reaches the frame the live window restores.
             window.setContentSize(NSSize(width: window.frame.width, height: snapshotHeight))
+        } else if let saved = persistence?.savedFrame, NSScreen.screens.contains(where: { $0.visibleFrame.intersects(saved) }) {
+            // This review's own place (ReviewSessionState.frame), while a screen still shows it.
+            window.setFrame(saved, display: false)
         } else if let front = frontWindow {
             // One autosave name holds one window: a later review opens down and right of the front one.
             window.setFrame(front.frame, display: false)
@@ -267,8 +302,10 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
         } else {
             window.setFrameAutosaveName("GenesisToolsReview")
         }
+        persistence?.track(window: window)
         window.delegate = self
-        windows[ObjectIdentifier(window)] = Open(launch: ["--review"] + launch.forwarded, key: stateKey, window: window, model: model, persistence: persistence, panelSlot: panelSlot, closeKey: HubKeymap.registerCloseWindow(window))
+        windows[ObjectIdentifier(window)] = Open(launch: ["--review"] + launch.forwarded, key: stateKey, window: window, model: model, persistence: persistence, panelSlot: panelSlot, closeKey: HubKeymap.registerCloseWindow(window), opened: openedCount)
+        openedCount += 1
 
         if launch.snapshotPath == nil {
             window.makeKeyAndOrderFront(nil)
@@ -282,10 +319,20 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
         return (window, model)
     }
 
-    /// The open windows into this process's face record, oldest first, so a rebuild reopens every one.
+    /// The open windows into this process's face record, oldest first, so a rebuild reopens every one, and which
+    /// of them is in front, so a rebuild brings back that one in front and not the newest.
     private func recordWindows() {
-        let open = NSApp.orderedWindows.reversed().compactMap { windows[ObjectIdentifier($0)]?.launch }
-        FaceRecord.writeWindows(argv: Array(CommandLine.arguments.dropFirst()), windows: open)
+        // By opening order, not `NSApp.orderedWindows`: that is z-order and leaves out a minimized window.
+        let open = windows.values.sorted { $0.opened < $1.opened }
+        let front = frontWindow.flatMap { front in open.firstIndex { $0.window === front } }
+        FaceRecord.writeWindows(argv: Array(CommandLine.arguments.dropFirst()), windows: open.map(\.launch), front: front)
+    }
+
+    /// Another review window came to the front: the face record names it.
+    func windowDidBecomeKey(_ notification: Notification) {
+        // A snapshot window (no panel slot) never writes a face record.
+        guard let window = notification.object as? NSWindow, windows[ObjectIdentifier(window)]?.panelSlot != nil else { return }
+        recordWindows()
     }
 
     /// The review window in front: the key one, else the last one ordered in.
@@ -302,6 +349,16 @@ final class ReviewWindows: NSObject, NSWindowDelegate {
         }
         recordWindows()
         HubPerf.log("review: window closed for \(closing.model.repo.lastPathComponent), \(windows.count) left")
+    }
+
+    /// The scope in a window title when no proposal, PR or label names the review: two commit or range reviews of
+    /// one repository read apart in the Window menu.
+    private static func titleLabel(_ scope: DiffScope) -> String? {
+        switch scope {
+        case .commit(let sha, let title): return title.isEmpty ? String(sha.prefix(10)) : title
+        case .range(_, _, let label, _), .compare(_, _, let label, _): return label
+        default: return nil
+        }
     }
 
     private static func panelSuite(_ slot: Int) -> String {
@@ -755,6 +812,8 @@ final class ReviewModel: ObservableObject {
     /// before the diff (and this model) exists, so the threads do not wait for the head fetch.
     func attachPR(_ store: PRThreadsStore) {
         guard pr !== store else { return }
+        // A lookup still running for the previous PR must not attach its review here.
+        storedProposals = .idle
         store.onChange = { [weak self] in
             self?.pushComments()
             self?.checkForPush()
@@ -1097,55 +1156,98 @@ final class ReviewModel: ObservableObject {
         renderer.focusThread(cardID: card, reply: false)
     }
 
-    /// The stored reviews of the PR on screen (`tools hub proposal list --json`), asked once per PR while
-    /// no proposal is attached. One match is attached by itself, as the hub's PR list does; several are
-    /// offered in the threads panel (StoredProposalsList).
+    /// The stored reviews of the PR on screen (`tools hub proposal list --json` for this PR), asked while no
+    /// proposal is attached: once per PR, and again after an answer of none (`StoredProposalLookup.needsLookup`).
+    /// One match is attached by itself, as the hub's PR list does; several are offered in the threads panel
+    /// (StoredProposalsList).
     func lookupStoredProposals() {
-        guard proposal == nil, let identity = pr?.payload?.pr.identity else { return }
-        switch storedProposals {
-        case .looking(let asked) where asked == identity: return
-        case .found(let asked, _) where asked == identity: return
-        default: break
-        }
+        guard proposal == nil, let identity = pr?.payload?.pr.identity, storedProposals.needsLookup(for: identity) else { return }
         storedProposals = .looking(identity)
         Task.detached(priority: .utility) { [weak self] in
-            let choices: [StoredProposal]
+            let answer: StoredProposalLookup
             do {
-                let capture = try ToolsCLIRunner.capture(["hub", "proposal", "list", "--json"], timeout: 20)
+                // Only this PR's keyed file: the whole archive grows with every PR ever reviewed.
+                let capture = try ToolsCLIRunner.capture(StoredProposal.listArguments(for: identity), timeout: 20)
                 guard capture.status == 0 else {
                     throw ReviewError.git("tools hub proposal list exited \(capture.status)")
                 }
-                choices = StoredProposal.matching(try StoredProposal.parse(capture.stdout), identity: identity)
+                answer = .found(identity, StoredProposal.matching(try StoredProposal.parse(capture.stdout), identity: identity))
             } catch {
+                // A failure is not "none stored": the panel says why, and the next PR update asks again.
                 HubPerf.log("review.proposals lookup failed for \(identity.label): \(error)")
-                choices = []
+                answer = .failed(identity, error.localizedDescription)
             }
             await MainActor.run { [weak self] in
-                guard let self, case .looking(let asked) = self.storedProposals, asked == identity else { return }
-                self.storedProposals = .found(identity, choices)
-                if self.proposal == nil, choices.count == 1, let only = choices.first {
+                // The PR on screen may have changed while the list ran: its answer belongs to the old one.
+                guard let self, case .looking(let asked) = self.storedProposals, asked == identity,
+                      self.pr?.payload?.pr.identity == identity else { return }
+                self.storedProposals = answer
+                if self.proposal == nil, case .found(_, let choices) = answer, choices.count == 1, let only = choices.first {
                     HubPerf.log("review.proposals \(identity.label): one stored review, attached \(only.key)")
-                    self.attachProposal(path: only.path)
+                    self.attachProposal(path: only.path, chosen: false)
                 }
             }
         }
     }
 
     /// Shows a stored review on this diff: its drafts become cards, its banner appears, and the first
-    /// undecided draft comes into view, as a `--proposal` launch does.
-    func attachProposal(path: String) {
-        do {
-            let document = try ProposalDocument(url: URL(fileURLWithPath: path))
-            if let identity = pr?.payload?.pr.identity, document.number > 0, document.identity != identity {
-                notice = "\(document.agent)'s review is of \(document.label), not \(identity.label)."
-                return
+    /// undecided draft comes into view, as a `--proposal` launch does. The file is read off the main thread: it
+    /// carries every draft, thread analysis and note, and every review window shares this process. `chosen` is a
+    /// pick in the threads panel; false is the automatic attach of a PR's only stored review.
+    func attachProposal(path: String, chosen: Bool = true) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let loaded = Result { try HubPerf.measure("review.proposal.read", path) { try ProposalDocument(url: URL(fileURLWithPath: path)) } }
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                switch loaded {
+                case .success(let document): self.showStoredProposal(document, chosen: chosen)
+                case .failure(let error): self.notice = "Could not read the stored review: \(error.localizedDescription)"
+                }
             }
-            proposal = document
-            if builtRenderer != nil {
-                pushComments()
+        }
+    }
+
+    private func showStoredProposal(_ document: ProposalDocument, chosen: Bool) {
+        // Checked against the PR on screen when the read ends, not when it began.
+        if let identity = pr?.payload?.pr.identity, document.number > 0, document.identity != identity {
+            notice = "\(document.agent)'s review is of \(document.label), not \(identity.label)."
+            return
+        }
+        // A review attached meanwhile (a pick, a launch) wins over the automatic one.
+        if !chosen, proposal != nil { return }
+        proposal = document
+        if let next = Self.scope(showing: document, over: scope, chosen: chosen) {
+            setScope(next)
+        }
+        if builtRenderer != nil {
+            pushComments()
+        }
+    }
+
+    /// The scope a stored review moves the diff to; nil keeps the one on screen. A pick shows the review's own range,
+    /// as a `--proposal` launch does. The automatic attach keeps a scope that names commits (a `--range` launch at a
+    /// newer head, a commit the reader picked): the review's older range would hide what the reader asked for.
+    static func scope(showing document: ProposalDocument, over current: DiffScope, chosen: Bool) -> DiffScope? {
+        guard !document.headSha.isEmpty, current.pinnedHead != document.headSha else { return nil }
+        if !chosen {
+            switch current {
+            case .commit, .range, .compare: return nil
+            default: break
             }
-        } catch {
-            notice = "Could not read the stored review: \(error.localizedDescription)"
+        }
+        return .range(base: document.baseSha, head: document.headSha, label: "\(document.label) \(document.title.prefix(40))")
+    }
+
+    /// A regenerated proposal for a window that is already open names its checkout and PR again: the window follows a
+    /// checkout that moved (the agent's old worktree removed), unless the reader picked one that still exists.
+    func adoptProposalCheckout(_ checkout: URL, prTarget: PRTarget?) {
+        let fileManager = FileManager.default
+        if checkout.path != repo.path, fileManager.fileExists(atPath: checkout.path),
+           !worktreeChosen || !fileManager.fileExists(atPath: repo.path) {
+            switchWorktree(to: checkout.path, chosen: false)
+        }
+        if let prTarget {
+            attachPR(prTarget)
         }
     }
 
@@ -1335,6 +1437,13 @@ final class ReviewModel: ObservableObject {
         guard started else { return }
         watchRoots()
         restartLoad()
+    }
+
+    /// A regenerated proposal for the window on screen: its drafts and suggested replies reach the diff now, also when
+    /// its scope is unchanged and `setScope` does not reload.
+    func replaceProposal(_ next: ProposalDocument) {
+        proposal = next
+        if builtRenderer != nil { pushComments() }
     }
 
     func setScope(_ next: DiffScope) {

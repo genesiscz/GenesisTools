@@ -48,6 +48,57 @@ final class PRThreadsTests: XCTestCase {
         XCTAssertTrue(StoredProposal.matching(all, identity: PRIdentity(provider: "gitlab", host: "gitlab.example.org", project: "group/app", number: 8)).isEmpty)
     }
 
+    func testTheStoredReviewLookupAsksForThisPROnly() {
+        let identity = PRIdentity(provider: "gitlab", host: "gitlab.example.org", project: "group/app", number: 7)
+        XCTAssertEqual(StoredProposal.listArguments(for: identity),
+                       ["hub", "proposal", "list", "--json", "--provider", "gitlab", "--host", "gitlab.example.org",
+                        "--project", "group/app", "--number", "7"])
+    }
+
+    func testAnAnswerOfNoStoredReviewIsAskedAgain() throws {
+        let identity = PRIdentity(provider: "github", host: "github.com", project: "acme/shop", number: 7)
+        let other = PRIdentity(provider: "github", host: "github.com", project: "acme/shop", number: 8)
+        let json = """
+        [{"key":"k","path":"/p/a.json","provider":"github","host":"github.com","project":"acme/shop","number":7,
+          "createdAt":"2026-10-19T08:00:00Z","author":{"agent":"codex"},"verdict":{"decision":"approve","summary":""}}]
+        """
+        let found = try StoredProposal.parse(Data(json.utf8))
+        XCTAssertTrue(StoredProposalLookup.idle.needsLookup(for: identity))
+        XCTAssertFalse(StoredProposalLookup.looking(identity).needsLookup(for: identity), "one lookup at a time")
+        XCTAssertFalse(StoredProposalLookup.found(identity, found).needsLookup(for: identity))
+        XCTAssertTrue(StoredProposalLookup.found(identity, []).needsLookup(for: identity),
+                      "a review pushed while the window is open must show up on the next update or Reload")
+        XCTAssertTrue(StoredProposalLookup.found(other, found).needsLookup(for: identity))
+        XCTAssertTrue(StoredProposalLookup.failed(identity, "exit 1").needsLookup(for: identity))
+    }
+
+    private func repliedThread(reply: String, draft: Bool) throws -> PRThread {
+        let json = """
+        {"id":"T1","path":"src/cart.ts","side":"additions","line":4,"outdated":false,"resolved":false,"resolvable":true,
+         "comments":[{"id":"N1","author":{"name":"Alice","username":"alice"},"bodyMarkdown":"Why?","createdAt":"2026-09-20T10:00:00Z","isDraft":false},
+                     {"id":"N2","author":{"name":"Me","username":"me"},"bodyMarkdown":"\(reply)","createdAt":"2026-09-20T11:00:00Z","isDraft":\(draft)}]}
+        """
+        return try JSONDecoder().decode(PRThread.self, from: Data(json.utf8))
+    }
+
+    func testAProposedReplyInAPendingReviewDraftIsNotPostedYet() throws {
+        XCTAssertFalse(PRProposedReply.isPosted("Fixed in abc.", on: try repliedThread(reply: "Fixed in abc.", draft: true)),
+                       "only I see a review draft: the row keeps its draft badge and the text")
+        XCTAssertTrue(PRProposedReply.isPosted("Fixed in abc. ", on: try repliedThread(reply: "Fixed in abc.", draft: false)))
+        XCTAssertFalse(PRProposedReply.isPosted("Something else", on: try repliedThread(reply: "Fixed in abc.", draft: false)))
+    }
+
+    func testFindInTheThreadsListSearchesTheProposedReply() throws {
+        let thread = try repliedThread(reply: "Why?", draft: true)
+        let proposed = ProposalDocument.Thread(id: "T1", path: "src/cart.ts", line: 4, author: "alice", body: "Why?", noteCount: 1,
+                                               resolved: false, suggestedReply: "Renamed the cart total.")
+        XCTAssertEqual(PRProposedReply.findFields(proposed, on: thread),
+                       [PanelFindField("proposed:T1", "Renamed the cart total.", markdown: true)])
+        let posted = try repliedThread(reply: "Renamed the cart total.", draft: false)
+        XCTAssertEqual(PRProposedReply.findFields(proposed, on: posted), [], "a posted reply is shown once, as the note")
+        XCTAssertEqual(PRProposedReply.findFields(nil, on: thread), [])
+    }
+
     // MARK: argv
 
     func testAReplyIsADraftUnlessItIsPublished() {

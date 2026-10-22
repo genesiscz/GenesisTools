@@ -924,7 +924,9 @@ describe("spawnRunner", () => {
         expect(res.code).toBe(127);
         expect(res.stderr).toBe(missingCliError("gt-no-such-cli-7f3a"));
         expect(summarizeHostError(res.stderr, "github.com")).toBe(
-            "gt-no-such-cli-7f3a is not installed (brew install gt-no-such-cli-7f3a)"
+            process.platform === "darwin"
+                ? "gt-no-such-cli-7f3a is not installed (brew install gt-no-such-cli-7f3a)"
+                : "gt-no-such-cli-7f3a is not installed"
         );
     });
 
@@ -969,6 +971,14 @@ describe("host query errors", () => {
         });
         expect(await proxied("git.example.org")).toBeNull();
         expect(asked).toBe(0);
+    });
+
+    it("runs the query once a proxy is set, even with a cached failure", async () => {
+        let proxy = false;
+        const check = createHostCheck({ lookup: async () => Promise.reject(notFound()), proxied: () => proxy });
+        expect(await check("git.example.org")).not.toBeNull();
+        proxy = true;
+        expect(await check("git.example.org")).toBeNull();
     });
 
     it("asks once per host while the answer is fresh, and again after it expires", async () => {

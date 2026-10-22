@@ -22,21 +22,23 @@ package enum FaceRecord {
         return first.isEmpty || first == "--window" || first.hasPrefix("-psn_") || first == "--hub" || first == "--review" || first == "--widget" || first == "--features" || first == "--clicky" || first == "--markdown"
     }
 
-    static func encode(pid: Int32, argv: [String], windows: [[String]]? = nil) -> Data? {
+    static func encode(pid: Int32, argv: [String], windows: [[String]]? = nil, front: Int? = nil) -> Data? {
         struct Record: Encodable {
             let pid: Int32
             let argv: [String]
             let windows: [[String]]?
+            let front: Int?
             let startedAt: String
         }
         return try? JSONEncoder().encode(
-            Record(pid: pid, argv: argv, windows: windows, startedAt: ISO8601DateFormatter().string(from: Date())))
+            Record(pid: pid, argv: argv, windows: windows, front: front, startedAt: ISO8601DateFormatter().string(from: Date())))
     }
 
     /// The review process holds every review window: its record lists them all, so a rebuild reopens each one
-    /// (`readFaceWindows` in relaunch.ts), not only the launch that started the process.
-    package static func writeWindows(argv: [String], windows: [[String]]) {
-        guard !NativePreview.enabled, let data = encode(pid: getpid(), argv: argv, windows: windows) else { return }
+    /// (`readFaceWindows` in relaunch.ts), not only the launch that started the process. `front` is the index of the
+    /// window in front: every window has the process's pid, so only it comes back in front (`readFaceFrontWindows`).
+    package static func writeWindows(argv: [String], windows: [[String]], front: Int? = nil) {
+        guard !NativePreview.enabled, let data = encode(pid: getpid(), argv: argv, windows: windows, front: front) else { return }
         do {
             try data.write(to: directory.appendingPathComponent("\(getpid()).json"), options: .atomic)
         } catch {

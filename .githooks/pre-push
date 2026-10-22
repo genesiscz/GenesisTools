@@ -108,7 +108,8 @@ run_guard() {
         rc=0
         "$@" > "$guard_dir/$name.log" 2>&1 &
         cmd=$!
-        (sleep "$guard_timeout"; kill "$cmd" 2>/dev/null) &
+        # A guard that ignores SIGTERM gets SIGKILL 5 s later, so `wait` below always returns.
+        (sleep "$guard_timeout"; kill "$cmd" 2>/dev/null; sleep 5; kill -9 "$cmd" 2>/dev/null) &
         watchdog=$!
         wait "$cmd" || rc=$?
         # The watchdog's `sleep` outlives a killed subshell and holds the hook's output pipe open, so git

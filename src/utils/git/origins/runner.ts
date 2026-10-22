@@ -4,7 +4,7 @@ import type { CommandRunner } from "./types";
 
 /** The error for a host CLI that is not on this machine: the one cause behind every "exited 127". */
 export function missingCliError(cli: string): string {
-    return `${cli} is not installed (brew install ${cli})`;
+    return process.platform === "darwin" ? `${cli} is not installed (brew install ${cli})` : `${cli} is not installed`;
 }
 
 /**

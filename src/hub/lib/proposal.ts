@@ -20,6 +20,10 @@ import { atomicWriteFileSync } from "@genesiscz/utils/storage/atomic-file";
  */
 
 export type ProposalProvider = "github" | "gitlab";
+
+export function isProposalProvider(value: unknown): value is ProposalProvider {
+    return value === "github" || value === "gitlab";
+}
 export type ProposalSide = "additions" | "deletions";
 export type ProposalSeverity = "blocker" | "major" | "minor" | "nit" | "question" | "praise";
 export type ProposalDecision = "approve" | "request_changes" | "comment";
@@ -526,22 +530,42 @@ export function listProposals(base?: string): ReviewProposal[] {
 
     return readdirSync(dir)
         .filter((name) => name.endsWith(".json"))
-        .flatMap((name) => {
-            try {
-                const parsed: unknown = SafeJSON.parse(readFileSync(join(dir, name), "utf8"));
-
-                if (!isStoredProposal(parsed)) {
-                    logger.warn({ name }, "review proposal skipped: not a stored proposal");
-                    return [];
-                }
-
-                return [parsed];
-            } catch (err) {
-                logger.warn({ err, name }, "review proposal unreadable");
-                return [];
-            }
-        })
+        .flatMap((name) => readListedProposal(join(dir, name)))
         .sort((a, b) => (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt));
+}
+
+/**
+ * The stored proposal of one PR as a list of one or none, read by its key (one file, no folder scan): the review
+ * window asks for its PR's review on every open, and the whole archive grows with every PR ever reviewed.
+ */
+export function listProposalsFor(
+    ref: Pick<ReviewProposal, "provider" | "host" | "project" | "number">,
+    base?: string
+): ReviewProposal[] {
+    const path = join(proposalsDir(base), `${proposalKey(ref)}.json`);
+
+    if (!existsSync(path)) {
+        return [];
+    }
+
+    return readListedProposal(path).filter((item) => proposalKey(item) === proposalKey(ref));
+}
+
+/** One stored file for a list: skipped (and logged) when it is unreadable or of another shape. */
+function readListedProposal(path: string): ReviewProposal[] {
+    try {
+        const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf8"));
+
+        if (!isStoredProposal(parsed)) {
+            logger.warn({ path }, "review proposal skipped: not a stored proposal");
+            return [];
+        }
+
+        return [parsed];
+    } catch (err) {
+        logger.warn({ err, path }, "review proposal unreadable");
+        return [];
+    }
 }
 
 export function proposalMarkdown(proposal: ReviewProposal): string {

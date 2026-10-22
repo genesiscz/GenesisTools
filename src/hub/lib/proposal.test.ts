@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     listProposals,
+    listProposalsFor,
     ProposalError,
     parseProposal,
     proposalFor,
@@ -150,6 +151,19 @@ describe("review proposal", () => {
         writeFileSync(join(base, "proposals", "null.json"), "null");
 
         expect(listProposals(base).map((item) => proposalKey(item))).toEqual([saved.key]);
+    });
+
+    test("one PR's list reads only that PR's keyed file, never the rest of the archive", async () => {
+        const base = mkdtempSync(join(tmpdir(), "review-proposal-"));
+        const mine = await saveProposal(parseProposal(input()), base);
+        await saveProposal(parseProposal(input({ number: 43, title: "Another MR" })), base);
+        // A stray copy of the same PR under another name: a folder scan reads it, the keyed read never does.
+        writeFileSync(join(base, "proposals", "stray-copy.json"), readFileSync(mine.path, "utf8"));
+        const ref = { provider: "gitlab" as const, host: "gitlab.example.com", project: "group/app", number: 42 };
+
+        expect(listProposals(base)).toHaveLength(3);
+        expect(listProposalsFor(ref, base).map((item) => proposalKey(item))).toEqual([mine.key]);
+        expect(listProposalsFor({ ...ref, number: 44 }, base)).toEqual([]);
     });
 
     test("a push onto a stored file that is not a proposal is refused and leaves the file alone", async () => {

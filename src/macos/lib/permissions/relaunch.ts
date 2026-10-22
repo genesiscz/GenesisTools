@@ -28,6 +28,11 @@ export interface WindowFace {
     argv: string[];
     /** True when the argv came from the face's own record, false when it was rebuilt from `ps`. */
     lossless: boolean;
+    /**
+     * One window of the review process: whether it was that process's front window. All its windows share the
+     * process's pid, so only this one may activate. Absent for a face that is one window.
+     */
+    front?: boolean;
 }
 
 export interface RelaunchStep {
@@ -42,6 +47,8 @@ interface FaceRecord {
     argv: string[];
     /** The review process's open windows, one launch argv each (Parts/Hub/Review/ReviewWindow.swift). */
     windows?: string[][];
+    /** The index in `windows` of the review window that was in front (the key one, else the last ordered in). */
+    front?: number;
 }
 
 /** Flags that make a face a one-shot scripted run: it ends on its own and must never come back. */
@@ -147,6 +154,8 @@ export function windowFacesFromPs(options: {
     stalePids: Set<string>;
     records: Map<number, string[]>;
     windows?: Map<number, string[][]>;
+    /** The front window's index in `windows`, by pid (`readFaceFrontWindows`). */
+    fronts?: Map<number, number>;
 }): WindowFace[] {
     const { records } = options;
     const faces: WindowFace[] = [];
@@ -159,8 +168,18 @@ export function windowFacesFromPs(options: {
         // One review process holds every review window; its record lists them, and each comes back.
         const windows = lossless && kind === "review" ? (options.windows?.get(pid) ?? []) : [];
 
+        const front = options.fronts?.get(pid);
+
         if (windows.length > 0) {
-            faces.push(...windows.map((window) => ({ pid, kind: "review" as const, argv: window, lossless })));
+            faces.push(
+                ...windows.map((window, index) => ({
+                    pid,
+                    kind: "review" as const,
+                    argv: window,
+                    lossless,
+                    ...(front === undefined ? {} : { front: index === front }),
+                }))
+            );
         } else if (kind) {
             faces.push({ pid, kind, argv, lossless });
         }
@@ -254,7 +273,8 @@ export function withoutHubActions(argv: string[]): string[] {
  */
 export function relaunchPlan(faces: WindowFace[], frontPid: number | null): RelaunchStep[] {
     const steps = faces.map((face): RelaunchStep => {
-        const activate = face.pid === frontPid;
+        // A review process's other windows open behind its front one: they share its pid.
+        const activate = face.pid === frontPid && face.front !== false;
         const kept = face.argv.filter((arg) => arg !== "--no-activate" && arg !== "--resume");
         let argv = kept;
 
@@ -324,6 +344,19 @@ export function readFaceRecords(dir = facesRecordDir()): Map<number, string[]> {
     return new Map(readFaceFiles(dir).map((record) => [record.pid, record.argv]));
 }
 
+/** Which of its recorded windows each review process had in front, by pid; a record from before `front` has none. */
+export function readFaceFrontWindows(dir = facesRecordDir()): Map<number, number> {
+    const fronts = new Map<number, number>();
+
+    for (const record of readFaceFiles(dir)) {
+        if (record.front !== undefined && record.windows && record.front < record.windows.length) {
+            fronts.set(record.pid, record.front);
+        }
+    }
+
+    return fronts;
+}
+
 /** The open review windows each review process recorded, by pid. */
 export function readFaceWindows(dir = facesRecordDir()): Map<number, string[][]> {
     const windows = new Map<number, string[][]>();
@@ -361,9 +394,12 @@ function readFaceFiles(dir: string): FaceRecord[] {
             const parsed: unknown = SafeJSON.parse(readFileSync(join(dir, name), "utf8"), { strict: true });
 
             if (isFaceRecord(parsed)) {
-                const windows =
-                    "windows" in parsed && Array.isArray(parsed.windows) ? parsed.windows.filter(isArgv) : [];
-                records.push({ pid: parsed.pid, argv: parsed.argv, windows });
+                const raw: unknown[] = "windows" in parsed && Array.isArray(parsed.windows) ? parsed.windows : [];
+                const windows = raw.filter(isArgv);
+                const at = "front" in parsed && typeof parsed.front === "number" ? parsed.front : -1;
+                // The index into the kept windows: an unreadable entry before the front one shifts it.
+                const front = isArgv(raw[at]) ? raw.slice(0, at).filter(isArgv).length : undefined;
+                records.push({ pid: parsed.pid, argv: parsed.argv, windows, front });
             }
         } catch (err) {
             logger.debug({ err, name }, "relaunch: face record unreadable, skipped");
@@ -420,6 +456,7 @@ export function planRelaunch(options: {
     stalePids: Set<string>;
     records: Map<number, string[]>;
     windows?: Map<number, string[][]>;
+    fronts?: Map<number, number>;
     frontPid: () => number | null;
 }): RelaunchCapture {
     const faces = windowFacesFromPs(options);
@@ -439,6 +476,7 @@ export function captureRelaunch(options: {
         stalePids: new Set(options.stalePids),
         records: readFaceRecords(),
         windows: readFaceWindows(),
+        fronts: readFaceFrontWindows(),
         frontPid: frontmostPid,
     });
     logger.info(

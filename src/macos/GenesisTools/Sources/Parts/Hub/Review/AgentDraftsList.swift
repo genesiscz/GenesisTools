@@ -80,7 +80,7 @@ private struct AgentDraftRow: View {
                     .font(.system(size: 10.5))
                     .foregroundColor(statusColor)
             }
-            // Inline markdown, as the card renders it: a draft's "[281870](https://…)" showed its brackets here (2026-10-19).
+            // Inline markdown, as the card renders it: a draft's "[1234](https://…)" showed its brackets here (2026-10-19).
             Text(inlineMarkdown((draft.editedBody ?? draft.body).split(separator: "\n").first.map(String.init) ?? ""))
                 .font(.system(size: 11.5))
                 .foregroundColor(Color.white.opacity(0.8))

@@ -7,7 +7,7 @@ import * as p from "@clack/prompts";
 import { isInteractive, runTool, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { parseSince, parseUntil } from "@genesiscz/utils/date";
-import { PR_LIST_STATES, type PrListState, parsePrRef } from "@genesiscz/utils/git/origins";
+import { PR_LIST_STATES, type PrListState, parsePrRef, summarizeHostError } from "@genesiscz/utils/git/origins";
 import { fetchPrHead, PR_FETCH_PROVIDERS, PrFetchError } from "@genesiscz/utils/git/origins/pr-fetch";
 import { repoFactsMany } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -50,7 +50,9 @@ import { commitFlagsProblem, isHubPrRef } from "./lib/pr-ref";
 import { prSessions } from "./lib/pr-sessions";
 import {
     hubStatus,
+    isProposalProvider,
     listProposals,
+    listProposalsFor,
     ProposalError,
     parseProposal,
     proposalKey,
@@ -311,14 +313,37 @@ proposal
     .command("list")
     .description("Stored proposals, newest first")
     .option("--json", "machine-readable output")
-    .action((opts: { json?: boolean }) => {
-        const all = listProposals();
+    .option("--provider <provider>", "only this PR's proposal (github or gitlab); with --host, --project and --number")
+    .option("--host <host>", "only this PR's proposal: its host")
+    .option("--project <project>", "only this PR's proposal: its project path")
+    .option("--number <n>", "only this PR's proposal: its number")
+    .action((opts: { json?: boolean; provider?: string; host?: string; project?: string; number?: string }) => {
+        const { provider, host, project } = opts;
+        const number = Number(opts.number);
+        const filtered = [provider, host, project, opts.number].some((value) => value !== undefined);
+
+        if (
+            filtered &&
+            (!host || !project || !Number.isInteger(number) || number <= 0 || !isProposalProvider(provider))
+        ) {
+            out.log.error(
+                "--provider (github or gitlab), --host, --project and --number go together; --number is a PR number."
+            );
+            process.exitCode = 1;
+            return;
+        }
+
+        const all =
+            filtered && host && project && isProposalProvider(provider)
+                ? listProposalsFor({ provider, host, project, number })
+                : listProposals();
 
         if (opts.json) {
             out.result(
                 all.map((item) => {
                     const key = proposalKey(item);
-                    return { key, path: join(proposalsDir(), `${key}.json`), ...item };
+                    // The stored file's own path wins over any `path` a proposal carries.
+                    return { key, ...item, path: join(proposalsDir(), `${key}.json`) };
                 })
             );
             return;
@@ -701,7 +726,8 @@ pr.command("show")
             }
 
             out.log.error(error.message);
-            out.result({ ref, error: error.message });
+            // The app shows the short line and keeps the full text under Details, as for a failed list.
+            out.result({ ref, error: error.message, errorSummary: summarizeHostError(error.message, null) });
             process.exitCode = 1;
         }
     });

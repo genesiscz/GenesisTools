@@ -441,6 +441,52 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(model.pendingRevealPath, "a later load must not open the draft's file unasked")
     }
 
+    func testAStoredReviewIsReadOffTheMainThreadAndThenShown() throws {
+        let model = ReviewModel(repo: URL(fileURLWithPath: "/work/shop"), options: DiffViewOptions(), renderer: NullRenderer())
+        // Already on the review's head, so no reload starts in the test.
+        model.scope = .commit(sha: "bbb", title: "head")
+        model.attachProposal(path: try proposalFile(sample()).path)
+        XCTAssertNil(model.proposal, "the read runs in the background; the click returns at once")
+        let shown = expectation(for: NSPredicate { _, _ in model.proposal != nil }, evaluatedWith: nil)
+        wait(for: [shown], timeout: 10)
+        XCTAssertEqual(model.proposal?.headSha, "bbb")
+        XCTAssertEqual(model.scope, .commit(sha: "bbb", title: "head"))
+    }
+
+    func testTheAutomaticAttachKeepsAScopeThatNamesCommits() throws {
+        let document = try ProposalDocument(url: try proposalFile(sample()))
+        let newer = DiffScope.range(base: "aaa", head: "ccc1234", label: "#42 newer push")
+        XCTAssertNil(ReviewModel.scope(showing: document, over: newer, chosen: false), "a --range launch at a newer head stays")
+        XCTAssertNil(ReviewModel.scope(showing: document, over: .commit(sha: "ddd5678", title: "one commit"), chosen: false))
+        XCTAssertNil(ReviewModel.scope(showing: document, over: .commit(sha: "bbb", title: "the head"), chosen: true),
+                     "a scope already on the review's head stays")
+        for (current, chosen) in [(DiffScope.uncommitted, false), (newer, true)] {
+            if case .range(let base, let head, _, _) = ReviewModel.scope(showing: document, over: current, chosen: chosen) {
+                XCTAssertEqual([base, head], ["aaa", "bbb"])
+            } else {
+                XCTFail("\(current) chosen=\(chosen) must move to the review's range")
+            }
+        }
+    }
+
+    func testAReusedReviewWindowFollowsTheProposalsNewCheckout() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("review-checkout-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let old = base.appendingPathComponent("old"), new = base.appendingPathComponent("new")
+        try FileManager.default.createDirectory(at: new, withIntermediateDirectories: true)
+        let model = ReviewModel(repo: old, options: DiffViewOptions(), renderer: NullRenderer())
+        model.adoptProposalCheckout(base.appendingPathComponent("missing"), prTarget: nil)
+        XCTAssertEqual(model.repo.path, old.path, "a checkout that does not exist is never adopted")
+        model.adoptProposalCheckout(new, prTarget: nil)
+        XCTAssertEqual(model.repo.path, new.path, "the agent's old worktree is gone: the window moves to the new one")
+
+        try FileManager.default.createDirectory(at: old, withIntermediateDirectories: true)
+        let picked = ReviewModel(repo: old, options: DiffViewOptions(), renderer: NullRenderer())
+        picked.switchWorktree(to: old.path)
+        picked.adoptProposalCheckout(new, prTarget: nil)
+        XCTAssertEqual(picked.repo.path, old.path, "a checkout the reader picked, and that still exists, stays")
+    }
+
     func testNextDraftShowsOnlyWhenAnUndecidedDraftHasACardOnThisDiff() throws {
         XCTAssertFalse(try draftModel(drafts: ["src/elsewhere.ts"]).hasOpenDraftOnDiff)
         XCTAssertTrue(try draftModel(drafts: ["src/a.ts"]).hasOpenDraftOnDiff)

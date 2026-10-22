@@ -187,6 +187,25 @@ final class ReviewSessionStateTests: XCTestCase {
         XCTAssertEqual(other.scope, .uncommitted, "another key restores nothing")
     }
 
+    func testEachReviewWindowKeepsItsOwnFrame() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("review-frame-\(UUID().uuidString.prefix(8))")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let cache = DiskCache(directory: dir, namespace: "window")
+        let model = ReviewModel(repo: URL(fileURLWithPath: "/w"), options: DiffViewOptions(), renderer: NullRenderer())
+        let frame = NSRect(x: 120, y: 80, width: 900, height: 640)
+        let state = ReviewSessionPersistence.capture(model: model, defaults: defaults, page: nil, frame: frame)
+        cache.write(state, key: "proposal:/p/one.json")
+
+        let first = ReviewModel(repo: URL(fileURLWithPath: "/w"), options: DiffViewOptions(), renderer: NullRenderer())
+        let restored = ReviewSessionPersistence.attach(model: first, key: "proposal:/p/one.json", launchScope: .uncommitted, cache: cache)
+        XCTAssertEqual(restored.savedFrame, frame, "the review opens where its own window was left")
+        let second = ReviewModel(repo: URL(fileURLWithPath: "/w"), options: DiffViewOptions(), renderer: NullRenderer())
+        let other = ReviewSessionPersistence.attach(model: second, key: "proposal:/p/two.json", launchScope: .uncommitted, cache: cache)
+        XCTAssertNil(other.savedFrame, "another review has no frame of the first one's")
+        restored.detach()
+        other.detach()
+    }
+
     // MARK: Diff style
 
     func testTheDiffStylePickedLastIsTheNextReviewsStyle() {
@@ -268,6 +287,10 @@ final class ReviewSessionStateTests: XCTestCase {
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         XCTAssertEqual(object["pid"] as? Int, 42)
         XCTAssertEqual(object["argv"] as? [String], ["--review", "--repo", "/a b"], "the path keeps its space")
+
+        let windows = try XCTUnwrap(FaceRecord.encode(pid: 42, argv: ["--review"], windows: [["--review", "--repo", "/a"], ["--review", "--repo", "/b"]], front: 0))
+        let record = try XCTUnwrap(JSONSerialization.jsonObject(with: windows) as? [String: Any])
+        XCTAssertEqual(record["front"] as? Int, 0, "a rebuild brings back the review that was in front, not the newest")
     }
 }
 

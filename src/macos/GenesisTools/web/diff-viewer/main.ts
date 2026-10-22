@@ -1151,8 +1151,8 @@ function richText(text: string): HTMLElement {
 
 /**
  * The same inline grammar as a PR comment (`inline`): `code`, **bold**, *italic*, [links](url) and bare URLs,
- * with the line breaks kept. Drafts only knew `code`, so an agent's "[281870](https://…)" showed as its
- * brackets (2026-10-19, !7404).
+ * with the line breaks kept. Drafts only knew `code`, so an agent's "[1234](https://…)" showed as its
+ * brackets (2026-10-19).
  */
 function proseText(text: string): HTMLElement {
     const body = element("div", css.body);

@@ -68,6 +68,11 @@ export function createHostCheck(overrides: Partial<HostCheckDeps> = {}): (host: 
     const recent = new Map<string, { at: number; answer: Promise<Resolution> }>();
 
     return async (host) => {
+        // A proxy resolves names itself: an answer cached before it was set must not skip the query.
+        if (deps.proxied()) {
+            return null;
+        }
+
         const now = deps.now();
         let entry = recent.get(host);
 

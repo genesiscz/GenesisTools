@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import WebKit
@@ -36,6 +37,9 @@ struct ReviewSessionState: Codable, Equatable {
     var worktreePicked: Bool?
     /// The base picked in the Base choice; nil is automatic.
     var chosenBase: String?
+    /// The window's frame (`NSStringFromRect`): each review window opens where it was left. One autosave name holds
+    /// one window, so the shared one served only the first review of the process.
+    var frame: String?
     var page: PageState?
 
     struct PageState: Codable, Equatable {
@@ -181,6 +185,9 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
     }
 
     private weak var model: ReviewModel?
+    /// The review's window, whose frame is saved with the rest (`track(window:)`); nil for a model without one.
+    private weak var window: NSWindow?
+    private var windowObservers: [NSObjectProtocol] = []
     private let key: String
     private let cache: DiskCache
     private var page: ReviewSessionState.PageState?
@@ -200,6 +207,23 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
 
     deinit {
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
+        windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
+    }
+
+    /// The frame this review's window had when it was saved last; nil when none was saved.
+    var savedFrame: NSRect? {
+        lastWritten?.frame.map { NSRectFromString($0) }.flatMap { $0.width > 0 && $0.height > 0 ? $0 : nil }
+    }
+
+    /// Saves the window's frame with the review's state from now on: a move or a resize schedules a save.
+    func track(window: NSWindow) {
+        self.window = window
+        windowObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        windowObservers = [NSWindow.didMoveNotification, NSWindow.didResizeNotification].map { name in
+            NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                self?.scheduleSave()
+            }
+        }
     }
 
     /// Call once per review window, after the model has its launch scope and proposal and before `start()`:
@@ -254,8 +278,10 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
     }
 
     /// The window's state now: the model, the left panel's settings, and the page's last report.
-    static func capture(model: ReviewModel, defaults: UserDefaults, page: ReviewSessionState.PageState?) -> ReviewSessionState {
+    static func capture(model: ReviewModel, defaults: UserDefaults, page: ReviewSessionState.PageState?,
+                        frame: NSRect? = nil) -> ReviewSessionState {
         var state = ReviewSessionState()
+        state.frame = frame.map { NSStringFromRect($0) }
         state.scope = SavedScope(model.scope)
         state.selectedFile = model.selectedID
         state.filter = model.filter
@@ -322,7 +348,8 @@ final class ReviewSessionPersistence: NSObject, WKScriptMessageHandler {
 
     private func save() {
         guard let model else { return }
-        let state = Self.capture(model: model, defaults: model.panelDefaults, page: page)
+        // A window that is gone keeps the frame it was saved with.
+        let state = Self.capture(model: model, defaults: model.panelDefaults, page: page, frame: window?.frame ?? savedFrame)
         guard state != lastWritten else { return }
         lastWritten = state
         let cache = cache

@@ -11,6 +11,7 @@ import {
     statSync,
     writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { isInteractive } from "@genesiscz/utils/cli";
 import { PRESETS } from "@genesiscz/utils/compress/presets";
@@ -846,9 +847,93 @@ const SIGN_PROMPT_NOTICE_MS = 2_500;
 /** The one-time command that lets codesign use the signing keys without the keychain dialog. */
 export const CODESIGN_TRUST_COMMAND = "tools macos permissions codesign-trust";
 
+/** How long the login password may take before `security` is stopped: nobody may be at the terminal. */
+const CODESIGN_TRUST_TIMEOUT_MS = 180_000;
+
+/** Records that this Mac was asked (`trusted` or `declined`), so a build asks once. */
+function codesignTrustMarker(): string {
+    return join(genesisAppDir(), "codesign-trust");
+}
+
+/** True once the trust was set or declined on this Mac (`trustCodesignKeys`, the first build's question). */
+export function codesignTrustAnswered(): boolean {
+    return existsSync(codesignTrustMarker());
+}
+
+function recordCodesignTrust(answer: "trusted" | "declined"): void {
+    mkdirSync(genesisAppDir(), { recursive: true });
+    writeFileSync(codesignTrustMarker(), `${answer} ${new Date().toISOString()}\n`);
+}
+
+/**
+ * `security set-key-partition-list` over the login keychain's signing keys: Apple's tools, codesign among them, may
+ * then use the keys without the keychain dialog. It replaces (never merges) each key's partition list, and it
+ * changes every signing key in that keychain, not only the app's:
+ * a private key's label is the name typed when its certificate was requested, not the certificate's name, so `-l`
+ * cannot pick the app's key by the identity it signs with. Asks for the login password on the terminal and stops
+ * `security` after `timeoutMs`.
+ */
+export async function trustCodesignKeys(
+    timeoutMs = CODESIGN_TRUST_TIMEOUT_MS
+): Promise<{ ok: boolean; reason?: string }> {
+    const keychain = join(homedir(), "Library", "Keychains", "login.keychain-db");
+    const proc = Bun.spawn({
+        cmd: ["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", keychain],
+        // security prints every key it touched to stdout (attribute dumps, a screen per key); the password
+        // prompt and errors are on stderr, so only those reach the terminal.
+        stdio: ["inherit", "ignore", "inherit"],
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+        timedOut = true;
+        proc.kill();
+    }, timeoutMs);
+    const code = await proc.exited;
+    clearTimeout(timer);
+
+    if (timedOut) {
+        return { ok: false, reason: `no password within ${Math.round(timeoutMs / 1000)} s, so security was stopped` };
+    }
+
+    if (code !== 0) {
+        return { ok: false, reason: `security exited ${code}` };
+    }
+
+    recordCodesignTrust("trusted");
+    return { ok: true };
+}
+
+/**
+ * The first build in a terminal offers the trust once, so a fresh install does not meet the keychain dialog on every
+ * build. Without a terminal there is nobody to type the password: the build signs as before, and the notification
+ * names the command. The answer defaults to No: the change is keychain-wide, so Enter alone must not make it.
+ */
+export async function offerCodesignTrust(step: (message: string) => void): Promise<void> {
+    const yes = await p.confirm({
+        message:
+            "First build on this Mac: let codesign use the login keychain's signing keys without the password dialog? " +
+            "It asks for your macOS login password once and replaces the partition list of every signing key in the " +
+            "login keychain with Apple's tools, so another app a key listed loses that entry.",
+        initialValue: false,
+    });
+
+    if (!yes) {
+        recordCodesignTrust("declined");
+        step(`codesign trust declined; ${CODESIGN_TRUST_COMMAND} sets it later`);
+        return;
+    }
+
+    const result = await trustCodesignKeys();
+    step(
+        result.ok
+            ? "codesign trust set: later builds sign without the keychain dialog"
+            : `codesign trust not set (${result.reason}); the keychain may ask during this build`
+    );
+}
+
 /**
  * Why the Mac is asking for a password, said where the user is looking: the keychain dialog names only
- * "codesign", so a build that stalls on it looked like a hang ("every fucking time", 2026-10-19). Posted
+ * "codesign", so a build that stalls on it looked like a hang, on every build (2026-10-19). Posted
  * once per build, and only when an attempt has run past the dialog's usual appearance.
  */
 export function codesignPromptNotice(identityName: string): Promise<boolean> {
@@ -858,6 +943,8 @@ export function codesignPromptNotice(identityName: string): Promise<boolean> {
         subtitle: identityName,
         message: `Click Always Allow in the dialog, or run ${CODESIGN_TRUST_COMMAND} once to stop these prompts.`,
         group: "genesis-app-codesign-prompt",
+        // The certificate name stays on this Mac: no webhook or chat channel gets it.
+        only: ["system"],
     }).catch(() => false);
 }
 
@@ -1161,6 +1248,10 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
                 "An ad-hoc build would lose every privacy grant. Build from a shell that can read the login keychain " +
                 "(not a sandboxed one), or set the signing identity to '-' to force ad-hoc on purpose."
         );
+    }
+
+    if (identity.kind !== "adhoc" && !codesignTrustAnswered() && isInteractive()) {
+        await offerCodesignTrust(step);
     }
 
     step(`codesign (${identity.kind === "adhoc" ? "ad-hoc" : identity.name})`);

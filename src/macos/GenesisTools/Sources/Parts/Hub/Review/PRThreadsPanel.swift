@@ -83,8 +83,9 @@ struct PRReviewBar: View {
                         open.toggle()
                     }
                 }
-                IconButton(systemName: "arrow.clockwise", tooltip: "Load the PR threads again from the host") {
+                IconButton(systemName: "arrow.clockwise", tooltip: "Load the PR threads again from the host, and look for a stored agent review") {
                     store.load(noCache: true)
+                    model.lookupStoredProposals()
                 }
                 if !model.selectedThreads.isEmpty {
                     Button {
@@ -549,13 +550,15 @@ struct PRThreadsList: View {
                 }
             }
         }
-        .panelFind(find, revision: threads.map(\.id) + threads.flatMap { $0.comments.map(\.bodyMarkdown) } + folded.sorted()) {
+        .panelFind(find, revision: threads.map(\.id) + threads.flatMap { $0.comments.map(\.bodyMarkdown) } + folded.sorted()
+            + threads.compactMap { proposed[$0.id]?.reply }) {
             threads.filter { !folded.contains($0.path) }.map { thread in
                 PanelFindRow(id: thread.id, fields: [PanelFindField("path", "\(thread.path):\(thread.line)")]
                     + thread.comments.flatMap { comment in
                         [PanelFindField("author:\(comment.id)", comment.author.name),
                          PanelFindField("comment:\(comment.id)", comment.bodyMarkdown, markdown: true)]
-                    })
+                    }
+                    + PRProposedReply.findFields(proposed[thread.id], on: thread))
             }
         }
         .onChange(of: store.payload?.pr.url, initial: true) { _, _ in markSeen() }
@@ -733,6 +736,21 @@ struct PRThreadsList: View {
                 PathActionsMenu(path: absolute, line: group.threads.first?.line)
             }
         }
+    }
+}
+
+/// The agent's proposed reply under a thread in the list (`PRThreadRow.proposedReply`).
+enum PRProposedReply {
+    /// Already a published note on the thread (sent from here or posted by hand): the row says so in one line. A review
+    /// draft only I can see is not posted yet, so its row keeps the "Review draft on PR" badge and the text.
+    static func isPosted(_ reply: String, on thread: PRThread) -> Bool {
+        thread.comments.dropFirst().contains { !$0.isDraft && $0.bodyMarkdown.trimmed == reply.trimmed }
+    }
+
+    /// The reply as ⌘F finds it, under the key its `MarkdownContentView` highlights; none while the row hides it.
+    static func findFields(_ proposed: ProposalDocument.Thread?, on thread: PRThread) -> [PanelFindField] {
+        guard let reply = proposed?.reply, !reply.trimmed.isEmpty, !isPosted(reply, on: thread) else { return [] }
+        return [PanelFindField("proposed:\(thread.id)", reply, markdown: true)]
     }
 }
 
@@ -1113,8 +1131,7 @@ private struct PRThreadRow: View {
     /// The agent's suggested reply under the notes. Read only here: a click on the card opens the thread's card in
     /// the diff, where the reply is reworded and sent.
     private func proposedReply(_ proposed: ProposalDocument.Thread, text: String) -> some View {
-        // Already a note on the thread (sent from here or posted by hand): one line, not the same text twice.
-        let posted = thread.comments.dropFirst().contains { $0.bodyMarkdown.trimmed == text.trimmed }
+        let posted = PRProposedReply.isPosted(text, on: thread)
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 5) {
                 Image(systemName: "sparkles")

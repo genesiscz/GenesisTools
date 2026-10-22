@@ -14,6 +14,7 @@ import {
     linkRelayOpenArgs,
     parseFrontmostPid,
     planRelaunch,
+    readFaceFrontWindows,
     readFaceRecords,
     readFaceWindows,
     relaunchCommands,
@@ -146,6 +147,31 @@ describe("relaunchPlan", () => {
         ]);
     });
 
+    it("of the review process's windows, only the one that was in front activates, and it starts last", () => {
+        const proposal = "/Users/alice/.genesis-tools/review/proposals/one.json";
+        const reviews = windowFacesFromPs({
+            processes: processRows(`101 ${LAUNCHER} --review --proposal ${proposal}`),
+            launcherPath: LAUNCHER,
+            stalePids: new Set(["101"]),
+            records: new Map([[101, ["--review", "--proposal", proposal]]]),
+            windows: new Map([
+                [
+                    101,
+                    [
+                        ["--review", "--proposal", proposal],
+                        ["--review", "--repo", "/work/shop"],
+                    ],
+                ],
+            ]),
+            fronts: new Map([[101, 0]]),
+        });
+
+        expect(relaunchPlan(reviews, 101)).toEqual([
+            { pid: 101, kind: "review", argv: ["--review", "--repo", "/work/shop", "--no-activate"], activate: false },
+            { pid: 101, kind: "review", argv: ["--review", "--proposal", proposal], activate: true },
+        ]);
+    });
+
     it("never runs a hub's one-shot action again", () => {
         const argv = [
             "--hub",
@@ -218,6 +244,17 @@ describe("readFaceRecords", () => {
                 ],
             ],
         ]);
+    });
+
+    it("reads which review window was in front, counted among the readable windows", () => {
+        const dir = mkdtempSync(join(tmpdir(), "faces-"));
+        writeFileSync(
+            join(dir, "21.json"),
+            '{"pid":21,"argv":["--review"],"windows":[[2],["--review","--repo","/a"],["--review","--repo","/b"]],"front":2}'
+        );
+        writeFileSync(join(dir, "22.json"), '{"pid":22,"argv":["--review"],"windows":[["--review"]],"front":5}');
+        writeFileSync(join(dir, "23.json"), '{"pid":23,"argv":["--review"],"windows":[["--review"]]}');
+        expect([...readFaceFrontWindows(dir)]).toEqual([[21, 1]]);
     });
 
     it("answers no records, never an error, when the folder cannot be listed", () => {

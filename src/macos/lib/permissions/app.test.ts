@@ -15,12 +15,14 @@ import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as commands from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
+import * as prompts from "@genesiscz/utils/prompts/p";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { ClickyLibraryUnavailableError, ensureClickyLibrary, unpackClickyLibrary } from "../clicky-library";
 import {
     assertFullXcodeToolchain,
     bundleClickyLibrary,
     downloadClickyLibrary,
+    offerCodesignTrust,
     pinnedRetiredBundles,
     readAppFaceProcesses,
     readRunningExecutableInodes,
@@ -413,6 +415,22 @@ describe("stampAppToolsPath", () => {
         expect(() => stampAppToolsPath("<plist><dict></dict></plist>", "tools")).toThrow("Cannot stamp");
         const stamped = stampAppToolsPath("<plist><dict></dict></plist>", "/fixture/tools");
         expect(() => stampAppToolsPath(stamped, "/another/tools")).toThrow("Cannot stamp");
+    });
+});
+
+describe("offerCodesignTrust", () => {
+    it("defaults the keychain-wide trust question to No, and a decline only records the answer", async () => {
+        const confirm = spyOn(prompts, "confirm").mockResolvedValue(false);
+        const steps: string[] = [];
+
+        try {
+            await offerCodesignTrust((message) => steps.push(message));
+            expect(confirm).toHaveBeenCalledTimes(1);
+            expect(confirm.mock.calls[0]?.[0].initialValue).toBe(false);
+            expect(steps).toEqual([expect.stringContaining("codesign trust declined")]);
+        } finally {
+            confirm.mockRestore();
+        }
     });
 });
 
