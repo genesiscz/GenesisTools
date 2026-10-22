@@ -232,9 +232,11 @@ plus `cloud` (the `cloud_backed` object) and `skippedCloud`.
 
 List, select, evict. It lists like `downloaded`, asks iCloud for each file's state, offers the
 eligible files in a multiselect (or takes `--all` / `--path` without a TTY), and prints what it
-would free. With `--apply` it evicts through `FileManager.evictUbiquitousItem` (the Swift helper
-`native/cloudctl.swift`, compiled on demand). Eviction never deletes: the file stays in iCloud and
-downloads again when opened.
+would free. With `--apply` it evicts through `FileManager.evictUbiquitousItem`. The helper is
+`native/cloudctl.swift`, compiled on demand; on a Mac without Xcode or the Command Line Tools (or
+when it does not compile) the same verbs run as `native/cloudctl.js` through `osascript -l
+JavaScript`, which ships with macOS. The output names the helper that answered. Neither needs
+GenesisTools.app. Eviction never deletes: the file stays in iCloud and downloads again when opened.
 
 A file is evicted only when iCloud reports it uploaded, not uploading, without an upload error,
 with the local copy current. The helper reads that state again right before each eviction.

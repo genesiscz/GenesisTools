@@ -135,6 +135,9 @@ export async function runEvict(opts: {
 }): Promise<void> {
     const ctl = opts.ctl ?? realCloudCtl;
     const plan = await planEviction(opts.files, ctl);
+    if (ctl.helper) {
+        out.println(pc.dim(`  iCloud upload state read by ${ctl.helper}.`));
+    }
 
     if (plan.refused.length > 0) {
         out.println(pc.yellow(`  ${plan.refused.length} file(s) are not evictable:`));

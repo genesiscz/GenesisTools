@@ -10,7 +10,7 @@
 // both lie), and GenesisTools does not read file contents here. Other providers
 // are refused too: their upload state has not been verified.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -21,6 +21,8 @@ import type { CloudFileEntry } from "./types";
 const NATIVE_DIR = join(import.meta.dir, "..", "native");
 const CLOUDCTL_SRC = join(NATIVE_DIR, "cloudctl.swift");
 const CLOUDCTL_BIN = join(NATIVE_DIR, "cloudctl");
+/** The same helper for a Mac without swiftc: osascript's JavaScript bridge ships with every macOS. */
+const CLOUDCTL_JS = join(NATIVE_DIR, "cloudctl.js");
 
 export interface CloudItemStatus {
     path: string;
@@ -43,6 +45,8 @@ export interface EvictOutcome {
 export interface CloudCtl {
     status(paths: string[]): Promise<CloudItemStatus[]>;
     evict(paths: string[]): Promise<EvictOutcome[]>;
+    /** Which helper answered, for the output; a fake leaves it out. */
+    readonly helper?: string;
 }
 
 export type Verdict = { file: CloudFileEntry; ok: true } | { file: CloudFileEntry; ok: false; reason: string };
@@ -151,23 +155,77 @@ export async function applyEviction(plan: EvictionPlan, selected: string[], ctl:
     return [...done, ...refused];
 }
 
-/** Compiles the Swift helper on demand (cached, rebuilt when the source is newer). */
-export function ensureCloudCtl(): string {
-    const needBuild =
-        !existsSync(CLOUDCTL_BIN) ||
-        (existsSync(CLOUDCTL_SRC) && statSync(CLOUDCTL_SRC).mtimeMs > statSync(CLOUDCTL_BIN).mtimeMs);
-    if (needBuild) {
-        logger.debug({ src: CLOUDCTL_SRC, bin: CLOUDCTL_BIN }, "du: compiling cloudctl.swift");
-        execFileSync("swiftc", ["-O", "-o", CLOUDCTL_BIN, CLOUDCTL_SRC], { stdio: "pipe" });
-    }
-
-    return CLOUDCTL_BIN;
+export interface CloudCtlHelper {
+    kind: "swift" | "osascript";
+    /** The argv before the verb. */
+    command: string[];
 }
 
-async function runCloudCtl<T>(verb: "status" | "evict", paths: string[]): Promise<T[]> {
-    const bin = ensureCloudCtl();
-    logger.debug({ bin, verb, paths: paths.length }, "du: running cloudctl");
-    const proc = Bun.spawn([bin, verb], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+export interface CloudCtlHelperDeps {
+    /** The compiled helper exists and is not older than its source. */
+    binaryReady(): boolean;
+    /** Xcode or the Command Line Tools are installed, so swiftc runs without asking to install them. */
+    developerTools(): boolean;
+    compile(): void;
+}
+
+const SWIFT_HELPER: CloudCtlHelper = { kind: "swift", command: [CLOUDCTL_BIN] };
+const OSASCRIPT_HELPER: CloudCtlHelper = { kind: "osascript", command: ["osascript", "-l", "JavaScript", CLOUDCTL_JS] };
+
+/**
+ * The compiled Swift helper when it exists or can be built; otherwise the osascript helper, which needs nothing
+ * beyond macOS. Both read the same resource values and apply the same refusal rule before an eviction.
+ */
+export function pickCloudCtlHelper(deps: CloudCtlHelperDeps = realHelperDeps): CloudCtlHelper {
+    if (deps.binaryReady()) {
+        return SWIFT_HELPER;
+    }
+
+    if (!deps.developerTools()) {
+        logger.debug("du: no developer tools, so cloudctl runs through osascript");
+        return OSASCRIPT_HELPER;
+    }
+
+    try {
+        deps.compile();
+        return SWIFT_HELPER;
+    } catch (error) {
+        logger.warn({ error }, "du: cloudctl.swift did not compile; cloudctl runs through osascript");
+        return OSASCRIPT_HELPER;
+    }
+}
+
+const realHelperDeps: CloudCtlHelperDeps = {
+    binaryReady: () =>
+        existsSync(CLOUDCTL_BIN) &&
+        !(existsSync(CLOUDCTL_SRC) && statSync(CLOUDCTL_SRC).mtimeMs > statSync(CLOUDCTL_BIN).mtimeMs),
+    // `xcode-select -p` never prompts. /usr/bin/swiftc exists on every Mac, but without the tools it opens the
+    // "install the command line developer tools" dialog instead of compiling.
+    developerTools: () => {
+        const found = spawnSync("xcode-select", ["-p"], { encoding: "utf8" });
+        return found.status === 0 && existsSync(found.stdout.trim());
+    },
+    compile: () => {
+        logger.debug({ src: CLOUDCTL_SRC, bin: CLOUDCTL_BIN }, "du: compiling cloudctl.swift");
+        execFileSync("swiftc", ["-O", "-o", CLOUDCTL_BIN, CLOUDCTL_SRC], { stdio: "pipe" });
+    },
+};
+
+let picked: CloudCtlHelper | undefined;
+
+function helper(): CloudCtlHelper {
+    picked ??= pickCloudCtlHelper();
+    return picked;
+}
+
+/** Runs one helper verb over `paths`; exported so a check can run either helper directly. */
+export async function runCloudCtl<T>(
+    verb: "status" | "evict",
+    paths: string[],
+    chosen: CloudCtlHelper = helper()
+): Promise<T[]> {
+    logger.debug({ helper: chosen.kind, verb, paths: paths.length }, "du: running cloudctl");
+    const proc = Bun.spawn([...chosen.command, verb], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
     proc.stdin.write(paths.join("\0"));
     proc.stdin.end();
     const [stdout, stderr, code] = await Promise.all([
@@ -176,7 +234,7 @@ async function runCloudCtl<T>(verb: "status" | "evict", paths: string[]): Promis
         proc.exited,
     ]);
     if (code !== 0) {
-        throw new Error(`cloudctl ${verb} exited with ${code}: ${stderr.trim()}`);
+        throw new Error(`cloudctl (${chosen.kind}) ${verb} exited with ${code}: ${stderr.trim()}`);
     }
 
     const rows: T[] = [];
@@ -192,4 +250,9 @@ async function runCloudCtl<T>(verb: "status" | "evict", paths: string[]): Promis
 export const realCloudCtl: CloudCtl = {
     status: (paths) => runCloudCtl<CloudItemStatus>("status", paths),
     evict: (paths) => runCloudCtl<EvictOutcome>("evict", paths),
+    get helper() {
+        return helper().kind === "swift"
+            ? "the compiled cloudctl helper"
+            : "osascript (the compiled Swift helper is not available)";
+    },
 };

@@ -22,7 +22,9 @@ import {
     type CloudItemStatus,
     type EvictOutcome,
     judgeEviction,
+    pickCloudCtlHelper,
     planEviction,
+    runCloudCtl,
     TRESORIT_REFUSAL,
 } from "./evict";
 import type { ClonesizeResult, CloudFileEntry } from "./types";
@@ -218,5 +220,49 @@ describe("eviction safety", () => {
         const live = fakeCtl([uploaded(good.path)], [good.path]);
         await runEvict({ root: "/u/Documents", files: [good], cli: { all: true, apply: true }, ctl: live });
         expect(live.evicted).toEqual([good.path]);
+    });
+    it("uses the Swift helper when it is built or can be, and osascript on a Mac without developer tools", () => {
+        const calls: string[] = [];
+        const deps = (ready: boolean, tools: boolean, compiles: boolean) => ({
+            binaryReady: () => ready,
+            developerTools: () => tools,
+            compile: () => {
+                calls.push("compile");
+                if (!compiles) {
+                    throw new Error("swiftc failed");
+                }
+            },
+        });
+        expect(pickCloudCtlHelper(deps(true, false, false)).kind).toBe("swift");
+        expect(calls).toEqual([]);
+        expect(pickCloudCtlHelper(deps(false, false, true)).kind).toBe("osascript");
+        // Without developer tools swiftc never runs, so macOS shows no "install the tools" dialog.
+        expect(calls).toEqual([]);
+        expect(pickCloudCtlHelper(deps(false, true, true)).kind).toBe("swift");
+        expect(pickCloudCtlHelper(deps(false, true, false)).kind).toBe("osascript");
+        expect(calls).toEqual(["compile", "compile"]);
+    });
+});
+
+describeOnDarwin("osascript cloudctl helper", () => {
+    it("reads the iCloud state of a local file and a missing one without a compiler", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "du-cloudctl-js-"));
+        try {
+            const local = join(dir, "local.txt");
+            writeFileSync(local, "x");
+            const helper = {
+                kind: "osascript" as const,
+                command: ["osascript", "-l", "JavaScript", join(import.meta.dir, "..", "native", "cloudctl.js")],
+            };
+            const rows = await runCloudCtl<CloudItemStatus>("status", [local, join(dir, "missing.txt")], helper);
+            expect(rows.map((r) => [r.path, r.ubiquitous, r.uploaded])).toEqual([
+                [local, false, false],
+                [join(dir, "missing.txt"), false, false],
+            ]);
+            const evicted = await runCloudCtl<EvictOutcome>("evict", [local], helper);
+            expect(evicted).toEqual([{ path: local, evicted: false, reason: "not an iCloud item" }]);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

@@ -1379,3 +1379,20 @@ Cloud folders with the new binary (counts by lstat only: `find -x <dir> \( -flag
 | ~/Documents (iCloud) | 0.10 s | 0 | 8949 / 8949 | 159140 / 159140 |
 | ~/Library/CloudStorage/Dropbox | 0.23 s | 0 | 52753 / 52753 | 0 / 0 |
 | Tresorit Drive mount root | 0.00 s | 0 | 24 dataless folders, none entered / 24 | — |
+
+## 2026-10-22 19:27 — `tools du evict` without a Swift compiler
+
+No scan code changed: the C engine, the Bun engine and their totals are untouched, so no benchmark was rerun.
+`evict` now picks its helper: the compiled `cloudctl` when it exists or `swiftc` can build it, otherwise
+`native/cloudctl.js` through `osascript -l JavaScript`. Developer tools are detected with `xcode-select -p`,
+because `/usr/bin/swiftc` exists on every Mac and opens the "install the tools" dialog when they are missing.
+
+Parity, status of every downloaded ~/Desktop file plus two control paths: 278 rows from each helper, 0 differing.
+The JS helper must pass the keys as an `NSMutableArray`; a JS array bridges to an empty key list, and single-key
+reads leave out the upload error that the batched Swift read returns.
+
+| Check | Swift helper | osascript helper (helper moved aside, fake `xcode-select` exiting 2) |
+|---|---|---|
+| `evict ~/Desktop --all --top 1000`, dry run | 45 eligible (180 KB), 231 refused | 45 eligible (180 KB), 231 refused (194 not uploaded, 37 not iCloud) |
+| `evict --apply` on a probe file created in iCloud Drive | — | evicted: 176 blocks → 0, flags `compressed,dataless` |
+
