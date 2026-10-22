@@ -1,4 +1,5 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { transclusionHints } from "@genesiscz/utils/genesis-tools/tools/hints";
 import { out } from "@genesiscz/utils/logger";
 import { UNSUPPORTED_IN_NOTES } from "@genesiscz/utils/markdown/includes";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
@@ -12,7 +13,7 @@ export function registerTokensCommand(program: Command): void {
         .description("List the {{kind …}} tokens a markdown file may carry, and the ones it may not")
         .option("--json", "machine-readable output")
         .action((flags: { json?: boolean }) => {
-            const kinds = defaultTransclusionRegistry()
+            const kinds = defaultTransclusionRegistry(transclusionHints())
                 .list()
                 .map((definition) => ({
                     name: definition.name,

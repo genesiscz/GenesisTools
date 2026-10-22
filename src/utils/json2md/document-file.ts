@@ -11,7 +11,7 @@
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { resolveIncludes } from "@genesiscz/utils/markdown/includes";
-import { hasTransclusionTokens } from "@genesiscz/utils/transclude";
+import { hasTransclusionTokens, type TransclusionRegistry } from "@genesiscz/utils/transclude";
 import TOML from "@iarna/toml";
 import { Json2mdError } from "./errors";
 import { type DocumentOptions, json2md } from "./index";
@@ -157,6 +157,8 @@ export interface BuildResult {
 export interface DocumentHints {
     /** The command that rebuilds the document, given its generator path relative to the cwd (or absolute). */
     rebuildCommand?: (portable: string) => string;
+    /** The registry `{{kind …}}` tokens resolve through; the default names no command of any CLI. */
+    transclusions?: TransclusionRegistry;
 }
 
 export interface BuildOverrides extends DocumentHints {
@@ -211,7 +213,14 @@ export async function buildDocument<T>(
     const body =
         definition.transclude === false || !hasTransclusionTokens(rendered)
             ? rendered
-            : (await resolveIncludes(rendered, { cwd: baseDir, refresh: true, now: () => capturedAt(generated) })).text;
+            : (
+                  await resolveIncludes(rendered, {
+                      cwd: baseDir,
+                      refresh: true,
+                      now: () => capturedAt(generated),
+                      ...(overrides.transclusions ? { registry: overrides.transclusions } : {}),
+                  })
+              ).text;
 
     if (definition.unstamped) {
         return { markdown: body, body, outPath, dataPath, sourceHash, data };
@@ -236,7 +245,10 @@ export async function buildDocument<T>(
 }
 
 function hintsOf(hints: DocumentHints): DocumentHints {
-    return hints.rebuildCommand ? { rebuildCommand: hints.rebuildCommand } : {};
+    return {
+        ...(hints.rebuildCommand ? { rebuildCommand: hints.rebuildCommand } : {}),
+        ...(hints.transclusions ? { transclusions: hints.transclusions } : {}),
+    };
 }
 
 export type WriteOutcome = "written" | "unchanged" | "refused";

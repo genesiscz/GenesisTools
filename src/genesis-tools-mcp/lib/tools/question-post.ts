@@ -34,9 +34,9 @@ import type { NativeInboxState } from "@genesiscz/utils/macos/native-inbox";
 import {
     describeTransclusions,
     formatTransclusionHelp,
-    TRANSCLUSION_GRAMMAR,
     type TranscludeOptions,
     transclude,
+    transclusionGrammar,
 } from "@genesiscz/utils/transclude";
 
 export interface QuestionPostArgs {
@@ -560,7 +560,10 @@ export const QUESTION_TOKENS_DESCRIPTION =
 export async function handleQuestionTokens(args: QuestionTokensArgs, deps: QuestionDeps = {}): Promise<string> {
     if (!args.text?.trim()) {
         return SafeJSON.stringify(
-            { grammar: TRANSCLUSION_GRAMMAR, kinds: describeTransclusions(questionTokenRegistry()) },
+            {
+                grammar: transclusionGrammar(questionTokenRegistry()),
+                kinds: describeTransclusions(questionTokenRegistry()),
+            },
             null,
             2
         );

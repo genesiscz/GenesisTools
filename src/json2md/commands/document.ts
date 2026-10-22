@@ -2,11 +2,12 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { json2mdBuild } from "@genesiscz/utils/genesis-tools/tools/hints";
+import { json2mdBuild, transclusionHints } from "@genesiscz/utils/genesis-tools/tools/hints";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     checkDocument,
     type DocumentCheck,
+    type DocumentHints,
     loadDocumentModule,
     writeDocument,
 } from "@genesiscz/utils/json2md/document-file";
@@ -20,6 +21,7 @@ import {
     shadowedByFor,
 } from "@genesiscz/utils/package-link";
 import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
+import { defaultTransclusionRegistry } from "@genesiscz/utils/transclude";
 import type { Command } from "commander";
 import pc from "picocolors";
 
@@ -267,6 +269,11 @@ export default defineDocument<Data>({
 `;
 }
 
+/** The GenesisTools commands a document's stamp and its `{{kind …}}` tokens name. */
+function documentHints(): DocumentHints {
+    return { rebuildCommand: json2mdBuild, transclusions: defaultTransclusionRegistry(transclusionHints()) };
+}
+
 function registerBuild(program: Command): void {
     program
         .command("build")
@@ -291,7 +298,7 @@ function registerBuild(program: Command): void {
                 const result = await writeDocument(modulePath, definition, {
                     force: flags.force,
                     dryRun: flags.dryRun,
-                    rebuildCommand: json2mdBuild,
+                    ...documentHints(),
                 });
 
                 logger.debug({ file: modulePath, outcome: result.outcome, out: result.outPath }, "json2md: build");
@@ -357,7 +364,7 @@ function registerCheck(program: Command): void {
                 }
 
                 const definition = await loadDocumentModule(modulePath);
-                results.push(await checkDocument(modulePath, definition, { rebuildCommand: json2mdBuild }));
+                results.push(await checkDocument(modulePath, definition, documentHints()));
             }
 
             // A document that was never generated reads as `unstamped`, which is not a failure for
@@ -467,7 +474,7 @@ function registerInit(program: Command): void {
             }
 
             const definition = await loadDocumentModule(modulePath);
-            const result = await writeDocument(modulePath, definition, { rebuildCommand: json2mdBuild });
+            const result = await writeDocument(modulePath, definition, documentHints());
 
             if (result.outcome === "refused" && result.check) {
                 // A markdown file already sits at the output path. It is left alone.

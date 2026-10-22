@@ -1,17 +1,24 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import type { TransclusionRegistry } from "./registry";
 import type { TransclusionDefinition, TransclusionParam } from "./types";
 
-/** The grammar in four lines, shared by the CLI help, the MCP description and the README check. */
-export const TRANSCLUSION_GRAMMAR = [
+/** The grammar, shared by the CLI help, the MCP description and the README check; see {@link transclusionGrammar}. */
+const GRAMMAR = [
     "{{<kind> key=\"value\" key='value' key=value}}: named params in any order, resolved when the text is saved.",
     "A token always has at least one key=value; a bare {{name}} is a prompt variable and stays literal.",
     "Inside quotes only \\\" \\' \\\\ are escapes, so C:\\path needs no doubling. \\{{ writes a literal {{.",
     "Tokens inside `code` or a fenced block stay literal. mdBook aliases: {{#include path}}, {{#include path:10:20}}, {{#include path:anchor}}.",
     "A token that fails is replaced by ⚠️ unresolved `{{…}}`: <reason>, never dropped.",
     "Each block ends with a footer: capture time, source, what is shown, and the token that re-checks it.",
-    `[verify] kinds stay live: ${toolCommand("question show")} <id> --recheck reports whether they changed since capture.`,
 ];
+
+/** The grammar lines, ending with how `[verify]` kinds are re-checked: the registry's command, or a plain sentence. */
+export function transclusionGrammar(registry: TransclusionRegistry): string[] {
+    const recheck = registry.hints.verifyRecheck;
+    const verify = recheck
+        ? `[verify] kinds stay live: ${recheck} reports whether they changed since capture.`
+        : "[verify] kinds stay live: a recheck reports whether they changed since capture.";
+    return [...GRAMMAR, verify];
+}
 
 export interface TransclusionDescription {
     name: string;
@@ -67,7 +74,7 @@ export function formatTransclusionHelp(
     { indent = "  ", descriptions = true }: { indent?: string; descriptions?: boolean } = {}
 ): string {
     const width = Math.max(...registry.list().map((definition) => definition.name.length));
-    const lines = TRANSCLUSION_GRAMMAR.map((line) => `${indent}${line}`);
+    const lines = transclusionGrammar(registry).map((line) => `${indent}${line}`);
     lines.push(`${indent}Kinds (* required, :type, =default):`);
 
     for (const definition of registry.list()) {

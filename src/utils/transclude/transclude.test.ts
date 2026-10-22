@@ -203,6 +203,12 @@ describe("registry", () => {
         expect(help).toContain("url [verify]");
         expect(help).toContain("pr-thread [verify]");
         expect(describeTransclusions(reg).find((entry) => entry.name === "lines")?.action).toBe("substitute");
+        expect(help).toContain("[verify] kinds stay live: a recheck reports whether they changed since capture.");
+
+        const hinted = formatTransclusionHelp(defaultTransclusionRegistry({ verifyRecheck: "mytool show <id>" }));
+        expect(hinted).toContain(
+            "[verify] kinds stay live: mytool show <id> reports whether they changed since capture."
+        );
     });
 });
 
@@ -366,7 +372,8 @@ describe("provenance, verify and fail-closed", () => {
                 shown: { shown: 40, total: 212, unit: "lines" },
             }),
         });
-        const result = await transclude("{{sourced n=1}}", { registry: registry(sourced), cwd: "/", now: clock });
+        const hinted = createTransclusionRegistry([sourced], { recheck: (raw) => `mytool resolve '${raw}'` });
+        const result = await transclude("{{sourced n=1}}", { registry: hinted, cwd: "/", now: clock });
         const footer = result.text.split("\n").at(-1);
         expect(footer).toBe(
             "_↳ captured 2026-09-30 17:11 UTC · a.ts@abc123 · showing 40 of 212 lines · re-check: `{{sourced n=1}}`_"
@@ -375,9 +382,12 @@ describe("provenance, verify and fail-closed", () => {
             capturedAt: "2026-09-30T17:11:00.000Z",
             source: "a.ts@abc123",
             token: "{{sourced n=1}}",
-            recheck: "tools question tokens resolve '{{sourced n=1}}'",
+            recheck: "mytool resolve '{{sourced n=1}}'",
             shown: { shown: 40, total: 212, unit: "lines" },
         });
+        const plain = await transclude("{{sourced n=1}}", { registry: registry(sourced), cwd: "/", now: clock });
+        expect(plain.text).toBe(result.text);
+        expect(plain.tokens[0].meta?.provenance).not.toHaveProperty("recheck");
         expect(result.tokens[0].action).toBe("substitute");
         expect(result.tokens[0].snapshot).toBeUndefined();
     });

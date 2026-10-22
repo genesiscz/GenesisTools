@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename } from "node:path";
 import { gatherHarnessPoster } from "@genesiscz/utils/agent/runtime";
+import { transclusionHints } from "@genesiscz/utils/genesis-tools/tools/hints";
 import {
     type ImageAttachmentInput,
     parseImageAttachmentInputs,
@@ -38,7 +39,7 @@ let registry: TransclusionRegistry | null = null;
 
 /** The kinds `tools question` resolves. One registry for the CLI, the MCP server and the help. */
 export function questionTokenRegistry(): TransclusionRegistry {
-    registry ??= defaultTransclusionRegistry();
+    registry ??= defaultTransclusionRegistry(transclusionHints());
     return registry;
 }
 

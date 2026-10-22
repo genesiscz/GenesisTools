@@ -1,6 +1,6 @@
 import { createTransclusionRegistry, type TransclusionRegistry } from "../registry";
-import type { TransclusionDefinition } from "../types";
-import { cmdTransclusion } from "./cmd";
+import type { TransclusionDefinition, TransclusionHints } from "../types";
+import { cmdTransclusion, createCmdTransclusion } from "./cmd";
 import { diffTransclusion } from "./diff";
 import { fileTransclusion } from "./file";
 import { imageTransclusion } from "./image";
@@ -25,13 +25,20 @@ export const DEFAULT_TRANSCLUSIONS: readonly TransclusionDefinition[] = [
     prThreadTransclusion,
 ];
 
-/** A fresh registry with the built-in kinds; callers may `define` more on it. */
-export function defaultTransclusionRegistry(): TransclusionRegistry {
-    return createTransclusionRegistry([...DEFAULT_TRANSCLUSIONS]);
+/**
+ * A fresh registry with the built-in kinds; callers may `define` more on it. `hints` name the caller's own commands
+ * (see {@link TransclusionHints}); without them the registry names none.
+ */
+export function defaultTransclusionRegistry(hints: TransclusionHints = {}): TransclusionRegistry {
+    const kinds = DEFAULT_TRANSCLUSIONS.map((kind) =>
+        kind === cmdTransclusion && hints.cmdTools ? createCmdTransclusion(hints.cmdTools) : kind
+    );
+    return createTransclusionRegistry(kinds, hints);
 }
 
 export {
     cmdTransclusion,
+    createCmdTransclusion,
     diffTransclusion,
     fileTransclusion,
     imageTransclusion,

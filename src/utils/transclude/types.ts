@@ -137,6 +137,37 @@ export interface TransclusionToken {
     truncated?: boolean;
 }
 
+/** A command of the caller's own CLI that the `cmd` kind may run, matched on its leading words. */
+export interface CmdToolVerb {
+    words: readonly string[];
+    /** The only dash arguments it may take; every other one is refused. */
+    flags: readonly string[];
+}
+
+/** The caller's own read-only CLI commands for the `cmd` kind, beyond the git subcommands every copy allows. */
+export interface CmdToolsHints {
+    /** argv[0] of those commands. */
+    program: string;
+    verbs: readonly CmdToolVerb[];
+    /** Appended to the kind's list of allowed commands in its description, e.g. `, mytool show`. */
+    description: string;
+    /** A second example token that runs one of them. */
+    example: string;
+}
+
+/**
+ * What only the program that ships the CLI knows: GenesisTools passes `transclusionHints()` from
+ * `@genesiscz/utils/genesis-tools/tools/hints`. A registry without them names no command of any CLI: the grammar
+ * says how `[verify]` works in a plain sentence, a token records no `recheck` line, and `cmd` runs git only.
+ */
+export interface TransclusionHints {
+    /** The command that reports whether stored `[verify]` tokens changed, e.g. `mytool show <id> --recheck`. */
+    verifyRecheck?: string;
+    /** The shell line that re-resolves one token, stored as the token's `recheck` provenance. */
+    recheck?: (raw: string) => string;
+    cmdTools?: CmdToolsHints;
+}
+
 export interface TranscludeResult {
     text: string;
     tokens: TransclusionToken[];

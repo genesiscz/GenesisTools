@@ -4,6 +4,7 @@ import { levenshteinDistance } from "@genesiscz/utils/fuzzy-match";
 import type {
     LineRange,
     TransclusionDefinition,
+    TransclusionHints,
     TransclusionParam,
     TransclusionParams,
     TransclusionParamValue,
@@ -22,9 +23,14 @@ export interface TransclusionRegistry {
     list(): TransclusionDefinition[];
     /** Adds a kind; a name already taken throws, so two kinds cannot silently shadow each other. */
     define(definition: TransclusionDefinition): void;
+    /** The caller's commands the help, the stored provenance and the `cmd` kind name. Empty in a plain registry. */
+    readonly hints: TransclusionHints;
 }
 
-export function createTransclusionRegistry(definitions: TransclusionDefinition[] = []): TransclusionRegistry {
+export function createTransclusionRegistry(
+    definitions: TransclusionDefinition[] = [],
+    hints: TransclusionHints = {}
+): TransclusionRegistry {
     const byName = new Map<string, TransclusionDefinition>();
 
     const registry: TransclusionRegistry = {
@@ -38,6 +44,7 @@ export function createTransclusionRegistry(definitions: TransclusionDefinition[]
             checkDefinition(definition);
             byName.set(definition.name, definition);
         },
+        hints,
     };
 
     for (const definition of definitions) {

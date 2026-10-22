@@ -1,9 +1,10 @@
 /**
  * The files under src/utils that still name a `tools …` command, counted 2026-10-22 when lint-rules
- * `no-tool-command-in-utils` was added: 124 literals in 52 files, of which json2md and the notification `say`
- * option were migrated at once. A ratchet: no file may join this list, and a file leaves it as soon as its hints
- * come from src/utils/genesis-tools/tools/hints.ts through its GenesisTools caller. `lint-rules.test.ts` fails
- * when a listed file no longer names a command, so the list cannot go stale.
+ * `no-tool-command-in-utils` was added: 124 literals in 52 files, of which json2md, the notification `say` option
+ * and the transclude grammar, recheck line and `cmd` allow-list were migrated at once. A ratchet: no file may join
+ * this list, and a file leaves it as soon as its hints come from src/utils/genesis-tools/tools/hints.ts through its
+ * GenesisTools caller. `lint-rules.test.ts` fails when a listed file no longer names a command, so the list cannot
+ * go stale.
  *
  * notifications-app.ts is GenesisTools-only by design (notifications.ts loads it by a runtime path, and a copy
  * leaves it out), so its hints stay where they are.
@@ -53,9 +54,6 @@ export const TOOL_COMMAND_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/utils/security/MasterKey.ts",
     "src/utils/security/SecretStore.ts",
     "src/utils/security/vault-admin.ts",
-    "src/utils/transclude/describe.ts",
-    "src/utils/transclude/engine.ts",
-    "src/utils/transclude/kinds/cmd.ts",
     "src/utils/ts/sourcemaps/find-commit.ts",
     "src/utils/ui/dashboards.ts",
     "src/utils/worker/contract.ts",

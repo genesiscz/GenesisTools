@@ -2,8 +2,8 @@ export {
     describeTransclusions,
     formatParamList,
     formatTransclusionHelp,
-    TRANSCLUSION_GRAMMAR,
     type TransclusionDescription,
+    transclusionGrammar,
 } from "./describe";
 export {
     capChars,
@@ -14,7 +14,6 @@ export {
     DEFAULT_TOKEN_TIMEOUT_MS,
     failureMarker,
     provenanceFooter,
-    recheckCommand,
     TranscludeFailedError,
     type TranscludeOptions,
     transclude,
@@ -42,12 +41,15 @@ export {
 } from "./registry";
 export { defaultRunner } from "./runner";
 export type {
+    CmdToolsHints,
+    CmdToolVerb,
     CommandOutput,
     LineRange,
     TranscludeResult,
     TransclusionAction,
     TransclusionContext,
     TransclusionDefinition,
+    TransclusionHints,
     TransclusionParam,
     TransclusionParams,
     TransclusionParamType,

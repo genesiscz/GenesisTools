@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type Logger, logger as rootLogger } from "@genesiscz/utils/logger";
 import { parseTranscludeText, type Segment, type TokenSegment } from "./parse";
 import { redactSecretsInText } from "./redact";
@@ -99,6 +98,7 @@ export async function transclude(text: string, options: TranscludeOptions): Prom
     const maxText = options.maxTextChars ?? DEFAULT_MAX_TEXT_CHARS;
     const maxToken = options.maxTokenChars ?? DEFAULT_MAX_TOKEN_CHARS;
     const redact = options.redact ?? redactSecretsInText;
+    const recheck = options.registry.hints.recheck;
     const capturedAt = (options.now?.() ?? new Date()).toISOString();
     const records: TransclusionToken[] = [];
     let added = 0;
@@ -129,7 +129,7 @@ export async function transclude(text: string, options: TranscludeOptions): Prom
                 capturedAt,
                 ...(entry.result.source ? { source: entry.result.source } : {}),
                 token: segment.raw,
-                recheck: recheckCommand(segment.raw),
+                ...(recheck ? { recheck: recheck(segment.raw) } : {}),
                 ...(entry.result.shown ? { shown: entry.result.shown } : {}),
                 ...(truncated ? { truncatedAt: maxToken } : {}),
             };
@@ -216,11 +216,6 @@ export async function transclude(text: string, options: TranscludeOptions): Prom
 /** sha256 of the resolved content before the footer and the size cap: what `recheck()` compares. */
 export function contentSignature(content: string): string {
     return createHash("sha256").update(content).digest("hex");
-}
-
-/** The shell line that re-resolves a token, single-quoted so a `"` inside it survives. */
-export function recheckCommand(raw: string): string {
-    return `${toolCommand("question tokens resolve")} '${raw.replace(/'/g, "'\\''")}'`;
 }
 
 function formatCaptureTime(iso: string): string {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { transclude } from "./engine";
-import { checkAllowed, splitCommandLine } from "./kinds/cmd";
+import { checkAllowed, cmdTransclusion, createCmdTransclusion, splitCommandLine } from "./kinds/cmd";
 import { defaultTransclusionRegistry } from "./kinds/index";
 import { pointerSegments } from "./kinds/json";
 import { parseCommentRef } from "./kinds/pr-thread";
@@ -223,12 +223,35 @@ describe("cmd", () => {
         );
         expect(() => checkAllowed(["git", "diff", "--output=/tmp/x"])).toThrow('git flag "--output=/tmp/x"');
         expect(() => checkAllowed(["rm", "-rf"])).toThrow('cmd: "rm" is not allowed');
-        expect(() => checkAllowed(["tools", "ts", "skeleton", "a.ts"])).not.toThrow();
-        expect(() => checkAllowed(["tools", "git", "merged", "--json", "--base=origin/master"])).not.toThrow();
-        expect(() => checkAllowed(["tools", "git", "merged", "feat/x", "--prune"])).toThrow(
-            '"tools git merged" does not take "--prune"'
+    });
+
+    test("runs the caller's own read-only commands only when it passes them", () => {
+        const tools = {
+            program: "mytool",
+            verbs: [
+                { words: ["ts", "skeleton"], flags: [] },
+                { words: ["git", "merged"], flags: ["--json", "--base"] },
+            ],
+            description: ", mytool ts skeleton, mytool git merged",
+            example: '{{cmd run="mytool ts skeleton a.ts"}}',
+        };
+        expect(() => checkAllowed(["mytool", "ts", "skeleton", "a.ts"], tools)).not.toThrow();
+        expect(() => checkAllowed(["mytool", "git", "merged", "--json", "--base=origin/master"], tools)).not.toThrow();
+        expect(() => checkAllowed(["mytool", "git", "merged", "feat/x", "--prune"], tools)).toThrow(
+            '"mytool git merged" does not take "--prune"'
         );
-        expect(() => checkAllowed(["tools", "git", "merged", "--yes"])).toThrow('does not take "--yes"');
+        expect(() => checkAllowed(["mytool", "rm"], tools)).toThrow(
+            /"mytool rm" is not on the read-only list \(allowed: git log, .*git merge-base, mytool ts skeleton, mytool git merged\)$/
+        );
+        expect(() => checkAllowed(["mytool", "ts", "skeleton", "a.ts"])).toThrow(
+            /cmd: "mytool" is not allowed \(allowed: git log, .*git merge-base\)$/
+        );
+
+        const kind = createCmdTransclusion(tools);
+        expect(kind.description).toContain("merge-base, mytool ts skeleton, mytool git merged). No shell");
+        expect(kind.examples).toEqual(['{{cmd run="git log --oneline -5"}}', '{{cmd run="mytool ts skeleton a.ts"}}']);
+        expect(cmdTransclusion.description).toContain("merge-base). No shell");
+        expect(cmdTransclusion.examples).toEqual(['{{cmd run="git log --oneline -5"}}']);
     });
 });
 

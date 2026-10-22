@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { type BackupRecord, backupAndWrite } from "@app/markdown/lib/backup";
+import { transclusionHints } from "@genesiscz/utils/genesis-tools/tools/hints";
 import { logger } from "@genesiscz/utils/logger";
 import {
     type CodeLinksResult,
@@ -9,6 +10,7 @@ import {
     type IncludeOutcome,
     resolveIncludes,
 } from "@genesiscz/utils/markdown/includes";
+import { defaultTransclusionRegistry } from "@genesiscz/utils/transclude";
 
 export interface ResolveFileOptions {
     file: string;
@@ -50,6 +52,7 @@ export async function resolveMarkdownFile(options: ResolveFileOptions): Promise<
     const resolved = await resolveIncludes(start, {
         cwd: options.cwd ? resolve(options.cwd) : dirname(file),
         refresh: !options.newOnly,
+        registry: defaultTransclusionRegistry(transclusionHints()),
     });
     const after = resolved.text;
     const outcomes = resolved.outcomes;

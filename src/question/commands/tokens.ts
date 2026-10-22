@@ -9,8 +9,8 @@ import {
     describeTransclusions,
     formatParamList,
     formatTransclusionHelp,
-    TRANSCLUSION_GRAMMAR,
     transclude,
+    transclusionGrammar,
 } from "@genesiscz/utils/transclude";
 import type { Command } from "commander";
 import pc from "picocolors";
@@ -53,7 +53,7 @@ function renderKinds(): void {
 
     out.println(table.toString());
 
-    for (const line of TRANSCLUSION_GRAMMAR) {
+    for (const line of transclusionGrammar(registry)) {
         out.println(pc.dim(line));
     }
 
@@ -81,7 +81,10 @@ export function registerTokensCommand(program: Command): void {
             if (format === "json") {
                 out.result(
                     SafeJSON.stringify(
-                        { grammar: TRANSCLUSION_GRAMMAR, kinds: describeTransclusions(questionTokenRegistry()) },
+                        {
+                            grammar: transclusionGrammar(questionTokenRegistry()),
+                            kinds: describeTransclusions(questionTokenRegistry()),
+                        },
                         null,
                         2
                     )
