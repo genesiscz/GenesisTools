@@ -1,7 +1,7 @@
 {
     "name": "genesis-tools-mods",
-    "version": "1.6.1",
-    "description": "Claude Code mods for GenesisTools: draws the whole diff of a Bash call whose diff-hook message was cut, with Claude Code's own diff element, under the call's row, adds the model a subagent runs on to its description, so the agents panel and its finished line name it, and compacts an idle session before its 1-hour prompt cache expires. Configured in the hooks file: tools agents hooks config set mods.fullDiff|mods.idleCompact true|false.",
+    "version": "1.6.2",
+    "description": "Claude Code mods for GenesisTools: draws the whole diff of a Bash call whose diff-hook message was cut, with Claude Code's own diff element, under the call's row, adds the model a subagent runs on to its description, so the launch block, the agents panel and the finished line name it, and compacts an idle session before its 1-hour prompt cache expires. Configured in the hooks file: tools agents hooks config set mods.fullDiff|mods.idleCompact true|false.",
     "author": {
         "name": "GenesisTools"
     },
