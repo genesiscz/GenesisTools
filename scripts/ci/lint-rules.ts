@@ -131,10 +131,11 @@ const RULES: Rule[] = [
         message:
             "A genesis.tools link opens something only when GenesisTools.app is installed, is the https handler and " +
             "routes that preset, and a link on the genesis-md or genesis-tools scheme only when its app is installed. Build it " +
-            "with `routerLink()` (or `schemeLink()` to open it) from @genesiscz/utils/browser-router/router-link: the " +
+            "with `routerLink()` from @genesiscz/utils/browser-router/router-link (or `schemeLink()` from " +
+            "@genesiscz/utils/app-links/targets to open it): the " +
             "preset builds the link, and the caller gets its fallback with the reason instead of a dead link.",
         test: (text) => GENESIS_ROUTER_LINK.test(text),
-        allowedIn: /(^|\/)src\/utils\/browser-router\//,
+        allowedIn: /(^|\/)src\/utils\/(browser-router|app-links)\//,
     },
 ];
 

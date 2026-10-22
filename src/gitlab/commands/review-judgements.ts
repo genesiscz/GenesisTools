@@ -57,7 +57,7 @@ import {
 } from "@app/gitlab/lib/review-drafts";
 import { judgementsPath, reviewItems } from "@app/gitlab/lib/review-items";
 import { collectThreadContext } from "@app/gitlab/lib/review-render";
-import { schemeLink } from "@genesiscz/utils/browser-router/router-link";
+import { schemeLink } from "@genesiscz/utils/app-links/targets";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
