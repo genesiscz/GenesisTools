@@ -245,6 +245,16 @@ final class ToolsDiskClonesCommandTests: XCTestCase {
             XCTFail("optimize without roots or dirs must not fall back to the CLI's watched folders")
         } catch ToolsDiskProviderError.invalidArgument {}
 
+        do {
+            _ = try await nothing.clonesOptimize(ClonesOptimizeOptions(roots: [""]), apply: false)
+            XCTFail("an empty path string must not reach the CLI, which would read it as its own working folder")
+        } catch ToolsDiskProviderError.invalidArgument {}
+
+        // A failed operation keeps the reason the audit log wrote under `message`.
+        let failed = try JSONDecoder().decode(ClonesApplyOp.self, from: Data(
+            #"{"seq": 3, "op": "error", "status": "prestate", "message": "EACCES: permission denied"}"#.utf8))
+        XCTAssertEqual(failed.message, "EACCES: permission denied")
+
         // `--worktrees-of` alone selects the repo's worktrees, so it reaches the CLI.
         let worktrees = try provider(printing: fixture("contract-clones-apply-result"))
         _ = try await worktrees.clonesOptimize(ClonesOptimizeOptions(worktreesOf: "/Users/alice/Projects/App",

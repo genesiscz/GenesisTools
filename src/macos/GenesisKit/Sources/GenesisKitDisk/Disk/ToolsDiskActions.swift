@@ -341,10 +341,12 @@ public struct ClonesApplyOp: Codable, Equatable, Sendable {
     public var sha256After: String?
     public var privateBytes: Int64?
     public var error: String?
+    /// Why an operation failed, as the audit log records it (`ops[].message` in src/macos/lib/clones/audit.ts).
+    public var message: String?
 
     public init(seq: Int, ts: String? = nil, op: String, status: String, bytes: Int64? = nil, keep: String? = nil,
                 replace: String? = nil, modeBefore: Int? = nil, mtimeBeforeMs: Double? = nil, sha256Before: String? = nil,
-                sha256After: String? = nil, privateBytes: Int64? = nil, error: String? = nil) {
+                sha256After: String? = nil, privateBytes: Int64? = nil, error: String? = nil, message: String? = nil) {
         self.seq = seq
         self.ts = ts
         self.op = op
@@ -358,6 +360,7 @@ public struct ClonesApplyOp: Codable, Equatable, Sendable {
         self.sha256After = sha256After
         self.privateBytes = privateBytes
         self.error = error
+        self.message = message
     }
 }
 

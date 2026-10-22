@@ -468,19 +468,23 @@ public struct ToolsDiskProvider: Sendable {
         }
     }
 
-    /// A path as a command-line operand: a relative path that starts with `-` gets `./`, so it never parses as a flag.
     /// A size flag's value in bytes with its unit: the CLI refuses a bare number.
     public static func sizeArgument(_ bytes: Int64) -> String {
         "\(bytes)B"
     }
 
+    /// A path as a command-line operand: a relative path that starts with `-` gets `./`, so it never parses as a flag.
     static func operand(_ path: String) -> String {
         path.hasPrefix("-") ? "./" + path : path
     }
 
+    /// An empty path string is no path: the CLI would resolve it to its own working folder and act on that.
     private static func requirePaths(_ paths: [String], command: String) throws {
         if paths.isEmpty {
             throw ToolsDiskProviderError.invalidArgument("tools \(command) needs at least one path")
+        }
+        if paths.contains(where: { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            throw ToolsDiskProviderError.invalidArgument("tools \(command) got an empty path")
         }
     }
 
@@ -804,7 +808,7 @@ extension ToolsDiskProvider {
     }
 
     /// `tools macos clones reclaim stores --format json`: bun cache entries no install tree clones. Report only; it
-    /// deletes nothing. `minBytes` judges each entry by its files of at least that size (CLI default 64 KB).
+    /// deletes nothing. `minBytes` judges each entry by its files of at least that size (CLI default 1 MB).
     public func clonesStoreReport(minBytes: Int64? = nil) async throws -> ClonesStoreReport {
         var args = ["clones", "reclaim", "stores", "--format", "json"]
         if let minBytes { args += ["--min-size", Self.sizeArgument(minBytes)] }
