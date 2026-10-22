@@ -31,8 +31,11 @@
  * Full measurements and the decision record live in the author's notes, out of repo.
  */
 
+import { readdirSync } from "node:fs";
+import { join } from "node:path";
 import { findInFiles, Lang, parse, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 
 export type Severity = "error" | "warn";
 
@@ -52,10 +55,18 @@ interface Rule {
     message: string;
     /** Node kinds this rule inspects. Cheaper than walking the whole tree per rule. */
     kinds: string[];
-    /** Given the node's source text, does it violate? */
-    test: (text: string) => boolean;
+    /** Given the node's source text (and the node, for a rule that needs its parent), does it violate? */
+    test: (text: string, node: SgNode) => boolean;
     /** Files where the pattern is the implementation, not a violation. */
     allowedIn?: RegExp;
+    /** The rule runs only on these files. */
+    onlyIn?: RegExp;
+    /** Single files still allowed while they are migrated (a ratchet: an entry only ever leaves). */
+    allowedFiles?: ReadonlySet<string>;
+}
+
+function ruleApplies(rule: Rule, file: string): boolean {
+    return (rule.onlyIn?.test(file) ?? true) && !rule.allowedIn?.test(file) && !rule.allowedFiles?.has(file);
 }
 
 /**
@@ -99,6 +110,48 @@ const LITERAL_KINDS = ["string", "template_string"];
 /** A link to a GenesisTools app: on the browser router's host, or an app's own scheme. */
 const GENESIS_ROUTER_LINK = /genesis\.tools\/|genesis-(?:md|tools):\/\//;
 
+/** Every tool name: a `src/<name>/` folder or a `src/<name>.ts` file. */
+function toolNames(): Set<string> {
+    const names = new Set<string>();
+
+    for (const entry of readdirSync(join(import.meta.dir, "..", "..", "src"), { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+            names.add(entry.name);
+        } else if (/\.tsx?$/.test(entry.name)) {
+            names.add(entry.name.replace(/\.tsx?$/, ""));
+        }
+    }
+
+    return names;
+}
+
+const TOOL_NAMES = toolNames();
+const TOOL_MENTION = /(?:^|[^\w./-])tools ([a-z][a-z0-9-]*)/g;
+const TOOL_COMMAND_CALLEES = new Set(["toolCommand", "suggestCommand"]);
+
+/**
+ * True for a literal that names a GenesisTools command: `tools <tool>` written out, where `<tool>` is a real tool (so
+ * prose such as "the tools are" passes), or the first argument of `toolCommand(…)`. Comments are not literals.
+ */
+export function namesToolCommand(text: string, node: SgNode): boolean {
+    for (const match of text.matchAll(TOOL_MENTION)) {
+        if (TOOL_NAMES.has(match[1])) {
+            return true;
+        }
+    }
+
+    const args = node.parent();
+    const callee = args?.kind() === "arguments" ? args.parent()?.field("function")?.text() : undefined;
+    const first = args?.children().find((child) => child.isNamed());
+
+    return (
+        callee !== undefined &&
+        TOOL_COMMAND_CALLEES.has(callee) &&
+        first !== undefined &&
+        first.range().start.index === node.range().start.index
+    );
+}
+
 const RULES: Rule[] = [
     {
         ...STORAGE_ROOT_RULE,
@@ -136,6 +189,20 @@ const RULES: Rule[] = [
             "preset builds the link, and the caller gets its fallback with the reason instead of a dead link.",
         test: (text) => GENESIS_ROUTER_LINK.test(text),
         allowedIn: /(^|\/)src\/utils\/(browser-router|app-links)\//,
+    },
+    {
+        name: "no-tool-command-in-utils",
+        severity: "error",
+        kinds: LITERAL_KINDS,
+        message:
+            "A module under src/utils names no `tools …` command: another repo copies these modules, and there " +
+            "`toolCommand()` names its own binary. Add a function to src/utils/genesis-tools/tools/hints.ts and have " +
+            "the GenesisTools caller pass its result into the util as an option; a util without the option prints " +
+            "no hint. scripts/ci/tool-command-ratchet.ts lists the files not migrated yet.",
+        test: namesToolCommand,
+        onlyIn: /(^|\/)src\/utils\//,
+        allowedIn: /(^|\/)src\/utils\/genesis-tools\/tools\/hints\.ts$/,
+        allowedFiles: TOOL_COMMAND_RATCHET,
     },
 ];
 
@@ -764,7 +831,7 @@ export function checkSource(file: string, source: string): Finding[] {
         const text = node.text();
 
         for (const rule of RULES) {
-            if (rule.test(text) && !rule.allowedIn?.test(file)) {
+            if (ruleApplies(rule, file) && rule.test(text, node)) {
                 record(node, rule);
             }
         }
@@ -983,7 +1050,7 @@ async function scanAll(files: string[], options: { processToolOnly?: boolean } =
                         const text = node.text();
 
                         for (const rule of RULES) {
-                            if (rule.test(text) && !rule.allowedIn?.test(node.getRoot().filename())) {
+                            if (ruleApplies(rule, node.getRoot().filename()) && rule.test(text, node)) {
                                 push(node, rule);
                             }
                         }
@@ -1108,7 +1175,7 @@ if (import.meta.main) {
     const timing = `boot ${boot}ms, list ${listed - started}ms, scan ${scanned - listed}ms`;
 
     if (findings.length === 0) {
-        console.log(`lint-rules: OK (${files.length} files, 11 repo rules) [${timing}]`);
+        console.log(`lint-rules: OK (${files.length} files, 12 repo rules) [${timing}]`);
     } else {
         console.log(`\nlint-rules: ${errors} error(s), ${warnings} warning(s) across ${files.length} files`);
     }

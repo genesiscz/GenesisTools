@@ -3,8 +3,10 @@ import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { Lang, parse } from "@ast-grep/napi";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
-import { checkSource, pluginsDisabledFor } from "./lint-rules";
+import { checkSource, namesToolCommand, pluginsDisabledFor } from "./lint-rules";
+import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 
 /**
  * These pin the behaviour of the six GritQL plugins this checker replaced.
@@ -395,5 +397,37 @@ describe("no-raw-genesis-link", () => {
         expect(rules('const u = "https://genesis.tools/t/";', "src/utils/browser-router/x.ts")).not.toContain(
             "no-raw-genesis-link"
         );
+    });
+});
+
+describe("no-tool-command-in-utils", () => {
+    const rule = "no-tool-command-in-utils";
+
+    test("flags a toolCommand call and a written-out tools command under src/utils", () => {
+        expect(rules('const h = `run ${toolCommand("question show")} <id>`;', "src/utils/x/a.ts")).toContain(rule);
+        expect(rules('const h = suggestCommand("tools notify", {});', "src/utils/x/a.ts")).toContain(rule);
+        expect(rules('const h = "run `tools json2md build` again";', "src/utils/x/a.ts")).toContain(rule);
+    });
+
+    test("passes prose, comments, hints.ts and code outside src/utils", () => {
+        expect(rules('const h = "the tools are slow";', "src/utils/x/a.ts")).not.toContain(rule);
+        expect(rules("// run tools json2md build\nconst a = 1;", "src/utils/x/a.ts")).not.toContain(rule);
+        expect(rules('const h = toolCommand("say");', "src/utils/genesis-tools/tools/hints.ts")).not.toContain(rule);
+        expect(rules('const h = toolCommand("say");', "src/notify/index.ts")).not.toContain(rule);
+    });
+
+    test("every ratchet entry still names a command, so a migrated file leaves the list", async () => {
+        const stale: string[] = [];
+
+        for (const file of TOOL_COMMAND_RATCHET) {
+            const root = parse(file.endsWith(".tsx") ? Lang.Tsx : Lang.TypeScript, await Bun.file(file).text()).root();
+            const literals = root.findAll({ rule: { any: [{ kind: "string" }, { kind: "template_string" }] } });
+
+            if (!literals.some((node) => namesToolCommand(node.text(), node))) {
+                stale.push(file);
+            }
+        }
+
+        expect(stale).toEqual([]);
     });
 });

@@ -801,12 +801,31 @@ describe("three-file pattern", () => {
         const modulePath = join(dir, "doc.ts");
         await Bun.write(join(dir, "doc.json"), SafeJSONStringify({ items: [{ id: 1, name: "one" }] }));
 
-        const built = await writeDocument(modulePath, definitionFor("./doc.json"));
+        const built = await writeDocument(modulePath, definitionFor("./doc.json"), {
+            rebuildCommand: (portable) => `rebuild ${portable}`,
+        });
         const stamped = await Bun.file(built.outPath).text();
         const recorded = decodeURIComponent(stamped.match(/command=([^\s]+)/)?.[1] ?? "");
 
         expect(recorded).not.toContain("..");
-        expect(recorded).toBe(`tools json2md build ${modulePath}`);
+        expect(recorded).toBe(`rebuild ${modulePath}`);
+    });
+
+    test("a build without a rebuild command records none, and the definition's own command still wins", async () => {
+        const dir = await scratch();
+        const modulePath = join(dir, "doc.ts");
+        await Bun.write(join(dir, "doc.json"), SafeJSONStringify({ items: [{ id: 1, name: "one" }] }));
+
+        const bare = await buildDocument(modulePath, definitionFor("./doc.json"));
+        expect(bare.markdown).toContain("json2md:stamp");
+        expect(bare.markdown).not.toContain("command=");
+
+        const own = await buildDocument(
+            modulePath,
+            { ...definitionFor("./doc.json"), command: "make docs" },
+            { rebuildCommand: (portable) => `rebuild ${portable}` }
+        );
+        expect(own.markdown).toContain(`command=${encodeURIComponent("make docs")}`);
     });
 
     test("dry-run reports without touching the file", async () => {

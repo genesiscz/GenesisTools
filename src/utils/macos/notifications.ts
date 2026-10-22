@@ -2,7 +2,6 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { withTimeout } from "@genesiscz/utils/async";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 import { escapeJxa } from "@genesiscz/utils/macos/jxa";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
@@ -26,7 +25,14 @@ export interface NotificationOptions {
      */
     attachments?: string[];
     ignoreDnD?: boolean;
+    /** Also speak the message through {@link NotificationOptions.sayCommand}. Nothing is spoken without one. */
     say?: boolean;
+    /**
+     * The argv that speaks the message, which is appended as its last word. GenesisTools passes
+     * `notificationSayCommand()` from `@genesiscz/utils/genesis-tools/tools/hints`; a copy of this module names no
+     * speech command of its own.
+     */
+    sayCommand?: string[];
     /**
      * Stable id, so the notification can be retracted later with {@link removeNotifications}, or
      * replaced in place by posting again with the same id. Generated when omitted.
@@ -490,17 +496,26 @@ export async function sendNotification(opts: NotificationOptions): Promise<Poste
     const posted = await postNotification(opts);
 
     if (opts.say) {
-        try {
-            Bun.spawn(["tools", "say", opts.message], {
-                stdout: "ignore",
-                stderr: "ignore",
-            });
-        } catch {
-            logger.debug(`${toolCommand("say")} failed for notification TTS`);
-        }
+        speak(opts.message, opts.sayCommand ?? []);
     }
 
     return posted;
+}
+
+function speak(message: string, command: string[]): void {
+    if (command.length === 0) {
+        logger.debug("notification TTS skipped: no say command was passed");
+        return;
+    }
+
+    try {
+        Bun.spawn([...command, message], {
+            stdout: "ignore",
+            stderr: "ignore",
+        });
+    } catch {
+        logger.debug(`${command.join(" ")} failed for notification TTS`);
+    }
 }
 
 export type NotificationFallbackState =

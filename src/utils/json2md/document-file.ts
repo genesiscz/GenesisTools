@@ -9,7 +9,6 @@
  */
 
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { resolveIncludes } from "@genesiscz/utils/markdown/includes";
 import { hasTransclusionTokens } from "@genesiscz/utils/transclude";
@@ -29,7 +28,10 @@ export interface DocumentDefinition<T = unknown> {
     render: (data: T) => BlockInput;
     /** Title, front matter, provenance header and contents list. */
     options?: DocumentOptions;
-    /** The command a reader should run to regenerate. Defaults to `tools json2md build <file>`. */
+    /**
+     * The command a reader should run to regenerate. Defaults to {@link DocumentHints.rebuildCommand} of the
+     * build; with neither, the stamp records no command.
+     */
     command?: string;
     /** Skip the stamp. Only for a document that a person is expected to keep editing. */
     unstamped?: boolean;
@@ -148,7 +150,16 @@ export interface BuildResult {
     data: unknown;
 }
 
-export interface BuildOverrides {
+/**
+ * What only the caller knows: GenesisTools passes `json2mdBuild` from `@genesiscz/utils/genesis-tools/tools/hints`.
+ * A build without it writes no rebuild command, so a copy of this module never names a command its repo lacks.
+ */
+export interface DocumentHints {
+    /** The command that rebuilds the document, given its generator path relative to the cwd (or absolute). */
+    rebuildCommand?: (portable: string) => string;
+}
+
+export interface BuildOverrides extends DocumentHints {
     /**
      * Pins the generated-at timestamp instead of using now.
      *
@@ -209,11 +220,11 @@ export async function buildDocument<T>(
     // 🛑 The recorded command must not depend on where the generator happened to be run from.
     // A `relative(process.cwd(), …)` path is written into a DURABLE file that another person,
     // in another directory, is meant to be able to run: building a vault note from the repo
-    // recorded `tools json2md build ../../../../../…`, which works from exactly one place.
+    // recorded a `json2md build ../../../../../…` command, which works from exactly one place.
     // A path inside the current directory stays short; anything outside it goes in absolute.
     const fromCwd = relative(process.cwd(), modulePath);
     const portable = fromCwd !== "" && !fromCwd.startsWith("..") && !isAbsolute(fromCwd) ? fromCwd : modulePath;
-    const command = definition.command ?? `${toolCommand("json2md build")} ${portable}`;
+    const command = definition.command ?? overrides.rebuildCommand?.(portable);
     const markdown = stampMarkdown(body, {
         source: sourceHash,
         generator: relative(dirname(outPath), modulePath) || modulePath,
@@ -224,6 +235,10 @@ export async function buildDocument<T>(
     return { markdown, body, outPath, dataPath, sourceHash, data };
 }
 
+function hintsOf(hints: DocumentHints): DocumentHints {
+    return hints.rebuildCommand ? { rebuildCommand: hints.rebuildCommand } : {};
+}
+
 export type WriteOutcome = "written" | "unchanged" | "refused";
 
 export interface WriteResult extends BuildResult {
@@ -231,7 +246,7 @@ export interface WriteResult extends BuildResult {
     check: CheckResult | null;
 }
 
-export interface WriteOptions {
+export interface WriteOptions extends DocumentHints {
     /** Overwrite even when the file was edited by hand. */
     force?: boolean;
     /** Render and compare, but do not write. */
@@ -253,7 +268,7 @@ export async function writeDocument<T>(
     const existing = Bun.file(outPath);
 
     if (!(await existing.exists())) {
-        const built = await buildDocument(modulePath, definition);
+        const built = await buildDocument(modulePath, definition, hintsOf(options));
 
         if (!options.dryRun) {
             await Bun.write(built.outPath, built.markdown);
@@ -265,7 +280,10 @@ export async function writeDocument<T>(
     const current = await existing.text();
     // Rebuild at the previous timestamp first. Only if THAT still differs has something real
     // changed, so an unchanged document keeps its original generated-at and never re-diffs.
-    const pinned = await buildDocument(modulePath, definition, { generatedAt: stripStamp(current).stamp?.generated });
+    const pinned = await buildDocument(modulePath, definition, {
+        ...hintsOf(options),
+        generatedAt: stripStamp(current).stamp?.generated,
+    });
     const check = checkMarkdown({ current, regenerated: pinned.markdown, sourceHash: pinned.sourceHash });
 
     if (check.verdict === "clean") {
@@ -279,7 +297,7 @@ export async function writeDocument<T>(
         return { ...pinned, outcome: "refused", check };
     }
 
-    const fresh = await buildDocument(modulePath, definition);
+    const fresh = await buildDocument(modulePath, definition, hintsOf(options));
 
     if (!options.dryRun) {
         await Bun.write(fresh.outPath, fresh.markdown);
@@ -297,7 +315,11 @@ export interface DocumentCheck extends CheckResult {
 }
 
 /** Checks the written document against what the definition produces now. */
-export async function checkDocument<T>(modulePath: string, definition: DocumentDefinition<T>): Promise<DocumentCheck> {
+export async function checkDocument<T>(
+    modulePath: string,
+    definition: DocumentDefinition<T>,
+    hints: DocumentHints = {}
+): Promise<DocumentCheck> {
     const outPath = outputPathFor(modulePath, definition);
     const file = Bun.file(outPath);
 
@@ -315,7 +337,10 @@ export async function checkDocument<T>(modulePath: string, definition: DocumentD
 
     const current = await file.text();
     // Pinned to the file's own timestamp, so the generated-at line is never itself the change.
-    const built = await buildDocument(modulePath, definition, { generatedAt: stripStamp(current).stamp?.generated });
+    const built = await buildDocument(modulePath, definition, {
+        ...hintsOf(hints),
+        generatedAt: stripStamp(current).stamp?.generated,
+    });
     const check = checkMarkdown({ current, regenerated: built.markdown, sourceHash: built.sourceHash });
 
     return {

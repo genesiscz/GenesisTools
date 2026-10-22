@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { json2mdBuild } from "@genesiscz/utils/genesis-tools/tools/hints";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     checkDocument,
@@ -290,6 +291,7 @@ function registerBuild(program: Command): void {
                 const result = await writeDocument(modulePath, definition, {
                     force: flags.force,
                     dryRun: flags.dryRun,
+                    rebuildCommand: json2mdBuild,
                 });
 
                 logger.debug({ file: modulePath, outcome: result.outcome, out: result.outPath }, "json2md: build");
@@ -355,7 +357,7 @@ function registerCheck(program: Command): void {
                 }
 
                 const definition = await loadDocumentModule(modulePath);
-                results.push(await checkDocument(modulePath, definition));
+                results.push(await checkDocument(modulePath, definition, { rebuildCommand: json2mdBuild }));
             }
 
             // A document that was never generated reads as `unstamped`, which is not a failure for
@@ -465,7 +467,7 @@ function registerInit(program: Command): void {
             }
 
             const definition = await loadDocumentModule(modulePath);
-            const result = await writeDocument(modulePath, definition);
+            const result = await writeDocument(modulePath, definition, { rebuildCommand: json2mdBuild });
 
             if (result.outcome === "refused" && result.check) {
                 // A markdown file already sits at the output path. It is left alone.
