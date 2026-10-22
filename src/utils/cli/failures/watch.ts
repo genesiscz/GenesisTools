@@ -124,8 +124,13 @@ export function messageOfTail(tail: string): string | null {
         return "no subcommand given; the help was printed";
     }
 
-    const lines = tail.split("\n").filter((line) => line.trim());
-    return lines.at(-1)?.trim() ?? null;
+    // clack frames each line with `│` and marks an error with `■`; `ERROR:` is runTool's own prefix.
+    const lines = tail
+        .split("\n")
+        .map((line) => line.replace(/^[│\s]+/, "").trim())
+        .filter(Boolean);
+    const marked = lines.findLast((line) => /^(?:■|✖|✗|×|ERROR:|Error:|error:)/.test(line));
+    return (marked ?? lines.at(-1))?.replace(/^(?:■|✖|✗|×)\s*/, "") ?? null;
 }
 
 /**

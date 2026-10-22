@@ -55,6 +55,14 @@ describe("messageOfTail", () => {
         ).toBe("error: missing required argument 'entry'");
     });
 
+    it("prefers clack's error line over the hints printed after it", () => {
+        expect(
+            messageOfTail(
+                "│\n■  pattern matches 2 tabs. Refusing to guess.\n│\n●  Narrow it:\n│\n●  tools x --match /a$/\n"
+            )
+        ).toBe("pattern matches 2 tabs. Refusing to guess.");
+    });
+
     it("falls back to the last non-empty line", () => {
         expect(messageOfTail("working…\nno such worktree: feat/x\n\n")).toBe("no such worktree: feat/x");
         expect(messageOfTail("")).toBeNull();
