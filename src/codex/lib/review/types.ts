@@ -1,7 +1,10 @@
 import type { ReviewEffort, ReviewManifest } from "@genesiscz/utils/worker/contract";
 
-/** What the depth gate decided about one review turn. */
-export const REVIEW_VERDICTS = ["pass", "steered", "escalated", "shallow"] as const;
+/**
+ * What the depth gate decided about one review turn. `imported` is never decided by the gate: it marks a review
+ * backfilled from a session that ran before the ledger and whose final message has no coverage line.
+ */
+export const REVIEW_VERDICTS = ["pass", "steered", "escalated", "shallow", "imported"] as const;
 export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
 
 /** Where the base ref came from; printed at spawn, because a derived base is a guess the caller must see. */

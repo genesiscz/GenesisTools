@@ -3,7 +3,6 @@ import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatDuration, formatTokens } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
-import { isObject } from "@genesiscz/utils/object";
 import * as p from "@genesiscz/utils/prompts/p";
 import { createBoxTable, formatDotStatus, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import {
@@ -15,6 +14,7 @@ import {
 import type { Command } from "commander";
 import pc from "picocolors";
 import { checkReview, type ReviewGateChecks } from "../lib/review/gate";
+import { importReviewSessions, lastAgentMessage } from "../lib/review/import";
 import {
     type ReviewGateRecord,
     type ReviewLedgerRecord,
@@ -157,7 +157,7 @@ async function runReviews(options: ReviewsOptions): Promise<void> {
         table.push([
             truncateDisplay(review.label ? `${review.name} ${pc.dim(review.label)}` : review.name, 36),
             review.pr === undefined ? (review.branch ? truncateDisplay(review.branch, 18) : "—") : `#${review.pr}`,
-            `${review.files} (${review.lines}L)`,
+            review.files === null ? "—" : `${review.files} (${review.lines}L)`,
             review.effort,
             formatDuration(review.durationMs),
             String(review.toolCalls),
@@ -176,6 +176,47 @@ async function runReviews(options: ReviewsOptions): Promise<void> {
         `Totals: ${plural(totals.reviews, "review")} (${verdicts}) · ${plural(totals.turns, "turn")} · ${formatDuration(totals.durationMs)} · ${totals.toolCalls} tool calls · ${formatTokens(totals.reasoningTokens)} reasoning · $${totals.costUsd.toFixed(2)} API-equivalent${totals.unpricedReviews > 0 ? ` (+${totals.unpricedReviews} unpriced)` : ""}`
     );
     out.println(pc.dim(`One review in depth: ${toolCommand("codex review-depth")} <name>`));
+}
+
+interface ImportOptions {
+    base?: string;
+    cwdFromSession: boolean;
+    json?: boolean;
+}
+
+async function runImport(names: string[], options: ImportOptions): Promise<void> {
+    const results = await importReviewSessions({
+        names,
+        ...(options.base ? { base: options.base } : {}),
+        cwdFromSession: options.cwdFromSession,
+    });
+
+    if (options.json) {
+        out.result({ ledger: reviewLedgerPath(), results });
+        return;
+    }
+
+    const table = createBoxTable(["NAME", "STATUS", "VERDICT", "MANIFEST", "NOTES"]);
+
+    for (const result of results) {
+        table.push([
+            result.name,
+            result.status,
+            result.verdict ? verdictCell(result.verdict) : "—",
+            result.manifest
+                ? `${result.manifest.files} files, ${result.manifest.lines}L (${result.manifest.base}...${result.manifest.head.slice(0, 10)})`
+                : "—",
+            truncateDisplay(result.notes.join("; "), 70),
+        ]);
+    }
+
+    out.println(table.toString());
+    const imported = results.filter((result) => result.status === "imported").length;
+    out.println(`${imported} imported, ${results.length - imported} not, into ${reviewLedgerPath()}`);
+
+    if (results.some((result) => result.status === "missing")) {
+        process.exitCode = 1;
+    }
 }
 
 interface DepthOptions {
@@ -216,31 +257,6 @@ function checksLines(checks: ReviewGateChecks): string[] {
         checkLine("reasoning", checks.reasoning.ok, checks.reasoning.detail),
         checkLine("shape", checks.shape.ok, checks.shape.detail),
     ];
-}
-
-/** The last agent message of the session's own thread, from its event log. */
-async function lastAgentMessage(store: CodexSessionStore, meta: CodexSessionMeta): Promise<string> {
-    const events = await store.readEvents(meta.name);
-
-    for (const event of events.toReversed()) {
-        const params = event.params;
-
-        if (event.method !== "item/completed" || !isObject(params) || !isObject(params.item)) {
-            continue;
-        }
-
-        const { item, threadId } = params;
-
-        if (
-            item.type === "agentMessage" &&
-            typeof item.text === "string" &&
-            (threadId === undefined || threadId === meta.threadId)
-        ) {
-            return item.text;
-        }
-    }
-
-    return "";
 }
 
 /** A session spawned without `--mode review`: the gate's checks against a manifest computed now from `--base`. */
@@ -357,7 +373,7 @@ async function runReviewDepth(name: string, options: DepthOptions): Promise<void
 }
 
 export function registerReviewsCommands(program: Command): void {
-    program
+    const reviews = program
         .command("reviews")
         .description("Every --mode review run from the review ledger: one row per review, with totals")
         .option("--since <when>", "Only reviews active since: a duration back (24h, 7d), HH:MM today, or a date")
@@ -369,6 +385,19 @@ export function registerReviewsCommands(program: Command): void {
         .option("--json", "Emit the reviews and totals as JSON")
         .action(async (options: ReviewsOptions) => {
             await runReviews(options);
+        });
+
+    reviews
+        .command("import <name...>")
+        .description(
+            "Backfill the ledger from codex sessions that ran before it: start, turns from the cost ledger, and a gate line whose verdict the final Files reviewed line implies"
+        )
+        .option("--base <ref>", "The base of every named session; default each branch's PR target, else its upstream")
+        .option("--cwd-from-session", "Read the manifest in each session's own cwd (the default)", true)
+        .option("--no-cwd-from-session", "Leave every manifest null")
+        .option("--json", "Emit the import results as JSON")
+        .action(async (names: string[], options: ImportOptions) => {
+            await runImport(names, options);
         });
 
     program

@@ -26,8 +26,10 @@ export interface ReviewGitReaders {
     /** The newest PR of the branch; null when there is none or the host cannot answer. */
     pullRequest(cwd: string, branch: string): Promise<PrInfo | null>;
     upstream(cwd: string, branch: string): Promise<string | null>;
-    /** `git diff --numstat <base>...HEAD`, limited to `paths` when given. */
-    numstat(cwd: string, base: string, paths?: string[]): Promise<NumstatEntry[]>;
+    /** `git diff --numstat <base>...<head>` (head defaults to HEAD), limited to `paths` when given. */
+    numstat(cwd: string, base: string, paths?: string[], head?: string): Promise<NumstatEntry[]>;
+    /** The newest commit of HEAD's history committed at or before `at` (ISO time); null when there is none. */
+    commitBefore(cwd: string, at: string): Promise<string | null>;
 }
 
 export function defaultReviewGitReaders(): ReviewGitReaders {
@@ -60,10 +62,20 @@ export function defaultReviewGitReaders(): ReviewGitReaders {
             return lookup.pr;
         },
         upstream: (cwd, branch) => createGit({ cwd }).getTrackingBranch(branch),
-        async numstat(cwd, base, paths) {
+        async numstat(cwd, base, paths, head = "HEAD") {
             const git = createGit({ cwd });
-            const mergeBase = await git.mergeBase(base, "HEAD");
-            return git.numstat({ from: mergeBase, to: "HEAD", ...(paths?.length ? { paths } : {}) });
+            const mergeBase = await git.mergeBase(base, head);
+            return git.numstat({ from: mergeBase, to: head, ...(paths?.length ? { paths } : {}) });
+        },
+        async commitBefore(cwd, at) {
+            const result = await createGit({ cwd }).executor.exec([
+                "log",
+                "-1",
+                "--format=%H",
+                `--before=${at}`,
+                "HEAD",
+            ]);
+            return result.success && result.stdout ? result.stdout : null;
         },
     };
 }
@@ -87,14 +99,17 @@ export interface PreparedReview {
     warnings: string[];
 }
 
-interface ChosenBase {
+export interface ChosenBase {
     ref: string;
     source: ReviewBaseSource;
     detail: string;
     pr?: PrInfo;
 }
 
-async function chooseBase(input: PrepareReviewInput & { readers: ReviewGitReaders; branch: string | null }) {
+/** The base ladder of `--mode review`: the flag (verified), else the branch's PR target, else its upstream. */
+export async function chooseBase(
+    input: Pick<PrepareReviewInput, "cwd" | "base"> & { readers: ReviewGitReaders; branch: string | null }
+): Promise<ChosenBase> {
     const { readers, cwd, branch } = input;
 
     if (input.base) {

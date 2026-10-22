@@ -4,7 +4,7 @@ import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { JsonlWriter } from "@genesiscz/utils/log-session/jsonl-writer";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
-import { manifestChangedLines, type ReviewEffort } from "@genesiscz/utils/worker/contract";
+import { manifestChangedLines } from "@genesiscz/utils/worker/contract";
 import type { CodexReviewConfig, CodexReviewSpent, ReviewVerdict } from "./types";
 
 const log = logger.child({ component: "codex:review-ledger" });
@@ -14,7 +14,7 @@ export function reviewLedgerPath(): string {
     return join(codexRoot(), "reviews.jsonl");
 }
 
-interface ReviewLedgerBase {
+export interface ReviewLedgerBase {
     v: 1;
     ts: string;
     name: string;
@@ -22,16 +22,22 @@ interface ReviewLedgerBase {
     label?: string;
     pr?: number;
     branch?: string;
-    base: string;
-    files: number;
-    lines: number;
-    effort: ReviewEffort;
+    /** Null only on an imported review whose base or worktree could not be found. */
+    base: string | null;
+    files: number | null;
+    lines: number | null;
+    /** A review tier; an imported session keeps whatever effort it ran at. */
+    effort: string;
+    /** Backfilled by `tools codex reviews import` from a session that ran before the ledger existed. */
+    imported?: true;
+    /** Imported: the commit the review is taken to have read (the last one before the session started). */
+    head?: string;
 }
 
 export interface ReviewStartRecord extends ReviewLedgerBase {
     kind: "start";
     cwd: string;
-    effortSource: CodexReviewConfig["effortSource"];
+    effortSource: CodexReviewConfig["effortSource"] | "imported";
     allowShallow: boolean;
     parent?: string;
 }
@@ -94,7 +100,7 @@ export function reviewLedgerBase(input: { name: string; review: CodexReviewConfi
  * review turn it describes. The failure is logged with the record's kind and session.
  */
 export function appendReviewRecord(
-    base: ReturnType<typeof reviewLedgerBase>,
+    base: ReviewLedgerBase,
     entry: ReviewLedgerEntry,
     path = reviewLedgerPath()
 ): ReviewLedgerRecord | null {
@@ -117,7 +123,7 @@ function isLedgerRecord(value: unknown): value is ReviewLedgerRecord {
         (value.kind === "start" || value.kind === "turn" || value.kind === "gate") &&
         typeof value.name === "string" &&
         typeof value.ts === "string" &&
-        typeof value.base === "string"
+        (typeof value.base === "string" || value.base === null)
     );
 }
 
