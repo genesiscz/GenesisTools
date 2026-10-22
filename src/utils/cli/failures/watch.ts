@@ -129,7 +129,8 @@ export function messageOfTail(tail: string): string | null {
         .split("\n")
         .map((line) => line.replace(/^[│\s]+/, "").trim())
         .filter(Boolean);
-    const marked = lines.findLast((line) => /^(?:■|✖|✗|×|ERROR:|Error:|error:)/.test(line));
+    // Not findLast: the dashboard tsconfigs that reach src/utils compile against an older lib.
+    const marked = [...lines].reverse().find((line) => /^(?:■|✖|✗|×|ERROR:|Error:|error:)/.test(line));
     return (marked ?? lines.at(-1))?.replace(/^(?:■|✖|✗|×)\s*/, "") ?? null;
 }
 
