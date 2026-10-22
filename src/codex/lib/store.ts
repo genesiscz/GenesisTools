@@ -7,6 +7,7 @@ import { JsonlWriter } from "@genesiscz/utils/log-session/jsonl-writer";
 import { logger } from "@genesiscz/utils/logger";
 import { WorkerMetaStore } from "@genesiscz/utils/worker/meta-store";
 import { sessionEventsPath, sessionMetaPath, sessionsDir } from "./paths";
+import type { CodexReviewConfig } from "./review/types";
 
 const log = logger.child({ component: "codex:store" });
 
@@ -81,6 +82,8 @@ export interface CodexSessionMeta {
     desktopProject?: { id: string; name: string };
     /** The `spawn --label` tag every cost-ledger row of the session carries. */
     label?: string;
+    /** `spawn --mode review`: the base, the diff manifest, the tier and the depth gate's state. */
+    review?: CodexReviewConfig;
 }
 
 export interface CodexEventRecord {

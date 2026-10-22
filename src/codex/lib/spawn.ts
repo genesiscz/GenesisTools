@@ -16,6 +16,8 @@ import { CODEX_SCHEMA_VERSION } from "./_generated/protocol";
 import { CodexAccountBinding } from "./account";
 import { computerUseOverrides } from "./computer-use";
 import { sessionDaemonLogPath, sessionLaunchPath } from "./paths";
+import { appendReviewRecord, reviewLedgerBase } from "./review/ledger";
+import type { CodexReviewConfig } from "./review/types";
 import { type CodexSessionMeta, CodexSessionStore, type CodexWritePolicy } from "./store";
 import { detectCodexVersion } from "./version";
 
@@ -37,6 +39,8 @@ export interface SpawnOptions {
     label?: string;
     /** A Codex Desktop project id, name or root to show the thread under; the cwd decides without it. */
     project?: string;
+    /** Required with `mode: "review"`: what `prepareReview` decided, plus the chain fields. */
+    review?: CodexReviewConfig;
 }
 
 export interface LaunchConfig {
@@ -269,6 +273,10 @@ export interface CodexSpawnResult extends CodexSessionMeta {
 }
 
 export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSpawnResult> {
+    if ((options.mode === "review") !== (options.review !== undefined)) {
+        throw new Error("A review session needs its review record, and only a review session takes one");
+    }
+
     const cwd = resolve(options.cwd ?? process.cwd());
     const checkout = checkoutKindSync(cwd);
     assertWritePolicyAllowed({ write: options.write, checkout });
@@ -335,6 +343,8 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSpa
 
     const daemonEntry = resolve(import.meta.dir, "../daemon.ts");
     const logFd = openSync(sessionDaemonLogPath(options.name), "a");
+    // A review runs at its tier; the gate's escalation changes the tier, never a stale --effort.
+    const effort = options.review?.effort ?? options.effort;
     const meta: CodexSessionMeta = {
         ...(account ? { accountId: account.accountId, accountName: account.name } : {}),
         name: options.name,
@@ -343,8 +353,9 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSpa
         cwd,
         home,
         ...(options.model ? { model: options.model } : {}),
-        ...(options.effort ? { effort: options.effort } : {}),
+        ...(effort ? { effort } : {}),
         ...(options.label ? { label: options.label } : {}),
+        ...(options.review ? { review: options.review } : {}),
         ...policy,
         status: "starting",
         agentName: `codex_${options.name}`,
@@ -356,6 +367,16 @@ export async function spawnCodexSession(options: SpawnOptions): Promise<CodexSpa
         pendingApprovals: {},
     };
     claimSessionName(store, meta);
+
+    if (options.review) {
+        appendReviewRecord(reviewLedgerBase({ name: options.name, review: options.review, label: options.label }), {
+            kind: "start",
+            cwd,
+            effortSource: options.review.effortSource,
+            allowShallow: options.review.allowShallow,
+            ...(options.review.parent ? { parent: options.review.parent } : {}),
+        });
+    }
 
     const proc = (() => {
         try {

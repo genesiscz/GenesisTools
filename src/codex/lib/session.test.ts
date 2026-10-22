@@ -10,6 +10,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import type { ThreadTurnsListParams, Turn } from "./_generated/protocol";
 import { CodexAccountBinding } from "./account";
 import { isOwnBusCommand, isReadOnlyCommand } from "./bus-approval";
+import { readReviewRecords } from "./review/ledger";
 import type { RpcClient } from "./session";
 import { CodexSessionRuntime } from "./session";
 import { type CodexSessionMeta, CodexSessionStore } from "./store";
@@ -1165,6 +1166,128 @@ describe("an ask worker's read-only commands", () => {
             ]);
             await runtime.execute({ op: "approve", requestId: "2" });
             await expect(edit).resolves.toEqual({ decision: "accept" });
+        });
+    });
+});
+
+describe("a --mode review session", () => {
+    const report = (reviewed: number) =>
+        `Findings: none\nRan: nothing\nFiles reviewed: ${reviewed} of 2\nNot reviewed: none`;
+
+    async function finishTurn(runtime: CodexSessionRuntime, turn: string, text: string, reasoning = 5): Promise<void> {
+        const params = { threadId: "thread-1" };
+        await runtime.handleNotification({ method: "turn/started", params: { ...params, turn: { id: turn } } });
+        await runtime.handleNotification({
+            method: "thread/tokenUsage/updated",
+            params: {
+                ...params,
+                tokenUsage: { last: { inputTokens: 100, outputTokens: 50, reasoningOutputTokens: reasoning } },
+            },
+        });
+        await runtime.handleNotification({
+            method: "item/completed",
+            params: { ...params, item: { type: "agentMessage", id: `${turn}-msg`, text } },
+        });
+        await runtime.handleNotification({
+            method: "turn/completed",
+            params: { ...params, turn: { id: turn, status: "completed" } },
+        });
+    }
+
+    test("gets its tier and manifest, steers once on a miss, escalates on the second, and ends shallow when that fails", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-runtime-review-"));
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+            const store = new CodexSessionStore();
+            const meta: CodexSessionMeta = {
+                ...makeMeta(home),
+                name: "rv",
+                agentsEnabled: false,
+                writePolicy: "deny",
+                sandbox: "read-only",
+                effort: "high",
+                review: {
+                    base: "origin/master",
+                    baseSource: "flag",
+                    baseDetail: "--base",
+                    pr: 12,
+                    manifest: {
+                        base: "origin/master",
+                        files: [
+                            { path: "src/a.ts", added: 40, deleted: 2 },
+                            { path: "src/b.ts", added: 8, deleted: 0 },
+                        ],
+                        added: 48,
+                        deleted: 2,
+                    },
+                    effort: "high",
+                    effortSource: "diff-size",
+                    allowShallow: false,
+                    step: 0,
+                    chain: "rv",
+                },
+            };
+            store.writeMeta(meta);
+            const client = new FakeRpcClient();
+            const escalations: string[] = [];
+            const gateEvents: unknown[] = [];
+            const runtime = new CodexSessionRuntime({
+                client,
+                store,
+                meta,
+                escalateReview: async (request) => {
+                    escalations.push(`${request.name} at ${request.effort}`);
+                    throw new Error('Codex session "rv-xhigh" is already active');
+                },
+                onReviewGate: (event) => {
+                    gateEvents.push(event.verdict);
+                },
+            });
+
+            await runtime.start({ prompt: "Review PR 12." });
+            const threadStart = client.requests.find((request) => request.method === "thread/start");
+            const startParams = threadStart?.params as { developerInstructions?: string } | undefined;
+            const instructions = String(startParams?.developerInstructions);
+            expect(instructions).toContain("You are a code REVIEWER at the high tier.");
+            expect(instructions).toContain("Files to review (2, +48 -2):\n- src/a.ts +40 -2\n- src/b.ts +8 -0");
+            expect((await store.readMeta("rv"))?.review?.prompt).toBe("Review PR 12.");
+
+            await finishTurn(runtime, "turn-1", report(1));
+            const steers = client.requests.filter((request) => request.method === "turn/start");
+            expect(steers).toHaveLength(2);
+            const steerText = (steers[1].params as { input: Array<{ text: string }> }).input[0].text;
+            expect(steerText).toContain("You did not read: src/a.ts, src/b.ts.");
+            // The session never reads as idle between the missed turn and its steer.
+            expect((await store.readMeta("rv"))?.status).toBe("running");
+            expect((await store.readMeta("rv"))?.review).toMatchObject({ verdict: "steered", step: 1 });
+
+            await finishTurn(runtime, "turn-2", report(1));
+            expect(client.requests.filter((request) => request.method === "turn/start")).toHaveLength(2);
+            expect(escalations).toEqual(["rv-xhigh at xhigh"]);
+
+            const after = await store.readMeta("rv");
+            expect(after?.status).toBe("ready");
+            expect(after?.review?.verdict).toBe("shallow");
+            expect(after?.review?.reason).toContain('the escalate failed: Codex session "rv-xhigh" is already active');
+            expect(after?.review?.spent).toMatchObject({ turns: 2, reasoningTokens: 10 });
+            expect(gateEvents).toEqual(["steered", "escalated", "shallow"]);
+            expect(
+                readReviewRecords().records.map(
+                    (record) => `${record.kind}:${"verdict" in record ? record.verdict : ""}`
+                )
+            ).toEqual(["turn:", "gate:steered", "turn:", "gate:escalated", "gate:shallow"]);
+
+            // A passing review needs no step: a full report with enough reasoning ends the gate at once.
+            const passing = new CodexSessionRuntime({
+                client: new FakeRpcClient(),
+                store,
+                meta: { ...meta, name: "rv-ok", review: { ...meta.review!, chain: "rv-ok", prompt: "x" } },
+            });
+            store.writeMeta({ ...meta, name: "rv-ok" });
+            await passing.start({});
+            await finishTurn(passing, "turn-1", report(2), 500);
+            expect((await store.readMeta("rv-ok"))?.review).toMatchObject({ verdict: "pass", step: 0 });
+            expect((await store.readMeta("rv-ok"))?.status).toBe("ready");
         });
     });
 });
