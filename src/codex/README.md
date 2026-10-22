@@ -240,7 +240,8 @@ Sources: [app-server protocol](https://learn.chatgpt.com/docs/app-server),
 tools codex spawn \
   --name reviewer \
   --mode review \
-  --prompt "Review the current working tree"
+  --base origin/master \
+  --prompt "Review this branch"
 
 tools codex status --name reviewer
 tools codex tail --name reviewer --follow
@@ -265,6 +266,34 @@ tools codex usage [--json] [--range 24h]          # the shared usage dashboard p
 worker verbs (`src/ai/commands/agent/worker.ts`); what makes them codex is `codexDriver`
 (`src/codex/lib/driver.ts`). `steer` still answers to its older `--body` / `--body-file`
 spelling, hidden from help.
+
+### Review mode (`--mode review`)
+
+`--mode review` needs a base: `--base <ref>`, else the branch's PR target, else its upstream (never the branch's own
+remote copy); the spawn prints which. It runs `git diff --numstat <base>...HEAD` in the worker's cwd (limited to
+`--paths <path...>` when given) and refuses an empty diff. The worker's developer instructions carry the shared worker
+contract plus `reviewLines(effort)` from `src/utils/worker/contract.ts` and the manifest (`Files to review (N, +A -D)`
+and one line per file).
+
+The tier is `--effort`, else the diff size: `high` up to 15 files and 800 changed lines, `xhigh` above. `max` only when
+named. `low` (triage) and `medium` are refused unless `--allow-shallow`. Above 60 files or 4,000 lines the spawn prints
+a split suggestion, one reviewer per folder with `--paths`.
+
+After each review turn the daemon runs the depth gate (`src/codex/lib/review/gate.ts`): the `Files reviewed: n of N`
+line against the manifest (a binary file named with a reason is excused), reasoning tokens per 100 changed lines
+against the tier floor (high 100, xhigh and max 250), and the finding shape (`N. [Severity] path:line - defect.
+Scenario: ... Fix: ...`, then `Ran:`). The first miss steers the same session once with the unread files; the second
+starts `<chain>-<next tier>` as a new session (a steer cannot change a thread's effort), at step 2; a miss after that,
+or a miss at `max`, ends the review `shallow`. A medium review with `--allow-shallow` is never tuned up. Each decision
+also goes to the agents bus as a `review_gate` event.
+
+Every review start, review turn and gate decision is one line of `~/.genesis-tools/codex/reviews.jsonl`:
+
+```bash
+tools codex reviews [--since 24h] [--pr <n>] [--label <text>] [--effort <tier>] [--verdict pass|steered|escalated|shallow|open] [--name <text>] [--json]
+tools codex review-depth <name> [--json]        # one review: manifest, spend, coverage, reasoning per 100 lines, verdict, gate history
+tools codex review-depth <name> --base <ref>    # the same checks for a session spawned without --mode review
+```
 
 `login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider codex` and `tools ai usage --provider codex`. `tools ai accounts discover --provider codex` lists every `~/.codex*` profile on the machine and `--bind` turns the unbound ones into accounts.
 
