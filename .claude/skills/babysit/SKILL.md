@@ -54,7 +54,7 @@ Write it to `/tmp/cc/<project>/<session>/babysit/run.json` at the start; the scr
 |---|---|---|
 | `prs` | asked | PR numbers. Small PRs first; never a PR another session owns (step 3.1). |
 | `worker` per PR | `grok` | `grok` (model `grok-4.7-build-fast`, `--auth subscription`) or `codex` (model `gpt-6.1-sol`, `--write ask`). Mix freely; one worker per PR. |
-| `effort` per PR | from the work | Codex `--effort`: `low`, `medium`, `high`, `xhigh` or `max`. A fix round: `medium`, `high` for a Critical or a cross-file finding. An independent review (step 7a): `high`, `xhigh` above about 50 changed files. Medium reviews were measured shallow (handoff-to, "Effort is the review's depth"). |
+| `effort` per PR | from the work | Codex `--effort`: `low`, `medium`, `high`, `xhigh` or `max`. A fix round: `medium`, `high` for a Critical or a cross-file finding. An independent review (step 7a): no effort; `--mode review` picks high or xhigh from the diff size and gates the depth (handoff-to, "Effort is the review's depth"). |
 | `mode` | from `scripts/mode.ts` | `worktree` or `unified`, step 2. |
 | `maxParallel` | 3 | Workers at once. The master is the bottleneck, not the workers. |
 | `post` | ask | Post the round summary and replies after the push (review-loop step 4), or hold them in the vault. |
@@ -319,11 +319,15 @@ step 4 only when `post` is true.
 
 A round counts only when it fixed or answered real findings. When the reviewer bot has nothing left on a PR that
 still needs rounds, or a PR merged with fewer than three, run an independent read-only review: `bun
-.claude/skills/babysit/scripts/review-brief.ts --run <dir> --pr <N> --wt <worktree> [--post-merge] [--swift]`, then
-`steer.ts` with the printed file to a worker that did NOT fix this PR (Sol; Astra only for a risky cross-system PR,
-by the model rule in step 1), at the run card's review `effort` (`high`, `xhigh` above about 50 changed files). A steer
-keeps the session's effort, so spawn the reviewer at that effort; check its depth afterwards in `tools codex status
---name <name> --json` (`cost.lastTurn`: `durationMs`, `toolCalls`, `tokens.reasoning`). Judge its findings like a bot's. Before a merge they become the next fix round (`fill-brief --judge <review
+.claude/skills/babysit/scripts/review-brief.ts --run <dir> --pr <N> --wt <worktree> [--post-merge] [--swift]`. It
+prints the brief path and then the spawn line: `tools codex spawn --mode review --base origin/<PR base>` (after a
+merge `--base <merge commit>^ --paths <the PR's files>`) with the brief as `--prompt-file`, for a worker that did NOT
+fix this PR (Sol; Astra only for a risky cross-system PR, by the model rule in step 1). Leave out `--effort`: the
+harness picks high or xhigh from the diff size, gives the worker the manifest and the tier's contract, and gates the
+depth after the turn (one steer with the unread files, then one rerun a tier higher as `bs-<N>-review-<tier>`, then
+`shallow`). Read the result with `tools codex review-depth bs-<N>-review`; a `shallow` verdict is not a finished
+review. Every run of the round is one command away: `tools codex reviews --pr <N>` (or `--label babysit`). Judge its
+findings like a bot's. Before a merge they become the next fix round (`fill-brief --judge <review
 file> --dedicated-review`); after a merge they go to a follow-up PR from master (2026-10-14: #518 carried #509's after-merge findings).
 Never count a reply-only round, or a label, as a fix round: on 2026-10-14 the report said "#500 merged after 3
 rounds" when GitHub showed two round summaries.

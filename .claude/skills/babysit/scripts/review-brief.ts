@@ -2,9 +2,14 @@
 /**
  * The brief for an independent read-only review round: when the reviewer bot has nothing left on a PR that still
  * needs rounds, or a PR merged with fewer than three. Its findings become the next fix round (`fill-brief --judge`)
- * or, after a merge, a follow-up PR. Writes `<run>/steer-review-<pr>.md` and prints the path for steer.ts.
+ * or, after a merge, a follow-up PR. Writes `<run>/steer-review-<pr>.md`, prints its path, then the
+ * `tools codex spawn --mode review` line that starts the reviewer with it.
  *
  *   bun review-brief.ts --run <dir> --pr 517 --wt <worktree> [--base master] [--post-merge] [--swift] [--fresh]
+ *
+ * The depth rules (read every file, probe each finding, the coverage line) are not in this brief: `--mode review`
+ * gives the worker its tier's contract and the diff manifest, and gates the depth after the turn
+ * (`tools codex reviews --pr <N>` lists every run).
  *
  * `--fresh`: a PR opened minutes ago, reviewed next to the bots (the first round of a newly cut PR).
  *
@@ -46,18 +51,44 @@ export function reviewBrief({ pr, title, wt, base, scratch, postMerge, swift, fr
         fresh
             ? `- The PR has no answered threads yet. Do not wait for the bots and do not read their threads: review the code on your own.`
             : `- Earlier review threads were already answered; read them with \`tools github review ${pr} --llm\` so you do not report a finding that was fixed or deliberately declined (a declined one is fair game only with new evidence).`,
-        `- Check every claim: run the relevant tests (\`timeout 600 bun scripts/test.ts <test files>\`) or a small read-only probe under \`${scratch}\`, and paste the real output. A finding without evidence is a guess; say so.`,
+        `- Tests in this repository run as \`timeout 600 bun scripts/test.ts <test files>\`; put any read-only probe under \`${scratch}\`.`,
         ...(swift
             ? [
                   "- Swift: do not run `swift build` or `swift test` (the lead runs them); a Swift claim needs a code quote as evidence.",
               ]
             : []),
-        `- Write \`${join(wt, ".claude/work/babysit", `${pr}-review.md`)}\` (create the folder): one section per finding with severity (Critical, High, Medium, Low), file:line, the defect, the evidence, why it matters, and the smallest fix. End with a one-line verdict.`,
+        `- Write \`${join(wt, ".claude/work/babysit", `${pr}-review.md`)}\` (create the folder): the same numbered findings, \`Ran\`, \`Files reviewed\` and \`Not reviewed\` lines as your final message, with the evidence under each finding, then a one-line verdict.`,
         "- Change NO source file, commit nothing, post nothing to GitHub. Do NOT run `git checkout`, `git switch`, `bun install` or the hook installer. No app builds, installs, launches or relaunches. Another reviewer may read this same folder, so write only your own review file.",
         "",
         "Then stop with a report: the finding count by severity and the review file path, then RESULT / AT / CHANGED / VERIFY / OPEN.",
     ];
     return `${lines.join("\n")}\n`;
+}
+
+export interface ReviewSpawnInput {
+    pr: number;
+    wt: string;
+    /** The PR's base branch, without `origin/`. */
+    base: string;
+    briefPath: string;
+    /** After a merge the worktree sits at master: the manifest is the PR's files since its merge commit's parent. */
+    postMerge?: { mergeCommit: string; files: string[] };
+}
+
+/** The reviewer's spawn line: `--mode review` with the base, so the harness computes the manifest and gates the depth. */
+export function reviewSpawnCommand({ pr, wt, base, briefPath, postMerge }: ReviewSpawnInput): string {
+    const target = postMerge
+        ? `--base ${postMerge.mergeCommit}^ --paths ${postMerge.files.join(" ")}`
+        : `--base origin/${base}`;
+
+    return `tools codex spawn --mode review ${target} --name bs-${pr}-review --model gpt-6.1-sol --write ask --cwd ${wt} --label "babysit pr${pr} review" --prompt-file ${briefPath}`;
+}
+
+interface PrView {
+    title: string;
+    baseRefName?: string;
+    mergeCommit?: { oid?: string } | null;
+    files?: Array<{ path: string }>;
 }
 
 if (import.meta.main) {
@@ -72,17 +103,21 @@ if (import.meta.main) {
         process.exit(2);
     }
 
-    const view = Bun.spawnSync(["gh", "pr", "view", String(pr), "--repo", run.repo, "--json", "title"], {
-        stdout: "pipe",
-        stderr: "pipe",
-    });
+    const view = Bun.spawnSync(
+        ["gh", "pr", "view", String(pr), "--repo", run.repo, "--json", "title,baseRefName,mergeCommit,files"],
+        { stdout: "pipe", stderr: "pipe" }
+    );
 
     if (view.exitCode !== 0) {
         console.error(`✖ gh pr view ${pr}: ${view.stderr.toString().trim()}`);
         process.exit(1);
     }
 
-    const { title } = SafeJSON.parse(view.stdout.toString(), { strict: true }) as { title: string };
+    const { title, baseRefName, mergeCommit, files } = SafeJSON.parse(view.stdout.toString(), {
+        strict: true,
+    }) as PrView;
+    const base = flag("--base") ?? baseRefName ?? "master";
+    const postMerge = has("--post-merge");
     const out = join(run.dir, `steer-review-${pr}.md`);
     await Bun.write(
         out,
@@ -90,12 +125,29 @@ if (import.meta.main) {
             pr,
             title,
             wt,
-            base: flag("--base") ?? "master",
+            base,
             scratch: reviewScratch(run.dir, pr),
-            postMerge: has("--post-merge"),
+            postMerge,
             swift: has("--swift"),
             fresh: has("--fresh"),
         })
     );
     console.log(out);
+
+    if (postMerge && !mergeCommit?.oid) {
+        console.error(`✖ PR #${pr} has no merge commit, so a post-merge review has no base.`);
+        process.exit(1);
+    }
+
+    console.log(
+        reviewSpawnCommand({
+            pr,
+            wt,
+            base,
+            briefPath: out,
+            ...(postMerge && mergeCommit?.oid
+                ? { postMerge: { mergeCommit: mergeCommit.oid, files: (files ?? []).map((file) => file.path) } }
+                : {}),
+        })
+    );
 }
