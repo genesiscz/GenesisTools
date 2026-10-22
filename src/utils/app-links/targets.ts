@@ -1,3 +1,6 @@
+import { genesisMdLink } from "./open-file";
+import { linkQuery } from "./query";
+
 /**
  * What a link to a GenesisTools app says: every preset, its actions, and the plain strings each builds, the router
  * path and the app's own scheme link. No gate and no config: whether such a link opens anything on this Mac is the
@@ -52,52 +55,30 @@ export interface AppLink<D> {
 
 export type AppLinkTable = { [P in LinkPreset]: { [A in LinkAction<P>]: AppLink<LinkData<P, A>> } };
 
-/** A query, empty values left out. `keepSlash` leaves `/` readable, which a query value may hold. */
-function query(pairs: Array<readonly [string, string | undefined]>, { keepSlash }: { keepSlash: boolean }): string {
-    const items = pairs.flatMap(([key, value]) => {
-        if (value === undefined || value === "") {
-            return [];
-        }
-
-        const encoded = encodeURIComponent(value);
-
-        return [`${key}=${keepSlash ? encoded.replace(/%2F/g, "/") : encoded}`];
-    });
-
-    return items.length > 0 ? `?${items.join("&")}` : "";
-}
-
 export const APP_LINKS: AppLinkTable = {
     "genesis-md": {
         open: {
             path: (data) =>
-                `md/open${query(
+                `md/open${linkQuery(
                     [
                         ["path", data.path],
                         ["range", data.range],
                     ],
                     { keepSlash: true }
                 )}`,
-            scheme: (data) =>
-                `genesis-md://open${query(
-                    [
-                        ["path", data.path],
-                        ["range", data.range],
-                    ],
-                    { keepSlash: true }
-                )}`,
+            scheme: (data) => genesisMdLink(data),
         },
     },
     "genesis-hub": {
         open: {
             // `encodeURIComponent` in full: a `+` from URLSearchParams reads back as a literal plus in the app.
             path: (data) =>
-                `hub${query(
+                `hub${linkQuery(
                     HUB_LINK_KEYS.map((key) => [key, data[key]] as const),
                     { keepSlash: false }
                 )}`,
             scheme: (data) =>
-                `genesis-tools://hub${query(
+                `genesis-tools://hub${linkQuery(
                     HUB_LINK_KEYS.map((key) => [key, data[key]] as const),
                     { keepSlash: false }
                 )}`,
@@ -106,11 +87,11 @@ export const APP_LINKS: AppLinkTable = {
     "claude-find": {
         decision: {
             path: (data) =>
-                `claude/find/${encodeURIComponent(data.session)}/decision/${data.decision}${query([["at", data.at]], { keepSlash: false })}`,
+                `claude/find/${encodeURIComponent(data.session)}/decision/${data.decision}${linkQuery([["at", data.at]], { keepSlash: false })}`,
         },
         text: {
             path: (data) =>
-                `claude/find/${encodeURIComponent(data.session)}${query(
+                `claude/find/${encodeURIComponent(data.session)}${linkQuery(
                     [
                         ["q", data.q],
                         ["at", data.at],
