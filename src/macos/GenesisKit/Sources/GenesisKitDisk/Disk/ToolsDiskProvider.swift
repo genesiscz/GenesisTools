@@ -794,7 +794,9 @@ extension ToolsDiskProvider {
     /// with `actTimeoutSeconds`.
     public func clonesOptimize(_ options: ClonesOptimizeOptions, apply: Bool,
                                usesCachedPlan: Bool = true) async throws -> ClonesApplyResult {
-        try Self.requirePaths(options.roots + options.dirs, command: "macos clones optimize")
+        // `--worktrees-of <repo>` is a selector of its own: the CLI finds that repo's worktrees with no root or --dir.
+        try Self.requirePaths(options.roots + options.dirs + [options.worktreesOf].compactMap { $0 },
+                              command: "macos clones optimize")
         let args = Self.clonesOptimizeArguments(options, apply: apply, usesCachedPlan: usesCachedPlan)
         let payload = try await runClones(args: args, command: apply ? "macos clones optimize --apply" : "macos clones optimize",
                                           changesDisk: apply)

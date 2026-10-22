@@ -244,6 +244,13 @@ final class ToolsDiskClonesCommandTests: XCTestCase {
             _ = try await nothing.clonesOptimize(ClonesOptimizeOptions(), apply: false)
             XCTFail("optimize without roots or dirs must not fall back to the CLI's watched folders")
         } catch ToolsDiskProviderError.invalidArgument {}
+
+        // `--worktrees-of` alone selects the repo's worktrees, so it reaches the CLI.
+        let worktrees = try provider(printing: fixture("contract-clones-apply-result"))
+        _ = try await worktrees.clonesOptimize(ClonesOptimizeOptions(worktreesOf: "/Users/alice/Projects/App",
+                                                                     targets: ["all"]), apply: false)
+        XCTAssertEqual(try argv(), ["macos", "clones", "optimize", "--format", "json", "--silent",
+                                    "--worktrees-of", "/Users/alice/Projects/App", "--targets", "all"])
     }
 
     func testStoreReportDecodesAndPassesTheSizeWithItsUnit() async throws {
