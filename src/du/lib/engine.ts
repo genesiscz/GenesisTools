@@ -16,7 +16,15 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
-import type { ClonesizeResult, PartnersResult, ScanOptions, VolumeInfo } from "./types";
+import type {
+    ClonesizeResult,
+    CloudBackedResult,
+    CloudFileEntry,
+    CloudFilesResult,
+    PartnersResult,
+    ScanOptions,
+    VolumeInfo,
+} from "./types";
 
 const prof = profiler.scope("du.engine");
 
@@ -137,6 +145,11 @@ function openLib() {
             args: [FFIType.ptr, FFIType.ptr, FFIType.i32, FFIType.i32],
             returns: FFIType.ptr,
         },
+        // char* clonesize_cloudfiles_json(const char* root, int threads, unsigned long long min_bytes, int include_cloud)
+        clonesize_cloudfiles_json: {
+            args: [FFIType.ptr, FFIType.i32, FFIType.u64, FFIType.i32],
+            returns: FFIType.ptr,
+        },
         clonesize_free: { args: [FFIType.ptr], returns: FFIType.void },
     });
 }
@@ -196,6 +209,69 @@ export function scanWithCFfi(opts: ScanOptions): ClonesizeResult {
     void exBufs;
     void cacheBuf;
     return SafeJSON.parse(json) as ClonesizeResult;
+}
+
+interface CloudFilesJson {
+    files_listed: number;
+    dirs: number;
+    denied_dirs: number;
+    read_errors?: number;
+    cloud_backed: CloudBackedResult;
+    skipped_cloud: string[];
+    files: { path: string; size: number; alloc: number; domain?: string; provider?: string }[];
+}
+
+/**
+ * Cloud-backed files under `root` that are on this disk: inside a File Provider
+ * domain, not dataless, allocated at least `minBytes`. One listing walk; no file
+ * is opened, a dataless folder is not entered, and the walk threads run with
+ * dataless materialization OFF.
+ */
+export function listCloudFiles(opts: {
+    root: string;
+    minBytes?: number;
+    threads?: number;
+    includeCloud?: boolean;
+}): CloudFilesResult {
+    const { symbols } = getLib();
+    const rootBuf = Buffer.from(`${opts.root}\0`, "utf8");
+    const end = prof.start("c-ffi.cloudfiles");
+    const resPtr = symbols.clonesize_cloudfiles_json(
+        ptr(rootBuf),
+        opts.threads && opts.threads > 0 ? opts.threads : 0,
+        BigInt(Math.max(0, Math.floor(opts.minBytes ?? 0))),
+        opts.includeCloud ? 1 : 0
+    );
+    end();
+    if (!resPtr) {
+        throw new Error("clonesize dylib returned NULL (cloud file listing failed)");
+    }
+
+    const json = new CString(resPtr).toString();
+    symbols.clonesize_free(resPtr);
+    const raw = SafeJSON.parse(json) as CloudFilesJson;
+    const files: CloudFileEntry[] = raw.files.map((f) => ({
+        path: f.path,
+        size: f.size,
+        alloc: f.alloc,
+        domain: f.domain ?? "",
+        provider: f.provider ?? "",
+    }));
+    files.sort((a, b) => b.alloc - a.alloc || a.path.localeCompare(b.path));
+    logger.debug(
+        { root: opts.root, listed: raw.files_listed, local: files.length, dataless: raw.cloud_backed.dataless_files },
+        "du: listed downloaded cloud files"
+    );
+    return {
+        root: opts.root,
+        filesListed: raw.files_listed,
+        dirs: raw.dirs,
+        deniedDirs: raw.denied_dirs,
+        readErrors: raw.read_errors ?? 0,
+        skippedCloud: raw.skipped_cloud,
+        cloud: raw.cloud_backed,
+        files,
+    };
 }
 
 /** Read the volume's authoritative used/free bytes (ATTR_VOL_*) for a mount point. */

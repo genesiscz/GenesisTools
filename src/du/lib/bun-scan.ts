@@ -10,12 +10,22 @@
 // non-sparse files are counted as unique via datalength; only sharers are opened
 // and extent-scanned. The merge/dedup/cluster math below matches the C engine.
 
+import { CString, dlopen, FFIType, ptr } from "bun:ffi";
 import { type Dirent, readdirSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { profiler } from "@genesiscz/utils/profile";
+import {
+    type CloudDomain,
+    cloudBackedFrom,
+    domainOf,
+    emptyFolder,
+    isCloudRoot,
+    isDomainCandidate,
+    mergeCloudFolders,
+} from "./cloud";
 import { ensureShim } from "./engine";
 import { type ScanDirsInput, type ScanDirsResult, scanDirs } from "./ffi-scan";
-import type { ClonesizeResult, GroupResult, ScanOptions } from "./types";
+import type { ClonesizeResult, CloudBackedFolder, GroupResult, ScanOptions } from "./types";
 
 // Group-count cap (mirrors native/clonesize.c). Cross-group sharing uses a BigInt
 // mask (no 64-bit limit); this is just the intern ceiling — generous so a scan root
@@ -135,10 +145,67 @@ export function mergeExtentClusters(
  * keeps the main thread's readdir work tiny (a few hundred dirs) — the deep,
  * expensive part of the walk happens in parallel inside the workers.
  */
+interface CloudProbe {
+    /** The File Provider domain `path` roots, or null. */
+    domain(path: string): CloudDomain | null;
+    isDataless(path: string): boolean;
+}
+
+function openCloudProbe(shim: string): CloudProbe & { close(): void } {
+    const lib = dlopen(shim, {
+        cs_fp_domain: { args: [FFIType.ptr, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+        cs_is_dataless: { args: [FFIType.ptr], returns: FFIType.i32 },
+    });
+    const provBuf = new Uint8Array(128);
+    return {
+        domain(path) {
+            const buf = Buffer.from(`${path}\0`, "utf8");
+            if (lib.symbols.cs_fp_domain(ptr(buf), ptr(provBuf), provBuf.length) < 0) {
+                return null;
+            }
+
+            return { path, provider: new CString(ptr(provBuf)).toString() };
+        },
+        isDataless(path) {
+            return lib.symbols.cs_is_dataless(ptr(Buffer.from(`${path}\0`, "utf8"))) !== 0;
+        },
+        close() {
+            lib.close();
+        },
+    };
+}
+
+/** The domain the scan root sits in: the root or its nearest ancestor that is a domain root. */
+function rootDomain(root: string, probe: CloudProbe): CloudDomain | null {
+    let dir = root;
+    for (;;) {
+        const d = probe.domain(dir);
+        if (d) {
+            return d;
+        }
+
+        const up = dirname(dir);
+        if (up === dir) {
+            return null;
+        }
+
+        dir = up;
+    }
+}
+
+interface PlanCloud {
+    includeCloud: boolean;
+    probe: CloudProbe;
+    domains: CloudDomain[];
+    /** Dataless folders the planner did not enter, per bucket. */
+    folders: Map<string, CloudBackedFolder>;
+}
+
 function planWork(
     root: string,
     excludes: Set<string>,
-    target: number
+    target: number,
+    cloud: PlanCloud
 ): { frontier: string[]; interior: string[]; groupIndex: Map<string, number>; groupNames: string[] } {
     const groupNames: string[] = [];
     const groupIndex = new Map<string, number>();
@@ -167,9 +234,34 @@ function planWork(
                 continue;
             }
             const p = join(dir, e.name);
-            if (!excludes.has(p)) {
-                out.push(p);
+            if (excludes.has(p) || (!cloud.includeCloud && isCloudRoot(dir, e.name))) {
+                continue;
             }
+
+            const parentDomain = domainOf(dir, cloud.domains);
+            let childDomain = parentDomain;
+            if (!childDomain && isDomainCandidate(dir, e.name)) {
+                childDomain = cloud.probe.domain(p);
+                if (childDomain) {
+                    cloud.domains.push(childDomain);
+                }
+            }
+
+            // Same rule as the walk: a dataless folder is counted, never entered.
+            if (!cloud.includeCloud && cloud.probe.isDataless(p)) {
+                const owner = childDomain ?? null;
+                const key = owner ? owner.path : dir;
+                let b = cloud.folders.get(key);
+                if (!b) {
+                    b = emptyFolder(key, owner);
+                    cloud.folders.set(key, b);
+                }
+
+                b.dataless_dirs++;
+                continue;
+            }
+
+            out.push(p);
         }
         return out;
     };
@@ -220,10 +312,21 @@ export async function scanWithBun(opts: ScanOptions): Promise<ClonesizeResult> {
     }
 
     const endPlan = prof.start("plan(bfs)");
+    const includeCloud = !!opts.includeCloud;
+    const probe = openCloudProbe(shim);
+    const start = rootDomain(root, probe);
+    const planCloud: PlanCloud = { includeCloud, probe, domains: start ? [start] : [], folders: new Map() };
     // Expand the frontier well past the worker count so giant subtrees (a whole
     // node_modules) get split into many small frontier dirs — otherwise one worker
     // inherits the whole thing and everyone else idles.
-    const { frontier, interior, groupIndex, groupNames } = planWork(root, excludes, nthreads * 256);
+    let plan: ReturnType<typeof planWork>;
+    try {
+        plan = planWork(root, excludes, nthreads * 256, planCloud);
+    } finally {
+        probe.close();
+    }
+
+    const { frontier, interior, groupIndex, groupNames } = plan;
     endPlan();
     const ngroups = groupNames.length;
     const excludeList = [...excludes];
@@ -257,6 +360,8 @@ export async function scanWithBun(opts: ScanOptions): Promise<ClonesizeResult> {
                 ngroups,
                 minBytes: opts.minBytes ?? 0,
                 freeable: !!opts.freeable,
+                includeCloud,
+                domains: planCloud.domains,
             };
             worker.postMessage(msg);
         });
@@ -275,6 +380,8 @@ export async function scanWithBun(opts: ScanOptions): Promise<ClonesizeResult> {
         ngroups,
         minBytes: opts.minBytes ?? 0,
         freeable: !!opts.freeable,
+        includeCloud,
+        domains: planCloud.domains,
     });
     const results = [interiorResult, ...(await Promise.all(workerPromises))];
     endScan();
@@ -398,6 +505,12 @@ export async function scanWithBun(opts: ScanOptions): Promise<ClonesizeResult> {
     if (opts.freeable) {
         result.private_sum_bytes = Number(privSum);
     }
+
+    result.cloud_backed = cloudBackedFrom({
+        folders: mergeCloudFolders([[...planCloud.folders.values()], ...results.map((r) => r.cloud)]),
+        includeCloud,
+        guard: results.every((r) => r.guard),
+    });
 
     endMerge();
     prof.summary("bun engine");

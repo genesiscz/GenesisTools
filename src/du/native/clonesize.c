@@ -39,7 +39,9 @@
 #include <sys/mman.h>
 #include <sys/mount.h>
 #include <sys/param.h>
+#include <sys/resource.h>
 #include <sys/vnode.h>
+#include <sys/xattr.h>
 #include <time.h>
 #include <mach/mach.h>
 
@@ -262,6 +264,194 @@ static void note_cloud_root(const char *path) {
         if (c) g_cloud_roots[g_ncloud++] = c;
     }
     pthread_mutex_unlock(&g_cloud_mtx);
+}
+
+// ---------------------------------------------------------------------------
+// Cloud-backed content that IS walked: File Provider domains outside the two
+// skipped roots (Desktop and Documents synced to iCloud, a scan rooted inside a
+// provider folder) and dataless files anywhere.
+//
+// Opening a dataless file asks fileproviderd to download it. So by default such
+// content is measured from the listing alone, like `du` (allocated size, never an
+// open() or an extent read), and every folder it came from is reported. Three
+// guards, cheapest first:
+//   1. SF_DATALESS from the listing (ATTR_CMN_FLAGS): a dataless file is never
+//      opened and a dataless folder is never entered (entering one makes the
+//      provider fetch its listing).
+//   2. Files under a File Provider domain root are never opened. A domain root
+//      carries the com.apple.file-provider-domain-id xattr. Roots live in a few
+//      places only, so only those children are asked (see is_domain_candidate).
+//   3. Each worker thread sets IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES to OFF,
+//      so even a missed case fails in the kernel instead of downloading.
+// --include-cloud lifts all three.
+// Buckets: one per domain root, plus one per folder holding stray dataless files.
+// ---------------------------------------------------------------------------
+#define FP_DOMAIN_XATTR "com.apple.file-provider-domain-id"
+#define MAX_CLOUD_BUCKETS 256
+#define CLOUD_OTHER (MAX_CLOUD_BUCKETS + 1)   // overflow bucket id
+typedef struct {
+    char    *path;
+    char     provider[96];   // the xattr value before its first '/', e.g. com.apple.CloudDocs.iCloudDriveFileProvider
+    int      domain;         // 1 = a File Provider domain root, 0 = a folder with stray dataless files
+    uint64_t files, dataless, dataless_dirs, local, cloud_only;
+} CloudBucket;
+static CloudBucket g_cb[MAX_CLOUD_BUCKETS + 2];   // ids 1..MAX, CLOUD_OTHER; slot 0 unused
+static int g_ncb = 0;
+static pthread_mutex_t g_cb_mtx = PTHREAD_MUTEX_INITIALIZER;
+static int g_iopol_ok = 1;    // 0 when a worker could not set the materialize policy
+
+/** 1 when `path` is a File Provider domain root; copies the provider id into prov. */
+static int fp_domain_provider(const char *path, char *prov, size_t cap) {
+    char val[512];
+    ssize_t n = getxattr(path, FP_DOMAIN_XATTR, val, sizeof val - 1, 0, XATTR_NOFOLLOW);
+    if (n < 0) return 0;
+    val[n] = '\0';
+    char *slash = strchr(val, '/');
+    if (slash) *slash = '\0';
+    snprintf(prov, cap, "%s", val);
+    return 1;
+}
+
+/** Bucket id for `path` (interned). Never fails: past the cap it is CLOUD_OTHER. */
+static int cloud_bucket(const char *path, int domain, const char *provider) {
+    pthread_mutex_lock(&g_cb_mtx);
+    int id = CLOUD_OTHER;
+    for (int i = 1; i <= g_ncb; i++) {
+        if (strcmp(g_cb[i].path, path) == 0) { id = i; goto out; }
+    }
+    if (g_ncb < MAX_CLOUD_BUCKETS) {
+        id = ++g_ncb;
+        memset(&g_cb[id], 0, sizeof g_cb[id]);
+        g_cb[id].path = strdup(path);
+        if (!g_cb[id].path) { perror("strdup cloud bucket"); exit(1); }
+        g_cb[id].domain = domain;
+        if (provider) snprintf(g_cb[id].provider, sizeof g_cb[id].provider, "%s", provider);
+    }
+out:
+    pthread_mutex_unlock(&g_cb_mtx);
+    return id;
+}
+
+static void cloud_add(int id, uint64_t files, uint64_t dataless, uint64_t dataless_dirs,
+                      uint64_t local, uint64_t cloud_only) {
+    pthread_mutex_lock(&g_cb_mtx);
+    if (id == CLOUD_OTHER && !g_cb[CLOUD_OTHER].path) {
+        g_cb[CLOUD_OTHER].path = strdup("(other folders)");
+    }
+    g_cb[id].files += files;
+    g_cb[id].dataless += dataless;
+    g_cb[id].dataless_dirs += dataless_dirs;
+    g_cb[id].local += local;
+    g_cb[id].cloud_only += cloud_only;
+    pthread_mutex_unlock(&g_cb_mtx);
+}
+
+static void reset_cloud_buckets(void) {
+    for (int i = 1; i <= MAX_CLOUD_BUCKETS + 1; i++) {
+        free(g_cb[i].path);
+        memset(&g_cb[i], 0, sizeof g_cb[i]);
+    }
+    g_ncb = 0;
+    g_iopol_ok = 1;
+}
+
+/**
+ * Where a File Provider domain root can sit: a child of a home folder
+ * (/Users/<name>, also spelled under /System/Volumes/Data), a child of
+ * <...>/Library/CloudStorage, and <...>/Library/Mobile Documents itself.
+ * Only these children pay for a getxattr, so the hot walk stays unchanged.
+ */
+static int is_domain_candidate(const char *dirpath, const char *name) {
+    size_t dl = strlen(dirpath);
+    if (dl >= 21 && strcmp(dirpath + dl - 21, "/Library/CloudStorage") == 0) return 1;
+    if (dl >= 8 && strcmp(dirpath + dl - 8, "/Library") == 0 && strcmp(name, "Mobile Documents") == 0) return 1;
+    const char *rest = dirpath;
+    if (strncmp(rest, "/System/Volumes/Data", 20) == 0) rest += 20;
+    if (strncmp(rest, "/Users/", 7) != 0) return 0;
+    rest += 7;
+    return rest[0] != '\0' && strchr(rest, '/') == NULL;
+}
+
+/** Bucket id of the domain `sub` roots, or 0 when it is not a domain root. */
+static int domain_bucket_for(const char *sub) {
+    char prov[96];
+    if (!fp_domain_provider(sub, prov, sizeof prov)) return 0;
+    return cloud_bucket(sub, 1, prov);
+}
+
+/** The domain bucket a scan root sits in: the root itself or its nearest ancestor that is a domain root. */
+static int root_domain_bucket(const char *target) {
+    char buf[4096];
+    snprintf(buf, sizeof buf, "%s", target);
+    size_t n = strlen(buf);
+    while (n > 1 && buf[n - 1] == '/') buf[--n] = '\0';
+    for (;;) {
+        int id = domain_bucket_for(buf);
+        if (id) return id;
+        char *slash = strrchr(buf, '/');
+        if (!slash || slash == buf) return 0;
+        *slash = '\0';
+    }
+}
+
+/** Per-thread kernel guard: a dataless object fails to open instead of downloading. */
+static void cloud_thread_guard(void) {
+    if (!g_skip_cloud) return;
+    if (setiopolicy_np(IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES, IOPOL_SCOPE_THREAD,
+                       IOPOL_MATERIALIZE_DATALESS_FILES_OFF) != 0) {
+        __atomic_store_n(&g_iopol_ok, 0, __ATOMIC_RELAXED);
+    }
+}
+
+/** Totals over all buckets. */
+static void cloud_totals(uint64_t *files, uint64_t *dataless, uint64_t *dataless_dirs,
+                         uint64_t *local, uint64_t *cloud_only) {
+    *files = *dataless = *dataless_dirs = *local = *cloud_only = 0;
+    for (int i = 1; i <= MAX_CLOUD_BUCKETS + 1; i++) {
+        *files += g_cb[i].files;
+        *dataless += g_cb[i].dataless;
+        *dataless_dirs += g_cb[i].dataless_dirs;
+        *local += g_cb[i].local;
+        *cloud_only += g_cb[i].cloud_only;
+    }
+}
+
+static char *json_escape(const char *s);
+
+/** The "cloud_backed" JSON object body, appended through `emit`. Returns a malloc'd string. */
+static char *cloud_json(void) {
+    uint64_t files, dataless, ddirs, local, conly;
+    cloud_totals(&files, &dataless, &ddirs, &local, &conly);
+    size_t cap = 1024 + (size_t)(g_ncb + 1) * 512, len = 0;
+    char *o = malloc(cap);
+    if (!o) { perror("malloc cloud json"); exit(1); }
+    len += (size_t)snprintf(o + len, cap - len,
+        "{\"mode\": \"%s\", \"materialize_guard\": %s, \"files\": %llu, \"dataless_files\": %llu, "
+        "\"dataless_dirs\": %llu, \"local_bytes\": %llu, \"cloud_only_bytes\": %llu, \"folders\": [",
+        g_skip_cloud ? "stat-only" : "opened", (g_skip_cloud && g_iopol_ok) ? "true" : "false",
+        (unsigned long long)files, (unsigned long long)dataless, (unsigned long long)ddirs,
+        (unsigned long long)local, (unsigned long long)conly);
+    int first = 1;
+    for (int i = 1; i <= MAX_CLOUD_BUCKETS + 1; i++) {
+        CloudBucket *b = &g_cb[i];
+        if (!b->path || (b->files == 0 && b->dataless_dirs == 0)) continue;
+        char *pesc = json_escape(b->path);
+        char *vesc = json_escape(b->provider);
+        size_t need = strlen(pesc) + strlen(vesc) + 320;
+        if (len + need >= cap) { cap = (cap + need) * 2; o = realloc(o, cap); if (!o) { perror("realloc cloud json"); exit(1); } }
+        len += (size_t)snprintf(o + len, cap - len,
+            "%s{\"path\": \"%s\", \"domain\": %s, \"provider\": \"%s\", \"files\": %llu, \"dataless_files\": %llu, "
+            "\"dataless_dirs\": %llu, \"local_bytes\": %llu, \"cloud_only_bytes\": %llu}",
+            first ? "" : ", ", pesc, b->domain ? "true" : "false", vesc,
+            (unsigned long long)b->files, (unsigned long long)b->dataless, (unsigned long long)b->dataless_dirs,
+            (unsigned long long)b->local, (unsigned long long)b->cloud_only);
+        first = 0;
+        free(pesc);
+        free(vesc);
+    }
+    if (len + 4 >= cap) { cap += 8; o = realloc(o, cap); if (!o) { perror("realloc cloud json"); exit(1); } }
+    len += (size_t)snprintf(o + len, cap - len, "]}");
+    return o;
 }
 
 static int is_excluded(const char *path) {
@@ -530,14 +720,15 @@ static uint64_t overlap_shared_file(int fd, off_t size) {
 // inline extent scan of shared files. `node`/`depth` carry the --depth tree
 // position (node = the file's directory clamped to g_maxdepth).
 // ---------------------------------------------------------------------------
-typedef struct { char *path; int group; int node; int depth; } DirJob;
+typedef struct { char *path; int group; int node; int depth; int cloud; } DirJob;
 static DirJob *g_q = NULL;
 static size_t  g_qn = 0, g_qcap = 0, g_pending = 0;
 static int     g_done = 0;
 static pthread_mutex_t g_qmtx = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_qcv  = PTHREAD_COND_INITIALIZER;
 
-static void q_push(char *path, int group, int node, int depth) {
+/** `cloud`: the domain bucket id the folder sits in, 0 when it is not inside a File Provider domain. */
+static void q_push(char *path, int group, int node, int depth, int cloud) {
     pthread_mutex_lock(&g_qmtx);
     if (g_qn == g_qcap) {
         g_qcap = g_qcap ? g_qcap * 2 : 4096;
@@ -548,6 +739,7 @@ static void q_push(char *path, int group, int node, int depth) {
     g_q[g_qn].group = group;
     g_q[g_qn].node = node;
     g_q[g_qn].depth = depth;
+    g_q[g_qn].cloud = cloud;
     g_qn++;
     g_pending++;
     pthread_cond_signal(&g_qcv);
@@ -559,17 +751,21 @@ static void q_push(char *path, int group, int node, int depth) {
 // shifts everything after it — verified empirically against fstatat() each time
 // one was added here:
 //   0  u32 length | 4 returned_attrs(20) | 24 name attrref(8) | 32 objtype(4)
-//   36 modtime timespec(16) | 52 fileid u64(8) | 60 linkcount u32(4)
-//   64 alloc off_t(8) | 72 datalength off_t(8) | 80 privatesize off_t(8)
+//   36 modtime timespec(16) | 52 flags u32(4) | 56 fileid u64(8) | 64 linkcount u32(4)
+//   68 alloc off_t(8) | 76 datalength off_t(8) | 84 privatesize off_t(8)
+// `flags` is st_flags (ATTR_CMN_FLAGS, 0x00040000, between MODTIME and FILEID).
 static struct attrlist g_al;
 static uint64_t g_alopt;
 
-static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dirnode, int depth) {
+static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dirnode, int depth, int dircloud) {
     int dfd = open(dirpath, O_RDONLY | O_DIRECTORY | O_NONBLOCK);
     if (dfd < 0) {
         if (errno == EACCES || errno == EPERM) note_denied(dirpath, 1);
         return;
     }
+    // Cloud-backed files in this folder, flushed into one bucket at the end: the
+    // domain's when the folder is inside one, else this folder's own (stray dataless files).
+    uint64_t c_files = 0, c_dataless = 0, c_ddirs = 0, c_local = 0, c_only = 0;
     char buf[64 * 1024];
     for (;;) {
         int n = getattrlistbulk(dfd, &g_al, buf, sizeof buf, g_alopt);
@@ -587,6 +783,7 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
             memcpy(&mtime, entry + off, 8);
             memcpy(&mnsec, entry + off + 8, 8);
             off += 16;                                                    // timespec: sec + nsec
+            uint32_t fflags;  memcpy(&fflags,  entry + off, 4); off += 4;
             uint64_t fileid;  memcpy(&fileid,  entry + off, 8); off += 8;
             uint32_t nlink;   memcpy(&nlink,   entry + off, 4); off += 4;
             off_t alloc; memcpy(&alloc, entry + off, 8); off += 8;
@@ -602,11 +799,20 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
                 memcpy(sub, dirpath, pl); sub[pl] = '/'; memcpy(sub + pl + 1, name, nl + 1);
                 if ((g_nexcludes || g_nforeign) && is_excluded(sub)) { free(sub); continue; }
                 if (is_cloud_root(dirpath, name)) { note_cloud_root(sub); free(sub); continue; }
+                int childcloud = dircloud;
+                if (!childcloud && is_domain_candidate(dirpath, name)) childcloud = domain_bucket_for(sub);
+                // Entering a dataless folder makes the provider fetch its listing.
+                if (g_skip_cloud && (fflags & SF_DATALESS)) {
+                    if (childcloud && childcloud != dircloud) cloud_add(childcloud, 0, 0, 1, 0, 0);
+                    else c_ddirs++;
+                    free(sub);
+                    continue;
+                }
                 // --depth: a child at depth<=maxdepth is its own node; deeper dirs
                 // inherit their depth-maxdepth ancestor's node.
                 int childnode = dirnode;
                 if (g_maxdepth >= 0 && depth + 1 <= g_maxdepth) childnode = intern_node(dirnode, name, depth + 1);
-                q_push(sub, g, childnode, depth + 1);
+                q_push(sub, g, childnode, depth + 1, childcloud);
                 continue;
             }
             if (objtype != VREG) continue; // symlinks/others: skip (du doesn't follow either)
@@ -616,6 +822,13 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
             // --changed-within: attribute only files touched inside the window.
             // Directories are still descended — a fresh file can sit in an old dir.
             if (g_mtime_min && (uint64_t)mtime < g_mtime_min) continue;
+            int dataless = (fflags & SF_DATALESS) != 0;
+            int cloud = dircloud || dataless;
+            if (cloud) {
+                c_files++;
+                c_local += (uint64_t)alloc;
+                if (dataless) { c_dataless++; c_only += (uint64_t)dlen; }
+            }
             t->priv_sum += (uint64_t)priv;
             if (alloc == 0 || (size_t)alloc < g_min_blocks) continue;
 
@@ -629,6 +842,16 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
             if ((uint64_t)dlen > a) {
                 t->sparse_extra += (uint64_t)dlen - a;
                 t->sparse_files++;
+            }
+
+            // Cloud-backed, stat-only: counted from the listing like `du` (its whole
+            // allocation as unique), never opened, so no extent read can download it.
+            if (cloud && g_skip_cloud) {
+                if (g_partner_mode) continue;
+                t->unique_private += (uint64_t)dlen;
+                t->unique_private_alloc += a;
+                if (g_maxdepth >= 0) rec_push(t, dirnode, a, (uint64_t)dlen, (uint64_t)priv, 1);
+                continue;
             }
 
             // Partner mode: only shared files can host another file's blocks, so
@@ -722,11 +945,16 @@ static void process_dir(ThreadOut *t, const char *dirpath, int dirgroup, int dir
         }
     }
     close(dfd);
+    if (c_files || c_ddirs) {
+        int id = dircloud ? dircloud : cloud_bucket(dirpath, 0, NULL);
+        cloud_add(id, c_files, c_dataless, c_ddirs, c_local, c_only);
+    }
 }
 
 static ThreadOut *g_outs = NULL;
 static void *worker(void *arg) {
     ThreadOut *t = arg;
+    cloud_thread_guard();
     for (;;) {
         pthread_mutex_lock(&g_qmtx);
         while (g_qn == 0 && !g_done) pthread_cond_wait(&g_qcv, &g_qmtx);
@@ -734,7 +962,7 @@ static void *worker(void *arg) {
         DirJob job = g_q[--g_qn];
         pthread_mutex_unlock(&g_qmtx);
 
-        process_dir(t, job.path, job.group, job.node, job.depth);
+        process_dir(t, job.path, job.group, job.node, job.depth, job.cloud);
         free(job.path);
 
         pthread_mutex_lock(&g_qmtx);
@@ -986,7 +1214,7 @@ static void setup_attrlist(void) {
     memset(&g_al, 0, sizeof g_al);
     g_al.bitmapcount = ATTR_BIT_MAP_COUNT;
     g_al.commonattr  = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_NAME | ATTR_CMN_OBJTYPE |
-                       ATTR_CMN_MODTIME | ATTR_CMN_FILEID;
+                       ATTR_CMN_MODTIME | ATTR_CMN_FLAGS | ATTR_CMN_FILEID;
     g_al.fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH;
     g_al.forkattr    = ATTR_CMNEXT_PRIVATESIZE;
     g_alopt = FSOPT_PACK_INVAL_ATTRS | FSOPT_ATTR_CMN_EXTENDED | FSOPT_NOFOLLOW;
@@ -1001,7 +1229,7 @@ static void spawn_walk(const char *target, int nthreads, int rootnode) {
     pthread_t *th = calloc(nthreads, sizeof(pthread_t));
     if (!g_outs || !th) { perror("calloc walk"); exit(1); }
     for (int i = 0; i < nthreads; i++) g_outs[i].tid = i;
-    q_push(strdup(target), -1, rootnode, 0);
+    q_push(strdup(target), -1, rootnode, 0, root_domain_bucket(target));
     for (int i = 0; i < nthreads; i++) pthread_create(&th[i], NULL, worker, &g_outs[i]);
     for (int i = 0; i < nthreads; i++) pthread_join(th[i], NULL);
     free(th);
@@ -1466,6 +1694,9 @@ static char *format_json(const char *target, const Result *R) {
         free(desc);
     }
     EMIT("],\n");
+    char *cj = cloud_json();
+    EMIT("  \"cloud_backed\": %s,\n", cj);
+    free(cj);
     if (g_mtime_min)
         EMIT("  \"changed_since\": %llu,\n", (unsigned long long)g_mtime_min);
     EMIT("  \"groups\": [\n");
@@ -1567,6 +1798,14 @@ static void print_human(const char *target, const Result *R, int quiet) {
     if (g_ncloud)
         printf("Cloud skipped:   %d provider root(s) not walked (placeholders, and reading them can download)\n",
                g_ncloud);
+    {
+        uint64_t cf, cd, cdd, cl, co;
+        cloud_totals(&cf, &cd, &cdd, &cl, &co);
+        if (cf || cdd)
+            printf("Cloud-backed:    %llu file(s) %s (%.1f %s local, %.1f %s cloud-only in %llu dataless file(s))\n",
+                   (unsigned long long)cf, g_skip_cloud ? "measured by stat only, not opened" : "opened (--include-cloud)",
+                   HUM(cl), HUM(co), (unsigned long long)cd);
+    }
     if (g_denied_dirs || g_denied_files)
         printf("UNREADABLE:      %llu dir(s), %llu file(s) skipped — totals above are INCOMPLETE\n",
                (unsigned long long)g_denied_dirs, (unsigned long long)g_denied_files);
@@ -1624,6 +1863,7 @@ static void reset_state(void) {
     g_denied_kept = 0; g_denied_dirs = 0; g_denied_files = 0; g_read_errors = 0;
     for (int i = 0; i < g_ncloud; i++) { free(g_cloud_roots[i]); g_cloud_roots[i] = NULL; }
     g_ncloud = 0;
+    reset_cloud_buckets();
     g_qn = 0; g_pending = 0; g_done = 0;
 }
 
@@ -1905,7 +2145,7 @@ void clonesize_free(char *p) { free(p); }
 // Progress goes to stderr as one JSON line per BIG_PROGRESS_EVERY files, so a
 // caller reading the pipe can drive a spinner while the walk runs.
 // ---------------------------------------------------------------------------
-typedef struct { char *path; uint64_t dlen, alloc, fileid, mtime_ns; uint32_t nlink; } BigRec;
+typedef struct { char *path; uint64_t dlen, alloc, fileid, mtime_ns; uint32_t nlink; int cloud; } BigRec;
 typedef struct { BigRec *recs; size_t n, cap; uint64_t files, dirs; } BigOut;
 
 #define BIG_PROGRESS_EVERY 200000ULL
@@ -1917,12 +2157,16 @@ static const char *g_prune_names[MAX_PRUNE_NAMES];
 static int g_nprune = 0;
 static BigOut *g_big_outs = NULL;
 static uint64_t g_big_progress = 0;   // files listed so far, all workers (atomic adds)
+// --cloudfiles (`tools du downloaded`): list only cloud-backed files that are on
+// disk (inside a File Provider domain, not dataless, allocated), so they can be evicted.
+static int g_big_cloud_only = 0;
+static uint64_t g_big_dataless_skipped = 0;   // dataless files left out of a --bigfiles listing
 
 static void big_setup_attrlist(void) {
     memset(&g_big_al, 0, sizeof g_big_al);
     g_big_al.bitmapcount = ATTR_BIT_MAP_COUNT;
     g_big_al.commonattr  = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_NAME | ATTR_CMN_OBJTYPE |
-                           ATTR_CMN_MODTIME | ATTR_CMN_FILEID;
+                           ATTR_CMN_MODTIME | ATTR_CMN_FLAGS | ATTR_CMN_FILEID;
     g_big_al.fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH;
     g_big_alopt = FSOPT_PACK_INVAL_ATTRS | FSOPT_NOFOLLOW;
 }
@@ -1935,7 +2179,7 @@ static int is_pruned_name(const char *name) {
 }
 
 static void big_push(BigOut *o, char *path, uint64_t dlen, uint64_t alloc, uint64_t fileid,
-                     uint64_t mtime_ns, uint32_t nlink) {
+                     uint64_t mtime_ns, uint32_t nlink, int cloud) {
     if (o->n == o->cap) {
         o->cap = o->cap ? o->cap * 2 : 256;
         o->recs = realloc(o->recs, o->cap * sizeof(BigRec));
@@ -1943,14 +2187,17 @@ static void big_push(BigOut *o, char *path, uint64_t dlen, uint64_t alloc, uint6
     }
     BigRec *r = &o->recs[o->n++];
     r->path = path; r->dlen = dlen; r->alloc = alloc; r->fileid = fileid; r->mtime_ns = mtime_ns; r->nlink = nlink;
+    r->cloud = cloud;
 }
 
 // Entry layout without the fork attr (same order as process_dir's, minus
 // privatesize at the tail):
 //   0 u32 length | 4 returned_attrs(20) | 24 name attrref(8) | 32 objtype(4)
-//   36 modtime timespec(16) | 52 fileid u64(8) | 60 linkcount u32(4)
-//   64 alloc off_t(8) | 72 datalength off_t(8)
-static void big_process_dir(BigOut *o, const char *dirpath) {
+//   36 modtime timespec(16) | 52 flags u32(4) | 56 fileid u64(8) | 64 linkcount u32(4)
+//   68 alloc off_t(8) | 76 datalength off_t(8)
+// A dataless file is never listed by default: the dedupe caller reads every
+// candidate, and reading a placeholder downloads it.
+static void big_process_dir(BigOut *o, const char *dirpath, int dircloud) {
     int dfd = open(dirpath, O_RDONLY | O_DIRECTORY | O_NONBLOCK);
     if (dfd < 0) {
         // A denial is a hole the report NAMES, so it stays its own counter.
@@ -1962,6 +2209,7 @@ static void big_process_dir(BigOut *o, const char *dirpath) {
         return;
     }
     o->dirs++;
+    uint64_t c_files = 0, c_dataless = 0, c_ddirs = 0, c_local = 0, c_only = 0;
     char buf[64 * 1024];
     for (;;) {
         int n = getattrlistbulk(dfd, &g_big_al, buf, sizeof buf, g_big_alopt);
@@ -1980,6 +2228,7 @@ static void big_process_dir(BigOut *o, const char *dirpath) {
             memcpy(&mtime, entry + off, 8);
             memcpy(&mnsec, entry + off + 8, 8);
             off += 16;
+            uint32_t fflags; memcpy(&fflags, entry + off, 4); off += 4;
             uint64_t fileid; memcpy(&fileid, entry + off, 8); off += 8;
             uint32_t nlink;  memcpy(&nlink,  entry + off, 4); off += 4;
             off_t alloc; memcpy(&alloc, entry + off, 8); off += 8;
@@ -1989,19 +2238,38 @@ static void big_process_dir(BigOut *o, const char *dirpath) {
             if (objtype == VDIR) {
                 if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
                 if (g_nprune && is_pruned_name(name)) continue;
-                if (is_cloud_root(dirpath, name)) continue;
                 size_t pl = strlen(dirpath), nl = strlen(name);
                 char *sub = malloc(pl + 1 + nl + 1);
                 if (!sub) { perror("malloc bigdir"); exit(1); }
                 memcpy(sub, dirpath, pl); sub[pl] = '/'; memcpy(sub + pl + 1, name, nl + 1);
+                if (is_cloud_root(dirpath, name)) {
+                    if (g_big_cloud_only) note_cloud_root(sub);
+                    free(sub);
+                    continue;
+                }
                 // Same pruning as the scan walk: without it --bigfiles descends
                 // into every other volume mounted inside a root, so cross-volume
                 // pairs join duplicate sets that clonefile can never share.
                 if ((g_nexcludes || g_nforeign) && is_excluded(sub)) { free(sub); continue; }
-                q_push(sub, -1, -1, 0);
+                int childcloud = dircloud;
+                if (!childcloud && is_domain_candidate(dirpath, name)) childcloud = domain_bucket_for(sub);
+                if (g_skip_cloud && (fflags & SF_DATALESS)) {
+                    if (childcloud && childcloud != dircloud) cloud_add(childcloud, 0, 0, 1, 0, 0);
+                    else c_ddirs++;
+                    free(sub);
+                    continue;
+                }
+                q_push(sub, -1, -1, 0, childcloud);
                 continue;
             }
             if (objtype != VREG) continue;
+            int dataless = (fflags & SF_DATALESS) != 0;
+            int cloud = dircloud || dataless;
+            if (cloud) {
+                c_files++;
+                c_local += (uint64_t)alloc;
+                if (dataless) { c_dataless++; c_only += (uint64_t)dlen; }
+            }
 
             o->files++;
             uint64_t seen = __atomic_add_fetch(&g_big_progress, 1, __ATOMIC_RELAXED);
@@ -2011,21 +2279,35 @@ static void big_process_dir(BigOut *o, const char *dirpath) {
                         (unsigned long long)seen, desc);
                 free(desc);
             }
-            if ((uint64_t)dlen < g_big_min) continue;
+            if (g_big_cloud_only) {
+                // On disk and evictable: inside a domain, not a placeholder, blocks allocated.
+                if (!dircloud || dataless || alloc <= 0 || (uint64_t)alloc < g_big_min) continue;
+            } else {
+                if (g_skip_cloud && dataless) {
+                    __atomic_add_fetch(&g_big_dataless_skipped, 1, __ATOMIC_RELAXED);
+                    continue;
+                }
+                if ((uint64_t)dlen < g_big_min) continue;
+            }
 
             size_t pl = strlen(dirpath), nl = strlen(name);
             char *full = malloc(pl + 1 + nl + 1);
             if (!full) { perror("malloc bigpath"); exit(1); }
             memcpy(full, dirpath, pl); full[pl] = '/'; memcpy(full + pl + 1, name, nl + 1);
             uint64_t mtime_ns = (uint64_t)mtime * 1000000000ULL + (uint64_t)mnsec;
-            big_push(o, full, (uint64_t)dlen, (uint64_t)alloc, fileid, mtime_ns, nlink);
+            big_push(o, full, (uint64_t)dlen, (uint64_t)alloc, fileid, mtime_ns, nlink, dircloud);
         }
     }
     close(dfd);
+    if (c_files || c_ddirs) {
+        int id = dircloud ? dircloud : cloud_bucket(dirpath, 0, NULL);
+        cloud_add(id, c_files, c_dataless, c_ddirs, c_local, c_only);
+    }
 }
 
 static void *big_worker(void *arg) {
     BigOut *o = arg;
+    cloud_thread_guard();
     for (;;) {
         pthread_mutex_lock(&g_qmtx);
         while (g_qn == 0 && !g_done) pthread_cond_wait(&g_qcv, &g_qmtx);
@@ -2033,7 +2315,7 @@ static void *big_worker(void *arg) {
         DirJob job = g_q[--g_qn];
         pthread_mutex_unlock(&g_qmtx);
 
-        big_process_dir(o, job.path);
+        big_process_dir(o, job.path, job.cloud);
         free(job.path);
 
         pthread_mutex_lock(&g_qmtx);
@@ -2047,10 +2329,10 @@ static int cmp_bigrec_path(const void *a, const void *b) {
     return strcmp(((const BigRec *)a)->path, ((const BigRec *)b)->path);
 }
 
-__attribute__((visibility("default")))
-char *clonesize_bigfiles_json(const char *const *roots, int nroots, int threads,
-                              unsigned long long min_bytes,
-                              const char *const *prune_names, int nprune) {
+static char *big_run_json(const char *const *roots, int nroots, int threads, unsigned long long min_bytes,
+                          const char *const *prune_names, int nprune, int cloud_only) {
+    g_big_cloud_only = cloud_only;
+    g_big_dataless_skipped = 0;
     g_nthreads = threads;
     g_big_min = min_bytes;
     g_nprune = 0;
@@ -2067,7 +2349,7 @@ char *clonesize_bigfiles_json(const char *const *roots, int nroots, int threads,
     g_big_outs = calloc(nthreads, sizeof(BigOut));
     pthread_t *th = calloc(nthreads, sizeof(pthread_t));
     if (!g_big_outs || !th) { perror("calloc bigwalk"); exit(1); }
-    for (int i = 0; i < nroots; i++) q_push(strdup(roots[i]), -1, -1, 0);
+    for (int i = 0; i < nroots; i++) q_push(strdup(roots[i]), -1, -1, 0, root_domain_bucket(roots[i]));
     if (nroots == 0) g_done = 1;
     for (int i = 0; i < nthreads; i++) pthread_create(&th[i], NULL, big_worker, &g_big_outs[i]);
     for (int i = 0; i < nthreads; i++) pthread_join(th[i], NULL);
@@ -2106,14 +2388,36 @@ char *clonesize_bigfiles_json(const char *const *roots, int nroots, int threads,
     BEMIT("{\"files_listed\":%llu,\"dirs\":%llu,\"roots\":%d,\"min_bytes\":%llu,\"threads\":%d,\"walk_ms\":%llu,",
           (unsigned long long)files, (unsigned long long)dirs, nroots, (unsigned long long)min_bytes, nthreads,
           (unsigned long long)(walk_s * 1000.0));
-    BEMIT("\"denied_dirs\":%llu,\"read_errors\":%llu,\"files\":[",
-          (unsigned long long)g_denied_dirs, (unsigned long long)g_read_errors);
+    BEMIT("\"denied_dirs\":%llu,\"read_errors\":%llu,\"dataless_skipped\":%llu,",
+          (unsigned long long)g_denied_dirs, (unsigned long long)g_read_errors,
+          (unsigned long long)g_big_dataless_skipped);
+    if (cloud_only) {
+        char *cj = cloud_json();
+        BEMIT("\"cloud_backed\":%s,\"skipped_cloud\":[", cj);
+        free(cj);
+        for (int c = 0; c < g_ncloud; c++) {
+            char *cesc = json_escape(g_cloud_roots[c]);
+            BEMIT("%s\"%s\"", c ? "," : "", cesc);
+            free(cesc);
+        }
+        BEMIT("],");
+    }
+    BEMIT("\"files\":[");
     for (size_t i = 0; i < total; i++) {
         char *pesc = json_escape(all[i].path);
         // mtime_ns is emitted as a string: it is past 2^53 and a JSON number would lose precision.
-        BEMIT("%s{\"path\":\"%s\",\"size\":%llu,\"alloc\":%llu,\"fileid\":%llu,\"mtime_ns\":\"%llu\",\"nlink\":%u}",
+        BEMIT("%s{\"path\":\"%s\",\"size\":%llu,\"alloc\":%llu,\"fileid\":%llu,\"mtime_ns\":\"%llu\",\"nlink\":%u",
               i ? "," : "", pesc, (unsigned long long)all[i].dlen, (unsigned long long)all[i].alloc,
               (unsigned long long)all[i].fileid, (unsigned long long)all[i].mtime_ns, all[i].nlink);
+        int cb = all[i].cloud;
+        if (cb > 0 && cb <= MAX_CLOUD_BUCKETS && g_cb[cb].path) {
+            char *desc = json_escape(g_cb[cb].path);
+            char *vesc = json_escape(g_cb[cb].provider);
+            BEMIT(",\"domain\":\"%s\",\"provider\":\"%s\"", desc, vesc);
+            free(desc);
+            free(vesc);
+        }
+        BEMIT("}");
         free(pesc);
         free(all[i].path);
     }
@@ -2121,6 +2425,26 @@ char *clonesize_bigfiles_json(const char *const *roots, int nroots, int threads,
     #undef BEMIT
     free(all);
     return out;
+}
+
+__attribute__((visibility("default")))
+char *clonesize_bigfiles_json(const char *const *roots, int nroots, int threads,
+                              unsigned long long min_bytes,
+                              const char *const *prune_names, int nprune) {
+    return big_run_json(roots, nroots, threads, min_bytes, prune_names, nprune, 0);
+}
+
+/**
+ * `tools du downloaded`: every cloud-backed file under `root` that is on disk
+ * (inside a File Provider domain, not dataless, allocated >= min_bytes). A
+ * listing only: no file is opened. include_cloud walks the skipped provider roots too.
+ */
+__attribute__((visibility("default")))
+char *clonesize_cloudfiles_json(const char *root, int threads, unsigned long long min_bytes, int include_cloud) {
+    g_skip_cloud = include_cloud ? 0 : 1;
+    g_nexcludes = 0;
+    const char *roots[1] = { root };
+    return big_run_json(roots, 1, threads, min_bytes, NULL, 0, 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -2368,7 +2692,7 @@ static void idx_setup_attrlist(void) {
     memset(&g_idx_al, 0, sizeof g_idx_al);
     g_idx_al.bitmapcount = ATTR_BIT_MAP_COUNT;
     g_idx_al.commonattr  = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_NAME | ATTR_CMN_OBJTYPE |
-                           ATTR_CMN_MODTIME | ATTR_CMN_FILEID;
+                           ATTR_CMN_MODTIME | ATTR_CMN_FLAGS | ATTR_CMN_FILEID;
     g_idx_al.fileattr    = ATTR_FILE_LINKCOUNT | ATTR_FILE_ALLOCSIZE | ATTR_FILE_DATALENGTH;
     g_idx_alopt = FSOPT_PACK_INVAL_ATTRS | FSOPT_NOFOLLOW;
     if (g_idx_private) {
@@ -2452,7 +2776,9 @@ static void idx_big_offer(IdxOut *t, IdxBig candidate) {
     t->big[pos] = candidate;
 }
 
-// Entry layout: the --bigfiles layout, plus privatesize at offset 80 when private is on.
+// Entry layout: the --bigfiles layout, plus privatesize at offset 84 when private is on.
+// A dataless folder is flagged as a skipped cloud folder (IDX_F_CLOUD) and not entered:
+// entering it makes the File Provider fetch its listing. Files are never opened here.
 // Returns 1 when the watchdog gave the directory up (the worker must then exit).
 static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
     INode *me = inode(node);
@@ -2505,6 +2831,7 @@ static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
             memcpy(&mtime, entry + off, 8);
             memcpy(&mnsec, entry + off + 8, 8);
             off += 16;
+            uint32_t fflags; memcpy(&fflags, entry + off, 4); off += 4;
             uint64_t fileid; memcpy(&fileid, entry + off, 8); off += 8;
             uint32_t nlink;  memcpy(&nlink,  entry + off, 4); off += 4;
             off_t alloc; memcpy(&alloc, entry + off, 8); off += 8;
@@ -2521,6 +2848,7 @@ static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
                 uint32_t fl = 0;
                 if (g_nforeign && idx_in_list(sub, g_foreign_mounts, g_nforeign)) fl = IDX_F_MOUNT;
                 else if (is_cloud_root(dirpath, name)) { fl = IDX_F_CLOUD; note_cloud_root(sub); }
+                else if (g_skip_cloud && (fflags & SF_DATALESS)) { fl = IDX_F_CLOUD; note_cloud_root(sub); }
                 int64_t mms = mtime * 1000 + mnsec / 1000000;
                 int child = idx_intern(node, name, fileid, mms, fl);
                 if (fl) { free(sub); continue; }   // a skipped root keeps its node (zero bytes, flagged)
@@ -2530,7 +2858,7 @@ static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
                     free(sub);
                     continue;
                 }
-                q_push(sub, -1, child, 0);
+                q_push(sub, -1, child, 0, 0);
                 continue;
             }
             if (objtype != VREG) continue;   // symlinks and others: not followed, not counted
@@ -2581,6 +2909,7 @@ static int idx_process_dir(IdxOut *t, const char *dirpath, int node) {
 
 static void *idx_worker(void *arg) {
     IdxOut *t = arg;
+    cloud_thread_guard();
     pthread_mutex_lock(&t->mtx);
     t->thread = pthread_mach_thread_np(pthread_self());
     pthread_mutex_unlock(&t->mtx);
@@ -2811,7 +3140,7 @@ static int run_index(const char *root, int nthreads) {
     g_idx_walking = 1;
     pthread_t prog;
     pthread_create(&prog, NULL, idx_progress, NULL);
-    q_push(strdup(root), -1, rootnode, 0);
+    q_push(strdup(root), -1, rootnode, 0, 0);
     for (int i = 0; i < nthreads; i++) idx_spawn_worker();
     // Done means every job finished or was given up. A given-up worker never returns,
     // so only the others are joined.
@@ -2926,7 +3255,9 @@ static void usage(const char *me) {
         "  --prune-name NAME    with --bigfiles: never enter a directory with this name (repeatable)\n"
         "  --cache-dir DIR      extent-cache directory (omit to disable the cache)\n"
         "  --no-cache           ignore the cache when reading (still writes it)\n"
-        "  --include-cloud      walk ~/Library/CloudStorage and iCloud Drive (slow; may download)\n"
+        "  --include-cloud      walk ~/Library/CloudStorage and iCloud Drive, and open cloud-backed files\n"
+        "                       (default: dataless files and File Provider domains are measured by stat only)\n"
+        "  --cloudfiles         list cloud-backed files that are on disk (evictable) under the dir (JSON)\n"
         "  --index              per-directory NDJSON rows for `tools du index` (one dir)\n"
         "  --min-dir-bytes N    with --index: fold directories whose subtree is < N (default 1 MiB)\n"
         "  --big-file-floor N   with --index: report files with datalength >= N (default 8 MiB)\n"
@@ -2941,7 +3272,7 @@ static void usage(const char *me) {
 
 int main(int argc, char **argv) {
     const char *target = NULL, *partners_of = NULL;
-    int json = 0, quiet = 0, volume = 0, topn = 30, bigfiles = 0;
+    int json = 0, quiet = 0, volume = 0, topn = 30, bigfiles = 0, cloudfiles = 0;
     int index_mode = 0, dropped_excludes = 0;
     const char *keep_file = NULL;
     // Grown on demand: a fixed 4096 cap dropped every root past it with no
@@ -2965,6 +3296,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--top") && i + 1 < argc)    topn = atoi(argv[++i]);
         else if (!strcmp(a, "--volume"))                 volume = 1;
         else if (!strcmp(a, "--bigfiles"))               bigfiles = 1;
+        else if (!strcmp(a, "--cloudfiles"))             cloudfiles = 1;
         else if (!strcmp(a, "--index"))                  index_mode = 1;
         else if (!strcmp(a, "--region"))                 g_idx_region = 1;
         else if (!strcmp(a, "--keep-file") && i + 1 < argc) keep_file = argv[++i];
@@ -3012,8 +3344,8 @@ int main(int argc, char **argv) {
         return rc;
     }
 
-    if (bigfiles) {
-        char *b = clonesize_bigfiles_json(roots, nroots, g_nthreads, (unsigned long long)g_min_blocks, prune, nprune);
+    if (bigfiles || cloudfiles) {
+        char *b = big_run_json(roots, nroots, g_nthreads, (unsigned long long)g_min_blocks, prune, nprune, cloudfiles);
         free(roots);
         if (!b) return 1;
         fputs(b, stdout);

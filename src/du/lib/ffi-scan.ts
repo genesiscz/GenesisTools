@@ -5,8 +5,10 @@
 // datalength (no open); only files that share blocks are opened + extent-scanned
 // via the fcntl shim. Used by scan-worker.ts (one instance per Bun Worker).
 
-import { dlopen, FFIType, ptr } from "bun:ffi";
+import { CString, dlopen, FFIType, ptr } from "bun:ffi";
 import { profiler } from "@genesiscz/utils/profile";
+import { type CloudDomain, domainOf, emptyFolder, isCloudRoot, isDomainCandidate, SF_DATALESS } from "./cloud";
+import type { CloudBackedFolder } from "./types";
 
 const VREG = 1;
 const VDIR = 2;
@@ -30,6 +32,10 @@ export interface ScanDirsInput {
     minBytes: number;
     /** Also accumulate per-file privatesize (for --freeable). */
     freeable: boolean;
+    /** --include-cloud: walk provider roots and open cloud-backed files. Off: stat only, never opened. */
+    includeCloud: boolean;
+    /** File Provider domain roots already known (the scan root's own domain, ones the planner found). */
+    domains: CloudDomain[];
 }
 
 export interface ScanDirsResult {
@@ -47,6 +53,10 @@ export interface ScanDirsResult {
     gNaive: Float64Array;
     gFiles: Float64Array;
     gPrivate: Float64Array;
+    /** Cloud-backed files seen, per domain root or per folder of stray dataless files. */
+    cloud: CloudBackedFolder[];
+    /** The worker thread ran with dataless materialization OFF. */
+    guard: boolean;
 }
 
 const MAX_GROUPS = 4096; // mirrors native/clonesize.c; BigInt mask has no 64-bit limit
@@ -73,8 +83,35 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
         cs_openat_file: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.i32 },
         cs_close: { args: [FFIType.i32], returns: FFIType.i32 },
         cs_getattrbulk: { args: [FFIType.i32, FFIType.ptr, FFIType.u64], returns: FFIType.i32 },
+        cs_fp_domain: { args: [FFIType.ptr, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+        cs_materialize_guard: { args: [], returns: FFIType.i32 },
+        cs_materialize_restore: { args: [FFIType.i32], returns: FFIType.i32 },
     });
     const { l2p_ext, cs_opendir_fd, cs_openat_file, cs_close, cs_getattrbulk } = lib.symbols;
+    const { includeCloud } = input;
+    // The kernel guard is per thread; the caller's own policy comes back at the end.
+    const prevPolicy = includeCloud ? -1 : lib.symbols.cs_materialize_guard();
+    const guard = includeCloud || prevPolicy >= 0;
+    const domains = [...input.domains];
+    const provBuf = new Uint8Array(128);
+    const fpDomain = (path: string): CloudDomain | null => {
+        const pathBuf = Buffer.from(`${path}\0`, "utf8");
+        if (lib.symbols.cs_fp_domain(ptr(pathBuf), ptr(provBuf), provBuf.length) < 0) {
+            return null;
+        }
+
+        return { path, provider: new CString(ptr(provBuf)).toString() };
+    };
+    const cloud = new Map<string, CloudBackedFolder>();
+    const bucket = (key: string, domain: CloudDomain | null): CloudBackedFolder => {
+        let b = cloud.get(key);
+        if (!b) {
+            b = emptyFolder(key, domain);
+            cloud.set(key, b);
+        }
+
+        return b;
+    };
 
     // getattrlistbulk output buffer.
     const BUF_SIZE = 64 * 1024;
@@ -140,14 +177,19 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
         return dec.decode(abuf.subarray(nameByteOff, end));
     };
 
-    const stack = [...dirs];
+    const stack: { dir: string; domain: CloudDomain | null }[] = dirs.map((d) => ({
+        dir: d,
+        domain: domainOf(d, domains),
+    }));
     while (stack.length > 0) {
-        const dir = stack.pop()!;
+        const { dir, domain } = stack.pop()!;
         const dirBuf = Buffer.from(`${dir}\0`, "utf8");
         const dfd = cs_opendir_fd(ptr(dirBuf));
         if (dfd < 0) {
             continue;
         }
+        // Cloud-backed files here go to the domain's bucket, or to this folder's own (stray dataless files).
+        const here = (): CloudBackedFolder => bucket(domain ? domain.path : dir, domain);
         // Precompute group for non-root dirs (all their files share it).
         const dirIsRoot = dir === root;
         const dirGroup = dirIsRoot ? -1 : groupOf(`${dir}/x`);
@@ -162,17 +204,37 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
                 const len = adv.getUint32(p, true);
                 const nameOff = adv.getInt32(p + 24, true);
                 const objtype = adv.getUint32(p + 32, true);
-                const nlink = adv.getUint32(p + 36, true);
-                const alloc = adv.getBigInt64(p + 40, true);
-                const dlen = adv.getBigInt64(p + 48, true);
-                const priv = adv.getBigInt64(p + 56, true);
+                const flags = adv.getUint32(p + 36, true);
+                const nlink = adv.getUint32(p + 40, true);
+                const alloc = adv.getBigInt64(p + 44, true);
+                const dlen = adv.getBigInt64(p + 52, true);
+                const priv = adv.getBigInt64(p + 60, true);
                 const nameByteOff = p + 24 + nameOff;
+                const dataless = (flags & SF_DATALESS) !== 0;
 
                 if (objtype === VDIR) {
                     if (recurse) {
-                        const sub = `${dir}/${readName(nameByteOff)}`;
-                        if (!excludeSet.has(sub)) {
-                            stack.push(sub);
+                        const name = readName(nameByteOff);
+                        const sub = `${dir}/${name}`;
+                        if (!excludeSet.has(sub) && !(!includeCloud && isCloudRoot(dir, name))) {
+                            let childDomain = domain;
+                            if (!childDomain && isDomainCandidate(dir, name)) {
+                                childDomain = fpDomain(sub);
+                                if (childDomain) {
+                                    domains.push(childDomain);
+                                }
+                            }
+
+                            // Entering a dataless folder makes the provider fetch its listing.
+                            if (!includeCloud && dataless) {
+                                if (childDomain && childDomain !== domain) {
+                                    bucket(childDomain.path, childDomain).dataless_dirs++;
+                                } else {
+                                    here().dataless_dirs++;
+                                }
+                            } else {
+                                stack.push({ dir: sub, domain: childDomain });
+                            }
                         }
                     }
                     p += len;
@@ -184,6 +246,16 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
                 }
 
                 listed++;
+                const isCloud = domain !== null || dataless;
+                if (isCloud) {
+                    const b = here();
+                    b.files++;
+                    b.local_bytes += Number(alloc);
+                    if (dataless) {
+                        b.dataless_files++;
+                        b.cloud_only_bytes += Number(dlen);
+                    }
+                }
                 privSum += priv;
 
                 if (alloc === 0n || alloc < minB) {
@@ -204,6 +276,14 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
                 gFiles[group]! += 1;
                 gPrivate[group]! += Number(priv);
                 scanned++;
+
+                // Cloud-backed, stat-only: counted from the listing like `du`, never opened.
+                if (isCloud && !includeCloud) {
+                    uniquePrivate += dlen;
+                    uniquePrivateAlloc += alloc;
+                    p += len;
+                    continue;
+                }
 
                 if (priv >= alloc && nlink <= 1 && alloc >= dlen) {
                     uniquePrivate += dlen; // fully private, non-sparse, single link
@@ -242,6 +322,10 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
         cs_close(dfd);
     }
 
+    if (prevPolicy >= 0) {
+        lib.symbols.cs_materialize_restore(prevPolicy);
+    }
+
     lib.close();
 
     return {
@@ -258,5 +342,7 @@ function scanDirsInner(input: ScanDirsInput): ScanDirsResult {
         gNaive,
         gFiles,
         gPrivate,
+        cloud: [...cloud.values()],
+        guard,
     };
 }

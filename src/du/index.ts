@@ -6,10 +6,13 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import * as p from "@genesiscz/utils/prompts/p";
+import { clackBackend } from "@genesiscz/utils/prompts/p/clack-backend";
 import { Storage } from "@genesiscz/utils/storage";
 import { Command, Option } from "commander";
 import pc from "picocolors";
 import { scanWithBun } from "./lib/bun-scan";
+import { registerCloudCommands } from "./lib/cloud-commands";
 import { readVolumeInfo, scanPartners, scanWithC, scanWithCFfi } from "./lib/engine";
 import { diffScans, humanBytes, renderDiff, renderHuman, renderPartners, renderTree, renderVolume } from "./lib/format";
 import { registerIndexCommands } from "./lib/index/commands";
@@ -19,6 +22,7 @@ import { detectWorktreeExcludes } from "./lib/worktrees";
 
 const program = new Command();
 const storage = new Storage("du");
+p.setBackend(clackBackend);
 
 /** `PROFILE=du` turns on every phase this CLI times: the scan itself and the
  *  engine's own sub-phases. Use it instead of wrapping the binary in `time`,
@@ -127,7 +131,8 @@ program
     .option("--no-cache", "Ignore the extent cache when reading. It is still written, so the NEXT run is warm.")
     .option(
         "--include-cloud",
-        "Also walk ~/Library/CloudStorage and iCloud Drive. Slow, and reading a placeholder can download it."
+        "Also walk ~/Library/CloudStorage and iCloud Drive, and OPEN cloud-backed files. This may download them. " +
+            "Default: dataless files and File Provider folders are measured by stat only"
     )
     .option("--save <file>", "Write the raw JSON result to a file (pairs with --diff on a later run)")
     .option("--diff <file>", "Compare against a previously --saved scan and print the per-directory delta")
@@ -280,7 +285,10 @@ program
     .addOption(new Option("--format <fmt>", "Output format").choices(["human", "json"]).default("human"))
     .option("--threads <n>", "Worker threads (default: number of CPUs)", intOpt("--threads", { min: 1, max: 1024 }))
     .option("--depth <n>", "Also print a per-directory tree down to depth N", intOpt("--depth", { min: 0 }))
-    .option("--include-cloud", "Also walk cloud-provider roots (slow; reading a placeholder can download it)")
+    .option(
+        "--include-cloud",
+        "Also walk cloud-provider roots and OPEN cloud-backed files (this may download them; default: stat only)"
+    )
     .addHelpText(
         "after",
         [
@@ -526,5 +534,6 @@ program
     });
 
 registerIndexCommands(program);
+registerCloudCommands(program);
 
 await runTool(program, { tool: "du" });

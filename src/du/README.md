@@ -1,7 +1,9 @@
 # tools du
 
 Measurement only: it never changes what it measures. The only things it writes
-are its own caches and the `index` database under `~/.genesis-tools/du/`.
+are its own caches and the `index` database under `~/.genesis-tools/du/`. The one
+exception is `evict --apply`, which frees the local copy of iCloud files (never the
+cloud copy), and only after a dry run by default.
 macOS/APFS: the engines map physical extents through `F_LOG2PHYS_EXT`, so every
 verb exits 2 with an explanation on other platforms rather than failing to compile.
 
@@ -25,6 +27,8 @@ On this machine that is not a corner case. `bun install` uses `clonefile(2)`, so
 | `clonesize <dir>` | Naive (du-style) versus real unique on-disk bytes for a tree, deduping APFS clones |
 | `volume [mount]` | Reconcile a whole volume: APFS used-bytes versus what a scan can actually see |
 | `partners <dir>` | Find where else a directory's blocks live, the concrete clone partners |
+| `downloaded <dir>` | Cloud files (iCloud, File Provider folders) that are downloaded on this disk, largest first |
+| `evict <dir>` | Free the local copy of downloaded iCloud files that are confirmed uploaded (dry run by default) |
 | `index build\|update\|query\|diff\|schedule` | A persisted directory-size index (SQLite) behind the Disk Manager: space map, "what grew", prewarmed answers |
 | `bench [dir]` | Benchmark the C engine against the Bun engine and plain `du -sh`, with a byte-for-byte cross-check |
 
@@ -65,7 +69,7 @@ tools du index diff --from 7d                   # what grew in the last week
 | `--ignore-worktrees` | Auto-detect and exclude git worktrees and `.worktrees/` dirs |
 | `--changed-within <duration>` | Only count files modified inside this window (`7d`, `24h`, `30m`) |
 | `--no-cache` | Ignore the extent cache when reading. It is still written, so the next run is warm. |
-| `--include-cloud` | Also walk `~/Library/CloudStorage` and iCloud Drive |
+| `--include-cloud` | Also walk `~/Library/CloudStorage` and iCloud Drive, and open cloud-backed files. This may download them. |
 | `--save <file>` | Write the raw JSON result to a file |
 | `--diff <file>` | Compare against a previously saved scan and print the per-directory delta |
 
@@ -80,7 +84,7 @@ tools du index diff --from 7d                   # what grew in the last week
 | `--format <fmt>` | `human` or `json` |
 | `--threads <n>` | Worker threads |
 | `--depth <n>` | Also print a per-directory tree down to depth N |
-| `--include-cloud` | Also walk cloud-provider roots |
+| `--include-cloud` | Also walk cloud-provider roots and open cloud-backed files (may download them) |
 
 Answers "my disk says 97% full, where is it?". The scan is compared against `ATTR_VOL_SPACEUSED`, the same number `diskutil` prints as Volume Used Space, so anything the walk could not read appears as an explicit **UNACCOUNTED** line instead of silently vanishing from the total.
 
@@ -155,9 +159,88 @@ Hard links count once per entry (like `naive_bytes`), never deduplicated.
 
 ---
 
-## ⚠️ `--include-cloud` can cost you
+## ⚠️ Cloud-backed content: stat only by default
 
-Reading a cloud placeholder file can trigger a download. On a metered or slow connection, or with a large iCloud Drive, that is expensive and slow. It is off by default for exactly that reason. Turn it on only when you specifically need cloud roots counted.
+Opening a cloud placeholder (a *dataless* file) makes `fileproviderd` download it. So by default
+no verb opens cloud-backed content, and none enters a dataless folder:
+
+- **Detection.** A file is cloud-backed when it is dataless (`st_flags & SF_DATALESS`, `ls -lO`
+  shows `dataless`), anywhere, or when it sits inside a File Provider domain. A domain root carries
+  the `com.apple.file-provider-domain-id` xattr: Desktop and Documents synced to iCloud,
+  `~/Library/Mobile Documents`, every `~/Library/CloudStorage/<provider>` (Dropbox, Tresorit, ...).
+  Only the places a domain root can sit are asked for the xattr (children of a home folder, of
+  `Library/CloudStorage`, and `Library/Mobile Documents`), plus the scan root and its ancestors.
+- **Stat only.** Such files are counted from the listing, like `du`: their allocated size goes into
+  `naive_bytes` and, in full, into the unique totals. They are never opened and their extents are
+  never read, so clone sharing inside them is not deduped (an upper bound). A dataless folder is
+  counted, never entered (entering it makes the provider fetch its listing).
+- **Kernel guard.** Each walk thread sets `IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES` to off, so a
+  case the rules miss fails in the kernel instead of downloading.
+- **Skipped roots.** `~/Library/CloudStorage` and `~/Library/Mobile Documents` are still not walked
+  at all (`skipped_cloud`): a provider's listing can stall a walk for minutes.
+- `--include-cloud` lifts all of it: it walks the provider roots and opens cloud-backed files for
+  exact clone accounting. **That may download them.**
+
+The human output names every folder, for example:
+
+```
+  ⚠ Cloud-backed content was measured by stat only, never opened (opening a placeholder
+    can make the provider download it). Clone sharing inside it is not deduped:
+     ~/Documents: 9,230 files cloud-backed, measured by stat only, not opened (155.4 MB local, 8,949 dataless = 1.20 GB cloud-only)
+     ~/Library/CloudStorage/Tresorit-x: 24 dataless folder(s) not entered
+```
+
+JSON (`clonesize`, `volume`'s `scan`): one object, `cloud_backed`:
+
+| Field | Meaning |
+|---|---|
+| `mode` | `stat-only` (default) or `opened` (`--include-cloud`) |
+| `materialize_guard` | The walk threads ran with dataless materialization off |
+| `files` | Cloud-backed regular files listed |
+| `dataless_files`, `dataless_dirs` | Placeholders; folders were not entered |
+| `local_bytes` | Σ allocated bytes of the cloud-backed files: what is on this disk |
+| `cloud_only_bytes` | Σ logical size of the dataless files: content that is only in the cloud |
+| `folders[]` | The same counts per folder: `path`, `domain` (true for a domain root), `provider`, `files`, `dataless_files`, `dataless_dirs`, `local_bytes`, `cloud_only_bytes`. A folder with `domain: false` held stray dataless files. |
+
+`--bigfiles` (the dedupe walk behind `tools macos clones`) leaves dataless files out of its
+list (`dataless_skipped`), since its caller reads every candidate. `index` flags a dataless folder
+as a skipped cloud folder (flag 4) and does not enter it.
+
+## `downloaded`
+
+| Flag | Description |
+|------|-------------|
+| `--format <fmt>` | `human` or `json` |
+| `--min-bytes <n>` | Only files with at least N allocated bytes |
+| `--top <n>` | Rows to show (default: 30) |
+| `--include-cloud` | Also walk the skipped provider roots under `<dir>` (listing only) |
+
+Every cloud-backed file under `<dir>` that is on this disk: inside a File Provider domain, not
+dataless, allocated. A listing walk, so it cannot download anything. These are the files `evict`
+can free. `clonesize` and `volume` print the two commands as a **Reclaim** hint whenever their
+walk saw downloaded cloud files. JSON: `files[]` with `path`, `size`, `alloc`, `domain`, `provider`,
+plus `cloud` (the `cloud_backed` object) and `skippedCloud`.
+
+## `evict`
+
+| Flag | Description |
+|------|-------------|
+| `--apply` | Really evict. Without it the command is a dry run that changes nothing |
+| `--all` | Select every eligible file (non-interactive) |
+| `--path <file...>` | Select these files only |
+| `--min-bytes <n>`, `--top <n>` | Which downloaded files to offer (default: the 50 largest) |
+
+List, select, evict. It lists like `downloaded`, asks iCloud for each file's state, offers the
+eligible files in a multiselect (or takes `--all` / `--path` without a TTY), and prints what it
+would free. With `--apply` it evicts through `FileManager.evictUbiquitousItem` (the Swift helper
+`native/cloudctl.swift`, compiled on demand). Eviction never deletes: the file stays in iCloud and
+downloads again when opened.
+
+A file is evicted only when iCloud reports it uploaded, not uploading, without an upload error,
+with the local copy current. The helper reads that state again right before each eviction.
+Refused, always: Tresorit (on its Drive mount only reading the file back through the mount proves
+the server has it, and its File Provider snapshot and the mount listing both lie), and every other
+provider, whose upload state GenesisTools has not verified.
 
 ## 🛑 Before changing anything under `src/du/`
 

@@ -1,6 +1,7 @@
+import { homedir } from "node:os";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import pc from "picocolors";
-import type { ClonesizeResult, Engine, NodeResult, PartnersResult, VolumeInfo } from "./types";
+import type { ClonesizeResult, CloudBackedResult, Engine, NodeResult, PartnersResult, VolumeInfo } from "./types";
 
 export function humanBytes(b: number): string {
     const KB = 1024,
@@ -91,8 +92,92 @@ export function renderDenied(r: { denied_dirs?: number; denied_files?: number; d
     return L;
 }
 
+/** `/Users/me/Documents` → `~/Documents`, for the warning lines. */
+export function tildePath(p: string, home = homedir()): string {
+    if (p === home) {
+        return "~";
+    }
+
+    return p.startsWith(`${home}/`) ? `~${p.slice(home.length)}` : p;
+}
+
+/** One warning line per folder: `~/Documents: 8,606 files cloud-backed, measured by stat only, not opened (...)`. */
+export function cloudFolderLine(
+    f: CloudBackedResult["folders"][number],
+    mode: CloudBackedResult["mode"],
+    home = homedir()
+): string {
+    const how = mode === "stat-only" ? "measured by stat only, not opened" : "opened (--include-cloud)";
+    const parts: string[] = [];
+    if (f.files > 0) {
+        const detail = [`${humanBytes(f.local_bytes)} local`];
+        if (f.dataless_files > 0) {
+            detail.push(`${f.dataless_files.toLocaleString()} dataless = ${humanBytes(f.cloud_only_bytes)} cloud-only`);
+        }
+
+        parts.push(`${f.files.toLocaleString()} files cloud-backed, ${how} (${detail.join(", ")})`);
+    }
+
+    if (f.dataless_dirs > 0) {
+        parts.push(`${f.dataless_dirs.toLocaleString()} dataless folder(s) not entered`);
+    }
+
+    return `${tildePath(f.path, home)}: ${parts.join("; ")}`;
+}
+
+/**
+ * The cloud-backed warning, grouped by folder. Printed whenever the walk listed
+ * any cloud-backed content, so a stat-only number can never pass for a measured one.
+ */
+export function renderCloudBacked(r: { path: string; cloud_backed?: CloudBackedResult }, home = homedir()): string[] {
+    const c = r.cloud_backed;
+    if (!c || (c.files === 0 && c.dataless_dirs === 0)) {
+        return [];
+    }
+
+    const L: string[] = [""];
+    if (c.mode === "stat-only") {
+        L.push(
+            pc.yellow("  \u26a0 Cloud-backed content was measured by stat only, never opened (opening a placeholder")
+        );
+        L.push(pc.yellow("    can make the provider download it). Clone sharing inside it is not deduped:"));
+    } else {
+        L.push(
+            pc.yellow("  \u26a0 Cloud-backed content was OPENED (--include-cloud). Dataless files may have downloaded:")
+        );
+    }
+
+    const folders = [...c.folders].sort((a, b) => b.files - a.files || b.dataless_dirs - a.dataless_dirs);
+    for (const f of folders.slice(0, 12)) {
+        L.push(pc.dim(`     ${cloudFolderLine(f, c.mode, home)}`));
+    }
+
+    if (folders.length > 12) {
+        L.push(pc.dim(`     ... and ${folders.length - 12} more folder(s)`));
+    }
+
+    if (c.mode === "stat-only") {
+        L.push(pc.dim("  Pass --include-cloud to open them for exact clone accounting. That may download them."));
+    }
+
+    if (c.local_bytes > 0 && c.folders.some((f) => f.domain)) {
+        L.push("");
+        L.push(
+            pc.dim(
+                `  Reclaim: ${humanBytes(c.local_bytes)} of cloud files are downloaded on this disk. The cloud copy stays:`
+            )
+        );
+        L.push(`     ${toolCommand("du downloaded")} ${shellQuote(r.path)}      ${pc.dim("# list the local copies")}`);
+        L.push(
+            `     ${toolCommand("du evict")} ${shellQuote(r.path)}           ${pc.dim("# pick and evict them (dry run first)")}`
+        );
+    }
+
+    return L;
+}
+
 /** Quote a path for copy-paste into a shell. */
-function shellQuote(p: string): string {
+export function shellQuote(p: string): string {
     return /^[\w./@:-]+$/.test(p) ? p : `'${p.replaceAll("'", `'\\''`)}'`;
 }
 
@@ -209,6 +294,7 @@ export function renderHuman(r: ClonesizeResult, engine: Engine, elapsedMs?: numb
         }
     }
 
+    L.push(...renderCloudBacked(r));
     L.push(...renderDenied(r));
 
     return L.join("\n");
@@ -302,6 +388,7 @@ export function renderTree(r: ClonesizeResult, engine: Engine, elapsedMs?: numbe
     if (nodes.some(sparse)) {
         L.push(pc.dim(`  ${pc.magenta("sparse")} = holds sparse files; apparent size far exceeds allocated blocks`));
     }
+    L.push(...renderCloudBacked(r));
     L.push(...renderDenied(r));
     return L.join("\n");
 }
@@ -346,6 +433,8 @@ export function renderVolume(vol: VolumeInfo, scan: ClonesizeResult, elapsedMs?:
         L.push(pc.dim("  Their contents are mostly placeholders that live on someone else's disk, and reading"));
         L.push(pc.dim("  one can download it. Pass --include-cloud to walk them anyway."));
     }
+
+    L.push(...renderCloudBacked({ path: vol.mount, cloud_backed: scan.cloud_backed }));
 
     const mounts = scan.skipped_mounts ?? [];
     if (mounts.length > 0) {

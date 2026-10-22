@@ -1322,3 +1322,60 @@ to the 512 cap, and a scratch directory registers nothing outside itself. `bun s
 (with the two other touched suites) exited 0: 101 pass, 0 fail. The foreign check requires `foreign>=1`, `missing=0`
 and `leaked=0`. `src/du/native/bench.sh` was not run. The change is the mount list for root `/`, and a bench must not
 walk `/`.
+
+## 2026-10-22 18:57 — Cloud-backed content is measured by stat only by default (dataless files, File Provider domains)
+
+Opening a dataless file makes `fileproviderd` download it. Before this change the default scan pruned only
+`~/Library/CloudStorage` and `~/Library/Mobile Documents` by name, so Desktop and Documents synced to iCloud (and a
+scan rooted inside a provider folder) were walked with the normal open + `F_LOG2PHYS_EXT` path for every shared file.
+`clonesize ~/Desktop --freeable` and the same for `~/Documents` each hit a 45 s timeout on this Mac.
+
+What changed in `clonesize.c`:
+
+- Every walk (scan, `--bigfiles`, `--index`) requests `ATTR_CMN_FLAGS` (bit 0x00040000, between MODTIME and FILEID),
+  so each entry layout gains a u32 at offset 52 and every later field moves by 4. The Bun engine's shim
+  (`cs_getattrbulk`) gains it at offset 36.
+- A file is cloud-backed when it has `SF_DATALESS`, or when it sits under a File Provider domain root (the
+  `com.apple.file-provider-domain-id` xattr). Only the places a root can sit pay for a `getxattr`: children of a home
+  folder, of `.../Library/CloudStorage`, `.../Library/Mobile Documents`, and the scan root with its ancestors.
+- Default: a cloud-backed file is counted from the listing (allocated size into `naive`, and in full into the unique
+  totals) and never opened. A dataless folder is counted and never entered. Each walk thread sets
+  `IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES` to off. `--include-cloud` lifts all of it.
+- `--bigfiles` leaves dataless files out (`dataless_skipped`); `--index` flags a dataless folder `IDX_F_CLOUD` and
+  does not enter it; a new `--cloudfiles` mode lists the downloaded cloud files for `tools du downloaded`.
+
+Which totals move: only trees that hold cloud-backed content. There, clone sharing between cloud-backed files is no
+longer deduped (they count at their full allocation, as `du` does), and `files_opened` drops to 0 for them. Every
+total on a tree without cloud-backed content is unchanged. Checked old binary against new, back to back, at the same
+moment (the repo is a live tree, so the T1 numbers of the two bench runs below differ between runs):
+
+| Target | old vs new |
+|---|---|
+| T1 (repo) `--json` | identical `files_listed` 331921, `files_opened` 115978, `naive` 10743083008, `unique` 8786771088, `unique_allocated` 9595559936, `shared` 1147523072 |
+| T2 (node_modules) `--json` | identical, `naive` 1680945152, `unique` 1238311583 |
+| T2 `--index --threads 8` | 784 rows identical once node ids (scheduling order) are removed |
+| T1 `--bigfiles --min-bytes 1000000` | 1176 files, same paths, `dataless_skipped` 0 |
+
+`src/du/native/bench.sh` (system CPU is the metric; the load average was 20 to 88 throughout, so wall time is noise):
+
+| Mode | before (sys s) | after (sys s) |
+|---|---|---|
+| T1 flat | 33.48 | 32.98 |
+| T1 depth2 | 30.44 | 30.31 |
+| T2 flat | 7.91 | 9.30 |
+| T2 depth2 | 7.08 | 6.66 |
+| T1 cache-cold | 28.31 | 27.66 |
+| T1 cache-warm | 17.86 | 17.51 |
+
+Load: before 35.00 at start, 88.66 at end; after 20.09 at start, 69.52 at end. Old against new in one hyperfine run
+(load 60): `--index` T2 2.66 s against 2.39 s system, `--bigfiles` T1 6.95 s against 5.16 s. No regression shows
+above the noise; the flags attribute is one more u32 per entry in the same kernel call.
+
+Cloud folders with the new binary (counts by lstat only: `find -x <dir> \( -flags +dataless -prune -type f -print \)`):
+
+| Folder | wall | opened | dataless files before / after | local KB before / after |
+|---|---|---|---|---|
+| ~/Desktop (iCloud) | 0.01 s | 0 | 889 / 889 | 3840 / 3840 |
+| ~/Documents (iCloud) | 0.10 s | 0 | 8949 / 8949 | 159140 / 159140 |
+| ~/Library/CloudStorage/Dropbox | 0.23 s | 0 | 52753 / 52753 | 0 / 0 |
+| Tresorit Drive mount root | 0.00 s | 0 | 24 dataless folders, none entered / 24 | — |

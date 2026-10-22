@@ -3,16 +3,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pc from "picocolors";
 import {
+    cloudFolderLine,
     diffScans,
     humanBytes,
     humanBytesDecimal,
+    renderCloudBacked,
     renderDenied,
     renderHuman,
     renderPartners,
     renderTree,
     renderVolume,
+    tildePath,
 } from "./format";
-import type { ClonesizeResult, NodeResult, PartnersResult, VolumeInfo } from "./types";
+import type { ClonesizeResult, CloudBackedResult, NodeResult, PartnersResult, VolumeInfo } from "./types";
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping ANSI escapes for assertions
 const stripAnsi = (s: string): string => s.replace(/\[[0-9;]*m/g, "");
@@ -423,5 +426,88 @@ describe("renderPartners", () => {
         expect(text).toContain("2 directories and 1 file(s) could not be read");
         expect(text).toContain("every total above is INCOMPLETE");
         expect(text).toContain("(3 further denial(s) not listed)");
+    });
+});
+
+describe("renderCloudBacked", () => {
+    const HOME = "/Users/alice";
+    const cloud = (mode: CloudBackedResult["mode"]): CloudBackedResult => ({
+        mode,
+        materialize_guard: mode === "stat-only",
+        files: 8606,
+        dataless_files: 8000,
+        dataless_dirs: 2,
+        local_bytes: 150 * 1024 * 1024,
+        cloud_only_bytes: 2 * 1024 * 1024 * 1024,
+        folders: [
+            {
+                path: `${HOME}/Documents`,
+                domain: true,
+                provider: "com.apple.CloudDocs.iCloudDriveFileProvider",
+                files: 8606,
+                dataless_files: 8000,
+                dataless_dirs: 0,
+                local_bytes: 150 * 1024 * 1024,
+                cloud_only_bytes: 2 * 1024 * 1024 * 1024,
+            },
+            {
+                path: `${HOME}/Library/CloudStorage/Box`,
+                domain: true,
+                provider: "com.example.box",
+                files: 0,
+                dataless_files: 0,
+                dataless_dirs: 2,
+                local_bytes: 0,
+                cloud_only_bytes: 0,
+            },
+        ],
+    });
+
+    it("names every folder, says stat only, and how to opt in", () => {
+        const text = stripAnsi(renderCloudBacked({ path: HOME, cloud_backed: cloud("stat-only") }, HOME).join("\n"));
+        expect(text).toContain("~/Documents: 8,606 files cloud-backed, measured by stat only, not opened");
+        expect(text).toContain("8,000 dataless = 2.00 GB cloud-only");
+        expect(text).toContain("~/Library/CloudStorage/Box: 2 dataless folder(s) not entered");
+        expect(text).toContain("--include-cloud");
+        expect(text).toContain("du downloaded");
+        expect(text).toContain("du evict");
+    });
+
+    it("says OPENED under --include-cloud", () => {
+        const text = stripAnsi(renderCloudBacked({ path: HOME, cloud_backed: cloud("opened") }, HOME).join("\n"));
+        expect(text).toContain("OPENED");
+        expect(text).toContain("opened (--include-cloud)");
+    });
+
+    it("prints nothing when the walk saw no cloud-backed content", () => {
+        const none: CloudBackedResult = { ...cloud("stat-only"), files: 0, dataless_dirs: 0, folders: [] };
+        expect(renderCloudBacked({ path: HOME, cloud_backed: none }, HOME)).toEqual([]);
+        expect(renderCloudBacked({ path: HOME }, HOME)).toEqual([]);
+    });
+
+    it("tildes only whole home components", () => {
+        expect(tildePath("/Users/alice", HOME)).toBe("~");
+        expect(tildePath("/Users/alice/Desktop", HOME)).toBe("~/Desktop");
+        expect(tildePath("/Users/alicex/Desktop", HOME)).toBe("/Users/alicex/Desktop");
+    });
+
+    it("renders a stray dataless folder without a provider", () => {
+        const line = cloudFolderLine(
+            {
+                path: "/data/x",
+                domain: false,
+                provider: "",
+                files: 3,
+                dataless_files: 3,
+                dataless_dirs: 0,
+                local_bytes: 0,
+                cloud_only_bytes: 3000,
+            },
+            "stat-only",
+            HOME
+        );
+        expect(line).toBe(
+            "/data/x: 3 files cloud-backed, measured by stat only, not opened (0 B local, 3 dataless = 2.9 KB cloud-only)"
+        );
     });
 });

@@ -87,9 +87,66 @@ export interface ClonesizeResult {
     skipped_mounts?: string[];
     /** Cloud-provider roots (~/Library/CloudStorage, iCloud Drive) skipped unless --include-cloud. */
     skipped_cloud?: string[];
+    /** Cloud-backed content the walk DID list: File Provider domains and dataless files. */
+    cloud_backed?: CloudBackedResult;
     /** Epoch seconds cutoff when the scan ran with --changed-within. */
     changed_since?: number;
     groups: GroupResult[];
+}
+
+/** One folder that held cloud-backed files: a File Provider domain root, or a folder with stray dataless files. */
+export interface CloudBackedFolder {
+    path: string;
+    /** True for a File Provider domain root (it carries the com.apple.file-provider-domain-id xattr). */
+    domain: boolean;
+    /** The provider id, e.g. com.apple.CloudDocs.iCloudDriveFileProvider. Empty for stray dataless files. */
+    provider: string;
+    files: number;
+    dataless_files: number;
+    /** Dataless folders: not entered, because entering one makes the provider fetch its listing. */
+    dataless_dirs: number;
+    /** Σ allocated bytes of the cloud-backed files: what is on this disk. */
+    local_bytes: number;
+    /** Σ logical size of the dataless files: content that lives only in the cloud. */
+    cloud_only_bytes: number;
+}
+
+/** One cloud-backed file that is on disk (`tools du downloaded`): evicting it frees `alloc`. */
+export interface CloudFileEntry {
+    path: string;
+    /** Logical size. */
+    size: number;
+    /** Allocated bytes on this disk. */
+    alloc: number;
+    /** The File Provider domain root it sits in. */
+    domain: string;
+    provider: string;
+}
+
+export interface CloudFilesResult {
+    root: string;
+    filesListed: number;
+    dirs: number;
+    deniedDirs: number;
+    readErrors: number;
+    /** Provider roots not walked (pass --include-cloud, or point at the provider folder itself). */
+    skippedCloud: string[];
+    cloud: CloudBackedResult;
+    /** Largest allocation first. */
+    files: CloudFileEntry[];
+}
+
+export interface CloudBackedResult {
+    /** `stat-only`: counted from the listing, never opened (default). `opened`: --include-cloud. */
+    mode: "stat-only" | "opened";
+    /** The walk threads ran with dataless materialization OFF, so a missed placeholder fails instead of downloading. */
+    materialize_guard: boolean;
+    files: number;
+    dataless_files: number;
+    dataless_dirs: number;
+    local_bytes: number;
+    cloud_only_bytes: number;
+    folders: CloudBackedFolder[];
 }
 
 /** Authoritative volume figures straight from the APFS layer (ATTR_VOL_*). */
@@ -147,6 +204,9 @@ export interface ScanOptions {
     cacheDir?: string;
     /** --no-cache: ignore the cache when reading. It is still WRITTEN, so the next run is warm. */
     noCache?: boolean;
-    /** --include-cloud: walk cloud-provider roots too (slow, and can trigger downloads). */
+    /**
+     * --include-cloud: walk cloud-provider roots too, and open cloud-backed files for their extents.
+     * Off by default: dataless files and File Provider domains are then measured from the listing only.
+     */
     includeCloud?: boolean;
 }

@@ -1,4 +1,5 @@
-# Compiled on demand by lib/engine.ts (platform-specific, never committed).
+# Compiled on demand by lib/engine.ts and lib/evict.ts (platform-specific, never committed).
 clonesize
 *.dylib
 *.o
+cloudctl
