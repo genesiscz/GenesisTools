@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, delimiter, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -91,6 +91,23 @@ export function modsWatched(settings: unknown): boolean {
 }
 
 /**
+ * `modsWatched` of the user settings file: `false` when there is no file, `undefined` when it cannot be read or is
+ * not JSON. `mods status` reports that as unknown instead of stopping at a malformed settings file.
+ */
+export function modsWatchState(settingsPath = claudeUserSettingsPath()): boolean | undefined {
+    if (!existsSync(settingsPath)) {
+        return false;
+    }
+
+    try {
+        return modsWatched(SafeJSON.parse(readFileSync(settingsPath, "utf8")));
+    } catch (err) {
+        logger.debug({ err, settingsPath }, "Claude settings unreadable: hot reload is unknown");
+        return undefined;
+    }
+}
+
+/**
  * The settings with the mods folder added to (or, `on: false`, every mods folder taken out of)
  * `env.CLAUDE_CODE_PLUGIN_DIRS`. Every interactive session loads such a folder as a `--plugin-dir` and
  * watches it, so a save reloads the mod; an installed plugin is never watched, only re-read by
@@ -118,21 +135,40 @@ export function withModsWatch(settings: unknown, folder: string, on: boolean): R
 }
 
 /**
- * Whether the user settings load the mods plugin: enabled in `enabledPlugins` (`hooks mods install`) or
- * named in `env.CLAUDE_CODE_PLUGIN_DIRS` (`hooks mods watch`), in `<claude dir>/settings.json`. A file read, not `claude plugin list`: the diff hook asks on every Bash call.
- * A project or local install is not seen, and a session that has not run `/reload-plugins` since the install
- * does not draw yet.
+ * The settings files that can turn the mods plugin on or off for this session, the strongest first: the project's
+ * local and shared settings (`CLAUDE_PROJECT_DIR`, which Claude Code gives its hooks), then the user settings.
  */
-export function modsPluginEnabled(settingsPath = claudeUserSettingsPath()): boolean {
-    try {
-        const settings: unknown = SafeJSON.parse(readFileSync(settingsPath, "utf8"), { strict: true });
-        const enabled = isRecord(settings) ? settings.enabledPlugins : undefined;
+export function modsSettingsPaths(projectDir = env.getProcessEnv().CLAUDE_PROJECT_DIR): string[] {
+    const project = projectDir
+        ? [join(projectDir, ".claude", "settings.local.json"), join(projectDir, ".claude", "settings.json")]
+        : [];
+    return [...project, claudeUserSettingsPath()];
+}
 
-        return (isRecord(enabled) && enabled[MODS_PLUGIN] === true) || modsWatched(settings);
-    } catch (err) {
-        logger.debug({ err, settingsPath }, "Claude settings unreadable: the mods plugin counts as off");
-        return false;
+/**
+ * Whether the strongest settings file that names the mods plugin turns it off. A file that does not name it (a
+ * `--plugin-dir` or watched load, a project install read from the user side) decides nothing.
+ */
+export function modsPluginDisabled(paths = modsSettingsPaths()): boolean {
+    for (const path of paths) {
+        let settings: unknown;
+
+        try {
+            settings = SafeJSON.parse(readFileSync(path, "utf8"));
+        } catch (err) {
+            logger.debug({ err, path }, "Claude settings unreadable: they decide nothing about the mods plugin");
+            continue;
+        }
+
+        const enabled = isRecord(settings) ? settings.enabledPlugins : undefined;
+        const value = isRecord(enabled) ? enabled[MODS_PLUGIN] : undefined;
+
+        if (typeof value === "boolean") {
+            return !value;
+        }
     }
+
+    return false;
 }
 
 export interface ClaudePluginRun {

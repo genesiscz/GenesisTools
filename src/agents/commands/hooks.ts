@@ -50,7 +50,7 @@ import {
     MODS_SCOPES,
     type ModsScope,
     modsPluginState,
-    modsWatched,
+    modsWatchState,
     PLUGIN_DIRS_VAR,
     pluginDirsOf,
     withModsWatch,
@@ -776,13 +776,18 @@ function registerMods(hooks: Command): void {
                 ui.raw(pc.yellow(`diff.fullDiff is off, so no call has a full-diff note for the mod to draw.`));
             }
 
-            const watched = modsWatched(readSettings(claudeUserSettingsPath()));
+            const settingsPath = claudeUserSettingsPath();
+            const watched = modsWatchState(settingsPath);
+            const hotReload =
+                watched === undefined
+                    ? pc.yellow(`unknown (${settingsPath} could not be read)`)
+                    : watched
+                      ? pc.green(`on (${PLUGIN_DIRS_VAR} in the settings env)`)
+                      : pc.dim(`off: ${toolCommand("agents hooks mods watch", "--write")}`);
 
-            ui.raw(
-                `hot reload: ${watched ? pc.green(`on (${PLUGIN_DIRS_VAR} in the settings env)`) : pc.dim(`off: ${toolCommand("agents hooks mods watch", "--write")}`)}`
-            );
+            ui.raw(`hot reload: ${hotReload}`);
 
-            if (!state.installed && !watched) {
+            if (!state.installed && watched === false) {
                 ui.raw(`Install: ${toolCommand("agents hooks mods install", "--write")}`);
             }
         });

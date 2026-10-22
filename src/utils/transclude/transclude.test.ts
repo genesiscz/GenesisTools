@@ -306,6 +306,20 @@ describe("helpers", () => {
         );
     });
 
+    test("masks a quoted credential literal with spaces, and keeps an expansion or a short literal", () => {
+        expect(redactSecretsInText('PASSWORD="A1bc defg hij"')).toBe('PASSWORD="[redacted]"');
+        expect(redactSecretsInText("client_secret: 'two words here'")).toBe("client_secret: '[redacted]'");
+        expect(redactSecretsInText('{"api_key": "abc def ghi jkl"}')).toBe('{"api_key": "[redacted]"}');
+        expect(redactSecretsInText('TOKEN="$TOKEN_FROM_ENV"')).toBe('TOKEN="$TOKEN_FROM_ENV"');
+        expect(redactSecretsInText('password: "short"')).toBe('password: "short"');
+        // A row of a .env patch: the name follows the diff marker.
+        expect(redactSecretsInText('+PASSWORD="two words here"\n-API_TOKEN=abcd1234efgh5678ijkl')).toBe(
+            '+PASSWORD="[redacted]"\n-API_TOKEN=[redacted]'
+        );
+        // A quoted password whose first word alone looks like a key: the rest is masked too.
+        expect(redactSecretsInText('PASSWORD="Abc123456789012345 tail secret"')).toBe('PASSWORD="[redacted]"');
+    });
+
     test("masks a browser's saved cookies and storage values, a cookie header, and a JWT with an encoded payload", () => {
         const jar =
             '{"cookies":[{"name":"JSESSIONID","value":"288F69E6","sameSite":"Lax"}],"localStorage":[{"name":"n","value":"v\\"x"}]}';

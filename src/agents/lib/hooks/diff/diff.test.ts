@@ -33,7 +33,7 @@ import { isDeleted, statusEntries, untrackedFilesIn } from "../git";
 import { callDir, claimsRoot, sessionDir } from "../paths";
 import type { HookPayload } from "../payload";
 import { readOnlyCommand, recordTouches } from "./attribution";
-import { beforeCopy } from "./before";
+import { beforeCopier, beforeCopy } from "./before";
 import { type CaptureResult, capturePre, captureRoots, harnessOwnFile } from "./capture";
 import { claimChange, claimFileName } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
@@ -66,7 +66,9 @@ import {
     deferredTaskHeading,
     flushDeferred,
     modDrawsDiffs,
+    modLoadedIn,
     noteFileToolInput,
+    readHead,
     renamesIn,
     runDiffPost,
     silentReason,
@@ -218,6 +220,29 @@ describe("beforeCopy", () => {
         const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
 
         expect(beforeCopy({ dir, root: repo, absolute: join(repo, "kept.ts") })).toBeNull();
+    });
+
+    it("extracts only the files the archive holds when asked for many", () => {
+        mkdirSync(join(repo, "scratch"), { recursive: true });
+        writeFileSync(join(repo, "scratch/deep.ts"), "one\ntwo\nthree\n");
+
+        const current = begin();
+        const dir = callDir(current.harness, current.sessionId ?? "", current.toolUseId ?? "");
+        const asked: string[] = [];
+        const copyOf = beforeCopier({
+            dir,
+            root: repo,
+            copy: (args) => {
+                asked.push(args.absolute);
+                return beforeCopy(args);
+            },
+        });
+        const clean = Array.from({ length: 20 }, (_, i) => copyOf(join(repo, `gone-${i}.ts`)));
+        const copy = copyOf(join(repo, "scratch/deep.ts"));
+
+        expect(clean.every((item) => item === null)).toBe(true);
+        expect(asked).toEqual([join(repo, "scratch/deep.ts")]);
+        expect(readFileSync(copy ?? "", "utf8")).toBe("one\ntwo\nthree\n");
     });
 });
 
@@ -913,6 +938,40 @@ describe("files the command NAMES rather than works in", () => {
         expect(runDiffPost({ payload: current, config: plain }).message).toContain("HEREDOC-ADDED");
     });
 
+    it("shows only the shape of a change to a private key file, whose hunk lacks the key's markers", () => {
+        const key = join(outside, "id_fixture");
+        const body = (middle: string) =>
+            [
+                "-----BEGIN OPENSSH PRIVATE KEY-----",
+                ...Array.from({ length: 20 }, (_, i) =>
+                    i === 10 ? middle : `AAAAFIXTUREKEYLINE${String(i).padStart(2, "0")}`
+                ),
+                "-----END OPENSSH PRIVATE KEY-----",
+                "",
+            ].join("\n");
+        writeFileSync(key, body("OLDFIXTURESECRETLINE"));
+        const current = begin({ command: `bun /x/rotate.mjs ${key}` });
+
+        writeFileSync(key, body("NEWFIXTURESECRETLINE"));
+        const message = runDiffPost({ payload: current, config: plain }).message ?? "";
+
+        expect(message).toContain("[redacted]");
+        expect(message).not.toContain("FIXTURESECRETLINE");
+        expect(message).not.toContain("AAAAFIXTUREKEYLINE");
+    });
+
+    it("shows the rows of a source file that only quotes a key marker, as a test fixture does", () => {
+        const source = join(outside, "key-fixture.test.ts");
+        const lines = (row: string) =>
+            [`const KEY = ["-----BEGIN OPENSSH PRIVATE KEY-----", "x"];`, row, ""].join("\n");
+        writeFileSync(source, lines("const a = 1;"));
+        const current = begin({ command: `bun /x/edit.mjs ${source}` });
+
+        writeFileSync(source, lines("const QUOTED_MARKER_ROW = 2;"));
+
+        expect(runDiffPost({ payload: current, config: plain }).message ?? "").toContain("QUOTED_MARKER_ROW");
+    });
+
     it("masks the cookie values of a browser login it shows", () => {
         const jar = join(outside, "localhost-3000.json");
         const cookie = (value: string) => `{"cookies":[{"name":"JSESSIONID","value":"${value}","httpOnly":true}]}`;
@@ -924,6 +983,51 @@ describe("files the command NAMES rather than works in", () => {
 
         expect(message).toContain('"value":"[redacted]"');
         expect(message).not.toContain("SESSION-");
+    });
+
+    it("masks a changed cookie value whose hunk shows none of the jar's own keys", () => {
+        // A formatted storageState: only the second cookie's value changes, and its three context lines
+        // hold name, domain, path and expires, none of `cookies`, `httpOnly` or `sameSite`.
+        const jar = join(outside, "storage-state.json");
+        const state = (second: string) =>
+            [
+                "{",
+                '  "cookies": [',
+                "    {",
+                '      "name": "first",',
+                '      "value": "FIRST-SESSION-0A1B2C3D",',
+                '      "domain": "localhost",',
+                '      "path": "/",',
+                '      "expires": -1,',
+                '      "httpOnly": true,',
+                '      "secure": false,',
+                '      "sameSite": "Lax"',
+                "    },",
+                "    {",
+                '      "name": "second",',
+                '      "domain": "localhost",',
+                '      "path": "/",',
+                '      "expires": -1,',
+                `      "value": "${second}",`,
+                '      "secure": false,',
+                '      "flagA": 1,',
+                '      "flagB": 2,',
+                '      "flagC": 3,',
+                '      "httpOnly": true,',
+                '      "sameSite": "Lax"',
+                "    }",
+                "  ]",
+                "}",
+                "",
+            ].join("\n");
+        writeFileSync(jar, state("OLD-SECOND-SESSION-11"));
+        const current = begin({ command: `bun /x/login.mjs ${jar}` });
+
+        writeFileSync(jar, state("NEW-SECOND-SESSION-22"));
+        const message = runDiffPost({ payload: current, config: plain }).message ?? "";
+
+        expect(message).toContain('"value": "[redacted]"');
+        expect(message).not.toContain("SECOND-SESSION");
     });
 
     it("a read-only command that names an absolute path never claims a concurrent edit to it", () => {
@@ -1065,6 +1169,59 @@ describe("files the command NAMES rather than works in", () => {
         expect(namedArguments(`node -e 'require("fs").writeFileSync("${note}", "x")'`, [vault])).toEqual([note]);
         expect(namedArguments(`python3 -c "open('${note}','a')"`, [vault])).toEqual([note]);
         expect(namedArguments(`python3 - <<'EOF'\nopen(f'${vault}/{n}.md')\nEOF`, [vault])).toEqual([]);
+    });
+
+    it("reads a relative quoted file of a script against the folder the command runs in", () => {
+        const note = join(vault, "wrapup.md");
+
+        expect(namedArguments(`python3 -c "open('wrapup.md','a')"`, [vault])).toEqual([note]);
+        expect(namedArguments(`python3 - <<'EOF'\nprint('wrapup.md is long')\nEOF`, [vault])).toEqual([]);
+    });
+
+    it("reads a relative literal in the folder the command last cd-ed into, before the session folder", () => {
+        const sub = join(vault, "relative-cd");
+        mkdirSync(sub, { recursive: true });
+        writeFileSync(join(sub, "wrapup.md"), "x\n");
+
+        expect(namedArguments(`python3 -c "open('wrapup.md','a')"`, [vault, sub])).toEqual([join(sub, "wrapup.md")]);
+    });
+
+    it("reads a relative literal in the folder the command returned to, not the one it left", () => {
+        const sub = join(vault, "relative-cd");
+        mkdirSync(sub, { recursive: true });
+        writeFileSync(join(sub, "wrapup.md"), "x\n");
+        const command = `cd relative-cd && cd .. && python3 -c "open('wrapup.md','a')"`;
+
+        expect(commandDirs(command, vault)).toEqual([vault, sub, vault]);
+        const named = namedArguments(command, commandDirs(command, vault));
+        expect(named).toContain(join(vault, "wrapup.md"));
+        expect(named).not.toContain(join(sub, "wrapup.md"));
+    });
+
+    it("reads a double-quoted script as the interpreter gets it, with the shell's escapes decoded", () => {
+        const note = join(vault, "wrapup.md");
+
+        expect(namedArguments(`python3 -c "open(\\"${note}\\",\\"a\\").write(\\"x\\")"`, [vault])).toEqual([note]);
+    });
+
+    it("keeps the other paths of a script when one literal cannot be stat'ed", () => {
+        // `/…/wrapup.md/x` is ENOTDIR, which `throwIfNoEntry: false` does not cover; it threw out of the hook.
+        const note = join(vault, "wrapup.md");
+        const command = `python3 - <<'EOF'\nprint('${note}/x')\nopen('${note}','a')\nEOF`;
+
+        expect(namedArguments(command, [vault])).toEqual([note]);
+    });
+
+    it("reads no script out of an interpreter example inside a data heredoc or a quoted string", () => {
+        const note = join(vault, "wrapup.md");
+
+        expect(
+            namedArguments(`cat > n.md <<'SPEC'\nnode -e 'require("fs").writeFileSync("${note}", "x")'\nSPEC`, [])
+        ).toEqual([]);
+        expect(namedArguments(`cat > n.md <<'SPEC'\npython3 - <<'EOF'\nopen('${note}','a')\nEOF\nSPEC`, [])).toEqual(
+            []
+        );
+        expect(namedArguments(`echo "run: node -e 'x(\\"${note}\\")'"`, [])).toEqual([]);
     });
 
     it("finds a quoted path, which the scanner blanks out of the token stream", () => {
@@ -1826,6 +1983,37 @@ describe("a command that edits AND commits in the same call", () => {
         expect(decision.message).toContain("(+1 -1)");
     });
 
+    it("shows only the shape of a key file whose BEGIN line the command removed, read against the base commit", () => {
+        const key = join(repo2, "id_base_fixture");
+        const rows = Array.from({ length: 40 }, (_, i) => `AAAABASEKEYLINE${String(i).padStart(2, "0")}`);
+        writeFileSync(
+            key,
+            ["-----BEGIN OPENSSH PRIVATE KEY-----", ...rows, "-----END OPENSSH PRIVATE KEY-----", ""].join("\n")
+        );
+        run(["add", "-A"]);
+        run(["commit", "-qm", "seed key"]);
+
+        const current = begin({ cwd: repo2, toolUseId: "commit-key" });
+
+        // The BEGIN line is gone and a key row far from the END line changed: the patch shows no END marker, so the
+        // key pattern cannot mask it, and the current file no longer looks like a key.
+        writeFileSync(
+            key,
+            [...rows.slice(0, 15), "NEWBASESECRETROW", ...rows.slice(16), "-----END OPENSSH PRIVATE KEY-----", ""].join(
+                "\n"
+            )
+        );
+        run(["add", "-A"]);
+        run(["commit", "-qm", "strip key"]);
+
+        const message = runDiffPost({ payload: current, config: plain }).message ?? "";
+
+        expect(message).toContain("id_base_fixture");
+        expect(message).not.toContain("BASESECRETROW");
+        expect(message).not.toContain("AAAABASEKEYLINE");
+        expect(message).not.toContain("BEGIN OPENSSH");
+    });
+
     it("renders a file ONCE when the command commits it and then edits it again", () => {
         // Such a file is in the committed list AND still in `git status`, so it used to be
         // collected twice and rendered twice. `dedupeAcrossSessions` is off on purpose: the
@@ -2265,15 +2453,32 @@ describe("the budget buys the change before the context", () => {
         const one = edit("a");
         let spawns = 0;
 
+        const tint = (text: string) => `\x1b[36m${text}\x1b[0m`;
         one.colour = () => {
             spawns += 1;
-            return ["TINTED one", "TINTED two", "TINTED three", "TINTED four"];
+            return one.body.filter((line) => line.at !== null).map((line) => tint(line.text));
         };
 
         const message = assembleMessage([one], budget(100_000));
 
         expect(spawns).toBe(1);
-        expect(message).toContain("TINTED one");
+        expect(message).toContain(tint(one.body[0]?.text ?? ""));
+    });
+
+    it("keeps a masked context line plain when the file's coloured line still holds the secret", () => {
+        // `bat` reads the file on disk; the patch was masked. The coloured original must not replace the mask.
+        const one = edit("a");
+        const masked = one.body[0];
+        if (masked) {
+            masked.text = 'a context one token = "[redacted]"';
+        }
+
+        one.colour = () => ['\x1b[36ma context one token = "sk-ant-FIXTURE-SECRET-0123456789"\x1b[0m'];
+
+        const message = assembleMessage([one], budget(100_000));
+
+        expect(message).toContain('token = "[redacted]"');
+        expect(message).not.toContain("FIXTURE-SECRET");
     });
 });
 
@@ -3832,14 +4037,96 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
         }
     });
 
+    it("keeps the full-diff link when the mod cannot draw the patch: past its budget", () => {
+        const current = begin({ command: "perl -pi -e 1 huge.ts", toolUseId: `call-mod-big-${calls}` }, quiet);
+        writeFileSync(
+            join(repo, "huge.ts"),
+            `${Array.from({ length: 4_000 }, (_, i) => `row ${i} ${"y".repeat(20)}`).join("\n")}\n`
+        );
+        const decision = runDiffPost({
+            payload: current,
+            config: { ...DEFAULT_HOOKS_CONFIG, diff: { ...quiet, fullDiff: "path" } },
+            drawnByMod: true,
+        });
+        const path = decision.stats?.fullDiff ?? "";
+
+        try {
+            expect(decision.decision).toBe("noted");
+            expect(decision.message).toContain(`Full diff: ${path}`);
+        } finally {
+            rmSync(join(repo, "huge.ts"), { force: true });
+            rmSync(path, { force: true });
+        }
+    });
+
+    it("keeps the header of a file the mod cannot draw: an empty file deleted has no hunk", () => {
+        writeFileSync(join(repo, "empty-gone.txt"), "");
+        git(["add", "empty-gone.txt"]);
+        git(["commit", "-qm", "empty file"]);
+
+        const current = begin({ command: "rm empty-gone.txt", toolUseId: `call-mod-empty-${calls}` }, quiet);
+        rmSync(join(repo, "empty-gone.txt"));
+        const decision = runDiffPost({
+            payload: current,
+            config: { ...DEFAULT_HOOKS_CONFIG, diff: { ...quiet, fullDiff: "path" } },
+            drawnByMod: true,
+        });
+
+        try {
+            expect(decision.decision).toBe("noted");
+            expect(stripAnsi(decision.message ?? "")).toContain("empty-gone.txt");
+        } finally {
+            git(["commit", "-qam", "empty file gone"]);
+            rmSync(decision.stats?.fullDiff ?? "", { force: true });
+        }
+    });
+
+    it("reads a missing file as empty and an unreadable one as null, which the patch masks as a jar", () => {
+        const folder = mkdtempSync(join(tmpdir(), "read-head-"));
+        try {
+            expect(readHead(join(folder, "never-written.json"))).toBe("");
+            // A folder opens but cannot be read (EISDIR): not proven harmless.
+            expect(readHead(folder)).toBeNull();
+        } finally {
+            rmSync(folder, { recursive: true, force: true });
+        }
+    });
+
+    it("leaves the diff to the mod only in the session the mod announced", () => {
+        expect(modLoadedIn({ sessionId: "s-1", announced: "s-1" })).toBe(true);
+        // A session started before `mods watch` never loaded the mod: no mark, the hook draws.
+        expect(modLoadedIn({ sessionId: "s-1" })).toBe(false);
+        // A nested session inherits its parent's mark.
+        expect(modLoadedIn({ sessionId: "s-2", announced: "s-1" })).toBe(false);
+        expect(modLoadedIn({ announced: "s-1" })).toBe(false);
+        expect(modLoadedIn({ sessionId: "", announced: "" })).toBe(false);
+    });
+
     it("lets the mod draw only for Claude, with mods.fullDiff on, a note to read and the plugin enabled", () => {
         const on = { ...DEFAULT_HOOKS_CONFIG, mods: { ...DEFAULT_HOOKS_CONFIG.mods, fullDiff: true } };
 
-        expect(modDrawsDiffs(on, "claude", () => true)).toBe(true);
-        expect(modDrawsDiffs(on, "claude", () => false)).toBe(false);
-        expect(modDrawsDiffs(on, "codex", () => true)).toBe(false);
-        expect(modDrawsDiffs({ ...on, mods: { ...on.mods, fullDiff: false } }, "claude", () => true)).toBe(false);
-        expect(modDrawsDiffs({ ...on, diff: { ...on.diff, fullDiff: "off" } }, "claude", () => true)).toBe(false);
+        const yes = () => true;
+        expect(modDrawsDiffs({ config: on, harness: "claude", isEnabled: yes })).toBe(true);
+        expect(modDrawsDiffs({ config: on, harness: "claude", isEnabled: () => false })).toBe(false);
+        expect(modDrawsDiffs({ config: on, harness: "codex", isEnabled: yes })).toBe(false);
+        expect(
+            modDrawsDiffs({
+                config: { ...on, mods: { ...on.mods, fullDiff: false } },
+                harness: "claude",
+                isEnabled: yes,
+            })
+        ).toBe(false);
+        expect(
+            modDrawsDiffs({
+                config: { ...on, diff: { ...on.diff, fullDiff: "off" } },
+                harness: "claude",
+                isEnabled: yes,
+            })
+        ).toBe(false);
+        // The session id reaches the check, which asks whether the mod announced this very session.
+        expect(
+            modDrawsDiffs({ config: on, harness: "claude", sessionId: "s-1", isEnabled: (id) => id === "s-1" })
+        ).toBe(true);
     });
 
     it("renders a file once when the command names it through another path to the same folder", () => {
@@ -4293,6 +4580,25 @@ describe("the misfires of 2026-10-14", () => {
         }
     });
 
+    it("masks a token in the command the full-diff note saves", () => {
+        const token = `ghp_${"A1b2C3d4".repeat(5)}`;
+        const path = writeFullDiff({
+            toolUseId: `call-cmd-secret-${calls}`,
+            command: `printf "${token}" > config.txt`,
+            parts: [{ label: "config.txt (+1 -0)", patch: "@@ -0,0 +1 @@\n+[redacted]\n" }],
+            notShown: [],
+        });
+
+        try {
+            const note = readFileSync(path ?? "", "utf8");
+
+            expect(note).toContain('printf "[redacted]" > config.txt');
+            expect(note).not.toContain(token);
+        } finally {
+            rmSync(path ?? "", { force: true });
+        }
+    });
+
     it("names a file with uncommitted edits, moved into a new folder, in one line and not as a deletion", () => {
         writeFileSync(join(repo, "dirty-src.ts"), "committed\nbody\n");
         git(["add", "dirty-src.ts"]);
@@ -4577,6 +4883,42 @@ describe("the misfires of 2026-10-14", () => {
             expect(flushed.map((item) => item.task?.id)).toEqual(["bgtest1"]);
             expect(flushed[0]?.message).toContain("BACKGROUND-EDIT");
             expect(flushDeferred({ payload: next, config: plain })).toEqual([]);
+        } finally {
+            rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
+            rmSync(target, { force: true });
+        }
+    });
+
+    it("saves a cut background diff under a note name the full-diff mod does not draw", () => {
+        const project = `gt-bg-note-${process.pid}`;
+        const tasks = join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project, "gt-diff-test", "tasks");
+        const output = join(tasks, "bgnote1.output");
+        const transcript = join(tmpdir(), project, "transcript.jsonl");
+        const target = join(repo, "background-note.ts");
+
+        mkdirSync(tasks, { recursive: true });
+        writeFileSync(output, "");
+
+        try {
+            const started = begin({ toolUseId: "bg-note-call", command: `bun /x/long.ts ${target}` });
+            runDiffPost({
+                payload: {
+                    ...started,
+                    raw: { transcript_path: transcript, tool_response: { backgroundTaskId: "bgnote1" } },
+                },
+                config: plain,
+            });
+            writeFileSync(target, Array.from({ length: 300 }, (_, i) => `BACKGROUND-ROW-${i}`).join("\n"));
+            writeFileSync(output, "done\n\n[exited with code 0]\n");
+
+            const next = begin({ command: "true", raw: { transcript_path: transcript } });
+            const note = flushDeferred({ payload: next, config: plain, maxChars: 2000 })[0]?.stats?.fullDiff ?? "";
+
+            try {
+                expect(basename(note)).toBe("bg-note-call.task.md");
+            } finally {
+                rmSync(note, { force: true });
+            }
         } finally {
             rmSync(join(tmpdir(), `claude-${process.getuid?.() ?? 0}`, project), { recursive: true, force: true });
             rmSync(target, { force: true });

@@ -11,6 +11,7 @@ import {
     type Span,
     scanShell,
     splitPipeline,
+    stripShellNoise,
     tokenize,
 } from "@genesiscz/utils/shell/scan";
 import { hookDiag } from "../log";
@@ -185,7 +186,9 @@ function cdTargets(command: string): string[] {
 
 /**
  * Every directory this command could have worked in: the session cwd, plus the target of
- * EVERY `cd` it names, relative ones included.
+ * EVERY `cd` it names, relative ones included. The first entry is the session cwd and the last
+ * is the folder the command ends in, so a folder it returns to (`cd sub && cd ..`) is named again
+ * at the end.
  *
  * A directory that does not exist cannot be one the command changed, so it is dropped here.
  * That is also the backstop for a target the raw read got wrong in a way `plainArgument` did
@@ -212,6 +215,10 @@ export function commandDirs(command: string, cwd: string): string[] {
         if (!dirs.includes(dir)) {
             dirs.push(dir);
         }
+    }
+
+    if (dirs.at(-1) !== current) {
+        dirs.push(current);
     }
 
     return dirs;
@@ -412,28 +419,36 @@ function gitDirectory({
 export function namedArguments(command: string, bases: string[]): string[] {
     const found = walkNamed({ command, bases, readings: false }).found;
 
-    return [...new Set([...found, ...scriptPaths(command)])];
+    return [...new Set([...found, ...scriptPaths(command, bases)])];
 }
 
 const INTERPRETER = /^(?:python[0-9.]*|node|bun|deno|perl|ruby|php)$/;
 const HEREDOC_OPENER = /<<(-?)[ \t]*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\2/;
 const INLINE_SCRIPT =
     /(?:^|[\s;&|(])(?:\S*\/)?(?:python[0-9.]*|node|bun|deno|perl|ruby|php)(?:\s+-[A-Za-z-]+)*?\s+(?:-c|-e|-r|--eval)\s+(['"])/g;
-const SCRIPT_LITERAL = /(["'`])((?:~\/|\/)[^"'`\n]+)\1/g;
+const SCRIPT_LITERAL = /(["'`])([^"'`\n]+)\1/g;
 
 /**
- * Existing files named by a quoted absolute or `~/` literal inside a script an interpreter RUNS:
- * the body of `python3 - <<'EOF'` (no script file, so the heredoc is the program) and the
+ * Existing files named by a quoted literal (absolute, `~/`, or relative to one of `bases`) inside a
+ * script an interpreter RUNS: the body of `python3 - <<'EOF'` (no script file, so the heredoc is the program) and the
  * argument of `-c`/`-e`/`-r`/`--eval`. The scanner blanks both, so `open(os.path.expanduser(
  * '~/.ssh/config'),'w')` in a heredoc edited a file outside every repository with no diff
  * (2026-10-20, session be21be54). A heredoc fed to a command with a script file (`bun cli.ts
  * <<'SPEC'`) stays data. Only files that exist now: a literal that names nothing (`"/api/x"`)
  * would only take one of the few named slots, and a creation found this way is not shown anyway.
  */
-export function scriptPaths(command: string): string[] {
+export function scriptPaths(command: string, bases: string[] = []): string[] {
     const found: string[] = [];
+    let cleaned = command;
 
-    for (const script of [...interpreterHeredocs(command), ...inlineScripts(command)]) {
+    try {
+        cleaned = stripShellNoise(command);
+    } catch (err) {
+        // Without the scanner every character counts as code, which is how scripts were read before it was asked.
+        hookDiag("Could not scan the command for script paths", { err });
+    }
+
+    for (const script of [...interpreterHeredocs(command, cleaned), ...inlineScripts(command, cleaned)]) {
         for (const match of script.matchAll(SCRIPT_LITERAL)) {
             const value = match[2] ?? "";
 
@@ -441,9 +456,19 @@ export function scriptPaths(command: string): string[] {
                 continue;
             }
 
-            const path = expandHome(value);
+            // `open('config.json')` names a file of the folder the command runs in. A relative literal with a
+            // space or a leading dash is prose or a flag, never a path.
+            const relativeOk = !/\s/.test(value) && !value.startsWith("-");
+            const candidates =
+                value.startsWith("/") || value.startsWith("~/")
+                    ? [expandHome(value)]
+                    : relativeOk
+                      ? // The folder the command last `cd`-ed into first: `cd /other && python3 -c "open('x')"` runs there.
+                        [...bases].reverse().map((base) => resolve(base, value))
+                      : [];
+            const path = candidates.find(isFile);
 
-            if (!found.includes(path) && isFile(path)) {
+            if (path && !found.includes(path)) {
                 found.push(path);
             }
         }
@@ -452,19 +477,47 @@ export function scriptPaths(command: string): string[] {
     return found;
 }
 
+/**
+ * A literal is any quoted text, so it can name a path the system refuses to stat: `/repo/package.json/x` is
+ * ENOTDIR, a long one ENAMETOOLONG. `throwIfNoEntry` covers ENOENT only, and one such literal must not cost
+ * the command every other path it names.
+ */
 function isFile(path: string): boolean {
-    return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+    try {
+        return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+    } catch (err) {
+        hookDiag("Could not stat a path a script names", { err, path });
+        return false;
+    }
 }
 
-function interpreterHeredocs(command: string): string[] {
+/**
+ * Whether the character at `index` is shell code: the scanner blanks quoted spans, comments and heredoc bodies in
+ * `cleaned` and keeps every offset. A `node -e '…'` example inside `cat > notes.md <<'SPEC'` is data, not a script.
+ */
+function isCode(command: string, cleaned: string, index: number): boolean {
+    const char = command[index] ?? " ";
+
+    return cleaned[index] === char && !/\s/.test(char);
+}
+
+function interpreterHeredocs(command: string, cleaned: string): string[] {
     const lines = command.split("\n");
     const bodies: string[] = [];
+    const starts: number[] = [];
+
+    lines.reduce((offset, line) => {
+        starts.push(offset);
+        return offset + line.length + 1;
+    }, 0);
 
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i] ?? "";
         const opener = HEREDOC_OPENER.exec(line);
+        const simple = opener ? lastSimpleCommandOnLine(line.slice(0, opener.index)) : "";
+        const word = simple.trim() ? line.lastIndexOf(simple.trim(), opener?.index) : -1;
 
-        if (!opener || !runsStdin(lastSimpleCommandOnLine(line.slice(0, opener.index)))) {
+        if (!opener || !runsStdin(simple) || word < 0 || !isCode(command, cleaned, (starts[i] ?? 0) + word)) {
             continue;
         }
 
@@ -504,10 +557,16 @@ function runsStdin(simple: string): boolean {
     );
 }
 
-function inlineScripts(command: string): string[] {
+function inlineScripts(command: string, cleaned: string): string[] {
     const scripts: string[] = [];
 
     for (const match of command.matchAll(INLINE_SCRIPT)) {
+        const program = (match.index ?? 0) + (/^[\s;&|(]/.test(match[0]) ? 1 : 0);
+
+        if (!isCode(command, cleaned, program)) {
+            continue;
+        }
+
         const quote = match[1] ?? "'";
         const start = (match.index ?? 0) + match[0].length;
         let end = start;
@@ -517,7 +576,9 @@ function inlineScripts(command: string): string[] {
             end += quote === '"' && command[end] === "\\" ? 2 : 1;
         }
 
-        scripts.push(command.slice(start, end));
+        // The interpreter receives the shell's decoded text: `"open(\"/tmp/x\")"` reaches python as `open("/tmp/x")`.
+        const raw = command.slice(start, end);
+        scripts.push(quote === '"' ? raw.replace(/\\(["\\$`])/g, "$1") : raw);
     }
 
     return scripts;

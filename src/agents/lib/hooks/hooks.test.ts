@@ -54,7 +54,15 @@ import {
     wiringStatus,
 } from "./install";
 import { logDecision, releaseRotationLock, setDiagLogPath, setMaxLogBytes, takeRotationLock } from "./log";
-import { MODS_PLUGIN, modsPluginEnabled, modsPluginState, modsWatched, pluginDirsOf, withModsWatch } from "./mods";
+import {
+    MODS_PLUGIN,
+    modsPluginDisabled,
+    modsPluginState,
+    modsWatched,
+    modsWatchState,
+    pluginDirsOf,
+    withModsWatch,
+} from "./mods";
 import { nativeDiffState } from "./native-diff";
 import { matchesGlob, resolveOutcome } from "./outcome";
 import { callDir, hookDataRoot, safeSegment, sessionDir } from "./paths";
@@ -685,17 +693,22 @@ describe("applySetting", () => {
         expect(modsPluginState("not json")).toEqual({ installed: false, enabled: false });
     });
 
-    it("reads whether the user settings enable the mods plugin", () => {
+    it("lets only the strongest settings file that names the mods plugin turn it off", () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-mods-settings-"));
-        const settings = join(dir, "settings.json");
+        const local = join(dir, "settings.local.json");
+        const user = join(dir, "settings.json");
+        const named = (on: boolean) => SafeJSON.stringify({ enabledPlugins: { [MODS_PLUGIN]: on } });
 
-        writeFileSync(settings, SafeJSON.stringify({ enabledPlugins: { [MODS_PLUGIN]: true } }));
-        expect(modsPluginEnabled(settings)).toBe(true);
-        writeFileSync(settings, SafeJSON.stringify({ enabledPlugins: { [MODS_PLUGIN]: false } }));
-        expect(modsPluginEnabled(settings)).toBe(false);
-        writeFileSync(settings, "not json");
-        expect(modsPluginEnabled(settings)).toBe(false);
-        expect(modsPluginEnabled(join(dir, "missing.json"))).toBe(false);
+        // A project, local or --plugin-dir load leaves the user settings silent: the session's mark decides.
+        expect(modsPluginDisabled([local, user])).toBe(false);
+        writeFileSync(user, named(true));
+        writeFileSync(local, named(false));
+        expect(modsPluginDisabled([local, user])).toBe(true);
+        writeFileSync(local, named(true));
+        writeFileSync(user, named(false));
+        expect(modsPluginDisabled([local, user])).toBe(false);
+        writeFileSync(local, "not json");
+        expect(modsPluginDisabled([local, user])).toBe(true);
     });
 
     it("mods watch adds the mods folder to CLAUDE_CODE_PLUGIN_DIRS and takes it out again, keeping the rest", () => {
@@ -717,8 +730,23 @@ describe("applySetting", () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-mods-watch-"));
         const path = join(dir, "settings.json");
 
+        // A watched load names no enabledPlugins entry, so it never turns the mod off.
         writeFileSync(path, SafeJSON.stringify(on));
-        expect(modsPluginEnabled(path)).toBe(true);
+        expect(modsPluginDisabled([path])).toBe(false);
+    });
+
+    it("mods status reads hot reload as unknown, not a crash, when the settings file is not JSON", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-mods-state-"));
+        const path = join(dir, "settings.json");
+
+        expect(modsWatchState(path)).toBe(false);
+        writeFileSync(
+            path,
+            SafeJSON.stringify({ env: { CLAUDE_CODE_PLUGIN_DIRS: "/repo/plugins/genesis-tools-mods" } })
+        );
+        expect(modsWatchState(path)).toBe(true);
+        writeFileSync(path, "{not json");
+        expect(modsWatchState(path)).toBeUndefined();
     });
 
     it("agentsTalk.hint is a boolean switch that ships on and survives a load", () => {

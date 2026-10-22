@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { basename } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { stripAnsi } from "@genesiscz/utils/string";
 import type { DiffConfig, FillMode } from "../config";
 import type { DiffCategory } from "./classify";
 import type { ChangedFile } from "./collect";
@@ -848,6 +849,11 @@ function textLength(text: string): number {
     return text.length;
 }
 
+/** Equal once colour and whitespace are gone. */
+function sameText(a: string, b: string): boolean {
+    return stripAnsi(a).replace(/\s+/g, "") === stripAnsi(b).replace(/\s+/g, "");
+}
+
 /**
  * The right edge of a `block` fill: the widest kept CHANGED row of the file plus two columns (a context
  * row carries no band), and never past `fillMax` columns in all (the gutter is `INDENT` of them). A hook
@@ -1044,6 +1050,14 @@ export function fitMessage(blocks: DiffBlock[], config: DiffConfig): { message: 
             }
 
             const next = contextLine(absolute, paint);
+
+            // `bat` colours the file on disk, the patch was masked (redact.ts): a line whose secret was masked
+            // reads differently once plain, and keeps its masked plain text instead of the coloured original.
+            // Whitespace is left out of the comparison, because `bat` expands tabs.
+            if (!sameText(paint, line.content ?? line.text)) {
+                continue;
+            }
+
             const extra = textLength(next) - textLength(line.text);
 
             // Colour is a luxury: it is applied only while it still fits. Without this the

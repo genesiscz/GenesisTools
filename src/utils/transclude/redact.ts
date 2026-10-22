@@ -29,20 +29,47 @@ const KEEP_PREFIX: RegExp[] = [
     /(\b[a-z][a-z0-9+.-]*:\/\/[^:\s/@]+:)[^@\s/]+(?=@)/gi,
     /(\b(?:Set-)?Cookie:[ \t]*)[^\r\n]+/gi,
     // A value only counts when it looks like a credential (16+ key characters, a digit among them), so
-    // code such as `refreshToken: string` or `token = readToken()` in an excerpt stays readable.
-    /((?:^|[\s"'{,])[\w.-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*["']?)(?=[A-Za-z0-9_+/=.-]*\d)[A-Za-z0-9_+/=.-]{16,}/gim,
+    // code such as `refreshToken: string` or `token = readToken()` in an excerpt stays readable. A name may follow
+    // a diff row's `+` or `-` (`+TOKEN=…` in a patch of a .env file).
+    /((?:^[+-]?|[\s"'{,])[\w.-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*["']?)(?=[A-Za-z0-9_+/=.-]*\d)[A-Za-z0-9_+/=.-]{16,}/gim,
 ];
+
+/**
+ * A quoted literal assigned to a credential name is a secret whatever its characters: `PASSWORD="A1bc defg hij"`
+ * has spaces the run-of-key-characters rule above cannot cross. Only a literal (8+ characters, no `$` expansion);
+ * `token = readToken()` and `password: string` stay readable.
+ */
+const QUOTED_CREDENTIAL =
+    /((?:^[+-]?|[\s{,(])["']?[\w.-]*(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key)["']?\s*[:=]\s*)(["'])(?!\[redacted\])([^"'$\n]{8,})\2/gim;
 
 /** A browser's saved login (Playwright `storageState`, a cookie jar): every cookie and storage value is a session. */
 const COOKIE_JAR = /"(?:cookies|localStorage|httpOnly|sameSite)"\s*:/;
 const JAR_VALUE = /("value"\s*:\s*")(?:[^"\\\n]|\\.)*(?=")/g;
 
-export function redactSecretsInText(text: string): string {
-    let result = COOKIE_JAR.test(text) ? text.replace(JAR_VALUE, (_match, prefix: string) => `${prefix}${MASK}`) : text;
+/** Whether a text is (part of) a saved browser login, whose every `"value"` is a session secret. */
+export function looksLikeCookieJar(text: string): boolean {
+    return COOKIE_JAR.test(text);
+}
+
+/**
+ * `cookieJar: true` masks every `"value"` even when `text` alone shows no jar marker: a diff hunk of a storage-state
+ * file can hold a changed cookie value with none of `cookies`, `httpOnly` or `sameSite` in its context lines.
+ */
+export function redactSecretsInText(text: string, options: { cookieJar?: boolean } = {}): string {
+    let result =
+        options.cookieJar || COOKIE_JAR.test(text)
+            ? text.replace(JAR_VALUE, (_match, prefix: string) => `${prefix}${MASK}`)
+            : text;
 
     for (const pattern of WHOLE_MATCH) {
         result = result.replace(pattern, MASK);
     }
+
+    // The whole quoted literal first: the key-character rule below would mask only its first word and leave the rest.
+    result = result.replace(
+        QUOTED_CREDENTIAL,
+        (_match, prefix: string, quote: string) => `${prefix}${quote}${MASK}${quote}`
+    );
 
     for (const pattern of KEEP_PREFIX) {
         result = result.replace(pattern, (_match, prefix: string) => `${prefix}${MASK}`);

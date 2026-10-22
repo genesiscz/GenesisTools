@@ -12,11 +12,12 @@ import {
     writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import type { StatusEntry } from "@genesiscz/utils/git/porcelain";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { isTestProcess } from "@genesiscz/utils/test-process";
-import { redactSecretsInText } from "@genesiscz/utils/transclude/redact";
+import { looksLikeCookieJar, redactSecretsInText } from "@genesiscz/utils/transclude/redact";
 import {
     type ChangeBytes,
     capBlob,
@@ -31,7 +32,7 @@ import { gitObjectSink } from "../../changes/objects";
 import { type DiffConfig, diffFor, type HooksConfig } from "../config";
 import { committedPaths, gitOut, lastHistoryMove, objectId, statusOf, untrackedFilesIn } from "../git";
 import { hookDiag } from "../log";
-import { modsPluginEnabled } from "../mods";
+import { modsPluginDisabled } from "../mods";
 import { callDir, safeSegment } from "../paths";
 import { type HookPayload, normalizeEvent } from "../payload";
 import {
@@ -47,13 +48,13 @@ import {
     summaryLine,
     type Touch,
 } from "./attribution";
-import { alreadyGone, beforeCopy, leftOutOfCapture } from "./before";
+import { alreadyGone, beforeCopier, beforeCopy, leftOutOfCapture } from "./before";
 import { transcriptOf } from "./capture";
 import { claimChange } from "./claim";
 import { classifyChange, type DiffCategory } from "./classify";
 import { type ChangedFile, changedFiles } from "./collect";
 import { commandDirs, namedArguments } from "./command-paths";
-import { type FullDiffPart, fullDiffLine, writeFullDiff } from "./full";
+import { type FullDiffPart, fullDiffLine, overflowPart, writeFullDiff } from "./full";
 import { appendMentions, canonical, covers, loadMentions, type Mentions, mentionsFrom, mentionsOf } from "./mentions";
 import { namedChanges } from "./named";
 import { type DiffBlock, fitMessage, highlightRange, hunkRange, renderBlock, renderPatch, themedDress } from "./render";
@@ -108,7 +109,16 @@ function patchFor({
     // `base` is the HEAD the command STARTED on, not today's HEAD. The two differ exactly
     // when the command committed, and diffing a just-committed file against the commit that
     // created it reports nothing at all.
-    return gitPatch(file.root, [base, context, "--", file.path]);
+    return gitPatch(file.root, [base, context, "--", file.path], [baseHead(file, base)]);
+}
+
+/**
+ * The first 256 KB of the file as `base` holds it: a command that removed a key's BEGIN line from a file with no
+ * captured copy leaves a current head that no longer looks like a key. "" for a file absent at `base`.
+ */
+function baseHead(file: ChangedFile, base: string): string {
+    const path = relative(file.root, resolve(file.root, file.path));
+    return gitOut(file.root, ["show", `${base}:${path}`], { quiet: true }).slice(0, 256 * 1024);
 }
 
 /**
@@ -116,14 +126,62 @@ function patchFor({
  * so neither the model, the screen nor the full-diff note gets a token or a login cookie (a re-login rewrote a
  * Playwright storageState, and its note kept the session cookies in plain text, 2026-10-20).
  */
-function gitPatch(root: string, args: string[]): string {
-    return redactSecretsInText(gitOut(root, ["diff", ...args]));
+function gitPatch(root: string, args: string[], baseHeads: string[] = []): string {
+    const paths = args.slice(args.indexOf("--") + 1).filter((path) => path !== "/dev/null");
+    const heads = [...paths.map((path) => readHead(resolve(root, path))), ...baseHeads];
+    const patch = gitOut(root, ["diff", ...args]);
+
+    // A hunk of a key file can show key lines without the BEGIN and END markers the key pattern needs, so a
+    // file that holds a private key shows its changed rows, never their text.
+    if (heads.some((head) => head !== null && PRIVATE_KEY_FILE.test(head))) {
+        return withheldPatch(patch);
+    }
+
+    // A file that could not be read is not proven harmless: it is masked as a cookie jar would be.
+    return redactSecretsInText(patch, { cookieJar: heads.some((head) => head === null || looksLikeCookieJar(head)) });
+}
+
+// The marker on a line of its own, as a key file holds it: a source file that quotes it (a test fixture) is not a key.
+const PRIVATE_KEY_FILE = /^-----BEGIN [A-Z ]*PRIVATE KEY-----\r?$/m;
+
+/** The patch with every body row's text replaced: the row count and the +/- shape stay, the content does not. */
+export function withheldPatch(patch: string): string {
+    return patch
+        .split("\n")
+        .map((line) => (/^[-+ ]/.test(line) && !/^(\+\+\+|---) /.test(line) ? `${line[0]}[redacted]` : line))
+        .join("\n");
+}
+
+/**
+ * The first 256 KB of a file: enough to find a storage-state file's `"cookies"` or a key's BEGIN line. "" for a file
+ * that does not exist (a deleted side), null for one that exists but could not be read, which the caller fails closed on.
+ */
+export function readHead(path: string): string | null {
+    try {
+        const fd = openSync(path, "r");
+        try {
+            const buffer = Buffer.alloc(256 * 1024);
+            return buffer.toString("utf8", 0, readSync(fd, buffer, 0, buffer.length, 0));
+        } finally {
+            closeSync(fd);
+        }
+    } catch (err) {
+        if (err instanceof Error && "code" in err && err.code === "ENOENT") {
+            return "";
+        }
+
+        hookDiag("Could not read the head of a changed file; its patch is masked as a cookie jar", { err, path });
+        return null;
+    }
 }
 
 /**
  * The rendered block for one changed file, or `null` when the diff turned out empty. A
  * DELETED file always renders: its block is the header alone when git has no patch for it.
  */
+/** The patch characters the full-diff mod draws per view (`MAX_CHARS` in plugins/genesis-tools-mods/hooks/register.tsx). */
+export const MOD_MAX_PATCH_CHARS = 60_000;
+
 /**
  * Columns a band leaves free: Claude Code draws a hook message 6 columns in (under its `⎿`), so a
  * row filled to the full terminal width wraps and leaves an empty band row under every changed row
@@ -646,17 +704,52 @@ export function deferredMessageParts(flushed: DiffDecision[]): string[] {
     );
 }
 
-/** The real Claude settings, never read by a test (they would make the message depend on this machine). */
-function installedMod(): boolean {
-    return !isTestProcess() && modsPluginEnabled();
+/**
+ * Set by the full-diff mod, on every turn, to the id of the session it runs in (`MODS_SESSION_VAR` in
+ * plugins/genesis-tools-mods/hooks/register.tsx; the two names must stay equal). Claude Code passes a mod's
+ * `env.set` to the hooks of that session (probed 2026-10-22: the PostToolUse hook read the mod's value, equal to
+ * the payload's `session_id`). The settings file only says the mod is installed; a session started before
+ * `mods watch` has not loaded it, and its diffs would be drawn by no one.
+ */
+export const MODS_SESSION_VAR = "GENESIS_TOOLS_MODS_SESSION";
+
+/** Whether the mod announced itself in this very session: a nested session inherits another session's id. */
+export function modLoadedIn({ sessionId, announced }: { sessionId?: string; announced?: string }): boolean {
+    return sessionId !== undefined && sessionId !== "" && announced === sessionId;
+}
+
+/** The mod's mark and the real Claude settings, never read by a test (they would make the message depend on this machine). */
+function installedMod(sessionId: string | undefined): boolean {
+    // The mark is the proof the mod is loaded here, from any scope or `--plugin-dir`. The settings are read only for
+    // a marked session, and only an explicit off (a disable this session has not reloaded yet) overrides the mark.
+    return (
+        !isTestProcess() &&
+        modLoadedIn({ sessionId, announced: env.getProcessEnv()[MODS_SESSION_VAR] }) &&
+        !modsPluginDisabled()
+    );
 }
 
 /**
- * Claude Code with the full-diff mod (`genesis-tools-mods`) installed and `mods.fullDiff` on: the mod draws
- * each call's diff from its note, so the hook's own message would draw it twice. Codex and Grok have no mods.
+ * Claude Code with the full-diff mod (`genesis-tools-mods`) loaded in this session and `mods.fullDiff` on: the mod
+ * draws each call's diff from its note, so the hook's own message would draw it twice. Codex and Grok have no mods.
  */
-export function modDrawsDiffs(config: HooksConfig, harness: string, isEnabled = installedMod): boolean {
-    return harness === "claude" && config.mods.fullDiff && diffFor(config, harness).fullDiff !== "off" && isEnabled();
+export function modDrawsDiffs({
+    config,
+    harness,
+    sessionId,
+    isEnabled = installedMod,
+}: {
+    config: HooksConfig;
+    harness: string;
+    sessionId?: string;
+    isEnabled?: (sessionId: string | undefined) => boolean;
+}): boolean {
+    return (
+        harness === "claude" &&
+        config.mods.fullDiff &&
+        diffFor(config, harness).fullDiff !== "off" &&
+        isEnabled(sessionId)
+    );
 }
 
 /**
@@ -681,7 +774,7 @@ export function composePostDiff({
     const flushedChars = flushedParts.reduce((total, part) => total + part.length + 2, 0);
     const heading = commandLines(payload.command, diffFor(config, payload.harness).commandLines);
     const room = Math.max(0, maxChars - flushedChars - (heading ? heading.length + 1 : 0));
-    const drawnByMod = modDrawsDiffs(config, payload.harness);
+    const drawnByMod = modDrawsDiffs({ config, harness: payload.harness, sessionId: payload.sessionId });
     const decision = fitDecision(runDiffPost({ payload, config, record, maxChars: room, drawnByMod }), room);
     const own = decision.message ? [heading ? `${heading}\n${decision.message}` : decision.message] : [];
     const message = [...own, ...flushedParts].join("\n\n");
@@ -778,6 +871,7 @@ export function flushDeferred({
                 config,
                 record,
                 maxChars: room,
+                deferred: true,
             }),
             room
         );
@@ -1185,12 +1279,15 @@ export function runDiffPost({
     record = recordBashEdits,
     maxChars,
     drawnByMod = false,
+    deferred = false,
 }: {
     payload: HookPayload;
     config: HooksConfig;
     record?: EditRecorder;
     /** The message budget when it must share the hook's one message (`flushDeferred`); else `diff.maxMessageChars`. */
     maxChars?: number;
+    /** A background call's diff taken when its task ended (`flushDeferred`): its note is one the mod does not draw. */
+    deferred?: boolean;
     /**
      * The full-diff mod draws this call's diff (`modDrawsDiffs`): every diff goes to its note, and the message
      * keeps only the notes under it, so the diff is not drawn twice.
@@ -1332,7 +1429,7 @@ export function runDiffPost({
             base,
             files: changed,
             entries: summary.entries,
-            beforeOf: (absolute) => beforeCopy({ dir, root, absolute }),
+            beforeOf: beforeCopier({ dir, root }),
         }).filter((pair) => ownedRename(pair, { dir, root, context: attribution }));
         const renamed = new Set(renames.flatMap((pair) => [pair.from, pair.to]));
         const carried: string[] = [];
@@ -1418,7 +1515,7 @@ export function runDiffPost({
                     const patch = patchFor({ file, before, config: diff, base });
 
                     if (patch.trim().length > 0) {
-                        overflow.push({ label: file.path, patch });
+                        overflow.push(overflowPart(file.path, patch));
                     }
                 }
 
@@ -1564,8 +1661,8 @@ export function runDiffPost({
         ]);
 
         if (full()) {
-            if (patch.trim().length > 0 && !overflow.some((part) => part.label === change.path)) {
-                overflow.push({ label: change.path, patch });
+            if (patch.trim().length > 0 && !overflow.some((part) => part.path === change.path)) {
+                overflow.push(overflowPart(change.path, patch));
             }
 
             if (!notShown.includes(change.path) && !files.includes(change.path)) {
@@ -1649,18 +1746,30 @@ export function runDiffPost({
     }
 
     if (drawnByMod) {
+        const parts = [...blocks.flatMap((block) => (block.source ? [block.source] : [])), ...overflow];
+        const unpatched = notShown.filter((path) => !overflow.some((part) => part.path === path));
         const path = writeFullDiff({
             toolUseId: payload.toolUseId,
             command: payload.command,
-            parts: [...blocks.flatMap((block) => (block.source ? [block.source] : [])), ...overflow],
-            notShown: notShown.filter((path) => !overflow.some((part) => part.label === path)),
+            parts,
+            notShown: unpatched,
         });
 
         if (path) {
-            const message = notes.join("\n");
+            // The mod draws only the patches that fit its budget, and nothing of a call past the file cap: keep
+            // the link then, or such a diff has no visible trace at all.
+            const undrawn =
+                unpatched.length > 0 ||
+                parts.reduce((total, part) => total + part.patch.length, 0) > MOD_MAX_PATCH_CHARS;
+            // The mod draws a file from its first `@@` hunk (`sectionsOf`); a file with none (an empty file deleted
+            // or created, a binary, a mode change) keeps its own header line here, or it vanished from the view.
+            const hunkless = blocks
+                .filter((block) => !/^@@ /m.test(block.source?.patch ?? ""))
+                .map((block) => block.head);
+            const message = [...hunkless, ...notes, ...(undrawn ? [`Full diff: ${path}`] : [])].join("\n");
 
             return {
-                decision: notes.length > 0 ? "noted" : "silent",
+                decision: message ? "noted" : "silent",
                 reason: "the full-diff mod draws the diff",
                 ...(message ? { message } : {}),
                 files,
@@ -1684,7 +1793,8 @@ export function runDiffPost({
             toolUseId: payload.toolUseId,
             command: payload.command,
             parts: [...blocks.flatMap((block) => (block.source ? [block.source] : [])), ...overflow],
-            notShown: notShown.filter((path) => !overflow.some((part) => part.label === path)),
+            notShown: notShown.filter((path) => !overflow.some((part) => part.path === path)),
+            deferred,
         });
         const line = path ? fullDiffLine(path, diff.fullDiff) : null;
 

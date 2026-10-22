@@ -2,6 +2,7 @@ import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs
 import { join } from "node:path";
 import { routerLink } from "@genesiscz/utils/browser-router/router-link";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
+import { redactSecretsInText } from "@genesiscz/utils/transclude/redact";
 import { hookDiag } from "../log";
 import { safeSegment } from "../paths";
 
@@ -25,14 +26,49 @@ export function fullDiffDir(): string {
 export interface FullDiffPart {
     label: string;
     patch: string;
+    /** The changed file, when `label` adds its counts. */
+    path?: string;
+}
+
+/**
+ * A file past the cap, headed `<path> (+a -b)` like a drawn block: the full-diff mod parses only that heading
+ * (`plugins/genesis-tools-mods/hooks/sections.ts`), so a bare path heading was dropped from its view.
+ */
+export function overflowPart(path: string, patch: string): FullDiffPart {
+    // Only rows inside a hunk count: an added source line that starts with `++` is `+++…` in the patch too.
+    let added = 0;
+    let removed = 0;
+    let inHunk = false;
+
+    for (const line of patch.split("\n")) {
+        if (line.startsWith("@@")) {
+            inHunk = true;
+        } else if (line.startsWith("diff --git ")) {
+            inHunk = false;
+        } else if (inHunk && line.startsWith("+")) {
+            added += 1;
+        } else if (inHunk && line.startsWith("-")) {
+            removed += 1;
+        }
+    }
+
+    return { label: `${path} (+${added} -${removed})`, path, patch };
 }
 
 /** Writes the call's full diff as markdown and returns its path, or `null` when it could not. */
+/**
+ * The note of a background call written when its task ends: the mod draws `<call>.md` under that call's row, which a
+ * finished task's diff already reaches through the hook's message, so this name keeps the mod from drawing it twice.
+ * `diff show <call>` still finds it, by prefix.
+ */
+export const DEFERRED_NOTE_SUFFIX = ".task";
+
 export function writeFullDiff(options: {
     toolUseId: string | undefined;
     command: string;
     parts: FullDiffPart[];
     notShown: string[];
+    deferred?: boolean;
 }): string | null {
     const call = safeSegment(options.toolUseId);
 
@@ -41,7 +77,9 @@ export function writeFullDiff(options: {
     }
 
     const fence = "```";
-    const command = options.command.trim();
+    // The patches come masked (`gitPatch` in run.ts); the command is masked here, because the note keeps it on disk
+    // whatever `logCommands` and `diff.commandLines` say: `printf "ghp_…" > config.txt` saved the token in plain text.
+    const command = redactSecretsInText(options.command.trim());
     const sections = [
         `# Diff of ${call}`,
         "",
@@ -65,7 +103,7 @@ export function writeFullDiff(options: {
             ? ["## Changed, past the file cap", "", ...options.notShown.map((path) => `- ${path}`), ""]
             : []),
     ];
-    const path = join(fullDiffDir(), `${call}.md`);
+    const path = join(fullDiffDir(), `${call}${options.deferred ? DEFERRED_NOTE_SUFFIX : ""}.md`);
 
     try {
         mkdirSync(fullDiffDir(), { recursive: true, mode: 0o700 });

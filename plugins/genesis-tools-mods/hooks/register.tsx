@@ -42,10 +42,12 @@ interface Diffs {
     sections: CallSection[];
     /** The calls that run a git sync (`git pull`, …), each with that command, while `mods.collapseGitSync` is on. */
     syncs: Map<string, string>;
+    /** The notes of the calls past `MAX_CHARS` (`sectionsOfCalls`), named under the diffs so none goes without a trace. */
+    omitted: string[];
 }
 
 async function fullDiffs($: EngineInterface, calls: readonly { id: string; input: unknown }[]): Promise<Diffs> {
-    const none: Diffs = { sections: [], syncs: new Map() };
+    const none: Diffs = { sections: [], syncs: new Map(), omitted: [] };
     const dir = calls.length > 0 ? await agentsDir($) : undefined;
 
     if (!dir) {
@@ -59,9 +61,10 @@ async function fullDiffs($: EngineInterface, calls: readonly { id: string; input
     }
 
     const ids = calls.map((call) => call.id);
-    const sections = await sectionsOfCalls({
+    const note = (id: string) => `${dir}/hook-diffs/${id}.md`;
+    const { sections, omitted } = await sectionsOfCalls({
         ids,
-        read: (id) => $.fs.read(`${dir}/hook-diffs/${id}.md`),
+        read: (id) => $.fs.read(note(id)),
         maxChars: MAX_CHARS,
     });
     const syncs = new Map<string, string>();
@@ -76,7 +79,7 @@ async function fullDiffs($: EngineInterface, calls: readonly { id: string; input
         }
     }
 
-    return { sections, syncs };
+    return { sections, syncs, omitted: omitted.map(note) };
 }
 
 // The idle-compaction mod. Claude Code's own idle compaction fires once, 54 minutes after the last
@@ -248,14 +251,42 @@ async function drawDiffs(
                         </Box>
                     );
                 })}
+                {diffs.omitted.map((path) => (
+                    <Text key={`${row}|${path}:omitted`} dimColor>
+                        past the view's budget, full diff: {path}
+                    </Text>
+                ))}
             </Box>
         </Box>
     );
 }
 
+/**
+ * The diff hook leaves a call's diff to this mod only in a session that set `GENESIS_TOOLS_MODS_SESSION` to its own
+ * id (`MODS_SESSION_VAR` in src/agents/lib/hooks/diff/run.ts; mods-plugin.test.ts keeps the two equal). The hooks of
+ * the session see a mod's `env.set`, so a session that never loaded the mod keeps the hook's own diff message. The
+ * engine wants the name as a literal, so it can list the variables a module writes.
+ */
+let announcedSession: string | undefined;
+
+/** Marks this session as one the mod draws in; again when the id changes (a resumed or forked session). */
+async function announceSession($: EngineInterface): Promise<void> {
+    try {
+        const id = String(await $.session.id());
+
+        if (id !== announcedSession) {
+            await $.env.set("GENESIS_TOOLS_MODS_SESSION", id);
+            announcedSession = id;
+        }
+    } catch {
+        // No mark means the hook draws the diff itself: never worse than before the mark existed.
+    }
+}
+
 export const register: Register = (on) => {
-    on("turn.start", (_$, e, next) => {
+    on("turn.start", async ($, e, next) => {
         stopIdleTimer();
+        await announceSession($);
 
         return next(e);
     });
@@ -303,7 +334,7 @@ export const register: Register = (on) => {
         );
         const diffs = await fullDiffs($, calls);
 
-        if (diffs.sections.length === 0) {
+        if (diffs.sections.length === 0 && diffs.omitted.length === 0) {
             return drawn;
         }
 
@@ -319,7 +350,7 @@ export const register: Register = (on) => {
 
         const diffs = await fullDiffs($, [{ id: e.props.tool_use_id, input: e.props.input }]);
 
-        if (diffs.sections.length === 0) {
+        if (diffs.sections.length === 0 && diffs.omitted.length === 0) {
             return drawn;
         }
 

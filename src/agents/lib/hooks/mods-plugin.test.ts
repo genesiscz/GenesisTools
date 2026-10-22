@@ -1,4 +1,6 @@
 import { describe, expect, it } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     compactionEndsIdleWait,
@@ -18,6 +20,8 @@ import {
     sectionsOf,
     sectionsOfCalls,
 } from "../../../../plugins/genesis-tools-mods/hooks/sections";
+import { overflowPart } from "./diff/full";
+import { MOD_MAX_PATCH_CHARS, MODS_SESSION_VAR } from "./diff/run";
 
 const NOTE = [
     "# Diff of toolu_x",
@@ -50,7 +54,41 @@ const NOTE = [
     "- /repo/src/c.ts",
 ].join("\n");
 
+describe("the mod's session mark", () => {
+    it("is the variable the diff hook reads", () => {
+        const source = readFileSync(
+            join(import.meta.dir, "../../../../plugins/genesis-tools-mods/hooks/register.tsx"),
+            "utf8"
+        );
+        expect(source).toContain(`$.env.set("${MODS_SESSION_VAR}", id)`);
+    });
+
+    it("shares the hook's patch budget, so a call the mod cannot draw keeps its full-diff link", () => {
+        const source = readFileSync(
+            join(import.meta.dir, "../../../../plugins/genesis-tools-mods/hooks/register.tsx"),
+            "utf8"
+        );
+        const budget = source.match(/const MAX_CHARS = ([\d_]+);/)?.[1]?.replaceAll("_", "");
+        expect(Number(budget)).toBe(MOD_MAX_PATCH_CHARS);
+    });
+});
+
 describe("the full-diff mod's note reader", () => {
+    it("reads a file past the hook's file cap, headed with its counts by overflowPart", () => {
+        const part = overflowPart("/repo/src/d.ts", "@@ -1,1 +1,2 @@\n-old\n+new\n+more");
+        const note = ["# Diff of toolu_z", "", `## ${part.label}`, "", "```diff", part.patch, "```", ""].join("\n");
+
+        expect(sectionsOf(note).map((section) => [section.path, section.added, section.removed])).toEqual([
+            ["/repo/src/d.ts", 2, 1],
+        ]);
+    });
+
+    it("counts an added or removed source line that itself starts with ++ or --", () => {
+        const patch = ["--- a/src/c.c", "+++ b/src/c.c", "@@ -1,2 +1,2 @@", "---i;", "+++i;", " x"].join("\n");
+
+        expect(overflowPart("/repo/src/c.c", patch).label).toBe("/repo/src/c.c (+1 -1)");
+    });
+
     it("reads each file of a note from its first hunk, and nothing else", () => {
         const sections = sectionsOf(NOTE);
 
@@ -78,16 +116,28 @@ describe("the full-diff mod's note reader", () => {
 
         const all = await sectionsOfCalls({ ids: ["first", "second", "third"], read, maxChars: 1_000 });
 
-        expect(all.map((section) => `${section.call} ${section.path}`)).toEqual([
+        expect(all.sections.map((section) => `${section.call} ${section.path}`)).toEqual([
             "first /repo/src/a.ts",
             "first /repo/src/b.ts",
             "third /repo/src/a.ts",
             "third /repo/src/b.ts",
         ]);
+        expect(all.omitted).toEqual([]);
 
         const cut = await sectionsOfCalls({ ids: ["first", "third"], read, maxChars: 40 });
 
-        expect(cut.map((section) => section.path)).toEqual(["/repo/src/a.ts"]);
+        expect(cut.sections.map((section) => section.path)).toEqual(["/repo/src/a.ts"]);
+    });
+
+    it("names every call of a group whose files went past the shared budget", async () => {
+        // Each call fits alone, so the hook dropped both links; together the second one was not drawn at all.
+        const read = async () => NOTE;
+        const one = (await sectionsOfCalls({ ids: ["first"], read, maxChars: 1_000 })).sections;
+        const each = one.reduce((total, section) => total + section.patch.length, 0);
+        const group = await sectionsOfCalls({ ids: ["first", "second", "third"], read, maxChars: each + 10 });
+
+        expect(group.sections.map((section) => section.call)).toEqual(["first", "first"]);
+        expect(group.omitted).toEqual(["second", "third"]);
     });
 
     it("draws a file the note holds twice once", () => {
@@ -137,6 +187,13 @@ describe("the full-diff mod's note reader", () => {
         expect(gitSyncOf('git commit -m "after git pull"')).toBeUndefined();
         expect(gitSyncOf("git commit -F - <<'EOF'\ngit merge was clean\nEOF")).toBeUndefined();
         expect(gitSyncOf("tools git pullout")).toBeUndefined();
+    });
+
+    it("reads a quoted git folder as one argument, and no git sync a command only prints", () => {
+        expect(gitSyncOf('git -C "/repo/a b" pull')).toBe("git pull");
+        expect(gitSyncOf("git -c core.pager=cat --no-pager merge topic")).toBe("git merge");
+        expect(gitSyncOf("echo git pull; perl -pi -e s/a/b/ a.ts")).toBeUndefined();
+        expect(gitSyncOf("printf '%s' x && git status")).toBeUndefined();
     });
 });
 

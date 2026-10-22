@@ -79,6 +79,16 @@ export function openByDefault(sections: readonly Section[]): boolean[] {
     });
 }
 
+export interface CallSections {
+    sections: CallSection[];
+    /**
+     * The calls with a file past the budget, drawn in part or not at all. The hook checks each call's size on its own
+     * and drops its full-diff link when that fits, so a group of two 40,000-character calls lost the second one
+     * without a trace; the mod names these calls' notes instead.
+     */
+    omitted: string[];
+}
+
 /**
  * The sections of several calls' notes, in call order, while their patches fit `maxChars` together.
  * A call with no note (the hook did not cut its message, or it changed nothing) adds nothing.
@@ -91,9 +101,11 @@ export async function sectionsOfCalls({
     ids: readonly string[];
     read: (id: string) => Promise<string>;
     maxChars: number;
-}): Promise<CallSection[]> {
-    const found: CallSection[] = [];
+}): Promise<CallSections> {
+    const sections: CallSection[] = [];
+    const omitted: string[] = [];
     let spent = 0;
+    let full = false;
 
     for (const call of ids) {
         let note: string;
@@ -105,17 +117,19 @@ export async function sectionsOfCalls({
         }
 
         for (const section of sectionsOf(note)) {
-            spent += section.patch.length;
-
-            if (spent > maxChars) {
-                return found;
+            if (!full && spent + section.patch.length <= maxChars) {
+                spent += section.patch.length;
+                sections.push({ ...section, call });
+                continue;
             }
 
-            found.push({ ...section, call });
+            full = true;
+            omitted.push(call);
+            break;
         }
     }
 
-    return found;
+    return { sections, omitted };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -156,19 +170,24 @@ export function commandOf(input: unknown): string {
     return isRecord(input) && typeof input.command === "string" ? input.command : "";
 }
 
+/**
+ * `git` as the command word of a statement (after `;`, `&&`, `|`, `(` or a line start, and any `VAR=x` assignments),
+ * then git's own leading options (`-C <dir>`, `-c <key=value>`, `--no-pager`), then the sync verb. `echo git pull`
+ * runs no pull.
+ */
 const GIT_SYNC =
-    /(?:^|[\s;&|(])git(?:\s+-C\s+\S+)?\s+(pull|merge|rebase|checkout|switch|reset|cherry-pick|revert|am|stash\s+(?:pop|apply))(?=$|[\s;&|)])/m;
+    /(?:^|[;&|(])[ \t]*(?:[A-Za-z_]\w*=\S*[ \t]+)*(?:\S*\/)?git(?:[ \t]+(?:-[Cc][ \t]+\S+|--?[A-Za-z][\w-]*(?:=\S+)?))*[ \t]+(pull|merge|rebase|checkout|switch|reset|cherry-pick|revert|am|stash[ \t]+(?:pop|apply))(?=$|[\s;&|)])/m;
 
 /**
  * `git pull` (or `git merge`, `git stash pop`, …) when the command runs one, else `undefined`. Its diff is other
  * people's work arriving, so the mod starts it hidden behind one button (2026-10-20: a `git pull` in devulinka-infra
- * drew every pulled line). Heredoc bodies and quoted text are dropped first: `git commit -m "after git pull"` runs
- * no pull.
+ * drew every pulled line). Heredoc bodies are dropped first and each quoted string becomes one word: `git commit -m
+ * "after git pull"` runs no pull, and `git -C "/repo/a b" pull` keeps its folder as one argument.
  */
 export function gitSyncOf(command: string): string | undefined {
     const bare = command
         .replace(/<<-?[ \t]*(['"]?)([A-Za-z_]\w*)\1[^\n]*\n[\s\S]*?\n[ \t]*\2[ \t]*(?=\n|$)/g, " ")
-        .replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, " ");
+        .replace(/'[^']*'|"(?:\\.|[^"\\])*"/g, "Q");
     const verb = GIT_SYNC.exec(bare)?.[1];
 
     return verb === undefined ? undefined : `git ${verb.replace(/\s+/g, " ")}`;

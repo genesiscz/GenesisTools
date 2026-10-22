@@ -131,6 +131,61 @@ export function beforeCopy({ dir, root, absolute }: { dir: string; root: string;
 }
 
 /**
+ * `beforeCopy` for many files of one root, with the archive listed once: a file the listing lacks was clean when
+ * the command began, so it gets `null` without a `tar` spawn of its own. `renamesIn` asks for every deleted file,
+ * and each one cost a `tar -xOf` even when absent (up to `RENAME_SCAN_LIMIT` of them). `copy` is the extraction,
+ * a parameter so a test can count it.
+ */
+export function beforeCopier({
+    dir,
+    root,
+    copy = beforeCopy,
+}: {
+    dir: string;
+    root: string;
+    copy?: typeof beforeCopy;
+}): (absolute: string) => string | null {
+    let members: Set<string> | null | undefined;
+
+    return (absolute) => {
+        if (members === undefined) {
+            members = archiveMembers(dir, root);
+        }
+
+        // An archive that could not be listed falls back to one extraction per file.
+        if (members !== null && !members.has(relative(root, absolute).normalize("NFC"))) {
+            return null;
+        }
+
+        return copy({ dir, root, absolute });
+    };
+}
+
+/** The archive's member names in NFC (bsdtar stores NFD, see `extract`), empty with no archive, `null` when `tar -tf` failed. */
+function archiveMembers(dir: string, root: string): Set<string> | null {
+    const index = rootIndex(dir, root);
+    const tar = join(dir, `${index + 1}.tar`);
+
+    if (index < 0 || !existsSync(tar)) {
+        return new Set();
+    }
+
+    const listed = spawnSync("tar", ["-tf", tar], { encoding: "utf8", maxBuffer: 16_000_000 });
+
+    if (listed.status !== 0 || typeof listed.stdout !== "string") {
+        hookDiag("Could not list the capture archive", { tar, status: listed.status });
+        return null;
+    }
+
+    return new Set(
+        listed.stdout
+            .split("\n")
+            .filter(Boolean)
+            .map((name) => name.normalize("NFC"))
+    );
+}
+
+/**
  * `--` before the member name, for the same reason the capture uses it: a repository file
  * named `-C` would otherwise be read by tar as an option.
  *
