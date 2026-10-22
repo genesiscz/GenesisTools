@@ -342,10 +342,12 @@ public struct GitWorkingTreeSource {
             }
 
             if file.skipped != nil && DiffImage.isImage(entry.path) || DiffImage.isSVG(entry.path) {
+                let working = repo.appendingPathComponent(entry.path).path
                 file.image = DiffImage(
                     old: entry.status == .added ? nil : .blob(repo: repo.path, object: "\(plan.old):\(entry.oldPath ?? entry.path)"),
                     new: entry.status == .deleted ? nil
-                        : plan.new.map { .blob(repo: repo.path, object: "\($0):\(entry.path)") } ?? .file(repo.appendingPathComponent(entry.path).path)
+                        : plan.new.map { .blob(repo: repo.path, object: "\($0):\(entry.path)") } ?? .file(working),
+                    revision: plan.new == nil ? DiffImage.revision(ofFile: working) : nil
                 )
             }
 

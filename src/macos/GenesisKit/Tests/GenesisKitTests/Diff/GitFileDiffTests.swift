@@ -49,6 +49,14 @@ final class GitFileDiffTests: XCTestCase {
         XCTAssertTrue(url.path.hasPrefix(DiffImageRegistry.prefix))
         XCTAssertEqual(DiffImageRegistry.source(String(url.path.dropFirst(DiffImageRegistry.prefix.count))), changed.old)
         XCTAssertEqual(DiffImageRegistry.mimeType(for: "a/B.PNG"), "image/png")
+
+        // Overwritten while its diff stays open: the image is a new value with a new URL, so the page loads it again.
+        try Data([0x89, 0x50, 0x4E, 0x47, 9, 9, 9, 9, 9]).write(to: repo.appendingPathComponent("logo.png"))
+        let reread = try XCTUnwrap(GitWorkingTreeSource(repo: repo).load(scope: .uncommitted).files.first { $0.path == "logo.png" }?.image)
+        XCTAssertEqual(reread.new, changed.new, "the same place")
+        XCTAssertNotEqual(reread, changed, "but another revision")
+        XCTAssertNotEqual(DiffImageRegistry.url(try XCTUnwrap(reread.new), revision: reread.revision),
+                          DiffImageRegistry.url(try XCTUnwrap(changed.new), revision: changed.revision))
     }
 
     func testUntrackedColorContrastsWithBothPageSchemes() throws {

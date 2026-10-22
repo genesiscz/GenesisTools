@@ -8,6 +8,9 @@ final class LocalNetworkWatchTests: XCTestCase {
             + "for PID 49784, allowing a new prompt"
         XCTAssertEqual(LocalNetworkWatch.promptPid(inLogLine: line), 49784)
         XCTAssertNil(LocalNetworkWatch.promptPid(inLogLine: "Filtering the log data using \"process == nehelper\""))
+        let other = "2026-10-22 16:34:10.002 I  nehelper[402:377e9a1] [com.apple.networkextension:] Found new path "
+            + "/Applications/Other.app/Contents/MacOS/Other for PID 51200, allowing a new prompt"
+        XCTAssertNil(LocalNetworkWatch.promptPid(inLogLine: other), "another app's prompt is not ours to describe")
     }
 
     func testShortCommandNamesTheTool() {

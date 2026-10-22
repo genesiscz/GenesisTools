@@ -372,7 +372,10 @@ private struct BridgeFile: Encodable {
         hasher.combine(newContents)
         hasher.combine(file.image)
         key = String(hasher.finalize(), radix: 36)
-        image = file.image.map { BridgeImage(old: $0.old.map(DiffImageRegistry.url), new: $0.new.map(DiffImageRegistry.url)) }
+        image = file.image.map { image in
+            BridgeImage(old: image.old.map { DiffImageRegistry.url($0, revision: image.revision) },
+                        new: image.new.map { DiffImageRegistry.url($0, revision: image.revision) })
+        }
     }
 }
 
@@ -518,9 +521,11 @@ enum DiffImageRegistry {
     private static let lock = NSLock()
     private static var sources: [String: DiffImage.Source] = [:]
 
-    static func url(_ source: DiffImage.Source) -> String {
+    /// The page caches an image by its URL, so the URL carries the file's revision: an overwritten image loads again.
+    static func url(_ source: DiffImage.Source, revision: String? = nil) -> String {
         var hasher = Hasher()
         hasher.combine(source)
+        hasher.combine(revision)
         let token = String(UInt(bitPattern: hasher.finalize()), radix: 36)
         lock.withLock { sources[token] = source }
         return "\(PierreWebDiffRenderer.scheme)://viewer\(prefix)\(token)"

@@ -201,8 +201,18 @@ const PROMPT_LINE = /^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)\.\d+ .*Found new path (.+
 export function parseLocalNetworkPrompts(logText: string): LocalNetworkPrompt[] {
     return logText.split("\n").flatMap((line): LocalNetworkPrompt[] => {
         const match = PROMPT_LINE.exec(line);
-        return match ? [{ at: match[1], pid: Number(match[3]), executable: match[2] }] : [];
+        return match && isGenesisToolsBinary(match[2])
+            ? [{ at: match[1], pid: Number(match[3]), executable: match[2] }]
+            : [];
     });
+}
+
+/**
+ * The launcher of the installed app or of a retired build. nehelper logs every app's prompt, and another app's is
+ * not ours to describe (its dialog names that app).
+ */
+export function isGenesisToolsBinary(executable: string): boolean {
+    return executable.endsWith("/GenesisTools.app/Contents/MacOS/GenesisTools");
 }
 
 /** Prompts in the last `since` (a `log show --last` value: `30m`, `2h`, `1d`); empty when `log show` fails (logged). */

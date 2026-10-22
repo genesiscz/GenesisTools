@@ -697,6 +697,7 @@ describe("Local Network answers", () => {
             "Timestamp               Ty Process[PID:TID]",
             "2026-10-21 22:16:06.926 I  nehelper[419:2a66e2b] [com.apple.networkextension:] Found new path /Users/x/.genesis-tools/app/retired.noindex/1792613086315/GenesisTools.app/Contents/MacOS/GenesisTools for PID 97417, allowing a new prompt",
             "2026-10-21 22:16:06.930 I  nehelper[419:2a66e2b] [com.apple.networkextension:] Local network preference not yet set, prompting for GenesisTools (com.genesiscz.genesistools)",
+            "2026-10-21 22:17:01.100 I  nehelper[419:2a66e2b] [com.apple.networkextension:] Found new path /Applications/Other.app/Contents/MacOS/Other for PID 51200, allowing a new prompt",
         ].join("\n");
         const [prompt, ...rest] = parseLocalNetworkPrompts(log);
         expect(rest).toEqual([]);

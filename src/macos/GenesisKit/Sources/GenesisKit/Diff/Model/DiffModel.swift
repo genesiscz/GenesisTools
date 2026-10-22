@@ -56,10 +56,22 @@ public struct DiffImage: Codable, Hashable {
 
     public var old: Source?
     public var new: Source?
+    /// What the working-tree file was when the diff was read (modification time and size). A source names a place,
+    /// not its bytes, so an image overwritten while its diff stays open is a new `DiffImage` only through this.
+    public var revision: String?
 
-    public init(old: Source?, new: Source?) {
+    public init(old: Source?, new: Source?, revision: String? = nil) {
         self.old = old
         self.new = new
+        self.revision = revision
+    }
+
+    /// `revision` for a file on disk: its modification time and size, nil when it cannot be read.
+    public static func revision(ofFile path: String) -> String? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let modified = attributes[.modificationDate] as? Date,
+              let size = attributes[.size] as? NSNumber else { return nil }
+        return "\(modified.timeIntervalSince1970)-\(size)"
     }
 
     /// The binary formats WebKit draws. SVG is text: it has code to show, so it is asked for by `isSVG`.

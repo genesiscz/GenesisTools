@@ -40,10 +40,14 @@ enum LocalNetworkWatch {
     /// The `--local-network-panel` face ends with its panel.
     static var onPanelClosed: (() -> Void)?
 
-    /// The pid in nehelper's `Found new path <executable> for PID <pid>, allowing a new prompt` line.
+    /// The pid in nehelper's `Found new path <executable> for PID <pid>, allowing a new prompt` line, when the
+    /// executable is a GenesisTools launcher (installed or a retired build). nehelper logs every app's prompts, and
+    /// another app's dialog names that app itself.
     nonisolated static func promptPid(inLogLine line: String) -> Int? {
         guard let marker = line.range(of: ", allowing a new prompt"),
-              let pidStart = line.range(of: " for PID ", options: .backwards, range: line.startIndex..<marker.lowerBound)
+              let pidStart = line.range(of: " for PID ", options: .backwards, range: line.startIndex..<marker.lowerBound),
+              let pathStart = line.range(of: "Found new path ", range: line.startIndex..<pidStart.lowerBound),
+              line[pathStart.upperBound..<pidStart.lowerBound].hasSuffix("/GenesisTools.app/Contents/MacOS/GenesisTools")
         else { return nil }
         return Int(line[pidStart.upperBound..<marker.lowerBound])
     }
