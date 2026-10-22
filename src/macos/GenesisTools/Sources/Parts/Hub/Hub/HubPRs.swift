@@ -397,6 +397,9 @@ final class PRsModel: ObservableObject {
     /// The last ref `openDirect` answered for, shown or failed: it said so itself, so a list landing
     /// after it neither reports the ref missing a second time nor widens and asks again.
     private var directAnswered: HubPRRef?
+    /// Why the last `openDirect` failed. Kept apart from the list's own notices, which every list load replaces:
+    /// a list that lands after the failure would otherwise erase the only word on why the link opened nothing.
+    private var directFailure: PRListNotice?
     /// The selected PR's live threads, started with its detail: the review adopts the store when it
     /// exists, so the threads never wait for the head fetch and the diff.
     private var prefetchedThreads: PRThreadsStore?
@@ -624,6 +627,10 @@ final class PRsModel: ObservableObject {
     /// its head commit. A cached row (`startWanted`) starts all three at once.
     private func openDirect(_ ref: HubPRRef, arg: String) {
         directOpen = (ref, selectedID)
+        if let failure = directFailure {
+            errors.removeAll { $0 == failure }
+            directFailure = nil
+        }
         Task {
             let span = HubPerf.begin("prs.show.direct", arg, awaits: true)
             let answer = await Task.detached(priority: .userInitiated) { () -> Result<(HubPR, HubPRDetail, Data), Error> in
@@ -646,17 +653,22 @@ final class PRsModel: ObservableObject {
             case .failure(let error):
                 span.end("failed")
                 // Said, not swallowed: the list's own answer no longer reports a ref it handed here.
+                let notice: PRListNotice
                 if let failure = error as? PRShowFailure, let summary = failure.summary {
-                    errors.append(PRListNotice("Could not open \(ref.label): \(summary)", more: failure.message))
+                    notice = PRListNotice("Could not open \(ref.label): \(summary)", more: failure.message)
                 } else {
-                    errors.append(PRListNotice.failure("Could not open \(ref.label)", error))
+                    notice = PRListNotice.failure("Could not open \(ref.label)", error)
                 }
+                directFailure = notice
+                errors.append(notice)
                 return
             }
             let (row, detail, data) = fresh
             guard ref.matches(row) else {
                 span.end("another PR")
-                errors.append(PRListNotice("\(arg) answered \(row.label), not \(ref.label)"))
+                let notice = PRListNotice("\(arg) answered \(row.label), not \(ref.label)")
+                directFailure = notice
+                errors.append(notice)
                 return
             }
             span.end(row.label)
@@ -936,6 +948,9 @@ final class PRsModel: ObservableObject {
 
     func dismissError(_ notice: PRListNotice) {
         errors.removeAll { $0 == notice }
+        if directFailure == notice {
+            directFailure = nil
+        }
     }
 
     /// A project opened from "More projects" (not a session project, not starred) leaves the list
@@ -1006,7 +1021,7 @@ final class PRsModel: ObservableObject {
             fullProjects = Set(list.repos.compactMap { repo in (repo.count ?? 0) >= limit ? repo.origin?.web : nil })
             changed = moved
         }
-        errors = PRListNotice.failures(list.repos)
+        errors = PRListNotice.failures(list.repos) + (directFailure.map { [$0] } ?? [])
         SWR.fade(moved, current: { [weak self] in self?.changed }, clear: { [weak self] in self?.changed = [] })
     }
 

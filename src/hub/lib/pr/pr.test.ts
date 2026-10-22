@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultReviewCommentClient, type ReviewCommentClient } from "@app/github/lib/review-comments";
@@ -1324,6 +1324,20 @@ describe("resolveHubPrRef", () => {
             number: 12,
         });
         expect(await resolveHubPrRef("app#12", { source })).toEqual({ path: "/work/app", number: 12 });
+    });
+
+    test("a ! ref finds its checkout even when the current folder holds a folder of the same name", async () => {
+        const here = process.cwd();
+        const scratch = mkdtempSync(join(tmpdir(), "gt-project-ref-"));
+        mkdirSync(join(scratch, "app"));
+        process.chdir(scratch);
+
+        try {
+            expect(await resolveHubPrRef("app!12", { source })).toEqual({ path: "/work/app", number: 12 });
+        } finally {
+            process.chdir(here);
+            rmSync(scratch, { recursive: true, force: true });
+        }
     });
 
     test("a checkout wins over the github.com guess, which stays for a project with none", async () => {

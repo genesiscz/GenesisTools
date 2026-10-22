@@ -33,7 +33,12 @@ export async function resolveHubPrRef(
     const trimmed = ref.trim();
     const named = /^([^\s#!]+)([#!])(\d+)$/.exec(trimmed);
 
-    if (!named || /^https?:\/\//i.test(trimmed) || /^[~./]/.test(named[1]) || existsSync(named[1])) {
+    if (
+        !named ||
+        /^https?:\/\//i.test(trimmed) ||
+        /^[~./]/.test(named[1]) ||
+        (named[2] === "#" && existsSync(named[1]))
+    ) {
         return (
             parsePrRef(trimmed) ?? {
                 problem: `expected a PR/MR URL, <repoPath>#<number> or <project>!<number>, got "${ref}"`,

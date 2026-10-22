@@ -223,6 +223,21 @@ final class HubLogicTests: XCTestCase {
         let range = HubCommitLookup.Found(root: root, sha: newest, title: "\(middle.prefix(10))..\(newest.prefix(10)) (2 commits)", base: head)
         XCTAssertEqual(HubCommitLookup.resolve(repo: path, sha: String(middle.prefix(8)), to: String(newest.prefix(8)), known: []), .found(range))
         XCTAssertEqual(HubCommitLookup.resolve(repo: path, sha: String(newest.prefix(8)), to: String(middle.prefix(8)), known: []), .found(range))
+
+        // Two same-name forks hold the older end; only the second holds the newer one, so the range opens there.
+        let stale = path + "-stale"
+        XCTAssertNotNil(WorktreeDiscovery.git(path, ["clone", "-q", "--no-local", path, stale]))
+        defer { try? FileManager.default.removeItem(atPath: stale) }
+        XCTAssertNotNil(WorktreeDiscovery.git(path, commit))
+        let latest = try XCTUnwrap(WorktreeDiscovery.git(path, ["rev-parse", "HEAD"])?.trimmed)
+        let forks = [HubPRProject(project: "https://example.test/old/app", repo: "app", root: stale, kind: "gitlab"),
+                     HubPRProject(project: "https://example.test/me/app", repo: "app", root: path, kind: "gitlab")]
+        guard case .found(let ranged) = HubCommitLookup.resolve(repo: "group/sub/app", sha: String(middle.prefix(8)),
+                                                                to: String(latest.prefix(8)), known: forks) else {
+            return XCTFail("the fork holding both ends of the range must open it")
+        }
+        XCTAssertEqual(ranged.root, root)
+        XCTAssertEqual(ranged.sha, latest)
     }
 
     @MainActor
