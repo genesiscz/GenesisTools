@@ -1,12 +1,10 @@
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { format } from "node:util";
-import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { stripAnsi } from "@genesiscz/utils/string";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import { redactSecretsInText } from "@genesiscz/utils/transclude/redact";
-import { failureCaller } from "./caller";
 import { appendFailure, type FailureCaller, type FailureKind, type ToolFailure } from "./record";
 
 const TAIL_CHARS = 4000;
@@ -26,6 +24,8 @@ interface Run {
     tool: string;
     argv: string[];
     commandPath: () => string | null;
+    /** Who ran the tool, asked only when a failure is written (agent-caller.ts unless a test injects one). */
+    caller: () => FailureCaller | null;
     stderr: string;
     /** Only read for a JSON error object; never stored, since stdout is the tool's result. */
     stdout: string;
@@ -213,15 +213,25 @@ function tapStderr(): void {
     };
 }
 
+/**
+ * agent-caller.ts, loaded on a failure only (the exit event is synchronous, so the load is too). The path is built at
+ * run time so neither a bundler nor the type checker follows it into the agent runtime. A copy of these helpers
+ * without that module records failures with no caller.
+ */
+function agentCaller(): FailureCaller | null {
+    const loaded: unknown = require(join(import.meta.dir, "agent-caller"));
+    const lookup = (loaded as { agentFailureCaller?: unknown } | null)?.agentFailureCaller;
+    if (typeof lookup !== "function") {
+        return null;
+    }
+
+    const found: unknown = lookup();
+    return typeof found === "object" && found !== null && "agent" in found ? (found as FailureCaller) : null;
+}
+
 function caller(): FailureCaller | null {
     try {
-        // Loaded here, on a failure only: the runtime context pulls the history index reader, which every tool
-        // would otherwise import at start. The exit event is synchronous, so the load is too.
-        const {
-            getAgentRuntimeContext,
-        }: typeof import("@genesiscz/utils/agent/runtime") = require("@genesiscz/utils/agent/runtime");
-        const processEnv = env.getProcessEnv();
-        return failureCaller({ context: getAgentRuntimeContext({}, processEnv), processEnv });
+        return run?.caller() ?? null;
     } catch (error) {
         logger.debug({ error }, "failures: no caller context");
         return null;
@@ -332,16 +342,18 @@ export function watchToolRun({
     tool,
     argv = process.argv.slice(2),
     commandPath = () => null,
+    caller = agentCaller,
 }: {
     tool: string;
     argv?: string[];
     commandPath?: () => string | null;
+    caller?: () => FailureCaller | null;
 }): void {
     if (run) {
         return;
     }
 
-    run = { tool, argv, commandPath, stderr: "", stdout: "", noted: null, ended: false };
+    run = { tool, argv, commandPath, caller, stderr: "", stdout: "", noted: null, ended: false };
     tapStderr();
     process.on("uncaughtExceptionMonitor", (error) => {
         noteCrash(error, process.listenerCount("uncaughtException") === 0);
