@@ -91,7 +91,10 @@ echo "▶ tsc --noEmit (failing on staged files only)..."
 # but only errors in STAGED files block the commit. Unstaged breakage — e.g. a
 # parallel agent mid-rewire in the same worktree — must not wedge an unrelated
 # commit; CI still gates the full tree.
-tsc_output=$(bunx tsc --noEmit 2>&1) && tsc_status=0 || tsc_status=$?
+# Incremental, sharing the root project's build info with scripts/ci/typecheck.ts: about 1.5 s instead of 6 to 13.
+tsc_cache=$(git rev-parse --path-format=absolute --git-path genesis-typecheck)
+mkdir -p "$tsc_cache"
+tsc_output=$(bunx tsc --noEmit --incremental --tsBuildInfoFile "$tsc_cache/root.tsbuildinfo" 2>&1) && tsc_status=0 || tsc_status=$?
 staged_files=$(git diff --cached --name-only --diff-filter=d | grep -E '\.(ts|tsx)$' || true)
 
 # Only per-file diagnostics are skippable. A non-zero exit with NO diagnostic

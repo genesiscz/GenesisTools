@@ -972,7 +972,8 @@ bun run lint                     # biome check .
 bun run lint:fix                 # biome check --write .
 bun run format                   # biome format --write .
 bun run tsgo                     # tsc --noEmit (TypeScript 7; `bun run tsc` is the same)
-bun run typecheck:all            # plus the dashboard tsconfig
+bun run typecheck                # the projects a change since their last pass reaches, incremental
+bun run typecheck:all            # every project (root, dashboards, fable-replace), incremental
 ```
 
 Formatting is Biome with a 120-column line width and 4-space indent. Imports are sorted by

@@ -80,8 +80,9 @@ stage_done
 
 # A failed typecheck fails the push. It used to run `bun install` and retry, which turned a
 # real error report into a pass whenever the install happened to fix it, and hid the failure.
-echo "▶ bun run typecheck:all..."
-if ! bun run typecheck:all; then
+# Only the projects a change since their last passing run can reach, each incremental (scripts/ci/typecheck.ts).
+echo "▶ bun run typecheck..."
+if ! bun run typecheck; then
     echo "✖ typecheck failed: push refused. If the errors name a missing module, the dependency tree is"
     echo "  stale: run \`bun install\` and push again."
     exit 1

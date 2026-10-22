@@ -8,7 +8,8 @@
     ],
     "scripts": {
         "prepare": "bun scripts/git/install-hooks.ts",
-        "typecheck:all": "tsc --noEmit && tsc -p src/claude-history-dashboard/tsconfig.json --noEmit && tsc -p src/spotify/ui/tsconfig.json --noEmit && tsc -p src/monitor/ui/tsconfig.json --noEmit && tsc -p src/clarity/ui/tsconfig.json --noEmit && tsc -p src/dev-dashboard/ui/tsconfig.json --noEmit && tsc -p plugins/genesis-tools/skills/fable-replace/scripts/tsconfig.json --noEmit",
+        "typecheck": "bun scripts/ci/typecheck.ts",
+        "typecheck:all": "bun scripts/ci/typecheck.ts --all",
         "tsgo": "tsc --noEmit",
         "tsc": "tsc --noEmit",
         "lint": "bun run lint:biome && bun run lint:rules",

@@ -409,8 +409,9 @@ jobs:
       # `bun run lint` still runs both for humans; CI wants them separable,
       # because a combined number cannot say which half regressed.
       # Lint rules are per-file and syntactic, so on a PR only the diff needs
-      # checking — unlike the `TypeScript check` step further down, which must stay
-      # whole-tree because a type error travels across files a diff never names. The
+      # checking. The `TypeScript check` step further down still checks whole projects,
+      # because a type error travels across files a diff never names; it only skips a
+      # project none of whose files changed (scripts/ci/typecheck.ts). The
       # base commit is fetched at depth 1 because a full-history checkout would
       # pull 350+ MiB and cost more than the linting it saves. Both commands
       # fall back to a full scan if the diff is unavailable for any reason.
@@ -498,9 +499,36 @@ jobs:
         timeout-minutes: 5
         run: bun run test:dd-mobile
 
+      # The typecheck compares against the PR base, or the commit before a push. The PR base is
+      # fetched above; a push's parent is fetched here (a new branch has none: every project runs).
+      - name: Fetch the commit before this push
+        if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
+        continue-on-error: true
+        run: git fetch --depth=1 origin ${{ github.event.before }}
+
+      # Build info saved by the green push run of that same base commit, and only that one: its
+      # file lists are what decides which projects a change can reach, so build info from another
+      # commit could skip a project that has since started importing a changed file. On a miss
+      # every project runs (still incremental), which is always correct.
+      - name: Restore TypeScript build info of the base commit
+        uses: actions/cache/restore@v4
+        with:
+          path: .git/genesis-typecheck
+          key: ${{ runner.os }}-typecheck-${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+
       - name: TypeScript check
         timeout-minutes: 2
-        run: bun run typecheck:all
+        shell: bash
+        env:
+          TYPECHECK_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: bun scripts/ci/typecheck.ts --base "$TYPECHECK_BASE"
+
+      - name: Save TypeScript build info for the next push
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: .git/genesis-typecheck
+          key: ${{ runner.os }}-typecheck-${{ github.sha }}
 
       - name: Logging & output convention guard
         timeout-minutes: 1
