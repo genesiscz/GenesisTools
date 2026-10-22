@@ -588,10 +588,15 @@ public final class WidgetModel: ObservableObject {
         hoveredSession = nil
     }
 
+    /// Whether `showPeek` would pop an item up in `surface` now: never while the user is in a panel, a window or a drag.
+    func canPeek(on surface: WidgetSurfaceID) -> Bool {
+        !stopping && expanded == nil && !dialogOpen && !draggingSide && pointerInside.isEmpty
+            && (hoveredSurface == nil || hoveredSurface == surface)
+    }
+
     /// Pops `item` up in `surface`'s preview for `seconds`, unless the user is in a panel, a window or a drag.
     func showPeek(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, seconds: Double = 7) {
-        guard !stopping, expanded == nil, !dialogOpen, !draggingSide, pointerInside.isEmpty,
-              hoveredSurface == nil || hoveredSurface == surface else { return }
+        guard canPeek(on: surface) else { return }
         hoverTask?.cancel()
         peekItem = item
         hoveredSurface = surface

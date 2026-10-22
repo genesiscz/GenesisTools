@@ -38,6 +38,16 @@ describe("reasonToRun", () => {
             "new file",
         ]);
         expect(reasons({ files: ["docs/new.md"], added: ["docs/new.md"] })).toEqual([null, null]);
+        expect(reasons({ files: ["src/utils/new.js"], added: ["src/utils/new.js"] })).toEqual(["new file", "new file"]);
+    });
+
+    it("runs a project for an added file another project's cache already holds, since its own may take it too", () => {
+        const rootSawIt = new Map(programs);
+        rootSawIt.set("root", new Set([...(programs.get("root") ?? []), key("src/app/ui/new.ts")]));
+        expect(reasons({ files: ["src/app/ui/new.ts"], added: ["src/app/ui/new.ts"] }, rootSawIt)).toEqual([
+            "in its program",
+            "new file",
+        ]);
     });
 
     it("a deleted file still counts for the programs that held it", () => {

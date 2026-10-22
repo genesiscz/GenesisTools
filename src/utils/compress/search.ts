@@ -30,6 +30,7 @@ export function zstdContentStream(path: string, concurrency = FRAMES_AHEAD): Rea
 }
 
 export interface RipgrepRun {
+    /** Empty when the caller took each line through `onLine`. */
     stdout: string;
     stderr: string;
     /** The worst exit code of the runs (rg exits 1 when nothing matched). */
@@ -37,16 +38,37 @@ export interface RipgrepRun {
     signal: string | null;
 }
 
+/** Hands each line of `stream` to `onLine` as it arrives, so no more than one chunk of it is held at a time. */
+async function eachLine(stream: ReadableStream<Uint8Array>, onLine: (line: string) => void): Promise<void> {
+    const decoder = new TextDecoder();
+    let rest = "";
+
+    for await (const chunk of stream) {
+        const lines = (rest + decoder.decode(chunk, { stream: true })).split("\n");
+        rest = lines.pop() ?? "";
+        for (const line of lines) {
+            onLine(line);
+        }
+    }
+
+    rest += decoder.decode();
+    if (rest) {
+        onLine(rest);
+    }
+}
+
 async function runOne({
     rg,
     args,
     timeoutMs,
     zst,
+    onLine,
 }: {
     rg: string;
     args: string[];
     timeoutMs?: number;
     zst?: string;
+    onLine?: (line: string) => void;
 }): Promise<RipgrepRun> {
     const proc = Bun.spawn(zst ? [rg, ...args, "-"] : [rg, ...args], {
         stdin: zst ? zstdContentStream(zst) : "ignore",
@@ -54,7 +76,10 @@ async function runOne({
         stderr: "pipe",
         timeout: timeoutMs,
     });
-    const output = Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+    const output = Promise.all([
+        onLine ? eachLine(proc.stdout, onLine).then(() => "") : new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+    ]);
 
     const [[stdout, stderr], code] = await Promise.all([output, proc.exited]);
     return { stdout, stderr, code, signal: proc.signalCode ?? null };
@@ -64,18 +89,21 @@ async function runOne({
  * Runs ripgrep with `args` over files that may be plain or `.zst`: one rg over all the plain files (they stay
  * arguments, so rg maps them as before) and, at the same time, one rg per `.zst` file fed its decompressed frames on
  * stdin. Needs no `zstd` CLI (unlike `rg -z`). Use `--no-filename` in `args`: stdin has no file name. The outputs are
- * joined, plain files first.
+ * joined, plain files first. With `onLine`, each output line goes there as it arrives (the runs interleave) and
+ * `stdout` stays empty, so a caller that keeps only some lines never holds the whole output.
  */
 export async function ripgrepFiles({
     rg,
     args,
     files,
     timeoutMs,
+    onLine,
 }: {
     rg: string;
     args: string[];
     files: string[];
     timeoutMs?: number;
+    onLine?: (line: string) => void;
 }): Promise<RipgrepRun> {
     const plain = files.filter((file) => !isZstdPath(file));
     const compressed = files.filter(isZstdPath);
@@ -84,13 +112,13 @@ export async function ripgrepFiles({
         const results: RipgrepRun[] = [];
 
         for (const zst of compressed) {
-            results.push(await runOne({ rg, args, timeoutMs, zst }));
+            results.push(await runOne({ rg, args, timeoutMs, zst, onLine }));
         }
 
         return results;
     })();
     const runs = [
-        ...(plain.length > 0 ? [await runOne({ rg, args: [...args, "--", ...plain], timeoutMs })] : []),
+        ...(plain.length > 0 ? [await runOne({ rg, args: [...args, "--", ...plain], timeoutMs, onLine })] : []),
         ...(await zstRuns),
     ];
 

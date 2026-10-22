@@ -111,7 +111,40 @@ export function prefilterFor(query: DayLogQuery): { pattern: string; fixed: bool
     return null;
 }
 
-async function candidateLines(files: string[], query: DayLogQuery): Promise<string[]> {
+/**
+ * Keeps the newest `limit` entries (all of them without a limit) while lines stream past, holding at most twice
+ * `limit`: a week of day logs can be gigabytes, and `logs day --limit 100` needs 100 records of it.
+ */
+export function newestEntries(limit: number | undefined): {
+    add(entry: DayLogEntry): void;
+    held(): number;
+    result(): DayLogEntry[];
+} {
+    let entries: DayLogEntry[] = [];
+    const trim = () => {
+        entries.sort((a, b) => a.time.localeCompare(b.time));
+        if (limit) {
+            entries = entries.slice(-limit);
+        }
+    };
+
+    return {
+        add(entry) {
+            entries.push(entry);
+            if (limit && entries.length >= limit * 2) {
+                trim();
+            }
+        },
+        held: () => entries.length,
+        result() {
+            trim();
+            return entries;
+        },
+    };
+}
+
+/** Hands every line that may match to `onLine` as it is read: rg's prefiltered output, else every line. */
+async function eachCandidateLine(files: string[], query: DayLogQuery, onLine: (line: string) => void): Promise<void> {
     const prefilter = prefilterFor(query);
     const rg = ripgrepBinary();
 
@@ -120,16 +153,26 @@ async function candidateLines(files: string[], query: DayLogQuery): Promise<stri
             logger.debug("day log: rg is not on PATH, reading every line");
         }
 
-        return files.flatMap((file) => [...readLinesSync(file)]);
+        for (const file of files) {
+            for (const line of readLinesSync(file)) {
+                onLine(line);
+            }
+        }
+
+        return;
     }
 
     const args = ["--no-config", "--no-filename", "--no-line-number", ...(prefilter.fixed ? ["-F", "-i"] : [])];
-    const run = await ripgrepFiles({ rg, args: [...args, "-e", prefilter.pattern], files, timeoutMs: 120_000 });
+    const run = await ripgrepFiles({
+        rg,
+        args: [...args, "-e", prefilter.pattern],
+        files,
+        timeoutMs: 120_000,
+        onLine,
+    });
     if (run.signal || run.code > 1) {
         throw new Error(`rg over the day logs failed (${run.signal ?? `exit ${run.code}`}): ${run.stderr.trim()}`);
     }
-
-    return run.stdout.split("\n");
 }
 
 /** The newest `limit` matching records, oldest first. */
@@ -141,14 +184,13 @@ export async function queryDayLog(query: DayLogQuery): Promise<DayLogEntry[]> {
         .map((file) => file.path);
     logger.debug({ files, prefilter: prefilterFor(query) }, "day log: query");
 
-    const found: DayLogEntry[] = [];
-    for (const line of await candidateLines(files, query)) {
+    const found = newestEntries(query.limit);
+    await eachCandidateLine(files, query, (line) => {
         const entry = parseDayLogLine(line);
         if (entry && matchesDayLog(entry, query, line)) {
-            found.push(entry);
+            found.add(entry);
         }
-    }
+    });
 
-    found.sort((a, b) => a.time.localeCompare(b.time));
-    return query.limit ? found.slice(-query.limit) : found;
+    return found.result();
 }

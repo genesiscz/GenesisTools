@@ -181,7 +181,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         guard let item = WidgetAlerts.popupItem(wanted) else { return }
         PerfLog.mark("widget.alert items=\(wanted.count) id=\(item.id) kind=\(item.kind)")
         playChime(preferences?.alertSound)
-        guard preferences?.alertPopup ?? true, let surface = peekSurface() else { return }
+        // Checked before the module switch: a popup the user's interaction refuses must not swap the pane they use.
+        guard preferences?.alertPopup ?? true, let surface = peekSurface(), model.canPeek(on: surface) else { return }
         if moduleIDs(for: surface).contains("agents"), model.moduleSelections[surface.key] != "agents" {
             model.moduleSelections[surface.key] = "agents"
         }

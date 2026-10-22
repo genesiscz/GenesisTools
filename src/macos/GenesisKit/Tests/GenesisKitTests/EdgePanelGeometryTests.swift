@@ -646,6 +646,17 @@ final class WidgetVisibilityTests: XCTestCase {
 
         coordinator.model.collapse()
         XCTAssertNil(coordinator.model.peekItem)
+        // The pointer is in a panel and another module is selected: the popup is refused and the pane stays.
+        let side = WidgetSurfaceID(edge: .right)
+        coordinator.model.moduleSelections[side.key] = "capture"
+        coordinator.model.hover(side, inside: true)
+        coordinator.alert([decision])
+        XCTAssertNil(coordinator.model.peekItem, "no popup while the pointer is in a panel")
+        XCTAssertEqual(coordinator.model.moduleSelections[side.key], "capture", "a refused popup keeps the selected module")
+        XCTAssertEqual(chimes, [nil, nil], "a refused popup still chimes")
+        coordinator.model.hover(side, inside: false)
+        coordinator.model.collapse()
+        chimes.removeLast()
         coordinator.model.updatePreferences(["alertPopup": .bool(false), "alertSound": .string("Ping")])
         coordinator.alert([decision])
         XCTAssertEqual(chimes, [nil, "Ping"])

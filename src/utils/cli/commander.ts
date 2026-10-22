@@ -6,7 +6,7 @@ import { consoleFloorFor } from "@genesiscz/utils/logging/tool-policy";
 import { type Command, CommanderError } from "commander";
 import { setCurrentCommand } from "./current-command";
 import { enhanceHelp, markRequiredOptionsDeep, setSuggestCommandProgram, showHelpAfterErrorDeep } from "./executor";
-import { commandPathFromArgv, noteToolError, watchToolRun } from "./failures/watch";
+import { commandPathFromArgv, noteToolError, secretsFromArgv, watchToolRun } from "./failures/watch";
 import { observeInterrupts } from "./interrupt";
 import { currentRunLabel, recordRunOnExit, setRunLabel } from "./run-record";
 
@@ -269,6 +269,7 @@ export async function runTool(
             tool,
             argv: argv.slice(2),
             commandPath: () => currentRunLabel() ?? commandPathFromArgv(program, argv.slice(2)),
+            secrets: () => secretsFromArgv(program, argv.slice(2)),
         });
     }
 

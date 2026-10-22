@@ -73,7 +73,7 @@ tools ai config default list
 
 tools ai config link                            # what references an account
 
-tools ai config secret set <path> [value]       # value comes from stdin or a file; does not link it to an account
+tools ai config secret set <path> [secret]      # value comes from stdin or a file; does not link it to an account
 tools ai config secret ls [prefix]              # paths only, never values
 tools ai config secret rotate                   # new master key, re-encrypt everything
 tools ai config secret export                   # passphrase-protected copy

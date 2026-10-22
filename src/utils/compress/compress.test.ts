@@ -664,6 +664,15 @@ describe("day logs", () => {
         expect(zstRun.stdout).toBe(plainRun.stdout);
         expect(zstRun.stdout.split("\n").filter(Boolean)).toHaveLength(2);
         expect(both.stdout).toBe(plainRun.stdout + zstRun.stdout);
+        const streamed: string[] = [];
+        const lineRun = await ripgrepFiles({
+            rg: ripgrepBinary()!,
+            args,
+            files: [plain, `${twin}.zst`],
+            onLine: (line) => streamed.push(line),
+        });
+        expect(lineRun.stdout).toBe("");
+        expect(streamed.sort()).toEqual(both.stdout.split("\n").filter(Boolean).sort());
         expect(absent.code).toBe(1);
     });
 });

@@ -335,7 +335,11 @@ function registerDay(logs: Command): void {
 
 function registerProfile(logs: Command): void {
     withWindow(
-        logs.command("profile").description(`Slow timers from the profiling log (${toolCommand("config profiling")})`),
+        logs
+            .command("profile")
+            .description(
+                `Slow timers from the profiling log (${toolCommand("config profiling")}). Its lines carry no time of day, so --since and --until select whole days`
+            ),
         "24h"
     )
         .option("--min-ms <ms>", "Only timers at least this long", "1000")
@@ -347,8 +351,9 @@ function registerProfile(logs: Command): void {
             (
                 options: WindowOptions & { minMs: string; scope?: string[]; grep?: string; pid?: string; top: string }
             ) => {
+                const days = daysIn(windowOf(options));
                 const entries = queryProfileLog({
-                    days: daysIn(windowOf(options)),
+                    days,
                     minMs: Number(options.minMs),
                     scopes: parseVariadic(options.scope),
                     grep: options.grep,
@@ -369,6 +374,9 @@ function registerProfile(logs: Command): void {
                     pc.dim(entry.day),
                 ]);
                 out.println(formatTable(rows, ["TIME", "SCOPE", "LABEL", "PID", "DAY"]));
+                out.println(
+                    pc.dim(`\nWhole days ${days[0]} to ${days[days.length - 1]}: profiling lines carry no time of day.`)
+                );
             }
         );
 }

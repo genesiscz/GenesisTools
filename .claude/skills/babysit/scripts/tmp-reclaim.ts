@@ -95,6 +95,10 @@ const SWIFTPM_SCRATCH_ENTRIES = new Set([
     "repositories",
     "workspace-state.json",
 ]);
+/** What SwiftPM writes into a triple folder: one folder per build configuration. */
+const SWIFTPM_TRIPLE_ENTRIES = new Set(["debug", "release"]);
+/** What only a SwiftPM scratch path holds; a triple folder counts only beside one of these (or inside `.build`). */
+const SWIFTPM_SCRATCH_MARKERS = ["workspace-state.json", "build.db", "debug.yaml", "release.yaml"];
 const MODULE_CACHE_FILES = [".pcm", ".swiftmodule", ".timestamp", ".modulevalidation", ".lock"];
 const MODULE_CACHE_MARKERS = [".pcm", ".swiftmodule", "modules.timestamp"];
 /** Never walked in an own-session scan: dependency trees, repositories and moved-aside files a user may restore. */
@@ -400,7 +404,15 @@ export function buildOutputKind(path: string): BuildOutputKind | null {
     const name = basename(path);
 
     if (SWIFTPM_TRIPLES.has(name)) {
-        return "swiftpm-triple";
+        // The name alone proves nothing: a saved or moved-aside folder can carry it. SwiftPM made it only when it sits
+        // in a scratch path and holds nothing but configuration folders.
+        const parent = dirname(path);
+        const children = childNames(path) ?? [];
+        const inScratch =
+            basename(parent) === ".build" ||
+            (childNames(parent) ?? []).some((child) => SWIFTPM_SCRATCH_MARKERS.includes(child));
+        const onlyConfigs = children.length > 0 && children.every((child) => SWIFTPM_TRIPLE_ENTRIES.has(child));
+        return inScratch && onlyConfigs ? "swiftpm-triple" : null;
     }
 
     const names = childNames(path) ?? [];

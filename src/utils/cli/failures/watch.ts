@@ -10,7 +10,10 @@ import { appendFailure, type FailureCaller, type FailureKind, type ToolFailure }
 
 const TAIL_CHARS = 4000;
 const TOOLS_ROOT = resolve(moduleDir(import.meta), "../../../..");
-const SECRET_FLAG = /^--?[\w-]*(?:token|secret|password|passwd|api[-_]?key|auth|cookie|credential)[\w-]*$/i;
+const SECRET_WORD = "(?:token|secret|password|passwd|api[-_]?key|auth|cookie|credential)";
+const SECRET_FLAG = new RegExp(`^--?[\\w-]*${SECRET_WORD}[\\w-]*$`, "i");
+/** A positional argument whose declared name is secret-shaped (`[secret]`) takes a secret value. */
+const SECRET_ARGUMENT = new RegExp(SECRET_WORD, "i");
 /** Commander's own refusals; each starts a stderr write with `error: `. */
 const USAGE_LINE =
     /^error: (?:unknown option|unknown command|missing required argument|option .+ argument missing|required option|too many arguments|option .+ argument .+ is invalid|command-argument value .+ is invalid|option .+ cannot be used with)/m;
@@ -25,6 +28,8 @@ interface Run {
     tool: string;
     argv: string[];
     commandPath: () => string | null;
+    /** The secret flags and argv words of the command that ran (`-t` for `--token`); asked only when writing. */
+    secrets: () => ArgvSecrets;
     /** Who ran the tool, asked only when a failure is written (agent-caller.ts unless a test injects one). */
     caller: () => FailureCaller | null;
     stderr: string;
@@ -36,48 +41,218 @@ interface Run {
 
 let run: Run | null = null;
 
-/** Masks the value of a secret-named flag (`--token x`, `--api-key=x`) and any secret-shaped argument. */
-export function redactArgv(args: readonly string[]): string[] {
+/** What the command definition says is secret in one argv, beyond what a flag's name shows. */
+export interface ArgvSecrets {
+    /** Every flag, short and long, of a secret-named option on the commands the run reaches (`-t` for `--token`). */
+    flags: string[];
+    /** The argv indexes of a declared secret option's value (even `-x…`) and of a secret-named argument's value. */
+    indexes: number[];
+}
+
+/**
+ * Masks the value of a secret-named flag (`--token x`, `--api-key=x`), of a flag the command declares for a
+ * secret-named option (`-t x` and `-tx` when `-t` is `--token`), every word `secrets.indexes` names, and any
+ * secret-shaped argument.
+ */
+export function redactArgv(args: readonly string[], secrets: Partial<ArgvSecrets> = {}): string[] {
+    const secretFlags = secrets.flags ?? [];
+    const secretIndexes = new Set(secrets.indexes ?? []);
+    const isSecret = (flag: string) => SECRET_FLAG.test(flag) || secretFlags.includes(flag);
+    const shorts = secretFlags.filter((flag) => /^-[^-]$/.test(flag));
+
     return args.map((arg, index) => {
+        if (secretIndexes.has(index)) {
+            return "[redacted]";
+        }
+
         const assigned = /^(--?[\w-]+)=/.exec(arg);
-        if (assigned && SECRET_FLAG.test(assigned[1])) {
+        if (assigned && isSecret(assigned[1])) {
             return `${assigned[1]}=[redacted]`;
         }
 
-        if (index > 0 && SECRET_FLAG.test(args[index - 1]) && !arg.startsWith("-")) {
+        if (index > 0 && isSecret(args[index - 1]) && !arg.startsWith("-")) {
             return "[redacted]";
+        }
+
+        const attached = shorts.find((flag) => arg.length > 2 && arg.startsWith(flag));
+        if (attached) {
+            return `${attached}[redacted]`;
         }
 
         return redactSecretsInText(arg);
     });
 }
 
+/** The argument values `redactArgv` masks, so the same values can be masked where a message or stderr echoes them. */
+function secretValues(args: readonly string[], secrets: Partial<ArgvSecrets>): string[] {
+    const masked = redactArgv(args, secrets);
+    return args
+        .flatMap((arg, index) => {
+            if (masked[index] === arg) {
+                return [];
+            }
+
+            const kept = masked[index].replace(/\[redacted\]$/, "");
+            return [arg.startsWith(kept) ? arg.slice(kept.length) : arg];
+        })
+        .filter((value) => value.length >= 4);
+}
+
+/** `redactSecretsInText`, plus every `--secret-flag=value` and every secret argument value the text echoes. */
+export function redactRunText(text: string, args: readonly string[], secrets: Partial<ArgvSecrets> = {}): string {
+    const secretFlags = secrets.flags ?? [];
+    let out = redactSecretsInText(text).replace(/(--?[\w-]+)=([^\s'"`]+)/g, (whole, flag: string) =>
+        SECRET_FLAG.test(flag) || secretFlags.includes(flag) ? `${flag}=[redacted]` : whole
+    );
+
+    for (const value of secretValues(args, secrets)) {
+        out = out.split(value).join("[redacted]");
+    }
+
+    return out;
+}
+
+interface OptionNode {
+    short?: string;
+    long?: string;
+    /** `<value>`: the next word is the value, even one that starts with a dash. */
+    required?: boolean;
+    /** `[value]`: the next word is the value unless it starts with a dash. */
+    optional?: boolean;
+}
+
+interface ArgumentNode {
+    name(): string;
+    variadic?: boolean;
+}
+
 interface CommandNode {
     name(): string;
     aliases(): string[];
     readonly commands: readonly CommandNode[];
+    readonly options: readonly OptionNode[];
+    readonly registeredArguments?: readonly ArgumentNode[];
 }
 
-/** `ai usage sessions` for `tools ai usage sessions --bad`: the deepest subcommand the leading words name. */
-export function commandPathFromArgv(program: CommandNode, args: readonly string[]): string {
-    const names = [program.name()];
-    let current = program;
+function isSecretOption(option: OptionNode): boolean {
+    return option.long !== undefined && SECRET_FLAG.test(option.long);
+}
 
-    for (const word of args) {
-        if (word.startsWith("-")) {
-            break;
-        }
+/** The option a flag word ends with, and whether its value is the next word. Null for a flag no command declares. */
+function flagOption(word: string, chain: readonly CommandNode[]): { option: OptionNode; valueNext: boolean } | null {
+    const find = (flag: string) =>
+        chain.flatMap((command) => command.options).find((option) => option.short === flag || option.long === flag);
 
-        const next = current.commands.find((command) => command.name() === word || command.aliases().includes(word));
-        if (!next) {
-            break;
-        }
-
-        names.push(next.name());
-        current = next;
+    if (word.startsWith("--")) {
+        const option = find(word.split("=")[0]);
+        return option ? { option, valueNext: !word.includes("=") } : null;
     }
 
-    return names.join(" ");
+    // `-vt` is `-v -t` until one flag takes a value; the rest of the word is then that value.
+    for (let at = 1; at < word.length; at++) {
+        const option = find(`-${word[at]}`);
+        if (!option) {
+            return null;
+        }
+
+        if (option.required || option.optional || at === word.length - 1) {
+            return { option, valueNext: at === word.length - 1 };
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Reads `args` the way commander does: options of every command reached so far may come anywhere (`-v` before the
+ * subcommand), an option's value is skipped, and the first operand that names no subcommand ends the chain. Stops at
+ * a flag no command declares, since commander refuses that line and what follows has no known shape.
+ */
+function walkArgv(program: CommandNode, args: readonly string[]): { chain: CommandNode[]; secretIndexes: number[] } {
+    const chain = [program];
+    const secretIndexes: number[] = [];
+    const operands: number[] = [];
+    let commandsDone = false;
+
+    for (let index = 0; index < args.length; index++) {
+        const word = args[index];
+        if (word === "--") {
+            for (let rest = index + 1; rest < args.length; rest++) {
+                operands.push(rest);
+            }
+
+            break;
+        }
+
+        if (word.startsWith("-") && word !== "-") {
+            const found = flagOption(word, chain);
+            if (!found) {
+                break;
+            }
+
+            const next = args[index + 1];
+            const { option } = found;
+            if (
+                found.valueNext &&
+                next !== undefined &&
+                (option.required || (option.optional && !next.startsWith("-")))
+            ) {
+                index++;
+                if (isSecretOption(option)) {
+                    secretIndexes.push(index);
+                }
+            }
+
+            continue;
+        }
+
+        if (!commandsDone) {
+            const current = chain[chain.length - 1];
+            const sub = current.commands.find((command) => command.name() === word || command.aliases().includes(word));
+            if (sub) {
+                chain.push(sub);
+                continue;
+            }
+
+            commandsDone = true;
+        }
+
+        operands.push(index);
+    }
+
+    const declared = chain[chain.length - 1].registeredArguments ?? [];
+    const last = declared[declared.length - 1];
+    operands.forEach((argIndex, position) => {
+        const argument = position < declared.length ? declared[position] : last?.variadic ? last : undefined;
+        if (argument && SECRET_ARGUMENT.test(argument.name())) {
+            secretIndexes.push(argIndex);
+        }
+    });
+
+    return { chain, secretIndexes };
+}
+
+/** `ai usage sessions` for `tools ai usage sessions --bad`: the deepest subcommand the words name. */
+export function commandPathFromArgv(program: CommandNode, args: readonly string[]): string {
+    return walkArgv(program, args)
+        .chain.map((command) => command.name())
+        .join(" ");
+}
+
+/**
+ * The flags of every secret-named option on the commands `args` reaches (`-t` for `--token`), and the argv
+ * indexes of their values and of a secret-named argument's value (`<path> [secret]`).
+ */
+export function secretsFromArgv(program: CommandNode, args: readonly string[]): ArgvSecrets {
+    const { chain, secretIndexes } = walkArgv(program, args);
+    return {
+        flags: chain.flatMap((command) =>
+            command.options
+                .filter(isSecretOption)
+                .flatMap((option) => [option.short, option.long].filter((flag): flag is string => flag !== undefined))
+        ),
+        indexes: secretIndexes,
+    };
 }
 
 /** What a run that ends with `exitCode` was. Null when it is not a failure. */
@@ -247,7 +422,9 @@ function write(kind: FailureKind, exitCode: number | null, fatal: boolean): void
     try {
         const error = run.noted?.error;
         const err = error instanceof Error ? error : null;
-        const tail = redactSecretsInText(stripAnsi(run.stderr)).trim();
+        const secrets = run.secrets();
+        const redact = (text: string) => redactRunText(text, run?.argv ?? [], secrets);
+        const tail = redact(stripAnsi(run.stderr)).trim();
         const message = err
             ? err.message
             : error !== undefined && error !== null
@@ -260,11 +437,11 @@ function write(kind: FailureKind, exitCode: number | null, fatal: boolean): void
             kind,
             tool: run.tool,
             command: run.commandPath()?.replace(/^tools /, "") ?? null,
-            argv: redactArgv(run.argv),
+            argv: redactArgv(run.argv, secrets),
             exitCode,
-            message: message ? redactSecretsInText(stripAnsi(message)).slice(0, 2000) : null,
+            message: message ? redact(stripAnsi(message)).slice(0, 2000) : null,
             errorName: err?.name ?? null,
-            stack: err?.stack ? redactSecretsInText(err.stack).slice(0, 8000) : null,
+            stack: err?.stack ? redact(err.stack).slice(0, 8000) : null,
             stderrTail: tail || null,
             fatal,
             durationMs: Math.round(performance.now()),
@@ -287,6 +464,12 @@ function finish(code: number): void {
     }
 
     run.ended = true;
+    // A crash another listener took is still pending here when that listener ended the process (ai-proxy's
+    // `process.exit(1)`): it was fatal after all, and it is the cause of this exit.
+    if (run.noted?.kind === "crash") {
+        run.noted = { ...run.noted, fatal: true };
+    }
+
     const exitCode = code || (typeof process.exitCode === "number" ? process.exitCode : 0);
     const kind = classifyExit({ exitCode, noted: run.noted, stderrTail: stripAnsi(run.stderr) });
     if (kind) {
@@ -294,16 +477,24 @@ function finish(code: number): void {
     }
 }
 
-/** A crash some other listener handles: the process goes on, so it is written now, not at exit. */
+/**
+ * A crash. One some other listener handles is written once that listener has returned and the process went on;
+ * a listener that ends the process instead leaves it to the exit hook, which writes it as the fatal cause.
+ */
 function noteCrash(error: unknown, fatal: boolean): void {
     if (!run) {
         return;
     }
 
-    run.noted = { kind: "crash", error, fatal };
+    const noted: Noted = { kind: "crash", error, fatal };
+    run.noted = noted;
     if (!fatal) {
-        write("crash", null, false);
-        run.noted = null;
+        setImmediate(() => {
+            if (run && !run.ended && run.noted === noted) {
+                write("crash", null, false);
+                run.noted = null;
+            }
+        });
     }
 }
 
@@ -336,25 +527,29 @@ export function noteToolError(error: unknown): void {
 
 /**
  * Records every failed run of this process into `~/.genesis-tools/logs/<date>-failures.jsonl`: a usage error, a
- * thrown action, a crash, a plain non-zero exit, an interrupt. `runTool` calls it; an entry point without commander
+ * thrown action, a crash, a plain non-zero exit, an interrupt the tool handles itself (exit 130 or 143). A run the
+ * default SIGINT or SIGTERM action ends is not recorded: that action skips the exit event, and a JS signal handler
+ * would make a synchronous tool unkillable (interrupt.ts). `runTool` calls it; an entry point without commander
  * calls it itself. Once per process; only a real CLI run, never a test that passes its own argv.
  */
 export function watchToolRun({
     tool,
     argv = process.argv.slice(2),
     commandPath = () => null,
+    secrets = () => ({ flags: [], indexes: [] }),
     caller = agentCaller,
 }: {
     tool: string;
     argv?: string[];
     commandPath?: () => string | null;
+    secrets?: () => ArgvSecrets;
     caller?: () => FailureCaller | null;
 }): void {
     if (run) {
         return;
     }
 
-    run = { tool, argv, commandPath, caller, stderr: "", stdout: "", noted: null, ended: false };
+    run = { tool, argv, commandPath, secrets, caller, stderr: "", stdout: "", noted: null, ended: false };
     tapStderr();
     process.on("uncaughtExceptionMonitor", (error) => {
         noteCrash(error, process.listenerCount("uncaughtException") === 0);

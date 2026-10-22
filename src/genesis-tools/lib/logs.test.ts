@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import type { FailureCaller, ToolFailure } from "@genesiscz/utils/cli/failures/record";
-import { matchesDayLog, parseDayLogLine, prefilterFor } from "./day-log";
+import { matchesDayLog, newestEntries, parseDayLogLine, prefilterFor } from "./day-log";
 import { groupFailures, matchesFailure, usageGaps } from "./failures";
 import { parseProfileLine } from "./profile-log";
 import { daysIn, resolveWindow } from "./window";
@@ -131,6 +131,33 @@ describe("day log", () => {
         expect(prefilterFor({ window, pid: 42, tool: "ai" })).toEqual({ pattern: '"pid":42,', fixed: true });
         expect(prefilterFor({ window, minLevel: 50 })).toEqual({ pattern: '"level":(50|60)[,}]', fixed: false });
         expect(prefilterFor({ window, minLevel: 30 })).toBeNull();
+    });
+
+    it("keeps the newest records of a stream out of order, holding at most twice the limit", () => {
+        const entry = (second: number) => ({
+            time: `2026-10-22T13:00:${String(second).padStart(2, "0")}.000Z`,
+            level: 30,
+            pid: 1,
+            tool: null,
+            msg: String(second),
+            record: {},
+        });
+        const seconds = Array.from({ length: 60 }, (_, index) => (index * 37) % 60);
+        const newest = newestEntries(5);
+        let most = 0;
+        for (const second of seconds) {
+            newest.add(entry(second));
+            most = Math.max(most, newest.held());
+        }
+
+        expect(newest.result().map((kept) => kept.msg)).toEqual(["55", "56", "57", "58", "59"]);
+        expect(most).toBeLessThanOrEqual(10);
+        const all = newestEntries(undefined);
+        for (const second of [3, 1, 2]) {
+            all.add(entry(second));
+        }
+
+        expect(all.result().map((kept) => kept.msg)).toEqual(["1", "2", "3"]);
     });
 });
 

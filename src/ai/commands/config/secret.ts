@@ -205,7 +205,7 @@ export function registerSecretCommands(config: Command): void {
         .command("set")
         .description("Store a secret; the value comes from stdin or a hidden prompt, never from argv")
         .argument("<path>", "Vault path, e.g. ai/acc_xai/apiKey")
-        .argument("[value]", "Not accepted — passing a secret on argv is refused")
+        .argument("[secret]", "Not accepted — passing a secret on argv is refused")
         .option("--stdin", "Read the value from stdin")
         .action(async (path: string, value: string | undefined, flags: { stdin?: boolean }) => {
             await cmdSecretSet(path, value, flags);

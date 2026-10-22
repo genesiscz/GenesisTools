@@ -103,7 +103,8 @@ if ! bun scripts/ci/dashboard-smoke.ts $smoke_args; then
     echo "✖ a dashboard does not render: push refused. The lines above name its server error and log."
     exit 1
 fi
-stage_done
+# The stage timer arrives with #551's pre-push timing; until then the call is skipped.
+if command -v stage_done >/dev/null 2>&1; then stage_done; fi
 
 # The repo guards from the CI "checks" job (ci.yml, after the TypeScript check). They used to run on
 # CI only, so a pid probe or a hard-coded command name reached every PR of a stack before anything

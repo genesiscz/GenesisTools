@@ -2,9 +2,19 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { formatLocalDate } from "@genesiscz/utils/date";
+import { Command } from "commander";
 import { claudeProjectFolder, modelInTranscriptLines } from "./caller";
 import { appendFailure, readFailures, type ToolFailure } from "./record";
-import { classifyExit, commandPathFromArgv, jsonErrorMessage, messageOfTail, redactArgv } from "./watch";
+import {
+    classifyExit,
+    commandPathFromArgv,
+    jsonErrorMessage,
+    messageOfTail,
+    redactArgv,
+    redactRunText,
+    secretsFromArgv,
+} from "./watch";
 
 describe("redactArgv", () => {
     it("masks the value of a secret-named flag in both spellings and keeps the rest", () => {
@@ -20,6 +30,79 @@ describe("redactArgv", () => {
 
     it("masks a secret-shaped argument without a flag", () => {
         expect(redactArgv(["set", "sk-ant-abcdefghijklmnopqrstuvwxyz0123"])).toEqual(["set", "[redacted]"]);
+    });
+});
+
+describe("secret option aliases", () => {
+    const program = new Command("wakeup").option("-v, --verbose", "verbose").option("--log <file>", "log file");
+    program
+        .command("daemon")
+        .command("register")
+        .option("-t, --token <token>", "shared secret")
+        .option("-p, --port <port>", "port");
+    const args = ["daemon", "register", "-t", "fixture-password", "--port", "0"];
+    const secrets = secretsFromArgv(program, args);
+    const redacted = (argv: string[]) => redactArgv(argv, secretsFromArgv(program, argv));
+
+    it("names the short and long flag of a secret-named option on the command that ran, and nothing else", () => {
+        expect(secrets.flags).toEqual(["-t", "--token"]);
+        expect(secretsFromArgv(program, ["daemon"]).flags).toEqual([]);
+    });
+
+    it("masks the value after a declared short alias, attached or separate", () => {
+        expect(redactArgv(args, secrets)).toEqual(["daemon", "register", "-t", "[redacted]", "--port", "0"]);
+        expect(redacted(["daemon", "register", "-tfixture-password"])).toEqual(["daemon", "register", "-t[redacted]"]);
+    });
+
+    it("reaches the subcommand past a global option and its value before it", () => {
+        expect(redacted(["-v", "daemon", "register", "-t", "fixture-password", "--port", "0"])).toEqual([
+            "-v",
+            "daemon",
+            "register",
+            "-t",
+            "[redacted]",
+            "--port",
+            "0",
+        ]);
+        expect(redacted(["--log", "out.txt", "daemon", "-v", "register", "-t", "fixture-password"])).toEqual([
+            "--log",
+            "out.txt",
+            "daemon",
+            "-v",
+            "register",
+            "-t",
+            "[redacted]",
+        ]);
+    });
+
+    it("masks a declared secret value that starts with a dash, since commander takes it as the value", () => {
+        const dashed = ["daemon", "register", "--token", "-fixture-password", "--port", "0"];
+        expect(redacted(dashed)).toEqual(["daemon", "register", "--token", "[redacted]", "--port", "0"]);
+        expect(redactRunText("error: bad token -fixture-password", dashed, secretsFromArgv(program, dashed))).toBe(
+            "error: bad token [redacted]"
+        );
+    });
+
+    it("masks the value of a secret-named argument and keeps the others", () => {
+        const ai = new Command("ai");
+        ai.command("config").command("secret").command("set").argument("<path>").argument("[secret]");
+        const argv = ["config", "secret", "set", "ai/work/password", "correct-horse-battery-staple"];
+        expect(redactArgv(argv, secretsFromArgv(ai, argv))).toEqual([
+            "config",
+            "secret",
+            "set",
+            "ai/work/password",
+            "[redacted]",
+        ]);
+    });
+
+    it("masks the same values and any --secret=value where a message or stderr echoes them", () => {
+        expect(redactRunText("error: bad value fixture-password for -t", args, secrets)).toBe(
+            "error: bad value [redacted] for -t"
+        );
+        expect(redactRunText("error: unknown option '--token=fixture-password'", [])).toBe(
+            "error: unknown option '--token=[redacted]'"
+        );
     });
 });
 
@@ -87,11 +170,13 @@ describe("commandPathFromArgv", () => {
         name(): string;
         aliases(): string[];
         commands: Node[];
+        options: [];
     }
     const node = (name: string, commands: Node[] = [], aliases: string[] = []): Node => ({
         name: () => name,
         aliases: () => aliases,
         commands,
+        options: [],
     });
     const program = node("ai", [node("usage", [node("sessions")], ["u"])]);
 
@@ -154,5 +239,37 @@ describe("failure records", () => {
 
         expect([...readFailures({ fromDay: "2026-10-22", toDay: "2026-10-22", dir })]).toEqual([failure]);
         expect([...readFailures({ fromDay: "2026-10-23", toDay: "2026-10-24", dir })]).toEqual([]);
+    });
+});
+
+describe("a crash another uncaughtException listener takes", () => {
+    function crashWith(handler: string): Array<[string, boolean, number | null, string | null]> {
+        const home = mkdtempSync(join(tmpdir(), "gt-failures-crash-"));
+        const script = [
+            `import { watchToolRun } from "${join(import.meta.dir, "watch.ts")}";`,
+            `watchToolRun({ tool: "fixture", argv: ["run"], caller: () => null });`,
+            `process.on("uncaughtException", () => { ${handler} });`,
+            `throw new Error("fixture crash");`,
+        ].join("\n");
+        const fromDay = formatLocalDate(new Date());
+        Bun.spawnSync([process.execPath, "-e", script], {
+            env: { ...process.env, GENESIS_TOOLS_HOME: home },
+            stdout: "ignore",
+            stderr: "ignore",
+        });
+        const records = readFailures({
+            fromDay,
+            toDay: formatLocalDate(new Date()),
+            dir: join(home, ".genesis-tools", "logs"),
+        });
+        return [...records].map((record) => [record.kind, record.fatal, record.exitCode, record.message]);
+    }
+
+    it("is the fatal cause of the exit when that listener ends the process", () => {
+        expect(crashWith("process.exit(1);")).toEqual([["crash", true, 1, "fixture crash"]]);
+    });
+
+    it("is written as non-fatal when that listener lets the process go on", () => {
+        expect(crashWith("")).toEqual([["crash", false, null, "fixture crash"]]);
     });
 });

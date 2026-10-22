@@ -9,8 +9,8 @@
  *
  * A project runs when no build info or state says what it holds, when a file that changes every project changed
  * (`package.json`, `bun.lock`, a `tsconfig`), when a changed file is in its last program (the build info's
- * `fileNames`), or when a changed TypeScript file sits in its folder (a new file is in no program yet). The root
- * project also runs for any changed TypeScript file outside the other projects' folders. Build info is a cache only:
+ * `fileNames`), or when a TypeScript or JavaScript file was added that its program does not hold yet (only tsc knows
+ * which include patterns take a new file, so every such project runs). Build info is a cache only:
  * `tsc` compares file hashes, so build info from another commit still gives the right answer, just slower.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -34,7 +34,8 @@ export const PROJECTS: Project[] = [
     { name: "fable-replace", tsconfig: "plugins/genesis-tools/skills/fable-replace/scripts/tsconfig.json" },
 ];
 
-const TS_FILE = /\.(?:[cm]?tsx?|json)$/;
+/** What a project can take in: the root project has `allowJs`, so JavaScript inputs count too. */
+const TS_FILE = /\.(?:[cm]?[jt]sx?|json)$/;
 const EVERY_PROJECT = /(?:^|\/)(?:package\.json|bun\.lock|tsconfig[\w.-]*\.json|bunfig\.toml)$/;
 
 export type Reason =
@@ -60,8 +61,9 @@ export interface Changes {
 
 /**
  * Why `project` must run for these changes, or null. `programs` holds each project's last program files (absolute,
- * lowercased, as the build info stores them), null when nothing is known. An added TypeScript file that no program
- * holds makes every project run: only tsc knows which include patterns take it (spotify-ui includes `../**`).
+ * lowercased, as the build info stores them), null when nothing is known. An added TypeScript file this project's
+ * program does not hold makes it run: only tsc knows which include patterns take it (spotify-ui includes `../**`), and
+ * another project's program holding it says nothing about this one (a root run caches a file a dashboard also takes).
  */
 export function reasonToRun({
     project,
@@ -86,8 +88,7 @@ export function reasonToRun({
         return "in its program";
     }
 
-    const known = (file: string) => [...programs.values()].some((other) => other?.has(key(file)));
-    return changes.added.some((file) => TS_FILE.test(file) && !known(file)) ? "new file" : null;
+    return changes.added.some((file) => TS_FILE.test(file) && !program.has(key(file))) ? "new file" : null;
 }
 
 function git(args: string[]): string | null {

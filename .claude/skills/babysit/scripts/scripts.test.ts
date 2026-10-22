@@ -5216,6 +5216,23 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         expect(buildOutputKind(join(dir, "pluggable/mc"))).toBe("module-cache");
     });
 
+    test("a triple folder counts only when SwiftPM made it: in a scratch path, holding configuration folders only", () => {
+        const { dir } = plantSession();
+        const saved = join(dir, "saved/arm64-apple-macosx");
+        fs.mkdirSync(join(saved, "debug"), { recursive: true });
+        fs.writeFileSync(join(saved, "debug/Old.o"), "x");
+        expect(buildOutputKind(saved)).toBeNull();
+        expect(ownBuildOutput(dir)).not.toContain(saved);
+        // A note dropped into a real triple folder, with its inode kept: it is no longer pure build output.
+        const triple = join(dir, "pluggable/b-notes/arm64-apple-macosx");
+        const before = fs.lstatSync(triple).ino;
+        fs.writeFileSync(join(triple, "kept.md"), "a note");
+        fs.writeFileSync(join(triple, "fix.patch"), "a patch");
+        expect(fs.lstatSync(triple).ino).toBe(before);
+        expect(buildOutputKind(triple)).toBeNull();
+        expect(judgeOwn(triple, { sessionDirs: [dir], open: [], minAgeMinutes: 0 })).toBe("not-build-output");
+    });
+
     test("judgeOwn keeps the guards: recent, open, FIFO, outside the session, not build output", () => {
         const { cc, dir } = plantSession();
         // A change time can sit a millisecond ahead of Date.now(); with a zero age limit that still reads as recent.
