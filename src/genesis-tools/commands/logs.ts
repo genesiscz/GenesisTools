@@ -1,5 +1,6 @@
 import { parseVariadic } from "@genesiscz/utils/cli";
 import { FAILURE_KINDS, type FailureKind, failuresDir, type ToolFailure } from "@genesiscz/utils/cli/failures/record";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { out } from "@genesiscz/utils/logger";
 import { dayLogsDir } from "@genesiscz/utils/logger/day-logs";
@@ -120,7 +121,7 @@ function printFailures(failures: ToolFailure[], window: TimeWindow): void {
         pc.dim(failure.id),
     ]);
     out.println(formatTable(rows, ["TIME", "KIND", "COMMAND", "EXIT", "WHO", "MESSAGE", "ID"]));
-    out.println(pc.dim(`\n${failures.length} failures. Details: tools genesis-tools logs show <id>`));
+    out.println(pc.dim(`\n${failures.length} failures. Details: ${toolCommand("genesis-tools logs show", "<id>")}`));
 }
 
 function registerFailures(logs: Command): void {
@@ -334,7 +335,7 @@ function registerDay(logs: Command): void {
 
 function registerProfile(logs: Command): void {
     withWindow(
-        logs.command("profile").description("Slow timers from the profiling log (tools config profiling)"),
+        logs.command("profile").description(`Slow timers from the profiling log (${toolCommand("config profiling")})`),
         "24h"
     )
         .option("--min-ms <ms>", "Only timers at least this long", "1000")
