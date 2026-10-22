@@ -1700,6 +1700,122 @@ test("an answer the agent got in chat moves to acknowledged and implemented with
     expect((await updateDecision(file, events, second.id, { state: "implemented" })).state).toBe("implemented");
 });
 
+describe("answers recorded by an agent, and superseded decisions", () => {
+    async function fixture(prompts: string[]) {
+        const dir = mkdtempSync(join(tmpdir(), "decision-recorded-"));
+        const file = join(dir, "decisions.jsonl");
+        const events = join(dir, "events.jsonl");
+        const rows = await postDecisions(file, events, {
+            sessionId: "recorded-session",
+            decisions: prompts.map((prompt) => ({ prompt, options: ["keep", "drop"] })),
+        });
+        return { file, events, rows };
+    }
+
+    test("open and drafted move straight to acknowledged with the chat answer, marked agent, and nothing is due", async () => {
+        const { file, events, rows } = await fixture(["Open one?", "Drafted one?", "No answer?"]);
+        const [open, drafted, bare] = rows;
+        await updateDecision(file, events, drafted.id, { state: "drafted", draft: "maybe", draftOption: "a" });
+
+        const fromOpen = await updateDecision(file, events, open.id, {
+            state: "acknowledged",
+            option: "b",
+            answer: "drop it, said in chat",
+        });
+        const [fromDrafted] = await updateDecisions(file, events, {
+            updates: [{ id: drafted.id, state: "acknowledged", option: "a" }],
+        });
+
+        expect(fromOpen).toMatchObject({ state: "acknowledged", option: "b", answeredVia: "agent" });
+        expect(fromDrafted).toMatchObject({ state: "acknowledged", option: "a", answeredVia: "agent" });
+        expect(fromDrafted.draft).toBeUndefined();
+        expect(fromDrafted.draftOption).toBeUndefined();
+        await expect(updateDecision(file, events, bare.id, { state: "acknowledged" })).rejects.toThrow(
+            "without the user's answer"
+        );
+        // Every send reads `answered` rows only: a recorded chat answer is never typed back into the agent.
+        expect(() => deliverDecisions(readDecisions(file), () => undefined)).toThrow("nothing to send");
+    });
+
+    test("the inbox answer path marks its answer inbox, and a later acknowledge keeps that mark", async () => {
+        const { file, events, rows } = await fixture(["Inbox?"]);
+        const answered = await updateDecision(file, events, rows[0].id, { state: "answered", option: "a" });
+        expect(answered.answeredVia).toBe("inbox");
+        const acknowledged = await updateDecision(file, events, rows[0].id, { state: "acknowledged" });
+        expect(acknowledged.answeredVia).toBe("inbox");
+    });
+
+    test("superseded needs a link or a reason, and the link must name another stored decision", async () => {
+        const { file, events, rows } = await fixture(["Old?", "New?"]);
+        const [old, replacement] = rows;
+        const [elsewhere] = await postDecisions(file, events, {
+            sessionId: "other-session",
+            decisions: [{ prompt: "Elsewhere?", options: [] }],
+        });
+
+        await expect(updateDecision(file, events, old.id, { state: "superseded" })).rejects.toThrow(
+            "without supersededBy or a comment"
+        );
+        await expect(
+            updateDecision(file, events, old.id, { state: "superseded", supersededBy: "d_99_recorded-session" })
+        ).rejects.toThrow("names no stored decision");
+        await expect(
+            updateDecision(file, events, old.id, { state: "superseded", supersededBy: old.id })
+        ).rejects.toThrow("superseded by itself");
+        await expect(updateDecision(file, events, old.id, { supersededBy: replacement.id })).rejects.toThrow(
+            "goes with state superseded"
+        );
+        expect(readDecisions(file).find((row) => row.id === old.id)?.state).toBe("open");
+
+        const moved = await updateDecision(file, events, old.id, {
+            state: "superseded",
+            supersededBy: elsewhere.id,
+            comment: "the other session decides it",
+        });
+        expect(moved).toMatchObject({
+            state: "superseded",
+            supersededBy: elsewhere.id,
+            comments: ["the other session decides it"],
+        });
+        // Terminal: nothing moves out of it.
+        await expect(updateDecision(file, events, old.id, { state: "acknowledged", option: "a" })).rejects.toThrow(
+            "cannot move"
+        );
+        expect(decisionsMarkdown([moved])).toContain(`superseded by ${elsewhere.id}: the other session decides it`);
+        expect(
+            listSessions(readDecisions(file), { status: ["superseded"] })[0]?.decisions.map((row) => row.id)
+        ).toEqual([old.id]);
+    });
+
+    test("superseded is legal from open, drafted, sent and acknowledged, and never for an answered row or a todo", async () => {
+        const { file, events, rows } = await fixture(["Open?", "Drafted?", "Sent?", "Acked?", "Answered?", "Done?"]);
+        const [open, drafted, sent, acked, answered, done] = rows;
+        await updateDecision(file, events, drafted.id, { state: "drafted", draftOption: "a" });
+        for (const row of [sent, acked, answered, done]) {
+            await updateDecision(file, events, row.id, { state: "answered", option: "a" });
+        }
+        await moveDecisions(file, events, [sent.id, acked.id], "sent");
+        await updateDecision(file, events, acked.id, { state: "acknowledged" });
+        await updateDecision(file, events, done.id, { state: "implemented" });
+
+        const why = { state: "superseded" as const, comment: "replaced" };
+        const moved = await updateDecisions(file, events, {
+            updates: [open, drafted, sent, acked].map((row) => ({ id: row.id, ...why })),
+        });
+        expect(moved.map((row) => row.state)).toEqual(["superseded", "superseded", "superseded", "superseded"]);
+        expect(moved[1].draftOption).toBeUndefined();
+        for (const row of [answered, done]) {
+            await expect(updateDecision(file, events, row.id, why)).rejects.toThrow("cannot move");
+        }
+
+        const [todo] = await postDecisions(file, events, {
+            sessionId: "recorded-session",
+            decisions: [{ type: "todo", prompt: "Ship it", options: [] }],
+        });
+        await expect(updateDecision(file, events, todo.id, why)).rejects.toThrow("cannot move");
+    });
+});
+
 test("decision revisions preserve the source turn of each posted version", async () => {
     const dir = mkdtempSync(join(tmpdir(), "decision-provenance-"));
     const file = join(dir, "decisions.jsonl");

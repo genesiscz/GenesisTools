@@ -9,7 +9,13 @@ import { dirname, join, resolve } from "node:path";
 import { DeliveryUnknownError } from "@app/question/lib/decisions/deliver";
 import { livePaneTargets } from "@app/question/lib/decisions/deliver.fixtures";
 import { decisionFiles, deliverDecisions } from "@app/question/lib/decisions/read";
-import { createTodo, type DecisionRecord, postDecisions, readDecisions } from "@app/question/lib/decisions/store";
+import {
+    createTodo,
+    type DecisionRecord,
+    postDecisions,
+    readDecisions,
+    updateDecisions,
+} from "@app/question/lib/decisions/store";
 import { sendInboxMessage } from "@app/question/lib/message";
 import { postAskForm } from "@app/question/lib/pending/ask";
 import { MAX_ANSWER_IMAGE_BYTES } from "@app/question/lib/pending/form";
@@ -79,6 +85,7 @@ import {
     widgetForms,
     widgetResultNode,
     widgetSnapshot,
+    widgetTitle,
 } from "../widget/snapshot";
 import { MAX_WIDGET_STATE_BYTES, mutateWidgetState, readWidgetState } from "../widget/storage";
 import {
@@ -1599,6 +1606,118 @@ test("an open TODO does not mark its session as waiting for an answer", async ()
     );
     const needsAnswer = await widgetSnapshot({ root: directory, sources });
     expect(needsAnswer.sessions[0]?.status).toBe("waiting");
+});
+
+test("decision cards carry recorded answers and supersede links; only open decisions ask, with a title and number", async () => {
+    const directory = await root();
+    const file = join(directory, "decisions.jsonl");
+    const events = join(directory, "events.jsonl");
+    const [answered, old, replacement] = await postDecisions(
+        file,
+        events,
+        {
+            sessionId: "card-session",
+            provider: "codex",
+            decisions: [
+                { prompt: "Keep the cache?", options: ["keep", "drop"], reasoning: "It is slow." },
+                { prompt: "Old wording?", options: ["a"] },
+                { prompt: `Rename it? ${"long ".repeat(60)}`, options: ["yes", "no"] },
+            ],
+        },
+        { env: {} }
+    );
+    const [elsewhere] = await postDecisions(
+        file,
+        events,
+        {
+            sessionId: "other-card-session",
+            provider: "codex",
+            decisions: [{ title: "Other", prompt: "x", options: [] }],
+        },
+        { env: {} }
+    );
+    await updateDecisions(file, events, {
+        updates: [
+            { id: answered.id, state: "acknowledged", option: "b", answer: "drop it, said in chat" },
+            { id: old.id, state: "superseded", supersededBy: replacement.id, comment: "reworded" },
+        ],
+    });
+    const sources: WidgetSources = {
+        sessions: async () => [],
+        decisions: () => readDecisions(file),
+        forms: () => [],
+        answers: () => [],
+        agents: async () => ({ generatedAt: "", parents: [], orphans: [] }),
+    };
+    const snapshot = await widgetSnapshot({ root: directory, sources });
+    const card = (id: string) => snapshot.cards.find((entry) => entry.sourceId === id);
+    expect(card(answered.id)).toMatchObject({
+        status: "acknowledged",
+        option: "b",
+        answer: "drop it, said in chat",
+        answeredVia: "agent",
+    });
+    // The answer is its own field; the body no longer repeats it.
+    expect(card(answered.id)?.body).not.toContain("drop it");
+    expect(card(answered.id)?.body).toContain("It is slow.");
+    const sessionKey = snapshot.sessions.find((entry) => entry.target.sessionId === "card-session")?.key;
+    expect(card(old.id)).toMatchObject({
+        status: "superseded",
+        comments: ["reworded"],
+        supersededBy: { id: replacement.id, number: 3, sessionKey, title: widgetTitle(replacement.prompt) },
+    });
+    expect(card(old.id)?.supersededBy?.title?.length).toBe(160);
+    expect(card(replacement.id)?.supersededBy).toBeUndefined();
+
+    // Acknowledged and superseded decisions are not pending: only the replacement asks.
+    const session = snapshot.notifications?.sessions.find((entry) => entry.key === sessionKey);
+    expect(session?.needsAnswer).toBe(1);
+    expect(session?.pendingItem).toMatchObject({
+        id: `decision:${replacement.id}`,
+        number: 3,
+        title: widgetTitle(replacement.prompt),
+    });
+    expect(
+        snapshot.notifications?.sessions.find((entry) => entry.pendingItem?.sourceId === elsewhere.id)?.pendingItem
+    ).toMatchObject({ number: 1, title: "Other" });
+
+    await updateDecisions(file, events, {
+        updates: [{ id: replacement.id, state: "superseded", supersededBy: elsewhere.id, comment: "moved" }],
+    });
+    const moved = await widgetSnapshot({ root: directory, sources });
+    expect(moved.cards.find((entry) => entry.sourceId === replacement.id)?.supersededBy).toEqual({
+        id: elsewhere.id,
+        number: 1,
+        sessionKey: moved.sessions.find((entry) => entry.target.sessionId === "other-card-session")?.key,
+        title: "Other",
+    });
+    expect(moved.notifications?.sessions.find((entry) => entry.key === sessionKey)?.needsAnswer ?? 0).toBe(0);
+});
+
+test("alert preferences default on with the Glass sound, load from an older state, and refuse a bad sound", async () => {
+    const directory = await root();
+    await writeFile(
+        join(directory, "state.json"),
+        SafeJSON.stringify({ version: 1, preferences: { placement: "side" } })
+    );
+    expect((await readWidgetState(directory)).preferences).toMatchObject({
+        placement: "side",
+        alertDecisions: true,
+        alertAnswers: true,
+        alertSound: "Glass",
+        alertPopup: true,
+    });
+    await performWidgetAction({
+        root: directory,
+        input: { action: "preferences", patch: { alertSound: "none", alertPopup: false } },
+    });
+    expect((await readWidgetState(directory)).preferences).toMatchObject({ alertSound: "none", alertPopup: false });
+    for (const alertSound of ["", "x".repeat(41)]) {
+        await expect(
+            performWidgetAction({ root: directory, input: { action: "preferences", patch: { alertSound } } })
+        ).rejects.toThrow();
+    }
+    expect((await readWidgetState(directory)).preferences.alertSound).toBe("none");
 });
 
 test("failed post-copy video checks remove the unreferenced copy while successful imports stay durable", async () => {

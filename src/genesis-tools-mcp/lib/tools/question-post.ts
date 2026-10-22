@@ -8,6 +8,7 @@ import {
     validateQuestionItems,
 } from "@app/question/lib/decisions/items";
 import { currentHarnessSession, decisionFiles, sessionAnswers } from "@app/question/lib/decisions/read";
+import { DECISION_RECORD_RULE } from "@app/question/lib/decisions/schema";
 import { type DecisionRecord, type PostDecisionDeps, readDecisions } from "@app/question/lib/decisions/store";
 import { decisionNudge } from "@app/question/lib/inbox-guidance";
 import {
@@ -501,7 +502,8 @@ export function questionPostDescription({
         'Items with type "decision" or "todo" are NOT a form: they are numbered in this session\'s decision log ' +
         "(numbers are session-wide and never reused) and the result is the markdown ❓ DECISION / TODO section to " +
         `paste into your reply. ${nudge}${answeredIn} reach you in a later prompt or through ` +
-        "question_poll, and you record progress with question_update. To correct an item nobody answered yet, " +
+        `question_poll, and you record progress with question_update. ${DECISION_RECORD_RULE} ` +
+        "To correct an item nobody answered yet, " +
         "post it again with supersedes: <its id>; it keeps its number and the old text is kept as a version.\n" +
         'SCREENSHOTS: any item may carry attachments: [{type: "image", path: "/abs/shot.png", label?}]; they are ' +
         `copied into the question store and ${native ? "shown as image previews on the inbox card" : "embedded in the item text"}.\n` +

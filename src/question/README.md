@@ -342,6 +342,14 @@ The MCP `question_post` item takes the same `supersedes` field.
 - Only an `open` or `drafted` item can be superseded; an answer must keep pointing at the text it answered, so an answered, sent or closed item is refused (`cannot supersede d_3_x: it is answered, and only an open or drafted item can be replaced; post a new item instead`). The kind must match, and a pending form is not superseded (cancel it and post a new one).
 - A post whose supersede is refused stores nothing, including its other items.
 
+## Recording a chat answer, and the state `superseded`
+
+Decision states: `open`, `drafted`, `answered` (stored, waiting for delivery), `sent`, `acknowledged`, `implemented`, `dismissed`, `superseded`. `tools question list --status` takes any of them (`waiting` is the printed name of `open`).
+
+- **The user answered in chat.** The agent records it in the same turn, so the inbox stops asking: `question_update { id, state: "acknowledged", option, answer: "<the user's words or a short copy>" }` (CLI: `tools question update` with the same JSON on stdin). `open` and `drafted` may move straight to `acknowledged` when the row then has `option` or `answer`. Nothing is delivered: every send reads `answered` rows only.
+- **A later decision replaced it.** `question_update { id, state: "superseded", supersededBy: "d_<n>_<session>", comment: "<why>" }`. `superseded` is legal from `open`, `drafted`, `sent` and `acknowledged`, for decisions only, and is terminal. It needs `supersededBy` or a `comment`. `supersededBy` must name another stored decision (any session). Unlike `supersedes` on a post, the old item keeps its text and number; the widget card links to the new one.
+- **`answeredVia`** on a stored row says who stored the answer: `inbox` (the move to `answered`: widget, hub, CLI `answer`) or `agent` (a move from `open` or `drafted` to `acknowledged`). The store sets it.
+
 ## Set up on a fresh clone
 
 How a new user's agent learns this grammar: from the genesis-tools MCP server (its instructions and the `question_post` description list every kind, and `question_tokens` returns the definitions), from `tools question ask --help`, and from `tools question tokens`. The MCP server is not registered by `install.sh`, so register it once:

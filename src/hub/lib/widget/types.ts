@@ -59,6 +59,14 @@ export const widgetPreferencesSchema = z.object({
     voiceAccount: z.string().nullable().optional(),
     voiceModel: z.string().nullable().optional(),
     voiceLanguage: z.string().default(""),
+    /** Alert when a new decision reaches the inbox. */
+    alertDecisions: z.boolean().default(true),
+    /** Alert when a new answer or message reaches the inbox. */
+    alertAnswers: z.boolean().default(true),
+    /** The system sound an alert plays, by name; "none" plays no sound. */
+    alertSound: z.string().trim().min(1).max(40).default("Glass"),
+    /** Show the widget's own popup with an alert. */
+    alertPopup: z.boolean().default(true),
 });
 
 // Zod defaults also run inside partial objects; a patch must retain only supplied keys.

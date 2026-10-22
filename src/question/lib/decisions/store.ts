@@ -17,6 +17,7 @@ import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { isTestProcess } from "@genesiscz/utils/test-process";
 import type { z } from "zod";
 import {
+    type ANSWERED_VIA,
     type DECISION_KINDS,
     type DECISION_STATES,
     type DecisionPatch,
@@ -33,6 +34,7 @@ import {
 
 export type DecisionState = (typeof DECISION_STATES)[number];
 export type DecisionKind = (typeof DECISION_KINDS)[number];
+export type AnsweredVia = (typeof ANSWERED_VIA)[number];
 
 export interface DecisionRef {
     path: string;
@@ -100,6 +102,13 @@ export interface DecisionRecord {
     answer?: string;
     /** The chosen option letters, when the answer picked one or more (`"b"`, `"ac"`). */
     option?: string;
+    /**
+     * Who stored the answer, set by the store: `inbox` on the move to `answered` (the widget, the hub, the CLI),
+     * `agent` on a move from open or drafted straight to `acknowledged` (an answer the user gave in chat).
+     */
+    answeredVia?: AnsweredVia;
+    /** The decision that replaced this one (`superseded`); it exists in the store, in any session. */
+    supersededBy?: string;
     commitRefs?: string[];
     verdict?: string;
     comments?: string[];
@@ -176,17 +185,21 @@ const SUPERSEDABLE: ReadonlySet<DecisionState> = new Set(["open", "drafted"]);
 
 const NEXT: Record<DecisionKind, Record<DecisionState, DecisionState[]>> = {
     decision: {
-        open: ["answered", "drafted", "dismissed"],
+        // `acknowledged` straight from open or drafted: an agent records an answer the user gave in chat (patched()
+        // requires option or answer). Nothing is delivered: every send reads `answered` rows only.
+        // `superseded`: a later decision replaced it (patched() requires supersededBy or a comment). Terminal.
+        open: ["answered", "drafted", "dismissed", "acknowledged", "superseded"],
         // Saving a draft again replaces it: the user edits a draft more than once before sending.
         // Clearing the last pick puts it back to open; Dismiss drops it without an answer.
-        drafted: ["answered", "drafted", "open", "dismissed"],
+        drafted: ["answered", "drafted", "open", "dismissed", "acknowledged", "superseded"],
         // An agent that got the answer in chat records its progress without a send (patched() refuses it while a
-        // queued delivery holds the row).
+        // queued delivery holds the row). No `superseded` here: the answer waits for its delivery.
         answered: ["sent", "acknowledged", "implemented"],
-        sent: ["acknowledged", "implemented"],
-        acknowledged: ["implemented"],
+        sent: ["acknowledged", "implemented", "superseded"],
+        acknowledged: ["implemented", "superseded"],
         implemented: [],
         dismissed: [],
+        superseded: [],
     },
     // A todo is done, not answered: whoever it is for takes it and finishes it.
     todo: {
@@ -197,6 +210,7 @@ const NEXT: Record<DecisionKind, Record<DecisionState, DecisionState[]>> = {
         acknowledged: ["implemented", "dismissed"],
         implemented: ["open"],
         dismissed: ["open"],
+        superseded: [],
     },
 };
 
@@ -504,8 +518,16 @@ function sessionNumbers(rows: DecisionRecord[], sessionId: string): Record<Decis
     return numbers;
 }
 
-/** The patched row, or a thrown reason. Pure, so a batch can check every patch before it writes. */
-function patched(row: DecisionRecord, patch: DecisionPatch, ts: string): DecisionRecord {
+/**
+ * The patched row, or a thrown reason. Pure, so a batch can check every patch before it writes. `stored` names
+ * the decision ids a `supersededBy` may point at: every row of the log, in any session.
+ */
+function patched(
+    row: DecisionRecord,
+    patch: DecisionPatch,
+    ts: string,
+    stored: ReadonlyMap<string, DecisionRecord>
+): DecisionRecord {
     if (patch.expectedRevision !== undefined && patch.expectedRevision !== (row.revision ?? 1)) {
         throw new Error(`stale decision revision: ${row.id}`);
     }
@@ -538,6 +560,28 @@ function patched(row: DecisionRecord, patch: DecisionPatch, ts: string): Decisio
         throw new Error(`cannot move ${row.id} to answered without an answer`);
     }
 
+    // A decision acknowledged before anyone answered it in the inbox carries the answer the user gave in chat.
+    const recorded = kindOf(row) === "decision" && patch.state === "acknowledged" && SUPERSEDABLE.has(row.state);
+    if (recorded && !next.answer?.trim() && !next.option) {
+        throw new Error(
+            `cannot move ${row.id} from ${row.state} to acknowledged without the user's answer: pass option or answer`
+        );
+    }
+
+    if (patch.state === "superseded" && !patch.supersededBy && !comment?.trim()) {
+        throw new Error(`cannot move ${row.id} to superseded without supersededBy or a comment saying why`);
+    }
+
+    if (patch.supersededBy !== undefined) {
+        checkSupersededBy(row, next, patch.supersededBy, stored);
+    }
+
+    if (patch.state === "answered") {
+        next.answeredVia = "inbox";
+    } else if (recorded) {
+        next.answeredVia = "agent";
+    }
+
     // A letter past the options would be delivered as `DECISION 1: z)`, naming nothing.
     for (const pick of [patch.option, patch.draftOption]) {
         const past = [...(pick ?? "")].find((letter) => letter.charCodeAt(0) - 97 >= row.options.length);
@@ -549,12 +593,33 @@ function patched(row: DecisionRecord, patch: DecisionPatch, ts: string): Decisio
     }
 
     // The answer consumes the draft: a sent decision must not still show an unsent pick.
-    if (patch.state === "answered" || patch.state === "dismissed") {
+    if (patch.state === "answered" || patch.state === "dismissed" || patch.state === "superseded" || recorded) {
         delete next.draft;
         delete next.draftOption;
     }
 
     return next;
+}
+
+/** Throws unless `target` names another stored decision and `next` is (becoming) superseded. */
+function checkSupersededBy(
+    row: DecisionRecord,
+    next: DecisionRecord,
+    target: string,
+    stored: ReadonlyMap<string, DecisionRecord>
+): void {
+    if (next.state !== "superseded") {
+        throw new Error(`${row.id}: supersededBy goes with state superseded`);
+    }
+
+    if (target === row.id) {
+        throw new Error(`${row.id} cannot be superseded by itself`);
+    }
+
+    const replacement = stored.get(target);
+    if (!replacement || kindOf(replacement) !== "decision") {
+        throw new Error(`${row.id}: supersededBy names no stored decision (${target}); post the new decision first`);
+    }
 }
 
 /** Moves one decision. The patch is validated first, and unknown keys are dropped. */
@@ -828,7 +893,7 @@ function applyUpdates({
             }
 
             beforeUpdate?.(row);
-            byId.set(id, patched(row, patch, ts));
+            byId.set(id, patched(row, patch, ts, byId));
         }
 
         signal?.throwIfAborted();
@@ -1089,6 +1154,7 @@ export async function reconcileQueuedDecision({
             delete row.delivery;
             delete row.answer;
             delete row.option;
+            delete row.answeredVia;
         }
         rewrite(file, rows);
         appendEvent(events, { ev: received ? "sent" : "queue_cancelled", id, ts, state: row.state });

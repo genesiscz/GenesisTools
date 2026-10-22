@@ -67,6 +67,7 @@ const STATUS: Record<DecisionState, string> = {
     acknowledged: "acknowledged",
     implemented: "implemented",
     dismissed: "dismissed",
+    superseded: "superseded",
 };
 
 /** Every status `listSessions` matches: the names it prints, then the stored state names (`open`). */
@@ -172,6 +173,9 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
                     ? `revision ${row.revision} (earlier text: ${toolCommand("question show")} ${row.id} --versions)`
                     : null,
                 todo ? null : findLink(row),
+                row.state === "superseded"
+                    ? `superseded${row.supersededBy ? ` by ${row.supersededBy}` : ""}${row.comments?.length ? `: ${row.comments.at(-1)}` : ""}`
+                    : null,
             ].filter((part): part is string => part !== null);
 
             return [

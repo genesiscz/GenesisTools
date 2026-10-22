@@ -2,7 +2,7 @@ import { existsSync, statSync } from "node:fs";
 import { sessionChangesPath } from "@app/agents/lib/changes/log";
 import { type AgentSessionRow, listAgentSessionRows } from "@app/ai/lib/sessions/agent-session-rows";
 import { decisionFiles } from "@app/question/lib/decisions/read";
-import { type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
+import { type AnsweredVia, type DecisionRecord, kindOf, readDecisions } from "@app/question/lib/decisions/store";
 import { INBOX_STALE_MS } from "@app/question/lib/inbox/build";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
 import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
@@ -99,6 +99,33 @@ export interface WidgetCard {
     refs: { type: string; value: string }[];
     read: boolean;
     entryId?: string;
+    /** Decision cards: the chosen option letters and the answer text, however they were stored. */
+    option?: string;
+    answer?: string;
+    /** Decision cards: every comment, oldest first (a supersede reason, progress notes). */
+    comments?: string[];
+    /** Decision cards: who stored the answer, the user in an inbox (`inbox`) or an agent copying a chat answer. */
+    answeredVia?: AnsweredVia;
+    /** A superseded decision: the decision that replaced it, with the widget key of its session when known. */
+    supersededBy?: WidgetSupersededBy;
+}
+export interface WidgetSupersededBy {
+    id: string;
+    number: number;
+    sessionKey?: string;
+    /** The replacing decision's title, else its prompt, at most 160 characters. */
+    title?: string;
+}
+/** The longest inbox or link title the snapshot carries. */
+export const WIDGET_TITLE_MAX = 160;
+/** One line of at most {@link WIDGET_TITLE_MAX} characters, or undefined for an empty text. */
+export function widgetTitle(text: string | null | undefined): string | undefined {
+    const line = text?.replace(/\s+/g, " ").trim();
+    if (!line) {
+        return undefined;
+    }
+
+    return line.length > WIDGET_TITLE_MAX ? `${line.slice(0, WIDGET_TITLE_MAX - 1)}…` : line;
 }
 export interface WidgetSources {
     sessions(refresh: boolean): Promise<AgentSessionRow[]>;
@@ -127,6 +154,8 @@ export interface WidgetInboxGroup {
     /** The group's newest item. */
     at: number;
     count: number;
+    /** The newest item's own title: an answer's question, a form's first prompt. */
+    itemTitle?: string | null;
     /** Items after the window's `clearedAt`. */
     afterClear: number;
     /** Of those, the ones at or after `staleBefore`: what a quiet session counts. */
@@ -162,6 +191,10 @@ export interface WidgetInboxItem {
     key: string;
     at: number;
     needsAnswer: boolean;
+    /** The item's own title, at most 160 characters: a decision's title or prompt, a question, a form's prompt. */
+    title?: string;
+    /** A decision's number. */
+    number?: number;
 }
 export interface WidgetInboxSession {
     key: string;
@@ -202,7 +235,7 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                         CASE WHEN agent IN ('claude','claude-code') THEN 'claude'
                              WHEN agent IN ('codex','grok') THEN agent ELSE 'unknown' END AS provider,
                         COALESCE(session_title,session_id,id) AS title, COALESCE(project,'') AS project,
-                        COALESCE(cwd,'') AS cwd, ts AS at
+                        COALESCE(cwd,'') AS cwd, ts AS at, substr(question,1,400) AS itemTitle
                     FROM entries WHERE read_at IS NULL AND superseded_by IS NULL
                         AND NOT EXISTS (SELECT 1 FROM qa_pending WHERE entry_id=entries.id)
                 ), ranked AS (
@@ -210,7 +243,7 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                         ${INBOX_WINDOW_COUNTS},
                         ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
                     FROM unseen
-                ) SELECT id,sessionId,provider,title,project,cwd,at,count,afterClear,recentAfterClear,recentAfterClearTotal
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,itemTitle,afterClear,recentAfterClear,recentAfterClearTotal
                   FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
             `)
                 .all(...bounds);
@@ -222,7 +255,8 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                     SELECT id, COALESCE(NULLIF(session_hint,''),id) AS sessionId,
                         CASE WHEN json_valid(poster_json) THEN NULLIF(json_extract(poster_json,'$.agent'),'unknown') END AS poster,
                         CASE WHEN json_valid(transcript_anchor_json) THEN json_extract(transcript_anchor_json,'$.provider') END AS anchor,
-                        COALESCE(source,'Question') AS title, project_path AS project, cwd, created_at AS at
+                        COALESCE(source,'Question') AS title, project_path AS project, cwd, created_at AS at,
+                        CASE WHEN json_valid(items_json) THEN substr(json_extract(items_json,'$[0].promptMarkdown'),1,400) END AS itemTitle
                     FROM qa_pending WHERE status='pending'
                 ), normalized AS (
                     SELECT *, CASE WHEN COALESCE(poster,anchor) IN ('claude','claude-code') THEN 'claude'
@@ -233,7 +267,7 @@ function readInboxData(window: WidgetInboxWindow): WidgetInboxData {
                         ${INBOX_WINDOW_COUNTS},
                         ROW_NUMBER() OVER (PARTITION BY sessionId,provider ORDER BY at DESC,id DESC) AS position
                     FROM normalized
-                ) SELECT id,sessionId,provider,title,project,cwd,at,count,afterClear,recentAfterClear,recentAfterClearTotal
+                ) SELECT id,sessionId,provider,title,project,cwd,at,count,itemTitle,afterClear,recentAfterClear,recentAfterClearTotal
                   FROM ranked WHERE position=1 ORDER BY at DESC,id DESC LIMIT 257
             `)
                       .all(...bounds)
@@ -643,6 +677,12 @@ function parseWidgetChanges(path: string, target: WidgetTarget): WidgetChanges {
     return { available: true, files: [...files.values()].sort((a, b) => b.at.localeCompare(a.at)).slice(0, 100) };
 }
 
+/** An inbox item's `title`, when the decision has text to show. */
+function decisionTitle(row: DecisionRecord): { title?: string } {
+    const title = widgetTitle(row.title ?? row.prompt);
+    return title ? { title } : {};
+}
+
 export async function widgetSnapshot({
     root,
     selectedKey,
@@ -734,6 +774,7 @@ export async function widgetSnapshot({
                   cwd: row.cwd,
                   at: row.ts,
                   count: 1,
+                  itemTitle: row.question,
                   ...inboxWindowCounts([row.ts], inboxWindow),
                   recentAfterClearTotal: rosterRecent.answers,
               })),
@@ -746,6 +787,7 @@ export async function widgetSnapshot({
                   cwd: form.cwd,
                   at: form.createdAt,
                   count: 1,
+                  itemTitle: form.items[0]?.promptMarkdown,
                   ...inboxWindowCounts([form.createdAt], inboxWindow),
                   recentAfterClearTotal: rosterRecent.forms,
               })),
@@ -991,6 +1033,7 @@ export async function widgetSnapshot({
             if (items === 0) {
                 continue;
             }
+            const title = widgetTitle(row.itemTitle);
             putInbox(
                 session,
                 {
@@ -1000,6 +1043,7 @@ export async function widgetSnapshot({
                     key: session.key,
                     at: row.at,
                     needsAnswer: kind === "form",
+                    ...(title ? { title } : {}),
                 },
                 items
             );
@@ -1027,6 +1071,8 @@ export async function widgetSnapshot({
                 key: session.key,
                 at: timeOf(row.updatedTs),
                 needsAnswer: true,
+                number: row.number,
+                ...decisionTitle(row),
             },
             1
         );
@@ -1057,7 +1103,20 @@ export async function widgetSnapshot({
             continue;
         }
         unreadResults += 1;
-        putInbox(session, { id, sourceId: node.id, kind: "result", key: session.key, at, needsAnswer: false }, 1);
+        const title = widgetTitle(node.name ?? node.description);
+        putInbox(
+            session,
+            {
+                id,
+                sourceId: node.id,
+                kind: "result",
+                key: session.key,
+                at,
+                needsAnswer: false,
+                ...(title ? { title } : {}),
+            },
+            1
+        );
     }
     const notifications: WidgetInboxSummary = {
         unread: inboxCount("answer", inboxData.answers) + unreadResults,
@@ -1145,6 +1204,26 @@ export async function widgetSnapshot({
             read: row.readAt !== null,
         });
     }
+    const decisionsById = new Map(decisions.map((row) => [row.id, row]));
+    /** The decision that replaced `row`, with the widget key of its session when the roster knows it. */
+    const supersededBy = (row: DecisionRecord): { supersededBy?: WidgetSupersededBy } => {
+        if (!row.supersededBy) {
+            return {};
+        }
+
+        const target = decisionsById.get(row.supersededBy);
+        const number = target?.number ?? Number(/^d_(\d+)_/.exec(row.supersededBy)?.[1] ?? 0);
+        const sessionKey = target ? findSession(target.sessionId, target.provider)?.key : undefined;
+        const title = target ? widgetTitle(target.title ?? target.prompt) : undefined;
+        return {
+            supersededBy: {
+                id: row.supersededBy,
+                number,
+                ...(sessionKey ? { sessionKey } : {}),
+                ...(title ? { title } : {}),
+            },
+        };
+    };
     for (const row of decisions) {
         const session = findSession(row.sessionId, row.provider);
         if (!session || (selectedKey && session.key !== selectedKey)) {
@@ -1156,7 +1235,8 @@ export async function widgetSnapshot({
             [
                 row.title ?? row.prompt,
                 cleanVisibleContext(
-                    [row.context, row.reasoning, row.proposal, row.answer, row.notes].filter(Boolean).join("\n\n")
+                    // The answer is not in the body: the card carries it as `answer` and the widget draws it itself.
+                    [row.context, row.reasoning, row.proposal, row.notes].filter(Boolean).join("\n\n")
                 ),
                 ...(row.title ? [cleanVisibleContext(row.prompt)] : []),
             ],
@@ -1198,6 +1278,11 @@ export async function widgetSnapshot({
             attachments: decisionImages.attachments,
             refs: (row.refs ?? []).map((ref) => ({ type: "file", value: ref.path })),
             read: true,
+            ...(row.option ? { option: row.option } : {}),
+            ...(row.answer?.trim() ? { answer: row.answer } : {}),
+            ...(row.comments?.length ? { comments: row.comments } : {}),
+            ...(row.answeredVia ? { answeredVia: row.answeredVia } : {}),
+            ...supersededBy(row),
         });
     }
     for (const form of forms) {

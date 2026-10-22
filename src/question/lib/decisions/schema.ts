@@ -16,7 +16,21 @@ export const DECISION_STATES = [
     "acknowledged",
     "implemented",
     "dismissed",
+    "superseded",
 ] as const;
+
+/** How an answer reached the row: the user in the widget, hub or CLI, or an agent copying a chat answer. */
+export const ANSWERED_VIA = ["inbox", "agent"] as const;
+
+/**
+ * The rule every agent-facing text repeats (server instructions, question_post and question_update descriptions):
+ * an answer given in chat is recorded, and a replaced decision points at its replacement.
+ */
+export const DECISION_RECORD_RULE =
+    "When the user answers a ❓ DECISION in chat, or it is settled another way, record it in the same turn: " +
+    'question_update { id, state: "acknowledged", option, answer: "<the user\'s words or a short copy>" }. ' +
+    'When a later decision replaces it: question_update { id, state: "superseded", supersededBy: "<new id>", ' +
+    'comment: "<why>" }. Never leave an answered decision open.';
 
 /** The stored item kinds. A `question` item never reaches this store: it is a pending form. */
 export const DECISION_KINDS = ["decision", "todo"] as const;
@@ -101,7 +115,11 @@ export const decisionPatchSchema = z.object({
     state: z
         .enum(DECISION_STATES)
         .optional()
-        .describe("The next legal state. Decisions move forward; completed or dismissed TODOs may explicitly reopen."),
+        .describe(
+            "The next legal state. Decisions move forward; completed or dismissed TODOs may explicitly reopen. " +
+                "acknowledged straight from open or drafted records an answer the user gave in chat (needs option " +
+                "or answer); nothing is delivered. superseded (decisions only) needs supersededBy or comment."
+        ),
     answer: z.string().optional().describe("The answer text, or a copy of an answer the user gave in chat."),
     option: z
         .string()
@@ -117,6 +135,14 @@ export const decisionPatchSchema = z.object({
     commitRefs: z.array(z.string()).optional(),
     verdict: z.string().optional().describe("The outcome, e.g. what was implemented."),
     comment: z.string().optional().describe("Appended to the item's comments."),
+    supersededBy: z
+        .string()
+        .regex(/^d_\d+_.+$/)
+        .optional()
+        .describe(
+            "With state superseded: the id of the decision that replaces this one (d_<n>_<session>, any session). " +
+                "It must exist and must not be this item."
+        ),
 });
 
 export const decisionUpdateInputSchema = decisionPatchSchema.extend({

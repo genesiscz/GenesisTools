@@ -13,7 +13,15 @@ import type { AskForm } from "../pending/types";
  * write back.
  */
 
-export type InboxStatus = "waiting" | "drafted" | "answered" | "sent" | "acknowledged" | "implemented" | "dismissed";
+export type InboxStatus =
+    | "waiting"
+    | "drafted"
+    | "answered"
+    | "sent"
+    | "acknowledged"
+    | "implemented"
+    | "dismissed"
+    | "superseded";
 
 export interface InboxChoice {
     /** The option letter for a decision, the choice id for a form. */
@@ -316,6 +324,7 @@ const STATUS: Record<DecisionRecord["state"], InboxStatus> = {
     acknowledged: "acknowledged",
     implemented: "implemented",
     dismissed: "dismissed",
+    superseded: "superseded",
 };
 
 function isOpen(status: InboxStatus): boolean {

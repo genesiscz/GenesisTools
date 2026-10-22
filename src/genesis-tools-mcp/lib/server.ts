@@ -1,4 +1,5 @@
 import { loadConfig as loadQuestionConfig } from "@app/question/lib/config";
+import { DECISION_RECORD_RULE } from "@app/question/lib/decisions/schema";
 import { decisionNudge, inboxInstructions, inboxSendDescription } from "@app/question/lib/inbox-guidance";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env/envVariables";
@@ -112,7 +113,8 @@ export function serverInstructions({ askViaQuestionTool, inboxState }: Instructi
         decisionNudge({ state: inboxState, askViaQuestionTool }) +
         "Record " +
         "progress (acknowledged, implemented, commit refs, verdict, comments, a copy of a chat answer) with " +
-        `\`question_update\`, several items per call. CLI: \`${toolCommand("question ask", "--json", "-")}\`, ` +
+        `\`question_update\`, several items per call. ${DECISION_RECORD_RULE} ` +
+        `CLI: \`${toolCommand("question ask", "--json", "-")}\`, ` +
         `\`${toolCommand("question")} list|update|answers|answer|draft|send\`.\n` +
         'INLINE TOKENS: item text may carry {{kind key="value"}} tokens (lines, file, symbol, diff, tail, json, ' +
         "cmd, url, image, pr-thread), resolved into real content when the item is saved; `question_tokens` lists " +

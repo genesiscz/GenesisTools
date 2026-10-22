@@ -37,3 +37,7 @@ Then tell the user one line — "Logged ✓ (`<id>`)" — or, if the tool return
 ## Native inbox (only when your instructions mention it)
 
 Some Macs run the native GenesisTools widget, whose inbox shows these entries as cards. Your session is told about it by the genesis-tools MCP server instructions or a SessionStart note that starts with `INBOX:`. Follow that text for WHEN to post decisions, messages and screenshots, and whether you must also ask in the chat. If no `INBOX:` text reached you, this Mac has no native inbox: do not mention it and do not use `inbox_send` or `tools question message`.
+
+## Decisions you posted: record the answer
+
+When the user answers a ❓ DECISION in chat, or it is settled another way, record it in the same turn: `question_update { id, state: "acknowledged", option, answer: "<the user's words or a short copy>" }` (CLI: `tools question update`, the same JSON on stdin). When a later decision replaces it: `question_update { id, state: "superseded", supersededBy: "<new id>", comment: "<why>" }`. Never leave an answered decision open.

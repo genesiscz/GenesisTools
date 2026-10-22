@@ -175,7 +175,7 @@ export function registerDecisionCommands(program: Command): void {
     program
         .command("update")
         .description(
-            "Update decisions and todos as one change. JSON on stdin: { updates: [{ id, state?, answer?, option?, draft?, commitRefs?, verdict?, comment? }] }, an array of those, or one"
+            "Update decisions and todos as one change. JSON on stdin: { updates: [{ id, state?, answer?, option?, draft?, commitRefs?, verdict?, comment?, supersededBy? }] }, an array of those, or one. Record a chat answer: state acknowledged with option or answer. Replace a decision: state superseded with supersededBy or comment"
         )
         .action(async () => {
             const { file, events } = decisionFiles();
