@@ -5,6 +5,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { namedBunExecPath } from "@genesiscz/utils/cli/bun-link";
 import { takeDetachedMarker } from "@genesiscz/utils/cli/detached";
+import { RUN_ID_ENV } from "@genesiscz/utils/cli/failures/run-id";
 import { planToolExec, terminateOrphanedChild } from "@genesiscz/utils/cli/tool-exec";
 import { skipWorktreeInstall } from "@genesiscz/utils/cli/worktree-install";
 import { env } from "@genesiscz/utils/env";
@@ -273,13 +274,19 @@ async function executeTool(scriptId, scriptArgs) {
     const exitCode = await runWithReinstallGuard(
         ["--preload", solidPreload, "--preload", sqliteVecPreload, targetScript, ...scriptArgs],
         workspaceRoot,
-        namedBunExecPath(scriptId)
+        namedBunExecPath(scriptId),
+        scriptId
     );
     process.exit(exitCode);
 }
 
-async function runWithReinstallGuard(args: string[], workspaceRoot: string, execPath: string): Promise<number> {
-    const exitCode = await spawnAndCaptureStderr(args, workspaceRoot, execPath);
+async function runWithReinstallGuard(
+    args: string[],
+    workspaceRoot: string,
+    execPath: string,
+    tool: string
+): Promise<number> {
+    const exitCode = await spawnAndCaptureStderr(args, workspaceRoot, execPath, tool);
 
     if (exitCode === 0) {
         return 0;
@@ -326,7 +333,12 @@ async function runWithReinstallGuard(args: string[], workspaceRoot: string, exec
 
 let capturedStderr = "";
 
-async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, execPath: string): Promise<number> {
+async function spawnAndCaptureStderr(
+    args: string[],
+    workspaceRoot: string,
+    execPath: string,
+    tool: string
+): Promise<number> {
     capturedStderr = "";
     const TAIL_BYTES = 64 * 1024;
 
@@ -338,6 +350,8 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
     // spawnToolDetached (a dashboard a link click starts) is orphaned on purpose; see DETACHED_ENV.
     const detached = takeDetachedMarker(process.env);
     const childEnv = env.withoutProxy({ INIT_CWD: process.cwd() });
+    // An id inherited from an outer wrapper would make that wrapper take this run's records for its own.
+    delete childEnv[RUN_ID_ENV];
     // Replace this wrapper with the launcher (or, under an app face, the worker) instead of waiting
     // as its parent; see src/utils/cli/tool-exec.ts for what moves where and when it still spawns.
     const plan = planToolExec({
@@ -363,6 +377,10 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
 
     const command = launcher ? launcher : execPath;
     const commandArgs = launcher ? [execPath, ...args] : args;
+    // Only a waiting wrapper sees a signal death, so only a spawned tool gets a run id (failures/launcher.ts).
+    const runId = `${process.pid}-${Date.now().toString(36)}`;
+    childEnv[RUN_ID_ENV] = runId;
+    const startedAt = new Date();
 
     return new Promise<number>((resolvePromise, reject) => {
         const child = spawn(command, commandArgs, {
@@ -438,14 +456,47 @@ async function spawnAndCaptureStderr(args: string[], workspaceRoot: string, exec
         });
         child.on("close", (code, signal) => {
             cleanup();
-            if (signal) {
-                resolvePromise(128 + (signalToNumber(signal) ?? 0));
+            const exitCode = signal ? 128 + (signalToNumber(signal) ?? 0) : (code ?? 1);
+            // The orphan watchdog's own TERM is the wrapper cleaning up after a dead shell, not a failed run.
+            if (orphanCleanup || (!signal && (code ?? 0) <= 128)) {
+                resolvePromise(exitCode);
                 return;
             }
 
-            resolvePromise(code ?? 1);
+            recordSignalDeath({
+                tool,
+                runId,
+                startedAt,
+                signal,
+                status: code,
+                viaLauncher: launcher !== null,
+                childPid: child.pid ?? 0,
+                toolsRoot: workspaceRoot,
+            }).finally(() => resolvePromise(exitCode));
         });
     });
+}
+
+/**
+ * A tool the default SIGINT or SIGTERM action killed never reached its own failure watcher; record it here, once.
+ * Loaded only on such an end, so a normal run pays nothing for it.
+ */
+async function recordSignalDeath(input: {
+    tool: string;
+    runId: string;
+    startedAt: Date;
+    signal: NodeJS.Signals | null;
+    status: number | null;
+    viaLauncher: boolean;
+    childPid: number;
+    toolsRoot: string;
+}): Promise<void> {
+    try {
+        const { recordSignalEnd } = await import("@genesiscz/utils/cli/failures/launcher");
+        recordSignalEnd(input);
+    } catch (err) {
+        logger.debug({ err }, "[tools] the signal death was not recorded");
+    }
 }
 
 /** Write out anything still buffered on stdout and stderr: an exec drops what the runtime holds. */

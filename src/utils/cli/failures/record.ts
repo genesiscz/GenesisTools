@@ -12,7 +12,8 @@ import { genesisToolsDir } from "@genesiscz/utils/storage/root";
  * - `error`: the tool's action threw and runTool printed `ERROR: …`.
  * - `crash`: an uncaught exception or an unhandled rejection; `fatal` says whether it ended the process.
  * - `exit`: a non-zero exit with none of the above (the tool printed its own message and exited 1).
- * - `interrupt`: Ctrl-C or SIGTERM (130 / 143); often a harness timeout rather than a bug.
+ * - `interrupt`: Ctrl-C or SIGTERM (130 / 143); often a harness timeout rather than a bug. The `tools` wrapper also
+ *   writes it for a spawned tool a signal killed (launcher.ts), and `crash` for one that died of a fault signal.
  */
 export const FAILURE_KINDS = ["usage", "error", "crash", "exit", "interrupt"] as const;
 export type FailureKind = (typeof FAILURE_KINDS)[number];
@@ -59,6 +60,8 @@ export interface ToolFailure {
     /** The GenesisTools checkout that ran the tool: the main one or a worktree. */
     toolsRoot: string;
     caller: FailureCaller | null;
+    /** The `tools` wrapper's id for a run it spawned (run-id.ts); absent when the wrapper exec'd into the tool. */
+    runId?: string;
 }
 
 const FILE = /^(\d{4}-\d{2}-\d{2})-failures\.jsonl$/;

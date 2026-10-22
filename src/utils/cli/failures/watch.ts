@@ -7,6 +7,7 @@ import { stripAnsi } from "@genesiscz/utils/string";
 import { currentTraceId } from "@genesiscz/utils/trace";
 import { redactSecretsInText } from "@genesiscz/utils/transclude/redact";
 import { appendFailure, type FailureCaller, type FailureKind, type ToolFailure } from "./record";
+import { takeRunId } from "./run-id";
 
 const TAIL_CHARS = 4000;
 const TOOLS_ROOT = resolve(moduleDir(import.meta), "../../../..");
@@ -37,6 +38,8 @@ interface Run {
     stdout: string;
     noted: Noted | null;
     ended: boolean;
+    /** The `tools` wrapper's id for this run, copied into every record so the wrapper never records it twice. */
+    runId: string | undefined;
 }
 
 let run: Run | null = null;
@@ -394,7 +397,7 @@ function tapStderr(): void {
  * run time so neither a bundler nor the type checker follows it into the agent runtime. A copy of these helpers
  * without that module records failures with no caller.
  */
-function agentCaller(): FailureCaller | null {
+export function agentCaller(): FailureCaller | null {
     const loaded: unknown = requireSibling(import.meta, "agent-caller");
     const lookup = (loaded as { agentFailureCaller?: unknown } | null)?.agentFailureCaller;
     if (typeof lookup !== "function") {
@@ -451,6 +454,7 @@ function write(kind: FailureKind, exitCode: number | null, fatal: boolean): void
             traceId: currentTraceId() ?? null,
             toolsRoot: TOOLS_ROOT,
             caller: caller(),
+            ...(run.runId ? { runId: run.runId } : {}),
         };
         appendFailure(failure);
     } catch (writeError) {
@@ -528,9 +532,10 @@ export function noteToolError(error: unknown): void {
 /**
  * Records every failed run of this process into `~/.genesis-tools/logs/<date>-failures.jsonl`: a usage error, a
  * thrown action, a crash, a plain non-zero exit, an interrupt the tool handles itself (exit 130 or 143). A run the
- * default SIGINT or SIGTERM action ends is not recorded: that action skips the exit event, and a JS signal handler
- * would make a synchronous tool unkillable (interrupt.ts). `runTool` calls it; an entry point without commander
- * calls it itself. Once per process; only a real CLI run, never a test that passes its own argv.
+ * default SIGINT or SIGTERM action ends never reaches the exit event, and a JS signal handler would make a
+ * synchronous tool unkillable (interrupt.ts); the `tools` wrapper records that death when it waits for the tool
+ * (launcher.ts). `runTool` calls it; an entry point without commander calls it itself. Once per process; only a
+ * real CLI run, never a test that passes its own argv.
  */
 export function watchToolRun({
     tool,
@@ -538,18 +543,32 @@ export function watchToolRun({
     commandPath = () => null,
     secrets = () => ({ flags: [], indexes: [] }),
     caller = agentCaller,
+    runId,
 }: {
     tool: string;
     argv?: string[];
     commandPath?: () => string | null;
     secrets?: () => ArgvSecrets;
     caller?: () => FailureCaller | null;
+    /** Defaults to the wrapper's id from the env (run-id.ts), which is then removed so child tools do not inherit it. */
+    runId?: string;
 }): void {
     if (run) {
         return;
     }
 
-    run = { tool, argv, commandPath, secrets, caller, stderr: "", stdout: "", noted: null, ended: false };
+    run = {
+        tool,
+        argv,
+        commandPath,
+        secrets,
+        caller,
+        stderr: "",
+        stdout: "",
+        noted: null,
+        ended: false,
+        runId: runId ?? takeRunId(process.env),
+    };
     tapStderr();
     process.on("uncaughtExceptionMonitor", (error) => {
         noteCrash(error, process.listenerCount("uncaughtException") === 0);

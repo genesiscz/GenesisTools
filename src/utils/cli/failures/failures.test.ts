@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { Command } from "commander";
 import { claudeProjectFolder, modelInTranscriptLines } from "./caller";
+import { recordSignalEnd, signalEnd, signalOfStatus, WITHHELD_ARGV } from "./launcher";
 import { appendFailure, readFailures, type ToolFailure } from "./record";
+import { RUN_ID_ENV } from "./run-id";
 import {
     classifyExit,
     commandPathFromArgv,
@@ -271,5 +273,155 @@ describe("a crash another uncaughtException listener takes", () => {
 
     it("is written as non-fatal when that listener lets the process go on", () => {
         expect(crashWith("")).toEqual([["crash", false, null, "fixture crash"]]);
+    });
+});
+
+describe("signalEnd", () => {
+    const direct = { status: null, viaLauncher: false };
+
+    it("records an outside signal as an interrupt and a fault signal as a crash", () => {
+        expect(signalEnd({ signal: "SIGINT", ...direct })).toEqual({
+            kind: "interrupt",
+            signal: "SIGINT",
+            exitCode: 130,
+        });
+        expect(signalEnd({ signal: "SIGTERM", ...direct })?.kind).toBe("interrupt");
+        expect(signalEnd({ signal: "SIGHUP", ...direct })?.kind).toBe("interrupt");
+        expect(signalEnd({ signal: "SIGKILL", ...direct })).toEqual({
+            kind: "interrupt",
+            signal: "SIGKILL",
+            exitCode: 137,
+        });
+        expect(signalEnd({ signal: "SIGSEGV", ...direct })?.kind).toBe("crash");
+        expect(signalEnd({ signal: "SIGABRT", ...direct })?.kind).toBe("crash");
+    });
+
+    it("is no failure for a signal that ends a run normally", () => {
+        expect(signalEnd({ signal: "SIGPIPE", ...direct })).toBeNull();
+        expect(signalEnd({ signal: null, ...direct })).toBeNull();
+    });
+
+    it("reads 128 + n as a signal only from the GenesisTools.app launcher", () => {
+        expect(signalEnd({ signal: null, status: 143, viaLauncher: true })).toEqual({
+            kind: "interrupt",
+            signal: "SIGTERM",
+            exitCode: 143,
+        });
+        expect(signalEnd({ signal: null, status: 134, viaLauncher: true })?.kind).toBe("crash");
+        expect(signalEnd({ signal: null, status: 143, viaLauncher: false })).toBeNull();
+        expect(signalEnd({ signal: null, status: 1, viaLauncher: true })).toBeNull();
+        expect(signalOfStatus(128)).toBeNull();
+        expect(signalOfStatus(130)).toBe("SIGINT");
+    });
+});
+
+describe("recordSignalEnd", () => {
+    const at = new Date(2026, 9, 22, 12);
+    const end = (dir: string, runId: string, overrides: { signal?: string | null; status?: number | null } = {}) =>
+        recordSignalEnd({
+            tool: "fixture",
+            runId,
+            startedAt: new Date(at.getTime() - 5000),
+            signal: overrides.signal === undefined ? "SIGINT" : overrides.signal,
+            status: overrides.status ?? null,
+            viaLauncher: true,
+            childPid: 4242,
+            toolsRoot: "/repo",
+            caller: () => null,
+            now: at,
+            dir,
+        });
+    const all = (dir: string) => [...readFailures({ fromDay: "2026-10-22", toDay: "2026-10-22", dir })];
+
+    it("writes one record with the argv withheld, no command and the signal named", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-failures-signal-"));
+        const written = end(dir, "run-a");
+        expect(written).toMatchObject({
+            kind: "interrupt",
+            tool: "fixture",
+            command: null,
+            argv: WITHHELD_ARGV,
+            exitCode: 130,
+            message: "ended by SIGINT",
+            stderrTail: null,
+            pid: 4242,
+            durationMs: 5000,
+            runId: "run-a",
+        });
+        expect(all(dir)).toEqual([written as ToolFailure]);
+    });
+
+    it("writes nothing when the tool already recorded this run, and still writes for another run", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-failures-signal-"));
+        const own: ToolFailure = {
+            v: 1,
+            id: "own-1",
+            at: at.toISOString(),
+            kind: "interrupt",
+            tool: "fixture",
+            command: "fixture run",
+            argv: ["run"],
+            exitCode: 130,
+            message: null,
+            errorName: null,
+            stack: null,
+            stderrTail: null,
+            fatal: true,
+            durationMs: 10,
+            pid: 4243,
+            ppid: 4242,
+            cwd: "/repo",
+            traceId: null,
+            toolsRoot: "/repo",
+            caller: null,
+            runId: "run-b",
+        };
+        appendFailure(own, dir);
+
+        expect(end(dir, "run-b", { signal: null, status: 130 })).toBeNull();
+        expect(end(dir, "run-c", { signal: null, status: 130 })?.message).toBe(
+            "ended by SIGINT (exit 130 from the GenesisTools.app launcher)"
+        );
+        expect(all(dir).map((failure) => failure.runId)).toEqual(["run-b", "run-c"]);
+    });
+});
+
+describe("a tool that handles its own interrupt under the tools wrapper", () => {
+    it("records the wrapper's run id, hides it from child tools, and the wrapper adds no second record", () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-failures-runid-"));
+        const script = [
+            `import { watchToolRun } from "${join(import.meta.dir, "watch.ts")}";`,
+            `watchToolRun({ tool: "fixture", argv: ["run"], caller: () => null });`,
+            `process.stdout.write(process.env.${RUN_ID_ENV} ?? "gone");`,
+            "process.exit(130);",
+        ].join("\n");
+        const startedAt = new Date();
+        const child = Bun.spawnSync([process.execPath, "-e", script], {
+            env: { ...process.env, GENESIS_TOOLS_HOME: home, [RUN_ID_ENV]: "run-wrapped" },
+            stdout: "pipe",
+            stderr: "ignore",
+        });
+        const dir = join(home, ".genesis-tools", "logs");
+        const read = () =>
+            [...readFailures({ fromDay: formatLocalDate(startedAt), toDay: formatLocalDate(new Date()), dir })].map(
+                (record) => [record.kind, record.exitCode, record.runId]
+            );
+
+        expect(child.stdout.toString()).toBe("gone");
+        expect(read()).toEqual([["interrupt", 130, "run-wrapped"]]);
+        const second = recordSignalEnd({
+            tool: "fixture",
+            runId: "run-wrapped",
+            startedAt,
+            signal: null,
+            status: child.exitCode,
+            viaLauncher: true,
+            childPid: child.pid,
+            toolsRoot: "/repo",
+            caller: () => null,
+            dir,
+        });
+        expect(second).toBeNull();
+        expect(read()).toHaveLength(1);
     });
 });
