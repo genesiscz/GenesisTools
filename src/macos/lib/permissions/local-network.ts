@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
+import { isGenesisToolsBinary } from "@genesiscz/utils/genesis-tools/app-binary";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_NAME, genesisAppDir } from "@genesiscz/utils/macos/genesis-app";
@@ -207,14 +208,6 @@ export function parseLocalNetworkPrompts(logText: string): LocalNetworkPrompt[] 
     });
 }
 
-/**
- * The launcher of the installed app or of a retired build. nehelper logs every app's prompt, and another app's is
- * not ours to describe (its dialog names that app).
- */
-export function isGenesisToolsBinary(executable: string): boolean {
-    return executable.endsWith("/GenesisTools.app/Contents/MacOS/GenesisTools");
-}
-
 /** Prompts in the last `since` (a `log show --last` value: `30m`, `2h`, `1d`); null when `log show` fails (logged). */
 export function readLocalNetworkPrompts(since: string): LocalNetworkPrompt[] | null {
     const proc = Bun.spawnSync(
@@ -303,12 +296,6 @@ export function describePromptProcesses(launcherPath: string, pids: number[]): M
     }
 
     return described;
-}
-
-/** When the build behind `executable` was retired, or null for the installed app. */
-export function retiredAtOf(executable: string): Date | null {
-    const match = /retired(?:\.noindex)?\/(\d+)\//.exec(executable);
-    return match ? new Date(Number(match[1])) : null;
 }
 
 /**

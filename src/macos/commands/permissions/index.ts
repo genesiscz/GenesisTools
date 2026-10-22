@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { retiredAtOf } from "@genesiscz/utils/genesis-tools/app-binary";
 import { out } from "@genesiscz/utils/logger";
 import { requestFullDiskAccess } from "@genesiscz/utils/macos/full-disk-access";
 import {
@@ -21,7 +22,6 @@ import {
     type LocalNetworkAnswer,
     type OldBuild,
     readLocalNetworkPrompts,
-    retiredAtOf,
 } from "../../lib/permissions/local-network";
 import {
     ALL_PART_IDS,

@@ -3,6 +3,11 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import {
+    GENESIS_TOOLS_LAUNCHER_SUFFIX,
+    isGenesisToolsBinary,
+    retiredAtOf,
+} from "@genesiscz/utils/genesis-tools/app-binary";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import * as processes from "@genesiscz/utils/process/processes";
 import { skip } from "@genesiscz/utils/test/skip";
@@ -30,7 +35,6 @@ import {
     parseLocalNetworkPrompts,
     parseLocalNetworkRules,
     promptsFromLogShow,
-    retiredAtOf,
     withoutPreloads,
 } from "./local-network";
 import {
@@ -762,6 +766,9 @@ describe("Local Network answers", () => {
         });
         expect(retiredAtOf(prompt.executable)?.getTime()).toBe(1792613086315);
         expect(retiredAtOf("/Users/x/Applications/GenesisTools.app/Contents/MacOS/GenesisTools")).toBeNull();
+        expect(isGenesisToolsBinary(`/Users/x/Applications${GENESIS_TOOLS_LAUNCHER_SUFFIX}`)).toBe(true);
+        expect(isGenesisToolsBinary("/Applications/Other.app/Contents/MacOS/Other")).toBe(false);
+        expect(isGenesisToolsBinary(`/x${GENESIS_TOOLS_LAUNCHER_SUFFIX}-helper`)).toBe(false);
         expect(withoutPreloads("gt-cc --preload /a.ts --preload /b.ts --resume abc")).toBe("gt-cc --resume abc");
     });
 

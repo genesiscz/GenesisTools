@@ -56,6 +56,7 @@ enum LocalNetworkWatch {
         guard let marker = line.range(of: ", allowing a new prompt"),
               let pidStart = line.range(of: " for PID ", options: .backwards, range: line.startIndex..<marker.lowerBound),
               let pathStart = line.range(of: "Found new path ", range: line.startIndex..<pidStart.lowerBound),
+              // Same suffix as GENESIS_TOOLS_LAUNCHER_SUFFIX in src/utils/genesis-tools/app-binary.ts; change both.
               line[pathStart.upperBound..<pidStart.lowerBound].hasSuffix("/GenesisTools.app/Contents/MacOS/GenesisTools")
         else { return nil }
         return Int(line[pidStart.upperBound..<marker.lowerBound])
