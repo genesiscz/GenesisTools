@@ -652,6 +652,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// within a second (2026-10-11).
     func collapseIfOutside(_ event: NSEvent) {
         guard !passivePanels, event.timestamp > model.openedAt, model.expanded != nil, !model.dialogOpen else { return }
+        // A dictation keeps the panel, so its words stay in view; Esc or the close button still closes it.
+        guard !model.voiceActive else { return }
         var window = event.window
         while let candidate = window {
             if panels.values.contains(where: { $0.panel === candidate }) { return }
@@ -661,7 +663,51 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             event.window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow
         guard !panels.values.contains(where: { $0.panel.isVisible && $0.panel.frame.contains(point) })
         else { return }
+        // A click on another GenesisTools window keeps the panel: the vault key window that a dictation or a send
+        // raises took its Allow click as "outside" and closed the panel under it (Martin, 2026-10-23: "allow with touch
+        // id does literally hide the widget").
+        if Self.ownWindowOwnsPoint(point) { return }
         model.requestCollapse()
+    }
+
+    /// The view chain AppKit's hit test picks at a CoreGraphics screen point (top-left origin) in each visible panel, for
+    /// the test driver's `hittest` command: accessibility frames can name a control that AppKit never delivers a click
+    /// to (a nested hosting view placed outside its parent's bounds).
+    public func hitTestDescription(cgPoint: CGPoint) -> String {
+        guard let primary = NSScreen.screens.first?.frame else { return "no screen" }
+        let point = NSPoint(x: cgPoint.x, y: primary.maxY - cgPoint.y)
+        var lines: [String] = []
+        for (surface, controller) in panels where controller.panel.isVisible && controller.panel.frame.contains(point) {
+            guard let content = controller.panel.contentView else { continue }
+            let local = content.convert(controller.panel.convertPoint(fromScreen: point), from: nil)
+            var chain: [String] = []
+            var view = content.hitTest(local)
+            while let current = view, chain.count < 12 {
+                chain.append("\(type(of: current))\(current.frame.integral)")
+                view = current.superview
+            }
+            lines.append("\(surface.key): " + (chain.isEmpty ? "nothing" : chain.joined(separator: " < ")))
+        }
+        return lines.isEmpty ? "no panel at the point" : lines.joined(separator: " | ")
+    }
+
+    /// Whether the topmost on-screen window at `point` (AppKit screen coordinates) belongs to a GenesisTools process.
+    static func ownWindowOwnsPoint(_ point: NSPoint) -> Bool {
+        guard let primary = NSScreen.screens.first?.frame,
+              let rows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[CFString: Any]] else { return false }
+        // CoreGraphics measures from the primary screen's top edge, AppKit from its bottom edge.
+        let flipped = CGPoint(x: point.x, y: primary.maxY - point.y)
+        let bundle = Bundle.main.bundleIdentifier
+        for row in rows {
+            guard (row[kCGWindowLayer] as? Int ?? 0) < 1000,
+                  let bounds = row[kCGWindowBounds] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation: bounds), frame.contains(flipped) else { continue }
+            guard let pid = row[kCGWindowOwnerPID] as? pid_t else { return false }
+            return pid == ProcessInfo.processInfo.processIdentifier
+                || (bundle != nil && NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == bundle)
+        }
+        return false
     }
 
     private func openVoiceNotes(for key: String) {

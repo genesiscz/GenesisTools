@@ -1099,6 +1099,7 @@ public final class WidgetModel: ObservableObject {
     /// session is already open there (Martin, 2026-10-23: a second click did nothing).
     public func toggleSession(_ key: String, on surface: WidgetSurfaceID) {
         guard !stopping else { return }
+        PerfLog.mark("widget.toggle-session surface=\(surface.key) presentation=\(presentation(for: surface)) module=\(activeModuleID) overview=\(inboxOverview) same=\(selectedKey == key) group=\(activeSideGroup)")
         if presentation(for: surface) == .expanded, activeModuleID == "agents", !inboxOverview, selectedKey == key {
             requestCollapse()
             return

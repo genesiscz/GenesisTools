@@ -132,6 +132,11 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         case "select": if parts.count > 1 { model.select(parts[1]) }
         case "settings": coordinator.showSettings(pageID: parts.count > 1 ? parts[1] : "widgets.general")
         case "passive": coordinator.passivePanels = parts.count < 2 || parts[1] != "off"
+        // `hittest <x> <y>` in CoreGraphics screen points: which view AppKit hands a click there to.
+        case "hittest":
+            if parts.count > 2, let x = Double(parts[1]), let y = Double(parts[2]) {
+                PerfLog.mark("widget.hittest \(x),\(y): " + coordinator.hitTestDescription(cgPoint: CGPoint(x: x, y: y)))
+            }
         default: NSLog("widget.test: unknown command %@", command)
         }
     }
