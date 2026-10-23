@@ -1,4 +1,5 @@
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { spawnToolDetached } from "@genesiscz/utils/cli/tools";
 import type { CmdToolVerb, TransclusionHints } from "@genesiscz/utils/transclude";
 
 /**
@@ -15,9 +16,14 @@ export function json2mdBuild(portable: string): string {
     return `${toolCommand("json2md build")} ${portable}`;
 }
 
-/** The argv that speaks a notification's message aloud; the message is appended as the last word. */
-export function notificationSayCommand(): string[] {
-    return toolCommand("say").split(" ");
+/**
+ * Speaks a notification's message through this checkout's `say` tool, by the shared runner rather than a `tools`
+ * found on PATH (the main checkout), and detached, so the speech outlives a sender that exits right after posting.
+ */
+export function notificationSpeaker(spawn: (args: string[]) => unknown = spawnToolDetached): (message: string) => void {
+    return (message) => {
+        spawn(["say", message]);
+    };
 }
 
 /** The command that reports whether a question's `[verify]` tokens changed since capture. */

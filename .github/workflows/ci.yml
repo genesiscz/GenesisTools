@@ -521,7 +521,8 @@ jobs:
         shell: bash
         env:
           TYPECHECK_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
-        run: bun scripts/ci/typecheck.ts --base "$TYPECHECK_BASE"
+        # A workflow_dispatch run has no base: then no --base, and every project is checked.
+        run: bun scripts/ci/typecheck.ts ${TYPECHECK_BASE:+--base "$TYPECHECK_BASE"}
 
       - name: Save TypeScript build info for the next push
         if: github.event_name == 'push'

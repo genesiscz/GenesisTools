@@ -642,3 +642,12 @@ describe("round 33 nested mirror configuration", () => {
         expect(readFileSync(join(repo, file), "utf8")).toContain("export const unstaged = 'kept';");
     });
 });
+
+describe("pre-commit hook: the typecheck binary", () => {
+    test("runs the checkout's own tsc, never bunx, which can write a partial node_modules in a worktree", () => {
+        const hook = readFileSync(join(ROOT, ".githooks/pre-commit"), "utf8");
+        const tscLine = hook.split("\n").find((line) => line.startsWith("tsc_output="));
+        expect(tscLine).toStartWith("tsc_output=$(./node_modules/.bin/tsc --noEmit");
+        expect(hook).not.toMatch(/^[^#]*\bbunx tsc\b/m);
+    });
+});

@@ -10,6 +10,7 @@ import {
     readFailures,
     type ToolFailure,
 } from "./record";
+import { signalExitStatus } from "./signal-status";
 import { agentCaller } from "./watch";
 
 /**
@@ -79,7 +80,7 @@ export function signalEnd({
         return null;
     }
 
-    const exitCode = signal === null && status !== null ? status : 128 + (SIGNAL_NUMBERS.get(name) ?? 0);
+    const exitCode = signal === null && status !== null ? status : signalExitStatus(name);
     return { kind, signal: name, exitCode };
 }
 

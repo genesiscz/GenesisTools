@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { execTool } from "@genesiscz/utils/cli";
 import { toolsEntrypoint } from "@genesiscz/utils/cli/tools";
 import { env } from "@genesiscz/utils/env";
@@ -4969,6 +4969,7 @@ describe("round 32 policy and landing routing", () => {
         const late = roundPolicy({ round: 32, changedFiles: 63 });
         expect(shouldFixFinding(late, "Low", true)).toBe(true);
         expect(shouldFixFinding(late, "High")).toBe(true);
+        expect(shouldFixFinding(late, "major")).toBe(true);
         expect(shouldFixFinding(late, "Medium")).toBe(false);
         expect(shouldFixFinding(roundPolicy({ round: 32, changedFiles: 120, dedicatedReview: true }), "Low")).toBe(
             true
@@ -5157,9 +5158,11 @@ describe("round 32 policy and landing routing", () => {
 describe("tmp-reclaim --own-session lists only the live session's build output", () => {
     const session = "1b4001ba-d479-40f2-9e25-b13cb2ef5a13";
 
-    function plantSession(): { cc: string; dir: string; nonBuild: string[] } {
-        const cc = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "babysit-own-")));
-        const dir = join(cc, "Project", session);
+    function plantSession(
+        cc = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "babysit-own-"))),
+        project = "Project"
+    ): { cc: string; dir: string; nonBuild: string[] } {
+        const dir = join(cc, project, session);
         const file = (path: string, text = "x") => {
             fs.mkdirSync(dirname(join(dir, path)), { recursive: true });
             fs.writeFileSync(join(dir, path), text);
@@ -5264,8 +5267,57 @@ describe("tmp-reclaim --own-session lists only the live session's build output",
         expect(ownSessionDirs(session, cc)).toEqual([dir]);
     });
 
-    test("apply removes the planned build output and refuses an entry that is no longer build output", () => {
+    /** A session under `<test TMPDIR>/cc/<unique project>/`, the only place an own-session plan may name. */
+    function plantInTmpCc(): ReturnType<typeof plantSession> {
+        const cc = join(fs.realpathSync(tmpdir()), "cc");
+        fs.mkdirSync(cc, { recursive: true });
+        return plantSession(cc, basename(fs.mkdtempSync(join(cc, "Project-"))));
+    }
+
+    function reclaim(args: string[], extraEnv: Record<string, string> = {}) {
+        return Bun.spawnSync([process.execPath, join(import.meta.dir, "tmp-reclaim.ts"), ...args], {
+            stdout: "pipe",
+            stderr: "pipe",
+            env: { ...process.env, ...extraEnv },
+        });
+    }
+
+    test("a missing or empty --own-session value is a usage error, never the regular dry run", () => {
+        const run = fs.mkdtempSync(join(tmpdir(), "babysit-own-run-"));
+        for (const args of [["--own-session"], ["--own-session", ""], ["--own-session", "   "]]) {
+            const result = reclaim(args, { BABYSIT_RUN: run });
+            expect(result.exitCode).toBe(2);
+            expect(result.stderr.toString()).toContain("--own-session needs the full session uuid");
+        }
+        expect(fs.existsSync(join(run, "logs"))).toBe(false);
+    });
+
+    test("apply refuses an own-session plan outside <tmp>/cc/<project>/<uuid> or with a bad age, and moves nothing", () => {
         const { dir } = plantSession();
+        const hub = join(dir, "pluggable/b-hub");
+        const planned = [{ path: hub, ino: fs.lstatSync(hub).ino, bytes: 1, newest: 0 }];
+        const inCc = plantInTmpCc();
+        const inCcHub = join(inCc.dir, "pluggable/b-hub");
+        const cases = [
+            { candidates: planned, ownSession: { id: session, dirs: [dir], minAgeMinutes: 0 } },
+            {
+                candidates: [{ path: inCcHub, ino: fs.lstatSync(inCcHub).ino, bytes: 1, newest: 0 }],
+                ownSession: { id: session, dirs: [inCc.dir], minAgeMinutes: -1 },
+            },
+        ];
+        for (const [index, body] of cases.entries()) {
+            const plan = join(dir, "..", `bad-plan-${index}.json`);
+            fs.writeFileSync(plan, SafeJSON.stringify({ createdAt: Date.now(), minAgeHours: 0, ...body }));
+            const result = reclaim(["--apply", "--plan", plan]);
+            expect(result.exitCode).toBe(2);
+            expect(result.stderr.toString()).toContain("the plan's ownSession needs");
+        }
+        expect(fs.existsSync(hub)).toBe(true);
+        expect(fs.existsSync(inCcHub)).toBe(true);
+    });
+
+    test("apply removes the planned build output and refuses an entry that is no longer build output", () => {
+        const { dir } = plantInTmpCc();
         const hub = join(dir, "pluggable/b-hub");
         const notesTriple = join(dir, "pluggable/b-notes/arm64-apple-macosx");
         const candidate = (path: string) => ({ path, ino: fs.lstatSync(path).ino, bytes: 1, newest: 0 });

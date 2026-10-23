@@ -166,6 +166,12 @@ function installHostEffectGuards(): void {
             "sendViaGenesisApp",
             "Assert the notification payload instead of delivering it."
         ),
+        // postNotification reaches the app through this object, built from the real sendViaGenesisApp when the
+        // module loaded, so replacing the export above alone does not cover that path.
+        appNotificationBackend: {
+            ...realMacosNotificationsApp.appNotificationBackend,
+            send: blockedAsync("sendViaGenesisApp", "Assert the notification payload instead of delivering it."),
+        },
         // These reach GenesisTools.app, which mutates Notification Center for the whole user
         // session. A test that removes "its own" notification would clear the user's real ones.
         removeNotifications: blockedAsync("removeNotifications", "Assert the removal target instead of running it."),

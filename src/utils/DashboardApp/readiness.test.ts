@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { rmSync, writeFileSync } from "node:fs";
+import { chmodSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnDetached } from "./detach";
@@ -111,6 +111,10 @@ describe("a server that answers with an error", () => {
                 "at /repo/src/utils/logger/daily-trigger.ts:15:55",
             ]);
             expect(serverErrorExcerpt(join(tmpdir(), "no-such-dashboard.log"))).toEqual([]);
+            // A log that exists but cannot be opened gives no excerpt rather than replacing the dashboard's report.
+            chmodSync(logFile, 0o000);
+            expect(serverErrorExcerpt(logFile)).toEqual([]);
+            chmodSync(logFile, 0o644);
             // Bun's own shape, from the real clarity log: header, properties, blank line, stack, then the code frame.
             writeFileSync(
                 logFile,

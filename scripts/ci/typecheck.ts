@@ -153,14 +153,22 @@ function cacheDir(): string {
     return path;
 }
 
-function readState(dir: string): State {
+/** What the last passing runs recorded; an unreadable file (a run killed mid-write) counts as nothing known. */
+export function readState(dir: string): State {
     const file = join(dir, "state.json");
     const passed: Record<string, Passed> = {};
     if (!existsSync(file)) {
         return { passed };
     }
 
-    const parsed: unknown = SafeJSON.parse(readFileSync(file, "utf8"));
+    let parsed: unknown;
+    try {
+        parsed = SafeJSON.parse(readFileSync(file, "utf8"));
+    } catch (err) {
+        out.println(`typecheck: ignoring unreadable ${file}: ${err instanceof Error ? err.message : String(err)}`);
+        return { passed };
+    }
+
     const entries = (parsed as { passed?: unknown } | null)?.passed;
     for (const [name, value] of Object.entries(typeof entries === "object" && entries !== null ? entries : {})) {
         if (isPassed(value)) {
@@ -175,13 +183,20 @@ function buildInfoPath(dir: string, project: Project): string {
     return join(dir, `${project.name}.tsbuildinfo`);
 }
 
-/** The files of the project's last program, from its build info; null when there is none to read. */
+/** The files of the project's last program, from its build info; null when there is none to read, or it is cut. */
 export function programFiles(buildInfo: string): Set<string> | null {
     if (!existsSync(buildInfo)) {
         return null;
     }
 
-    const parsed: unknown = SafeJSON.parse(readFileSync(buildInfo, "utf8"), { strict: true });
+    let parsed: unknown;
+    try {
+        parsed = SafeJSON.parse(readFileSync(buildInfo, "utf8"), { strict: true });
+    } catch (err) {
+        out.println(`typecheck: ignoring unreadable ${buildInfo}: ${err instanceof Error ? err.message : String(err)}`);
+        return null;
+    }
+
     const names = (parsed as { fileNames?: unknown } | null)?.fileNames;
     if (!Array.isArray(names)) {
         return null;

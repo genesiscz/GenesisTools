@@ -26,14 +26,14 @@ export interface NotificationOptions {
      */
     attachments?: string[];
     ignoreDnD?: boolean;
-    /** Also speak the message through {@link NotificationOptions.sayCommand}. Nothing is spoken without one. */
+    /** Also speak the message through {@link NotificationOptions.speak}. Nothing is spoken without one. */
     say?: boolean;
     /**
-     * The argv that speaks the message, which is appended as its last word. GenesisTools passes
-     * `notificationSayCommand()` from `@genesiscz/utils/genesis-tools/tools/hints`; a copy of this module names no
-     * speech command of its own.
+     * Speaks the message. GenesisTools passes `notificationSpeaker()` from
+     * `@genesiscz/utils/genesis-tools/tools/hints`, which runs this checkout's speech tool; a copy of this module
+     * names no speech command of its own.
      */
-    sayCommand?: string[];
+    speak?: (message: string) => void;
     /**
      * Stable id, so the notification can be retracted later with {@link removeNotifications}, or
      * replaced in place by posting again with the same id. Generated when omitted.
@@ -497,25 +497,22 @@ export async function sendNotification(opts: NotificationOptions): Promise<Poste
     const posted = await postNotification(opts);
 
     if (opts.say) {
-        speak(opts.message, opts.sayCommand ?? []);
+        speak(opts.message, opts.speak);
     }
 
     return posted;
 }
 
-function speak(message: string, command: string[]): void {
-    if (command.length === 0) {
-        logger.debug("notification TTS skipped: no say command was passed");
+function speak(message: string, speaker: ((message: string) => void) | undefined): void {
+    if (!speaker) {
+        logger.debug("notification TTS skipped: no speaker was passed");
         return;
     }
 
     try {
-        Bun.spawn([...command, message], {
-            stdout: "ignore",
-            stderr: "ignore",
-        });
-    } catch {
-        logger.debug(`${command.join(" ")} failed for notification TTS`);
+        speaker(message);
+    } catch (error) {
+        logger.debug({ error }, "notification TTS failed");
     }
 }
 

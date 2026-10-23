@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { notificationSpeaker } from "@genesiscz/utils/genesis-tools/tools/hints";
 import { systemChannelDelivered } from "@genesiscz/utils/notifications/channels/system";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
@@ -207,5 +208,13 @@ describe("launchdSession", () => {
 
     it("claims nothing when the session cannot be read", () => {
         expect(launchdSession(() => null)).toEqual({ gui: true, manager: null });
+    });
+});
+
+describe("notificationSpeaker", () => {
+    it("hands the say tool and the whole message to the shared tool runner, not a tools argv from PATH", () => {
+        const runs: string[][] = [];
+        notificationSpeaker((args) => runs.push(args))("Build done, 3 warnings");
+        expect(runs).toEqual([["say", "Build done, 3 warnings"]]);
     });
 });

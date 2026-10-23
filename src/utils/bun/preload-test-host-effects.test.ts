@@ -4,7 +4,7 @@ import { copyToClipboard, readFromClipboard } from "@genesiscz/utils/clipboard";
 import { fullDiskAccessSubject, requestFullDiskAccess } from "@genesiscz/utils/macos/full-disk-access";
 import { escapeJxa, runJxa } from "@genesiscz/utils/macos/jxa";
 import { NotificationBackend, sendNotification } from "@genesiscz/utils/macos/notifications";
-import { authorizeNotifications } from "@genesiscz/utils/macos/notifications-app";
+import { appNotificationBackend, authorizeNotifications } from "@genesiscz/utils/macos/notifications-app";
 import { settings } from "@genesiscz/utils/macos/system-settings";
 import {
     dispatchNotification,
@@ -99,6 +99,13 @@ describe("host-effect preload", () => {
 
         test("sendNotification rejects instead of raising a banner", async () => {
             await expect(sendNotification({ message: "hi" })).rejects.toThrow(/sendNotification is blocked/);
+        });
+
+        test("the app backend postNotification uses rejects instead of posting through GenesisTools.app", async () => {
+            await expect(appNotificationBackend.send({ message: "hi" })).rejects.toThrow(
+                /sendViaGenesisApp is blocked/
+            );
+            expect(typeof appNotificationBackend.terminalNotifierFixHint).toBe("function");
         });
 
         test("authorizeNotifications rejects instead of raising the grant prompt", async () => {

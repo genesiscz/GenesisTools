@@ -35,6 +35,11 @@ export function resolveWindow({
         throw new Error(`--until ${until} is not a time: use 30m, 24h, 7d, HH:MM or YYYY-MM-DD`);
     }
 
+    // An inverted window has no days, and the readers would then scan every day file to keep nothing.
+    if (from.getTime() > to.getTime()) {
+        throw new Error(`--since ${since} is after --until ${until ?? "now"}`);
+    }
+
     return { from, to };
 }
 

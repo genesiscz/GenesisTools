@@ -494,6 +494,16 @@ final class WidgetInteractionTests: XCTestCase {
         value.collapse()
         XCTAssertEqual(value.moduleSelections[side.key], "tasks", "a module the user picked during the peek stays")
 
+        let top = WidgetSurfaceID(edge: .top)
+        value.moduleSelections[side.key] = "capture"
+        value.showPeek(item, on: side, module: "agents", seconds: 60)
+        value.openModule("tasks", on: top)
+        XCTAssertEqual(value.moduleSelections[side.key], "capture", "a pick on another surface gives the peeked one back")
+        XCTAssertEqual(value.moduleSelections[top.key], "tasks")
+        let saved = defaults.dictionary(forKey: "widget.moduleSelections") as? [String: String]
+        XCTAssertEqual(saved?[side.key], "capture", "the peek's module is never saved as the user's")
+        value.collapse()
+
         value.moduleSelections[side.key] = "capture"
         value.showPeek(item, on: side, module: "agents", seconds: 0.1)
         value.open(.right)

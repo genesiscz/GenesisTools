@@ -50,22 +50,33 @@ export interface ArgvSecrets {
     flags: string[];
     /** The argv indexes of a declared secret option's value (even `-x…`) and of a secret-named argument's value. */
     indexes: number[];
+    /** A secret value attached inside a group of short flags (`-vtx`): the word's index and where the value starts. */
+    attached?: { index: number; at: number }[];
 }
+
+/** What a message, stack or stderr tail becomes when it echoes a declared secret too short to replace safely. */
+export const WITHHELD_TEXT = "[withheld: it echoes a short secret value]";
 
 /**
  * Masks the value of a secret-named flag (`--token x`, `--api-key=x`), of a flag the command declares for a
- * secret-named option (`-t x` and `-tx` when `-t` is `--token`), every word `secrets.indexes` names, and any
- * secret-shaped argument.
+ * secret-named option (`-t x` and `-tx` when `-t` is `--token`), every word `secrets.indexes` names, every value
+ * `secrets.attached` names (`-vtx`), and any secret-shaped argument.
  */
 export function redactArgv(args: readonly string[], secrets: Partial<ArgvSecrets> = {}): string[] {
     const secretFlags = secrets.flags ?? [];
     const secretIndexes = new Set(secrets.indexes ?? []);
+    const attachedAt = new Map((secrets.attached ?? []).map(({ index, at }) => [index, at]));
     const isSecret = (flag: string) => SECRET_FLAG.test(flag) || secretFlags.includes(flag);
     const shorts = secretFlags.filter((flag) => /^-[^-]$/.test(flag));
 
     return args.map((arg, index) => {
         if (secretIndexes.has(index)) {
             return "[redacted]";
+        }
+
+        const valueAt = attachedAt.get(index);
+        if (valueAt !== undefined) {
+            return `${arg.slice(0, valueAt)}[redacted]`;
         }
 
         const assigned = /^(--?[\w-]+)=/.exec(arg);
@@ -98,18 +109,27 @@ function secretValues(args: readonly string[], secrets: Partial<ArgvSecrets>): s
             const kept = masked[index].replace(/\[redacted\]$/, "");
             return [arg.startsWith(kept) ? arg.slice(kept.length) : arg];
         })
-        .filter((value) => value.length >= 4);
+        .filter((value) => value.length > 0);
 }
 
-/** `redactSecretsInText`, plus every `--secret-flag=value` and every secret argument value the text echoes. */
+/**
+ * `redactSecretsInText`, plus every `--secret-flag=value` and every secret argument value the text echoes. A value
+ * shorter than four characters would mask unrelated text wherever it occurs, so a text that still echoes one is
+ * withheld whole ({@link WITHHELD_TEXT}).
+ */
 export function redactRunText(text: string, args: readonly string[], secrets: Partial<ArgvSecrets> = {}): string {
     const secretFlags = secrets.flags ?? [];
     let out = redactSecretsInText(text).replace(/(--?[\w-]+)=([^\s'"`]+)/g, (whole, flag: string) =>
         SECRET_FLAG.test(flag) || secretFlags.includes(flag) ? `${flag}=[redacted]` : whole
     );
 
-    for (const value of secretValues(args, secrets)) {
+    const values = secretValues(args, secrets);
+    for (const value of values.filter((candidate) => candidate.length >= 4)) {
         out = out.split(value).join("[redacted]");
+    }
+
+    if (values.some((value) => value.length < 4 && out.includes(value))) {
+        return WITHHELD_TEXT;
     }
 
     return out;
@@ -141,8 +161,14 @@ function isSecretOption(option: OptionNode): boolean {
     return option.long !== undefined && SECRET_FLAG.test(option.long);
 }
 
-/** The option a flag word ends with, and whether its value is the next word. Null for a flag no command declares. */
-function flagOption(word: string, chain: readonly CommandNode[]): { option: OptionNode; valueNext: boolean } | null {
+/**
+ * The option a flag word ends with, whether its value is the next word, and where a value attached to it starts
+ * (`-vtx`: 3). Null for a flag no command declares.
+ */
+function flagOption(
+    word: string,
+    chain: readonly CommandNode[]
+): { option: OptionNode; valueNext: boolean; valueAt?: number } | null {
     const find = (flag: string) =>
         chain.flatMap((command) => command.options).find((option) => option.short === flag || option.long === flag);
 
@@ -158,12 +184,45 @@ function flagOption(word: string, chain: readonly CommandNode[]): { option: Opti
             return null;
         }
 
-        if (option.required || option.optional || at === word.length - 1) {
-            return { option, valueNext: at === word.length - 1 };
+        if (at === word.length - 1) {
+            return { option, valueNext: true };
+        }
+
+        if (option.required || option.optional) {
+            return { option, valueNext: false, valueAt: at + 1 };
         }
     }
 
     return null;
+}
+
+/** A command and every subcommand under it, at any depth. */
+function commandsUnder(command: CommandNode): CommandNode[] {
+    return [command, ...command.commands.flatMap(commandsUnder)];
+}
+
+function secretFlagsOf(commands: readonly CommandNode[]): string[] {
+    const flags = commands.flatMap((command) =>
+        command.options
+            .filter(isSecretOption)
+            .flatMap((option) => [option.short, option.long].filter((flag): flag is string => flag !== undefined))
+    );
+    return [...new Set(flags)];
+}
+
+function takesSecret(command: CommandNode): boolean {
+    return (
+        command.options.some(isSecretOption) ||
+        (command.registeredArguments ?? []).some((argument) => SECRET_ARGUMENT.test(argument.name()))
+    );
+}
+
+interface WalkedArgv {
+    chain: CommandNode[];
+    secretIndexes: number[];
+    attached: { index: number; at: number }[];
+    /** The index of the first flag no command declares; commander refuses that line. Null when every flag is known. */
+    refusedAt: number | null;
 }
 
 /**
@@ -171,11 +230,13 @@ function flagOption(word: string, chain: readonly CommandNode[]): { option: Opti
  * subcommand), an option's value is skipped, and the first operand that names no subcommand ends the chain. Stops at
  * a flag no command declares, since commander refuses that line and what follows has no known shape.
  */
-function walkArgv(program: CommandNode, args: readonly string[]): { chain: CommandNode[]; secretIndexes: number[] } {
+function walkArgv(program: CommandNode, args: readonly string[]): WalkedArgv {
     const chain = [program];
     const secretIndexes: number[] = [];
+    const attached: { index: number; at: number }[] = [];
     const operands: number[] = [];
     let commandsDone = false;
+    let refusedAt: number | null = null;
 
     for (let index = 0; index < args.length; index++) {
         const word = args[index];
@@ -190,11 +251,16 @@ function walkArgv(program: CommandNode, args: readonly string[]): { chain: Comma
         if (word.startsWith("-") && word !== "-") {
             const found = flagOption(word, chain);
             if (!found) {
+                refusedAt = index;
                 break;
             }
 
             const next = args[index + 1];
             const { option } = found;
+            if (found.valueAt !== undefined && isSecretOption(option)) {
+                attached.push({ index, at: found.valueAt });
+            }
+
             if (
                 found.valueNext &&
                 next !== undefined &&
@@ -232,7 +298,7 @@ function walkArgv(program: CommandNode, args: readonly string[]): { chain: Comma
         }
     });
 
-    return { chain, secretIndexes };
+    return { chain, secretIndexes, attached, refusedAt };
 }
 
 /** `ai usage sessions` for `tools ai usage sessions --bad`: the deepest subcommand the words name. */
@@ -245,16 +311,23 @@ export function commandPathFromArgv(program: CommandNode, args: readonly string[
 /**
  * The flags of every secret-named option on the commands `args` reaches (`-t` for `--token`), and the argv
  * indexes of their values and of a secret-named argument's value (`<path> [secret]`).
+ *
+ * A line with a flag no command declares has no known shape past that flag. When a command at or under the deepest
+ * one reached takes a secret, every later word that is not a flag counts as secret, and the flags of every secret
+ * option under it count too: a refused line is still recorded, and its secret must not be.
  */
 export function secretsFromArgv(program: CommandNode, args: readonly string[]): ArgvSecrets {
-    const { chain, secretIndexes } = walkArgv(program, args);
+    const { chain, secretIndexes, attached, refusedAt } = walkArgv(program, args);
+    const below = refusedAt === null ? [] : commandsUnder(chain[chain.length - 1]);
+    if (refusedAt === null || !below.some(takesSecret)) {
+        return { flags: secretFlagsOf(chain), indexes: secretIndexes, attached };
+    }
+
+    const rest = args.flatMap((word, index) => (index > refusedAt && !word.startsWith("-") ? [index] : []));
     return {
-        flags: chain.flatMap((command) =>
-            command.options
-                .filter(isSecretOption)
-                .flatMap((option) => [option.short, option.long].filter((flag): flag is string => flag !== undefined))
-        ),
-        indexes: secretIndexes,
+        flags: secretFlagsOf([...chain, ...below]),
+        indexes: [...new Set([...secretIndexes, ...rest])],
+        attached,
     };
 }
 

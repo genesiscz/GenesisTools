@@ -160,7 +160,8 @@ export function namesToolCommand(text: string, node: SgNode): boolean {
 /** `import.meta` members only Bun sets; Vite's SSR runner and Node leave them undefined. */
 const BUN_ONLY_IMPORT_META = /^import\.meta\.(?:dir|dirname|filename|path)$/;
 /** Code a Vite dashboard can load server-side: the shared utils and the dashboards' own sources. */
-const SSR_REACHABLE = /(?:^|\/)src\/(?:utils\/|[^/]+\/ui\/|dashboard\/)/;
+const SSR_REACHABLE =
+    /(?:^|\/)src\/(?:utils\/|[^/]+\/ui\/|dashboard\/|claude-history-dashboard\/|debugging-master\/dashboard\/)/;
 /**
  * Files under src/utils that still call a bare `require()`, each inside a function (a lazy load), counted 2026-10-22
  * when lint-rules `no-bare-require-in-utils` was added. A ratchet: no file joins, and lint-rules.test.ts fails when a

@@ -27,25 +27,55 @@ export interface SmokeDashboard {
     config: string;
     /** Files under this folder reach only this dashboard. */
     folder: string;
+    /**
+     * Other tools' folders its sources import from (`@app/azure-devops/…` is `src/azure-devops/`): a change there
+     * reaches this dashboard too. dashboard-smoke.test.ts checks every such import is listed.
+     */
+    uses: string[];
 }
 
 export const SMOKE_DASHBOARDS: SmokeDashboard[] = [
-    { name: "clarity", config: "src/clarity/ui/vite.config.ts", folder: "src/clarity/" },
+    { name: "clarity", config: "src/clarity/ui/vite.config.ts", folder: "src/clarity/", uses: ["src/azure-devops/"] },
     {
         name: "claude-history",
         config: "src/claude-history-dashboard/vite.config.ts",
         folder: "src/claude-history-dashboard/",
+        uses: ["src/claude/lib/"],
     },
     {
         name: "debugging-master",
         config: "src/debugging-master/dashboard/vite.config.ts",
         folder: "src/debugging-master/",
+        uses: ["src/log-viewer/"],
     },
-    { name: "dev-dashboard", config: "src/dev-dashboard/ui/vite.config.ts", folder: "src/dev-dashboard/" },
-    { name: "monitor", config: "src/monitor/ui/vite.config.ts", folder: "src/monitor/" },
-    { name: "shops", config: "src/shops/ui/vite.config.ts", folder: "src/shops/" },
-    { name: "spotify", config: "src/spotify/ui/vite.config.ts", folder: "src/spotify/" },
-    { name: "youtube", config: "src/youtube/ui/vite.config.ts", folder: "src/youtube/ui/" },
+    {
+        name: "dev-dashboard",
+        config: "src/dev-dashboard/ui/vite.config.ts",
+        folder: "src/dev-dashboard/",
+        uses: [
+            "src/ai/commands/usage/",
+            "src/ai-spend/lib/",
+            "src/claude/lib/",
+            "src/daemon/lib/",
+            "src/handoff/",
+            "src/macos/lib/swap/",
+            "src/question/",
+        ],
+    },
+    { name: "monitor", config: "src/monitor/ui/vite.config.ts", folder: "src/monitor/", uses: [] },
+    { name: "shops", config: "src/shops/ui/vite.config.ts", folder: "src/shops/", uses: ["src/daemon/lib/"] },
+    {
+        name: "spotify",
+        config: "src/spotify/ui/vite.config.ts",
+        folder: "src/spotify/",
+        uses: ["src/chrome-devtools/lib/"],
+    },
+    {
+        name: "youtube",
+        config: "src/youtube/ui/vite.config.ts",
+        folder: "src/youtube/ui/",
+        uses: ["src/youtube/lib/"],
+    },
 ];
 
 /** Changes that every dashboard's server can load: the shared modules, the shared UI and the dependency set. */
@@ -55,7 +85,7 @@ const READY_TIMEOUT_MS = 90_000;
 const BROKEN_GRACE_MS = 3_000;
 const FIRST_PORT = 39_300;
 
-/** The dashboards a set of changed files can reach. */
+/** The dashboards a set of changed files can reach: through its own folder, a folder it uses, or shared code. */
 export function affectedDashboards(
     changed: string[],
     dashboards: SmokeDashboard[] = SMOKE_DASHBOARDS
@@ -64,7 +94,9 @@ export function affectedDashboards(
         return dashboards;
     }
 
-    return dashboards.filter((dashboard) => changed.some((file) => file.startsWith(dashboard.folder)));
+    return dashboards.filter((dashboard) =>
+        changed.some((file) => [dashboard.folder, ...dashboard.uses].some((root) => file.startsWith(root)))
+    );
 }
 
 interface SmokeResult {

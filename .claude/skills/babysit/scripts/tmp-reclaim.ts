@@ -615,10 +615,40 @@ function entries(): string[] {
     return out;
 }
 
+/**
+ * An own-session plan as the dry run writes it: a full uuid, each folder a canonical `<tmp root>/cc/<project>/<uuid>`,
+ * and a finite nonnegative age. A hand-edited or stale plan must not point apply at a `.build` outside `/tmp/cc`.
+ */
+function validOwnSession(own: unknown): own is NonNullable<Plan["ownSession"]> {
+    const { id, dirs, minAgeMinutes } = (typeof own === "object" && own !== null ? own : {}) as Record<string, unknown>;
+    if (typeof id !== "string" || !SESSION_UUID.test(id) || !Array.isArray(dirs) || dirs.length === 0) {
+        return false;
+    }
+
+    if (typeof minAgeMinutes !== "number" || !Number.isFinite(minAgeMinutes) || minAgeMinutes < 0) {
+        return false;
+    }
+
+    return dirs.every(
+        (dir) =>
+            typeof dir === "string" &&
+            basename(dir) === id &&
+            roots.some((root) => dirname(dirname(dir)) === join(root, "cc")) &&
+            existsSync(dir) &&
+            realpathSync(dir) === dir
+    );
+}
+
 const gb = (bytes: number) => `${(bytes / 1e9).toFixed(2)} GB`;
 
 function ownSessionDryRun(id: string): void {
-    const minAgeMinutes = Number(flag("--min-age-minutes") ?? 10);
+    if (!SESSION_UUID.test(id)) {
+        console.error(`✖ --own-session needs the full session uuid, got ${SafeJSON.stringify(id)}`);
+        process.exit(2);
+    }
+
+    const rawAge = flag("--min-age-minutes");
+    const minAgeMinutes = has("--min-age-minutes") && !rawAge?.trim() ? Number.NaN : Number(rawAge ?? 10);
 
     if (!Number.isFinite(minAgeMinutes) || minAgeMinutes < 1) {
         console.error("✖ --min-age-minutes must be at least 1");
@@ -667,10 +697,10 @@ function ownSessionDryRun(id: string): void {
 }
 
 function main(): void {
-    const ownSession = flag("--own-session");
-
-    if (!has("--apply") && ownSession) {
-        ownSessionDryRun(ownSession);
+    // A missing or empty value (an unset "$SESSION") is refused, never read as "no session": the regular run lists
+    // every other session's entries.
+    if (!has("--apply") && has("--own-session")) {
+        ownSessionDryRun(flag("--own-session") ?? "");
     }
 
     if (!has("--apply")) {
@@ -734,6 +764,13 @@ function main(): void {
     minAgeHours = validAge(plan.minAgeHours, "plan.minAgeHours");
 
     const own = plan.ownSession;
+    if (own !== undefined && !validOwnSession(own)) {
+        console.error(
+            "✖ the plan's ownSession needs a full session uuid, folders <tmp>/cc/<project>/<that uuid> and a finite nonnegative minAgeMinutes"
+        );
+        process.exit(2);
+    }
+
     // An own-session plan is re-checked by judgeOwn, which needs no live-session list (that scan reads every
     // agent's transcript folders).
     const protection = own ? null : protectedEntries();

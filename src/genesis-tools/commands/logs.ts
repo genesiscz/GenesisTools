@@ -129,7 +129,7 @@ function registerFailures(logs: Command): void {
         .option("--limit <n>", "Show the newest N", "40")
         .action((options: FilterOptions & { limit: string }) => {
             const window = windowOf(options);
-            const failures = loadFailures({ window, filter: filterOf(options) }).slice(-Number(options.limit));
+            const failures = loadFailures({ window, filter: filterOf(options), limit: Number(options.limit) });
             if (options.json) {
                 out.result(failures);
                 return;
@@ -358,6 +358,7 @@ function registerProfile(logs: Command): void {
                     scopes: parseVariadic(options.scope),
                     grep: options.grep,
                     pid: options.pid ? Number(options.pid) : undefined,
+                    top: Number(options.top),
                 })
                     .sort((a, b) => b.ms - a.ms)
                     .slice(0, Number(options.top));

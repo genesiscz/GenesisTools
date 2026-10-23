@@ -94,7 +94,8 @@ echo "▶ tsc --noEmit (failing on staged files only)..."
 # Incremental, sharing the root project's build info with scripts/ci/typecheck.ts: about 1.5 s instead of 6 to 13.
 tsc_cache=$(git rev-parse --path-format=absolute --git-path genesis-typecheck)
 mkdir -p "$tsc_cache"
-tsc_output=$(bunx tsc --noEmit --incremental --tsBuildInfoFile "$tsc_cache/root.tsbuildinfo" 2>&1) && tsc_status=0 || tsc_status=$?
+# The local binary, never `bunx`: a bunx call in a worktree can write a partial node_modules (README, tests.md).
+tsc_output=$(./node_modules/.bin/tsc --noEmit --incremental --tsBuildInfoFile "$tsc_cache/root.tsbuildinfo" 2>&1) && tsc_status=0 || tsc_status=$?
 staged_files=$(git diff --cached --name-only --diff-filter=d | grep -E '\.(ts|tsx)$' || true)
 
 # Only per-file diagnostics are skippable. A non-zero exit with NO diagnostic

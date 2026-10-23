@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { formatLocalDate } from "@genesiscz/utils/date";
 import { Command } from "commander";
@@ -8,6 +8,7 @@ import { claudeProjectFolder, modelInTranscriptLines } from "./caller";
 import { recordSignalEnd, signalEnd, signalOfStatus, WITHHELD_ARGV } from "./launcher";
 import { appendFailure, readFailures, type ToolFailure } from "./record";
 import { RUN_ID_ENV } from "./run-id";
+import { signalExitStatus } from "./signal-status";
 import {
     classifyExit,
     commandPathFromArgv,
@@ -16,6 +17,7 @@ import {
     redactArgv,
     redactRunText,
     secretsFromArgv,
+    WITHHELD_TEXT,
 } from "./watch";
 
 describe("redactArgv", () => {
@@ -96,6 +98,54 @@ describe("secret option aliases", () => {
             "ai/work/password",
             "[redacted]",
         ]);
+    });
+
+    it("masks a secret value attached inside a group of short flags, in argv and where text echoes it", () => {
+        const grouped = ["daemon", "register", "-vtfixture-password", "--port", "0"];
+        const groupedSecrets = secretsFromArgv(program, grouped);
+        expect(redactArgv(grouped, groupedSecrets)).toEqual(["daemon", "register", "-vt[redacted]", "--port", "0"]);
+        expect(redactRunText("error: port 0 is invalid for fixture-password", grouped, groupedSecrets)).toBe(
+            "error: port 0 is invalid for [redacted]"
+        );
+    });
+
+    it("masks every operand past a flag no command declares when a command there takes a secret", () => {
+        const ai = new Command("ai");
+        ai.command("config").command("secret").command("set").argument("<path>").argument("[secret]");
+        ai.command("usage").argument("[day]");
+        const refused = ["config", "secret", "set", "--bogus", "ai/work/password", "correct-horse-battery-staple"];
+        const refusedSecrets = secretsFromArgv(ai, refused);
+        expect(redactArgv(refused, refusedSecrets)).toEqual([
+            "config",
+            "secret",
+            "set",
+            "--bogus",
+            "[redacted]",
+            "[redacted]",
+        ]);
+        expect(redactRunText("error: rejected correct-horse-battery-staple", refused, refusedSecrets)).toBe(
+            "error: rejected [redacted]"
+        );
+
+        const early = ["--bogus", "config", "secret", "set", "ai/work/password", "correct-horse-battery-staple"];
+        expect(redactArgv(early, secretsFromArgv(ai, early)).at(-1)).toBe("[redacted]");
+        expect(redacted(["--bogus", "daemon", "register", "-tfixture-password"])).toEqual([
+            "--bogus",
+            "[redacted]",
+            "[redacted]",
+            "-t[redacted]",
+        ]);
+
+        const plain = ["usage", "--bogus", "2026-10-22"];
+        expect(redactArgv(plain, secretsFromArgv(ai, plain))).toEqual(plain);
+    });
+
+    it("withholds a text that echoes a declared secret too short to replace, and keeps one that does not", () => {
+        const short = ["daemon", "register", "--token", "abc"];
+        const shortSecrets = secretsFromArgv(program, short);
+        expect(redactArgv(short, shortSecrets)).toEqual(["daemon", "register", "--token", "[redacted]"]);
+        expect(redactRunText("authentication rejected abc", short, shortSecrets)).toBe(WITHHELD_TEXT);
+        expect(redactRunText("authentication rejected", short, shortSecrets)).toBe("authentication rejected");
     });
 
     it("masks the same values and any --secret=value where a message or stderr echoes them", () => {
@@ -294,6 +344,13 @@ describe("signalEnd", () => {
         });
         expect(signalEnd({ signal: "SIGSEGV", ...direct })?.kind).toBe("crash");
         expect(signalEnd({ signal: "SIGABRT", ...direct })?.kind).toBe("crash");
+    });
+
+    it("gives every fault signal the platform's status, which the tools wrapper exits with too", () => {
+        for (const name of ["SIGSEGV", "SIGBUS", "SIGABRT", "SIGILL", "SIGINT"] as const) {
+            expect(signalExitStatus(name)).toBe(128 + constants.signals[name]);
+        }
+        expect(signalEnd({ signal: "SIGSEGV", ...direct })?.exitCode).toBe(128 + constants.signals.SIGSEGV);
     });
 
     it("is no failure for a signal that ends a run normally", () => {

@@ -64,22 +64,32 @@ export function matchesFailure(failure: ToolFailure, filter: FailureFilter): boo
     return true;
 }
 
-/** The failures in the window that pass the filter, oldest first. */
+/**
+ * The failures in the window that pass the filter, oldest first. With a positive `limit`, only the newest that many
+ * are kept while reading, so a long window holds no more records than it shows; a command that counts all of them
+ * passes none.
+ */
 export function loadFailures({
     window,
     filter = {},
     dir,
+    limit,
 }: {
     window: TimeWindow;
     filter?: FailureFilter;
     dir?: string;
+    limit?: number;
 }): ToolFailure[] {
     const days = daysIn(window);
     const found: ToolFailure[] = [];
+    const bound = limit !== undefined && Number.isFinite(limit) && limit > 0 ? limit : null;
 
     for (const failure of readFailures({ fromDay: days[0], toDay: days.at(-1) ?? days[0], dir })) {
         if (inWindow(failure.at, window) && matchesFailure(failure, filter)) {
             found.push(failure);
+            if (bound !== null && found.length > bound) {
+                found.shift();
+            }
         }
     }
 

@@ -554,8 +554,13 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func openModule(_ moduleID: String, on surface: WidgetSurfaceID) {
-        // The user picked this module (also by clicking the peek itself): it stays after the peek.
-        peekReplaced = nil
+        // The user picked this module (also by clicking the peek itself): it stays after the peek. A pick on another
+        // surface ends the peek here too, so the surface the peek switched gets its own module back first.
+        if peekReplaced?.surface == surface {
+            peekReplaced = nil
+        } else {
+            restorePeekModule()
+        }
         moduleSelections[surface.key] = moduleID
         defaults.set(moduleSelections, forKey: "widget.moduleSelections")
         activeSideGroup = surface.group

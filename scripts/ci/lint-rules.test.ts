@@ -441,6 +441,9 @@ describe("no-bun-only-import-meta", () => {
         for (const member of ["dir", "dirname", "filename", "path"]) {
             expect(rules(`const a = import.meta.${member};`, "src/clarity/ui/src/server.ts")).toContain(rule);
         }
+        // The two dashboards whose sources live outside a `ui/` folder.
+        expect(rules("const a = import.meta.dir;", "src/claude-history-dashboard/src/server.ts")).toContain(rule);
+        expect(rules("const a = import.meta.dir;", "src/debugging-master/dashboard/src/server.ts")).toContain(rule);
     });
 
     test("passes module-dir.ts, tests, vite configs, import.meta.url and code no dashboard loads", () => {

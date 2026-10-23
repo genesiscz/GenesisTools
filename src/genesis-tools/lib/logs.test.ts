@@ -1,8 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import type { FailureCaller, ToolFailure } from "@genesiscz/utils/cli/failures/record";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appendFailure, type FailureCaller, type ToolFailure } from "@genesiscz/utils/cli/failures/record";
 import { matchesDayLog, newestEntries, parseDayLogLine, prefilterFor } from "./day-log";
-import { groupFailures, matchesFailure, usageGaps } from "./failures";
-import { parseProfileLine } from "./profile-log";
+import { groupFailures, loadFailures, matchesFailure, usageGaps } from "./failures";
+import { parseProfileLine, queryProfileLog } from "./profile-log";
 import { daysIn, resolveWindow } from "./window";
 
 const NOW = new Date(2026, 9, 22, 16, 0);
@@ -56,6 +59,7 @@ describe("window", () => {
         expect(daysIn(window)).toEqual(["2026-10-20", "2026-10-21", "2026-10-22"]);
         expect(resolveWindow({ since: "09:30", now: NOW }).from).toEqual(new Date(2026, 9, 22, 9, 30));
         expect(() => resolveWindow({ since: "soon", now: NOW })).toThrow("--since soon is not a time");
+        expect(() => resolveWindow({ since: "1h", until: "2h", now: NOW })).toThrow("--since 1h is after --until 2h");
     });
 });
 
@@ -81,6 +85,19 @@ describe("failure filters and groups", () => {
         expect(rows.filter((row) => matchesFailure(row, { model: "HAIKU" })).map((row) => row.id)).toEqual(["b"]);
         expect(rows.filter((row) => matchesFailure(row, { agent: "unknown" })).map((row) => row.id)).toEqual(["d"]);
         expect(rows.filter((row) => matchesFailure(row, { grep: "--repo" })).map((row) => row.id)).toEqual(["a", "b"]);
+    });
+
+    it("keeps only the newest N matches while reading when a limit is passed, and all of them without one", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-logs-failures-"));
+        const at = (minute: number) => new Date(2026, 9, 22, 15, minute).toISOString();
+        for (const [index, row] of rows.entries()) {
+            appendFailure({ ...row, at: at(index) }, dir);
+        }
+
+        const window = resolveWindow({ since: "2h", now: NOW });
+        expect(loadFailures({ window, dir, limit: 2 }).map((row) => row.id)).toEqual(["b", "d"]);
+        expect(loadFailures({ window, dir }).map((row) => row.id)).toEqual(["a", "b", "d"]);
+        expect(loadFailures({ window, dir, limit: 0 }).map((row) => row.id)).toEqual(["a", "b", "d"]);
     });
 
     it("counts groups and the sessions and models in each", () => {
@@ -175,5 +192,21 @@ describe("profile log", () => {
         });
         expect(parseProfileLine("[profile:agent-sessions] walk 1.5s trace=2e100b3a pid=9", "d")?.ms).toBe(1500);
         expect(parseProfileLine("── cli ──", "d")).toBeNull();
+    });
+
+    it("keeps only the slowest N while reading when --top reaches it, in the order a full sort gives", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-logs-profile-"));
+        const ms = [120, 900, 40, 900, 300, 5];
+        writeFileSync(
+            join(dir, "2026-10-22-profiling.log"),
+            `${ms.map((value, index) => `[profile:cli] step${index} ${value}ms pid=${index}`).join("\n")}\n`
+        );
+        const query = { days: ["2026-10-22"], minMs: 0, dir };
+        const all = queryProfileLog(query).sort((a, b) => b.ms - a.ms);
+        expect(queryProfileLog({ ...query, top: 3 }).map((entry) => entry.label)).toEqual(
+            all.slice(0, 3).map((entry) => entry.label)
+        );
+        expect(queryProfileLog({ ...query, top: 3 }).map((entry) => entry.label)).toEqual(["step1", "step3", "step4"]);
+        expect(queryProfileLog(query)).toHaveLength(6);
     });
 });

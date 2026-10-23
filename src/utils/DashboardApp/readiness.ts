@@ -227,8 +227,9 @@ export function serverErrorExcerpt(logFile: string, maxLines = 8): string[] {
     }
 
     let text: string;
-    const fd = openSync(logFile, "r");
+    let fd: number | undefined;
     try {
+        fd = openSync(logFile, "r");
         const size = statSync(logFile).size;
         const length = Math.min(size, 64 * 1024);
         const buf = Buffer.alloc(length);
@@ -238,7 +239,9 @@ export function serverErrorExcerpt(logFile: string, maxLines = 8): string[] {
         logger.debug({ err, logFile }, "dashboard log unreadable for the error excerpt");
         return [];
     } finally {
-        closeSync(fd);
+        if (fd !== undefined) {
+            closeSync(fd);
+        }
     }
 
     const lines = text.split("\n");

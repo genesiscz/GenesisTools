@@ -6,6 +6,7 @@ import { basename, join, resolve } from "node:path";
 import { namedBunExecPath } from "@genesiscz/utils/cli/bun-link";
 import { takeDetachedMarker } from "@genesiscz/utils/cli/detached";
 import { RUN_ID_ENV, RUN_ROOT_ENV, RUN_TOOL_ENV } from "@genesiscz/utils/cli/failures/run-id";
+import { signalExitStatus } from "@genesiscz/utils/cli/failures/signal-status";
 import { planToolExec, terminateOrphanedChild } from "@genesiscz/utils/cli/tool-exec";
 import { skipWorktreeInstall } from "@genesiscz/utils/cli/worktree-install";
 import { env } from "@genesiscz/utils/env";
@@ -464,7 +465,7 @@ async function spawnAndCaptureStderr(
         });
         child.on("close", (code, signal) => {
             cleanup();
-            const exitCode = signal ? 128 + (signalToNumber(signal) ?? 0) : (code ?? 1);
+            const exitCode = signal ? signalExitStatus(signal) : (code ?? 1);
             // The orphan watchdog's own TERM is the wrapper cleaning up after a dead shell, not a failed run.
             if (orphanCleanup || (!signal && (code ?? 0) <= 128)) {
                 resolvePromise(exitCode);
@@ -511,11 +512,6 @@ async function recordSignalDeath(input: {
 function flushStdio(): Promise<void> {
     const flush = (stream: NodeJS.WriteStream) => new Promise<void>((done) => stream.write("", () => done()));
     return Promise.all([flush(process.stdout), flush(process.stderr)]).then(() => undefined);
-}
-
-function signalToNumber(signal: NodeJS.Signals): number | undefined {
-    const map: Record<string, number> = { SIGINT: 2, SIGTERM: 15, SIGKILL: 9, SIGHUP: 1, SIGQUIT: 3 };
-    return map[signal];
 }
 
 // --- Main Logic ---

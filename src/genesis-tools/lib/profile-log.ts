@@ -40,14 +40,18 @@ export interface ProfileQuery {
     pid?: number;
     /** `@name` lines are marks (a point in time since the process started), not durations. */
     marks?: boolean;
+    /** Keep only the slowest N while reading, slowest first; without it every match comes back in log order. */
+    top?: number;
+    dir?: string;
 }
 
 export function queryProfileLog(query: ProfileQuery): ProfileEntry[] {
     const wanted = new Set(query.days);
     const found: ProfileEntry[] = [];
     const needle = query.grep?.toLowerCase();
+    const top = query.top !== undefined && Number.isFinite(query.top) && query.top > 0 ? query.top : null;
 
-    for (const file of listDayLogs({ profiling: true })) {
+    for (const file of listDayLogs({ profiling: true, dir: query.dir })) {
         if (!wanted.has(file.day)) {
             continue;
         }
@@ -65,7 +69,18 @@ export function queryProfileLog(query: ProfileQuery): ProfileEntry[] {
                 continue;
             }
 
-            found.push(entry);
+            if (top === null) {
+                found.push(entry);
+                continue;
+            }
+
+            // A bounded buffer, slowest first: an entry slots in after every one at least as slow, and the fastest
+            // falls off past N, so the result equals a stable sort of everything cut to N.
+            const at = found.findIndex((kept) => kept.ms < entry.ms);
+            found.splice(at === -1 ? found.length : at, 0, entry);
+            if (found.length > top) {
+                found.pop();
+            }
         }
     }
 
