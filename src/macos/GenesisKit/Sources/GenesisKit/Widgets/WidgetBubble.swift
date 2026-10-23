@@ -18,6 +18,9 @@ struct WidgetBubbleChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(Circle().fill(Color.white.opacity(ring > 0 ? 0.07 : 0)).padding(2))
+            // The whole circle takes clicks and hover at every ring value: the count is not hit-testable, and SwiftUI
+            // does not hit-test the fill at opacity 0, so a bubble whose attention ended took no click at all.
+            .contentShape(Circle())
             .overlay(Circle().strokeBorder(Color.white.opacity(ring), lineWidth: 1.5).padding(2).allowsHitTesting(false))
             .attentionPulse(trigger: trigger, style: attention, since: since)
             .onHover { inside in

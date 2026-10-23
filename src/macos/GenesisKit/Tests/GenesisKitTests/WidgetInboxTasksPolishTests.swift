@@ -1116,3 +1116,60 @@ final class WidgetComposerClickTests: XCTestCase {
         pump(0.5)
     }
 }
+
+/// A rail bubble takes clicks whether or not its attention ring shows (Martin, 2026-10-23: "clicking the circle with the
+/// count on the right does nothing when first click opened it - neither the hover shows correctly"). Its count sits
+/// under `.allowsHitTesting(false)` and its only background was a fill at opacity 0 once the ring faded, which SwiftUI
+/// does not hit-test, so opening the session (which ends the attention) left a bubble no click or hover could reach.
+@MainActor
+final class WidgetBubbleHitTests: XCTestCase {
+    final class Taps: ObservableObject { @Published var count = 0 }
+    struct Bubble: View {
+        @ObservedObject var taps: Taps
+        var body: some View {
+            Button { taps.count += 1 } label: {
+                Text("4").allowsHitTesting(false)
+                    .frame(width: 38, height: 34)
+                    .modifier(WidgetBubbleChrome(trigger: 0, attention: .borderFlash(color: .orange, cornerRadius: 17),
+                                                 reduceMotion: true))
+            }
+            .buttonStyle(.plain)
+            .frameProbe("bubble")
+            .frame(width: 120, height: 120)
+        }
+    }
+
+    func testABubbleWithoutItsRingStillTakesAClick() throws {
+        _ = NSApplication.shared
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false }
+        let taps = Taps()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 120, height: 120), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = FirstClickHost(rootView: AnyView(Bubble(taps: taps)))
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.order(.below, relativeTo: 0)
+        defer { window.orderOut(nil); window.close() }
+        pump(0.6)
+        let frame = try XCTUnwrap(FrameProbe.frames["bubble"])
+        // Off the count's glyph: the bubble's edge, where only the chrome is.
+        let point = NSPoint(x: frame.midX - 12, y: 120 - frame.midY)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            NSApp.postEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: 1)!, atStart: false)
+        }
+        pump(0.5)
+        XCTAssertEqual(taps.count, 1, "a click on a bubble with no ring opens its session")
+    }
+
+    private func pump(_ seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if let next = NSApp.nextEvent(matching: .any, until: deadline, inMode: .default, dequeue: true) { NSApp.sendEvent(next) }
+        }
+    }
+}
