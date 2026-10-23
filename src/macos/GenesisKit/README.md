@@ -66,6 +66,7 @@ A fixture an app test needs goes there under its own name, never into a test tar
 | `Perf/` | `PerfLog`, `HangWatch`, `MainStackSampler`, `MonitorPerf`, `RenderProbe`, `PerfConfiguration`, `MainBusy` (main-thread busy time after an event, `measureUntilSettled`, and a `Meter` for benches), `SessionOpenBench` (times one open of a session screen for the bench tests of both apps) |
 | `Tools/` | `ToolsBridge` (runs `tools`), `ToolsLineStream` (one long-running `tools` child, stdout as whole lines on the main queue, stdin held open so the child ends with the app), `MonitorJSON`, `TitleFormatter`, `SessionTranscriptClient` (the `tools ai sessions tail` envelope), `TranscriptPromptPart`, `DiskCache` (last answers on disk; `load` / `loadData` read off the main thread), `DirectoryWatcher` (one FSEvents stream over several folders, a path filter, main-queue callback) |
 | `Providers/` | `AIProviderMeta`, `AIProviders`, `AIProviderGlyph` |
+| `Recording/` | screen recording for any host: `ScreenRecorder` (picker, grant, session, floating controls) with `ScreenRecordingHost`, `RecordingTargetPicker`, `RecordingControlsView`, `RecordingSessionController` (one `tools control capture session`), `RecordingTarget(s)`, `RecordingSettings` + `RecordingSettingsView` |
 | `Sessions/` | `SessionPalette`, `SessionFormat` |
 | `Sessions/Transcript/` | `SessionTranscriptList`, `TranscriptDocument`, prompt parts, `TranscriptScrollAnchor`, `TranscriptBus` / `TranscriptFilters`, `TranscriptMarkdownStyle`, `TranscriptLiveTail` (one `tools ai sessions tail --live` child, or a server subscription, per open screen; its `TranscriptLiveActivity` says what the agent does now, the list's last row through a `TranscriptActivityFeed` only that row observes) |
 | `Sessions/ToolCalls/` | `SessionToolCallView` + `TranscriptServices`, `SessionNativeLog` + `SessionNativeLogStore`, `SessionToolChanges`, `BatchedToolChangeSource` + `ToolChangeBatcher` (rows that ask within 100 ms share one `tools agents changes` run) |
@@ -101,6 +102,7 @@ count of the section.
 - [Pose](#pose) (8)
 - [Posture](#posture) (9)
 - [Providers](#providers) (3)
+- [Recording](#recording) (7)
 - [Sessions](#sessions) (65)
 - [Settings](#settings) (49)
 - [Style](#style) (32)
@@ -6683,6 +6685,102 @@ let meta = AIProviders.meta(for: "grok-sub")
 HStack(spacing: 6) {
     AIProviderGlyph(meta: meta, size: 18)
     Text(meta.displayName)
+}
+```
+
+### Recording
+
+Screen recording for any host. `ScreenRecorder` is the entry point: it shows `RecordingTargetPicker` in a floating panel (a window, an app or a display), checks the Screen Recording grant, runs `tools control capture session` through `RecordingSessionController`, and floats `RecordingControlsView` next to what is recorded: pause or resume, switch what is recorded, restart, the host's "stop and use" action and stop and discard. The host says what "use" means through `ScreenRecordingHost` (the widget pastes the movie into a session's draft as "Stop and paste", the Capture shelf stages it as "Stop and save"). The recorder records in segments and joins them into one H.264 MP4 of at most ten minutes; the controls panel is left out of every movie by its window id, because ScreenCaptureKit ignores `sharingType = .none` on macOS 15 and later. One recording runs at a time in a process. `RecordingSettings` holds the preferences and `RecordingSettingsView` is their settings page.
+
+#### `ScreenRecorder`
+
+The whole flow for one host. It is `@MainActor` and an `ObservableObject`.
+
+- `bridge: ToolsBridge`: runs `tools control capture targets --json` and `tools control capture session`.
+- `settings: RecordingSettings? = nil`: the preferences; `RecordingSettings.shared` when nil.
+- `permissionGate: ((PermissionNeed) async -> Bool)? = nil`: the Screen Recording check; `PermissionCenter.shared.ensure` when nil.
+
+Properties and methods:
+
+- `isActive: Bool`: true from the picker's first appearance until the recording ended.
+- `begin(host: ScreenRecordingHost, anchor: CGPoint? = nil, preferredPid: Int32? = nil)`: opens the picker near `anchor` (a Cocoa screen point, the pointer when nil), starting on the front window of `preferredPid` (else the frontmost app that is not this process), then records the choice. While another recording runs it brings that one's controls forward instead.
+- `stopAndUse()`, `discard()`: what the controls' buttons do, for a host control (the widget's video button stops and pastes on a second press).
+- `showControls()`: brings the controls forward.
+
+Switching target pauses the recording while the picker is open, so the movie never shows the picker; a cancel resumes.
+
+```swift
+let recorder = ScreenRecorder(bridge: bridge)
+recorder.begin(host: ScreenRecordingHost(
+    useTitle: "Stop and save",
+    permissionReason: "Records the window, app or display you choose.",
+    onUse: { movie in try await library.add(movie) },
+    onError: { message in notice = message }))
+```
+
+#### `ScreenRecordingHost`
+
+What a host does with a recording.
+
+- `useTitle: String`: the name of "stop and keep" in the controls, such as "Stop and paste".
+- `useSymbol: String = "stop.fill"`: its symbol.
+- `permissionReason: String`: why the recording needs Screen Recording, shown in the permission dialog.
+- `onUse: (URL) async throws -> Void`: gets the finished movie; the file is the host's from then on. A throw is reported through `onError` with the movie's path.
+- `onDiscard: () -> Void = {}`: the person discarded the recording.
+- `onError: (String) -> Void`: the recording could not start or failed, or `onUse` threw.
+- `onStart: () -> Void = {}`: the controls are up and the recorder starts; a host can step aside (the widget collapses).
+
+#### `RecordingTargetPicker`
+
+Picks what to record: tabs for windows (grouped under their app, with titles and sizes), apps and displays, a filter field, and the rows as buttons. It starts on `initial`. ↑ and ↓ move, Return records, Esc cancels, a click on a row records it. Values and closures only.
+
+- `load: RecordingTargetPicker.Load`: `.loading`, `.failed(String)` (with a Try again button) or `.loaded(RecordingTargets)`.
+- `title: String = "Choose what to record"`
+- `initial: RecordingTarget?`: the highlighted row and the first tab.
+- `onChoose: (RecordingTarget) -> Void`, `onCancel: () -> Void`, `onRetry: () -> Void = {}`
+
+```swift
+RecordingTargetPicker(load: .loaded(targets), initial: targets.defaultTarget(preferredPid: pid),
+                      onChoose: { start($0) }, onCancel: { close() })
+```
+
+#### `RecordingControlsView`
+
+The floating controls of a running recording: a grip, the recorded time with a red dot (a spinner while starting or saving, a pause glyph while paused, the time left in the last minute), what is recorded as a chip that switches it, pause or resume, restart, the use button and stop and discard. The grip, dot and time drag the window. With `confirmsDiscard`, discard and restart ask inside the controls once something was recorded ("Discard 1:23 of recording?" with Discard and Keep).
+
+- `state: RecordingControlsState`: `phase`, `elapsedMs`, `limitMs`, `target`, `pauseReason` (`user`, `limit`, `recorder`), `notice`, `useTitle`, `useSymbol`, `confirmsDiscard`.
+- `actions: RecordingControlsActions`: `pause`, `resume`, `switchTarget`, `restart`, `use`, `discard`, `dismissNotice`, `moved`.
+
+```swift
+RecordingControlsView(
+    state: RecordingControlsState(phase: .recording, elapsedMs: 83_000, target: target, useTitle: "Stop and paste"),
+    actions: RecordingControlsActions(pause: pause, resume: resume, switchTarget: pick, restart: restart,
+                                      use: stop, discard: discard))
+```
+
+#### `RecordingSessionController`
+
+One `tools control capture session --json --stop-on-stdin` child on `ToolsLineStream`. It publishes `phase` (`RecordingPhase`: idle, starting, recording, paused, finishing, done, discarded, failed), `elapsedMs` (time in the movie: no arming, no paused time), `limitMs`, `target`, `pauseReason`, `segments` and `notice`, and calls `onDone(URL, durationMs)`, `onDiscarded()` or `onFailed(message, code)` (`screen-recording-denied` for a missing grant).
+
+- `start(target:excludeWindowIDs:frameRate:showsBorder:) throws`: `excludeWindowIDs` are windows no movie may show.
+- `pause()`, `resume()`, `switchTo(_:)`, `restart()`, `stop()` (keeps the movie), `discard()`, `terminate()` (SIGTERM: the session stops and keeps what it recorded).
+
+#### `RecordingTarget`, `RecordingTargets`
+
+`RecordingTarget` is `.window(ids:app:title:pid:)`, `.app(app:name:)` (a pid, name or bundle id) or `.display(index:name:)` (NSScreen order); `json` is the CLI's form, and `title`, `subtitle` and `symbol` describe it. `RecordingTargets` decodes `tools control capture targets --json`: `windows` (`RecordingWindow`: id, pid, app, title, bounds in CG points), `apps` (`RecordingApp`), `displays` (`RecordingDisplay`) and `frontmostPid`; `excluding(pids:)` drops a host's own process and `defaultTarget(preferredPid:)` is the front window of that app, else of the frontmost app, else the main display.
+
+#### `RecordingSettings`, `RecordingSettingsView`
+
+The recorder's preferences in the app's defaults (`recording.*`), with their page (the widget shows it as Widgets › Screen recording):
+
+- `placement: RecordingPanelPlacement = .nearTarget`: where the controls appear (under the recorded window, or at the bottom of a recorded display), or a corner of that display. A drag moves them for the rest of the recording.
+- `frameRate: Int = 15`: frames per second while something moves (5, 10, 15, 24 or 30); a still screen records at 2.
+- `showsBorder: Bool = true`: the pulsing red border around what is recorded. It is never in the movie.
+- `confirmsDiscard: Bool = true`: discard and restart ask first.
+
+```swift
+NativeSettingsPage(id: "app.recording", title: "Screen recording", symbol: "record.circle", tint: .red) {
+    RecordingSettingsView()
 }
 ```
 
