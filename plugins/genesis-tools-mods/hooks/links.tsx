@@ -3,7 +3,10 @@
 // existing markdown links and bare URLs are left as they are, and nothing is linked unless it resolves: a path
 // that exists, a commit the repository has, a decision asked in an earlier message. Every transform and every
 // candidate it rejected goes to `mods-log/links.jsonl` with the reason, to tune the heuristics from real replies.
+// A genesis.tools link (a note, a folder, a commit in the hub, a decision) is written only when this Mac opens it
+// (`genesis.ts`); else a note gets its plain path and a folder, a commit or a decision stays text.
 import type { HookStream, TurnStepChunk, TurnStepInput, TurnStepResult } from "claude-code";
+import { decisionLink, encodePath, finderLink, type GenesisProbe, genesisProbe, hubLink, mdLink } from "./genesis";
 import { type Host, isRecord, logMod } from "./shared";
 
 const DOC = new Set(["md", "mdx", "json", "jsonl", "yaml", "yml", "toml", "log", "txt", "csv"]);
@@ -74,6 +77,7 @@ export interface LinkContext {
     repo: string | undefined;
     sessionId: string;
     askedBefore: Set<number>;
+    probe: GenesisProbe;
     log: Record<string, unknown>[];
 }
 
@@ -97,10 +101,6 @@ function remember(path: unknown): void {
     known.set(name, set);
 }
 
-function encodePath(path: string): string {
-    return encodeURI(path).replace(/\(/g, "%28").replace(/\)/g, "%29");
-}
-
 function extOf(path: string): string {
     const name = path.split("/").pop() ?? "";
     const dot = name.lastIndexOf(".");
@@ -108,18 +108,29 @@ function extOf(path: string): string {
     return dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
 }
 
-/** The link target for an absolute path, by kind (AGENTS.md "Clickable paths"). */
-export function targetFor(path: string, kind: "file" | "dir", line?: number, end?: number): string {
+/**
+ * The link target for an absolute path, by kind (AGENTS.md "Clickable paths"), or undefined for a folder this Mac
+ * cannot reveal from a link (a plain folder path opens nothing useful).
+ */
+export function targetFor(
+    probe: GenesisProbe,
+    path: string,
+    kind: "file" | "dir",
+    line?: number,
+    end?: number
+): string | undefined {
     if (kind === "dir") {
-        return `https://genesis.tools/finder/reveal?target=${encodePath(path)}`;
+        return finderLink(probe, path);
     }
 
     const ext = extOf(path);
 
     if (DOC.has(ext)) {
-        const range = line ? `&range=${line}${end ? `-${end}` : ""}` : "";
+        const md = mdLink(probe, path, line ? `${line}${end ? `-${end}` : ""}` : undefined);
 
-        return `https://genesis.tools/md/open?path=${encodePath(path)}${range}`;
+        if (md) {
+            return md;
+        }
     }
 
     if (line) {
@@ -295,24 +306,33 @@ async function linkPlain(ctx: LinkContext, text: string): Promise<string> {
         } else if (hit.kind === "decision") {
             const n = Number(/\d+/.exec(hit.token)?.[0]);
 
-            if (ctx.askedBefore.has(n)) {
-                replacement = `[${hit.token}](https://genesis.tools/claude/find/${ctx.sessionId}/decision/${n})`;
+            const link = ctx.askedBefore.has(n) ? decisionLink(ctx.probe, ctx.sessionId, n) : undefined;
+
+            if (link) {
+                replacement = `[${hit.token}](${link})`;
             }
         } else if (hit.kind === "sha") {
-            if (ctx.repo && (await isCommit(ctx, hit.token))) {
+            const link = ctx.repo ? hubLink(ctx.probe, { repo: ctx.repo, commit: hit.token }) : undefined;
+
+            if (link && (await isCommit(ctx, hit.token))) {
                 const bold = text.slice(start - 2, start) === "**" && text.slice(end, end + 2) === "**";
                 start = bold ? start - 2 : start;
                 end = bold ? end + 2 : end;
                 const label = bold ? `**${hit.token}**` : hit.token;
-                replacement = `[${label}](https://genesis.tools/hub?repo=${encodeURIComponent(ctx.repo)}&commit=${hit.token})`;
+                replacement = `[${label}](${link})`;
             }
         } else {
             const token = hit.token.replace(/[.,:;!?]+$/, "");
             end = hit.start + token.length;
             const found = await resolve(ctx, token);
 
-            if ("path" in found) {
-                replacement = `[${token}](${targetFor(found.path, found.kind, found.line, found.end)})`;
+            const target =
+                "path" in found ? targetFor(ctx.probe, found.path, found.kind, found.line, found.end) : undefined;
+
+            if (target) {
+                replacement = `[${token}](${target})`;
+            } else if ("path" in found) {
+                ctx.log.push({ kind: "miss", token, reason: "this Mac opens no link to it" });
             } else if (token.includes("/") || ANY_EXT.has(extOf(token.replace(/:\d+(-\d+)?$/, "")))) {
                 ctx.log.push({ kind: "miss", token, reason: found.reason });
             }
@@ -346,8 +366,11 @@ export async function linkLine(ctx: LinkContext, line: string): Promise<string> 
             const inner = code.slice(1, -1).trim();
             const found = /\s/.test(inner) ? { reason: "code with spaces" } : await resolve(ctx, inner);
 
-            if ("path" in found) {
-                const link = `[${inner}](${targetFor(found.path, found.kind, found.line, found.end)})`;
+            const target =
+                "path" in found ? targetFor(ctx.probe, found.path, found.kind, found.line, found.end) : undefined;
+
+            if (target) {
+                const link = `[${inner}](${target})`;
                 ctx.log.push({ kind: "code-path", token: code, link });
                 out += link;
                 continue;
@@ -388,7 +411,7 @@ async function contextOf(host: Host, messageCount: number): Promise<LinkContext>
         }
     }
 
-    return { host, home, cwd, root, repo, sessionId, askedBefore, log: [] };
+    return { host, home, cwd, root, repo, sessionId, askedBefore, probe: await genesisProbe(host), log: [] };
 }
 
 /** Notes the absolute paths a tool call names, so a bare file name in a later reply finds its one path. */

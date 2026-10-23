@@ -35,6 +35,7 @@ async function measure(host: Host): Promise<void> {
         return;
     }
 
+    // lint-rules-ignore: /tmp/cc/<project>/<session> is the agents' scratch folder by convention, not a temp file.
     const folder = `/tmp/cc/${await projectOf(host)}/${await host.sessionId()}`;
     const sessionKb = (await host.exists(folder)) ? await kbOf(host, ["du", "-sk", folder], 0) : 0;
     const reading: TmpReading = { at: Date.now(), sessionKb, freeKb: await kbOf(host, ["df", "-k", "/"], 3) };

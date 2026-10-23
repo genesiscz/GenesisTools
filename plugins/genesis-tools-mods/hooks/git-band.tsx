@@ -5,6 +5,7 @@
 // session, `mods.git.enabled` for every session. Each refresh and command goes to `mods-log/git.jsonl`.
 import type { ElementTable, RenderElement } from "claude-code";
 import type { BandCheck, BandPr, GitBand, GitBandLine, GitBandSwitch } from "../types";
+import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
 import { type Feature, type Host, isRecord, logMod, settingsOf, shortDuration } from "./shared";
 import { actionRow, dimNote, divider, headerRow, type Kit, plural, sidebarFrame } from "./sidebar";
 
@@ -311,11 +312,11 @@ function prNote(pr: BandPr): string {
     return `${pr.draft ? " draft" : ""}${pr.state === "OPEN" ? "" : ` ${pr.state.toLowerCase()}`} ${ciText(pr)}`;
 }
 
-/** `https://genesis.tools/hub?pr=owner%2Frepo%23507` out of the PR's GitHub URL; undefined for another forge. */
-export function hubUrlOf(pr: Pick<BandPr, "url" | "number">): string | undefined {
+/** The hub link for a GitHub PR (`hub?pr=owner%2Frepo%23507`); undefined for another forge or where it opens nothing. */
+export function hubUrlOf(probe: GenesisProbe, pr: Pick<BandPr, "url" | "number">): string | undefined {
     const slug = /github\.com\/([^/]+\/[^/]+)\/pull\//.exec(pr.url)?.[1];
 
-    return slug ? `https://genesis.tools/hub?pr=${encodeURIComponent(`${slug}#${pr.number}`)}` : undefined;
+    return slug ? hubLink(probe, { pr: `${slug}#${pr.number}` }) : undefined;
 }
 
 /** A branch longer than this keeps its start and end, so the hooks chip at the right keeps its room. */
@@ -404,6 +405,7 @@ async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
 
     const root = (await rootOf(host)) ?? "";
     const tracked = root ? await trackedPrs(host, root) : [];
+    const probe = await genesisProbe(host);
     const setTracked = async (n: number, on: boolean) => {
         const next = on ? [...new Set([...tracked, n])] : tracked.filter((held) => held !== n);
         await host.storeSet(storeKey(root), next);
@@ -429,7 +431,7 @@ async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
             )}
             {band.prs.length === 0 ? dimNote(kit, "No pull request here. /mod-git pr add <n> tracks one.") : null}
             {band.prs.map((pr) => {
-                const hub = hubUrlOf(pr);
+                const hub = hubUrlOf(probe, pr);
                 const failing = pr.checks.filter((check) => check.verdict === "fail");
                 const pending = pr.checks.filter((check) => check.verdict === "pending");
 

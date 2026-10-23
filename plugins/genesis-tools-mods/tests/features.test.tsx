@@ -4,10 +4,24 @@ import { bareDescription, lastSaidOf } from "../hooks/agents-band";
 import { quoteOf } from "../hooks/ask-row";
 import { cacheRowsOf, cacheTone } from "../hooks/cache-band";
 import { openDecisions, stagedMessage } from "../hooks/decisions";
+import { forgetGenesisProbe, type GenesisProbe, probeOf } from "../hooks/genesis";
 import { checkCounts, checksOf, hubUrlOf, middleCut, parseNumstat, parseStatus } from "../hooks/git-band";
 import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
 import { targetFor } from "../hooks/links";
 import { toolLabel } from "../hooks/spinner";
+
+/** A Mac where every GenesisTools link opens, on an invented link host. */
+const ALL_LINKS: GenesisProbe = {
+    tools: true,
+    linkHost: "links.example.test",
+    opens: { md: true, finder: true, hub: true, "claude-find": true },
+};
+/** A Mac with neither the GenesisTools CLI nor its app. */
+const NO_LINKS: GenesisProbe = {
+    tools: false,
+    linkHost: null,
+    opens: { md: false, finder: false, hub: false, "claude-find": false },
+};
 
 // Run with `claude plugin test plugins/genesis-tools-mods`. The pure parts of each feature first, then the link
 // fixer end to end over a streamed reply.
@@ -61,10 +75,13 @@ test("git band: status line and CI counts", async () => {
         { name: "lint", verdict: "fail" },
         { name: "ci/deploy", verdict: "pending" },
     ]);
-    expect(hubUrlOf({ url: "https://github.com/acme/widgets/pull/42", number: 42 })).toBe(
-        "https://genesis.tools/hub?pr=acme%2Fwidgets%2342"
+    expect(hubUrlOf(ALL_LINKS, { url: "https://github.com/acme/widgets/pull/42", number: 42 })).toBe(
+        "https://links.example.test/hub?pr=acme%2Fwidgets%2342"
     );
-    expect(hubUrlOf({ url: "https://gitlab.example.com/a/b/-/merge_requests/3", number: 3 })).toBeUndefined();
+    expect(hubUrlOf(NO_LINKS, { url: "https://github.com/acme/widgets/pull/42", number: 42 })).toBeUndefined();
+    expect(
+        hubUrlOf(ALL_LINKS, { url: "https://gitlab.example.com/a/b/-/merge_requests/3", number: 3 })
+    ).toBeUndefined();
 });
 
 test("agents sidebar: an agent's last words from its transcript's end, past a byte-cut first line", async () => {
@@ -154,17 +171,42 @@ test("ask quote and spinner label", async () => {
     expect(toolLabel("Read", {})).toBe("Read");
 });
 
-test("link targets by kind", async () => {
-    expect(targetFor("/r/My Notes/a.md", "file", 3, 9)).toBe(
-        "https://genesis.tools/md/open?path=/r/My%20Notes/a.md&range=3-9"
+test("link targets by kind, and only links this Mac opens", async () => {
+    expect(targetFor(ALL_LINKS, "/r/My Notes/a.md", "file", 3, 9)).toBe(
+        "https://links.example.test/md/open?path=/r/My%20Notes/a.md&range=3-9"
     );
-    expect(targetFor("/r/src", "dir")).toBe("https://genesis.tools/finder/reveal?target=/r/src");
-    expect(targetFor("/r/src/a.ts", "file", 12)).toBe("cursor://file/r/src/a.ts:12");
-    expect(targetFor("/r/src/a (1).ts", "file")).toBe("/r/src/a%20%281%29.ts");
+    expect(targetFor(ALL_LINKS, "/r/src", "dir")).toBe("https://links.example.test/finder/reveal?target=/r/src");
+    expect(targetFor(ALL_LINKS, "/r/src/a.ts", "file", 12)).toBe("cursor://file/r/src/a.ts:12");
+    expect(targetFor(ALL_LINKS, "/r/src/a (1).ts", "file")).toBe("/r/src/a%20%281%29.ts");
+    // No router: a note opens in the editor at its line, or by its path; a folder gets no link.
+    expect(targetFor(NO_LINKS, "/r/My Notes/a.md", "file", 3, 9)).toBe("cursor://file/r/My%20Notes/a.md:3");
+    expect(targetFor(NO_LINKS, "/r/My Notes/a.md", "file")).toBe("/r/My%20Notes/a.md");
+    expect(targetFor(NO_LINKS, "/r/src", "dir")).toBeUndefined();
 });
 
-/** The machine beneath the plugin: a repository at /repo with three paths and one commit. */
-function machine(on: On): void {
+test("the probe out of tools genesis-tools probe --json", async () => {
+    const opens = { opens: true };
+    const json = JSON.stringify({
+        router: { linkHost: "links.example.test" },
+        links: { md: opens, finder: { opens: false }, hub: opens, "claude-find": opens },
+    });
+
+    expect(probeOf(json)).toEqual({
+        tools: true,
+        linkHost: "links.example.test",
+        opens: { md: true, finder: false, hub: true, "claude-find": true },
+    });
+    // No link host: nothing opens, whatever the rows say.
+    expect(probeOf(JSON.stringify({ router: {}, links: { md: opens } }))?.opens.md).toBe(false);
+    expect(probeOf("Usage: genesis-tools [options]")).toBeUndefined();
+});
+
+/**
+ * The machine beneath the plugin: a repository at /repo with three paths and one commit, and GenesisTools with
+ * every link kind working (`links: "all"`) or not installed at all (`"none"`).
+ */
+function machine(on: On, links: "all" | "none" = "all"): void {
+    forgetGenesisProbe();
     mock.env(on, { HOME: "/home/test" });
     const files: Record<string, "file" | "dir"> = {
         "/repo/src/a.ts": "file",
@@ -203,6 +245,20 @@ function machine(on: On): void {
         const answer = (stdout: string, exitCode = 0) => ({
             value: { exitCode, stdout, stderr: "", isStdoutTruncated: false, isStderrTruncated: false },
         });
+
+        if (argv === "tools genesis-tools probe --json") {
+            if (links === "none") {
+                throw new Error("spawn tools ENOENT");
+            }
+
+            const opens = { opens: true };
+            return answer(
+                JSON.stringify({
+                    router: { linkHost: "links.example.test" },
+                    links: { md: opens, finder: opens, hub: opens, "claude-find": opens },
+                })
+            );
+        }
 
         if (argv.endsWith("rev-parse --show-toplevel")) {
             return answer("/repo\n");
@@ -258,13 +314,29 @@ test("the link fixer links what resolves, as the reply streams, and leaves the r
 
     expect(text).toBe(
         [
-            "See [src/a.ts:12](cursor://file/repo/src/a.ts:12) and [docs/](https://genesis.tools/finder/reveal?target=/repo/docs) and [**abc1234f**](https://genesis.tools/hub?repo=acme%2Fwidgets&commit=abc1234f).",
-            "Repeat [❓ DECISION 3](https://genesis.tools/claude/find/sess-1/decision/3) now, not ❓ DECISION 9.",
+            "See [src/a.ts:12](cursor://file/repo/src/a.ts:12) and [docs/](https://links.example.test/finder/reveal?target=/repo/docs) and [**abc1234f**](https://links.example.test/hub?repo=acme%2Fwidgets&commit=abc1234f).",
+            "Repeat [❓ DECISION 3](https://links.example.test/claude/find/sess-1/decision/3) now, not ❓ DECISION 9.",
             "```",
             "src/a.ts",
             "```",
-            "Already [a](src/a.ts), https://b.c/src/a.ts#9, missing/x.ts, [notes/plan.md](https://genesis.tools/md/open?path=/repo/notes/plan.md), PR [#42 (feat: widgets)](https://github.com/acme/widgets/pull/42), #43",
+            "Already [a](src/a.ts), https://b.c/src/a.ts#9, missing/x.ts, [notes/plan.md](https://links.example.test/md/open?path=/repo/notes/plan.md), PR [#42 (feat: widgets)](https://github.com/acme/widgets/pull/42), #43",
         ].join("\n")
     );
     expect(chunks.at(-1)?.kind).toBe("stop");
+});
+
+test("without GenesisTools the link fixer writes no genesis.tools link", async ($, on) => {
+    machine(on, "none");
+
+    const stream = $.turn.step({ turnId: "t1", index: 0, model: "claude-haiku-5-5", messageCount: 1 });
+    let text = "";
+
+    for await (const chunk of stream) {
+        text += chunk.kind === "text" ? chunk.text : "";
+    }
+
+    expect(text).not.toContain("links.example.test");
+    expect(text).toContain("[src/a.ts:12](cursor://file/repo/src/a.ts:12) and `docs/` and **abc1234f**.");
+    expect(text).toContain("Repeat ❓ DECISION 3 now");
+    expect(text).toContain("[notes/plan.md](/repo/notes/plan.md)");
 });

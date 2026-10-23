@@ -5,6 +5,7 @@
 // a cold cache is visible from any open session. Reading the folder is a file listing, no process; it runs every 15 seconds.
 import type { ElementTable, RenderElement } from "claude-code";
 import type { CacheRow, CacheRows } from "../types";
+import { genesisProbe } from "./genesis";
 import { idleDueAt } from "./idle";
 import { agentsDir, type Feature, type Host, isRecord, settingsOf, shortDuration } from "./shared";
 
@@ -213,6 +214,8 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
     }
 
     const { Box, Button, Text } = ui;
+    // A press runs `tools claude cmux focus`: without the GenesisTools CLI the chip is plain text.
+    const canFocus = (await genesisProbe(host)).tools;
     const now = Date.now();
     const warnMs = settings.warnMinutes * 60_000;
     const cautionMs = settings.cautionMinutes * 60_000;
@@ -255,6 +258,10 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
             ) : null;
 
         // Another session's chip is a Button: a press focuses the cmux pane that session runs in.
+        if (!row.own && !canFocus) {
+            return <Box key={row.sessionId}>{text}</Box>;
+        }
+
         return row.own ? (
             <Box key={row.sessionId}>
                 {text}

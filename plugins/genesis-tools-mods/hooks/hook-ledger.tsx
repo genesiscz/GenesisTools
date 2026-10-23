@@ -331,8 +331,8 @@ async function hooksPane(host: Host, kit: Kit): Promise<RenderElement> {
                         key: "hooks-log",
                         label: "show log",
                         isDim: true,
-                        onPress: () =>
-                            void host.openUrl(`https://genesis.tools/finder/reveal?target=${encodeURI(log)}`),
+                        // Finder straight away: a reveal needs no link router.
+                        onPress: () => void host.run(["/usr/bin/open", "-R", log], { timeoutMs: 10_000 }),
                     },
                     { key: "hooks-reset", label: "reset", isDim: true, onPress: reset },
                 ]
