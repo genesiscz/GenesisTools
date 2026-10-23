@@ -143,8 +143,11 @@ struct WidgetInboxOverview: View {
                         HStack(spacing: 4) {
                             Text(Self.kindLabel(item))
                             Text("·")
-                            Text(session?.title ?? "Unknown session").lineLimit(1)
-                            Text("·")
+                            // Under its session header the row does not repeat the session.
+                            if !grouped {
+                                Text(session?.title ?? "Unknown session").lineLimit(1)
+                                Text("·")
+                            }
                             LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
                         }.font(.system(size: 10)).foregroundStyle(item.needsAnswer ? Color.orange : .secondary)
                     }

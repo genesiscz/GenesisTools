@@ -921,3 +921,118 @@ final class WarmPaneVisibilityTests: XCTestCase {
         XCTAssertEqual(shown.enabled.last, true)
     }
 }
+
+/// Staged decisions (Martin, 2026-10-23): a click stages the pick, closing with staged ones asks first, and the
+/// answer to that question sends, keeps or discards them.
+@MainActor
+final class WidgetStagingTests: XCTestCase {
+    private let key = "local:codex:fixture-staged:"
+
+    private func snapshot(draftOption: String?, decisionClick: String = "stage") throws -> String {
+        var item: [String: Any] = ["id": "decision:d1", "sourceId": "d1", "kind": "decision", "key": key, "at": 1,
+                                   "needsAnswer": true, "title": "Keep it?", "number": 7, "options": ["keep", "drop"],
+                                   "revision": 1]
+        var card: [String: Any] = ["id": "decision:d1", "kind": "decision", "sourceId": "d1", "sessionKey": key, "at": 1,
+                                   "title": "Keep it?", "body": "", "status": draftOption == nil ? "open" : "drafted",
+                                   "revision": 1, "number": 7,
+                                   "choices": [["id": "a", "title": "keep", "recommended": true],
+                                               ["id": "b", "title": "drop", "recommended": false]],
+                                   "attachments": [], "refs": [], "read": true]
+        if let draftOption { item["draftOption"] = draftOption; card["draftOption"] = draftOption }
+        let session: [String: Any] = ["key": key, "target": ["hostId": "local", "provider": "codex",
+            "sessionId": "fixture-staged", "sourceHome": "", "cwd": "/fixture"], "title": "Staged fixture",
+            "project": "Fixture", "activityAt": 0, "status": "waiting", "pinned": true, "visible": true, "hiddenByFilter": false]
+        let notifications: [String: Any] = ["unread": 0, "needsAnswer": 1, "complete": true, "truncated": false,
+            "sessions": [["key": key, "unread": 0, "needsAnswer": 1, "pendingItem": item, "items": [item]]]]
+        let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
+            "selectedKey": key, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+                "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en",
+                "decisionClick": decisionClick],
+            "assets": [:], "drafts": [:], "outgoing": []], "sessions": [session], "cards": [card],
+            "manifests": [:], "errors": [], "selectedKey": key, "notifications": notifications])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private func names(_ actions: [WidgetJSON]) -> [String] {
+        actions.compactMap { value in
+            guard case .object(let fields) = value, case .string(let name) = fields["action"] else { return nil }
+            return name
+        }
+    }
+
+    func testAPickStagesAndClosingAsksThenSendsOneBatch() async throws {
+        let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
+        let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
+            defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
+                notificationNamespace: "staging." + UUID().uuidString, observeExternalChanges: false))
+        defer { model.stop() }
+        var actions: [WidgetJSON] = []
+        model.actionRunner = { value in
+            actions.append(value)
+            return ["sent": 1, "failed": 0]
+        }
+        model.receive([try snapshot(draftOption: nil)])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+
+        model.choose(card, option: "a")
+        XCTAssertEqual(model.stagedOption("d1", stored: nil), "a", "the pick shows at once, before the hub answers")
+        try await Task.sleep(for: .milliseconds(200))
+        let ledger = try XCTUnwrap(actions.last)
+        guard case .object(let fields) = ledger else { return XCTFail("not an object") }
+        XCTAssertEqual(fields["action"], .string("ledger"))
+        XCTAssertEqual(fields["state"], .string("drafted"))
+        XCTAssertEqual(fields["draftOption"], .string("a"))
+        XCTAssertFalse(names(actions).contains("submit"), "a staged pick sends nothing")
+
+        model.receive([try snapshot(draftOption: "a")])
+        XCTAssertEqual(model.stagedItems.map(\.sourceId), ["d1"])
+        XCTAssertTrue(model.pendingStage.isEmpty, "the snapshot now shows the pick")
+
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertTrue(model.stagedLeavePrompt, "closing with a staged decision asks first")
+        XCTAssertEqual(model.expanded, .right, "and keeps the panel open while it asks")
+
+        model.resolveStagedLeave("send")
+        XCTAssertNil(model.expanded)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(names(actions).last, "send-staged")
+        XCTAssertEqual(WidgetModel.stagedSummary(model.stagedItems), "1 decision will be sent to 1 session")
+    }
+
+    func testKeepingStagedDecisionsDoesNotAskAgainForTheSameOnes() throws {
+        let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
+        let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
+            defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
+                notificationNamespace: "staging." + UUID().uuidString, observeExternalChanges: false))
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try snapshot(draftOption: "b")])
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertTrue(model.stagedLeavePrompt)
+        model.resolveStagedLeave("keep")
+        XCTAssertNil(model.expanded)
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertFalse(model.stagedLeavePrompt, "the same staged decisions were kept a moment ago")
+        XCTAssertNil(model.expanded)
+    }
+
+    func testTheSendSettingAnswersAtOnce() async throws {
+        let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
+        let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
+            defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
+                notificationNamespace: "staging." + UUID().uuidString, observeExternalChanges: false))
+        defer { model.stop() }
+        var actions: [WidgetJSON] = []
+        model.actionRunner = { value in actions.append(value); return ["ok": true] }
+        model.receive([try snapshot(draftOption: nil, decisionClick: "send")])
+        model.select(key)
+        model.choose(try XCTUnwrap(model.cards.first), option: "b")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(names(actions).contains("ledger"), "the send setting does not stage")
+        XCTAssertNil(model.pendingStage["d1"])
+    }
+}

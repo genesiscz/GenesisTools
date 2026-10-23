@@ -53,8 +53,10 @@ final class WidgetScrollReplayTests: XCTestCase {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 914, height: 900),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.backgroundColor = .black
         window.contentView = NSHostingView(rootView: LiveWidgetView(model: model, edge: .right, embedded: true)
-            .frame(width: 914, height: 900))
+            .frame(width: 914, height: 900).background(Color(white: 0.11)).environment(\.colorScheme, .dark))
         // `GENESIS_WIDGET_REPLAY_VISIBLE=1`: an almost transparent window above the others that ignores the mouse. A window
         // below the desktop is occluded, and AppKit skips the display passes of an occluded window.
         if environment["GENESIS_WIDGET_REPLAY_VISIBLE"] == "1" {
@@ -71,6 +73,22 @@ final class WidgetScrollReplayTests: XCTestCase {
         defer { window.orderOut(nil); window.close() }
         try await Task.sleep(for: .seconds(2))
         print("replay: window visible to the user: \(window.occlusionState.contains(.visible))")
+        // `GENESIS_WIDGET_REPLAY_PNG=<path>`: a picture of the panel, with `GENESIS_WIDGET_REPLAY_VIEW` = "staged" (the
+        // staged list) or "leave" (the question before closing) set first.
+        if let png = environment["GENESIS_WIDGET_REPLAY_PNG"] {
+            switch environment["GENESIS_WIDGET_REPLAY_VIEW"] {
+            case "staged": model.stagedView = "session"
+            case "leave": model.stagedLeavePrompt = true
+            default: break
+            }
+            try await Task.sleep(for: .seconds(1))
+            let view = try XCTUnwrap(window.contentView)
+            let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+            view.cacheDisplay(in: view.bounds, to: rep)
+            try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: png))
+            print("replay: picture \(png)")
+            return
+        }
         let scrollView = try XCTUnwrap(Self.scrollViews(in: window.contentView!).max {
             ($0.documentView?.frame.height ?? 0) < ($1.documentView?.frame.height ?? 0)
         }, "the inbox list is a scroll view")

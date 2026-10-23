@@ -149,9 +149,9 @@ struct WidgetStagedLeavePrompt: View {
         ZStack {
             Color.black.opacity(0.35).allowsHitTesting(true)
             VStack(alignment: .leading, spacing: 10) {
-                Text("You have \(Plural.count(items.count, "decision")) staged. What to do with them?")
+                Text("You have \(Plural.count(items.count, "decision")) staged. What to do with \(items.count == 1 ? "it" : "them")?")
                     .font(.system(size: 13, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
-                Text(WidgetModel.stagedSummary(items) + " if you send them now.")
+                Text(WidgetModel.stagedSummary(items) + (items.count == 1 ? " if you send it now." : " if you send them now."))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                 HStack(spacing: 8) {
                     Button("Send now") { model.resolveStagedLeave("send") }
