@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,6 +17,7 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
+import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { z } from "zod";
 import { DeliveryUnknownError, deliverToSession, resolveDeliveryTarget } from "./deliver";
 import { livePaneTargets, noPaneTargets } from "./deliver.fixtures";
@@ -46,6 +47,29 @@ import {
     updateDecisions,
     updateTodo,
 } from "./store";
+
+// A decision post reads its checkout with eight `git` starts; see no-git.ts for the CI hang they caused.
+const git = answerGitWithoutSpawning();
+
+test("a decision post asks git only through the stub and starts no process", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decisions-no-spawn-"));
+    const spawn = spyOn(Bun, "spawn");
+    const answered = git.answered;
+    const started = git.started.length;
+
+    try {
+        await postDecisions(join(dir, "decisions.jsonl"), join(dir, "events.jsonl"), {
+            sessionId: "abc",
+            decisions: [{ prompt: "one", options: ["a"] }],
+        });
+
+        expect(git.answered).toBeGreaterThan(answered);
+        expect(git.started.slice(started)).toEqual([]);
+        expect(spawn).not.toHaveBeenCalled();
+    } finally {
+        spawn.mockRestore();
+    }
+});
 
 /** A row another process wrote, appended while the test holds the decisions lock. */
 function foreignRow(sessionId: string, number: number): DecisionRecord {
