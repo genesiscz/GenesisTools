@@ -75,7 +75,7 @@ export const SETTABLE_KEYS = [
     "mods.idleCompact.<enabled|minutes|minTokens>",
     "mods.agentModel.<enabled|format>",
     "mods.<decisions|links|git|askRow|spinner>.enabled",
-    "mods.git.labels",
+    "mods.git.<labels|checkouts|cwd>",
     "mods.cacheBand.<enabled|warnMinutes|cautionMinutes|others>",
     "mods.tmpUsage.<enabled|minutes>",
     "mods.agentsBand.<enabled|warnMinutes>",
@@ -97,6 +97,7 @@ const MOD_NUMBER_LIMITS: Record<string, { max: number; min?: number; why: string
     "cacheBand.warnMinutes": { max: 59, why: "the cache lives 60 minutes" },
     "cacheBand.cautionMinutes": { max: 59, why: "the cache lives 60 minutes" },
     "tmpUsage.minutes": { max: 120, why: "a reading older than 2 hours says little" },
+    "git.checkouts": { max: 6, why: "each checkout takes a row above the prompt" },
     "agentsBand.warnMinutes": { max: 24 * 60, why: "a day" },
 };
 
@@ -132,6 +133,12 @@ function withMods(mods: ModsConfig, key: string, value: string): ModsConfig {
     } else if (feature === "git" && field === "labels") {
         if (value !== "full" && value !== "minimal") {
             throw new Error(`${key} takes full or minimal, not ${SafeJSON.stringify(value)}`);
+        }
+
+        part[field] = value;
+    } else if (feature === "git" && field === "cwd") {
+        if (value !== "touched" && value !== "always") {
+            throw new Error(`${key} takes touched or always, not ${SafeJSON.stringify(value)}`);
         }
 
         part[field] = value;

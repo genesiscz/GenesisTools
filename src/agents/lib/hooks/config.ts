@@ -295,8 +295,12 @@ export interface ModsConfig {
     decisions: { enabled: boolean };
     /** Bare paths, folders, commits and repeated decisions in the main loop's reply become links as it streams. */
     links: { enabled: boolean };
-    /** The git band above the prompt: branch, unpushed, dirty, PRs with CI; `/mod-git` switches it per session. */
-    git: { enabled: boolean; labels: "full" | "minimal" };
+    /**
+     * The git band above the prompt: branch, unpushed, dirty, PRs with CI; `/mod-git` switches it per session. One
+     * row per checkout the session wrote files or changed git state in, the last first, up to `checkouts`; the
+     * session's own folder shows only when it worked there (`cwd: touched`) or first in every session (`always`).
+     */
+    git: { enabled: boolean; labels: "full" | "minimal"; checkouts: number; cwd: "touched" | "always" };
     /** `[ask]` beside a finished tool row: quotes the row into the prompt. */
     askRow: { enabled: boolean };
     /** The running tool, its time and the working subagents on the spinner line. */
@@ -467,7 +471,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         agentModel: { enabled: false, format: "label" },
         decisions: { enabled: false },
         links: { enabled: false },
-        git: { enabled: false, labels: "full" },
+        git: { enabled: false, labels: "full", checkouts: 3, cwd: "touched" },
         askRow: { enabled: false },
         spinner: { enabled: false },
         cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
@@ -1103,6 +1107,8 @@ export function mergeMods(stored: unknown): ModsConfig {
         git: {
             enabled: enabled("git", base.git.enabled),
             labels: git.labels === "full" || git.labels === "minimal" ? git.labels : base.git.labels,
+            checkouts: minutesOr("mods.git.checkouts", git.checkouts, base.git.checkouts, 6),
+            cwd: git.cwd === "touched" || git.cwd === "always" ? git.cwd : base.git.cwd,
         },
         askRow: { enabled: enabled("askRow", base.askRow.enabled) },
         spinner: { enabled: enabled("spinner", base.spinner.enabled) },

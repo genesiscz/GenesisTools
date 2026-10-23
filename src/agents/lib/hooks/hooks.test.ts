@@ -680,8 +680,17 @@ describe("applySetting", () => {
 
         expect(set("mods.agentModel.format", "short").agentModel).toEqual({ enabled: false, format: "short" });
         expect(() => set("mods.agentModel.format", "tiny")).toThrow("label or short");
-        expect(set("mods.git.labels", "minimal").git).toEqual({ enabled: false, labels: "minimal" });
+        expect(set("mods.git.labels", "minimal").git).toEqual({
+            enabled: false,
+            labels: "minimal",
+            checkouts: 3,
+            cwd: "touched",
+        });
         expect(() => set("mods.git.labels", "short")).toThrow("full or minimal");
+        expect(set("mods.git.checkouts", "2").git.checkouts).toBe(2);
+        expect(() => set("mods.git.checkouts", "9")).toThrow("1 to 6");
+        expect(set("mods.git.cwd", "always").git.cwd).toBe("always");
+        expect(() => set("mods.git.cwd", "never")).toThrow("touched or always");
         expect(set("mods.links", "true").links.enabled).toBe(true);
         expect(set("mods.cacheBand.warnMinutes", "15").cacheBand.warnMinutes).toBe(15);
         expect(() => set("mods.cacheBand.warnMinutes", "75")).toThrow("1 to 59");

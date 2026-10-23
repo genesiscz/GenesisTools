@@ -1,0 +1,365 @@
+// The checkouts a session works in, for the git band: the git root of each file the session writes, and of each
+// folder where it changes git state (`git -C <dir> commit`, `cd <dir> && git rebase`). A file git ignores does not
+// count, so a plan a worktree session writes into the main checkout's `.claude/plans/` leaves the main checkout out.
+// Reads and read-only git (status, log, diff) count nothing.
+//
+// Each session's list lives in the plugin store, so it outlives a hot reload and a resume; the 40 sessions touched
+// last are kept. A session with no list yet starts from the GenesisTools file journal
+// (`~/.genesis-tools/claude-code/sessions/<id>.json`), each checkout dated by the newest change to one of its files.
+import type { Host } from "./shared";
+
+export interface Touch {
+    root: string;
+    at: number;
+}
+
+const STORE_KEY = "git-band-checkouts";
+const KEEP_SESSIONS = 40;
+const KEEP_ROOTS = 12;
+/** The journal's newest files the first list is built from. */
+const SEED_FILES = 200;
+const WRITE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+const GIT_WRITES = new Set([
+    "add",
+    "am",
+    "apply",
+    "checkout",
+    "cherry-pick",
+    "commit",
+    "merge",
+    "mv",
+    "pull",
+    "push",
+    "rebase",
+    "reset",
+    "restore",
+    "revert",
+    "rm",
+    "stash",
+    "switch",
+]);
+
+type Ledger = Record<string, Touch[]>;
+
+/** This session's list, newest first, while this module lives; the store holds it across reloads. */
+let held: { session: string; touches: Touch[] } | undefined;
+let loading: Promise<Touch[]> | undefined;
+const rootByDir = new Map<string, string | null>();
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parentOf(path: string): string {
+    return path.slice(0, path.lastIndexOf("/")) || "/";
+}
+
+function absolute(path: string, home: string | undefined): string | undefined {
+    if (path.startsWith("/")) {
+        return path.replace(/\/+$/, "") || "/";
+    }
+
+    return home && path.startsWith("~/") ? `${home}/${path.slice(2)}`.replace(/\/+$/, "") : undefined;
+}
+
+/** The absolute files a tool call wrote: `file_path` of Edit, Write and MultiEdit, `notebook_path` of NotebookEdit. */
+export function writtenFiles(input: unknown): string[] {
+    if (!isRecord(input) || typeof input.tool !== "string" || !WRITE_TOOLS.has(input.tool)) {
+        return [];
+    }
+
+    return [input.file_path, input.notebook_path].filter(
+        (path): path is string => typeof path === "string" && path.startsWith("/")
+    );
+}
+
+/** A shell word without its quotes. */
+function unquote(word: string): string {
+    return /^(["']).*\1$/s.test(word) ? word.slice(1, -1) : word;
+}
+
+/**
+ * The folders a Bash command changes git state in: `git -C <dir> <verb>`, or `git <verb>` after `cd <dir>` in the
+ * same command, for a verb that writes (commit, rebase, stash, push…). Only absolute and `~/` folders count, since
+ * the shell's own folder is not known here.
+ */
+export function gitWriteDirs(command: string, home: string | undefined): string[] {
+    const dirs: string[] = [];
+    let here: string | undefined;
+
+    for (const part of command.split(/&&|\|\||[;|\n]/)) {
+        const words = (part.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map(unquote);
+
+        while (words[0] && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) {
+            words.shift();
+        }
+
+        if (words[0] === "cd") {
+            here = words[1] ? absolute(words[1], home) : undefined;
+            continue;
+        }
+
+        if (words[0] !== "git") {
+            continue;
+        }
+
+        let dir = here;
+        let at = 1;
+
+        while (words[at]?.startsWith("-")) {
+            const flag = words[at];
+
+            if (flag === "-C" || flag === "-c") {
+                const value = words[at + 1] ?? "";
+
+                if (flag === "-C") {
+                    dir = absolute(value, home) ?? (dir && !value.startsWith("/") ? `${dir}/${value}` : undefined);
+                }
+
+                at += 2;
+            } else {
+                at += 1;
+            }
+        }
+
+        if (dir && GIT_WRITES.has(words[at] ?? "")) {
+            dirs.push(dir);
+        }
+    }
+
+    return [...new Set(dirs)];
+}
+
+/** The git root above a file or folder: the nearest folder holding `.git` (a folder, or a worktree's file). */
+async function rootAbove(host: Host, start: string): Promise<string | null> {
+    const walked: string[] = [];
+    let dir = start;
+    let found: string | null = null;
+
+    while (dir !== "/") {
+        const known = rootByDir.get(dir);
+
+        if (known !== undefined) {
+            found = known;
+            break;
+        }
+
+        walked.push(dir);
+
+        if (await host.exists(`${dir}/.git`).catch(() => false)) {
+            found = dir;
+            break;
+        }
+
+        dir = parentOf(dir);
+    }
+
+    for (const each of walked) {
+        rootByDir.set(each, found);
+    }
+
+    return found;
+}
+
+/** The files of `root` git does not ignore, in one `git check-ignore --stdin`. */
+async function notIgnored(host: Host, root: string, files: string[]): Promise<string[]> {
+    const run = await host
+        .run(["git", "-C", root, "check-ignore", "--stdin"], { stdin: `${files.join("\n")}\n`, timeoutMs: 10_000 })
+        .catch(() => undefined);
+
+    // 0: some are ignored, listed one per line. 1: none is. Anything else: git failed, so the root does not count.
+    if (run?.exitCode === 1) {
+        return files;
+    }
+
+    if (run?.exitCode !== 0) {
+        return [];
+    }
+
+    const ignored = new Set(run.stdout.split("\n").filter(Boolean));
+
+    return files.filter((file) => !ignored.has(file));
+}
+
+/** Each checkout of these files, dated by the newest change to a file of it that git does not ignore. */
+async function datedRoots(host: Host, files: string[]): Promise<Touch[]> {
+    const byRoot = new Map<string, string[]>();
+
+    for (const file of files) {
+        const root = await rootAbove(host, parentOf(file));
+
+        if (root) {
+            byRoot.set(root, [...(byRoot.get(root) ?? []), file]);
+        }
+    }
+
+    const touches = await Promise.all(
+        [...byRoot].map(async ([root, held]): Promise<Touch | undefined> => {
+            const kept = await notIgnored(host, root, [...new Set(held)]);
+            const times = await Promise.all(
+                kept.map((file) =>
+                    host.stat(file).then(
+                        (stat) => stat.mtimeMs,
+                        () => 0
+                    )
+                )
+            );
+            const at = Math.max(0, ...times);
+
+            return at > 0 ? { root, at } : undefined;
+        })
+    );
+
+    return touches.filter((touch): touch is Touch => touch !== undefined).sort((a, b) => b.at - a.at);
+}
+
+/** The first list of a session the store has none for: the checkouts of the files its GenesisTools journal names. */
+async function fromJournal(host: Host, session: string): Promise<Touch[]> {
+    const home = (await host.env("GENESIS_TOOLS_HOME")) ?? (await host.env("HOME"));
+    const text = home
+        ? await host.read(`${home}/.genesis-tools/claude-code/sessions/${session}.json`).catch(() => undefined)
+        : undefined;
+    let files: string[] = [];
+
+    try {
+        const parsed: unknown = text ? JSON.parse(text) : undefined;
+
+        if (isRecord(parsed) && Array.isArray(parsed.files)) {
+            files = parsed.files
+                .filter((file): file is string => typeof file === "string")
+                .slice(-SEED_FILES)
+                .map((file) => {
+                    try {
+                        return decodeURIComponent(file);
+                    } catch {
+                        return file;
+                    }
+                })
+                .filter((file) => file.startsWith("/"));
+        }
+    } catch {
+        files = [];
+    }
+
+    return (await datedRoots(host, files)).slice(0, KEEP_ROOTS);
+}
+
+async function readLedger(host: Host): Promise<Ledger> {
+    const value = await host.storeGet(STORE_KEY).catch(() => undefined);
+    const ledger: Ledger = {};
+
+    if (isRecord(value)) {
+        for (const [session, list] of Object.entries(value)) {
+            if (Array.isArray(list)) {
+                ledger[session] = list.filter(
+                    (touch): touch is Touch =>
+                        isRecord(touch) && typeof touch.root === "string" && typeof touch.at === "number"
+                );
+            }
+        }
+    }
+
+    return ledger;
+}
+
+async function save(host: Host, session: string, touches: Touch[]): Promise<void> {
+    const ledger = { ...(await readLedger(host)), [session]: touches };
+    const newest = (list: Touch[]) => Math.max(0, ...list.map((touch) => touch.at));
+    const kept = Object.entries(ledger)
+        .sort((a, b) => newest(b[1]) - newest(a[1]))
+        .slice(0, KEEP_SESSIONS);
+
+    await host.storeSet(STORE_KEY, Object.fromEntries(kept)).catch(() => undefined);
+}
+
+async function load(host: Host, session: string): Promise<Touch[]> {
+    const stored = (await readLedger(host))[session];
+
+    if (stored && stored.length > 0) {
+        return stored;
+    }
+
+    const seeded = await fromJournal(host, session);
+
+    if (seeded.length > 0) {
+        await save(host, session, seeded);
+    }
+
+    return seeded;
+}
+
+/** This session's checkouts, the one it worked in last first. */
+export async function sessionCheckouts(host: Host): Promise<Touch[]> {
+    const session = await host.sessionId();
+
+    if (held?.session === session) {
+        return held.touches;
+    }
+
+    loading ??= load(host, session).finally(() => {
+        loading = undefined;
+    });
+    const touches = await loading;
+    held = { session, touches };
+
+    return touches;
+}
+
+/**
+ * Records the checkouts a finished tool call worked in. True when one of them was not already the newest, so the
+ * band's rows may have moved.
+ */
+export async function noteToolCall(host: Host, input: unknown): Promise<boolean> {
+    const home = await host.env("HOME");
+    const files = writtenFiles(input);
+    const command = isRecord(input) && input.tool === "Bash" && typeof input.command === "string" ? input.command : "";
+    const dirs = command ? gitWriteDirs(command, home) : [];
+
+    if (files.length === 0 && dirs.length === 0) {
+        return false;
+    }
+
+    const now = Date.now();
+    const fromFiles = (await datedRoots(host, files)).map((touch) => touch.root);
+    const fromDirs = await Promise.all(dirs.map((dir) => rootAbove(host, dir)));
+    const roots = [...new Set([...fromFiles, ...fromDirs.filter((root): root is string => root !== null)])];
+
+    if (roots.length === 0) {
+        return false;
+    }
+
+    const before = await sessionCheckouts(host);
+    const touches = [
+        ...roots.map((root) => ({ root, at: now })),
+        ...before.filter((touch) => !roots.includes(touch.root)),
+    ].slice(0, KEEP_ROOTS);
+    const session = await host.sessionId();
+
+    held = { session, touches };
+    await save(host, session, touches);
+
+    return roots.some((root) => before[0]?.root !== root);
+}
+
+/**
+ * The checkouts the band shows, newest first: `cwd: "always"` puts the session's own folder first. A session that
+ * has worked in no checkout yet shows its own folder.
+ */
+export function pickRoots(
+    touches: readonly Touch[],
+    cwdRoot: string | undefined,
+    settings: { checkouts: number; cwd: "touched" | "always" }
+): string[] {
+    const roots = touches.map((touch) => touch.root);
+    const ordered = settings.cwd === "always" && cwdRoot ? [cwdRoot, ...roots.filter((r) => r !== cwdRoot)] : roots;
+    const picked = ordered.slice(0, settings.checkouts);
+
+    return picked.length > 0 ? picked : cwdRoot ? [cwdRoot] : [];
+}
+
+/** Forgets this module's memory: a test sets up another session. */
+export function forgetCheckouts(): void {
+    held = undefined;
+    loading = undefined;
+    rootByDir.clear();
+}

@@ -1,18 +1,24 @@
-// The git band: one line above the prompt with the branch, unpushed and unpulled commits, the dirty count, and
-// the pull requests that matter here (the current branch's, plus the ones `/mod-git pr add` tracks) with their
-// CI counts. It refreshes when the session starts, after a Bash call that ran git or gh, every 3 minutes, and on
+// The git band: one line above the prompt per checkout the session works in (`checkouts.ts`: the ones it wrote
+// files in or changed git state in, the last first, up to `mods.git.checkouts`), each with the branch, unpushed and
+// unpulled commits, the dirty count, and the pull requests that matter there (the branch's, plus the ones
+// `/mod-git pr add` tracks) with their CI counts. A session that has worked in no checkout yet shows its own
+// folder; `mods.git.cwd: always` shows that folder first in every session. It refreshes when the session starts,
+// after a Bash call that ran git or gh, after a call that works in another checkout, every 3 minutes, and on
 // `/mod-git refresh`; `gh` answers are reused for 2 minutes. `/mod-git on|off|toggle` switches it for this
 // session, `mods.git.enabled` for every session. Each refresh and command goes to `mods-log/git.jsonl`.
 import type { ElementTable, RenderElement } from "claude-code";
-import type { BandCheck, BandPr, GitBand, GitBandLine, GitBandSwitch } from "../types";
+import type { BandCheck, BandPr, GitBand, GitBandRows, GitBandSwitch } from "../types";
+import { noteToolCall, pickRoots, sessionCheckouts } from "./checkouts";
 import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
 import { type Feature, type Host, isRecord, logMod, settingsOf, shortDuration } from "./shared";
 import { actionRow, dimNote, divider, headerRow, type Kit, plural, sidebarFrame } from "./sidebar";
 
 export const GIT_PANE = "mods-git";
 
-/** The last refresh; null until one finished. */
-let line: GitBandLine = null;
+/** The last refresh, one row per checkout; empty until one finished. */
+let rows: GitBandRows = [];
+/** The git root of the session's own folder at the last refresh. */
+let ownRoot: string | undefined;
 /** `/mod-git on|off` for this session; null follows `mods.git.enabled`. */
 let turnedOn: GitBandSwitch = null;
 
@@ -27,10 +33,27 @@ async function run(host: Host, argv: string[], cwd: string): Promise<string | un
     return done?.exitCode === 0 ? done.stdout : undefined;
 }
 
-async function rootOf(host: Host): Promise<string | undefined> {
+async function cwdRoot(host: Host): Promise<string | undefined> {
     const cwd = await host.cwd();
 
     return (await run(host, ["git", "rev-parse", "--show-toplevel"], cwd))?.trim() || undefined;
+}
+
+/** The checkouts the band shows now, the session's last first. */
+async function bandRoots(host: Host): Promise<string[]> {
+    ownRoot = await cwdRoot(host);
+
+    return pickRoots(await sessionCheckouts(host), ownRoot, (await settingsOf(host)).git);
+}
+
+/** The checkout `/mod-git pr` and the sidebar's track act on: the band's first row. */
+async function firstRoot(host: Host): Promise<string | undefined> {
+    return rows[0]?.root ?? (await bandRoots(host))[0];
+}
+
+/** A checkout's folder name: `col-fe-marketplace-2.0-poc`. */
+export function checkoutName(root: string): string {
+    return root.slice(root.lastIndexOf("/") + 1) || root;
 }
 
 const storeKey = (root: string) => `git-band-prs:${root}`;
@@ -143,20 +166,12 @@ async function isOn(host: Host): Promise<boolean> {
     return held ?? (await settingsOf(host)).git.enabled;
 }
 
-async function refreshNow(host: Host, why: string): Promise<void> {
-    const root = await rootOf(host);
-
-    if (!root) {
-        line = null;
-        host.redraw();
-        return;
-    }
-
-    const started = Date.now();
+/** One checkout's row; undefined when git cannot read it. */
+async function readRow(host: Host, root: string): Promise<GitBand | undefined> {
     const status = await run(host, ["git", "status", "--porcelain", "--branch"], root);
 
     if (status === undefined) {
-        return;
+        return undefined;
     }
 
     const numstat = parseNumstat((await run(host, ["git", "diff", "--numstat", "HEAD"], root)) ?? "");
@@ -168,21 +183,34 @@ async function refreshNow(host: Host, why: string): Promise<void> {
     const prs = [own ? { ...own, tracked: tracked.includes(own.number) } : null, ...others].filter(
         (pr): pr is BandPr => pr !== null
     );
-    const band: GitBand = { at: Date.now(), ...parseStatus(status), ...numstat, prs };
 
-    line = band;
+    return { root, at: Date.now(), ...parseStatus(status), ...numstat, prs };
+}
+
+async function refreshNow(host: Host, why: string): Promise<void> {
+    const started = Date.now();
+    const roots = await bandRoots(host);
+    const read = await Promise.all(roots.map((root) => readRow(host, root)));
+    // A checkout git could not read this time keeps its last row.
+    const next = roots
+        .map((root, index) => read[index] ?? rows.find((row) => row.root === root))
+        .filter((row): row is GitBand => row !== undefined);
+
+    rows = next;
     host.redraw();
     await logMod(host, "git", {
         event: "refresh",
         why,
-        root,
-        branch: band.branch,
-        ahead: band.ahead,
-        behind: band.behind,
-        dirty: band.dirty,
-        added: band.added,
-        removed: band.removed,
-        prs: prs.map((pr) => ({ n: pr.number, passed: pr.passed, failed: pr.failed, pending: pr.pending })),
+        rows: next.map((band) => ({
+            root: band.root,
+            branch: band.branch,
+            ahead: band.ahead,
+            behind: band.behind,
+            dirty: band.dirty,
+            added: band.added,
+            removed: band.removed,
+            prs: band.prs.map((pr) => ({ n: pr.number, passed: pr.passed, failed: pr.failed, pending: pr.pending })),
+        })),
         ms: Date.now() - started,
     });
 }
@@ -227,18 +255,22 @@ async function command(host: Host, args: string): Promise<string> {
         return "Git band refreshed.";
     }
 
-    const root = await rootOf(host);
+    const root = await firstRoot(host);
 
     if (!root) {
         return "Not in a git repository.";
     }
+
+    const where = checkoutName(root);
 
     if (verb === "pr") {
         const numbers = rest.map((n) => Number(n.replace(/^#/, ""))).filter((n) => Number.isInteger(n) && n > 0);
         const held = await trackedPrs(host, root);
 
         if (sub === "list" || sub === undefined) {
-            return held.length ? `Tracked here: ${held.map((n) => `#${n}`).join(", ")}` : "No tracked PRs here.";
+            return held.length
+                ? `Tracked in ${where}: ${held.map((n) => `#${n}`).join(", ")}`
+                : `No tracked PRs in ${where}.`;
         }
 
         if ((sub !== "add" && sub !== "rm") || numbers.length === 0) {
@@ -249,14 +281,15 @@ async function command(host: Host, args: string): Promise<string> {
         await host.storeSet(storeKey(root), next);
         await refresh(host, `pr ${sub}`);
 
-        return `Tracked here: ${next.length ? next.map((n) => `#${n}`).join(", ") : "none"}`;
+        return `Tracked in ${where}: ${next.length ? next.map((n) => `#${n}`).join(", ") : "none"}`;
     }
 
     if (verb === "status") {
-        const band = line;
+        const band = rows[0];
         const on = await isOn(host);
+        const shown = rows.length ? `; checkouts ${rows.map((row) => checkoutName(row.root)).join(", ")}` : "";
 
-        return `Git band ${on ? "on" : "off"}; last refresh ${band ? new Date(band.at).toLocaleTimeString() : "never"}.`;
+        return `Git band ${on ? "on" : "off"}; last refresh ${band ? new Date(band.at).toLocaleTimeString() : "never"}${shown}.`;
     }
 
     return USAGE;
@@ -288,8 +321,14 @@ export const gitBand: Feature = {
     ],
     sidebars: [{ id: GIT_PANE, title: "Git", draw: gitPane }],
     async afterTool(host, e) {
-        if (e.tool === "Bash" && /(^|[\s;&|(])(git|gh)\s/.test(e.command) && (await isOn(host))) {
-            void refresh(host, "tool");
+        if (!(await isOn(host))) {
+            return;
+        }
+
+        const moved = await noteToolCall(host, e);
+
+        if (moved || (e.tool === "Bash" && /(^|[\s;&|(])(git|gh)\s/.test(e.command))) {
+            void refresh(host, moved ? "checkout" : "tool");
         }
     },
 };
@@ -333,62 +372,84 @@ export function middleCut(text: string, max: number): string {
     return `${text.slice(0, head)}…${text.slice(text.length - (max - 1 - head))}`;
 }
 
+/** A checkout name longer than this keeps its start and end. */
+const NAME_MAX = 28;
+
+/** Whether the rows name their checkout: always, unless the one row is the session's own folder. */
+export function namesCheckouts(shown: readonly Pick<GitBand, "root">[], own: string | undefined): boolean {
+    return shown.length > 1 || (shown.length === 1 && shown[0]?.root !== own);
+}
+
 /**
- * The band's git row, or null while the band is off or has nothing yet. Each PR is a Button (it inverts under the
- * pointer, so it reads as one) that opens the Git sidebar; the sidebar opens the PR in the browser or the hub.
+ * The band's git rows, one per checkout, or null while the band is off or has nothing yet. Each PR is a Button (it
+ * inverts under the pointer, so it reads as one) that opens the Git sidebar; the sidebar opens the PR in the browser
+ * or the hub.
  */
 export async function gitRow(host: Host, ui: ElementTable): Promise<RenderElement | null> {
-    const band = line;
+    const shown = rows;
 
-    if (!band || !(await isOn(host))) {
+    if (shown.length === 0 || !(await isOn(host))) {
         return null;
     }
 
     const { Box, Button, Text } = ui;
     const labelled = (await settingsOf(host)).git.labels === "full";
-    const sync = [
-        band.ahead ? `↑${band.ahead}${labelled ? " to push" : ""}` : "",
-        band.behind ? `↓${band.behind}${labelled ? " to pull" : ""}` : "",
-    ]
-        .filter(Boolean)
-        .join(labelled ? " · " : " ");
+    const named = namesCheckouts(shown, ownRoot);
     const open = () => void host.togglePane(GIT_PANE, "Git");
-    const lines =
-        band.added || band.removed ? (
-            <Text>
-                <Text color="green">{`+${band.added}`}</Text>
-                <Text> </Text>
-                <Text color="red">{`−${band.removed}`}</Text>
-            </Text>
-        ) : null;
+    const rowOf = (band: GitBand) => {
+        const sync = [
+            band.ahead ? `↑${band.ahead}${labelled ? " to push" : ""}` : "",
+            band.behind ? `↓${band.behind}${labelled ? " to pull" : ""}` : "",
+        ]
+            .filter(Boolean)
+            .join(labelled ? " · " : " ");
+        const lines =
+            band.added || band.removed ? (
+                <Text>
+                    <Text color="green">{`+${band.added}`}</Text>
+                    <Text> </Text>
+                    <Text color="red">{`−${band.removed}`}</Text>
+                </Text>
+            ) : null;
+
+        return (
+            <Box key={`git-${band.root}`} flexDirection="row" gap={1}>
+                <Button key="git-branch" plain onPress={open}>
+                    {named ? <Text color="cyan">{`${middleCut(checkoutName(band.root), NAME_MAX)} `}</Text> : null}
+                    <Text dimColor>⎇ </Text>
+                    <Text bold>{middleCut(band.branch, BRANCH_MAX)}</Text>
+                </Button>
+                {sync ? <Text color="yellow">{sync}</Text> : null}
+                {band.dirty ? (
+                    <Text color="magenta">{labelled ? `${plural(band.dirty, "file")} changed` : `●${band.dirty}`}</Text>
+                ) : (
+                    <Text dimColor>clean</Text>
+                )}
+                {band.dirty ? lines : null}
+                {band.prs.map((pr) => (
+                    <Button key={`pr-${pr.number}`} plain onPress={open}>
+                        <Text color={prColor(pr)} underline>{`#${pr.number}`}</Text>
+                        <Text color={prColor(pr)}>{prNote(pr)}</Text>
+                    </Button>
+                ))}
+            </Box>
+        );
+    };
 
     return (
-        <Box key="git-band" flexDirection="row" gap={1}>
-            <Button key="git-branch" plain onPress={open}>
-                <Text dimColor>⎇ </Text>
-                <Text bold>{middleCut(band.branch, BRANCH_MAX)}</Text>
-            </Button>
-            {sync ? <Text color="yellow">{sync}</Text> : null}
-            {band.dirty ? (
-                <Text color="magenta">{labelled ? `${plural(band.dirty, "file")} changed` : `●${band.dirty}`}</Text>
-            ) : (
-                <Text dimColor>clean</Text>
-            )}
-            {band.dirty ? lines : null}
-            {band.prs.map((pr) => (
-                <Button key={`pr-${pr.number}`} plain onPress={open}>
-                    <Text color={prColor(pr)} underline>{`#${pr.number}`}</Text>
-                    <Text color={prColor(pr)}>{prNote(pr)}</Text>
-                </Button>
-            ))}
+        <Box key="git-band" flexDirection="column">
+            {shown.map(rowOf)}
         </Box>
     );
 }
 
-/** The Git sidebar: the branch, then each PR with its title, its failing and pending checks, and its actions. */
+/**
+ * The Git sidebar: per checkout, its branch, then each PR with its title, its failing and pending checks, and its
+ * actions.
+ */
 async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
     const { Box, Text } = kit.ui;
-    const band = line;
+    const shown = rows;
     const reload = {
         key: "git-refresh",
         label: "refresh",
@@ -399,102 +460,115 @@ async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
         },
     };
 
-    if (!band) {
+    if (shown.length === 0) {
         return sidebarFrame(kit, headerRow(kit, dimNote(kit, "No git reading yet."), [reload]));
     }
 
-    const root = (await rootOf(host)) ?? "";
-    const tracked = root ? await trackedPrs(host, root) : [];
     const probe = await genesisProbe(host);
-    const setTracked = async (n: number, on: boolean) => {
-        const next = on ? [...new Set([...tracked, n])] : tracked.filter((held) => held !== n);
-        await host.storeSet(storeKey(root), next);
-        await logMod(host, "git", { event: on ? "track" : "untrack", n, from: "sidebar" });
-        await refresh(host, "sidebar");
-    };
-    const sync = [
-        `↑${band.ahead} to push`,
-        `↓${band.behind} to pull`,
-        band.dirty ? `${plural(band.dirty, "file")} changed +${band.added} −${band.removed}` : "clean",
-    ].join(" · ");
+    const named = namesCheckouts(shown, ownRoot);
+    const sections = await Promise.all(
+        shown.map(async (band, index) => {
+            const tracked = await trackedPrs(host, band.root);
+            const setTracked = async (n: number, on: boolean) => {
+                const next = on ? [...new Set([...tracked, n])] : tracked.filter((held) => held !== n);
+                await host.storeSet(storeKey(band.root), next);
+                await logMod(host, "git", { event: on ? "track" : "untrack", n, root: band.root, from: "sidebar" });
+                await refresh(host, "sidebar");
+            };
+            const sync = [
+                `↑${band.ahead} to push`,
+                `↓${band.behind} to pull`,
+                band.dirty ? `${plural(band.dirty, "file")} changed +${band.added} −${band.removed}` : "clean",
+            ].join(" · ");
+            const at = `git-${index}`;
 
-    return sidebarFrame(
-        kit,
-        <Box flexDirection="column">
-            {headerRow(
-                kit,
-                <Text wrap="truncate-end">
-                    <Text bold>{band.branch}</Text>
-                    <Text dimColor>{` ${sync} · read ${shortDuration(Date.now() - band.at)} ago`}</Text>
-                </Text>,
-                [reload]
-            )}
-            {band.prs.length === 0 ? dimNote(kit, "No pull request here. /mod-git pr add <n> tracks one.") : null}
-            {band.prs.map((pr) => {
-                const hub = hubUrlOf(probe, pr);
-                const failing = pr.checks.filter((check) => check.verdict === "fail");
-                const pending = pr.checks.filter((check) => check.verdict === "pending");
+            return (
+                <Box key={at} flexDirection="column" marginTop={index ? 1 : 0}>
+                    {index ? divider(kit) : null}
+                    {headerRow(
+                        kit,
+                        <Text wrap="truncate-end">
+                            {named ? <Text color="cyan">{`${checkoutName(band.root)} `}</Text> : null}
+                            <Text bold>{band.branch}</Text>
+                            <Text dimColor>{` ${sync} · read ${shortDuration(Date.now() - band.at)} ago`}</Text>
+                        </Text>,
+                        index ? [] : [reload]
+                    )}
+                    {band.prs.length === 0
+                        ? dimNote(
+                              kit,
+                              index ? "No pull request here." : "No pull request here. /mod-git pr add <n> tracks one."
+                          )
+                        : null}
+                    {band.prs.map((pr) => {
+                        const hub = hubUrlOf(probe, pr);
+                        const failing = pr.checks.filter((check) => check.verdict === "fail");
+                        const pending = pr.checks.filter((check) => check.verdict === "pending");
 
-                return (
-                    <Box key={`pr-${pr.number}`} flexDirection="column" marginTop={1}>
-                        {divider(kit)}
-                        <Text wrap="wrap">
-                            <Text color={prColor(pr)} bold>{`#${pr.number} `}</Text>
-                            <Text bold>{pr.title}</Text>
-                        </Text>
-                        {dimNote(kit, `${pr.state.toLowerCase()}${pr.draft ? " draft" : ""} · ${ciText(pr)}`)}
-                        {failing.map((check) => (
-                            <Text key={`fail-${check.name}`} color="red" wrap="truncate-end">
-                                {`✗ ${check.name}`}
-                            </Text>
-                        ))}
-                        {pending.slice(0, 6).map((check) => (
-                            <Text key={`pending-${check.name}`} color="yellow" wrap="truncate-end">
-                                {`… ${check.name}`}
-                            </Text>
-                        ))}
-                        {pending.length > 6 ? dimNote(kit, `… ${pending.length - 6} more pending`) : null}
-                        <Box marginTop={1}>
-                            {actionRow(kit, [
-                                {
-                                    key: `pr-${pr.number}-open`,
-                                    label: "open",
-                                    isPrimary: true,
-                                    onPress: () => void host.openUrl(pr.url),
-                                },
-                                ...(hub
-                                    ? [
-                                          {
-                                              key: `pr-${pr.number}-hub`,
-                                              label: "hub",
-                                              onPress: () => void host.openUrl(hub),
-                                          },
-                                      ]
-                                    : []),
-                                {
-                                    key: `pr-${pr.number}-copy`,
-                                    label: "copy link",
-                                    isDim: true,
-                                    onPress: () => void host.copy(`[#${pr.number} (${pr.title})](${pr.url})`),
-                                },
-                                tracked.includes(pr.number)
-                                    ? {
-                                          key: `pr-${pr.number}-untrack`,
-                                          label: "untrack",
-                                          isDim: true,
-                                          onPress: () => void setTracked(pr.number, false),
-                                      }
-                                    : {
-                                          key: `pr-${pr.number}-track`,
-                                          label: "track",
-                                          isDim: true,
-                                          onPress: () => void setTracked(pr.number, true),
-                                      },
-                            ])}
-                        </Box>
-                    </Box>
-                );
-            })}
-        </Box>
+                        return (
+                            <Box key={`${at}-pr-${pr.number}`} flexDirection="column" marginTop={1}>
+                                {divider(kit)}
+                                <Text wrap="wrap">
+                                    <Text color={prColor(pr)} bold>{`#${pr.number} `}</Text>
+                                    <Text bold>{pr.title}</Text>
+                                </Text>
+                                {dimNote(kit, `${pr.state.toLowerCase()}${pr.draft ? " draft" : ""} · ${ciText(pr)}`)}
+                                {failing.map((check) => (
+                                    <Text key={`fail-${check.name}`} color="red" wrap="truncate-end">
+                                        {`✗ ${check.name}`}
+                                    </Text>
+                                ))}
+                                {pending.slice(0, 6).map((check) => (
+                                    <Text key={`pending-${check.name}`} color="yellow" wrap="truncate-end">
+                                        {`… ${check.name}`}
+                                    </Text>
+                                ))}
+                                {pending.length > 6 ? dimNote(kit, `… ${pending.length - 6} more pending`) : null}
+                                <Box marginTop={1}>
+                                    {actionRow(kit, [
+                                        {
+                                            key: `${at}-pr-${pr.number}-open`,
+                                            label: "open",
+                                            isPrimary: true,
+                                            onPress: () => void host.openUrl(pr.url),
+                                        },
+                                        ...(hub
+                                            ? [
+                                                  {
+                                                      key: `${at}-pr-${pr.number}-hub`,
+                                                      label: "hub",
+                                                      onPress: () => void host.openUrl(hub),
+                                                  },
+                                              ]
+                                            : []),
+                                        {
+                                            key: `${at}-pr-${pr.number}-copy`,
+                                            label: "copy link",
+                                            isDim: true,
+                                            onPress: () => void host.copy(`[#${pr.number} (${pr.title})](${pr.url})`),
+                                        },
+                                        tracked.includes(pr.number)
+                                            ? {
+                                                  key: `${at}-pr-${pr.number}-untrack`,
+                                                  label: "untrack",
+                                                  isDim: true,
+                                                  onPress: () => void setTracked(pr.number, false),
+                                              }
+                                            : {
+                                                  key: `${at}-pr-${pr.number}-track`,
+                                                  label: "track",
+                                                  isDim: true,
+                                                  onPress: () => void setTracked(pr.number, true),
+                                              },
+                                    ])}
+                                </Box>
+                            </Box>
+                        );
+                    })}
+                </Box>
+            );
+        })
     );
+
+    return sidebarFrame(kit, <Box flexDirection="column">{sections}</Box>);
 }

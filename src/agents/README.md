@@ -210,8 +210,10 @@ under the fold, so without them nothing says which command changed the files.
 **The full-diff mod.** `tools agents hooks mods install --write` installs the plugin `genesis-tools-mods`
 from this repository's marketplace (`plugins/genesis-tools-mods/`). It is a Claude Code mod: when a hook
 message cut lines, it draws the call's whole diff (the `hook-diffs/<call>.md` note) with Claude Code's own
-diff element under the call's row, so the 10,000-character message limit no longer hides the rest. A running
-session needs `/reload-plugins`. `tools agents hooks mods` shows whether it is installed;
+diff element under the call's row, so the 10,000-character message limit no longer hides the rest. A session
+that was running at the install needs `/reload-plugins` once. A session that loads the folder through
+`CLAUDE_CODE_PLUGIN_DIRS` (the shell, or the `env` block of `~/.claude/settings.json`) reloads the mods by itself
+when a file in the folder is saved. `tools agents hooks mods` shows whether it is installed;
 `tools agents hooks config set mods.diff.fullDiff false --write` turns it off without an uninstall (the mod reads
 the hooks file). It draws nothing while `diff.fullDiff` is `off`. Installing the plugin is not what makes the
 diff hook stand down: on every turn the loaded mod sets `GENESIS_TOOLS_MODS_SESSION` to the id of its session, and
@@ -259,7 +261,13 @@ checked against real use.
   commits, the changed files with their added and removed lines (`↑14 to push · ↓2 to pull 4 files changed +120 −30`,
   or `↑14 ↓2 ●4 +120 −30` with `minimal`), and the PRs (the branch's own and the ones `/mod-git pr add 123` tracks)
   with CI counts. A press on the branch or a PR, or a bare `/mod-git`, opens the Git sidebar: each PR's title, failing and pending checks, and `open`, `hub`, `copy link`
-  and `track` buttons. `/mod-git on|off|toggle|refresh`.
+  and `track` buttons. `/mod-git on|off|toggle|refresh`. The band has one line per checkout the session works in,
+  named by its folder, the last first, up to `checkouts` (default 3, at most 6): a checkout counts once the session
+  writes a file in it that git does not ignore, or runs a git command that changes it (`git -C <dir> commit`,
+  `cd <dir> && git rebase`); reads and `git status` count nothing. So a session started in the main checkout that
+  works in two worktrees shows the two worktrees. `cwd` `touched` (the default) shows the session's own folder only
+  when the session worked there, or when it has worked nowhere yet; `always` shows it first. A session that has no
+  record yet starts from its GenesisTools file journal. `/mod-git pr add` acts on the first line's checkout.
 - `mods.askRow`: `[ask]` beside a finished tool row puts the row, quoted, into the prompt.
 - `mods.spinner`: the spinner line names the running tool, its time and the working subagents.
 - `mods.cacheBand` (`cautionMinutes` 20, `warnMinutes` 10, `others`): the prompt cache countdown, yellow under

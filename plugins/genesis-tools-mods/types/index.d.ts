@@ -43,8 +43,10 @@ export interface BandPr {
     tracked: boolean;
 }
 
-/** The git band's line, as the last refresh found it. */
+/** One checkout's row of the git band, as the last refresh found it. */
 export interface GitBand {
+    /** The checkout's git root. */
+    root: string;
     at: number;
     branch: string;
     ahead: number;
@@ -56,8 +58,8 @@ export interface GitBand {
     prs: BandPr[];
 }
 
-/** The git band of this session: `null` until the first refresh. */
-export type GitBandLine = GitBand | null;
+/** The git band of this session, one row per checkout it shows; empty until the first refresh. */
+export type GitBandRows = GitBand[];
 
 /** `/mod-git on|off` for this session; `null` follows `mods.git.enabled`. */
 export type GitBandSwitch = boolean | null;

@@ -16,7 +16,7 @@ export interface ModsSettings {
     agentModel: { enabled: boolean; format: "label" | "short" };
     decisions: { enabled: boolean };
     links: { enabled: boolean };
-    git: { enabled: boolean; labels: "full" | "minimal" };
+    git: { enabled: boolean; labels: "full" | "minimal"; checkouts: number; cwd: "touched" | "always" };
     askRow: { enabled: boolean };
     spinner: { enabled: boolean };
     cacheBand: { enabled: boolean; warnMinutes: number; cautionMinutes: number; others: boolean };
@@ -32,7 +32,7 @@ export const MODS_DEFAULTS: ModsSettings = {
     agentModel: { enabled: false, format: "label" },
     decisions: { enabled: false },
     links: { enabled: false },
-    git: { enabled: false, labels: "full" },
+    git: { enabled: false, labels: "full", checkouts: 3, cwd: "touched" },
     askRow: { enabled: false },
     spinner: { enabled: false },
     cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
@@ -106,6 +106,8 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
         git: {
             enabled: enabled("git", d.git.enabled),
             labels: git.labels === "full" || git.labels === "minimal" ? git.labels : d.git.labels,
+            checkouts: whole(git.checkouts, 1, 6, d.git.checkouts),
+            cwd: git.cwd === "touched" || git.cwd === "always" ? git.cwd : d.git.cwd,
         },
         askRow: { enabled: enabled("askRow", d.askRow.enabled) },
         spinner: { enabled: enabled("spinner", d.spinner.enabled) },
