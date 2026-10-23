@@ -212,20 +212,16 @@ enum RecordingPanelChrome {
 @MainActor
 final class RecordingPickerPanel: NSObject, NSWindowDelegate {
     let window: RecordingPickerWindow
-    private let hosting: FirstMouseHostingView<AnyView>
     private var onDismiss: (() -> Void)?
 
     override init() {
         window = RecordingPickerWindow(contentRect: CGRect(x: 0, y: 0, width: 400, height: 420),
                                        styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        hosting = FirstMouseHostingView(rootView: AnyView(EmptyView()))
         super.init()
         window.title = "Choose what to record"
         window.identifier = NSUserInterfaceItemIdentifier("recording.picker")
         RecordingPanelChrome.apply(to: window)
         window.delegate = self
-        hosting.sizingOptions = []
-        window.contentView = hosting
     }
 
     var isVisible: Bool { window.isVisible }
@@ -234,9 +230,13 @@ final class RecordingPickerPanel: NSObject, NSWindowDelegate {
     /// the keyboard without activating the app.
     func present(_ view: some View, near anchor: CGPoint, onDismiss: @escaping () -> Void) {
         self.onDismiss = onDismiss
-        hosting.rootView = AnyView(view.fixedSize().onGeometryChange(for: CGSize.self, of: { $0.size }) { [weak self] size in
+        // A fresh hosting view each time: a reused one that had been on screen measured 0x0 after a new root view, so
+        // the second picker of a session opened invisible and the recorder waited for a choice nobody could see.
+        let hosting = FirstMouseHostingView(rootView: AnyView(view.fixedSize().onGeometryChange(for: CGSize.self, of: { $0.size }) { [weak self] size in
             DispatchQueue.main.async { self?.resize(to: size) }
-        })
+        }))
+        hosting.sizingOptions = []
+        window.contentView = hosting
         hosting.layoutSubtreeIfNeeded()
         let size = hosting.fittingSize
         let screen = NSScreen.screens.first { $0.frame.contains(anchor) } ?? NSScreen.screens.first

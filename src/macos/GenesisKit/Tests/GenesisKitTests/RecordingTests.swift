@@ -507,3 +507,29 @@ final class RecordingHostTests: XCTestCase {
         XCTAssertFalse(store.canRecord, "a store made without a recorder offers no Record screen button")
     }
 }
+
+/// The picker panel takes its content's size every time it opens (Martin, 2026-10-23: a second recording from the
+/// widget opened a picker of 0x0, so the recorder waited for a choice nobody could see and the video button stuck on
+/// Stop).
+@MainActor
+final class RecordingPickerPanelTests: XCTestCase {
+    func testThePickerHasItsContentSizeEachTimeItOpens() async throws {
+        _ = NSApplication.shared
+        let panel = RecordingPickerPanel()
+        panel.window.alphaValue = 0
+        defer { panel.dismiss() }
+        let anchor = CGPoint(x: (NSScreen.screens.first?.frame.midX ?? 400), y: (NSScreen.screens.first?.frame.midY ?? 400))
+        for round in 1...3 {
+            let picker = RecordingTargetPicker(load: .loaded(RecordingFixture.targets),
+                                               initial: RecordingFixture.targets.windows[0].target,
+                                               onChoose: { _ in }, onCancel: {})
+            panel.present(picker, near: anchor) {}
+            try await Task.sleep(for: .milliseconds(300))
+            let size = panel.window.frame.size
+            XCTAssertGreaterThan(size.width, 200, "round \(round): the picker is \(size)")
+            XCTAssertGreaterThan(size.height, 200, "round \(round): the picker is \(size)")
+            panel.dismiss()
+            try await Task.sleep(for: .milliseconds(100))
+        }
+    }
+}
