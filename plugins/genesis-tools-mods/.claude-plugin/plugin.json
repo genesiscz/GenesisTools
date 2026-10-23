@@ -1,6 +1,6 @@
 {
     "name": "genesis-tools-mods",
-    "version": "1.9.0",
+    "version": "1.9.1",
     "description": "Claude Code mods for GenesisTools, each switched by mods.<feature> in the hooks file: the whole diff of a cut diff-hook message under the call's row, the subagent's model on its rows, idle compaction before the prompt cache expires, /decisions, links in the streamed reply, a git and PR band with /mod-git, [ask] on tool rows, live spinner progress, a prompt cache countdown across sessions, /tmp usage, a live agents band, and a ledger of what hooks inject with repeat dedupe; the git, agents and hooks parts open sidebars (/mod-git, /mod-agents, /mod-hooks). Every mod but the full diff and idle compaction starts off: tools agents hooks mods enable <name|all> --write. Configured with: tools agents hooks config set mods.<feature>.<field> <value> --write.",
     "author": {
         "name": "GenesisTools"

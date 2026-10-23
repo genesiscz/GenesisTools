@@ -49,6 +49,8 @@ export interface Host {
     copy: (text: string) => Promise<unknown>;
     /** Opens a URL with macOS `open`: a browser page, or a genesis.tools route. */
     openUrl: (url: string) => Promise<unknown>;
+    /** A short notice that fades by itself. */
+    toast: (text: string) => void;
     /** Draws this plugin's `ui.render` hooks again, so a band or pane shows the state just changed. */
     redraw: () => void;
 }

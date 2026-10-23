@@ -356,6 +356,7 @@ function hostOf($: EngineInterface): Host {
         closePane: (id) => $.ui.close({ id }),
         copy: (text) => $.ui.copy({ text }),
         openUrl: (url) => $.process.run(["open", url], { timeoutMs: 10_000 }),
+        toast: (text) => $.ui.toast(text),
         redraw: () => $.ui.invalidate("ui.render"),
     };
 }

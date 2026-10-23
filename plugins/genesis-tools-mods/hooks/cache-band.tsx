@@ -150,6 +150,21 @@ export async function markEnded(host: Host): Promise<void> {
     await mark(host, true).catch(() => undefined);
 }
 
+/** Focuses the cmux pane the row's session runs in (`tools claude cmux focus`); says so when no pane has it. */
+async function focusSession(host: Host, row: CacheRow): Promise<void> {
+    try {
+        const run = await host.run(["tools", "claude", "cmux", "focus", row.sessionId, "--first"], {
+            timeoutMs: 15_000,
+        });
+
+        if (run.exitCode !== 0) {
+            host.toast(`No cmux pane runs ${row.label}`);
+        }
+    } catch {
+        host.toast(`Could not focus ${row.label}: tools claude cmux focus did not run`);
+    }
+}
+
 /** The band's cache row, or null with nothing to show. */
 export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElement | null> {
     const held = rows;
@@ -159,7 +174,7 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
         return null;
     }
 
-    const { Box, Text } = ui;
+    const { Box, Button, Text } = ui;
     const now = Date.now();
     const warnMs = settings.warnMinutes * 60_000;
     const cell = (row: CacheRow) => {
@@ -174,14 +189,22 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
             ) : null;
         }
 
-        return left <= warnMs ? (
-            <Text key={row.sessionId} backgroundColor="red" color="white" bold>
-                {` ${name} ${shortDuration(left)} `}
-            </Text>
+        const text =
+            left <= warnMs ? (
+                <Text backgroundColor="red" color="white" bold>
+                    {` ${name} ${shortDuration(left)} `}
+                </Text>
+            ) : (
+                <Text dimColor>{`${name} ${Math.ceil(left / 60_000)}m`}</Text>
+            );
+
+        // Another session's chip is a Button: a press focuses the cmux pane that session runs in.
+        return row.own ? (
+            <Box key={row.sessionId}>{text}</Box>
         ) : (
-            <Text key={row.sessionId} dimColor>
-                {`${name} ${Math.ceil(left / 60_000)}m`}
-            </Text>
+            <Button key={row.sessionId} plain onPress={() => void focusSession(host, row)}>
+                {text}
+            </Button>
         );
     };
 
