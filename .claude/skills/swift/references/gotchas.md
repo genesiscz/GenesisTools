@@ -454,3 +454,30 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   never deinitialises and fires every frame for the life of the process. Stop it wherever the owner is replaced (a
   `didSet` on the property), and count live ones for a test (`EdgeFrameTicker.live`). Find them in a sample of the
   idle app: `EdgeFrameTicker.step` under `CA::Display::DisplayLink` with nothing animating.
+
+## Hangs that reached the user on 2026-10-23, and why they got through — 2026-10-23 21:13
+
+- **A face that does not start `HangWatch` reports nothing.** Only the hub, the review window and the link relay
+  called `HangWatch.start()`; the widget, the markdown viewer and the settings window (which hosts Clicky) never did.
+  So the spin detector added at 17:57 could not see the widget spin at 20:14, and the settings window's key-sound
+  stalls were invisible. Every face's entry point starts it now (94cf0dd8f4). Check a new face: `rg -n
+  'HangWatch.start' src/macos` must list it.
+- **A guess is not a fix.** The 17:11 widget hang was blamed on leaked display links at 55% and called fixed. The
+  20:14 sample had the same signature as the 17:11 one (`NSRunLoop.flushObservers → NSHostingView.beginTransaction →
+  GraphHost.runTransaction`, `LazySubviewPlacements.placeSubviews`, no display link). Compare a new sample's
+  signature with the old one's before you call a hang fixed, and keep every sample in scratch.
+- **A layout loop with no body updates.** In the widget's inbox list the main thread re-ran layout on every
+  run-loop pass while no view body was evaluated (RenderProbe counted only a clock tick). A replay of the real
+  snapshot in a hidden window (`WidgetScrollReplayTests`, env-gated) reproduced it at some scroll offsets (700 to
+  2000 passes per 0.5 s) and not at others, and with a plain `VStack` too, so neither the lazy stack nor the
+  overflow fade nor the fit measurement alone is the cause. The root cause is still open; what ships is the
+  breaker: `HangWatch.onSpin` closes the widget panel after a 5 s spin and says why.
+- **Do not measure the whole scroll content to learn two edges.** A background `GeometryReader` or
+  `onGeometryChange` on a scroll view's content lays out every row of a lazy list on each pass. On macOS 15 and
+  later read `onScrollGeometryChange` (`visibleRect`, `contentSize`) instead (`ScrollOverflowHints`,
+  `DocumentHeight` in LiveWidgetView).
+- **Never start audio hardware on the main thread, least of all inside an event tap.** Clicky stopped its
+  `AVAudioEngine` after 3 s idle and started it again inside the keyboard tap's callback: 360 ms to 1 s per start
+  while the output device was slow, every typing pause, and a tap that waits delays every key in every app. Start it
+  on its own queue and play the first click when it runs; keep the synchronous start only for offline rendering in
+  tests (`isInManualRenderingMode`).
