@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { _setFindClaudeCommandTestHooks, findClaudeCommand } from "./index";
+import {
+    _setFindClaudeCommandTestHooks,
+    claudeInstallLocations,
+    findClaudeCommand,
+    findClaudeExecutable,
+} from "./index";
 
 describe("findClaudeCommand timeout cleanup", () => {
     afterEach(() => {
@@ -25,5 +30,47 @@ describe("findClaudeCommand timeout cleanup", () => {
 
         const after = Bun.spawnSync(["pgrep", "-f", marker], { env: process.env }).stdout.toString().trim();
         expect(after).toBe("");
+    });
+});
+
+describe("findClaudeExecutable", () => {
+    const home = "/Users/alice";
+    const noShell = async () => null;
+
+    test("PATH wins, then the installers' folders, then the interactive shell", async () => {
+        expect(
+            await findClaudeExecutable({
+                which: () => "/usr/bin/claude",
+                exists: () => true,
+                shellLookup: noShell,
+                home,
+            })
+        ).toBe("/usr/bin/claude");
+
+        const local = `${home}/.local/bin/claude`;
+        expect(
+            await findClaudeExecutable({
+                which: () => null,
+                exists: (path) => path === local,
+                shellLookup: noShell,
+                home,
+            })
+        ).toBe(local);
+
+        expect(
+            await findClaudeExecutable({
+                which: () => null,
+                exists: () => false,
+                shellLookup: async () => "/opt/tools/claude",
+                home,
+            })
+        ).toBe("/opt/tools/claude");
+    });
+
+    test("a Mac without Claude Code answers null, so tools update skips the plugin steps instead of failing them", async () => {
+        expect(
+            await findClaudeExecutable({ which: () => null, exists: () => false, shellLookup: noShell, home })
+        ).toBeNull();
+        expect(claudeInstallLocations(home)).toContain(`${home}/.claude/local/claude`);
     });
 });

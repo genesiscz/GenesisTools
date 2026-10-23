@@ -6,6 +6,7 @@ import { createBuildProgressDisplay } from "@app/macos/lib/permissions/swift-pro
 import { discoverTools } from "@app/tools/lib/discovery";
 import * as p from "@clack/prompts";
 import { getAgentRuntimeContext } from "@genesiscz/utils/agent/runtime";
+import { findClaudeExecutable } from "@genesiscz/utils/claude";
 import { execTool, execToolInteractive, isInteractive, isVerbose, runTool, suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
@@ -27,10 +28,13 @@ import {
 import { offerMcpRegistration } from "./mcp-registration-offer";
 import { recoverFromFailedPull } from "./recovery";
 
+/** The `claude` binary the plugin steps run, resolved once before they start (`findClaudeExecutable`). */
+let claudeBin = "claude";
+
 /** Bun.spawn throws SYNCHRONOUSLY when the executable is missing, so a bare await never sees it. */
 async function runClaude(args: string[]): Promise<number> {
     try {
-        return await Bun.spawn(["claude", ...args], { stdio: ["inherit", "inherit", "inherit"] }).exited;
+        return await Bun.spawn([claudeBin, ...args], { stdio: ["inherit", "inherit", "inherit"] }).exited;
     } catch (err) {
         logger.warn({ err, args }, "update: could not run the claude CLI");
         return 127;
@@ -43,7 +47,7 @@ async function claudeJson<T>(args: string[]): Promise<T | null> {
     let exitCode: number;
 
     try {
-        const proc = Bun.spawn(["claude", ...args], { stdio: ["ignore", "pipe", "ignore"] });
+        const proc = Bun.spawn([claudeBin, ...args], { stdio: ["ignore", "pipe", "ignore"] });
         stdout = await new Response(proc.stdout).text();
         exitCode = await proc.exited;
     } catch (err) {
@@ -149,14 +153,31 @@ const program = new Command()
         // 3b. Long-running servers (daemons, gateways, dashboards) keep the code they started with.
         await offerServiceRestarts();
 
-        // 4. Claude Code plugin management
+        // 4. Claude Code plugin management. Without a claude binary there is nothing to run: asking first and then
+        // failing every step with a stack trace is what a Mac without Claude Code on PATH used to get.
         const inClaudeCode = getAgentRuntimeContext().isInAgent;
-        const runClaudeUpdates = await p.confirm({
-            message: inClaudeCode
-                ? "Run Claude plugin update and marketplace update?"
-                : "Run Claude marketplace update, add, and plugin install?",
-            initialValue: true,
-        });
+        const resolvedClaude = await findClaudeExecutable();
+        logger.debug({ claude: resolvedClaude }, "update: claude CLI for the plugin steps");
+
+        if (resolvedClaude) {
+            claudeBin = resolvedClaude;
+        } else {
+            out.println(
+                pc.yellow(
+                    "\n  Claude Code CLI not found (no `claude` on PATH or in its install folders); skipping the plugin steps."
+                )
+            );
+            out.println(pc.dim(`  Install Claude Code, then run: ${toolCommand("update")}`));
+        }
+
+        const runClaudeUpdates =
+            resolvedClaude !== null &&
+            (await p.confirm({
+                message: inClaudeCode
+                    ? "Run Claude plugin update and marketplace update?"
+                    : "Run Claude marketplace update, add, and plugin install?",
+                initialValue: true,
+            }));
         if (p.isCancel(runClaudeUpdates)) {
             p.cancel("Cancelled");
             process.exit(0);

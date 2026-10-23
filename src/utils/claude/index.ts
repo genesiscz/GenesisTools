@@ -5,6 +5,7 @@
 
 export { cleanPromptText, cleanTranscriptText } from "../ai/transcripts/clean-text";
 export * from "./auth";
+export * from "./executable";
 export * from "./projects";
 export { humanTextOf } from "./session.utils";
 export { extractToolInputSummary, extractToolResultText, isAssistantEndTurn } from "./session-helpers";
