@@ -589,6 +589,14 @@ describe("decision store", () => {
         expect(decisionQuestion("Done.\n```\nconst decision = ask('choose?');\n```")).toBeNull();
         expect(decisionQuestion("Done. The `decision` field stays.\nShould I push?")).toBeNull();
         expect(decisionQuestion("Martin wrote:\n> which decision do you want?\nDone.")).toBeNull();
+        expect(
+            decisionQuestion(
+                '- Pause worked, then it asked "Discard 0:21 of recording?". Discard closed it.\nThis happened on the Decisions tab.'
+            )
+        ).toBeNull();
+        expect(decisionQuestion('❓ DECISION 5: Should I rename "foo" to "bar"?')).toBe(
+            '❓ DECISION 5: Should I rename "foo" to "bar"?'
+        );
         expect(decisionQuestion(`Decide: ${"x".repeat(300)}?`)).toHaveLength(200);
     });
 

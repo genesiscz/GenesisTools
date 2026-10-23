@@ -354,6 +354,8 @@ const QUESTION_END = /\?(?=[\s)\]"'*_]|$)/;
 const FENCE = /^\s*(`{3,}|~{3,})/;
 const QUOTED_LINE = /^\s*>/;
 const INLINE_CODE = /`[^`\n]*`/g;
+/** Text in quotation marks: a dialog's own question or a tab name the reply quotes, not the reply asking. */
+const QUOTED_TEXT = /"[^"\n]*"|“[^”\n]*”/g;
 const QUESTION_LINE_MAX = 200;
 
 /** The reply's own prose, line by line: fenced code blocks, `>` quoted lines and inline code are left out. */
@@ -387,18 +389,20 @@ function proseLines(reply: string): string[] {
 
 /**
  * The line of a reply that asks the user to decide, or null. The prose (see `proseLines`) must hold a decision cue
- * (`DECISION_CUE`) and a sentence that ends in "?". The line returned is the first question that carries the cue,
- * else the first question.
+ * (`DECISION_CUE`) and a sentence that ends in "?", both outside quotation marks: a reply that quotes a dialog's
+ * "Discard 0:21 of recording?" and names the "Decisions" tab asks nothing (2026-10-23). The line returned is the first
+ * question that carries the cue, else the first question.
  */
 export function decisionQuestion(reply: string): string | null {
     const lines = proseLines(reply);
+    const own = (line: string) => line.replace(QUOTED_TEXT, "");
 
-    if (!lines.some((line) => DECISION_CUE.test(line))) {
+    if (!lines.some((line) => DECISION_CUE.test(own(line)))) {
         return null;
     }
 
-    const questions = lines.filter((line) => QUESTION_END.test(line));
-    const line = questions.find((question) => DECISION_CUE.test(question)) ?? questions[0];
+    const questions = lines.filter((line) => QUESTION_END.test(own(line)));
+    const line = questions.find((question) => DECISION_CUE.test(own(question))) ?? questions[0];
 
     if (!line) {
         return null;
