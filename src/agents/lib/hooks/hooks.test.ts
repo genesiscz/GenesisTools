@@ -678,12 +678,12 @@ describe("applySetting", () => {
     it("the other mods keys are set and checked by the type of their default", () => {
         const set = (key: string, value: string) => applySetting(DEFAULT_HOOKS_CONFIG, key, value).mods;
 
-        expect(set("mods.agentModel.format", "short").agentModel).toEqual({ enabled: true, format: "short" });
+        expect(set("mods.agentModel.format", "short").agentModel).toEqual({ enabled: false, format: "short" });
         expect(() => set("mods.agentModel.format", "tiny")).toThrow("label or short");
-        expect(set("mods.links", "false").links.enabled).toBe(false);
+        expect(set("mods.links", "true").links.enabled).toBe(true);
         expect(set("mods.cacheBand.warnMinutes", "15").cacheBand.warnMinutes).toBe(15);
         expect(() => set("mods.cacheBand.warnMinutes", "75")).toThrow("1 to 59");
-        expect(set("mods.hooks.dedupe", "false").hooks).toEqual({ tokens: true, dedupe: false });
+        expect(set("mods.hooks.dedupe", "true").hooks).toEqual({ tokens: false, dedupe: true });
         expect(() => set("mods.nonsense.enabled", "true")).toThrow("Unknown mods key");
         expect(() => set("mods.links.colour", "red")).toThrow("Unknown mods key");
     });

@@ -152,7 +152,12 @@ function machine(on: On): void {
         "/repo/notes/plan.md": "file",
     };
 
-    on("fs.read", async () => {
+    // Every mod past the full diff starts off; the link fixer is turned on through the hooks file.
+    on("fs.read", async (_$, e) => {
+        if (e.path === "/home/test/.genesis-tools/agents/hooks.json") {
+            return { value: JSON.stringify({ mods: { links: { enabled: true }, decisions: { enabled: true } } }) };
+        }
+
         throw new Error("no file");
     });
     on("fs.stat", async (_$, e) => {

@@ -63,12 +63,21 @@ export function overflowPart(path: string, patch: string): FullDiffPart {
  */
 export const DEFERRED_NOTE_SUFFIX = ".task";
 
+/**
+ * The note of a call whose diff the hook's own message showed (the session has no mod mark): the mod draws only
+ * `<call>.md`, so this name keeps any loaded copy of it from drawing the diff a second time. A session that loaded the
+ * mod before the mark existed never sets it, and drew such calls twice (col-tools, 2026-10-23). `diff show <call>` still
+ * finds it, by prefix.
+ */
+export const HOOK_NOTE_SUFFIX = ".hook";
+
 export function writeFullDiff(options: {
     toolUseId: string | undefined;
     command: string;
     parts: FullDiffPart[];
     notShown: string[];
     deferred?: boolean;
+    shownByHook?: boolean;
 }): string | null {
     const call = safeSegment(options.toolUseId);
 
@@ -103,7 +112,8 @@ export function writeFullDiff(options: {
             ? ["## Changed, past the file cap", "", ...options.notShown.map((path) => `- ${path}`), ""]
             : []),
     ];
-    const path = join(fullDiffDir(), `${call}${options.deferred ? DEFERRED_NOTE_SUFFIX : ""}.md`);
+    const suffix = options.deferred ? DEFERRED_NOTE_SUFFIX : options.shownByHook ? HOOK_NOTE_SUFFIX : "";
+    const path = join(fullDiffDir(), `${call}${suffix}.md`);
 
     try {
         mkdirSync(fullDiffDir(), { recursive: true, mode: 0o700 });

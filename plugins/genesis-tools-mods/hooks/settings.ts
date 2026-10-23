@@ -25,19 +25,20 @@ export interface ModsSettings {
     hooks: { tokens: boolean; dedupe: boolean };
 }
 
+/** Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`. */
 export const MODS_DEFAULTS: ModsSettings = {
     diff: { fullDiff: true, collapseGitSync: true },
     idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
-    agentModel: { enabled: true, format: "label" },
-    decisions: { enabled: true },
-    links: { enabled: true },
-    git: { enabled: true },
-    askRow: { enabled: true },
-    spinner: { enabled: true },
-    cacheBand: { enabled: true, warnMinutes: 10, others: true },
-    tmpUsage: { enabled: true, minutes: 5 },
-    agentsBand: { enabled: true, warnMinutes: 60 },
-    hooks: { tokens: true, dedupe: true },
+    agentModel: { enabled: false, format: "label" },
+    decisions: { enabled: false },
+    links: { enabled: false },
+    git: { enabled: false },
+    askRow: { enabled: false },
+    spinner: { enabled: false },
+    cacheBand: { enabled: false, warnMinutes: 10, others: true },
+    tmpUsage: { enabled: false, minutes: 5 },
+    agentsBand: { enabled: false, warnMinutes: 60 },
+    hooks: { tokens: false, dedupe: false },
 };
 
 function whole(value: unknown, min: number, max: number, fallback: number): number {

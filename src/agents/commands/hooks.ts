@@ -46,9 +46,11 @@ import {
 import {
     claudePlugin,
     claudeUserSettingsPath,
+    MOD_SWITCHES,
     MODS_PLUGIN,
     MODS_SCOPES,
     type ModsScope,
+    modSwitchKeys,
     modsPluginState,
     modsWatchState,
     PLUGIN_DIRS_VAR,
@@ -736,7 +738,7 @@ function registerMods(hooks: Command): void {
     const mods = hooks
         .command("mods")
         .description(
-            `Claude Code mods (${MODS_PLUGIN}): status, install, uninstall. Settings: mods.* in the hooks config`
+            `Claude Code mods (${MODS_PLUGIN}): status, enable, disable, install, uninstall. Settings: mods.* in the hooks config`
         );
 
     mods.command("status", { isDefault: true })
@@ -851,6 +853,18 @@ function registerMods(hooks: Command): void {
             );
         });
 
+    for (const on of [true, false]) {
+        const verb = on ? "enable" : "disable";
+
+        mods.command(verb)
+            .description(`Turn mods ${on ? "on" : "off"} by name, or all: ${Object.keys(MOD_SWITCHES).join(", ")}`)
+            .argument("[names...]", "The mods to switch")
+            .option("--write", "Actually write; without it this is a dry run")
+            .action((names: string[], options: { write?: boolean }) => {
+                switchMods({ names, on, write: Boolean(options.write) });
+            });
+    }
+
     mods.command("install")
         .description("Install the mods plugin from this repository's marketplace")
         .option("--scope <scope>", `Where Claude Code records it: ${MODS_SCOPES.join(", ")}`, "user")
@@ -873,6 +887,47 @@ function registerMods(hooks: Command): void {
         .action((options: { write?: boolean }) => {
             runPluginCommand({ args: ["uninstall", MODS_PLUGIN], write: Boolean(options.write) });
         });
+}
+
+/** `hooks mods enable|disable <names...>`: one `config set` per switch key of the named mods. */
+function switchMods({ names, on, write }: { names: string[]; on: boolean; write: boolean }): void {
+    const { keys, unknown } = modSwitchKeys(names);
+    const verb = on ? "enable" : "disable";
+
+    if (names.length === 0 || unknown.length > 0) {
+        if (unknown.length > 0) {
+            ui.err(`No such mod: ${unknown.join(", ")}`);
+        }
+
+        ui.raw(`Mods: all, ${Object.keys(MOD_SWITCHES).join(", ")}`);
+        ui.raw(
+            suggestCommand("tools agents", { replaceCommand: ["hooks", "mods", verb, "git", "agentsBand", "--write"] })
+        );
+        process.exitCode = 1;
+        return;
+    }
+
+    for (const key of keys) {
+        try {
+            setHooksConfig(key, String(on), { write });
+        } catch (err) {
+            logger.debug({ err, key }, "Rejected a mods switch");
+            ui.err(err instanceof Error ? err.message : String(err));
+            process.exitCode = 1;
+            return;
+        }
+
+        ui.raw(`${pc.bold(key)} → ${on}`);
+    }
+
+    ui.raw(pc.dim(hooksConfigPath()));
+
+    if (!write) {
+        ui.raw(pc.yellow("dry run: nothing was written. Pass --write to apply."));
+        return;
+    }
+
+    ui.raw(pc.dim("A running session reads the change at its next turn; a band redraws on its next refresh."));
 }
 
 function runPluginCommand({ args, write }: { args: string[]; write: boolean }): void {

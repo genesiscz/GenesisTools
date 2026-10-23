@@ -1833,6 +1833,7 @@ export function runDiffPost({
             parts: [...blocks.flatMap((block) => (block.source ? [block.source] : [])), ...overflow],
             notShown: notShown.filter((path) => !overflow.some((part) => part.path === path)),
             deferred,
+            shownByHook: true,
         });
         const line = path ? fullDiffLine(path, diff.fullDiff) : null;
 

@@ -6,6 +6,14 @@ import { expect, mock, test } from "claude-code/testing";
 /** The engine's own spawn, beneath the plugin: records the description the plugin passed down. */
 function engine(on: On, seen: string[]): void {
     mock.env(on, { HOME: "/home/test" });
+    // Every mod past the full diff starts off; this test turns its own on through the hooks file.
+    on("fs.read", async (_$, e) => {
+        if (e.path === "/home/test/.genesis-tools/agents/hooks.json") {
+            return { value: JSON.stringify({ mods: { agentModel: { enabled: true } } }) };
+        }
+
+        throw new Error("no file");
+    });
     on("agent.spawn", async (_$, e) => {
         seen.push(e.description);
 
@@ -58,6 +66,14 @@ test("a spawn that names no model keeps its description", async ($, on) => {
 /** The model's response beneath the plugin: an Agent call that names a model, an Agent call that does not, a Bash call. */
 function response(on: On): void {
     mock.env(on, { HOME: "/home/test" });
+    // Every mod past the full diff starts off; this test turns its own on through the hooks file.
+    on("fs.read", async (_$, e) => {
+        if (e.path === "/home/test/.genesis-tools/agents/hooks.json") {
+            return { value: JSON.stringify({ mods: { agentModel: { enabled: true } } }) };
+        }
+
+        throw new Error("no file");
+    });
     on("turn.step", async function* () {
         yield { kind: "tool", index: 0, id: "toolu_a", name: "Agent" };
         yield { kind: "input", index: 0, json: '{"description":"Pair one",' };

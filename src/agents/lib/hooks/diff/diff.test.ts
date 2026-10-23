@@ -4024,6 +4024,8 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
             expect(stripAnsi(decision.message ?? "")).toContain(`Full diff: ${path}`);
             expect((decision.message ?? "").length).toBeLessThanOrEqual(900);
             expect(readFileSync(path, "utf8")).toContain("+line 79");
+            // The message showed the diff, so the note's name keeps any copy of the full-diff mod from drawing it too.
+            expect(basename(path)).toEndWith(".hook.md");
         } finally {
             rmSync(join(repo, "big.ts"), { force: true });
             rmSync(path, { force: true });
@@ -4045,6 +4047,7 @@ describe("the claude theme: Claude Code's own Bash diff, drawn by the hook", () 
             expect(decision.message).toBeUndefined();
             expect(decision.files).toEqual([join(repo, "small.ts")]);
             expect(readFileSync(path, "utf8")).toContain("+two");
+            expect(basename(path)).toMatch(/^call-mod-\d+\.md$/);
         } finally {
             rmSync(join(repo, "small.ts"), { force: true });
             rmSync(path, { force: true });

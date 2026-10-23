@@ -237,9 +237,11 @@ turn, a context under `mods.idleCompact.minTokens` (200,000) and a session with 
 appends a notice that starts `Compacted while idle`. `tools agents hooks config set mods.idleCompact false --write`
 turns it off, also for a timer already armed. A reload of the mod drops the timer until the next turn ends.
 
-**The daily mods.** The same plugin carries more features, each an object under `mods` in the hooks file, all on
-by default; `config set mods.<feature> false --write` turns one off (it means `mods.<feature>.enabled`), and the
-flat keys of before 2026-10-23 (`mods.fullDiff`, `mods.idleCompactMinutes`, …) are still read and still set.
+**The daily mods.** The same plugin carries more features, each an object under `mods` in the hooks file, all off
+by default. `tools agents hooks mods enable git agentsBand --write` turns mods on by name (`all` is every mod,
+`disable` turns them off, `mods status` shows each one); `config set mods.<feature> true --write` does the same for one
+(it means `mods.<feature>.enabled`). The flat keys of before 2026-10-23 (`mods.fullDiff`, `mods.idleCompactMinutes`, …)
+are still read and still set.
 Each feature appends what it did to `~/.genesis-tools/agents/mods-log/<feature>.jsonl`, so its heuristics can be
 checked against real use.
 

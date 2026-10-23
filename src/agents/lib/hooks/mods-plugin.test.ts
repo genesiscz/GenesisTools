@@ -24,6 +24,7 @@ import { MODS_DEFAULTS, modsSettings } from "../../../../plugins/genesis-tools-m
 import { DEFAULT_HOOKS_CONFIG } from "./config";
 import { overflowPart } from "./diff/full";
 import { MOD_MAX_PATCH_CHARS, MODS_SESSION_VAR } from "./diff/run";
+import { MOD_SWITCHES, modSwitchKeys } from "./mods";
 
 const NOTE = [
     "# Diff of toolu_x",
@@ -248,6 +249,22 @@ describe("the mods section", () => {
         expect(MODS_DEFAULTS).toEqual(DEFAULT_HOOKS_CONFIG.mods);
     });
 
+    it("starts every mod off but the full diff and the idle compaction, and each one has a switch by name", () => {
+        const valueAt = (key: string): unknown =>
+            key
+                .split(".")
+                .slice(1)
+                .reduce<unknown>(
+                    (at, part) => (typeof at === "object" && at !== null ? Reflect.get(at, part) : undefined),
+                    MODS_DEFAULTS
+                );
+        const on = Object.entries(MOD_SWITCHES).filter(([, keys]) => keys.every((key) => valueAt(key) === true));
+        expect(on.map(([name]) => name)).toEqual(["diff", "idleCompact"]);
+        expect(modSwitchKeys(["git", "hooks", "git"]).keys).toEqual(["mods.git.enabled", "mods.hooks.tokens"]);
+        expect(modSwitchKeys(["all"]).keys).toHaveLength(Object.keys(MOD_SWITCHES).length);
+        expect(modSwitchKeys(["gti"]).unknown).toEqual(["gti"]);
+    });
+
     it("the plugin reads the nested keys, and the flat keys of before where the object leaves a field out", () => {
         const read = modsSettings(
             SafeJSON.stringify({
@@ -265,10 +282,10 @@ describe("the mods section", () => {
 
         expect(read.diff).toEqual({ fullDiff: false, collapseGitSync: false });
         expect(read.idleCompact).toEqual({ enabled: false, minutes: 40, minTokens: 200_000 });
-        expect(read.agentModel).toEqual({ enabled: true, format: "short" });
+        expect(read.agentModel).toEqual({ enabled: false, format: "short" });
         // Out of range keeps the default, as the CLI does.
         expect(read.cacheBand.warnMinutes).toBe(10);
-        expect(read.hooks).toEqual({ tokens: true, dedupe: false });
+        expect(read.hooks).toEqual({ tokens: false, dedupe: false });
         expect(modsSettings("{ not json")).toEqual(MODS_DEFAULTS);
     });
 });

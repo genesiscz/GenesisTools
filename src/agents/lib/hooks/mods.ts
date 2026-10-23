@@ -15,6 +15,32 @@ export const MODS_PLUGIN = "genesis-tools-mods@genesis-tools";
 export const MODS_SCOPES = ["user", "project", "local"] as const;
 export type ModsScope = (typeof MODS_SCOPES)[number];
 
+/** Each mod by the name `hooks mods enable|disable` takes, with the hooks-config keys that switch it. */
+export const MOD_SWITCHES: Record<string, string[]> = {
+    diff: ["mods.diff.fullDiff"],
+    idleCompact: ["mods.idleCompact.enabled"],
+    agentModel: ["mods.agentModel.enabled"],
+    decisions: ["mods.decisions.enabled"],
+    links: ["mods.links.enabled"],
+    git: ["mods.git.enabled"],
+    askRow: ["mods.askRow.enabled"],
+    spinner: ["mods.spinner.enabled"],
+    cacheBand: ["mods.cacheBand.enabled"],
+    tmpUsage: ["mods.tmpUsage.enabled"],
+    agentsBand: ["mods.agentsBand.enabled"],
+    hooks: ["mods.hooks.tokens"],
+    hooksDedupe: ["mods.hooks.dedupe"],
+};
+
+/** The keys of the named mods (`all` is every one), and the names that are no mod. */
+export function modSwitchKeys(names: readonly string[]): { keys: string[]; unknown: string[] } {
+    const picked = names.includes("all") ? Object.keys(MOD_SWITCHES) : names;
+    const unknown = picked.filter((name) => !(name in MOD_SWITCHES));
+    const keys = picked.flatMap((name) => MOD_SWITCHES[name] ?? []);
+
+    return { keys: [...new Set(keys)], unknown };
+}
+
 export interface ModsPluginState {
     installed: boolean;
     enabled: boolean;

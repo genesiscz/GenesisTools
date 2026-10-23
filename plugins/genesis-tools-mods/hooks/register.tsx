@@ -381,6 +381,8 @@ const FEATURES: Feature[] = [decisions, gitBand, spinner, cacheBand, tmpUsage, a
 export const register: Register = (on) => {
     on("session.start", async ($, e, next) => {
         const host = hostOf($);
+        // A reload runs `session.start` again in the middle of a turn: mark the session at once, not at the next turn.
+        await announceSession($);
 
         for (const feature of FEATURES) {
             for (const command of feature.commands ?? []) {
@@ -411,6 +413,8 @@ export const register: Register = (on) => {
 
     on("tool.call", async ($, e, next) => {
         const host = hostOf($);
+        // Before the call runs, so its PostToolUse hook sees the mark; a no-op once this module set it.
+        await announceSession($);
         rememberToolPaths(e);
         const ends = FEATURES.flatMap((feature) => feature.beforeTool?.(host, e) ?? []);
 
