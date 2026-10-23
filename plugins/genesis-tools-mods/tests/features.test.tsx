@@ -4,10 +4,16 @@ import { bareDescription, lastSaidOf } from "../hooks/agents-band";
 import { quoteOf } from "../hooks/ask-row";
 import { cacheRowsOf, cacheTone } from "../hooks/cache-band";
 import {
+    addCheckout,
+    addedCheckouts,
+    folderSuggestions,
     forgetCheckouts,
     gitWriteDirs,
+    hideCheckout,
     noteToolCall,
     pickRoots,
+    rankByName,
+    removeAdded,
     sessionCheckouts,
     writtenFiles,
 } from "../hooks/checkouts";
@@ -17,15 +23,17 @@ import {
     checkCounts,
     checksOf,
     fitLabels,
+    gitBand,
     hubUrlOf,
     middleCut,
     namesCheckouts,
     parseNumstat,
     parseStatus,
+    wordingFor,
 } from "../hooks/git-band";
 import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
 import { targetFor } from "../hooks/links";
-import type { Host } from "../hooks/shared";
+import { forgetSettings, type Host } from "../hooks/shared";
 import { toolLabel } from "../hooks/spinner";
 
 /** A Mac where every GenesisTools link opens, on an invented link host. */
@@ -131,6 +139,22 @@ test("git band: the checkouts a command or an edit works in", async () => {
         branch: "feat/2026…-unified",
     });
     expect(fitLabels(undefined, "feat/2026-10-13-enhancements-unified", 20).branch).toBe("feat/2026-…s-unified");
+    const busy = {
+        root: "/work/main",
+        why: "folder" as const,
+        at: 0,
+        branch: "feat/2026-10-13-enhancements-unified",
+        ahead: 27,
+        behind: 2,
+        dirty: 13,
+        added: 862,
+        removed: 125,
+        prs: [],
+    };
+    // 110 columns hold the words; 55 hold the signs (↑27 ↓2 ●13 +862 −125) beside a cut branch.
+    expect(wordingFor(busy, 110, false, true)).toBe("full");
+    expect(wordingFor(busy, 55, false, true)).toBe("signs");
+    expect(wordingFor(busy, 110, false, false)).toBe("signs");
     expect(namesCheckouts([{ root: "/work/main" }], "/work/main")).toBe(false);
     expect(namesCheckouts([{ root: "/work/wt-a" }], "/work/main")).toBe(true);
 });
@@ -138,10 +162,12 @@ test("git band: the checkouts a command or an edit works in", async () => {
 /**
  * A session started in /work/main that works in the worktrees /work/wt-a and /work/wt-b; its GenesisTools journal
  * also names a plan in the main checkout's ignored `.claude/plans/` and a scratch file outside every repository.
+ * zoxide knows /home/test/code/playground (a checkout) and /home/test/notes (none); the git band is on.
  */
 function checkoutHost(): Host {
     const store = new Map<string, unknown>();
-    const repos = new Set(["/work/main/.git", "/work/wt-a/.git", "/work/wt-b/.git"]);
+    const repos = new Set(["/work/main/.git", "/work/wt-a/.git", "/work/wt-b/.git", "/home/test/code/playground/.git"]);
+    const dirs = new Set(["/work/wt-a", "/home/test/code/playground", "/home/test/code/play-old", "/home/test/notes"]);
     const mtimes: Record<string, number> = {
         "/work/main/.claude/plans/p.md": 900,
         "/work/main/.claude/plans/p2.md": 950,
@@ -160,6 +186,10 @@ function checkoutHost(): Host {
 
     return {
         async run(argv, init) {
+            if (argv.join(" ") === "zoxide query --list") {
+                return done("/home/test/notes\n/home/test/code/playground\n/home/test/code/play-old\n", 0);
+            }
+
             if (argv[3] !== "check-ignore") {
                 return done("", 1);
             }
@@ -175,16 +205,32 @@ function checkoutHost(): Host {
                 return journal;
             }
 
+            if (path === "/home/test/.genesis-tools/agents/hooks.json") {
+                return JSON.stringify({ mods: { git: { enabled: true } } });
+            }
+
             throw new Error(`ENOENT ${path}`);
         },
         async write() {},
-        async list() {
-            return [];
+        async list(path) {
+            return [...dirs]
+                .filter((dir) => dir.startsWith(`${path}/`) && !dir.slice(path.length + 1).includes("/"))
+                .map((dir) => ({
+                    name: dir.slice(path.length + 1),
+                    kind: "dir" as const,
+                    size: 0,
+                    mtimeMs: 0,
+                    isLink: false,
+                }));
         },
         async exists(path) {
             return repos.has(path);
         },
         async stat(path) {
+            if (dirs.has(path)) {
+                return { kind: "dir", size: 0, mtimeMs: 0, isLink: false };
+            }
+
             const mtimeMs = mtimes[path];
 
             if (mtimeMs === undefined) {
@@ -221,7 +267,9 @@ function checkoutHost(): Host {
         async openPane() {},
         async togglePane() {},
         async closePane() {},
-        async copy() {},
+        async copy() {
+            return { isCopied: true };
+        },
         async openUrl() {},
         toast() {},
         redraw() {},
@@ -242,6 +290,56 @@ test("git band: a session in the main checkout that works in two worktrees shows
     // A reload starts this module over; the store keeps the order, and the journal is not read again.
     forgetCheckouts();
     expect(await roots()).toEqual(["/work/wt-a", "/work/wt-b"]);
+
+    // hide drops a worked-in checkout until the session works there again.
+    await hideCheckout(host, "/work/wt-b");
+    expect(await roots()).toEqual(["/work/wt-a"]);
+});
+
+test("git band: folders added by hand, and the folders proposed for them", async () => {
+    forgetCheckouts();
+    forgetSettings();
+    const host = checkoutHost();
+
+    expect(rankByName(["/a/old-play", "/a/notes", "/b/Playground", "/c/play/x"], "play")).toEqual([
+        "/b/Playground",
+        "/a/old-play",
+        "/c/play/x",
+    ]);
+    expect((await folderSuggestions(host, "playg")).map((found) => found.path)).toEqual(["/home/test/code/playground"]);
+    expect(await folderSuggestions(host, "~/code/pl")).toEqual([
+        { path: "/home/test/code/play-old", from: "folder" },
+        { path: "/home/test/code/playground", from: "folder" },
+    ]);
+
+    expect(await addCheckout(host, "~/notes")).toEqual({ error: "/home/test/notes is in no git checkout" });
+    expect(await addCheckout(host, "~/nowhere")).toEqual({ error: "/home/test/nowhere is not a folder" });
+    expect(await addCheckout(host, "~/code/playground")).toEqual({ root: "/home/test/code/playground" });
+    expect(await addedCheckouts(host)).toEqual(["/home/test/code/playground"]);
+    // Before the session works anywhere its own folder stays, then the added ones.
+    expect(pickRoots([], "/work/main", { checkouts: 1, cwd: "touched" }, await addedCheckouts(host))).toEqual([
+        "/work/main",
+        "/home/test/code/playground",
+    ]);
+    // Added folders come first and do not count against `checkouts`.
+    expect(
+        pickRoots(
+            [{ root: "/work/wt-a", at: 1 }],
+            "/work/main",
+            { checkouts: 1, cwd: "touched" },
+            await addedCheckouts(host)
+        )
+    ).toEqual(["/home/test/code/playground", "/work/wt-a"]);
+
+    const typed = "/mod-git add playg";
+    const rows = await gitBand.autocomplete?.(host, { text: typed, cursor: typed.length, token: "playg", start: 13 });
+    expect(rows).toEqual([
+        { text: "/home/test/code/playground", label: "~/code/playground", description: "zoxide · git" },
+    ]);
+    expect(await gitBand.autocomplete?.(host, { text: "playg", cursor: 5, token: "playg", start: 0 })).toEqual([]);
+
+    expect(await removeAdded(host, "playground")).toBe("/home/test/code/playground");
+    expect(await addedCheckouts(host)).toEqual([]);
 });
 
 test("agents sidebar: an agent's last words from its transcript's end, past a byte-cut first line", async () => {

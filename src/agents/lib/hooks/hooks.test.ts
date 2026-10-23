@@ -691,6 +691,9 @@ describe("applySetting", () => {
         expect(() => set("mods.git.checkouts", "9")).toThrow("1 to 6");
         expect(set("mods.git.cwd", "always").git.cwd).toBe("always");
         expect(() => set("mods.git.cwd", "never")).toThrow("touched or always");
+        expect(set("mods.sidebar.hints", "false").sidebar).toEqual({ hints: false, feedback: "line" });
+        expect(set("mods.sidebar.feedback", "both").sidebar.feedback).toBe("both");
+        expect(() => set("mods.sidebar.feedback", "popup")).toThrow("line, toast or both");
         expect(set("mods.links", "true").links.enabled).toBe(true);
         expect(set("mods.cacheBand.warnMinutes", "15").cacheBand.warnMinutes).toBe(15);
         expect(() => set("mods.cacheBand.warnMinutes", "75")).toThrow("1 to 59");

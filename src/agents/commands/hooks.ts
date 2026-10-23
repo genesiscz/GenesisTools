@@ -797,6 +797,7 @@ function registerMods(hooks: Command): void {
                 ["mods.agentsBand", mods.agentsBand.enabled, `red past ${mods.agentsBand.warnMinutes} min`],
                 ["mods.hooks.tokens", mods.hooks.tokens, ""],
                 ["mods.hooks.dedupe", mods.hooks.dedupe, ""],
+                ["mods.sidebar.hints", mods.sidebar.hints, `feedback ${mods.sidebar.feedback}`],
             ];
 
             for (const [name, on, detail] of rows) {

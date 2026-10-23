@@ -270,6 +270,18 @@ checked against real use.
   record yet starts from its GenesisTools file journal. `/mod-git pr add` acts on the first line's checkout.
   Each line fits the band's width: the counts and the PRs keep theirs, and the checkout name (at most 40% of what
   is left when both cannot fit) and the branch keep their start and end. Only the first line shares the hooks chip.
+  When the words do not fit, every line says its counts in signs (`↑27 ↓2 ●13 +862 −125`), then the PRs as bare
+  numbers. `/mod-git add <folder>` (the prompt's typeahead proposes folders, zoxide's first when it is installed:
+  `GenesisPlayg` finds the GenesisPlayground path) and the sidebar's field put any checkout in this session's band;
+  `/mod-git remove <folder>` and the sidebar's `remove` take it out, and `hide` drops a worked-in checkout until
+  the session works there again. In the sidebar, a PR's `track` keeps it in its checkout's line after a branch
+  switch (`/mod-git pr add`); the branch's own PR shows anyway, so its `hide` takes it out of the band and `show`
+  puts it back.
+- `mods.sidebar` (`hints` on, `feedback` `line`, `toast` or `both`): in a sidebar, the line under a row of buttons
+  says what the focused one does, and after a press what happened (`✓ Copied [#507 (…)](…)`). The engine runs no
+  plugin code on hover, so the hint follows the focus ring: Tab and the arrows in a pane that holds the keyboard, or
+  a click. A pane docks beside the transcript only in a fullscreen session; elsewhere Claude Code draws it above the
+  prompt. The plugin cannot choose (`$.ui.open` takes no placement).
 - `mods.askRow`: `[ask]` beside a finished tool row puts the row, quoted, into the prompt.
 - `mods.spinner`: the spinner line names the running tool, its time and the working subagents.
 - `mods.cacheBand` (`cautionMinutes` 20, `warnMinutes` 10, `others`): the prompt cache countdown, yellow under

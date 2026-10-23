@@ -80,6 +80,7 @@ export const SETTABLE_KEYS = [
     "mods.tmpUsage.<enabled|minutes>",
     "mods.agentsBand.<enabled|warnMinutes>",
     "mods.hooks.<tokens|dedupe>",
+    "mods.sidebar.<hints|feedback>",
 ] as const;
 
 /** The flat keys of before 2026-10-23, still taken; `mods.<feature>` alone means its `enabled`. */
@@ -139,6 +140,12 @@ function withMods(mods: ModsConfig, key: string, value: string): ModsConfig {
     } else if (feature === "git" && field === "cwd") {
         if (value !== "touched" && value !== "always") {
             throw new Error(`${key} takes touched or always, not ${SafeJSON.stringify(value)}`);
+        }
+
+        part[field] = value;
+    } else if (feature === "sidebar" && field === "feedback") {
+        if (value !== "line" && value !== "toast" && value !== "both") {
+            throw new Error(`${key} takes line, toast or both, not ${SafeJSON.stringify(value)}`);
         }
 
         part[field] = value;

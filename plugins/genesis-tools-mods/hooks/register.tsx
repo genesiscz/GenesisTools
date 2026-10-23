@@ -31,6 +31,7 @@ import {
     sectionsOfCalls,
 } from "./sections";
 import { agentsDir, type Feature, type Host, readHooksFile, settingsOf } from "./shared";
+import { focusOf, noteFocus } from "./sidebar";
 import { progressSuffix, spinner } from "./spinner";
 import { tmpRow, tmpUsage } from "./tmp-usage";
 
@@ -555,14 +556,37 @@ export const register: Register = (on) => {
             return next(e);
         }
 
+        const host = hostOf($);
         const kit = {
             ui: $.ui.resolve(e),
             columns: Math.max(1, e.props.bodyColumns - (e.props.placement === "dock" ? 1 : 0)),
             rows: e.props.scroll.bodyRows,
             placement: e.props.placement,
+            focused: focusOf(e.requestId),
+            hints: (await settingsOf(host)).sidebar.hints,
         };
 
-        return sidebar.draw(hostOf($), kit);
+        return sidebar.draw(host, kit);
+    });
+
+    // Where a sidebar's focus ring is, so the line under a row of Buttons says what the focused one does.
+    on("ui.focus", { component: "Pane" }, async ($, e, next) => {
+        const result = await next(e);
+
+        if (!result.deny && FEATURES.some((feature) => feature.sidebars?.some((held) => held.id === e.requestId))) {
+            noteFocus(e.requestId, e.element);
+            $.ui.invalidate("ui.render");
+        }
+
+        return result;
+    });
+
+    on("prompt.autocomplete", async ($, e, next) => {
+        const host = hostOf($);
+        const mine = (await Promise.all(FEATURES.map((feature) => feature.autocomplete?.(host, e) ?? []))).flat();
+        const below = await next(e);
+
+        return mine.length > 0 ? { suggestions: [...mine, ...below.suggestions] } : below;
     });
 
     on("ui.render", { component: "Spinner" }, async ($, e, next) => {

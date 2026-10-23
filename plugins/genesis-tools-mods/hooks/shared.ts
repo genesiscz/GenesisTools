@@ -13,9 +13,12 @@ import type {
     FsStat,
     ProcessRunInit,
     ProcessRunResult,
+    PromptAutocompleteInput,
+    PromptAutocompleteSuggestion,
     PromptFillArgs,
     ToolCallInput,
     TurnCompleteInput,
+    UiCopyResult,
 } from "claude-code";
 import { type ModsSettings, modsSettings } from "./settings";
 import type { Sidebar } from "./sidebar";
@@ -46,7 +49,7 @@ export interface Host {
     /** Closes the sidebar when it shows, else opens it: what a press on its band chip does. */
     togglePane: (id: string, title: string) => Promise<unknown>;
     closePane: (id: string) => Promise<unknown>;
-    copy: (text: string) => Promise<unknown>;
+    copy: (text: string) => Promise<UiCopyResult>;
     /** Opens a URL with macOS `open`: a browser page, or a genesis.tools route. */
     openUrl: (url: string) => Promise<unknown>;
     /** A short notice that fades by itself. */
@@ -80,6 +83,11 @@ export async function settingsOf(host: Host): Promise<ModsSettings> {
     cached = { at: now, value };
 
     return value;
+}
+
+/** Drops the remembered settings: a test sets up another hooks file. */
+export function forgetSettings(): void {
+    cached = undefined;
 }
 
 /**
@@ -142,4 +150,6 @@ export interface Feature {
     compacted?: (host: Host, agentId: string | undefined) => void | Promise<void>;
     /** The sidebars it opens from the band (`sidebar.tsx`). */
     sidebars?: Sidebar[];
+    /** Rows for the prompt's typeahead as the person types (`prompt.autocomplete`); none for most tokens. */
+    autocomplete?: (host: Host, e: PromptAutocompleteInput) => Promise<PromptAutocompleteSuggestion[]>;
 }

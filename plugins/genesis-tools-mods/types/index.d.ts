@@ -40,13 +40,20 @@ export interface BandPr {
     failed: number;
     pending: number;
     checks: BandCheck[];
+    /** `/mod-git pr add` keeps it in the checkout's row whatever branch is checked out. */
     tracked: boolean;
+    /** The PR of the branch the checkout has checked out. */
+    own: boolean;
+    /** Taken out of the band by the sidebar's `hide`; the sidebar still lists it. */
+    hidden: boolean;
 }
 
 /** One checkout's row of the git band, as the last refresh found it. */
 export interface GitBand {
     /** The checkout's git root. */
     root: string;
+    /** Why the band shows it: added by hand, worked in by the session, or the session's own folder. */
+    why: "added" | "worked" | "folder";
     at: number;
     branch: string;
     ahead: number;

@@ -319,6 +319,11 @@ export interface ModsConfig {
      * replaces a context block already given to the same loop since its last compaction with a one-line receipt.
      */
     hooks: { tokens: boolean; dedupe: boolean };
+    /**
+     * The sidebars a band row opens: `hints` says under a row of buttons what the focused one does, `feedback` shows
+     * what a press did on that line (`line`), as a toast (`toast`), or both.
+     */
+    sidebar: { hints: boolean; feedback: "line" | "toast" | "both" };
 }
 
 /**
@@ -478,6 +483,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         tmpUsage: { enabled: false, minutes: 5 },
         agentsBand: { enabled: false, warnMinutes: 60 },
         hooks: { tokens: false, dedupe: false },
+        sidebar: { hints: true, feedback: "line" },
     },
     unpushed: { enabled: true, maxCommits: 3, maxAgeMinutes: 60, remindEveryMinutes: 30 },
     logPath: defaultLogPath(),
@@ -1074,6 +1080,7 @@ export function mergeMods(stored: unknown): ModsConfig {
     const tmp = partOf(held.tmpUsage);
     const agents = partOf(held.agentsBand);
     const hooks = partOf(held.hooks);
+    const sidebar = partOf(held.sidebar);
     const enabled = (key: string, fallback: boolean) => boolOr(partOf(held[key]).enabled, fallback);
     const git = partOf(held.git);
     const minutes = countOr({
@@ -1137,6 +1144,13 @@ export function mergeMods(stored: unknown): ModsConfig {
             ),
         },
         hooks: { tokens: boolOr(hooks.tokens, base.hooks.tokens), dedupe: boolOr(hooks.dedupe, base.hooks.dedupe) },
+        sidebar: {
+            hints: boolOr(sidebar.hints, base.sidebar.hints),
+            feedback:
+                sidebar.feedback === "line" || sidebar.feedback === "toast" || sidebar.feedback === "both"
+                    ? sidebar.feedback
+                    : base.sidebar.feedback,
+        },
     };
 }
 

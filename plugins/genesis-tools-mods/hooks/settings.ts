@@ -23,6 +23,7 @@ export interface ModsSettings {
     tmpUsage: { enabled: boolean; minutes: number };
     agentsBand: { enabled: boolean; warnMinutes: number };
     hooks: { tokens: boolean; dedupe: boolean };
+    sidebar: { hints: boolean; feedback: "line" | "toast" | "both" };
 }
 
 /** Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`. */
@@ -39,6 +40,7 @@ export const MODS_DEFAULTS: ModsSettings = {
     tmpUsage: { enabled: false, minutes: 5 },
     agentsBand: { enabled: false, warnMinutes: 60 },
     hooks: { tokens: false, dedupe: false },
+    sidebar: { hints: true, feedback: "line" },
 };
 
 function whole(value: unknown, min: number, max: number, fallback: number): number {
@@ -79,6 +81,7 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
     const tmp = part("tmpUsage");
     const agents = part("agentsBand");
     const hooks = part("hooks");
+    const sidebar = part("sidebar");
     const enabled = (key: string, fallback: boolean) => bool(part(key).enabled, fallback);
     const git = part("git");
 
@@ -126,5 +129,12 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
             warnMinutes: whole(agents.warnMinutes, 1, 24 * 60, d.agentsBand.warnMinutes),
         },
         hooks: { tokens: bool(hooks.tokens, d.hooks.tokens), dedupe: bool(hooks.dedupe, d.hooks.dedupe) },
+        sidebar: {
+            hints: bool(sidebar.hints, d.sidebar.hints),
+            feedback:
+                sidebar.feedback === "line" || sidebar.feedback === "toast" || sidebar.feedback === "both"
+                    ? sidebar.feedback
+                    : d.sidebar.feedback,
+        },
     };
 }

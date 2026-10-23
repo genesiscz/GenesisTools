@@ -6,6 +6,10 @@
 // Each session's list lives in the plugin store, so it outlives a hot reload and a resume; the 40 sessions touched
 // last are kept. A session with no list yet starts from the GenesisTools file journal
 // (`~/.genesis-tools/claude-code/sessions/<id>.json`), each checkout dated by the newest change to one of its files.
+//
+// The person can also add a folder by hand (`/mod-git add <folder>`, the Git sidebar's field): its checkout shows
+// in this session's band until removed. `folderSuggestions` proposes folders for that, from zoxide when it is
+// installed (`GenesisPlayg` finds the GenesisPlayground path) and from the folder a typed `/` or `~/` path names.
 import type { Host } from "./shared";
 
 export interface Touch {
@@ -14,6 +18,8 @@ export interface Touch {
 }
 
 const STORE_KEY = "git-band-checkouts";
+const ADDED_KEY = "git-band-added";
+const ZOXIDE_TTL_MS = 60_000;
 const KEEP_SESSIONS = 40;
 const KEEP_ROOTS = 12;
 /** The journal's newest files the first list is built from. */
@@ -43,6 +49,9 @@ type Ledger = Record<string, Touch[]>;
 
 /** This session's list, newest first, while this module lives; the store holds it across reloads. */
 let held: { session: string; touches: Touch[] } | undefined;
+/** The folders this session added by hand, newest first, as git roots. */
+let added: { session: string; roots: string[] } | undefined;
+let zoxide: { at: number; dirs: string[] } | undefined;
 let loading: Promise<Touch[]> | undefined;
 const rootByDir = new Map<string, string | null>();
 
@@ -244,8 +253,8 @@ async function fromJournal(host: Host, session: string): Promise<Touch[]> {
     return (await datedRoots(host, files)).slice(0, KEEP_ROOTS);
 }
 
-async function readLedger(host: Host): Promise<Ledger> {
-    const value = await host.storeGet(STORE_KEY).catch(() => undefined);
+async function readLedger(host: Host, key = STORE_KEY): Promise<Ledger> {
+    const value = await host.storeGet(key).catch(() => undefined);
     const ledger: Ledger = {};
 
     if (isRecord(value)) {
@@ -262,14 +271,14 @@ async function readLedger(host: Host): Promise<Ledger> {
     return ledger;
 }
 
-async function save(host: Host, session: string, touches: Touch[]): Promise<void> {
-    const ledger = { ...(await readLedger(host)), [session]: touches };
+async function save(host: Host, session: string, touches: Touch[], key = STORE_KEY): Promise<void> {
+    const ledger = { ...(await readLedger(host, key)), [session]: touches };
     const newest = (list: Touch[]) => Math.max(0, ...list.map((touch) => touch.at));
     const kept = Object.entries(ledger)
         .sort((a, b) => newest(b[1]) - newest(a[1]))
         .slice(0, KEEP_SESSIONS);
 
-    await host.storeSet(STORE_KEY, Object.fromEntries(kept)).catch(() => undefined);
+    await host.storeSet(key, Object.fromEntries(kept)).catch(() => undefined);
 }
 
 async function load(host: Host, session: string): Promise<Touch[]> {
@@ -342,24 +351,199 @@ export async function noteToolCall(host: Host, input: unknown): Promise<boolean>
 }
 
 /**
- * The checkouts the band shows, newest first: `cwd: "always"` puts the session's own folder first. A session that
- * has worked in no checkout yet shows its own folder.
+ * The checkouts the band shows: the session's own folder while it has worked in no checkout (or always, with
+ * `cwd: "always"`), the folders added by hand, then up to `checkouts` the session worked in, the last first.
  */
 export function pickRoots(
     touches: readonly Touch[],
     cwdRoot: string | undefined,
-    settings: { checkouts: number; cwd: "touched" | "always" }
+    settings: { checkouts: number; cwd: "touched" | "always" },
+    addedRoots: readonly string[] = []
 ): string[] {
-    const roots = touches.map((touch) => touch.root);
-    const ordered = settings.cwd === "always" && cwdRoot ? [cwdRoot, ...roots.filter((r) => r !== cwdRoot)] : roots;
-    const picked = ordered.slice(0, settings.checkouts);
+    const worked = touches
+        .map((touch) => touch.root)
+        .filter((root) => !addedRoots.includes(root))
+        .slice(0, settings.checkouts);
+    const own = cwdRoot && (settings.cwd === "always" || worked.length === 0) ? [cwdRoot] : [];
 
-    return picked.length > 0 ? picked : cwdRoot ? [cwdRoot] : [];
+    return [...new Set([...own, ...addedRoots, ...worked])];
+}
+
+/** Drops a checkout the session worked in from its band, until the session works there again. */
+export async function hideCheckout(host: Host, root: string): Promise<void> {
+    const session = await host.sessionId();
+    const touches = (await sessionCheckouts(host)).filter((touch) => touch.root !== root);
+
+    held = { session, touches };
+    await save(host, session, touches);
+}
+
+/** The folders this session added by hand, newest first, as git roots. */
+export async function addedCheckouts(host: Host): Promise<string[]> {
+    const session = await host.sessionId();
+
+    if (added?.session !== session) {
+        const stored = (await readLedger(host, ADDED_KEY))[session] ?? [];
+        added = { session, roots: stored.map((touch) => touch.root) };
+    }
+
+    return added.roots;
+}
+
+async function saveAdded(host: Host, roots: string[]): Promise<void> {
+    const session = await host.sessionId();
+    const now = Date.now();
+
+    added = { session, roots };
+    await save(
+        host,
+        session,
+        roots.map((root) => ({ root, at: now })),
+        ADDED_KEY
+    );
+}
+
+/** A typed folder as an absolute path: `~/x` under the home, a bare relative one under the session's folder. */
+async function expand(host: Host, typed: string): Promise<string> {
+    const home = await host.env("HOME");
+    const path = absolute(typed.trim(), home);
+
+    return path ?? `${await host.cwd()}/${typed.trim()}`.replace(/\/+$/, "");
+}
+
+/** Adds the checkout of a folder to this session's band; the error says why not. */
+export async function addCheckout(host: Host, typed: string): Promise<{ root: string } | { error: string }> {
+    const path = await expand(host, typed);
+    const stat = await host.stat(path).catch(() => undefined);
+
+    if (stat?.kind !== "dir") {
+        return { error: `${path} is not a folder` };
+    }
+
+    const root = await rootAbove(host, path);
+
+    if (!root) {
+        return { error: `${path} is in no git checkout` };
+    }
+
+    await saveAdded(host, [root, ...(await addedCheckouts(host)).filter((held) => held !== root)]);
+
+    return { root };
+}
+
+/** Removes a folder added by hand, named by its path or its folder name; false when none matches. */
+export async function removeAdded(host: Host, typed: string): Promise<string | undefined> {
+    const roots = await addedCheckouts(host);
+    const path = await expand(host, typed);
+    const match = roots.find((root) => root === path || root.slice(root.lastIndexOf("/") + 1) === typed.trim());
+
+    if (match) {
+        await saveAdded(
+            host,
+            roots.filter((root) => root !== match)
+        );
+    }
+
+    return match;
+}
+
+export interface FolderSuggestion {
+    path: string;
+    from: "zoxide" | "folder";
+}
+
+/** zoxide's folders, best first; none without zoxide. One `zoxide query --list` per minute. */
+async function zoxideDirs(host: Host): Promise<string[]> {
+    if (zoxide && Date.now() - zoxide.at < ZOXIDE_TTL_MS) {
+        return zoxide.dirs;
+    }
+
+    const run = await host.run(["zoxide", "query", "--list"], { timeoutMs: 3_000 }).catch(() => undefined);
+    const dirs = run?.exitCode === 0 ? run.stdout.split("\n").filter((dir) => dir.startsWith("/")) : [];
+
+    zoxide = { at: Date.now(), dirs };
+
+    return dirs;
+}
+
+/** zoxide's folders that match a name: the folder name starting with it first, then holding it, then the path. */
+export function rankByName(dirs: readonly string[], typed: string): string[] {
+    const needle = typed.toLowerCase();
+    const nameOf = (dir: string) => dir.slice(dir.lastIndexOf("/") + 1).toLowerCase();
+    const tier = (dir: string) =>
+        nameOf(dir).startsWith(needle)
+            ? 0
+            : nameOf(dir).includes(needle)
+              ? 1
+              : dir.toLowerCase().includes(needle)
+                ? 2
+                : 3;
+
+    return dirs
+        .map((dir, index) => ({ dir, index, tier: tier(dir) }))
+        .filter((entry) => entry.tier < 3)
+        .sort((a, b) => a.tier - b.tier || a.index - b.index)
+        .map((entry) => entry.dir);
+}
+
+/**
+ * Folders for what the person typed: for a `/` or `~/` path, the folders in the folder it names that start with
+ * its last part, then zoxide's under it; for a name, zoxide's folders that match it.
+ */
+export async function folderSuggestions(host: Host, typed: string, limit = 8): Promise<FolderSuggestion[]> {
+    const text = typed.trim();
+
+    if (!text) {
+        return [];
+    }
+
+    const home = await host.env("HOME");
+    const path = absolute(text, home);
+    const found: FolderSuggestion[] = [];
+
+    if (path) {
+        const dir = text.endsWith("/") ? path : parentOf(path);
+        const start = text.endsWith("/") ? "" : path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+        const entries = await host.list(dir).catch(() => []);
+
+        for (const entry of entries) {
+            const name = entry.name.toLowerCase();
+
+            if (entry.kind === "dir" && name.startsWith(start) && (start.startsWith(".") || !name.startsWith("."))) {
+                found.push({ path: `${dir === "/" ? "" : dir}/${entry.name}`, from: "folder" });
+            }
+        }
+
+        found.sort((a, b) => a.path.localeCompare(b.path));
+
+        for (const dir of await zoxideDirs(host)) {
+            if (dir.startsWith(path) && dir !== path) {
+                found.push({ path: dir, from: "zoxide" });
+            }
+        }
+    } else {
+        for (const dir of rankByName(await zoxideDirs(host), text)) {
+            found.push({ path: dir, from: "zoxide" });
+        }
+    }
+
+    const seen = new Set<string>();
+
+    return found
+        .filter((suggestion) => !seen.has(suggestion.path) && Boolean(seen.add(suggestion.path)))
+        .slice(0, limit);
+}
+
+/** Whether a folder is in a git checkout (the walk up is cached). */
+export async function isInCheckout(host: Host, path: string): Promise<boolean> {
+    return (await rootAbove(host, path)) !== null;
 }
 
 /** Forgets this module's memory: a test sets up another session. */
 export function forgetCheckouts(): void {
     held = undefined;
+    added = undefined;
+    zoxide = undefined;
     loading = undefined;
     rootByDir.clear();
 }
