@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// An agent's initial in its colour: C (Claude), X (Codex), G (Grok), else the first letter.
+/// An agent's mark on a square in its colour (`AIProviderMark`): Claude, Codex, Grok; any other agent keeps its first
+/// letter.
 public struct ProviderBadge: View {
     let provider: String
     var size: CGFloat
@@ -23,11 +24,7 @@ public struct ProviderBadge: View {
 
     public var body: some View {
         let style = Self.style(for: provider)
-        Text(verbatim: style.letter)
-            .font(.system(size: (size * 0.56).rounded(), weight: .bold, design: .rounded))
-            .foregroundColor(.black.opacity(0.8))
-            .frame(width: size, height: size)
-            .background(RoundedRectangle(cornerRadius: size * 0.28).fill(style.color))
+        AIProviderGlyphBody(provider: provider, letter: style.letter, color: style.color, size: size, style: .filled)
             .instantTooltip(tooltip ?? provider)
             .accessibilityLabel(Text(tooltip ?? provider))
     }

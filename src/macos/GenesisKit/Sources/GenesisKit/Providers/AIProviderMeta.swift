@@ -51,23 +51,22 @@ public enum AIProviders {
     }
 }
 
-/// The provider's one-letter glyph in its tinted box: the leader of an account row, and
-/// the marker on a session row that is not Claude's.
+/// The provider's mark (`AIProviderMark`) in its tinted box: the leader of an account row, and the marker on a session
+/// row. A provider with no mark keeps its letter. `style` picks the tinted box, the bare mark or a solid badge.
 public struct AIProviderGlyph: View {
     public var meta: AIProviderMeta
     public var size: CGFloat
+    public var style: AIProviderGlyphStyle
 
-    public init(meta: AIProviderMeta, size: CGFloat = 16) {
+    public init(meta: AIProviderMeta, size: CGFloat = 16, style: AIProviderGlyphStyle = .tinted) {
         self.meta = meta
         self.size = size
+        self.style = style
     }
 
     public var body: some View {
-        Text(meta.glyph)
-            .font(.system(size: size * 0.625, weight: .bold, design: .monospaced))
-            .frame(width: size, height: size)
-            .background(meta.color.opacity(0.18), in: RoundedRectangle(cornerRadius: size / 4))
-            .foregroundStyle(meta.color)
+        AIProviderGlyphBody(provider: meta.alias, letter: meta.glyph, color: meta.color, size: size, style: style)
+            .accessibilityElement()
             .accessibilityLabel(meta.displayName)
     }
 }

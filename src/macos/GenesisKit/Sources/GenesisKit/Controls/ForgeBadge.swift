@@ -96,8 +96,9 @@ public struct ForgeBadge: View {
     }
 }
 
-/// The subset of SVG path data the forge marks use: M, L, H, V, C, S and Z, absolute and relative, with
-/// implicit repeats and the compact number forms (`.4.07`, `-.17`). Anything else ends the path there.
+/// The subset of SVG path data the forge and provider marks use: M, L, H, V, C, S, A and Z, absolute and relative,
+/// with implicit repeats and the compact number forms (`.4.07`, `-.17`, arc flags packed as `01-.104`). Anything else
+/// ends the path there.
 enum SVGPath {
     static func parse(_ data: String) -> Path {
         var path = Path()
@@ -159,6 +160,13 @@ enum SVGPath {
                 path.addCurve(to: target, control1: first, control2: second)
                 current = target
                 lastControl = second
+            case "A":
+                guard let rx = tokens.number(), let ry = tokens.number(), let rotation = tokens.number(),
+                      let large = tokens.flag(), let sweep = tokens.flag(), let target = point() else { return path }
+                addArc(to: &path, from: current, radii: CGSize(width: rx, height: ry), rotation: rotation,
+                       large: large, sweep: sweep, end: target)
+                current = target
+                lastControl = nil
             default:
                 return path
             }
@@ -166,9 +174,68 @@ enum SVGPath {
         return path
     }
 
+    /// An elliptical arc as cubic curves, at most a quarter turn each (SVG 1.1 implementation notes F.6.5 and F.6.6).
+    static func addArc(
+        to path: inout Path, from start: CGPoint, radii: CGSize, rotation: CGFloat, large: Bool, sweep: Bool,
+        end: CGPoint
+    ) {
+        var rx = abs(radii.width)
+        var ry = abs(radii.height)
+        guard rx > 0, ry > 0, start != end else {
+            path.addLine(to: end)
+            return
+        }
+        let phi = rotation * .pi / 180
+        let cosPhi = cos(phi), sinPhi = sin(phi)
+        let dx = (start.x - end.x) / 2, dy = (start.y - end.y) / 2
+        let x1 = cosPhi * dx + sinPhi * dy
+        let y1 = -sinPhi * dx + cosPhi * dy
+        // Radii too small to reach the end point grow until they just do.
+        let lambda = (x1 * x1) / (rx * rx) + (y1 * y1) / (ry * ry)
+        if lambda > 1 {
+            rx *= sqrt(lambda)
+            ry *= sqrt(lambda)
+        }
+        let numerator = rx * rx * ry * ry - rx * rx * y1 * y1 - ry * ry * x1 * x1
+        let denominator = rx * rx * y1 * y1 + ry * ry * x1 * x1
+        var factor = sqrt(max(0, numerator / denominator))
+        if large == sweep { factor = -factor }
+        let cx1 = factor * rx * y1 / ry
+        let cy1 = -factor * ry * x1 / rx
+        let center = CGPoint(x: cosPhi * cx1 - sinPhi * cy1 + (start.x + end.x) / 2,
+                             y: sinPhi * cx1 + cosPhi * cy1 + (start.y + end.y) / 2)
+        func angle(_ ux: CGFloat, _ uy: CGFloat, _ vx: CGFloat, _ vy: CGFloat) -> CGFloat {
+            let value = atan2(ux * vy - uy * vx, ux * vx + uy * vy)
+            return value
+        }
+        let theta = angle(1, 0, (x1 - cx1) / rx, (y1 - cy1) / ry)
+        var delta = angle((x1 - cx1) / rx, (y1 - cy1) / ry, (-x1 - cx1) / rx, (-y1 - cy1) / ry)
+        if !sweep, delta > 0 { delta -= 2 * .pi }
+        if sweep, delta < 0 { delta += 2 * .pi }
+        let segments = max(1, Int(ceil(abs(delta) / (.pi / 2))))
+        let step = delta / CGFloat(segments)
+        let k = 4 / 3 * tan(step / 4)
+        func onEllipse(_ t: CGFloat) -> CGPoint {
+            CGPoint(x: center.x + rx * cos(t) * cosPhi - ry * sin(t) * sinPhi,
+                    y: center.y + rx * cos(t) * sinPhi + ry * sin(t) * cosPhi)
+        }
+        func tangent(_ t: CGFloat) -> CGPoint {
+            CGPoint(x: -rx * sin(t) * cosPhi - ry * cos(t) * sinPhi, y: -rx * sin(t) * sinPhi + ry * cos(t) * cosPhi)
+        }
+        var t = theta
+        for index in 0 ..< segments {
+            let next = t + step
+            let from = onEllipse(t), to = index == segments - 1 ? end : onEllipse(next)
+            let d1 = tangent(t), d2 = tangent(next)
+            path.addCurve(to: to, control1: CGPoint(x: from.x + k * d1.x, y: from.y + k * d1.y),
+                          control2: CGPoint(x: to.x - k * d2.x, y: to.y - k * d2.y))
+            t = next
+        }
+    }
+
     private enum Token: Equatable {
         case command(Character)
-        case number(CGFloat)
+        case number(CGFloat, raw: String)
     }
 
     private struct Tokens {
@@ -178,7 +245,7 @@ enum SVGPath {
         init(_ text: String) {
             var number = ""
             func flush() {
-                if let value = Double(number) { items.append(.number(CGFloat(value))) }
+                if let value = Double(number) { items.append(.number(CGFloat(value), raw: number)) }
                 number = ""
             }
             for char in text {
@@ -206,9 +273,25 @@ enum SVGPath {
         mutating func advance() { index += 1 }
 
         mutating func number() -> CGFloat? {
-            guard case .number(let value) = peek() else { return nil }
+            guard case .number(let value, _) = peek() else { return nil }
             index += 1
             return value
+        }
+
+        /// An arc flag: one digit, which may share its token with what follows (`01-.104` is flags 0 and 1).
+        mutating func flag() -> Bool? {
+            guard case .number(_, let raw) = peek(), let first = raw.first, first == "0" || first == "1" else {
+                return nil
+            }
+            let rest = String(raw.dropFirst())
+            if rest.isEmpty {
+                index += 1
+            } else if let value = Double(rest) {
+                items[index] = .number(CGFloat(value), raw: rest)
+            } else {
+                return nil
+            }
+            return first == "1"
         }
     }
 }

@@ -1241,13 +1241,23 @@ private struct Avatar: View {
     let glyph: String
     let color: Color
     var solid = false
+    /// An agent's id or alias: its mark (`AIProviderMark`) replaces the letter.
+    var provider: String?
 
     var body: some View {
-        Text(verbatim: glyph)
-            .font(.system(size: 11, weight: .bold))
-            .foregroundStyle(solid ? Color.black.opacity(0.85) : color)
-            .frame(width: 22, height: 22)
-            .background(Circle().fill(solid ? color : color.opacity(0.18)))
+        Group {
+            if let kind = provider.flatMap(AIProviderMark.Kind.init(provider:)) {
+                AIProviderMark(kind)
+                    .fill(solid ? Color.black.opacity(0.85) : color, style: FillStyle(eoFill: true))
+                    .padding(5)
+            } else {
+                Text(verbatim: glyph)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(solid ? Color.black.opacity(0.85) : color)
+            }
+        }
+        .frame(width: 22, height: 22)
+        .background(Circle().fill(solid ? color : color.opacity(0.18)))
     }
 }
 
@@ -1467,7 +1477,7 @@ private struct ReplyBlock: View {
 
     private var authorRow: some View {
             HStack(spacing: 8) {
-                Avatar(glyph: provider.glyph, color: provider.color)
+                Avatar(glyph: provider.glyph, color: provider.color, provider: provider.alias)
                 Text(verbatim: provider.displayName)
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(SessionPalette.text)
