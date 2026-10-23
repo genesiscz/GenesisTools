@@ -24,8 +24,8 @@ export interface NotificationLedgerEntry {
     source: string;
     /** Where it went: `macos`, `in-app`, `telegram`, `webhook`, `say`. */
     channel: string;
-    /** `posted`, `failed`, or `suppressed` (a rule decided against it; `reason` says which). */
-    outcome: "posted" | "failed" | "suppressed";
+    /** `posted`, `failed`, `suppressed` (a rule decided against it; `reason` says which), or `withdrawn`. */
+    outcome: "posted" | "failed" | "suppressed" | "withdrawn";
     title?: string;
     subtitle?: string;
     body?: string;

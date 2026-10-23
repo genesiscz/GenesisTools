@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { AgentSessionRow, AgentSessionRowsOptions } from "@app/ai/lib/sessions/agent-session-rows";
 import { computeCacheStatus } from "@app/claude/lib/usage/cache-clock";
 import { aiDataDir } from "@genesiscz/utils/ai/config/paths";
+import { liveClaudeSessionIds } from "@genesiscz/utils/claude/peer-message";
 import { type TmuxCmuxLocation, tmuxCmuxLocations } from "@genesiscz/utils/cmux/tmux-host";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -172,6 +173,26 @@ async function withTmuxLocations(
 }
 
 /**
+ * Claude rows with `alive` read now from the session registry, never from the cached file: a cached answer may
+ * be 90 s old, and a session that exited in that time would still read as running. Other providers have no
+ * registry and keep what they had. `live` null (registry unreadable) changes nothing: unknown is not dead.
+ */
+export function withLiveness(rows: AgentSessionRow[], live: Set<string> | null): AgentSessionRow[] {
+    if (!live) {
+        return rows;
+    }
+
+    return rows.map((row) => {
+        if (row.provider !== "claude") {
+            return row;
+        }
+
+        const alive = live.has(row.sessionId.toLowerCase());
+        return row.alive === alive ? row : { ...row, alive };
+    });
+}
+
+/**
  * Rows with each prompt-cache clock (`cacheStatus`, `cacheTtlSec`) worked out for `now` from `lastCacheAt` and
  * `cacheLifetimeSec`, which are facts of the transcript. A cached answer may be 90 s old, and its clocks used to
  * be 90 s old with it: a session shown with 3 minutes of cache left could already be cold. The files behind the
@@ -208,6 +229,7 @@ export async function sessionRowsJson(
         path = sessionRowsCachePath(),
         listRows,
         tmuxLocations = isTestProcess() ? async () => new Map() : () => tmuxCmuxLocations(),
+        liveSessionIds = isTestProcess() ? () => null : () => liveClaudeSessionIds(),
     }: {
         fresh?: boolean;
         cacheWrite?: boolean;
@@ -220,6 +242,8 @@ export async function sessionRowsJson(
         listRows: (options: AgentSessionRowsOptions) => Promise<AgentSessionRow[]>;
         /** Live cmux tabs of tmux-hosted sessions. A test that injects none gets none. */
         tmuxLocations?: () => Promise<Map<string, TmuxCmuxLocation>>;
+        /** Running Claude session ids (`liveClaudeSessionIds`); a test that injects none gets `alive: null`. */
+        liveSessionIds?: () => Set<string> | null;
     }
 ): Promise<{ fetchedAt: number; cached: boolean; rows: AgentSessionRow[] }> {
     if (!fresh) {
@@ -242,7 +266,9 @@ export async function sessionRowsJson(
             return {
                 fetchedAt: cached.fetchedAt,
                 cached: true,
-                rows: liveLocations ? await withTmuxLocations(rows, tmuxLocations) : rows,
+                rows: liveLocations
+                    ? withLiveness(await withTmuxLocations(rows, tmuxLocations), liveSessionIds())
+                    : rows,
             };
         }
     }
@@ -253,5 +279,9 @@ export async function sessionRowsJson(
         await writeSessionRowsCache({ query: listing, fetchedAt: now, lastRequestedAt: now, rows }, path);
     }
 
-    return { fetchedAt: now, cached: false, rows: liveLocations ? await withTmuxLocations(rows, tmuxLocations) : rows };
+    return {
+        fetchedAt: now,
+        cached: false,
+        rows: liveLocations ? withLiveness(await withTmuxLocations(rows, tmuxLocations), liveSessionIds()) : rows,
+    };
 }

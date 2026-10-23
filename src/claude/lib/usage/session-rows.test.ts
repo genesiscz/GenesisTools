@@ -278,6 +278,7 @@ describe("listSessionRows", () => {
         expect(Object.keys(hot ?? {}).sort()).toEqual(
             [
                 "account",
+                "alive",
                 "cacheCreateTokens",
                 "cacheReadTokens",
                 "cacheLifetimeSec",

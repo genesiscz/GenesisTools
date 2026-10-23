@@ -7,12 +7,14 @@ import Foundation
 /// banners were logged nowhere, and the macOS unified log kept about 14 hours of them without titles.
 ///
 /// Fields every line has: `at`, `source` (`monitor.cache`, `disk`, `hang`, ...), `channel` (`macos`, `in-app`),
-/// `outcome` (`posted`, `failed`, `suppressed`), `writer`. A suppressed line names its `reason`.
+/// `outcome` (`posted`, `failed`, `suppressed`, `withdrawn`), `writer`. A suppressed line names its `reason`.
 public enum NotificationLedger {
     public enum Outcome: String, Sendable {
         case posted
         case failed
         case suppressed
+        /// A delivered card was taken away on purpose (a countdown's card once its session went cold).
+        case withdrawn
     }
 
     public static var path: String {

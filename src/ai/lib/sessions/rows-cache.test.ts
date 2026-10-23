@@ -12,6 +12,7 @@ import {
     type SessionRowsCache,
     sessionRowsCacheKey,
     sessionRowsJson,
+    withLiveness,
     writeSessionRowsCache,
 } from "./rows-cache";
 
@@ -311,5 +312,33 @@ describe("refreshSessionRowsCache", () => {
         expect(calls).toBe(0);
         expect(result.refreshed).toBe(false);
         expect(result.reason).toBe("nobody has asked for an hour");
+    });
+});
+
+describe("withLiveness", () => {
+    const row = (provider: AgentSessionRow["provider"], sessionId: string): AgentSessionRow => ({
+        provider,
+        sessionId,
+        title: null,
+        cwd: "/x",
+        cwdShort: "/x",
+        project: null,
+        mtime: 0,
+        model: null,
+        account: null,
+        filePath: `/x/${sessionId}.jsonl`,
+    });
+
+    test("marks Claude rows from the registry, case-insensitively, and leaves other providers alone", () => {
+        const rows = withLiveness(
+            [row("claude", "AAAA"), row("claude", "bbbb"), row("codex", "cccc")],
+            new Set(["aaaa"])
+        );
+        expect(rows.map((r) => r.alive)).toEqual([true, false, undefined]);
+    });
+
+    test("an unreadable registry changes nothing: unknown is not dead", () => {
+        const rows = [row("claude", "aaaa")];
+        expect(withLiveness(rows, null)).toBe(rows);
     });
 });

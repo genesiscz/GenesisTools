@@ -74,6 +74,8 @@ export interface AgentSessionRow {
     lastUserAt?: number | null;
     modelSwitched?: boolean;
     cmux?: SessionCmuxLocation | null;
+    /** Claude only: whether a claude process still runs it (registry); null when the registry is unreadable. */
+    alive?: boolean | null;
 }
 
 export interface AgentSessionRowsOptions {

@@ -1,6 +1,7 @@
 import { cleanPromptText } from "@app/claude/lib/cmux/sessions";
 import { getSessionListing, type SessionMetadataRecord } from "@app/claude/lib/history/search";
 import { loadPins } from "@genesiscz/utils/agent-sessions/pins";
+import { liveClaudeSessionIds } from "@genesiscz/utils/claude/peer-message";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
 import { loadAllSessionCmuxRefs } from "@genesiscz/utils/cmux/session-refs";
 import { FileIdentityCache, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
@@ -76,6 +77,12 @@ export interface SessionRow {
     account: string | null;
     /** Recorded cmux location from the refs journal — where the session started, unverified. */
     cmux: SessionCmuxLocation | null;
+    /**
+     * Whether a claude process still runs this session (`~/.claude/sessions` registry). null when the
+     * registry could not be read. The Genesis monitor skips cache banners for `false`: a session whose
+     * process exited cannot be resumed from its pane, and those were 80 of 203 banners in 40 h (2026-10-23).
+     */
+    alive: boolean | null;
     filePath: string;
 }
 
@@ -124,6 +131,8 @@ export interface ListSessionRowsOptions {
     maxDiscoveryAgeMs?: number;
     /** Passed to `getSessionListing`: `false` reads the index with no refresh. */
     refresh?: boolean;
+    /** Which session ids have a running claude process; tests inject it. Defaults to the registry. */
+    liveSessionIds?: () => Set<string> | null;
 }
 
 function simplifyModel(model: string): string {
@@ -396,6 +405,7 @@ export async function extractTailUsageUncached(filePath: string): Promise<{ usag
 interface RowJoins {
     accounts: Map<string, string | null>;
     cmux: Map<string, SessionCmuxLocation>;
+    live: Set<string> | null;
 }
 
 function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number, joins: RowJoins): SessionRow {
@@ -431,6 +441,7 @@ function buildRow(record: SessionMetadataRecord, usage: TailUsage, now: number, 
         lastUserAt: usage.lastUserAt,
         account: joins.accounts.get(sessionId.toLowerCase()) ?? null,
         cmux: joins.cmux.get(sessionId.toLowerCase()) ?? null,
+        alive: joins.live ? joins.live.has(sessionId.toLowerCase()) : null,
         filePath: record.filePath,
     };
 }
@@ -527,7 +538,7 @@ export async function listSessionRowsWithTimings(
             });
         }
 
-        return { accounts, cmux };
+        return { accounts, cmux, live: (opts.liveSessionIds ?? liveClaudeSessionIds)() };
     });
     const joinMs = performance.now() - joinStarted;
     const rank: Record<CacheStatus, number> = { HOT: 0, COOLING: 1, CRITICAL: 2, COLD: 3 };

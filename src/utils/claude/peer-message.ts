@@ -120,6 +120,56 @@ export function parseRegistryEntry(raw: string, file: string): ClaudeLiveSession
     };
 }
 
+/**
+ * Ids (lower case) of every Claude session whose process is still running, from the registry alone: no
+ * messaging socket needed. A parked entry (`parkedJobId`, the conversation moved to a background job under a
+ * new id) does not count, because its id is frozen. null when the registry cannot be read, so a caller can
+ * tell "unknown" from "not running".
+ *
+ * Liveness is a signal-0 probe only, without `liveClaudePids`' batched `ps`: measured 2026-10-23 on 26
+ * entries, 0.39 ms median against 213 ms, and this runs on every monitor poll. Claude deletes its entry on
+ * exit, so only a crash leaves one behind, and a recycled pid then reads as alive: the fail-open side.
+ */
+export function liveClaudeSessionIds(
+    dir: string = claudeSessionsDir(),
+    liveOf: (pids: number[]) => Set<number> = (pids) => new Set(pids.filter((pid) => isProcessAlive(pid)))
+): Set<string> | null {
+    let names: string[];
+
+    try {
+        names = readdirSync(dir);
+    } catch (error) {
+        log.debug({ error, dir }, "no Claude session registry");
+        return null;
+    }
+
+    const byPid = new Map<number, string>();
+
+    for (const name of names) {
+        if (!/^\d+\.json$/.test(name)) {
+            continue;
+        }
+
+        try {
+            const parsed: unknown = SafeJSON.parse(readFileSync(join(dir, name), "utf8"), { strict: true });
+
+            if (
+                isRecord(parsed) &&
+                typeof parsed.pid === "number" &&
+                text(parsed.sessionId) &&
+                !text(parsed.parkedJobId)
+            ) {
+                byPid.set(parsed.pid, String(parsed.sessionId).toLowerCase());
+            }
+        } catch (error) {
+            log.debug({ error, name }, "unreadable session registry file");
+        }
+    }
+
+    const live = liveOf([...byPid.keys()]);
+    return new Set([...byPid].filter(([pid]) => live.has(pid)).map(([, id]) => id));
+}
+
 /** Every live Claude session that advertises a messaging socket. `liveOf` checks the whole inventory at once. */
 export function listClaudeLiveSessions(
     dir: string = claudeSessionsDir(),
