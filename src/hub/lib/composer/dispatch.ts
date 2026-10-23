@@ -14,6 +14,11 @@ import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import type { WidgetAsset, WidgetOutgoing } from "../widget/types";
 import type { OutboxDispatcher } from "./engine";
 
+/** The transport the widget delivers through: the `tools` runner of the widget's own checkout. */
+export function widgetDeliverDeps(signal?: AbortSignal): DeliverDeps {
+    return { runTool: (args: string[]) => runWidgetDelivery({ args, signal }) };
+}
+
 async function runWidgetDelivery({ args, signal }: { args: string[]; signal?: AbortSignal }) {
     const nativeTurn = (args[0] === "claude" && args[1] === "worker") || args[0] === "grok";
     const result = await boundedCommand({

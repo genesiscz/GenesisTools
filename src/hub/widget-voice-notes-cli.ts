@@ -13,6 +13,7 @@ import {
     readVoiceNote,
     recordVoiceNote,
     transcribeVoiceNote,
+    voiceNoteContextSchema,
 } from "./lib/widget/voice-notes";
 
 export function registerWidgetVoiceNotes(widget: Command): void {
@@ -30,8 +31,15 @@ export function registerWidgetVoiceNotes(widget: Command): void {
         .option("--mic-launcher <path>")
         .option("--wait-for-start")
         .option("--stop-on-stdin")
+        .option(
+            "--context <json>",
+            "where it was recorded: {sessionKey, sessionTitle?, decisionId?, decisionNumber?, title?}"
+        )
         .option("--json")
         .action(async (options, command) => {
+            const context = options.context
+                ? voiceNoteContextSchema.parse(SafeJSON.parse(options.context, { strict: true }))
+                : undefined;
             if (options.input === "-" && (options.waitForStart || options.stopOnStdin)) {
                 throw new Error("PCM stdin cannot also control recording");
             }
@@ -58,6 +66,7 @@ export function registerWidgetVoiceNotes(widget: Command): void {
                             signal,
                             stopSignal: control?.stopSignal,
                             onEvent: (event) => out.print(`${SafeJSON.stringify(event)}\n`),
+                            context,
                         });
                         out.result({ kind: "recorded", note });
                     } catch (error) {

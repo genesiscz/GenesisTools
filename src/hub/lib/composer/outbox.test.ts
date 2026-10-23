@@ -89,6 +89,7 @@ import {
     widgetSnapshot,
     widgetTitle,
 } from "../widget/snapshot";
+import { isStaged, sendStagedDecisions, unstageDecisions } from "../widget/staged";
 import { MAX_WIDGET_STATE_BYTES, mutateWidgetState, readWidgetState } from "../widget/storage";
 import {
     parseWidgetSessionKey,
@@ -619,6 +620,63 @@ describe("widget source and delivery contracts", () => {
         await expect(
             dispatcher.validate({ ...message, payload: { ...message.payload, option: "b" } }, [])
         ).rejects.toThrow("changed");
+    });
+
+    test("staged decisions go one message per session; unstaging keeps them waiting", async () => {
+        const directory = await root();
+        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+        const post = (sessionId: string, prompts: string[]) =>
+            postDecisions(
+                files.file,
+                files.events,
+                {
+                    sessionId,
+                    provider: "codex",
+                    decisions: prompts.map((prompt) => ({ prompt, options: ["yes", "no"] })),
+                },
+                { env: {} }
+            );
+        const [a1, a2, a3] = await post("staged-a", ["First?", "Second?", "Left alone?"]);
+        const [b1] = await post("staged-b", ["Other?"]);
+        await updateDecisions(files.file, files.events, {
+            updates: [
+                { id: a1.id, state: "drafted", draftOption: "a" },
+                { id: a2.id, state: "drafted", draft: "only if it is cheap" },
+                { id: a3.id, state: "drafted", draftOption: "b" },
+                { id: b1.id, state: "drafted", draftOption: "b" },
+            ],
+        });
+        const sent: string[] = [];
+        const result = await sendStagedDecisions({
+            ids: [a1.id, b1.id, a2.id],
+            files,
+            deliver: {
+                codexWorkerFor: () => "fixture-worker",
+                runTool: async (args: string[]) => {
+                    sent.push(args.join(" "));
+                    return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
+                },
+            },
+        });
+        expect(result).toMatchObject({ sent: 3, failed: 0 });
+        expect(result.sessions.map((entry) => [entry.session, entry.numbers])).toEqual([
+            ["staged-a", [1, 2]],
+            ["staged-b", [1]],
+        ]);
+        expect(sent).toHaveLength(2);
+        const rows = readDecisions(files.file);
+        const row = (id: string) => rows.find((entry) => entry.id === id);
+        expect(row(a1.id)).toMatchObject({ option: "a" });
+        expect(row(a2.id)?.answer).toBe("only if it is cheap");
+        expect(row(a1.id)?.draftOption).toBeUndefined();
+        // Not chosen for this send: still staged, still waiting.
+        expect(row(a3.id)).toMatchObject({ state: "drafted", draftOption: "b" });
+
+        expect(await unstageDecisions({ ids: [a3.id, a1.id], files })).toBe(1);
+        const after = readDecisions(files.file).find((entry) => entry.id === a3.id);
+        expect(after?.state).toBe("drafted");
+        expect(after?.draftOption ?? "").toBe("");
+        expect(after && isStaged(after)).toBe(false);
     });
 
     test("a media-only reply keeps the original session and card title in one literal message", async () => {
@@ -1246,7 +1304,8 @@ test("malformed stored times sort as the oldest activity instead of breaking the
         root: directory,
         sources: {
             ...emptySources,
-            decisions: () => readDecisions(file).map((row) => ({ ...row, updatedTs: "not a time" })),
+            decisions: () =>
+                readDecisions(file).map((row) => ({ ...row, createdTs: "not a time", updatedTs: "not a time" })),
         },
     });
     expect(snapshot.sessions[0]?.activityAt).toBe(0);
@@ -1684,6 +1743,18 @@ test("decision cards carry recorded answers and supersede links; only open decis
     expect(
         snapshot.notifications?.sessions.find((entry) => entry.pendingItem?.sourceId === elsewhere.id)?.pendingItem
     ).toMatchObject({ number: 1, title: "Other" });
+
+    // A saved draft updates the row but asks nothing new: the item keeps the time it was asked, so the widget
+    // sees no new arrival (it chimed and flashed on every Save draft, 2026-10-23).
+    const askedAt = session?.pendingItem?.at;
+    await Bun.sleep(5);
+    await updateDecisions(file, events, {
+        updates: [{ id: replacement.id, state: "drafted", draft: "back both up", expectedRevision: 1 }],
+    });
+    const drafted = await widgetSnapshot({ root: directory, sources });
+    expect(drafted.notifications?.sessions.find((entry) => entry.key === sessionKey)?.pendingItem?.at).toBe(askedAt);
+    expect(drafted.cards.find((entry) => entry.sourceId === replacement.id)?.at).toBe(askedAt);
+    expect(readDecisions(file).find((row) => row.id === replacement.id)?.updatedTs).not.toBe(replacement.createdTs);
 
     await updateDecisions(file, events, {
         updates: [{ id: replacement.id, state: "superseded", supersededBy: elsewhere.id, comment: "moved" }],

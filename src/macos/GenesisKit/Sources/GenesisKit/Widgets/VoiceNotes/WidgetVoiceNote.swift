@@ -15,6 +15,31 @@ public struct WidgetVoiceNote: Decodable, Identifiable, Equatable, Sendable {
     public let transcription: String
     public let error: String?
     public let provider: String?
+    /// Recorded from a reply box: its session and decision.
+    public var context: WidgetVoiceNoteContext? = nil
+}
+
+/// Where a voice note was recorded: a session's reply box, for one decision or a follow-up.
+public struct WidgetVoiceNoteContext: Codable, Equatable, Sendable {
+    public var sessionKey: String
+    public var sessionTitle: String?
+    public var decisionId: String?
+    public var decisionNumber: Int?
+    public var title: String?
+
+    public init(sessionKey: String, sessionTitle: String? = nil, decisionId: String? = nil, decisionNumber: Int? = nil,
+                title: String? = nil) {
+        self.sessionKey = sessionKey
+        self.sessionTitle = sessionTitle
+        self.decisionId = decisionId
+        self.decisionNumber = decisionNumber
+        self.title = title
+    }
+
+    /// "DECISION 19 · gt-native-fixes" or the session's title.
+    public var label: String {
+        [decisionNumber.map { "DECISION \($0)" }, sessionTitle].compactMap { $0 }.joined(separator: " · ")
+    }
 }
 
 struct WidgetVoiceNoteSnapshot: Decodable {

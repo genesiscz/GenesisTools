@@ -554,15 +554,17 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         model.startSettings()
         await fulfillment(of: [loaded], timeout: 3)
         model.selectedKey = "pinned-recipient"
-        var requested: [String] = []
-        model.recordVoiceNote = { requested.append($0) }
+        // The reply box microphone records a voice note in place, with its session as context; no panel opens.
+        var requested: [WidgetVoiceNoteContext] = []
+        model.dictateVoiceNote = { requested.append($0) }
         model.toggleVoice()
-        XCTAssertEqual(requested, ["pinned-recipient"])
-        XCTAssertEqual(model.voiceActionLabel, "Record voice note")
+        XCTAssertEqual(requested.map(\.sessionKey), ["pinned-recipient"])
+        XCTAssertNil(requested.first?.decisionNumber, "a follow-up names no decision")
+        XCTAssertEqual(model.voiceActionLabel, "Record a voice note into the reply box")
         XCTAssertFalse(model.voiceActive)
         XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
-        // Control: the same model and executable can still reach the standalone legacy listener.
-        model.recordVoiceNote = nil
+        // Control: without voice notes the same model and executable still reach the live listener.
+        model.dictateVoiceNote = nil
         let finished = expectation(description: "legacy fixture exits")
         let voiceSubscription = model.$voiceActive.dropFirst().filter { !$0 }.prefix(1).sink { _ in finished.fulfill() }
         model.toggleVoice()

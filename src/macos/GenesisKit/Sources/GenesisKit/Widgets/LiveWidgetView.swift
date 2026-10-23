@@ -106,7 +106,7 @@ public struct LiveWidgetView: View {
             draft: Binding(get: { model.draft.text }, set: model.setText),
             actions: AgentWidgetActions(
                 expand: { model.open(edge) }, collapse: model.collapse,
-                select: { model.select($0, edge: edge) }, choose: { model.submit(choice: $0) },
+                select: { model.select($0, edge: edge) }, choose: { model.choose(option: $0) },
                 submit: { model.submit() }, settings: { model.showSettings?() }, next: { model.next() }),
             liveContent: AnyView(content)
         )
@@ -161,8 +161,11 @@ public struct LiveWidgetView: View {
                     if model.error != nil || model.connectionLost { Button("Reconnect", action: model.start) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if model.inboxOverview {
+                if model.stagedView == nil { WidgetStagedChip(model: model) }
                 ScrollView {
-                    WidgetInboxOverview(model: model)
+                    Group {
+                        if model.stagedView != nil { WidgetStagedList(model: model) } else { WidgetInboxOverview(model: model) }
+                    }
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
                         .scrollOverflowContent()
                         .modifier(DocumentHeight(onScrollView: false) { fit.document = $0; reportFit() })
@@ -188,10 +191,13 @@ public struct LiveWidgetView: View {
                 // Pinned above the list: inside it, a session that opened at its selected card scrolled the filter
                 // under the top fade (Martin's image 24, 2026-10-23).
                 if section == "Inbox", !model.cards.isEmpty { inboxFilterBar }
+                if section == "Inbox", model.stagedView == nil { WidgetStagedChip(model: model) }
                 ScrollViewReader { reader in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 14) {
-                            if section == "Inbox" {
+                            if model.stagedView != nil {
+                                WidgetStagedList(model: model)
+                            } else if section == "Inbox" {
                                 inbox
                             } else if section == "Sessions" {
                                 WidgetSessionBrowser(model: model)
@@ -232,6 +238,10 @@ public struct LiveWidgetView: View {
         }
         .mediaPreviewHost()
         .padding(18).frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay {
+            if model.stagedLeavePrompt { WidgetStagedLeavePrompt(model: model) }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: model.stagedLeavePrompt)
         .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.outer = $0; reportFit() }
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             for provider in providers {
@@ -329,7 +339,7 @@ public struct LiveWidgetView: View {
                 model.showSettings?()
             }
             .accessibilityLabel("Widget settings")
-            IconButton(systemName: "xmark", tooltip: WidgetKeymap.hint("Collapse", WidgetKeymap.collapse), action: model.collapse)
+            IconButton(systemName: "xmark", tooltip: WidgetKeymap.hint("Collapse", WidgetKeymap.collapse), action: model.requestCollapse)
                 .accessibilityLabel("Collapse widget")
         }
     }
@@ -527,8 +537,32 @@ public struct LiveWidgetView: View {
             .strokeBorder(card.needsAnswer ? Color.orange.opacity(0.28) : .clear, lineWidth: 1))
     }
 
+    /// A card whose pick or note is staged, here or in the snapshot.
+    private func staged(_ card: WidgetCard) -> Bool {
+        card.kind == "decision" && card.needsAnswer
+            && (model.stagedOption(card.sourceId, stored: card.draftOption) != nil || card.draft != nil)
+    }
+
+    static func choiceTooltip(_ choice: WidgetChoice, index: Int, stages: Bool, picked: Bool) -> String {
+        let key = index < 9 ? " · key \(index + 1)" : ""
+        if !stages { return "Answer \(choice.id)" + (choice.recommended ? " (recommended)" : "") + key }
+        return (picked ? "Staged; click again to unstage" : "Stage \(choice.id), sent later with your other staged decisions")
+            + (choice.recommended ? " (recommended)" : "") + key
+    }
+
     @ViewBuilder private func cardDetail(_ card: WidgetCard) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let saved = model.draftSavedAt[card.id] ?? (card.draft != nil ? Date(timeIntervalSince1970: card.at / 1000) : nil),
+               card.kind == "decision", card.needsAnswer {
+                HStack(spacing: 4) {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(SessionPalette.blue)
+                    Text(card.draft.map { "Draft saved: " + $0 } ?? "Draft saved").lineLimit(2)
+                    if model.draftSavedAt[card.id] != nil {
+                        Text("·")
+                        LiveAgo(date: saved, style: .brief)
+                    }
+                }.font(.system(size: 11)).foregroundStyle(.secondary)
+            }
             WidgetReceiptContextView(card: card, model: model)
                 .id(card.id + "|" + String(card.at))
             if !card.body.isEmpty {
@@ -550,9 +584,11 @@ public struct LiveWidgetView: View {
                         .buttonStyle(.borderedProminent).pointerCursor(!model.cardPending)
                         .disabled(model.importing > 0 || model.cardPending)
                 } else {
+                    let staged = model.stagedOption(card.sourceId, stored: card.draftOption)
                     ForEach(Array(card.choices.enumerated()), id: \.element.id) { index, choice in
+                        let picked = staged == choice.id
                         Button {
-                            model.submit(choice: choice.id)
+                            model.choose(card, option: choice.id)
                         } label: {
                             HStack(alignment: .top, spacing: 8) {
                                 Text(verbatim: choice.id).font(.system(size: 10.5, weight: .semibold, design: .rounded))
@@ -562,17 +598,26 @@ public struct LiveWidgetView: View {
                                     horizontal: false, vertical: true)
                                     .padding(.top, 2)
                                 Spacer(minLength: 0)
+                                if picked {
+                                    Text("Staged").font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(SessionPalette.blue).padding(.top, 3)
+                                }
                                 if choice.recommended {
                                     Image(systemName: "sparkle").foregroundStyle(.orange)
                                 }
                             }.padding(9).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 9))
+                                .background(picked ? SessionPalette.blue.opacity(0.16) : .white.opacity(0.065),
+                                            in: RoundedRectangle(cornerRadius: 9))
+                                .overlay(RoundedRectangle(cornerRadius: 9)
+                                    .strokeBorder(picked ? SessionPalette.blue.opacity(0.7) : .clear, lineWidth: 1))
                                 .contentShape(RoundedRectangle(cornerRadius: 9))
                         }
                         .buttonStyle(RowButtonStyle(cornerRadius: 9)).disabled(model.importing > 0)
-                        .instantTooltip("Answer \(choice.id)" + (choice.recommended ? " (recommended)" : "")
-                                        + (index < 9 ? " · key \(index + 1)" : ""))
-                        .accessibilityLabel("Answer \(choice.id): " + Self.choiceText(choice))
+                        .instantTooltip(Self.choiceTooltip(choice, index: index, stages: model.decisionClickStages,
+                                                           picked: picked))
+                        .accessibilityLabel((model.decisionClickStages ? "Stage " : "Answer ") + "\(choice.id): "
+                                            + Self.choiceText(choice))
+                        .accessibilityValue(picked ? "Staged" : "")
                     }
                     ownAnswer(card)
                 }
@@ -585,7 +630,13 @@ public struct LiveWidgetView: View {
                     Button("Mark complete") { model.ledger(card, state: "implemented") }
                     Button("Dismiss") { model.ledger(card, state: "dismissed") }
                 } else if card.kind == "decision" && card.needsAnswer {
-                    Button("Save draft") { model.ledger(card, state: "drafted") }
+                    Button("Save draft") { model.saveDraft(card) }
+                        .instantTooltip("Keeps your text as this decision's note, staged with your other decisions.")
+                    if staged(card) {
+                        Button("Send now") { model.sendStaged([card.sourceId]) }
+                            .instantTooltip("Sends this staged decision alone, without the others.")
+                        Button("Unstage") { model.discardStaged([card.sourceId]) }
+                    }
                     Button("Dismiss") { model.ledger(card, state: "dismissed") }
                 }
                 if card.kind == "result" || card.kind == "answer" {
@@ -630,7 +681,7 @@ public struct LiveWidgetView: View {
             .onAppear { editing = true }
         } else {
             WidgetOwnAnswerRow {
-                GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { model.ownAnswerCardID = card.id }
+                GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { model.openOwnAnswer(card) }
             }.disabled(model.importing > 0 || model.cardPending)
         }
     }
@@ -996,12 +1047,20 @@ public struct LiveWidgetView: View {
                 }.instantTooltip(WidgetKeymap.hint("Paste image or video", WidgetKeymap.paste)).accessibilityLabel("Paste media")
                 Button(action: model.capture) { Image(systemName: "camera") }.instantTooltip("Capture a screenshot")
                     .accessibilityLabel("Capture screenshot")
+                Button(action: model.toggleVideoCapture) {
+                    Image(systemName: model.recordingVideo ? "stop.circle.fill" : "video")
+                }
+                .foregroundStyle(model.recordingVideo ? .red : .secondary)
+                .instantTooltip(model.recordingVideo ? "Stop the recording and add the video to the draft"
+                                : "Record a video of the app you are in (up to 90 s)")
+                .accessibilityLabel(model.recordingVideo ? "Stop video recording" : "Record video")
                 Button(action: model.toggleVoice) {
-                    Image(systemName: model.voiceActive ? "stop.circle.fill" : "mic").padding(.horizontal, 8)
+                    Image(systemName: model.voiceActive || model.noteDictation == "Recording" ? "stop.circle.fill"
+                          : (model.noteDictation != nil ? "waveform" : "mic")).padding(.horizontal, 8)
                         .padding(.vertical, 4)
                 }
                 .modifier(WidgetGlassControl())
-                .foregroundStyle(model.voiceActive ? .red : .secondary)
+                .foregroundStyle(model.voiceActive || model.noteDictation == "Recording" ? .red : .secondary)
                 .instantTooltip(model.voiceActionLabel).accessibilityLabel(model.voiceActionLabel)
                 Spacer()
                 Text(WidgetKeymap.mediaFooter).font(.system(size: 9)).foregroundStyle(.tertiary)

@@ -241,6 +241,35 @@ private struct WidgetGeneralSettings: View {
                         Text("Below the list").tag("bottom")
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
+                Divider()
+                NativeSettingsRow("Decision click", detail: "Stage keeps your pick to send later with the others, one message per session.") {
+                    Picker("Decision click", selection: string("decisionClick", prefs?.decisionClick ?? "stage")) {
+                        Text("Stage").tag("stage")
+                        Text("Send at once").tag("send")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
+                Divider()
+                NativeSettingsRow("Closing with staged decisions", detail: "What happens to staged decisions when the inbox closes.") {
+                    Picker("Closing with staged decisions", selection: string("stagedOnLeave", prefs?.stagedOnLeave ?? "ask")) {
+                        Text("Ask").tag("ask")
+                        Text("Keep staged").tag("keep")
+                        Text("Send them").tag("send")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
+                Divider()
+                NativeSettingsRow("Inbox of every session", detail: "The inbox button's list: grouped under each session, or one list.") {
+                    Picker("Inbox of every session", selection: string("inboxGrouping", prefs?.inboxGrouping ?? "session")) {
+                        Text("By session").tag("session")
+                        Text("One list").tag("list")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
+                Divider()
+                NativeSettingsRow("Reply box microphone", detail: "Voice note keeps the recording in Voice Notes and puts its text in the reply box.") {
+                    Picker("Reply box microphone", selection: string("composerVoice", prefs?.composerVoice ?? "note")) {
+                        Text("Voice note").tag("note")
+                        Text("Live dictation").tag("live")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
             }
             NativeSettingsCard("Alerts", subtitle: "When an agent asks or answers while the widget is closed.") {
                 NativeSettingsToggle(

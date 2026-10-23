@@ -81,6 +81,14 @@ export const widgetPreferencesSchema = z.object({
     bubbleTooltip: z.enum(["auto", "always", "never"]).default("auto"),
     /** The rail's session bubbles: in the hover list's order ("list"), or each keeps its place ("stable"). */
     railOrder: z.enum(["list", "stable"]).default("list"),
+    /** A click on a decision option: stages the pick to send later with others ("stage"), or sends it at once. */
+    decisionClick: z.enum(["stage", "send"]).default("stage"),
+    /** Leaving the inbox with staged decisions: ask what to do ("ask"), keep them staged, or send them. */
+    stagedOnLeave: z.enum(["ask", "keep", "send"]).default("ask"),
+    /** The inbox of every session: entries grouped under their session ("session"), or one list. */
+    inboxGrouping: z.enum(["session", "list"]).default("session"),
+    /** The composer's microphone: records a voice note and puts its transcript in the field ("note"), or live dictation. */
+    composerVoice: z.enum(["note", "live"]).default("note"),
 });
 
 // Zod defaults also run inside partial objects; a patch must retain only supplied keys.

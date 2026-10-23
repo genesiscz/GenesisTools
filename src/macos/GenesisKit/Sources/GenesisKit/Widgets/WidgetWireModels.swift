@@ -167,6 +167,10 @@ public struct WidgetCard: Codable, Identifiable, Equatable, Sendable {
     public var answeredVia: String? = nil
     public var comments: [String]? = nil
     public var supersededBy: SupersededBy? = nil
+    /// A staged decision's unsent pick and note (the decision log's `drafted` state); sent with the other staged ones.
+    public var draftOption: String? = nil
+    public var draft: String? = nil
+    public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }
     public var needsAnswer: Bool {
         (kind == "decision" && ["open", "drafted"].contains(status))
             || (kind == "form" && status == "pending")
@@ -300,6 +304,14 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var bubbleTooltip: String?
     /// The rail's session bubbles: "list" (default, the hover list's order) or "stable" (each keeps its place).
     public var railOrder: String?
+    /// A click on a decision option: "stage" (default, sent later with the other staged ones) or "send" (at once).
+    public var decisionClick: String?
+    /// Leaving the inbox with staged decisions: "ask" (default), "keep" or "send".
+    public var stagedOnLeave: String?
+    /// The inbox of every session: "session" (default, grouped under each session) or "list".
+    public var inboxGrouping: String?
+    /// The composer's microphone: "note" (default, a voice note whose transcript fills the field) or "live".
+    public var composerVoice: String?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(
@@ -391,6 +403,14 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     public var number: Int? = nil
     /// How many items this entry stands for: an answers group lists only its newest item.
     public var count: Int? = nil
+    /// A decision's options and recommended letter, so the inbox of every session can stage a pick in place.
+    public var options: [String]? = nil
+    public var recommended: String? = nil
+    public var revision: Int? = nil
+    /// A staged decision's unsent pick and note; see `WidgetCard.draftOption`.
+    public var draftOption: String? = nil
+    public var draft: String? = nil
+    public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }
 }
 public struct WidgetInboxSession: Codable, Equatable, Sendable {
     public var key: String

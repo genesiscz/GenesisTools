@@ -131,9 +131,19 @@ public final class WidgetModel: ObservableObject {
     public var showSettingsPage: ((String) -> Void)?
     public var showMedia: ((WidgetMediaSelection) -> Void)?
     public var openHub: ((WidgetSession?) -> Void)?
-    public var recordVoiceNote: ((String) -> Void)?
+    /// The reply box's microphone in "note" mode (the default): starts a voice note with where it was recorded, or
+    /// stops the one that records; its transcript lands in the reply box. Nil where no voice notes run (the preview).
+    public var dictateVoiceNote: ((WidgetVoiceNoteContext) -> Void)?
+    /// A voice note for the reply box records or transcribes; the button shows Stop while it records.
+    @Published public var noteDictation: String?
     public var voiceActionLabel: String {
-        voiceActive ? "Stop dictation" : (recordVoiceNote == nil ? "Dictate" : "Record voice note")
+        if noteDictation == "Recording" { return "Stop and put the text in the reply box" }
+        if noteDictation != nil { return noteDictation ?? "" }
+        return voiceActive ? "Stop dictation" : (usesNoteDictation ? "Record a voice note into the reply box" : "Dictate")
+    }
+    /// `composerVoice` "note" (default) records a voice note; "live" streams dictation into the field.
+    var usesNoteDictation: Bool {
+        dictateVoiceNote != nil && (snapshot?.state.preferences.composerVoice ?? "note") == "note"
     }
     public var openDestination: ((WidgetSession, String, String?) -> Void)?
     /// Called with each preference patch once the hub has stored it.
@@ -844,6 +854,7 @@ public final class WidgetModel: ObservableObject {
         railActivitySessions = snapshot?.state.preferences.railOrder == "stable"
             ? railActive : railActive.sorted(by: Self.previewOrder(inbox: inboxSessions, sort: previewSort))
         inboxOverviewItems = Self.overviewItems(value.sessions)
+        reconcileStaged(value.sessions.flatMap { $0.items ?? [] })
         previewList = Self.previewRows(
             sessions: snapshot?.sessions ?? [], inbox: inboxSessions,
             filter: previewFilter, sort: previewSort)
@@ -1011,6 +1022,18 @@ public final class WidgetModel: ObservableObject {
     /// per-session list gives each session's pending and unread item. Stored when the inbox changes: up to 512
     /// sessions × 8 entries, sorted, is too much to derive in a body that reads it several times per pass.
     public private(set) var inboxOverviewItems: [WidgetInboxItem] = []
+    /// Every staged decision of every session (the decision log's unsent picks and notes), stored with the inbox.
+    @Published public internal(set) var stagedItems: [WidgetInboxItem] = []
+    /// Picks staged or cleared here that the next snapshot has not shown yet, by decision id ("" is a cleared pick).
+    @Published var pendingStage: [String: String] = [:]
+    /// The question about staged decisions before the panel closes (`requestCollapse`).
+    @Published public var stagedLeavePrompt = false
+    /// The staged decisions view: nil closed, "session" for the selected session's, "all" for every session's.
+    @Published public var stagedView: String?
+    /// The staged decisions the user kept at the last leave; the prompt asks again only for a newly staged one.
+    var keptStaged: Set<String> = []
+    /// When this widget last saved a decision's draft, by card id, for the card's "Draft saved" line.
+    @Published public var draftSavedAt: [String: Date] = [:]
 
     nonisolated static func overviewItems(_ sessions: [WidgetInboxSession]) -> [WidgetInboxItem] {
         sessions.flatMap { entry in entry.items ?? [entry.pendingItem, entry.unreadItem].compactMap { $0 } }
@@ -1052,7 +1075,7 @@ public final class WidgetModel: ObservableObject {
     public func toggleInboxOverview(on surface: WidgetSurfaceID) {
         guard !stopping else { return }
         if presentation(for: surface) == .expanded, activeModuleID == "agents", inboxOverview {
-            collapse()
+            requestCollapse()
             return
         }
 
@@ -1066,7 +1089,7 @@ public final class WidgetModel: ObservableObject {
     public func toggleSession(_ key: String, on surface: WidgetSurfaceID) {
         guard !stopping else { return }
         if presentation(for: surface) == .expanded, activeModuleID == "agents", !inboxOverview, selectedKey == key {
-            collapse()
+            requestCollapse()
             return
         }
 
@@ -1382,7 +1405,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     @discardableResult
-    private func call(_ value: WidgetJSON) async throws -> WidgetJSON {
+    func call(_ value: WidgetJSON, timeoutSeconds: Int = 120) async throws -> WidgetJSON {
         if let actionRunner { return try await actionRunner(value) }
         let file = journal.appendingPathComponent("action-" + UUID().uuidString + ".tmp")
         try JSONEncoder().encode(value).write(to: file, options: .atomic)
@@ -1391,12 +1414,12 @@ public final class WidgetModel: ObservableObject {
                 PerfLog.mark("widget.action cleanup \(error.localizedDescription)")
             }
         }
-        return try await runAction(file)
+        return try await runAction(file, timeoutSeconds: timeoutSeconds)
     }
 
-    private func runAction(_ file: URL) async throws -> WidgetJSON {
+    private func runAction(_ file: URL, timeoutSeconds: Int = 120) async throws -> WidgetJSON {
         let result = try await bridge.run(
-            subcommand: "hub", args: widgetArgs + ["call", "--input", file.path], timeoutSeconds: 120)
+            subcommand: "hub", args: widgetArgs + ["call", "--input", file.path], timeoutSeconds: timeoutSeconds)
         guard result.exitCode == 0 else {
             throw ToolsBridgeError.refused(String(result.stderr.suffix(1200)))
         }
@@ -1718,6 +1741,48 @@ public final class WidgetModel: ObservableObject {
     static let screenRecordingRefused = "macOS refused the screenshot: Screen Recording is off for this app. Turn it on "
         + "in System Settings → Privacy & Security → Screen & System Audio Recording, then try again."
 
+    /// A video recording for the reply box runs: the camera's video sibling shows Stop.
+    @Published public var recordingVideo = false
+
+    /// The video button: records the app the user was in (the widget panel never takes the front) with the
+    /// ScreenCaptureKit recorder of `tools control capture record`, until Stop or 90 s, and adds the movie to the draft
+    /// as a video, with the frame review a pasted video gets (Martin, 2026-10-23: "wheres the button to capture the
+    /// video?"). A second press stops it.
+    public func toggleVideoCapture() {
+        if recordingVideo {
+            action(["action": "record-video-stop"])
+            return
+        }
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
+            error = "Bring the app to record to the front first; the widget records that app's windows."
+            return
+        }
+        let key = selectedKey
+        let need = PermissionNeed(
+            .screenRecording,
+            reason: "The video button records the windows of the app you were using and attaches the movie to this session's draft.",
+            grantWorksInNewProcess: true,
+            onGranted: { [weak self] in self?.toggleVideoCapture() })
+        recordingVideo = true
+        notice = "Recording \(app.localizedName ?? "the front app"). Press the video button again to stop (at most 90 s)."
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.recordingVideo = false }
+            guard await self.screenCaptureGate(need) else { return }
+            do {
+                _ = try await self.call(
+                    ["action": "record-video", "key": .string(key), "app": .string(String(app.processIdentifier))],
+                    timeoutSeconds: 150)
+                self.notice = "The video is in the draft. Review its frames before you send it."
+            } catch where WidgetCaptureError.isScreenRecordingDenied(error) {
+                if await self.screenCaptureGate(need) { self.report(ToolsBridgeError.refused(Self.screenRecordingRefused)) }
+            } catch {
+                self.report(error)
+            }
+        }
+    }
+
     /// The panel steps aside for the selection, then reopens with the new attachment in the draft. Escape returns
     /// `{cancelled: true, reason: "user"}`, which is not an error and reopens nothing. A missing Screen Recording grant
     /// (an error whose text starts with `WidgetCaptureError.screenRecordingDenied`) opens the permission dialog.
@@ -1755,9 +1820,12 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func toggleVoice() {
-        if let recordVoiceNote {
+        if usesNoteDictation, let dictateVoiceNote {
             guard !selectedKey.isEmpty else { return }
-            recordVoiceNote(selectedKey)
+            let card = ownAnswerCard
+            dictateVoiceNote(WidgetVoiceNoteContext(
+                sessionKey: selectedKey, sessionTitle: selected?.title, decisionId: card?.sourceId,
+                decisionNumber: card?.number, title: card?.title))
             return
         }
         if voiceActive {
@@ -1994,7 +2062,8 @@ public final class WidgetModel: ObservableObject {
         let delay = max(5, snapshot?.state.preferences.quietSeconds ?? 15)
         quietTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
-            self?.collapse()
+            // With staged decisions this asks first and the panel stays open (Martin, 2026-10-23).
+            self?.requestCollapse()
         }
     }
 
@@ -2004,7 +2073,7 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    private func report(_ error: Error) {
+    func report(_ error: Error) {
         self.error = error.localizedDescription
         PerfLog.mark("widget.error \(error.localizedDescription)")
     }

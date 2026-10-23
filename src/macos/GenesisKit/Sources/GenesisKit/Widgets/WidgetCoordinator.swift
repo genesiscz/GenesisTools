@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @MainActor
@@ -31,6 +32,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private var globalMouse: Any?
     private var keyboard: Any?
     private var screenObserver: NSObjectProtocol?
+    private var voiceNotesPhase: AnyCancellable?
     private var lastSide: EdgePanelPlacement?
     private var lastDisplayID: String?
     private var lastShown: Bool?
@@ -127,7 +129,22 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             self.model.dialogOpen = visible || self.settings?.isVisible == true || self.mediaWindow?.isVisible == true
         }
         self.voiceNotes = voiceNotes
-        model.recordVoiceNote = { [weak self] key in self?.openVoiceNotes(for: key) }
+        // The reply box's microphone records a note in place and puts its text in the field; the Voice Notes panel
+        // never opens for it (Martin, 2026-10-23: "should not open another widget but just let me dictate").
+        model.dictateVoiceNote = { [weak voiceNotes, weak model] context in
+            guard let voiceNotes, let model else { return }
+            if voiceNotes.phase == "Recording" {
+                voiceNotes.finishRecording()
+                return
+            }
+            voiceNotes.dictate(context: context) { [weak model] text in
+                guard let model, model.selectedKey == context.sessionKey else { return }
+                model.setText(model.draft.text.isEmpty ? text : model.draft.text + " " + text)
+            }
+        }
+        voiceNotesPhase = voiceNotes.$phase.receive(on: DispatchQueue.main).sink { [weak model] phase in
+            model?.noteDictation = phase
+        }
         do {
             try modules.register(
                 WidgetModuleDescriptor(
@@ -651,7 +668,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             event.window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow
         guard !panels.values.contains(where: { $0.panel.isVisible && $0.panel.frame.contains(point) })
         else { return }
-        model.collapse()
+        model.requestCollapse()
     }
 
     private func openVoiceNotes(for key: String) {
@@ -707,10 +724,18 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                            answering: model.answerCard))
         {
         case .pass: return event
-        case .collapse: if !model.escapeToList() { model.collapse() }
+        case .collapse:
+            // The leave question first (Esc keeps the staged decisions), then the staged view, then the list.
+            if model.stagedLeavePrompt {
+                model.resolveStagedLeave("keep")
+            } else if model.stagedView != nil {
+                model.stagedView = nil
+            } else if !model.escapeToList() {
+                model.requestCollapse()
+            }
         case .previous: model.next(-1)
         case .next: model.next()
-        case .choose(let choice): model.submit(choice: choice)
+        case .choose(let choice): model.choose(option: choice)
         }
         return nil
     }

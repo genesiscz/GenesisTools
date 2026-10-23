@@ -193,7 +193,32 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         }
     }
 
-    public func record(input: String = "mic") {
+    /// The reply box's microphone: records a note with where it was recorded (Martin, 2026-10-23: "it should just be
+    /// placed into the field where the button shows"), transcribes it as soon as the recording stops, and hands the
+    /// text to `onText`. The note stays in Voice Notes with its context. While it records, `finishRecording()` stops
+    /// it, as in the panel.
+    public func dictate(context: WidgetVoiceNoteContext, onText: @escaping @MainActor (String) -> Void) {
+        let configuration = settings()
+        record(context: context, then: { [self] note in
+            phase = "Transcribing"
+            var args = ["transcribe", note.id, "--revision", String(note.revision), "--provider", configuration.provider]
+            if let account = configuration.account { args += ["--account", account] }
+            if let model = configuration.model { args += ["--model", model] }
+            if let language = configuration.language { args += ["--language", language] }
+            let data = try await execute(args, nil) { _ in }
+            try Task.checkCancellation()
+            let updated = try JSONDecoder().decode(WidgetVoiceNoteResult.self, from: data).note
+            put(updated)
+            let text = updated.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            receipt = text.isEmpty ? "The recording had no speech to transcribe. It is kept in Voice Notes." : nil
+            if !text.isEmpty { onText(text) }
+        })
+    }
+
+    public func record(input: String = "mic") { record(input: input, context: nil, then: nil) }
+
+    private func record(input: String = "mic", context: WidgetVoiceNoteContext?,
+                        then: (@MainActor (WidgetVoiceNote) async throws -> Void)?) {
         begin(input == "mic" ? "Checking microphone access" : "Starting recording") { [self] in
             meter.reset()
             guard input != "mic" || !micLauncher.isEmpty else {
@@ -209,8 +234,11 @@ public final class WidgetVoiceNotesStore: ObservableObject {
                 try await lease.release()
                 throw CancellationError()
             }
-            let data = try await execute(["record", "--input", input, "--mic-launcher", micLauncher,
-                                          "--wait-for-start", "--stop-on-stdin", "--json"], lease) { [weak self, weak meter] event in
+            var args = ["record", "--input", input, "--mic-launcher", micLauncher, "--wait-for-start", "--stop-on-stdin", "--json"]
+            if let context, let json = try? JSONEncoder().encode(context), let text = String(data: json, encoding: .utf8) {
+                args += ["--context", text]
+            }
+            let data = try await execute(args, lease) { [weak self, weak meter] event in
                 meter?.receive(event)
                 if event.kind == "recording", let self, self.phase == "Starting recording" { self.phase = "Recording" }
             }
@@ -218,6 +246,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
             put(note)
             selectedID = note.id
             receipt = "Recording saved locally. Transcribe when you are ready."
+            try await then?(note)
         }
     }
 

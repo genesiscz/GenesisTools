@@ -1,0 +1,112 @@
+import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
+import { decisionFiles } from "@app/question/lib/decisions/read";
+import { type DecisionRecord, kindOf, readDecisions, updateDecisions } from "@app/question/lib/decisions/store";
+import { answerInboxDecisions, type InboxAnswerResult } from "@app/question/lib/inbox/answer";
+import { waitingBlock } from "@app/question/lib/inbox/load";
+
+/** Where a session's answers go: the widget's target for it (the decision row alone has no source home). */
+export interface StagedTarget {
+    provider?: string;
+    sourceHome?: string;
+    cwd?: string;
+}
+
+export interface StagedSendResult {
+    /** One entry per session, in the order the sessions first appear in `ids`. */
+    sessions: Array<{ session: string; numbers: number[]; result?: InboxAnswerResult; error?: string }>;
+    sent: number;
+    failed: number;
+}
+
+/**
+ * A staged decision: the user picked an option or wrote a note in an inbox and has not sent it. It is the decision
+ * log's own unsent state (`drafted` with `draftOption` or `draft`), so the hub, the widget and the CLI see one list.
+ */
+export function isStaged(row: DecisionRecord): boolean {
+    return kindOf(row) === "decision" && row.state === "drafted" && Boolean(row.draftOption || row.draft?.trim());
+}
+
+/**
+ * Sends the staged decisions `ids` as their answers: one message per session, through `answerInboxDecisions`, the
+ * path the inbox and the hub's Decisions pane send with. A session that fails keeps its decisions staged and is
+ * reported; the other sessions still go. An id that is not staged (sent meanwhile, unstaged) is skipped.
+ */
+export async function sendStagedDecisions({
+    ids,
+    targets = {},
+    files = decisionFiles(),
+    deliver = {},
+}: {
+    ids: readonly string[];
+    targets?: Record<string, StagedTarget>;
+    files?: { file: string; events: string };
+    deliver?: DeliverDeps;
+}): Promise<StagedSendResult> {
+    const wanted = new Set(ids);
+    const staged = readDecisions(files.file).filter((row) => wanted.has(row.id) && isStaged(row));
+    const bySession = new Map<string, DecisionRecord[]>();
+
+    for (const id of ids) {
+        const row = staged.find((entry) => entry.id === id);
+
+        if (!row) {
+            continue;
+        }
+
+        bySession.set(row.sessionId, [...(bySession.get(row.sessionId) ?? []), row]);
+    }
+
+    const result: StagedSendResult = { sessions: [], sent: 0, failed: 0 };
+
+    for (const [session, rows] of bySession) {
+        const target = targets[session] ?? {};
+        const numbers = rows.map((row) => row.number);
+        const provider = target.provider ?? rows[0]?.provider;
+        const cwd = target.cwd ?? rows[0]?.cwd;
+
+        try {
+            const sent = await answerInboxDecisions(
+                {
+                    session,
+                    ...(provider ? { provider } : {}),
+                    ...(target.sourceHome ? { sourceHome: target.sourceHome } : {}),
+                    ...(cwd ? { cwd } : {}),
+                    answers: rows.map((row) => ({
+                        number: row.number,
+                        expectedRevision: row.revision ?? 1,
+                        ...(row.draftOption ? { option: row.draftOption } : {}),
+                        ...(row.draft?.trim() ? { text: row.draft.trim() } : {}),
+                    })),
+                },
+                { ...files, block: waitingBlock, deliver }
+            );
+            result.sessions.push({ session, numbers, result: sent });
+            result.sent += rows.length;
+        } catch (error) {
+            result.sessions.push({ session, numbers, error: error instanceof Error ? error.message : String(error) });
+            result.failed += rows.length;
+        }
+    }
+
+    return result;
+}
+
+/** Discards the unsent pick and note of each staged decision in `ids`; the decision still waits for an answer. */
+export async function unstageDecisions({
+    ids,
+    files = decisionFiles(),
+}: {
+    ids: readonly string[];
+    files?: { file: string; events: string };
+}): Promise<number> {
+    const wanted = new Set(ids);
+    const updates = readDecisions(files.file)
+        .filter((row) => wanted.has(row.id) && isStaged(row))
+        .map((row) => ({ id: row.id, draft: "", draftOption: "" }));
+
+    if (updates.length > 0) {
+        await updateDecisions(files.file, files.events, { updates });
+    }
+
+    return updates.length;
+}

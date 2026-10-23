@@ -24,6 +24,16 @@ const clipSchema = z.object({
     endedBy: z.enum(["eof", "stop", "limit"]),
     sha256: z.string().length(64),
 });
+/** Where a note was recorded: the widget's reply box of a session, for one decision or a follow-up. */
+export const voiceNoteContextSchema = z.object({
+    sessionKey: z.string().max(1_000),
+    sessionTitle: z.string().max(500).optional(),
+    decisionId: z.string().max(500).optional(),
+    decisionNumber: z.number().int().positive().optional(),
+    title: z.string().max(500).optional(),
+});
+export type VoiceNoteContext = z.infer<typeof voiceNoteContextSchema>;
+
 export const voiceNoteSchema = z.object({
     id: z.string().uuid(),
     revision: z.number().int().positive(),
@@ -38,6 +48,8 @@ export const voiceNoteSchema = z.object({
     language: z.string().optional(),
     /** The newest transcription attempt; only that attempt may write its outcome. */
     operationId: z.string().uuid().optional(),
+    /** Recorded from a reply box: its session and decision. Absent for a note recorded in Voice Notes itself. */
+    context: voiceNoteContextSchema.optional(),
 });
 export type VoiceNote = z.infer<typeof voiceNoteSchema>;
 const indexSchema = z.object({ revision: z.number().int().nonnegative(), notes: z.array(voiceNoteSchema).max(100) });
@@ -148,11 +160,13 @@ export async function recordVoiceNote({
     signal,
     stopSignal,
     onEvent,
+    context,
 }: {
     root?: string;
     id?: string;
     input?: string;
     micLauncher?: string;
+    context?: VoiceNoteContext;
     signal?: AbortSignal;
     stopSignal?: AbortSignal;
     onEvent?: (event: RecordingEvent) => void;
@@ -186,6 +200,7 @@ export async function recordVoiceNote({
         text: "",
         recognizedText: "",
         transcription: "none",
+        ...(context ? { context } : {}),
     });
     let duplicate = false;
     try {

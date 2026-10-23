@@ -46,6 +46,29 @@ function timeOf(value: string | null | undefined): number {
     return Number.isFinite(at) ? at : 0;
 }
 
+/**
+ * When a decision was asked: its last post (a supersede revises it), not its last update. A saved draft or a staged
+ * pick updates the row, and the widget treats a newer item time as a new arrival that chimes and flashes.
+ */
+/** The unsent pick and note of a `drafted` decision, each only when present. */
+function stagedOf(row: { state: string; draftOption?: string; draft?: string }): {
+    draftOption?: string;
+    draft?: string;
+} {
+    if (row.state !== "drafted") {
+        return {};
+    }
+
+    return {
+        ...(row.draftOption ? { draftOption: row.draftOption } : {}),
+        ...(row.draft?.trim() ? { draft: row.draft } : {}),
+    };
+}
+
+function askedTimeOf(row: { revisedTs?: string; createdTs?: string; updatedTs: string }): number {
+    return timeOf(row.revisedTs ?? row.createdTs ?? row.updatedTs);
+}
+
 export interface WidgetSession {
     key: string;
     target: WidgetTarget;
@@ -102,6 +125,12 @@ export interface WidgetCard {
     /** Decision cards: the chosen option letters and the answer text, however they were stored. */
     option?: string;
     answer?: string;
+    /**
+     * Decision cards: the user's unsent pick and note (state `drafted`). A staged decision has either; the widget
+     * sends staged decisions together, one message per session.
+     */
+    draftOption?: string;
+    draft?: string;
     /** Decision cards: every comment, oldest first (a supersede reason, progress notes). */
     comments?: string[];
     /** Decision cards: who stored the answer, the user in an inbox (`inbox`) or an agent copying a chat answer. */
@@ -197,6 +226,13 @@ export interface WidgetInboxItem {
     number?: number;
     /** How many inbox items this entry stands for: an answers group lists only its newest item. */
     count?: number;
+    /** A decision: its options, so the inbox of every session can stage a pick without opening the session. */
+    options?: string[];
+    recommended?: string;
+    revision?: number;
+    /** A decision's unsent pick and note (`drafted`); see `WidgetCard.draftOption`. */
+    draftOption?: string;
+    draft?: string;
 }
 export interface WidgetInboxSession {
     key: string;
@@ -1085,10 +1121,14 @@ export async function widgetSnapshot({
                 sourceId: row.id,
                 kind: "decision",
                 key: session.key,
-                at: timeOf(row.updatedTs),
+                at: askedTimeOf(row),
                 needsAnswer: true,
                 number: row.number,
                 ...decisionTitle(row),
+                options: row.options,
+                ...(row.recommended ? { recommended: row.recommended } : {}),
+                revision: row.revision ?? 1,
+                ...stagedOf(row),
             },
             1
         );
@@ -1281,7 +1321,7 @@ export async function widgetSnapshot({
             },
             sessionKey: session.key,
             sourceId: row.id,
-            at: timeOf(row.updatedTs),
+            at: askedTimeOf(row),
             title: decisionTitle,
             body: decisionBody,
             status: row.delivery?.uncertain ? "delivery unknown" : row.state,
@@ -1297,6 +1337,7 @@ export async function widgetSnapshot({
             read: true,
             ...(row.option ? { option: row.option } : {}),
             ...(row.answer?.trim() ? { answer: row.answer } : {}),
+            ...stagedOf(row),
             ...(row.comments?.length ? { comments: row.comments } : {}),
             ...(row.answeredVia ? { answeredVia: row.answeredVia } : {}),
             ...supersededBy(row),

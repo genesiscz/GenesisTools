@@ -17,6 +17,9 @@ struct WidgetInboxOverview: View {
         }
     }
 
+    /// Entries under their session ("session", the default) or one list (Widgets → Inbox, and the header button).
+    private var grouped: Bool { (model.snapshot?.state.preferences.inboxGrouping ?? "session") == "session" }
+
     var body: some View {
         let items = items
         let _ = RenderProbe.hit("widget.overview")
@@ -30,6 +33,11 @@ struct WidgetInboxOverview: View {
                         filter = value
                     }), minSegmentWidth: 70, identifier: "widget.overview.filter")
                 Spacer(minLength: 4)
+                IconButton(systemName: grouped ? "list.bullet" : "rectangle.3.group",
+                           tooltip: grouped ? "Show one list" : "Group the entries by session") {
+                    model.holdAgentFit()
+                    model.updatePreferences(["inboxGrouping": .string(grouped ? "list" : "session")])
+                }.accessibilityLabel(grouped ? "Show one list" : "Group by session")
                 if model.inboxCount > 0 {
                     Button("Mark all read", action: model.markAllRead)
                         .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
@@ -48,7 +56,17 @@ struct WidgetInboxOverview: View {
                 Text(Self.summary(items)).font(.system(size: 11)).foregroundStyle(.secondary)
                 // Hundreds of entries: lazy, so only the rows on screen exist (swift skill, dense lists).
                 LazyVStack(alignment: .leading, spacing: 10) {
-                    ForEach(items, id: \.id) { item in row(item) }
+                    if grouped {
+                        ForEach(Self.groups(items), id: \.key) { group in
+                            Section {
+                                ForEach(group.items, id: \.id) { item in row(item) }
+                            } header: {
+                                header(group.key, items: group.items)
+                            }
+                        }
+                    } else {
+                        ForEach(items, id: \.id) { item in row(item) }
+                    }
                 }
                 if model.inbox.truncated {
                     Text("The newest entries are shown. Open a session for its whole inbox.")
@@ -56,6 +74,40 @@ struct WidgetInboxOverview: View {
                 }
             }
         }
+    }
+
+    /// The sessions in the order their first entry appears (the waiting ones first), each with its entries.
+    static func groups(_ items: [WidgetInboxItem]) -> [(key: String, items: [WidgetInboxItem])] {
+        var order: [String] = []
+        var byKey: [String: [WidgetInboxItem]] = [:]
+        for item in items {
+            if byKey[item.key] == nil { order.append(item.key) }
+            byKey[item.key, default: []].append(item)
+        }
+        return order.map { ($0, byKey[$0] ?? []) }
+    }
+
+    private func header(_ key: String, items: [WidgetInboxItem]) -> some View {
+        let session = model.session(forKey: key)
+        let waiting = items.filter(\.needsAnswer).count
+        return HStack(spacing: 7) {
+            if let session {
+                AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 14)
+            }
+            Text(session?.title ?? "Unknown session").font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+            Text([Plural.count(items.count, "entry", "entries"), waiting > 0 ? "\(waiting) need you" : nil]
+                .compactMap { $0 }.joined(separator: " · "))
+                .font(.system(size: 10)).foregroundStyle(waiting > 0 ? Color.orange : .secondary)
+            Spacer(minLength: 0)
+            if let session {
+                Button("Whole inbox") {
+                    model.select(session.key)
+                    model.section = "Inbox"
+                }.buttonStyle(.genHoverPlain()).font(.system(size: 10.5))
+            }
+        }
+        .padding(.top, 6).padding(.horizontal, 2)
+        .accessibilityElement(children: .combine)
     }
 
     private static func summary(_ items: [WidgetInboxItem]) -> String {
@@ -84,6 +136,10 @@ struct WidgetInboxOverview: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(Self.title(item)).font(.system(size: 12.5, weight: open ? .semibold : .medium))
                             .lineLimit(open ? 6 : 2).fixedSize(horizontal: false, vertical: true)
+                        if let staged = stagedLine(item) {
+                            Text("Staged: " + staged).font(.system(size: 11)).foregroundStyle(SessionPalette.blue)
+                                .lineLimit(1)
+                        }
                         HStack(spacing: 4) {
                             Text(Self.kindLabel(item))
                             Text("·")
@@ -120,8 +176,53 @@ struct WidgetInboxOverview: View {
             .strokeBorder(item.needsAnswer ? Color.orange.opacity(0.28) : .clear, lineWidth: 1))
     }
 
+    private func stagedLine(_ item: WidgetInboxItem) -> String? {
+        let option = model.stagedOption(item.sourceId, stored: item.draftOption)
+        guard item.kind == "decision", item.needsAnswer, option != nil || item.draft != nil else { return nil }
+        return WidgetStagedText.line(item, option: option)
+    }
+
+    /// An open decision's options, each staging (or sending, by the setting) that pick from here.
+    @ViewBuilder private func choices(_ item: WidgetInboxItem) -> some View {
+        if item.kind == "decision", item.needsAnswer, let options = item.options, !options.isEmpty {
+            let staged = model.stagedOption(item.sourceId, stored: item.draftOption)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(options.enumerated()), id: \.offset) { index, title in
+                    let letter = String(UnicodeScalar(97 + index).map(Character.init) ?? "?")
+                    let picked = staged == letter
+                    Button { model.choose(item, option: letter) } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text(verbatim: letter).font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                                .frame(width: 20, height: 20).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+                            Text(title).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).padding(.top, 2)
+                            Spacer(minLength: 0)
+                            if picked {
+                                Text("Staged").font(.system(size: 10, weight: .semibold)).foregroundStyle(SessionPalette.blue)
+                                    .padding(.top, 3)
+                            }
+                            if item.recommended == letter { Image(systemName: "sparkle").foregroundStyle(.orange) }
+                        }
+                        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(picked ? SessionPalette.blue.opacity(0.16) : .white.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(picked ? SessionPalette.blue.opacity(0.7) : .clear, lineWidth: 1))
+                        .contentShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(RowButtonStyle(cornerRadius: 8))
+                    .instantTooltip(LiveWidgetView.choiceTooltip(
+                        WidgetChoice(id: letter, title: title, recommended: item.recommended == letter),
+                        index: 10, stages: model.decisionClickStages, picked: picked))
+                    .accessibilityLabel((model.decisionClickStages ? "Stage " : "Answer ") + letter + ": " + title)
+                    .accessibilityValue(picked ? "Staged" : "")
+                }
+            }
+        }
+    }
+
     private func detail(_ item: WidgetInboxItem, session: WidgetSession?) -> some View {
         VStack(alignment: .leading, spacing: 10) {
+            choices(item)
             if let session {
                 HStack(spacing: 8) {
                     AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 18)

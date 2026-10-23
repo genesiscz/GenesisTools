@@ -9,6 +9,7 @@ import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { z } from "zod";
 import { confirmVideoAsset, importWidgetAsset, reviseVideoAsset } from "../composer/assets";
+import { widgetDeliverDeps } from "../composer/dispatch";
 import { changeOutgoing, enqueueWidgetMessage } from "../composer/outbox";
 import { createWidgetHandoff } from "./handoff";
 import {
@@ -19,6 +20,7 @@ import {
 } from "./screenshot";
 import { readShelfAttachment } from "./shelf";
 import { type WidgetSources, widgetProvider, widgetResultNode } from "./snapshot";
+import { sendStagedDecisions, unstageDecisions } from "./staged";
 import { acknowledgeWidgetInbox, mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
 import {
     parseWidgetSessionKey,
@@ -28,6 +30,7 @@ import {
     widgetPreferencesSchema,
     widgetTargetSchema,
 } from "./types";
+import { recordWidgetVideo, stopWidgetVideo } from "./video-capture";
 
 export const widgetActionSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("selection"), key: z.string().nullable() }),
@@ -42,6 +45,21 @@ export const widgetActionSchema = z.discriminatedUnion("action", [
         draft: z.string().optional(),
         draftOption: z.string().optional(),
     }),
+    z.object({
+        action: z.literal("send-staged"),
+        ids: z.array(z.string()).min(1),
+        targets: z
+            .record(
+                z.string(),
+                z.object({
+                    provider: z.string().optional(),
+                    sourceHome: z.string().optional(),
+                    cwd: z.string().optional(),
+                })
+            )
+            .optional(),
+    }),
+    z.object({ action: z.literal("unstage"), ids: z.array(z.string()).min(1) }),
     z.object({ action: z.literal("preferences"), patch: widgetPreferencesPatchSchema }),
     z.object({ action: z.literal("visibility"), key: z.string(), pinned: z.boolean() }),
     z.object({ action: z.literal("draft"), key: z.string(), draft: widgetDraftSchema }),
@@ -49,6 +67,8 @@ export const widgetActionSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("append-draft"), key: z.string(), text: z.string().max(64_000) }),
     z.object({ action: z.literal("import"), key: z.string(), input: z.string(), type: z.enum(["image", "video"]) }),
     z.object({ action: z.literal("capture"), key: z.string() }),
+    z.object({ action: z.literal("record-video"), key: z.string(), app: z.string().min(1) }),
+    z.object({ action: z.literal("record-video-stop") }),
     z.object({ action: z.literal("remove-asset"), key: z.string(), id: z.string() }),
     z.object({ action: z.literal("video-settings"), id: z.string(), settings: videoSettingsSchema }),
     z.object({ action: z.literal("confirm-video"), id: z.string(), revision: z.number().int() }),
@@ -111,6 +131,14 @@ export async function performWidgetAction({
                 ...(request.draftOption !== undefined ? { draftOption: request.draftOption } : {}),
             });
         }
+        case "send-staged":
+            return sendStagedDecisions({
+                ids: request.ids,
+                targets: request.targets,
+                deliver: widgetDeliverDeps(signal),
+            });
+        case "unstage":
+            return { unstaged: await unstageDecisions({ ids: request.ids }) };
         case "selection":
             return mutateWidgetState(root, (state) => {
                 state.selectedKey = request.key;
@@ -186,6 +214,24 @@ export async function performWidgetAction({
                 }
             }
         }
+        case "record-video": {
+            const recorded = await recordWidgetVideo({ root, app: request.app, signal });
+            try {
+                return await performWidgetAction({
+                    root,
+                    input: { action: "import", key: request.key, type: "video", input: recorded.path },
+                    signal,
+                });
+            } finally {
+                try {
+                    await unlink(recorded.path);
+                } catch (error) {
+                    logger.debug({ error, path: recorded.path }, "Video staging cleanup ended");
+                }
+            }
+        }
+        case "record-video-stop":
+            return stopWidgetVideo(root);
         case "remove-asset":
             return mutateWidgetState(root, (state) => {
                 const draft = state.drafts[request.key];
