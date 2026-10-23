@@ -41,6 +41,10 @@ final class ClickyAudio {
     /// every key the user types.
     private let startQueue = DispatchQueue(label: "genesiskit.clicky.audio-start", qos: .userInteractive)
     private var starting = false
+    /// Whether the engine runs, as this class started and stopped it. `AVAudioEngine.isRunning` takes the engine's
+    /// lock, which a start on the start queue holds for its whole length: reading it there blocked the key tap again
+    /// (HangWatch, 2026-10-23 21:14).
+    private var running = false
     /// The click that arrived while the engine starts; it plays once the engine runs (a newer one replaces it).
     private var pendingClick: (() -> Void)?
     private var stopAfterStart = false
@@ -157,10 +161,11 @@ final class ClickyAudio {
         guard preferences.volume > 0 else { return }
         idleStop?.cancel()
         // Offline rendering (tests) starts at once: no hardware to wake.
-        if !engine.isRunning, engine.isInManualRenderingMode {
+        if !running, !starting, engine.isInManualRenderingMode {
             try engine.start()
+            running = true
         }
-        guard engine.isRunning else {
+        guard running else {
             pendingClick = { [weak self] in
                 try? self?.play(buffer, preferences: preferences, pan: pan, gain: gain, pitchVariation: pitchVariation)
             }
@@ -184,6 +189,7 @@ final class ClickyAudio {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     self.starting = false
+                    self.running = failure == nil
                     PerfLog.mark(String(format: "clicky.audio.start %.1fms off-main", ms)
                         + (failure.map { " failed: \($0.localizedDescription)" } ?? ""))
                     if self.stopAfterStart {
@@ -228,6 +234,7 @@ final class ClickyAudio {
             stopAfterStart = true
             return
         }
+        running = false
         for voice in voices { voice.0.stop() }
         engine.stop()
     }

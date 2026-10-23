@@ -55,16 +55,31 @@ public enum WidgetAlerts {
         let sound = name ?? defaultSound
         guard sound != "none", now.timeIntervalSince(lastChime) >= 1.5 else { return }
         lastChime = now
-        guard let player = NSSound(named: NSSound.Name(sound)) else {
+        guard NSSound(named: NSSound.Name(sound)) != nil else {
             PerfLog.mark("widget.alert unknown sound \(sound)")
             return
         }
-        player.play()
+        play(sound)
     }
+
+    /// `NSSound.play` waits for the output device: about 0.8 s on the main thread on 2026-10-23 (HangWatch), long
+    /// enough to freeze the widget the moment an alert arrives. It plays from a background queue instead.
+    private static func play(_ name: String) {
+        soundQueue.async {
+            guard let player = NSSound(named: NSSound.Name(name)) else { return }
+            player.play()
+            playing.append(player)
+            if playing.count > 4 { playing.removeFirst() }
+        }
+    }
+
+    private static let soundQueue = DispatchQueue(label: "genesiskit.widget.chime", qos: .userInitiated)
+    /// Keeps the last few players alive until they finish; a released NSSound stops at once.
+    private nonisolated(unsafe) static var playing: [NSSound] = []
 
     /// Plays `name` now, for the settings page's preview button.
     @MainActor public static func preview(_ name: String) {
         guard name != "none" else { return }
-        NSSound(named: NSSound.Name(name))?.play()
+        play(name)
     }
 }
