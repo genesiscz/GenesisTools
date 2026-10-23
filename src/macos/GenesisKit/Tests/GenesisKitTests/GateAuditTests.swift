@@ -273,3 +273,18 @@ final class GateAuditTests: XCTestCase {
         XCTAssertEqual(mode & 0o777, 0o600)
     }
 }
+
+/// The vault window's command block (Martin, 2026-10-23): the program, its flags, their values and the rest each get
+/// their own color, and a quoted empty value stays one word.
+final class ApprovalCommandTextTests: XCTestCase {
+    func testACommandLineSplitsIntoProgramFlagsValuesAndArguments() {
+        let words = ApprovalCommandText.words(
+            "tools hub widget voice-notes transcribe 0b2b2787-0f55 --revision 1 --provider xai --language \"\" --json")
+        XCTAssertEqual(words.map(\.text), ["tools", "hub", "widget", "voice-notes", "transcribe", "0b2b2787-0f55",
+                                           "--revision", "1", "--provider", "xai", "--language", "\"\"", "--json"])
+        XCTAssertEqual(words.map(\.role), [.program, .program, .program, .program, .program, .argument,
+                                           .flag, .value, .flag, .value, .flag, .value, .flag])
+        XCTAssertEqual(ApprovalCommandText.words("tools say --voice=Zoe \"two words\"").map(\.role),
+                       [.program, .program, .flag, .argument], "a flag with = carries its own value")
+    }
+}

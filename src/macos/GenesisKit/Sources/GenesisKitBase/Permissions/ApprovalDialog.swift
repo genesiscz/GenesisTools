@@ -37,6 +37,8 @@ public struct ApprovalRemember: Identifiable, Hashable {
 public final class ApprovalDialogModel: ObservableObject {
     public let title: String
     public let purpose: String
+    /// The command line the request runs, shown as a code block under the purpose.
+    public let command: String?
     public let symbol: String
     public let facts: [ApprovalFact]
     public let details: [ApprovalFact]
@@ -55,11 +57,12 @@ public final class ApprovalDialogModel: ObservableObject {
     public var onAllow: @MainActor (ApprovalRemember?) -> Void = { _ in }
     public var onDeny: @MainActor () -> Void = {}
 
-    public init(title: String, purpose: String, symbol: String, facts: [ApprovalFact], details: [ApprovalFact],
+    public init(title: String, purpose: String, command: String? = nil, symbol: String, facts: [ApprovalFact], details: [ApprovalFact],
                 warning: String?, footnote: String, rememberChoices: [ApprovalRemember], rememberNote: String?,
                 allowTitle: String, deadline: Date?, identifier: String) {
         self.title = title
         self.purpose = purpose
+        self.command = command
         self.symbol = symbol
         self.facts = facts
         self.details = details
@@ -106,6 +109,9 @@ public struct ApprovalDialogView: View {
                         .font(.system(size: 12))
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
+                    if let command = model.command {
+                        ApprovalCommandText(command: command).padding(.top, 3)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }

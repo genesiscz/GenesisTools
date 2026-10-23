@@ -304,6 +304,10 @@ final class VaultUnlockTests: XCTestCase {
         let content = VaultWindowContent.build(params, caller: who, session: VaultSessionInfo())
         let fact = try XCTUnwrap(content.details.first { $0.label == "Command" })
         XCTAssertFalse(content.purpose.contains(token))
+        XCTAssertEqual(content.purpose, "To run this command:", "a purpose that only runs the command shows it as a block")
+        let shownCommand = try XCTUnwrap(content.command)
+        XCTAssertTrue(shownCommand.hasPrefix("tools claude config add work --token "))
+        XCTAssertFalse(shownCommand.contains(token))
         XCTAssertFalse((fact.help ?? "").contains(token))
         vaultAudit("prompted", params: params, caller: who, session: VaultSessionInfo(), shown: content)
         for path in [GateAudit.path, (VaultGrants.directory as NSString).appendingPathComponent("audit.jsonl")] {

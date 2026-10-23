@@ -501,6 +501,8 @@ enum VaultWindowLock {
 struct VaultWindowContent {
     var title: String
     var purpose: String
+    /// The command line, when the purpose is only "run <it>": then it shows as a code block, not inside a sentence.
+    var command: String? = nil
     var facts: [ApprovalFact]
     var details: [ApprovalFact]
     var warning: String?
@@ -584,9 +586,13 @@ struct VaultWindowContent {
         }
 
         let injected = caller.injected
+        let asked = GateCredentialRedactor.text(params.purpose).trimmingCharacters(in: .whitespacesAndNewlines)
+        let line = GateCredentialRedactor.text(params.command ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let onlyRuns = !line.isEmpty && asked.lowercased() == "run " + line.lowercased()
         return VaultWindowContent(
             title: "“\(tool)” wants the vault key",
-            purpose: sentence(GateCredentialRedactor.text(params.purpose)),
+            purpose: onlyRuns ? "To run this command:" : sentence(asked),
+            command: onlyRuns ? line : nil,
             facts: facts,
             details: details,
             warning: injected.isEmpty ? nil : "Extra code may be loaded (\(injected.joined(separator: ", "))). It can only be allowed once.",
@@ -774,8 +780,8 @@ func unlockVault(_ params: VaultUnlockParams) {
 
     DispatchQueue.main.async {
         let model = ApprovalDialogModel(
-            title: content.title, purpose: content.purpose, symbol: "key.fill", facts: content.facts, details: content.details,
-            warning: content.warning, footnote: VaultWindowContent.footnote,
+            title: content.title, purpose: content.purpose, command: content.command, symbol: "key.fill", facts: content.facts,
+            details: content.details, warning: content.warning, footnote: VaultWindowContent.footnote,
             rememberChoices: rememberable ? VaultWindowContent.rememberChoices : [],
             rememberNote: content.onceOnlyReason.map { "Only once: \($0)" },
             allowTitle: biometric ? "Allow with Touch ID" : "Allow…",
