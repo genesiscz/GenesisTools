@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
 import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { Command } from "commander";
 import { type InboxCommandDeps, registerInboxCommand } from "../../commands/inbox";
 import { paneMiss } from "../decisions/deliver";
@@ -17,6 +18,9 @@ import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./an
 import { buildInbox, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
 import { locateRef } from "./excerpts";
 import { type InboxDeps, loadInbox, loadSessionDecisions, lookupListing, lookupSessionCwd, waitingBlock } from "./load";
+
+// A decision post reads its checkout with eight `git` starts; see no-git.ts for the CI hang they caused.
+answerGitWithoutSpawning();
 
 function turn(role: TranscriptTurn["role"], text: string, at = "2026-03-01T10:00:00.000Z"): TranscriptTurn {
     return { id: `${role}-${at}`, role, at, text, tools: [] };

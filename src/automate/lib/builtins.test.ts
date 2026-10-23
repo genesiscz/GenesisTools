@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import * as realPrompts from "@clack/prompts";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { stripAnsi } from "@genesiscz/utils/string";
 import { executeBuiltin } from "./builtins";
 import { saveCredential } from "./credentials";
 import type { RunLogger } from "./run-logger";
@@ -33,9 +34,10 @@ const spinnerStops: string[] = [];
 const metaCalls: string[] = [];
 let metaFails = false;
 
+/** Records the text a reader sees: picocolors colors its output whenever `CI` is set, so CI and a local run differ only in escape codes. */
 function logSink(level: string): (message: string) => void {
     return (message) => {
-        logLines.push({ level, message });
+        logLines.push({ level, message: stripAnsi(message) });
     };
 }
 

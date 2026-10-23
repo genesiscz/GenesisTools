@@ -3,9 +3,13 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { deliverDecisions, parseDecisionBlocks } from "../decisions/read";
 import { type DecisionRecord, postDecisions, readDecisions } from "../decisions/store";
 import { dismissDecision, draftDecision, sendDrafts } from "./drafts";
+
+// A decision post reads its checkout with eight `git` starts; see no-git.ts for the CI hang they caused.
+answerGitWithoutSpawning();
 
 function scratch(): { file: string; events: string } {
     const dir = mkdtempSync(join(tmpdir(), "gt-drafts-"));

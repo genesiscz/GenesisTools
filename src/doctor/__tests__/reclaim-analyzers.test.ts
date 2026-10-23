@@ -919,6 +919,9 @@ describe("review fixes: app-bloat", () => {
         const old = join(versions, "2026.01.01-aaa");
         file(join(old, "cursor-agent"), 4096);
         file(join(versions, "2026.10.01-bbb", "cursor-agent"), 4096);
+        // The analyzer keeps the newest folder by mtime. Two folders made in one test share an mtime on Linux,
+        // whose file times tick at the kernel clock, and then directory order alone picked the one kept.
+        touch(old, 30 * 86_400_000, Date.now());
         const original = measurements.measurePath;
         const probe = spyOn(measurements, "measurePath").mockImplementation((path, budget) =>
             path === old ? null : original(path, budget)

@@ -2,6 +2,7 @@ import { describe, expect, it, spyOn } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { formatDateTime } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { stripAnsi } from "@genesiscz/utils/string";
@@ -14,7 +15,11 @@ type Row = Record<string, unknown>;
 type FormatterOptions = ConstructorParameters<typeof ClaudeSessionFormatter>[0];
 
 const TS = "2026-03-01T10:00:00.000Z";
-const CLOCK = /\d{2}:\d{2}:\d{2}/;
+/**
+ * The clock text the formatter prints for TS. It follows the system locale and zone ("11:00:00" in Prague with a
+ * Czech locale, "10:00:00 AM" on the UTC runner, whose LANG=C.UTF-8 leaves Intl at en-US), so it is computed.
+ */
+const CLOCK = new RegExp(formatDateTime(TS, { absolute: "time-seconds" }).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
 
 /** A record the way it arrives from a JSONL line. */
 function rec(row: Row): ConversationMessage {

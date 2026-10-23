@@ -120,6 +120,12 @@ describe("openFiles", () => {
         const root = mkdtempSync(join(tmpdir(), "open-files-"));
         const path = join(root, "file.txt");
         writeFileSync(path, "x");
+        // The lsof path, on any host: Linux reads /proc instead, and a box without lsof answers before the spawn.
+        const platform = spyOn(os, "processPlatform").mockReturnValue("darwin");
+        const which = Bun.which;
+        const lsof = spyOn(Bun, "which").mockImplementation((name, options) =>
+            name === "lsof" ? "/usr/sbin/lsof" : which(name, options)
+        );
         const spawn = spyOn(Bun, "spawnSync");
 
         try {
@@ -153,6 +159,8 @@ describe("openFiles", () => {
             ).toEqual([7]);
         } finally {
             spawn.mockRestore();
+            lsof.mockRestore();
+            platform.mockRestore();
         }
     });
 
