@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { cacheDbPath, dumpIdbScript, venvDir, venvPython } from "./paths";
 import { liveIdbMtimeMs, snapshotTeamsIdb } from "./snapshot";
@@ -142,15 +142,28 @@ async function runDump(idb: string, blob: string, out: string): Promise<Record<s
         throw new Error(`IndexedDB dump failed:\n${result.stderr || result.stdout}`);
     }
 
+    return readDumpSummary(result.stdout);
+}
+
+/**
+ * The dump script's last line: the records per store, and the stores it could not find. A missing store is a
+ * warning on stderr, not a silent 0: Teams renamed `replychains` to `replychains-2` and every sync ingested 0
+ * messages while the summary looked fine (2026-10-23).
+ */
+export function readDumpSummary(stdout: string): Record<string, number> {
+    let parsed: { counts?: Record<string, number>; missing?: Record<string, string> };
     try {
-        const parsed = SafeJSON.parse(result.stdout.trim().split("\n").at(-1) ?? "{}", { strict: true }) as {
-            counts?: Record<string, number>;
-        };
-        return parsed.counts ?? {};
+        parsed = SafeJSON.parse(stdout.trim().split("\n").at(-1) ?? "{}", { strict: true });
     } catch (err) {
-        log.debug({ err, stdout: result.stdout }, "[ms-teams] dump summary was not JSON");
+        log.debug({ err, stdout }, "[ms-teams] dump summary was not JSON");
         return {};
     }
+
+    for (const [store, reason] of Object.entries(parsed.missing ?? {})) {
+        out.log.warn(`Teams store "${store}" was not found, so it read nothing: ${reason}. Teams may have renamed it.`);
+    }
+
+    return parsed.counts ?? {};
 }
 
 async function spawnOk(cmd: string[], timeout = 60_000): Promise<{ ok: boolean; stdout: string; stderr: string }> {

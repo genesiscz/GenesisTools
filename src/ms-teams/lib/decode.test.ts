@@ -36,3 +36,29 @@ describe("foldTeamsText", () => {
         expect(foldTeamsText("Ada Lovelace")).toBe("ada lovelace");
     });
 });
+
+describe("readDumpSummary", () => {
+    test("returns the counts and names a store the dump could not find", async () => {
+        const { readDumpSummary } = await import("./ingest");
+        const warnings: string[] = [];
+        const { out } = await import("@genesiscz/utils/logger");
+        const original = out.log.warn;
+        out.log.warn = (message: string) => {
+            warnings.push(message);
+        };
+        try {
+            const counts = readDumpSummary(
+                'log line\n{"ok": true, "counts": {"conversations": 458, "replychains": 0}, "missing": {"replychains": "no store"}}\n'
+            );
+            expect(counts).toEqual({ conversations: 458, replychains: 0 });
+            expect(warnings).toHaveLength(1);
+            expect(warnings[0]).toContain('"replychains"');
+            expect(readDumpSummary('{"ok": true, "counts": {"conversations": 1}, "missing": {}}')).toEqual({
+                conversations: 1,
+            });
+            expect(warnings).toHaveLength(1);
+        } finally {
+            out.log.warn = original;
+        }
+    });
+});

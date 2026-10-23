@@ -10,12 +10,14 @@ import sys
 from pathlib import Path
 
 
+# Each dump's database and its store names, newest first: Teams renames a store when its schema changes
+# (2026-10-23: "replychains" became "replychains-2"), and an older Teams build keeps the old name.
 STORES = {
-    "conversations": ("Teams:conversation-manager:", "conversations"),
-    "replychains": ("Teams:replychain-manager:", "replychains"),
-    "profiles": ("Teams:profiles:", "profiles"),
-    "calls": ("Teams:call-history-manager:", "call-history"),
-    "activity": ("Teams:activity-manager:", "feed-items"),
+    "conversations": ("Teams:conversation-manager:", ("conversations",)),
+    "replychains": ("Teams:replychain-manager:", ("replychains-2", "replychains")),
+    "profiles": ("Teams:profiles:", ("profiles",)),
+    "calls": ("Teams:call-history-manager:", ("call-history",)),
+    "activity": ("Teams:activity-manager:", ("feed-items",)),
 }
 
 
@@ -48,16 +50,19 @@ def find_database(wrapped, needle: str):
     return None
 
 
-def dump_store(wrapped, needle: str, store_name: str, out_path: Path) -> int:
+def dump_store(wrapped, needle: str, store_names, out_path: Path, missing: dict, label: str) -> int:
     db = find_database(wrapped, needle)
     if db is None:
         out_path.write_text("", encoding="utf-8")
-        print(f"missing database containing {needle!r}", file=sys.stderr)
+        missing[label] = f"no database containing {needle!r}"
+        print(missing[label], file=sys.stderr)
         return 0
     names = list(db.object_store_names)
-    if store_name not in names:
+    store_name = next((name for name in store_names if name in names), None)
+    if store_name is None:
         out_path.write_text("", encoding="utf-8")
-        print(f"{needle!r} has stores {names}, not {store_name!r}", file=sys.stderr)
+        missing[label] = f"{needle!r} has stores {names}, none of {list(store_names)}"
+        print(missing[label], file=sys.stderr)
         return 0
     store = db.get_object_store_by_name(store_name)
     n = 0
@@ -92,9 +97,10 @@ def main() -> int:
     blob = args.blob if Path(args.blob).exists() else None
     wrapped = WrappedIndexDB(args.idb, blob)
     counts = {}
-    for label, (needle, store_name) in STORES.items():
-        counts[label] = dump_store(wrapped, needle, store_name, out / f"{label}.jsonl")
-    print(json.dumps({"ok": True, "counts": counts}))
+    missing = {}
+    for label, (needle, store_names) in STORES.items():
+        counts[label] = dump_store(wrapped, needle, store_names, out / f"{label}.jsonl", missing, label)
+    print(json.dumps({"ok": True, "counts": counts, "missing": missing}))
     return 0
 
 
