@@ -21,7 +21,7 @@ const REPO = resolve(import.meta.dir, "../../..");
 const TOOLS = join(REPO, "tools");
 const BASELINES = join(REPO, "scripts/benchmarks/clones/baselines");
 
-interface Case {
+export interface Case {
     id: string;
     group: "du" | "macos";
     /** argv after `tools`; `{T}` is replaced by the target, `{FX}` by the fixture root. */
@@ -32,7 +32,7 @@ interface Case {
     heavy?: boolean;
 }
 
-function cases(): Case[] {
+export function cases(): Case[] {
     const A = "{FX}/a-noclones";
     const B = "{FX}/b-realclones";
     const C = "{FX}/c-worktrees";
@@ -114,27 +114,27 @@ function cases(): Case[] {
     add("du.volume", "du", "/", ["du", "volume", "--format", "json"], true);
 
     // ---- tools macos clones: read-only verbs ---------------------------------
-    add("macos.measure.c", "macos", C, ["macos", "clones", "measure", C, "--min-real", "1", "--format", "json"]);
+    add("macos.measure.c", "macos", C, ["macos", "clones", "measure", C, "--min-real", "1B", "--format", "json"]);
     add("macos.measure.nobreakdown", "macos", C, [
         "macos",
         "clones",
         "measure",
         C,
         "--min-real",
-        "1",
+        "1B",
         "--no-breakdown",
         "--format",
         "json",
     ]);
-    add("macos.measure.b", "macos", B, ["macos", "clones", "measure", B, "--min-real", "1", "--format", "json"]);
-    add("macos.measure.a", "macos", A, ["macos", "clones", "measure", A, "--min-real", "1", "--format", "json"]);
+    add("macos.measure.b", "macos", B, ["macos", "clones", "measure", B, "--min-real", "1B", "--format", "json"]);
+    add("macos.measure.a", "macos", A, ["macos", "clones", "measure", A, "--min-real", "1B", "--format", "json"]);
     add("macos.measure.sort-real", "macos", C, [
         "macos",
         "clones",
         "measure",
         C,
         "--min-real",
-        "1",
+        "1B",
         "--sort",
         "real",
         "--format",
@@ -146,7 +146,7 @@ function cases(): Case[] {
         "measure",
         C,
         "--min-real",
-        "1",
+        "1B",
         "--exclude",
         "**/wt1/**",
         "--format",
@@ -158,7 +158,7 @@ function cases(): Case[] {
         "du",
         C,
         "--min-real",
-        "1",
+        "1B",
         "--depth",
         "1",
         "--format",
@@ -170,20 +170,20 @@ function cases(): Case[] {
         "du",
         C,
         "--min-real",
-        "1",
+        "1B",
         "--depth",
         "2",
         "--format",
         "json",
     ]);
-    add("macos.duplicates.c", "macos", C, ["macos", "clones", "duplicates", C, "--min-real", "1", "--format", "json"]);
+    add("macos.duplicates.c", "macos", C, ["macos", "clones", "duplicates", C, "--min-real", "1B", "--format", "json"]);
     add("macos.duplicates.group", "macos", C, [
         "macos",
         "clones",
         "duplicates",
         C,
         "--min-real",
-        "1",
+        "1B",
         "--group",
         "--format",
         "json",
@@ -194,7 +194,7 @@ function cases(): Case[] {
         "duplicates",
         C,
         "--min-real",
-        "1",
+        "1B",
         "--prefix-hash",
         "--format",
         "json",
@@ -205,7 +205,7 @@ function cases(): Case[] {
         "optimize",
         C,
         "--min-real",
-        "1",
+        "1B",
         "--no-cache",
         "--format",
         "json",
@@ -217,7 +217,7 @@ function cases(): Case[] {
         `${C}/wt1`,
         "--node-modules",
         "--min-real",
-        "1",
+        "1B",
         "--no-cache",
         "--format",
         "json",
@@ -230,7 +230,7 @@ function cases(): Case[] {
         "--dir",
         C,
         "--min-real",
-        "1",
+        "1B",
         "--no-daemon",
         "--format",
         "json",
@@ -245,7 +245,7 @@ function cases(): Case[] {
         "--targets",
         "node_modules",
         "--min-real",
-        "1",
+        "1B",
         "--no-daemon",
         "--format",
         "json",
@@ -541,7 +541,9 @@ const flag = (name: string, def?: string): string | undefined => {
     return i >= 0 ? rest[i + 1] : def;
 };
 
-if (verb === "run") {
+if (!import.meta.main) {
+    // Imported by matrix.test.ts, which checks cases(): run no verb.
+} else if (verb === "run") {
     const label = flag("label");
     const fixture = flag("fixture");
     if (!label || !fixture) {

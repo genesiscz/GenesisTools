@@ -1,14 +1,10 @@
 import { resolveKinds } from "@app/macos/commands/clones/kinds";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
+import { addMinRealOptions } from "@app/macos/commands/clones/min-real-flags";
 import { createStoresCommand } from "@app/macos/commands/clones/reclaim-stores";
-import {
-    armedAuto,
-    DEFAULT_AUTO_MAX_BYTES,
-    DEFAULT_AUTO_MAX_FILES,
-    parseByteLimit,
-} from "@app/macos/lib/clones/auto-reclaim";
+import { armedAuto, formatLimits, mergeLimits } from "@app/macos/lib/clones/auto-reclaim";
 import { KEEP_PARTNER_IDS, type KeepPartnerId, REWRITABLE_STORE_IDS } from "@app/macos/lib/clones/keep-partners";
-import { parseMinReal } from "@app/macos/lib/clones/min-real";
+import { type MinRealFlags, parseByteSize, parseCount } from "@app/macos/lib/clones/min-real";
 import {
     applyReclaimPlan,
     type PlanRunHooks,
@@ -25,12 +21,7 @@ import {
     touchPreset,
     updatePresetAuto,
 } from "@app/macos/lib/clones/presets";
-import {
-    DEFAULT_MIN_REAL,
-    type ReclaimPhase,
-    type ReclaimPlan,
-    type ReclaimSelector,
-} from "@app/macos/lib/clones/reclaim";
+import type { ReclaimPhase, ReclaimPlan, ReclaimSelector } from "@app/macos/lib/clones/reclaim";
 import { emitClonesError } from "@app/macos/lib/clones/render/envelope";
 import { JsonRenderer, resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { freeBytesLine } from "@app/macos/lib/clones/render/table";
@@ -56,7 +47,7 @@ function collect(value: string, previous: string[]): string[] {
     return [...previous, value];
 }
 
-interface ReclaimOpts {
+interface ReclaimOpts extends MinRealFlags {
     dir: string[];
     worktreesOf?: string;
     targets?: string | boolean;
@@ -64,7 +55,6 @@ interface ReclaimOpts {
     rewriteStores?: string | boolean;
     keepUnfreeable?: boolean;
     exclude: string[];
-    minReal: string;
     format?: string;
     json?: boolean;
     save?: string;
@@ -89,11 +79,14 @@ function shortenForSpinner(dir: string): string {
 }
 
 function applySelectorFlags(cmd: Command): Command {
-    return cmd
+    return addMinRealOptions(cmd, "Minimum per-file size to consider", "10MB")
         .argument("[dirs...]", "Directories to search (same as --dir)")
         .option("--dir <path>", "Directory to search (repeatable)", collect, [])
         .option("--worktrees-of <repo>", "Resolve this repo's git worktrees, siblings included")
-        .option("--targets [kinds]", `What to scan: ${TARGET_KIND_VALUES.join(", ")}, or a find -name pattern`)
+        .option(
+            "--targets [kinds]",
+            `What to scan: ${TARGET_KIND_VALUES.join(", ")} (every file under each dir, not only install dirs), or a find -name pattern that matches directory names`
+        )
         .option(
             "--keep-partners [ids]",
             `Package-manager stores never rewritten (${KEEP_PARTNER_IDS.join(", ")}); only bun also offers its cached copies as keep candidates`
@@ -103,8 +96,7 @@ function applySelectorFlags(cmd: Command): Command {
             `Also rewrite a store file onto a byte-identical file of the same store (${REWRITABLE_STORE_IDS.join(", ")}); implies --keep-partners for it`
         )
         .option("--keep-unfreeable", "Keep sets that free nothing (dropped by default, so apply skips them)", false)
-        .option("--exclude <glob>", "Exclude glob (repeatable)", collect, [])
-        .option("--min-real <bytes>", "Minimum per-file size to consider", String(DEFAULT_MIN_REAL));
+        .option("--exclude <glob>", "Exclude glob (repeatable)", collect, []);
 }
 
 function applyOutputFlags(cmd: Command): Command {
@@ -138,7 +130,7 @@ async function reportSelectorError(error: SelectorError, opts: ReclaimOpts, subc
             ? "Nothing to search. Pass a directory, or --dir <path>."
             : error.kind === "unknown-keep-partners"
               ? `Unknown --keep-partners: ${error.given.join(", ")}`
-              : `--min-real must be a positive whole number of bytes, got "${opts.minReal}".`;
+              : error.message;
     await emitInvalidArguments(opts, subcommand, message);
     if (error.kind === "no-dirs") {
         console.error(message);
@@ -159,7 +151,7 @@ async function reportSelectorError(error: SelectorError, opts: ReclaimOpts, subc
     }
 
     console.error(message);
-    console.error(suggestCommand("tools macos clones", { add: ["--min-real", String(DEFAULT_MIN_REAL)], subcommand }));
+    console.error(suggestCommand("tools macos clones", { add: ["--min-real", "10MB"], subcommand }));
     process.exitCode = 1;
 }
 
@@ -227,7 +219,7 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
         targets,
         keepPartners,
         exclude: opts.exclude,
-        minReal: opts.minReal,
+        minReal: opts,
     });
     if ("error" in resolved) {
         await reportSelectorError(resolved.error, opts, subcommand);
@@ -241,9 +233,26 @@ async function selectorFrom(dirsArg: string[], opts: ReclaimOpts, verb: string[]
     };
 }
 
+/** `--max-bytes` / `--max-files`: undefined keeps the stored limit, null clears it (`none`), NaN is invalid. */
+function limitFlag(raw: string | undefined, parse: (raw: string) => number | null): number | null | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+
+    if (raw.trim().toLowerCase() === "none") {
+        return null;
+    }
+
+    return parse(raw) ?? Number.NaN;
+}
+
+/** The record `presets save` / `plan --save` writes. Saving over an existing id is an edit: it keeps `createdAt`,
+ *  the auto settings and the last run, so a UI edit never disarms auto. When the selector itself changed, an armed
+ *  preset loses `dryRunAt`, so its next run is a dry run of the new selector. */
 function presetFromSelector(id: string, selector: ReclaimSelector, run?: { reclaimable: number }): Preset {
     const now = new Date().toISOString();
-    return {
+    const previous = getPreset(id);
+    const fresh: Preset = {
         id,
         dirs: selector.dirs,
         ...(selector.worktreesOf !== undefined ? { worktreesOf: selector.worktreesOf } : {}),
@@ -253,9 +262,24 @@ function presetFromSelector(id: string, selector: ReclaimSelector, run?: { recla
         keepPartners: selector.keepPartners,
         ...(selector.rewriteStores !== undefined ? { rewriteStores: selector.rewriteStores } : {}),
         ...(selector.keepUnfreeable === true ? { keepUnfreeable: true } : {}),
-        createdAt: now,
-        ...(run !== undefined ? { lastRunAt: now, lastReclaimable: run.reclaimable } : {}),
+        createdAt: previous?.createdAt ?? now,
+        ...(run !== undefined
+            ? { lastRunAt: now, lastReclaimable: run.reclaimable }
+            : previous?.lastRunAt !== undefined
+              ? {
+                    lastRunAt: previous.lastRunAt,
+                    ...(previous.lastReclaimable !== undefined ? { lastReclaimable: previous.lastReclaimable } : {}),
+                }
+              : {}),
     };
+    if (previous?.auto === undefined) {
+        return fresh;
+    }
+
+    const sameSelector =
+        SafeJSON.stringify(selectorFromPreset(previous)) === SafeJSON.stringify(selectorFromPreset(fresh));
+    const { dryRunAt, ...auto } = previous.auto;
+    return { ...fresh, auto: sameSelector && dryRunAt !== undefined ? { ...auto, dryRunAt } : auto };
 }
 
 function renderPlan(plan: ReclaimPlan, format: string | undefined): string {
@@ -567,7 +591,7 @@ function autoCell(preset: Preset): string {
         return "off";
     }
 
-    const limits = `${formatBytes(auto.maxBytes)}, ${auto.maxFiles} files`;
+    const limits = formatLimits(auto);
     return auto.dryRunAt === undefined ? `on, dry run next (${limits})` : `on (${limits})`;
 }
 
@@ -674,9 +698,9 @@ function createPresetsCommand(): Command {
         .option("--off", "stop running the plan on its own")
         .option(
             "--max-bytes <size>",
-            `most bytes cloned per run, e.g. 5GB (default ${formatBytes(DEFAULT_AUTO_MAX_BYTES)})`
+            "most bytes cloned per run, e.g. 50GB; none removes the limit (default: no limit)"
         )
-        .option("--max-files <n>", `most files cloned per run (default ${DEFAULT_AUTO_MAX_FILES})`)
+        .option("--max-files <n>", "most files cloned per run; none removes the limit (default: no limit)")
         .option("--json", "print the preset as JSON")
         .action(
             async (
@@ -696,15 +720,17 @@ function createPresetsCommand(): Command {
                     return;
                 }
 
-                const maxBytes = opts.maxBytes === undefined ? undefined : parseByteLimit(opts.maxBytes);
-                const maxFiles = opts.maxFiles === undefined ? undefined : parseMinReal(opts.maxFiles);
-                if (maxBytes === null || maxFiles === null) {
-                    console.error("--max-bytes takes a size such as 5GB or 500MB; --max-files a whole number above 0.");
+                const maxBytes = limitFlag(opts.maxBytes, parseByteSize);
+                const maxFiles = limitFlag(opts.maxFiles, parseCount);
+                if (Number.isNaN(maxBytes) || Number.isNaN(maxFiles)) {
+                    console.error(
+                        "--max-bytes takes a size such as 50GB or 500MB, --max-files a whole number above 0; none removes either limit."
+                    );
                     process.exitCode = 1;
                     return;
                 }
 
-                const limits = { maxBytes: maxBytes ?? undefined, maxFiles: maxFiles ?? undefined };
+                const limits = { maxBytes, maxFiles };
                 let next: Preset | null = preset;
                 if (opts.on) {
                     next = updatePresetAuto(id, armedAuto(preset.auto, limits));
@@ -713,11 +739,8 @@ function createPresetsCommand(): Command {
                         ? updatePresetAuto(id, { ...preset.auto, enabled: false, dryRunAt: undefined })
                         : preset;
                 } else if (preset.auto && (limits.maxBytes !== undefined || limits.maxFiles !== undefined)) {
-                    next = updatePresetAuto(id, {
-                        ...preset.auto,
-                        maxBytes: limits.maxBytes ?? preset.auto.maxBytes,
-                        maxFiles: limits.maxFiles ?? preset.auto.maxFiles,
-                    });
+                    const { maxBytes: _bytes, maxFiles: _files, ...rest } = preset.auto;
+                    next = updatePresetAuto(id, { ...rest, ...mergeLimits(preset.auto, limits) });
                 }
 
                 if (opts.json) {
@@ -784,7 +807,7 @@ function createPresetsCommand(): Command {
 
 export function createReclaimCommand(): Command {
     const group = new Command("reclaim").description(
-        "Find the install trees under a directory (worktrees included) and share their duplicates"
+        "Find the install trees under a directory (worktrees included) and share their duplicates; --targets all takes every file"
     );
     group.addCommand(createPlanCommand());
     group.addCommand(createApplyCommand());

@@ -107,7 +107,7 @@ describe("--set-min-real contract", () => {
         const exitCode: unknown = process.exitCode;
         process.exitCode = undefined;
         expect(exitCode).toBe(1);
-        expect(errLines.join("\n")).toContain("positive whole number");
+        expect(errLines.join("\n")).toContain("positive size");
         expect((await loadClonesConfig()).minReal).toBe(4096);
     });
 

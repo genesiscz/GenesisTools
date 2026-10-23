@@ -491,15 +491,16 @@ public enum ClonesReclaimApplyOutcome: Equatable, Sendable {
 
 /// A saved reclaim selector (`tools macos clones reclaim presets`, `src/macos/lib/clones/presets.ts`).
 public struct ClonesPreset: Codable, Equatable, Identifiable, Sendable {
-    /// The limits of a plan the daily scan task runs on its own.
+    /// The limits of a plan the daily scan task runs on its own. A nil limit does not limit: the CLI arms a preset
+    /// without limits since 2026-10-19, and `presets auto --max-bytes none` clears one.
     public struct Auto: Codable, Equatable, Sendable {
         public var enabled: Bool
-        public var maxBytes: Int64
-        public var maxFiles: Int
+        public var maxBytes: Int64?
+        public var maxFiles: Int?
         /// When the scan task first ran the plan as a dry run; until then it only reports.
         public var dryRunAt: String?
 
-        public init(enabled: Bool, maxBytes: Int64, maxFiles: Int, dryRunAt: String? = nil) {
+        public init(enabled: Bool, maxBytes: Int64? = nil, maxFiles: Int? = nil, dryRunAt: String? = nil) {
             self.enabled = enabled
             self.maxBytes = maxBytes
             self.maxFiles = maxFiles

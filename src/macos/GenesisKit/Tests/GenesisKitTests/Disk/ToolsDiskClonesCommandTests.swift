@@ -88,6 +88,16 @@ final class ToolsDiskClonesCommandTests: XCTestCase {
                                     "--dir", "/Users/alice/Projects", "--targets", "node_modules"],
                        "presets save takes the selector without --no-daemon")
 
+        let unlimited = try provider(printing: """
+            {"preset": {"id": "home", "dirs": ["/Users/alice/Projects"], "targets": ["all"], "exclude": [],
+             "minReal": 102400, "keepPartners": [], "createdAt": "2026-10-19T15:00:00.000Z", "auto": {"enabled": true}}}
+            """)
+        var withFloor = options
+        withFloor.minReal = 102_400
+        let armed = try await unlimited.clonesPresetSave(id: "home", options: withFloor)
+        XCTAssertEqual(armed.auto, ClonesPreset.Auto(enabled: true), "an armed preset without limits decodes as nil limits")
+        XCTAssertTrue(try argv().contains("102400B"), "the floor goes out with a unit; the CLI refuses a bare number")
+
         let unknown = try provider(printing: """
             {"error": {"kind": "unknown-preset", "message": "Unknown preset \\"x\\".", "command": "reclaim presets rm",
              "presetId": "x", "known": ["home"]}}

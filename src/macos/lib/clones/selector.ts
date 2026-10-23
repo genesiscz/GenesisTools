@@ -1,7 +1,7 @@
 import { parseVariadic } from "@genesiscz/utils/cli";
 import { KEEP_PARTNER_IDS, type KeepPartnerId } from "./keep-partners";
-import { parseMinReal } from "./min-real";
-import type { ReclaimSelector } from "./reclaim";
+import { type MinRealFlags, resolveMinReal } from "./min-real";
+import { DEFAULT_MIN_REAL, type ReclaimSelector } from "./reclaim";
 
 export interface SelectorInput {
     /** Positional roots and `--dir` values, already merged by the caller. */
@@ -11,14 +11,14 @@ export interface SelectorInput {
     keepPartners: string[];
     /** Raw `--exclude` values; comma lists are split here. */
     exclude: string[];
-    /** Raw `--min-real` text, validated here. */
-    minReal: string;
+    /** Raw `--min-real` and its unit-named aliases, validated here. */
+    minReal: MinRealFlags;
 }
 
 export type SelectorError =
     | { kind: "no-dirs" }
     | { kind: "unknown-keep-partners"; given: string[] }
-    | { kind: "bad-min-real"; given: string };
+    | { kind: "bad-min-real"; message: string };
 
 export type SelectorResult = { selector: ReclaimSelector } | { error: SelectorError };
 
@@ -35,9 +35,9 @@ export function resolveSelector(input: SelectorInput): SelectorResult {
         return { error: { kind: "unknown-keep-partners", given: unknownPartners } };
     }
 
-    const minReal = parseMinReal(input.minReal);
-    if (minReal === null) {
-        return { error: { kind: "bad-min-real", given: input.minReal } };
+    const minReal = resolveMinReal(input.minReal, DEFAULT_MIN_REAL);
+    if ("error" in minReal) {
+        return { error: { kind: "bad-min-real", message: minReal.error } };
     }
 
     return {
@@ -46,7 +46,7 @@ export function resolveSelector(input: SelectorInput): SelectorResult {
             ...(input.worktreesOf !== undefined ? { worktreesOf: input.worktreesOf } : {}),
             targets: input.targets,
             exclude: parseVariadic(input.exclude),
-            minReal,
+            minReal: minReal.bytes ?? DEFAULT_MIN_REAL,
             keepPartners: input.keepPartners.filter((k): k is KeepPartnerId =>
                 (KEEP_PARTNER_IDS as readonly string[]).includes(k)
             ),

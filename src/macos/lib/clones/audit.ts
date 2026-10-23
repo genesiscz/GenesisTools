@@ -263,12 +263,18 @@ function readProcessSummary(id: string): Omit<ProcessReport, "ops"> | null {
     return rest;
 }
 
-export function listProcesses(): ProcessListReport {
+/** Recorded optimize runs, newest first. `limit` reads only that many summaries: the ids start with an ISO stamp,
+ *  so the newest names sort last, and a machine with 862 runs printed 414 KB on every Disk Manager reload. */
+export function listProcesses(opts: { limit?: number } = {}): ProcessListReport {
     const dir = processDir();
     const entries: ProcessListEntry[] = [];
-    for (const name of readdirSync(dir)) {
-        if (!name.endsWith(".jsonl")) {
-            continue;
+    const names = readdirSync(dir)
+        .filter((name) => name.endsWith(".jsonl"))
+        .sort()
+        .reverse();
+    for (const name of names) {
+        if (opts.limit !== undefined && entries.length >= opts.limit) {
+            break;
         }
 
         const id = name.slice(0, -".jsonl".length);

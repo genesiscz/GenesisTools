@@ -1,7 +1,9 @@
 import { resolve } from "node:path";
 import { applyLogLevel } from "@app/macos/commands/clones/log-level";
-import { parseMinReal } from "@app/macos/lib/clones/min-real";
+import { addMinRealOptions } from "@app/macos/commands/clones/min-real-flags";
+import { type MinRealFlags, resolveMinReal } from "@app/macos/lib/clones/min-real";
 import { buildMeasureReport, expandNodeModules, resolveRoots } from "@app/macos/lib/clones/orchestrator";
+import { DEFAULT_MIN_REAL } from "@app/macos/lib/clones/reclaim";
 import { resolveFormat, resolveRenderer } from "@app/macos/lib/clones/render/index";
 import { loadClonesConfig } from "@app/macos/lib/clones/store";
 import { parseVariadic } from "@genesiscz/utils/cli";
@@ -15,10 +17,9 @@ function collect(value: string, previous: string[]): string[] {
     return [...previous, value];
 }
 
-interface MeasureOpts {
+interface MeasureOpts extends MinRealFlags {
     format?: string;
     nodeModules?: boolean;
-    minReal: string;
     top?: string;
     breakdown: boolean;
     include: string[];
@@ -32,12 +33,11 @@ interface MeasureOpts {
 }
 
 export function applySharedMeasureFlags(cmd: Command): Command {
-    return cmd
+    return addMinRealOptions(cmd, "Hide subtrees whose real size is below this", "10MB")
         .addOption(
             new Option("--format <format>", "Output format").choices(["auto", "table", "json", "jsonl"]).default("auto")
         )
         .option("--node-modules", "Expand each root to its node_modules dirs", false)
-        .option("--min-real <bytes>", "Hide subtrees whose real size is below this", "10485760")
         .option("--top <N>", "Show only the top N rows (default: unlimited)")
         .option("--no-breakdown", "Totals + clone analysis only (no per-dir tree)")
         .option("--include <glob>", "Include glob (repeatable)", collect, [])
@@ -70,12 +70,14 @@ export function createMeasureCommand(): Command {
         // Same contract as every sibling command: a negative or truncated floor
         // is what disables the native walk and turns this into a walk-and-hash
         // of every file under every root.
-        const minReal = parseMinReal(opts.minReal);
-        if (minReal === null) {
-            console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+        const resolvedMinReal = resolveMinReal(opts, DEFAULT_MIN_REAL);
+        if ("error" in resolvedMinReal) {
+            console.error(resolvedMinReal.error);
             process.exitCode = 1;
             return;
         }
+
+        const minReal = resolvedMinReal.bytes ?? DEFAULT_MIN_REAL;
 
         const cfg = await loadClonesConfig();
         const roots0 = resolveRoots(rootsArg ?? [], cfg.watchedDirs);
@@ -129,12 +131,14 @@ export function createDuCommand(): Command {
     cmd.action(async (folderArg: string | undefined, opts: DuOpts) => {
         applyLogLevel(opts);
         const folder = resolve(folderArg ?? process.cwd());
-        const minReal = parseMinReal(opts.minReal);
-        if (minReal === null) {
-            console.error(`--min-real must be a positive whole number of bytes, got "${opts.minReal}".`);
+        const resolvedMinReal = resolveMinReal(opts, DEFAULT_MIN_REAL);
+        if ("error" in resolvedMinReal) {
+            console.error(resolvedMinReal.error);
             process.exitCode = 1;
             return;
         }
+
+        const minReal = resolvedMinReal.bytes ?? DEFAULT_MIN_REAL;
 
         const depth = opts.depth ? Number.parseInt(opts.depth, 10) : undefined;
 

@@ -26,7 +26,7 @@ function fixture(): string {
 
 describe("targets", () => {
     it("exposes gitignored plus the well-known install dir names", () => {
-        expect([...TARGET_KIND_VALUES]).toEqual(["gitignored", "node_modules", "vendor", "Pods", ".cxx"]);
+        expect([...TARGET_KIND_VALUES]).toEqual(["gitignored", "node_modules", "vendor", "Pods", ".cxx", "all"]);
     });
 
     it("findNamedDirs prunes at the first match and skips .git", async () => {
@@ -125,6 +125,25 @@ describe("targets", () => {
         } finally {
             rmSync(outer, { recursive: true, force: true });
         }
+    });
+
+    it("all makes each dir a root and drops a dir nested in another one", async () => {
+        const res = await expandTargets({
+            dirs: ["/r/app/.worktrees/w1", "/r/app", "/r/app-two", "/r/app", "/r/other/.worktrees/w2"],
+            targets: ["all", "node_modules"],
+        });
+        expect(res.roots).toEqual(["/r/app", "/r/app-two", "/r/other/.worktrees/w2"]);
+        expect(res.skipped).toEqual([]);
+    });
+
+    it("all drops every dir under the filesystem root when / is selected", async () => {
+        const res = await expandTargets({ dirs: ["/r/app", "/", "/r/..app"], targets: ["all"] });
+        expect(res.roots).toEqual(["/"]);
+    });
+
+    it("all keeps a sibling whose name starts with two dots", async () => {
+        const res = await expandTargets({ dirs: ["/r/app", "/r/..app"], targets: ["all"] });
+        expect(res.roots).toEqual(["/r/..app", "/r/app"]);
     });
 
     it("checkIgnoreBatch answers every candidate of one repository in one git call", async () => {

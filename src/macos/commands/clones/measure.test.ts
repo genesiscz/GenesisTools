@@ -55,7 +55,7 @@ describe("createMeasureCommand", () => {
             );
             try {
                 await createMeasureCommand().parseAsync(
-                    ["node", "measure", dir, "--format", "json", "--min-real", "1024"],
+                    ["node", "measure", dir, "--format", "json", "--min-real", "1KB"],
                     {
                         from: "node",
                     }
@@ -100,7 +100,7 @@ describe("measure roots fall back to configured watchedDirs", () => {
                 }
             );
             try {
-                await createMeasureCommand().parseAsync(["node", "measure", "--format", "json", "--min-real", "1024"], {
+                await createMeasureCommand().parseAsync(["node", "measure", "--format", "json", "--min-real", "1KB"], {
                     from: "node",
                 });
             } finally {
@@ -144,7 +144,7 @@ describe("createDuCommand", () => {
             );
             try {
                 await createDuCommand().parseAsync(
-                    ["node", "du", dir, "--depth", "1", "--format", "json", "--min-real", "1024"],
+                    ["node", "du", dir, "--depth", "1", "--format", "json", "--min-real", "1KB"],
                     { from: "node" }
                 );
             } finally {
@@ -177,7 +177,7 @@ describe("measure --min-real contract", () => {
         const exitCode: unknown = process.exitCode;
         process.exitCode = undefined;
         expect(exitCode).toBe(1);
-        expect(errs.join("\n")).toContain("positive whole number");
+        expect(errs.join("\n")).toContain("positive size");
     });
 
     it("refuses a non-positive value on du too", async () => {
@@ -194,6 +194,6 @@ describe("measure --min-real contract", () => {
         const exitCode: unknown = process.exitCode;
         process.exitCode = undefined;
         expect(exitCode).toBe(1);
-        expect(errs.join("\n")).toContain("positive whole number");
+        expect(errs.join("\n")).toContain("positive size");
     });
 });
