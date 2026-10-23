@@ -866,6 +866,16 @@ describe("GitLab MR list and view", () => {
         expect(asked.filter((cmd) => cmd.includes("--paginate"))).toHaveLength(1);
     });
 
+    it("reads every page of an MR's commits, which glab --paginate prints back to back", () => {
+        const commit = (id: string) => ({ id, title: `Fix ${id}`, message: `Fix ${id}\n\nsee [--flag] [x]` });
+        const detail = parseGlabMrView({
+            mr: SafeJSON.stringify(SafeJSON.parse(GL_MRS, { strict: true })[0]),
+            // Newest first, as GitLab lists them; a "]" inside a message must not end a page.
+            commits: SafeJSON.stringify([commit("c3"), commit("c2")]) + SafeJSON.stringify([commit("c1")]),
+        });
+        expect(detail.commits.map((entry) => entry.sha)).toEqual(["c1", "c2", "c3"]);
+    });
+
     it("keeps a commit's message body without the title line GitLab repeats", () => {
         const detail = parseGlabMrView({
             mr: SafeJSON.stringify(SafeJSON.parse(GL_MRS, { strict: true })[0]),

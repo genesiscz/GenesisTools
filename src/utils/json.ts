@@ -103,3 +103,52 @@ export function parseJSON<T>(text: string, fallback?: T): T | null {
         return null;
     }
 }
+
+/**
+ * The JSON documents of a text that holds several back to back, as `glab api --paginate` and `gh api --paginate`
+ * print one array per page with nothing between them (`[…][…]`). Each document is parsed strictly; a text with one
+ * document gives one entry. Throws on malformed JSON, like `JSON.parse`.
+ */
+export function parseConcatenatedJson(text: string): unknown[] {
+    const documents: unknown[] = [];
+    let depth = 0;
+    let start = -1;
+    let inString = false;
+    let escaped = false;
+    for (let index = 0; index < text.length; index++) {
+        const char = text[index];
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            } else if (char === "\\") {
+                escaped = true;
+            } else if (char === '"') {
+                inString = false;
+            }
+
+            continue;
+        }
+
+        if (char === '"') {
+            inString = true;
+        } else if (char === "[" || char === "{") {
+            if (depth === 0) {
+                start = index;
+            }
+
+            depth++;
+        } else if (char === "]" || char === "}") {
+            depth--;
+            if (depth === 0) {
+                documents.push(SafeJSON.parse(text.slice(start, index + 1), { strict: true }));
+            }
+        }
+    }
+
+    if (depth !== 0 || documents.length === 0) {
+        // Malformed or not an array or object at all: let the native parser name the problem.
+        return [SafeJSON.parse(text, { strict: true })];
+    }
+
+    return documents;
+}

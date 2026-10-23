@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { SafeJSON } from "@genesiscz/utils/json";
+import { parseConcatenatedJson, SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { classifyOriginUrl } from "./detector";
 import { toState as ghState } from "./gh";
@@ -123,6 +123,16 @@ class PrParseError extends Error {}
 function parseJson(json: string, what: string): unknown {
     try {
         return SafeJSON.parse(json, { strict: true });
+    } catch (err) {
+        log.debug({ err, what }, "unparsable host output");
+        throw new PrParseError(`unparsable ${what} output`);
+    }
+}
+
+/** `glab api --paginate` prints one array per page back to back (`[…][…]`): the pages as one list. */
+function parseJsonPages(json: string, what: string): unknown[] {
+    try {
+        return parseConcatenatedJson(json).flatMap((page) => (Array.isArray(page) ? page : [page]));
     } catch (err) {
         log.debug({ err, what }, "unparsable host output");
         throw new PrParseError(`unparsable ${what} output`);
@@ -842,7 +852,7 @@ export function parseGlabMrView({
         body: str(row.description) ?? "",
         // GitLab lists an MR's commits newest first, gh oldest first: every caller gets the oldest first.
         commits: commits
-            ? records(parseJson(commits, "glab commits"))
+            ? records(parseJsonPages(commits, "glab commits"))
                   .slice()
                   .reverse()
                   .map((commit) => ({
