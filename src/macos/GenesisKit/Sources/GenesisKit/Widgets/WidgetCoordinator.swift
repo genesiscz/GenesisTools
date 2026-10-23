@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import SwiftUI
 
 @MainActor
@@ -32,7 +31,6 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private var globalMouse: Any?
     private var keyboard: Any?
     private var screenObserver: NSObjectProtocol?
-    private var voiceNotesPhase: AnyCancellable?
     private var lastSide: EdgePanelPlacement?
     private var lastDisplayID: String?
     private var lastShown: Bool?
@@ -129,21 +127,16 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             self.model.dialogOpen = visible || self.settings?.isVisible == true || self.mediaWindow?.isVisible == true
         }
         self.voiceNotes = voiceNotes
-        // The reply box's microphone records a note in place and puts its text in the field; the Voice Notes panel
-        // never opens for it (Martin, 2026-10-23: "should not open another widget but just let me dictate").
-        model.dictateVoiceNote = { [weak voiceNotes, weak model] context in
-            guard let voiceNotes, let model else { return }
-            if voiceNotes.phase == "Recording" {
-                voiceNotes.finishRecording()
-                return
-            }
-            voiceNotes.dictate(context: context) { [weak model] text in
-                guard let model, model.selectedKey == context.sessionKey else { return }
-                model.setText(model.draft.text.isEmpty ? text : model.draft.text + " " + text)
-            }
+        // The reply box's microphone dictates live in place; a voice note keeps its audio in Voice Notes without
+        // opening that panel (Martin, 2026-10-23: "should not open another widget but just let me dictate").
+        model.voiceNoteClip = { [weak voiceNotes] in
+            guard let voiceNotes else { throw CancellationError() }
+            return try await voiceNotes.newIncomingClipPath()
         }
-        voiceNotesPhase = voiceNotes.$phase.receive(on: DispatchQueue.main).sink { [weak model] phase in
-            model?.noteDictation = phase
+        model.fileVoiceNote = { [weak voiceNotes, weak model] clip, text, context in
+            guard let voiceNotes, let prefs = model?.snapshot?.state.preferences else { return }
+            voiceNotes.fileLiveNote(clip: clip, text: text, context: context, provider: prefs.voiceProvider,
+                                    model: prefs.voiceModel, language: prefs.voiceLanguage)
         }
         do {
             try modules.register(

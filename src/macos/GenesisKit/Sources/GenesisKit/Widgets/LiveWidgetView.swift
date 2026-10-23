@@ -997,15 +997,17 @@ public struct LiveWidgetView: View {
                 attachments(model.draft.assetIds, tile: CGSize(width: 88, height: 60), removable: true)
             }
             if model.voiceActive {
-                HStack(spacing: 8) {
-                    Image(systemName: "waveform").foregroundStyle(.red)
-                    Text(
-                        model.voiceText.isEmpty ? "Listening… tap Stop to edit the transcript" : model.voiceText
-                    )
-                    .font(.caption).lineLimit(2)
-                    Spacer()
-                    ProgressView(value: min(1, model.voiceLevel * 5)).frame(width: 40)
+                HStack(alignment: .center, spacing: 9) {
+                    VoiceLevelBars(level: min(1, model.voiceLevel * 5), tint: .red, reduceMotion: model.effectiveReduceMotion)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.voiceMode == .note ? "Voice note" : "Dictation")
+                            .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
+                        Text(model.voiceText.isEmpty ? "Listening… the words appear here as you talk" : model.voiceText)
+                            .font(.caption).lineLimit(3)
+                    }
+                    Spacer(minLength: 0)
                 }
+                .accessibilityElement(children: .combine)
             }
             if model.importing > 0 {
                 ProgressView("Saving attachment…").controlSize(.small).font(.caption)
@@ -1055,14 +1057,7 @@ public struct LiveWidgetView: View {
                 .instantTooltip(model.recordingVideo ? "Stop the recording and add the video to the draft"
                                 : "Record a video of the app you are in (up to 90 s)")
                 .accessibilityLabel(model.recordingVideo ? "Stop video recording" : "Record video")
-                Button(action: model.toggleVoice) {
-                    Image(systemName: model.voiceActive || model.noteDictation == "Recording" ? "stop.circle.fill"
-                          : (model.noteDictation != nil ? "waveform" : "mic")).padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                }
-                .modifier(WidgetGlassControl())
-                .foregroundStyle(model.voiceActive || model.noteDictation == "Recording" ? .red : .secondary)
-                .instantTooltip(model.voiceActionLabel).accessibilityLabel(model.voiceActionLabel)
+                voiceButton
                 Spacer()
                 Text(WidgetKeymap.mediaFooter).font(.system(size: 9)).foregroundStyle(.tertiary)
             }.font(.system(size: 12)).foregroundStyle(.secondary).buttonStyle(.genHoverIcon())
@@ -1073,6 +1068,31 @@ public struct LiveWidgetView: View {
         .contentShape(RoundedRectangle(cornerRadius: 13))
         .onTapGesture { editing = true }
         .frameProbe("widget.composer")
+    }
+
+    /// The microphone: Stop while a dictation runs; otherwise a menu of the two modes when the setting asks, else the
+    /// set mode at once.
+    @ViewBuilder private var voiceButton: some View {
+        let icon = Image(systemName: model.voiceActive ? "stop.circle.fill" : "mic")
+            .padding(.horizontal, 8).padding(.vertical, 4)
+        if model.voiceActive || model.composerVoiceChoice != "ask" {
+            Button(action: model.toggleVoice) { icon }
+                .modifier(WidgetGlassControl())
+                .foregroundStyle(model.voiceActive ? .red : .secondary)
+                .instantTooltip(model.voiceActionLabel).accessibilityLabel(model.voiceActionLabel)
+        } else {
+            Menu {
+                Button("Dictate into the reply box", systemImage: "text.cursor") { model.startVoice(.dictate) }
+                Button("Voice note into the reply box (keeps the recording)", systemImage: "waveform") {
+                    model.startVoice(.note)
+                }
+                .disabled(model.voiceNoteClip == nil)
+            } label: { icon }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .modifier(WidgetGlassControl())
+                .foregroundStyle(.secondary)
+                .instantTooltip(model.voiceActionLabel).accessibilityLabel(model.voiceActionLabel)
+        }
     }
 
     private func attachments(_ ids: [String], tile: CGSize, removable: Bool) -> some View {

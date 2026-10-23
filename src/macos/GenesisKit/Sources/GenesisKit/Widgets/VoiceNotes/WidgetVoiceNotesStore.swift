@@ -31,6 +31,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     private let cancelCommand: () -> Void
     private let acquireAudio: () async throws -> any VoiceRecordingLease
     private let settings: () -> WidgetVoiceNoteSettings
+    private var incomingDirectory: String?
     private let sessionsSource: () -> [WidgetSession]
     private let attachDraft: (WidgetSession, WidgetVoiceNote) async throws -> String
     private let micLauncher: String
@@ -193,28 +194,42 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         }
     }
 
-    /// The reply box's microphone: records a note with where it was recorded (Martin, 2026-10-23: "it should just be
-    /// placed into the field where the button shows"), transcribes it as soon as the recording stops, and hands the
-    /// text to `onText`. The note stays in Voice Notes with its context. While it records, `finishRecording()` stops
-    /// it, as in the panel.
-    public func dictate(context: WidgetVoiceNoteContext, onText: @escaping @MainActor (String) -> Void) {
-        let configuration = settings()
-        record(context: context, then: { [self] note in
-            phase = "Transcribing"
-            let data = try await execute(configuration.transcribeArguments(id: note.id, revision: note.revision), nil) { _ in }
-            try Task.checkCancellation()
-            let updated = try JSONDecoder().decode(WidgetVoiceNoteResult.self, from: data).note
-            put(updated)
-            let text = updated.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            receipt = text.isEmpty ? "The recording had no speech to transcribe. It is kept in Voice Notes." : nil
-            if !text.isEmpty { onText(text) }
-        })
+    /// Where the reply box's live dictation writes its audio (`voice listen --save-audio`) before `fileLiveNote`
+    /// keeps it. The CLI names the folder once (it follows GENESIS_TOOLS_HOME); later clips are named here.
+    public func newIncomingClipPath() async throws -> String {
+        if let incomingDirectory {
+            return (incomingDirectory as NSString).appendingPathComponent(UUID().uuidString.lowercased() + ".pcm")
+        }
+        struct Path: Decodable { let path: String }
+        let data = try await execute(["incoming-path", "--json"], nil) { _ in }
+        let path = try JSONDecoder().decode(Path.self, from: data).path
+        incomingDirectory = (path as NSString).deletingLastPathComponent
+        return path
     }
 
-    public func record(input: String = "mic") { record(input: input, context: nil, then: nil) }
+    /// Keeps a live dictation from the reply box as a voice note: its audio, its text, and where it was spoken
+    /// (Martin, 2026-10-23: it "can go into the voice notes place (with context of which session, which decision")).
+    public func fileLiveNote(clip: String, text: String, context: WidgetVoiceNoteContext, provider: String,
+                             model: String?, language: String?) {
+        var args = ["add", "--clip", clip, "--text", text, "--provider", provider, "--json"]
+        if let json = try? JSONEncoder().encode(context), let encoded = String(data: json, encoding: .utf8) {
+            args += ["--context", encoded]
+        }
+        for (flag, value) in [("--model", model), ("--language", language)] {
+            if let value, !value.isEmpty { args += [flag, value] }
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let data = try await self.execute(args, nil) { _ in }
+                self.put(try JSONDecoder().decode(WidgetVoiceNoteResult.self, from: data).note)
+            } catch {
+                self.report(error)
+            }
+        }
+    }
 
-    private func record(input: String = "mic", context: WidgetVoiceNoteContext?,
-                        then: (@MainActor (WidgetVoiceNote) async throws -> Void)?) {
+    public func record(input: String = "mic") {
         begin(input == "mic" ? "Checking microphone access" : "Starting recording") { [self] in
             meter.reset()
             guard input != "mic" || !micLauncher.isEmpty else {
@@ -230,10 +245,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
                 try await lease.release()
                 throw CancellationError()
             }
-            var args = ["record", "--input", input, "--mic-launcher", micLauncher, "--wait-for-start", "--stop-on-stdin", "--json"]
-            if let context, let json = try? JSONEncoder().encode(context), let text = String(data: json, encoding: .utf8) {
-                args += ["--context", text]
-            }
+            let args = ["record", "--input", input, "--mic-launcher", micLauncher, "--wait-for-start", "--stop-on-stdin", "--json"]
             let data = try await execute(args, lease) { [weak self, weak meter] event in
                 meter?.receive(event)
                 if event.kind == "recording", let self, self.phase == "Starting recording" { self.phase = "Recording" }
@@ -242,7 +254,6 @@ public final class WidgetVoiceNotesStore: ObservableObject {
             put(note)
             selectedID = note.id
             receipt = "Recording saved locally. Transcribe when you are ready."
-            try await then?(note)
         }
     }
 

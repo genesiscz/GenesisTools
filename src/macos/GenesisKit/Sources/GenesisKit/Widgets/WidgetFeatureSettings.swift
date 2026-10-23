@@ -264,11 +264,12 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
-                NativeSettingsRow("Reply box microphone", detail: "Voice note keeps the recording in Voice Notes and puts its text in the reply box.") {
-                    Picker("Reply box microphone", selection: string("composerVoice", prefs?.composerVoice ?? "note")) {
+                NativeSettingsRow("Reply box microphone", detail: "Both put the words in the reply box as you talk; a voice note also keeps the recording in Voice Notes.") {
+                    Picker("Reply box microphone", selection: string("composerVoice", prefs?.composerVoice ?? "ask")) {
+                        Text("Ask each time").tag("ask")
                         Text("Voice note").tag("note")
-                        Text("Live dictation").tag("live")
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                        Text("Dictate").tag("live")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 300, alignment: .trailing)
                 }
             }
             NativeSettingsCard("Alerts", subtitle: "When an agent asks or answers while the widget is closed.") {

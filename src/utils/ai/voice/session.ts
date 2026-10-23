@@ -40,6 +40,8 @@ export async function createVoiceSession(
         realtime?: boolean;
         maxDurationMs?: number;
         onEvent: (event: VoiceEvent) => void;
+        /** Each captured frame (s16le mono at the source rate), as it goes to the provider: `voice listen --save-audio`. */
+        onAudio?: (frame: Uint8Array) => void;
     }
 ): Promise<VoiceSession> {
     options.signal?.throwIfAborted();
@@ -63,7 +65,11 @@ export async function createVoiceSession(
             throw new Error("Input none is reserved for fixture replay");
         }
 
-        opened = await openLiveStt({ ...options, signal: transport.signal });
+        opened = await openLiveStt({
+            ...options,
+            signal: transport.signal,
+            fixtureFollowsAudio: options.input !== "none",
+        });
         options.signal?.throwIfAborted();
         if (options.input !== "none") {
             source = await openPcmSource({
@@ -118,6 +124,7 @@ export async function createVoiceSession(
                 for await (const frame of source.frames()) {
                     capture.signal.throwIfAborted();
                     session.write(frame);
+                    options.onAudio?.(frame);
                     options.onEvent({ kind: "level", rms: pcmRms(frame) });
                 }
             }

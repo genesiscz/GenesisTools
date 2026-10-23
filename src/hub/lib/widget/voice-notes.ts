@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, realpathSync, unlinkSync } from "node:fs";
-import { mkdir, unlink } from "node:fs/promises";
+import { mkdir, rename, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseSttProvider } from "@genesiscz/utils/ai/stt/resolve";
 import type { LiveTranscriptEvent } from "@genesiscz/utils/ai/stt/types";
+import { pcmRms } from "@genesiscz/utils/ai/stt/vad";
 import { type RecordingEvent, recordPcmClip } from "@genesiscz/utils/ai/voice/record";
 import { createVoiceSession, type VoiceEvent } from "@genesiscz/utils/ai/voice/session";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -15,11 +16,12 @@ import { widgetRoot } from "./storage";
 
 const clipSchema = z.object({
     path: z.string(),
-    bytes: z.number().int().positive().max(960_000),
+    // A recorded note stops at 30 s; one kept from live dictation may run up to five minutes.
+    bytes: z.number().int().positive().max(9_600_000),
     sampleRateHz: z.literal(16000),
     channels: z.literal(1),
     encoding: z.literal("s16le"),
-    durationMs: z.number().positive().max(30_000),
+    durationMs: z.number().positive().max(300_000),
     peakRms: z.number(),
     endedBy: z.enum(["eof", "stop", "limit"]),
     sha256: z.string().length(64),
@@ -238,6 +240,103 @@ export async function recordVoiceNote({
         throw new Error(`The recording was discarded because it could not be saved: ${reason}`, { cause: error });
     }
 }
+/** Where `voice listen --save-audio` writes a reply box dictation before `addLiveVoiceNote` files it. */
+export function voiceNotesIncomingDirectory(root?: string): string {
+    return join(voiceNotesDirectory(root), "incoming");
+}
+
+/** A new file name in the incoming folder; the folder exists afterwards. */
+export async function incomingClipPath(root?: string): Promise<string> {
+    await mkdir(voiceNotesIncomingDirectory(root), { recursive: true });
+    return join(voiceNotesIncomingDirectory(root), `${randomUUID()}.pcm`);
+}
+
+/**
+ * Files the audio of a live dictation from the reply box as a voice note with its text, already transcribed, and
+ * where it was spoken (Martin, 2026-10-23: the dictation "can go into the voice notes place (with context of which
+ * session, which decision etc was it recorded in)"). The clip must be raw s16le 16 kHz mono in the incoming folder;
+ * it moves into the note's clip path.
+ */
+export async function addLiveVoiceNote({
+    root,
+    clip,
+    text,
+    context,
+    provider,
+    model,
+    language,
+    signal,
+}: {
+    root?: string;
+    clip: string;
+    text: string;
+    context?: VoiceNoteContext;
+    provider?: string;
+    model?: string;
+    language?: string;
+    signal?: AbortSignal;
+}): Promise<VoiceNote> {
+    const incoming = resolve(voiceNotesIncomingDirectory(root));
+    if (resolve(clip, "..") !== incoming) {
+        throw new Error("A live dictation clip must be in the voice notes incoming folder");
+    }
+
+    const audio = new Uint8Array(await Bun.file(clip).arrayBuffer());
+    if (audio.byteLength < 2 || audio.byteLength % 2 !== 0) {
+        throw new Error("The dictation recorded no audio");
+    }
+
+    let peakRms = 0;
+    for (let offset = 0; offset < audio.byteLength; offset += 3_200) {
+        peakRms = Math.max(peakRms, pcmRms(audio.subarray(offset, Math.min(audio.byteLength, offset + 3_200))));
+    }
+
+    const id = randomUUID();
+    const output = join(voiceNotesDirectory(root), "clips", `${id}.pcm`);
+    await mkdir(join(voiceNotesDirectory(root), "clips"), { recursive: true });
+    await rename(clip, output);
+    const note = voiceNoteSchema.parse({
+        id,
+        revision: 1,
+        createdAt: Date.now(),
+        clip: {
+            path: output,
+            bytes: audio.byteLength,
+            sampleRateHz: 16000,
+            channels: 1,
+            encoding: "s16le",
+            durationMs: audio.byteLength / 32,
+            peakRms,
+            endedBy: "stop",
+            sha256: createHash("sha256").update(audio).digest("hex"),
+        },
+        text,
+        recognizedText: text,
+        transcription: "ready",
+        ...(provider ? { provider } : {}),
+        ...(model ? { model } : {}),
+        ...(language ? { language } : {}),
+        ...(context ? { context } : {}),
+    });
+    try {
+        return await mutate({
+            root,
+            signal,
+            change: (index) => {
+                if (index.notes.length >= 100) {
+                    throw new Error("The local voice notebook is full. Discard a note before recording another.");
+                }
+
+                index.notes.push(note);
+                return note;
+            },
+        });
+    } catch (error) {
+        await unlink(output).catch((cleanup) => logger.debug({ error: cleanup, id }, "Unsaved dictation clip cleanup"));
+        throw error;
+    }
+}
+
 export async function editVoiceNote({
     root,
     id,

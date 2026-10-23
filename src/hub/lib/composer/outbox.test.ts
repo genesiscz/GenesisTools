@@ -102,8 +102,10 @@ import {
     widgetSessionKey,
 } from "../widget/types";
 import {
+    addLiveVoiceNote,
     discardVoiceNote,
     editVoiceNote,
+    incomingClipPath,
     listVoiceNotes,
     recordVoiceNote,
     transcribeVoiceNote,
@@ -3224,6 +3226,28 @@ describe("private Widget voice notes", () => {
         const note = await recordVoiceNote({ root, input });
         return { root, input, note };
     }
+    test("a live dictation from the reply box becomes a transcribed note with its audio and where it was spoken", async () => {
+        const root = await mkdtemp(join(tmpdir(), "widget-voice-live-"));
+        const clip = await incomingClipPath(root);
+        const audio = new Uint8Array(32_000).map((_, index) => (index % 2 === 1 ? 32 : 0));
+        await Bun.write(clip, audio);
+        const context = { sessionKey: "local:claude:fixture:", sessionTitle: "fixture", decisionNumber: 18 };
+        const note = await addLiveVoiceNote({ root, clip, text: "Fixture words", context, provider: "fixture" });
+        expect(note.transcription).toBe("ready");
+        expect(note.text).toBe("Fixture words");
+        expect(note.context).toEqual(context);
+        expect(note.clip.durationMs).toBe(1000);
+        expect(note.clip.peakRms).toBeGreaterThan(0);
+        expect(await Bun.file(note.clip.path).bytes()).toEqual(audio);
+        expect(await Bun.file(clip).exists()).toBe(false);
+        expect((await listVoiceNotes(root)).notes.map((entry) => entry.id)).toEqual([note.id]);
+        // Only the incoming folder may hand a clip over: any other path stays where it is.
+        const outside = join(root, "outside.pcm");
+        await Bun.write(outside, audio);
+        await expect(addLiveVoiceNote({ root, clip: outside, text: "x" })).rejects.toThrow("incoming folder");
+        expect(await Bun.file(outside).exists()).toBe(true);
+    });
+
     test("local record, explicit fixture transcription, edit and guarded discard use one private note", async () => {
         const { root, input, note } = await fixture();
         expect((await files.stat(note.clip.path)).mode & 0o777).toBe(0o600);

@@ -537,14 +537,17 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         model.action(["action": "fixture-barrier"], completed: { saved.fulfill() })
         await fulfillment(of: [saved], timeout: 2)
     }
-    func testHostVoiceActionOpensNotesWithoutStartingLegacyListener() async throws {
+    /// The reply box microphone dictates live in both modes (Martin, 2026-10-23: the words should appear "live" while
+    /// he talks). A voice note also passes `--save-audio`, and when it stops it is filed with its session and text.
+    func testVoiceNoteDictatesLiveAndFilesItsAudioWithTheSession() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("voice-routing-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         let binary = root.appendingPathComponent("tools")
         let marker = root.appendingPathComponent("voice-invoked")
         let snapshot = #"{"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"fixture","voiceLanguage":"en"},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}"#
-        try "#!/bin/sh\nif [ \"$1\" = voice ]; then echo \"$*\" > '\(marker.path)'; exit 0; fi\nprintf '%s\\n' '\(snapshot)'\n".write(to: binary, atomically: true, encoding: .utf8)
+        let complete = #"{"kind":"complete","text":"Fixture words"}"#
+        try "#!/bin/sh\nif [ \"$1\" = voice ]; then echo \"$*\" > '\(marker.path)'; printf '%s\\n' '\(complete)'; exit 0; fi\nprintf '%s\\n' '\(snapshot)'\n".write(to: binary, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
         let defaults = UserDefaults(suiteName: "voice-routing-\(UUID())")!
         let model = WidgetModel(binaryPath: binary.path, stateRoot: root.path, defaults: defaults)
@@ -554,23 +557,38 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         model.startSettings()
         await fulfillment(of: [loaded], timeout: 3)
         model.selectedKey = "pinned-recipient"
-        // The reply box microphone records a voice note in place, with its session as context; no panel opens.
-        var requested: [WidgetVoiceNoteContext] = []
-        model.dictateVoiceNote = { requested.append($0) }
-        model.toggleVoice()
-        XCTAssertEqual(requested.map(\.sessionKey), ["pinned-recipient"])
-        XCTAssertNil(requested.first?.decisionNumber, "a follow-up names no decision")
-        XCTAssertEqual(model.voiceActionLabel, "Record a voice note into the reply box")
-        XCTAssertFalse(model.voiceActive)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
-        // Control: without voice notes the same model and executable still reach the live listener.
-        model.dictateVoiceNote = nil
-        let finished = expectation(description: "legacy fixture exits")
-        let voiceSubscription = model.$voiceActive.dropFirst().filter { !$0 }.prefix(1).sink { _ in finished.fulfill() }
-        model.toggleVoice()
-        await fulfillment(of: [finished], timeout: 3)
-        XCTAssertTrue(try String(contentsOf: marker, encoding: .utf8).contains("voice listen"))
-        withExtendedLifetime((subscription, voiceSubscription)) {}
+        let clip = root.appendingPathComponent("incoming.pcm").path
+        var filed: [(String, String, WidgetVoiceNoteContext)] = []
+        model.voiceNoteClip = { clip }
+        model.fileVoiceNote = { filed.append(($0, $1, $2)) }
+        XCTAssertEqual(model.composerVoiceChoice, "ask", "the microphone asks by default")
+
+        func run(_ mode: WidgetVoiceMode) async {
+            let finished = expectation(description: "fixture listener exits")
+            let watch = model.$voiceActive.dropFirst().filter { !$0 }.prefix(1).sink { _ in finished.fulfill() }
+            model.startVoice(mode)
+            XCTAssertTrue(model.voiceActive)
+            XCTAssertEqual(model.voiceMode, mode)
+            await fulfillment(of: [finished], timeout: 5)
+            withExtendedLifetime(watch) {}
+        }
+
+        await run(.note)
+        let noteArgs = try String(contentsOf: marker, encoding: .utf8)
+        XCTAssertTrue(noteArgs.contains("voice listen"), noteArgs)
+        XCTAssertTrue(noteArgs.contains("--save-audio \(clip)"), "a voice note keeps its audio: \(noteArgs)")
+        XCTAssertEqual(filed.map(\.0), [clip])
+        XCTAssertEqual(filed.map(\.1), ["Fixture words"])
+        XCTAssertEqual(filed.first?.2.sessionKey, "pinned-recipient")
+        XCTAssertNil(filed.first?.2.decisionNumber, "a follow-up names no decision")
+        XCTAssertEqual(model.draft.text, "Fixture words", "the words land in the reply box")
+        XCTAssertEqual(model.preferredVoiceMode, .note, "the next press starts the mode picked last")
+
+        await run(.dictate)
+        XCTAssertFalse(try String(contentsOf: marker, encoding: .utf8).contains("--save-audio"), "dictation keeps no audio")
+        XCTAssertEqual(filed.count, 1, "dictation files no voice note")
+        XCTAssertEqual(model.draft.text, "Fixture words Fixture words")
+        withExtendedLifetime(subscription) {}
     }
 
     func testCoordinatorRegistersModulesAndSettingsOverInjectedRuntimeWithoutStartingIt() async throws {

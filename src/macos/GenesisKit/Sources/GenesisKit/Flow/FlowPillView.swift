@@ -96,26 +96,8 @@ public struct FlowPillView: View {
     /// not a frequency display. A real band split would need the FFT that
     /// BridgeVoice does in `compute_band_levels_into`.
     private var bars: some View {
-        HStack(spacing: 3) {
-            ForEach(0..<7, id: \.self) { index in
-                Capsule()
-                    .fill(accent)
-                    .frame(width: 3, height: barHeight(index))
-                    .opacity(session.phase == .listening ? 1 : 0.35)
-            }
-        }
-        .frame(width: 44, height: 22, alignment: .center)
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.08), value: recognizer.micLevel)
-    }
-
-    private static let barWeights: [Double] = [0.45, 0.7, 0.95, 1.0, 0.9, 0.65, 0.4]
-
-    private func barHeight(_ index: Int) -> CGFloat {
-        let base: CGFloat = 4
-        guard session.phase == .listening else { return base }
-        let level = max(0, min(1, recognizer.micLevel))
-        let weighted = level * Self.barWeights[index]
-        return base + CGFloat(weighted) * 16
+        VoiceLevelBars(level: recognizer.micLevel, active: session.phase == .listening, tint: accent,
+                       reduceMotion: reduceMotion)
     }
 
     private func stopBreathing() {

@@ -131,19 +131,30 @@ public final class WidgetModel: ObservableObject {
     public var showSettingsPage: ((String) -> Void)?
     public var showMedia: ((WidgetMediaSelection) -> Void)?
     public var openHub: ((WidgetSession?) -> Void)?
-    /// The reply box's microphone in "note" mode (the default): starts a voice note with where it was recorded, or
-    /// stops the one that records; its transcript lands in the reply box. Nil where no voice notes run (the preview).
-    public var dictateVoiceNote: ((WidgetVoiceNoteContext) -> Void)?
-    /// A voice note for the reply box records or transcribes; the button shows Stop while it records.
-    @Published public var noteDictation: String?
-    public var voiceActionLabel: String {
-        if noteDictation == "Recording" { return "Stop and put the text in the reply box" }
-        if noteDictation != nil { return noteDictation ?? "" }
-        return voiceActive ? "Stop dictation" : (usesNoteDictation ? "Record a voice note into the reply box" : "Dictate")
+    /// A path for a voice note's audio; nil where no voice notes run (the preview studio), so a note is only dictated.
+    public var voiceNoteClip: (() async throws -> String)?
+    /// Keeps a finished dictation as a voice note: its audio file, its text, and where it was spoken.
+    public var fileVoiceNote: ((_ clip: String, _ text: String, _ context: WidgetVoiceNoteContext) -> Void)?
+    /// The mode of the dictation that runs, or nil.
+    @Published public private(set) var voiceMode: WidgetVoiceMode?
+    private var voiceNotePlan: (clip: String, context: WidgetVoiceNoteContext)?
+    static let lastVoiceModeKey = "widget.voice.last-mode"
+
+    /// `composerVoice`: "ask" (default) offers both modes on every press of the microphone (Martin, 2026-10-23: "i want
+    /// to be able to pick when i click the "record" every time"); "note" or "live" starts that one at once.
+    public var composerVoiceChoice: String { snapshot?.state.preferences.composerVoice ?? "ask" }
+    /// What a press starts without asking: the setting, or the mode picked last when it asks.
+    public var preferredVoiceMode: WidgetVoiceMode {
+        if let fixed = WidgetVoiceMode(rawValue: composerVoiceChoice) { return fixed }
+        return defaults.string(forKey: Self.lastVoiceModeKey).flatMap(WidgetVoiceMode.init) ?? .note
     }
-    /// `composerVoice` "note" (default) records a voice note; "live" streams dictation into the field.
-    var usesNoteDictation: Bool {
-        dictateVoiceNote != nil && (snapshot?.state.preferences.composerVoice ?? "note") == "note"
+    public var voiceActionLabel: String {
+        if voiceActive { return voiceMode == .note ? "Stop and keep the voice note" : "Stop dictation" }
+        switch composerVoiceChoice {
+        case "note": return "Record a voice note into the reply box"
+        case "live": return "Dictate into the reply box"
+        default: return "Dictate, or record a voice note, into the reply box"
+        }
     }
     public var openDestination: ((WidgetSession, String, String?) -> Void)?
     /// Called with each preference patch once the hub has stored it.
@@ -1819,42 +1830,65 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// The microphone key and a press without a menu: stops the dictation that runs, else starts the preferred mode.
     public func toggleVoice() {
-        if usesNoteDictation, let dictateVoiceNote {
-            guard !selectedKey.isEmpty else { return }
-            let card = ownAnswerCard
-            dictateVoiceNote(WidgetVoiceNoteContext(
-                sessionKey: selectedKey, sessionTitle: selected?.title, decisionId: card?.sourceId,
-                decisionNumber: card?.number, title: card?.title))
-            return
-        }
         if voiceActive {
             voice?.finishInput()
             return
         }
-        guard let prefs = snapshot?.state.preferences, !selectedKey.isEmpty else { return }
+        startVoice(preferredVoiceMode)
+    }
+
+    /// Live dictation into the reply box: the words appear while the user talks, with the voice level as waves. In
+    /// `.note` mode the audio is kept too and becomes a voice note with this session and decision when it stops.
+    public func startVoice(_ mode: WidgetVoiceMode) {
+        guard !voiceActive, let prefs = snapshot?.state.preferences, !selectedKey.isEmpty else { return }
+        defaults.set(mode.rawValue, forKey: Self.lastVoiceModeKey)
+        let card = ownAnswerCard
+        let context = WidgetVoiceNoteContext(
+            sessionKey: selectedKey, sessionTitle: selected?.title, decisionId: card?.sourceId,
+            decisionNumber: card?.number, title: card?.title)
         voiceKey = selectedKey
         voiceFinals = []
         voiceText = ""
+        voiceLevel = 0
         voiceActive = true
+        voiceMode = mode
         var args = [
             "listen", "--provider", prefs.voiceProvider, "--language", prefs.voiceLanguage,
             "--input", "mic", "--json", "--stop-on-stdin",
         ]
         if let account = prefs.voiceAccount, !account.isEmpty { args += ["--account", account] }
         if let model = prefs.voiceModel, !model.isEmpty { args += ["--model", model] }
-        do {
-            voice = try ToolsLineStream(
-                bridge: bridge, subcommand: "voice", args: args,
-                onLines: { [weak self] lines in self?.receiveVoice(lines) },
-                onExit: { [weak self] exit in
-                    guard let self else { return }
-                    self.finishVoice()
-                    if exit.status != 0 && !exit.stopped { self.error = String(exit.stderr.suffix(600)) }
-                })
-        } catch {
-            voiceActive = false
-            report(error)
+        let clipSource = mode == .note ? voiceNoteClip : nil
+        Task { [weak self] in
+            var args = args
+            if let clipSource {
+                do {
+                    let clip = try await clipSource()
+                    args += ["--save-audio", clip]
+                    self?.voiceNotePlan = (clip, context)
+                } catch {
+                    // The words still go into the reply box; only the recording is not kept.
+                    self?.report(error)
+                }
+            }
+            guard let self, self.voiceActive, self.voice == nil else { return }
+            do {
+                self.voice = try ToolsLineStream(
+                    bridge: self.bridge, subcommand: "voice", args: args,
+                    onLines: { [weak self] lines in self?.receiveVoice(lines) },
+                    onExit: { [weak self] exit in
+                        guard let self else { return }
+                        self.finishVoice()
+                        if exit.status != 0 && !exit.stopped { self.error = String(exit.stderr.suffix(600)) }
+                    })
+            } catch {
+                self.voiceActive = false
+                self.voiceMode = nil
+                self.voiceNotePlan = nil
+                self.report(error)
+            }
         }
     }
 
@@ -1892,8 +1926,19 @@ public final class WidgetModel: ObservableObject {
     private func finishVoice() {
         guard voiceActive else { return }
         voiceActive = false
+        voiceMode = nil
         voice = nil
         let text = (voiceFinals + [voiceText]).filter { !$0.isEmpty }.joined(separator: " ")
+        if let plan = voiceNotePlan {
+            voiceNotePlan = nil
+            if !text.isEmpty, let fileVoiceNote {
+                fileVoiceNote(plan.clip, text, plan.context)
+            } else {
+                do { try FileManager.default.removeItem(atPath: plan.clip) } catch {
+                    PerfLog.mark("widget.voice clip cleanup \(error.localizedDescription)")
+                }
+            }
+        }
         if let key = voiceKey, !text.isEmpty {
             let existing = drafts[key]?.text ?? ""
             drafts[key] = WidgetDraft(
@@ -2152,4 +2197,12 @@ final class WidgetSnapshotDecoder: @unchecked Sendable {
             }
         }
     }
+}
+
+/// The reply box microphone's two live modes. The raw values are the `composerVoice` setting's.
+public enum WidgetVoiceMode: String, Sendable {
+    /// Words into the reply box only.
+    case dictate = "live"
+    /// Words into the reply box, and the audio kept as a voice note with its session and decision.
+    case note
 }

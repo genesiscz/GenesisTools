@@ -7,8 +7,10 @@ import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 import { z } from "zod";
 import {
+    addLiveVoiceNote,
     discardVoiceNote,
     editVoiceNote,
+    incomingClipPath,
     listVoiceNotes,
     readVoiceNote,
     recordVoiceNote,
@@ -23,6 +25,41 @@ export function registerWidgetVoiceNotes(widget: Command): void {
         .option("--json")
         .action(async (_options, command) => {
             out.result(await listVoiceNotes(command.optsWithGlobals().stateRoot));
+        });
+    notes
+        .command("add")
+        .description("File a live dictation's audio and text as a voice note")
+        .requiredOption("--clip <path>", "raw s16le 16 kHz mono audio in the voice notes incoming folder")
+        .requiredOption("--text <text>", "the dictated text")
+        .option(
+            "--context <json>",
+            "where it was spoken: {sessionKey, sessionTitle?, decisionId?, decisionNumber?, title?}"
+        )
+        .option("--provider <provider>")
+        .option("--model <model>")
+        .option("--language <codes>")
+        .option("--json")
+        .action(async (options, command) => {
+            const context = options.context
+                ? voiceNoteContextSchema.parse(SafeJSON.parse(options.context, { strict: true }))
+                : undefined;
+            const note = await addLiveVoiceNote({
+                root: command.optsWithGlobals().stateRoot,
+                clip: options.clip,
+                text: options.text,
+                context,
+                provider: options.provider,
+                model: options.model,
+                language: options.language,
+            });
+            out.result({ kind: "added", note });
+        });
+    notes
+        .command("incoming-path")
+        .description("A fresh path in the incoming folder for voice listen --save-audio")
+        .option("--json")
+        .action(async (_options, command) => {
+            out.result({ path: await incomingClipPath(command.optsWithGlobals().stateRoot) });
         });
     notes
         .command("record")

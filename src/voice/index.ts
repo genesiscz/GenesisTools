@@ -49,6 +49,7 @@ program
     .option("--events-file <file>", "Fixture transcript events")
     .option("--max-seconds <seconds>", "Maximum recording duration", "300")
     .option("--capsule", "Show the existing optional native Capsule")
+    .option("--save-audio <file>", "Also write the captured audio there (raw s16le, 16 kHz mono)")
     .option("--stop-on-stdin", "Stop when the owning UI closes stdin; unavailable with PCM stdin input")
     .option("--json", "Emit typed JSONL events")
     .action(
@@ -61,6 +62,7 @@ program
             eventsFile?: string;
             maxSeconds: string;
             capsule?: boolean;
+            saveAudio?: string;
             stopOnStdin?: boolean;
             json?: boolean;
         }) => {
@@ -88,6 +90,7 @@ program
             await withInterrupt(
                 async (signal) => {
                     const capsule = options.capsule ? openVoiceCapsule({ signal }) : null;
+                    const audio = options.saveAudio ? Bun.file(options.saveAudio).writer() : undefined;
                     let stop: (() => void) | undefined;
                     const stopFromOwner = () => stop?.();
                     try {
@@ -100,6 +103,7 @@ program
                             signal,
                             events,
                             maxDurationMs,
+                            onAudio: audio ? (frame) => audio.write(frame) : undefined,
                             onEvent: (event) => {
                                 capsuleEvent(capsule, event);
                                 if (options.json) {
@@ -127,6 +131,7 @@ program
                         if (options.stopOnStdin) {
                             process.stdin.pause();
                         }
+                        await audio?.end();
                         await capsule?.close();
                     }
                 },

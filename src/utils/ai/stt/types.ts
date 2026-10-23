@@ -40,6 +40,11 @@ export interface OpenLiveSttOptions {
     signal?: AbortSignal;
     /** Fixture replay events (`provider: "fixture"` only). */
     events?: LiveTranscriptEvent[];
+    /**
+     * Real audio flows into this session (fixture only): each event waits for its `startedAtMs` and the replay ends
+     * only after `end()`, as a provider answering live audio does. Without it the fixture replays at once.
+     */
+    fixtureFollowsAudio?: boolean;
 }
 
 export interface LiveSttSession {

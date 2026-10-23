@@ -109,7 +109,12 @@ export async function openLiveStt(options: OpenLiveSttOptions): Promise<LiveSttS
     options.signal?.throwIfAborted();
 
     if (provider === "fixture") {
-        return createFixtureStt({ events: options.events ?? [], accountId: options.account, signal: options.signal });
+        return createFixtureStt({
+            events: options.events ?? [],
+            accountId: options.account,
+            signal: options.signal,
+            followsAudio: options.fixtureFollowsAudio,
+        });
     }
 
     const account = await resolveSttAccount({ provider, account: options.account });

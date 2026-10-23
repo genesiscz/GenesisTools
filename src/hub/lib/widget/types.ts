@@ -88,7 +88,7 @@ export const widgetPreferencesSchema = z.object({
     /** The inbox of every session: entries grouped under their session ("session"), or one list. */
     inboxGrouping: z.enum(["session", "list"]).default("session"),
     /** The composer's microphone: records a voice note and puts its transcript in the field ("note"), or live dictation. */
-    composerVoice: z.enum(["note", "live"]).default("note"),
+    composerVoice: z.enum(["ask", "note", "live"]).default("ask"),
 });
 
 // Zod defaults also run inside partial objects; a patch must retain only supplied keys.
