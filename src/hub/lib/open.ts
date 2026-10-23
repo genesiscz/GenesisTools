@@ -26,8 +26,9 @@ export interface OpenHubOptions {
     /** With `pr`: this repo-relative file opens in that PR's review. */
     reveal?: string;
     /**
-     * A commit sha (7 to 40 hex characters, a prefix is enough). With `pr` it is selected in that PR's
-     * review; without it, `repo` names its project and it opens in the Worktrees mode's diff.
+     * A commit sha (7 to 40 hex characters, a prefix is enough), or `<from>..<to>`: a run of commits with both
+     * ends included. With `pr` it is selected in that PR's review; without it, `repo` names its project and it
+     * opens in the Worktrees mode's diff.
      */
     commit?: string;
     /** With `commit` and no `pr`: the commit's project, a checkout path or its forge path (`owner/repo`). */
@@ -151,7 +152,7 @@ export function hubArgs(options: OpenHubOptions): string[] {
  * The same target as a link: `genesis-tools://hub?session=<parent>&agent=<child>`, with `mode`,
  * `pr`, `reveal`, `repo`, `commit`, `tab`, `filter` and `worktree` as further query items (keys of
  * `HubRequest.linkKeys` in the app). A link without `worktree` and `reveal` lost them: `--print-url`
- * named neither. A commit link: `?pr=owner%2Frepo%2342&commit=<sha>`, or `?repo=<path>&commit=<sha>`.
+ * named neither. A commit link: `?pr=owner%2Frepo%2342&commit=<sha>` (or `<from>..<to>`), or `?repo=<path>&commit=<sha>`.
  */
 export function hubUrl(options: Pick<OpenHubOptions, (typeof HUB_LINK_KEYS)[number]>): string {
     // The link itself is built in the router utils, beside its https twin, so the two cannot drift.

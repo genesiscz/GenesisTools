@@ -69,9 +69,21 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(HubPRRef("#42")?.project)
         XCTAssertEqual(HubPRRef("group/app#42")?.project, "group/app")
         XCTAssertEqual(HubPRRef("app!12")?.number, 12)
-        XCTAssertEqual(HubPRRef("app!12")?.label, "app#12")
+        XCTAssertEqual(HubPRRef("app!12")?.label, "app!12")
+        XCTAssertEqual(HubPRRef("#42")?.label, "#42")
         XCTAssertNil(HubPRRef("app#x"))
         XCTAssertNil(HubPRRef("seven"))
+    }
+
+    /// A ref outside the list goes to `tools hub pr show` as the project name, which the CLI finds among
+    /// every checkout under the repo roots; the hub's own project index may not have loaded yet.
+    func testAPRRefOutsideTheListOpensByItsProjectName() {
+        XCTAssertEqual(HubPRRef("group/sub/app!12")?.showArg, "group/sub/app!12")
+        XCTAssertEqual(HubPRRef("acme/app#42")?.showArg, "acme/app#42")
+        XCTAssertEqual(HubPRRef("https://gitlab.example/group/app/-/merge_requests/3")?.showArg, "https://gitlab.example/group/app/-/merge_requests/3")
+        XCTAssertNil(HubPRRef("#42")?.showArg)
+        XCTAssertNil(HubPRRef("--flag#12")?.showArg, "the CLI would read it as an option, not as the ref")
+        XCTAssertTrue(PRsModel.notListed(HubPRRef("!7")!).text.contains("<project>!7"))
     }
 
     /// The browser extension and pasted links hand the hub a page URL, often with a tab suffix.
@@ -134,6 +146,36 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(HubCommitSha.find("abcdef9", in: commits))
     }
 
+    /// `commit=<from>..<to>`: a run of a PR's commits, both ends included, in either order.
+    func testACommitRangeLinkShowsItsCommitsFromTheParentOfTheFirst() throws {
+        XCTAssertEqual(HubCommitSpan("abcdef0"), HubCommitSpan(from: "abcdef0"))
+        XCTAssertEqual(HubCommitSpan("67AD51671E..3cac936e2f"), HubCommitSpan(from: "67ad51671e", to: "3cac936e2f"))
+        XCTAssertNil(HubCommitSpan("abcdef0..xyz"))
+        XCTAssertNil(HubCommitSpan("abcdef0...1234567"))
+        let commit = { (sha: String) in HubPRDetail.Commit(sha: sha, title: sha, author: nil, authorLogin: nil, date: nil, body: nil) }
+        let commits = ["a000000", "b000000", "c000000", "d000000"].map(commit)
+        let json = """
+        {"repo":"app","repoRoot":"/work/app","origin":{"kind":"gitlab","host":"git.example","web":"https://git.example/group/app"},
+         "number":7,"title":"t","state":"OPEN","draft":false,"author":"a","headBranch":"feat/x","baseBranch":"main",
+         "url":"https://git.example/group/app/-/merge_requests/7","labels":[],"reviewers":[],"headSha":"d000000","crossRepository":false,"headRepo":null}
+        """
+        let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        let whole = DiffScope.range(base: "base000", head: "d000000", label: "whole", fallbackBase: "origin/main")
+        let middle = PRsModel.rangeScope(commits, first: 1, last: 2, pr: pr, whole: whole)
+        XCTAssertEqual(middle, .range(base: "a000000", head: "c000000", label: "!7 b000000..c000000 (2 commits)"))
+        XCTAssertEqual(PRsModel.rangeShas(middle, linked: middle, in: commits), ["b000000", "c000000"])
+        let opening = PRsModel.rangeScope(commits, first: 0, last: 1, pr: pr, whole: whole)
+        XCTAssertEqual(opening, .range(base: "base000", head: "b000000", label: "!7 a000000..b000000 (2 commits)", fallbackBase: "origin/main"))
+        XCTAssertEqual(PRsModel.rangeShas(opening, linked: opening, in: commits), ["a000000", "b000000"])
+        // A link over every commit of the PR marks them all; the whole PR itself, or another range, marks none.
+        let span = PRsModel.rangeScope(commits, first: 0, last: 3, pr: pr, whole: whole)
+        XCTAssertEqual(PRsModel.rangeShas(span, linked: span, in: commits), Set(commits.map(\.sha)))
+        XCTAssertEqual(PRsModel.rangeShas(whole, linked: span, in: commits), [], "the whole PR marks no commit")
+        XCTAssertEqual(PRsModel.rangeShas(whole, linked: nil, in: commits), [])
+        XCTAssertEqual(PRsModel.rangeShas(middle, linked: opening, in: commits), [], "only the range the link set")
+        XCTAssertEqual(PRsModel.rangeShas(.commit(sha: "b000000", title: "b"), linked: span, in: commits), [])
+    }
+
     func testAForgePathFindsItsCheckoutInAnyCaseAndForm() {
         let projects = [
             HubPRProject(project: "https://github.com/acme/App", repo: "App", root: "/fixture/app", kind: "github"),
@@ -166,10 +208,55 @@ final class HubLogicTests: XCTestCase {
         XCTAssertEqual(HubCommitLookup.resolve(repo: path + "/", sha: short, known: []), found)
         let projects = [HubPRProject(project: "https://example.test/acme/app", repo: "app", root: path, kind: "github")]
         XCTAssertEqual(HubCommitLookup.resolve(repo: "acme/app", sha: short, known: projects), found)
+        // The link names the upstream, the checkout is a fork: the same last name with the commit is the checkout.
+        let fork = [HubPRProject(project: "https://example.test/other/app", repo: "app", root: "/fixture/none", kind: "gitlab"),
+                    HubPRProject(project: "https://example.test/me/app", repo: "app", root: path, kind: "gitlab")]
+        XCTAssertEqual(HubCommitLookup.resolve(repo: "group/sub/app", sha: short, known: fork), found)
+        guard case .failed = HubCommitLookup.resolve(repo: "group/sub/app", sha: "0000000", known: fork) else {
+            return XCTFail("a same-name project without the commit is no match")
+        }
         guard case .failed(let message) = HubCommitLookup.resolve(repo: path, sha: "0000000", known: []) else {
             return XCTFail("a commit the checkout lacks must be said")
         }
         XCTAssertTrue(message.contains("is not in"), message)
+
+        // A range, named in either order: from the parent of the older end to the newer one.
+        for _ in 0..<2 {
+            XCTAssertNotNil(WorktreeDiscovery.git(path, commit))
+        }
+        let newest = try XCTUnwrap(WorktreeDiscovery.git(path, ["rev-parse", "HEAD"])?.trimmed)
+        let middle = try XCTUnwrap(WorktreeDiscovery.git(path, ["rev-parse", "HEAD^"])?.trimmed)
+        let range = HubCommitLookup.Found(root: root, sha: newest, title: "\(middle.prefix(10))..\(newest.prefix(10)) (2 commits)", base: head)
+        XCTAssertEqual(HubCommitLookup.resolve(repo: path, sha: String(middle.prefix(8)), to: String(newest.prefix(8)), known: []), .found(range))
+        XCTAssertEqual(HubCommitLookup.resolve(repo: path, sha: String(newest.prefix(8)), to: String(middle.prefix(8)), known: []), .found(range))
+
+        // Two same-name forks hold the older end; only the second holds the newer one, so the range opens there.
+        let stale = path + "-stale"
+        XCTAssertNotNil(WorktreeDiscovery.git(path, ["clone", "-q", "--no-local", path, stale]))
+        defer { try? FileManager.default.removeItem(atPath: stale) }
+        XCTAssertNotNil(WorktreeDiscovery.git(path, commit))
+        let latest = try XCTUnwrap(WorktreeDiscovery.git(path, ["rev-parse", "HEAD"])?.trimmed)
+        let forks = [HubPRProject(project: "https://example.test/old/app", repo: "app", root: stale, kind: "gitlab"),
+                     HubPRProject(project: "https://example.test/me/app", repo: "app", root: path, kind: "gitlab")]
+        guard case .found(let ranged) = HubCommitLookup.resolve(repo: "group/sub/app", sha: String(middle.prefix(8)),
+                                                                to: String(latest.prefix(8)), known: forks) else {
+            return XCTFail("the fork holding both ends of the range must open it")
+        }
+        XCTAssertEqual(ranged.root, root)
+        XCTAssertEqual(ranged.sha, latest)
+
+        // The upstream itself is checked out but lacks the linked commit: the fork that holds it opens instead.
+        let upstream = [HubPRProject(project: "https://example.test/group/sub/app", repo: "app", root: stale, kind: "gitlab"),
+                        HubPRProject(project: "https://example.test/me/app", repo: "app", root: path, kind: "gitlab")]
+        guard case .found(let viaFork) = HubCommitLookup.resolve(repo: "group/sub/app", sha: String(latest.prefix(8)), known: upstream) else {
+            return XCTFail("the fork holding the commit must open it when the upstream checkout lacks it")
+        }
+        XCTAssertEqual(viaFork.root, root)
+        // No checkout holds it: the miss names the upstream checkout, where the link pointed.
+        guard case .failed(let lacking) = HubCommitLookup.resolve(repo: "group/sub/app", sha: "0000000", known: upstream) else {
+            return XCTFail("a commit no checkout holds must be said")
+        }
+        XCTAssertTrue(lacking.contains("is not in"), lacking)
     }
 
     @MainActor
@@ -365,6 +452,53 @@ final class HubLogicTests: XCTestCase {
         XCTAssertEqual(review.scope, PRsModel.scope(pr, detail: nil))
         XCTAssertTrue(model.notice?.text.contains("so the whole PR shows") == true)
         XCTAssertEqual(model.notice?.ref, missing.ref)
+    }
+
+    /// A range link waits for a fresh detail when the cached one predates its newer end; when that detail
+    /// fails, the missing end is said, never dropped with the old diff left on screen.
+    @MainActor
+    func testAFailedDetailSaysTheMissingEndOfARange() throws {
+        let json = """
+        {"repo":"app","repoRoot":"/fixture/app","origin":{"kind":"github","host":"github.com","web":"https://github.com/acme/app"},
+         "number":7,"title":"t","state":"OPEN","draft":false,"author":"alice","headBranch":"feature","baseBranch":"develop",
+         "url":"https://github.com/acme/app/pull/7","labels":[],"reviewers":[],"headSha":"abcdef0123","crossRepository":false,"headRepo":null}
+        """
+        let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        let model = PRsModel()
+        // A bare ref with no rows or known project starts no CLI fetch in this logic test.
+        let ref = try XCTUnwrap(HubPRRef("7"))
+        let cached = [HubPRDetail.Commit(sha: "aaaaaaa111", title: "from", author: nil, authorLogin: nil, date: nil, body: nil)]
+
+        model.request(ref, commit: "aaaaaaa..bbbbbbb")
+        model.detailFailed(pr, cached: cached)
+        XCTAssertNil(model.pendingCommit)
+        XCTAssertEqual(model.notice?.text, "Could not load the commits of #7 to select bbbbbbb")
+
+        model.request(ref, commit: "aaaaaaa")
+        model.detailFailed(pr, cached: cached)
+        XCTAssertNil(model.notice, "a cached commit is already selectable, so nothing is missing")
+    }
+
+    /// A deep link's failure is the only word on why the link opened nothing: a list load that lands after it,
+    /// answered or failed, replaces the list's own notices and keeps that one until it is dismissed.
+    @MainActor
+    func testADeepLinkFailureSurvivesAnsweredAndFailedListLoads() {
+        struct ListDown: LocalizedError { var errorDescription: String? { "gh: network down" } }
+        let model = PRsModel()
+        let direct = PRListNotice("Could not open #7: no such PR")
+        let stale = PRListNotice("app: rate limited")
+        model.listAnswered([stale])
+        model.directFailed(direct)
+
+        model.listAnswered([PRListNotice("web: Cannot resolve git.example.org")])
+        XCTAssertEqual(model.errors.map(\.text), ["web: Cannot resolve git.example.org", direct.text])
+
+        model.listFailed(ListDown())
+        XCTAssertEqual(model.errors.map(\.text), ["Could not list the PRs/MRs: gh: network down", direct.text])
+
+        model.dismissError(direct)
+        model.listFailed(ListDown())
+        XCTAssertEqual(model.errors.map(\.text), ["Could not list the PRs/MRs: gh: network down"])
     }
 
     func testALiveLaunchIsNotScripted() {

@@ -1,18 +1,21 @@
 import { describe, expect, test } from "bun:test";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { defaultReviewCommentClient, type ReviewCommentClient } from "@app/github/lib/review-comments";
+import type { LocalCheckout } from "@genesiscz/utils/git/local-checkouts";
 import type { CommandRunner } from "@genesiscz/utils/git/origins";
 import type { RepoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage";
+import { localCheckoutOf } from "../prs";
 import { draftDatesFor, stampDraftDates } from "./draft-dates";
 import { findBranchPr, findPrByRef } from "./find";
 import { githubBackend, githubThread, githubVersions } from "./github";
 import { gitlabBackend, gitlabPosition, gitlabThreads, gitlabVersions } from "./gitlab";
 import { type FoundPr, forgetThreads, gitlabBaseUrl, type PrBackend, prThreads, readPrThreads } from "./index";
+import { resolveHubPrRef } from "./project-ref";
 
 // ─── find ─────────────────────────────────────────────────────────────────────
 
@@ -222,7 +225,9 @@ describe("findPrByRef", () => {
             repoPath: null,
         });
 
-        await expect(findPrByRef({ ref: "not a ref", runner: refuseRunner })).rejects.toThrow("--pr takes");
+        await expect(findPrByRef({ ref: "not a ref", runner: refuseRunner })).rejects.toThrow(
+            "--pr: expected a PR/MR URL"
+        );
     });
 
     test("a PR from a fork says so, and names the fork, for `tools hub pr find --json` and the window", async () => {
@@ -1287,5 +1292,127 @@ describe("PR versions", () => {
         expect(versions[1].pushedBy).toMatchObject({ username: "bob", name: "bob" });
         expect(versions.every((version) => version.baseSha === null)).toBe(true);
         expect(githubVersions({ headSha: "h9", pushes: [] }).map((version) => version.id)).toEqual(["head"]);
+    });
+});
+
+// ─── project refs ─────────────────────────────────────────────────────────────
+
+describe("resolveHubPrRef", () => {
+    const checkout = (root: string, host: string, path: string, isMain = true): LocalCheckout => ({
+        root,
+        commonDir: `${root}/.git`,
+        branch: "main",
+        isMain,
+        remoteUrl: `https://${host}/${path}.git`,
+        project: { host, path },
+    });
+    const source = async () => ({
+        roots: ["/work"],
+        checkouts: [
+            checkout("/work/app-wt", "git.example.com", "group/sub/app", false),
+            checkout("/work/app", "git.example.com", "group/sub/app"),
+            checkout("/work/web", "github.com", "acme/web"),
+            checkout("/work/one/tool", "github.com", "acme/tool"),
+            checkout("/work/two/tool", "git.example.com", "team/tool"),
+        ],
+    });
+
+    test("a GitLab project path with ! finds its main checkout, whatever the letter case or host prefix", async () => {
+        expect(await resolveHubPrRef("group/sub/app!12", { source })).toEqual({ path: "/work/app", number: 12 });
+        expect(await resolveHubPrRef("Group/Sub/App!12", { source })).toEqual({ path: "/work/app", number: 12 });
+        expect(await resolveHubPrRef("git.example.com/group/sub/app!12", { source })).toEqual({
+            path: "/work/app",
+            number: 12,
+        });
+        expect(await resolveHubPrRef("app#12", { source })).toEqual({ path: "/work/app", number: 12 });
+    });
+
+    test("a ! ref finds its checkout even when the current folder holds a folder of the same name", async () => {
+        const here = process.cwd();
+        const scratch = mkdtempSync(join(tmpdir(), "gt-project-ref-"));
+        mkdirSync(join(scratch, "app"));
+        process.chdir(scratch);
+
+        try {
+            expect(await resolveHubPrRef("app!12", { source })).toEqual({ path: "/work/app", number: 12 });
+        } finally {
+            process.chdir(here);
+            rmSync(scratch, { recursive: true, force: true });
+        }
+    });
+
+    test("a checkout wins over the github.com guess, which stays for a project with none", async () => {
+        expect(await resolveHubPrRef("acme/web#5", { source })).toEqual({ path: "/work/web", number: 5 });
+        expect(await resolveHubPrRef("acme/other#5", { source })).toEqual({
+            url: "https://github.com/acme/other/pull/5",
+        });
+    });
+
+    test("an unknown merge request or a name of two projects is a problem that says why", async () => {
+        const missing = await resolveHubPrRef("group/none!3", { source });
+        expect("problem" in missing && missing.problem).toContain(
+            "no checkout of group/none under the repo roots (/work)"
+        );
+        const twice = await resolveHubPrRef("tool!3", { source });
+        expect("problem" in twice && twice.problem).toContain("names 2 projects");
+    });
+
+    test("of two clones of one project, the folder named like the project wins over the first by name", async () => {
+        const clones = async () => ({
+            roots: ["/work"],
+            checkouts: [
+                checkout("/work/aaa/site-v2", "github.com", "acme/site"),
+                checkout("/work/site", "github.com", "acme/site"),
+            ],
+        });
+        expect(await resolveHubPrRef("acme/site#4", { source: clones })).toEqual({ path: "/work/site", number: 4 });
+    });
+
+    test("a page URL opens the same clone a named ref does: the folder named like the project", async () => {
+        const clones = async () => ({
+            roots: ["/work"],
+            checkouts: [
+                checkout("/work/aaa/site-v2", "github.com", "acme/site"),
+                checkout("/work/site", "github.com", "acme/site"),
+            ],
+        });
+        expect(
+            await localCheckoutOf(
+                { kind: "github", host: "github.com", path: "acme/site", web: "https://github.com/acme/site" },
+                clones
+            )
+        ).toBe("/work/site");
+    });
+
+    test("a folder written as a path takes ! as a folder, never as a project name", async () => {
+        expect(await resolveHubPrRef("./app!12", { source })).toEqual({ path: "./app", number: 12 });
+        expect(await resolveHubPrRef("~/work/app!12", { source })).toEqual({
+            path: join(homedir(), "work/app"),
+            number: 12,
+        });
+        expect(await resolveHubPrRef("~/work/app#12", { source })).toEqual({
+            path: join(homedir(), "work/app"),
+            number: 12,
+        });
+    });
+
+    test("a failed checkout scan leaves owner/repo#42 a github.com PR and says why a project is missing", async () => {
+        const broken = async (): Promise<{ roots: string[]; checkouts: LocalCheckout[] }> => {
+            throw new Error("config unreadable");
+        };
+        expect(await resolveHubPrRef("acme/other#5", { source: broken })).toEqual({
+            url: "https://github.com/acme/other/pull/5",
+        });
+        const missing = await resolveHubPrRef("group/none!3", { source: broken });
+        expect("problem" in missing && missing.problem).toContain("no checkout of group/none");
+    });
+
+    test("a URL never scans the checkouts", async () => {
+        const never = async () => {
+            throw new Error("scanned");
+        };
+        expect(await resolveHubPrRef("https://github.com/acme/web/pull/5", { source: never })).toEqual({
+            url: "https://github.com/acme/web/pull/5",
+        });
     });
 });

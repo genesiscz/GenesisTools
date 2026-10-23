@@ -499,6 +499,9 @@ describe("hub open deep link", () => {
         expect(isHubCommitSha("abc123")).toBe(false);
         expect(isHubCommitSha("abc123g")).toBe(false);
         expect(isHubCommitSha("a".repeat(41))).toBe(false);
+        expect(isHubCommitSha("abc1234..def5678")).toBe(true);
+        expect(isHubCommitSha("abc1234...def5678")).toBe(false);
+        expect(isHubCommitSha("abc1234..")).toBe(false);
         expect(commitFlagsProblem({ pr: "acme/app#7", commit: "abc1234" })).toBeUndefined();
         expect(commitFlagsProblem({ repo: "acme/app", commit: "abc1234" })).toBeUndefined();
         expect(commitFlagsProblem({})).toBeUndefined();

@@ -840,15 +840,19 @@ export function parseGlabMrView({
         reviewDecision,
         approvals: approvalCount,
         body: str(row.description) ?? "",
+        // GitLab lists an MR's commits newest first, gh oldest first: every caller gets the oldest first.
         commits: commits
-            ? records(parseJson(commits, "glab commits")).map((commit) => ({
-                  sha: str(commit.id) ?? "",
-                  title: str(commit.title) ?? "",
-                  author: str(commit.author_name),
-                  authorLogin: null,
-                  date: str(commit.committed_date) ?? str(commit.authored_date),
-                  body: glabCommitBody(str(commit.message)),
-              }))
+            ? records(parseJson(commits, "glab commits"))
+                  .slice()
+                  .reverse()
+                  .map((commit) => ({
+                      sha: str(commit.id) ?? "",
+                      title: str(commit.title) ?? "",
+                      author: str(commit.author_name),
+                      authorLogin: null,
+                      date: str(commit.committed_date) ?? str(commit.authored_date),
+                      body: glabCommitBody(str(commit.message)),
+                  }))
             : [],
         changedFiles,
         additions: null,
@@ -869,8 +873,8 @@ function glabProject(project: ProjectRef): string {
     return `projects/${encodeURIComponent(project.path)}`;
 }
 
-function glabApi(project: ProjectRef, endpoint: string): string[] {
-    return ["glab", "api", "--hostname", project.host, endpoint];
+function glabApi(project: ProjectRef, endpoint: string, ...flags: string[]): string[] {
+    return ["glab", "api", "--hostname", project.host, endpoint, ...flags];
 }
 
 // ---------------------------------------------------------------------------
@@ -1277,10 +1281,15 @@ export async function viewPr({
         }
 
         const base = `${glabProject(project)}/merge_requests/${number}`;
+        // Every page of commits: with only the newest 100, the oldest one listed read as the MR's first, and a
+        // range starting there diffed from the MR's base, taking in the commits before it.
         const [mr, commits, approvals, pipelines] = await Promise.all(
-            [base, `${base}/commits?per_page=100`, `${base}/approvals`, `${base}/pipelines`].map((endpoint) =>
-                run({ cmd: glabApi(project, endpoint), cwd, runner })
-            )
+            [
+                glabApi(project, base),
+                glabApi(project, `${base}/commits?per_page=100`, "--paginate"),
+                glabApi(project, `${base}/approvals`),
+                glabApi(project, `${base}/pipelines`),
+            ].map((cmd) => run({ cmd, cwd, runner }))
         );
 
         if (mr.error) {

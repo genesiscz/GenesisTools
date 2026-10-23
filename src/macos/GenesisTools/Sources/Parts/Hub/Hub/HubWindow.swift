@@ -962,7 +962,7 @@ final class HubModel: ObservableObject {
     /// `--repo` + `--commit` link. The checkout is selected before the mode opens, so a first walk of
     /// the worktrees includes it; a launch that has not settled yet opens the mode when it settles.
     @MainActor
-    func showCommit(repo: String, sha: String, title: String) {
+    func showCommit(repo: String, sha: String, title: String, base: String? = nil) {
         cancelSessionNavigation()
         commitLinkRequest = UUID()
         selectedWorktree = repo
@@ -972,7 +972,8 @@ final class HubModel: ObservableObject {
         }
         let next = ReviewModel(repo: URL(fileURLWithPath: repo), options: DiffViewOptions.remembered())
         next.embedded = true
-        next.setScope(.commit(sha: sha, title: title))
+        // A range link's commits: from the parent of its first commit to its last.
+        next.setScope(base.map { .range(base: $0, head: sha, label: title) } ?? .commit(sha: sha, title: title))
         review = next
         addWorktreesIfMissing(repo)
     }

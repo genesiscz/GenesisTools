@@ -87,6 +87,33 @@ final class ReviewVersionsTests: XCTestCase {
         XCTAssertEqual(snapshot.files.map(\.path), ["a.txt"])
     }
 
+    /// A link's `commit=<root>..<sha>`: the range starts from the empty tree and the diff loads it, every file
+    /// added. A shallow clone hides a parent without being a root, so its range is refused, not shown as added.
+    func testARangeFromTheRootCommitLoadsAgainstTheEmptyTree() throws {
+        try write("a.txt", "1\n")
+        let root = try commit("root")
+        try write("b.txt", "2\n")
+        let second = try commit("second")
+        guard case .found(let found) = HubCommitLookup.resolve(repo: repo.path, sha: root, to: second, known: []) else {
+            return XCTFail("both ends are in the checkout")
+        }
+        XCTAssertEqual(found.base, GitWorkingTreeSource.emptyTree)
+        XCTAssertTrue(found.title.hasSuffix("(2 commits)"), found.title)
+        let scope = DiffScope.range(base: try XCTUnwrap(found.base), head: found.sha, label: found.title)
+        let snapshot = try GitWorkingTreeSource(repo: repo).load(scope: scope)
+        XCTAssertEqual(snapshot.files.map(\.path).sorted(), ["a.txt", "b.txt"])
+
+        try write("c.txt", "3\n")
+        let third = try commit("third")
+        let shallow = repo.deletingLastPathComponent().appendingPathComponent("\(repo.lastPathComponent)-shallow")
+        defer { try? FileManager.default.removeItem(at: shallow) }
+        try git("clone", "-q", "--depth", "2", "file://\(repo.path)", shallow.path)
+        guard case .failed(let message) = HubCommitLookup.resolve(repo: shallow.path, sha: second, to: third, known: []) else {
+            return XCTFail("a shallow clone's oldest commit is no root commit")
+        }
+        XCTAssertTrue(message.contains("shallow"), message)
+    }
+
     func testAPushFetchedByIdLeavesFetchHeadToAPullInTheSameCheckout() throws {
         try write("a.txt", "1\n")
         let base = try commit("base")

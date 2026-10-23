@@ -85,13 +85,14 @@ struct HubPRRef: Equatable {
     /// `group/app!7`: a GitLab merge request, whose page needs a host only its checkout knows.
     var isMergeRequest = false
 
-    /// What `tools hub pr show` can fetch with no local checkout: the page, else a GitHub
-    /// `owner/repo` PR. Never for a merge request: a github.com guess opened another project or
-    /// failed with a host error that hid the real cause.
-    var showURL: String? {
+    /// What `tools hub pr show` takes: the page, else `<project>!<n>` / `<project>#<n>`, which the CLI
+    /// looks up among every checkout under the repo roots (and reads an unknown `owner/repo#n` as a
+    /// github.com PR). Nil for a bare number: only the list's rows can name its project. Nil for a project
+    /// starting with `-` too: the CLI's parser would read `--flag#12` as an option, not as the ref.
+    var showArg: String? {
         if let pageURL { return pageURL }
-        guard !isMergeRequest, let project, project.split(separator: "/").count == 2 else { return nil }
-        return "https://github.com/\(project)/pull/\(number)"
+        guard let project, !project.hasPrefix("-") else { return nil }
+        return "\(project)\(isMergeRequest ? "!" : "#")\(number)"
     }
 
     /// The forge host of the page this ref came from; nil for a path-only ref.
@@ -151,7 +152,7 @@ struct HubPRRef: Equatable {
         return pr.repo.lowercased() == wanted || key == wanted || key.hasSuffix("/" + wanted)
     }
 
-    var label: String { project.map { "\($0)#\(number)" } ?? "#\(number)" }
+    var label: String { "\(project ?? "")\(isMergeRequest ? "!" : "#")\(number)" }
 }
 
 /// A forge project with a checkout under the repo roots (`tools hub pr projects`).
@@ -339,6 +340,9 @@ final class PRsModel: ObservableObject {
     private(set) var pendingCommit: PRCommitPick?
     /// The commit row the overview scrolls to, set when a link selected it.
     @Published private(set) var commitScroll: PRCommitScroll?
+    /// The range a link's `commit=<from>..<to>` set, so the commits list marks its commits even when it spans
+    /// the whole PR; any other scope (the whole PR, one commit) is not it.
+    @Published private(set) var linkedRange: DiffScope?
     /// What a link asked of a PR and could not get (its commit is not in the PR), in that PR's header until
     /// dismissed or another PR opens. Not in `errors`: every list load replaces those.
     @Published var notice: PRNotice?
@@ -394,6 +398,12 @@ final class PRsModel: ObservableObject {
     /// The deep-linked PR `openDirect` is fetching, and the selection when it started: its answer
     /// still selects it after the list cleared `wanted`, unless someone picked another row meanwhile.
     private var directOpen: (ref: HubPRRef, selectionAtStart: String?)?
+    /// The last ref `openDirect` answered for, shown or failed: it said so itself, so a list landing
+    /// after it neither reports the ref missing a second time nor widens and asks again.
+    private var directAnswered: HubPRRef?
+    /// Why the last `openDirect` failed. Kept apart from the list's own notices, which every list load replaces:
+    /// a list that lands after the failure would otherwise erase the only word on why the link opened nothing.
+    private var directFailure: PRListNotice?
     /// The selected PR's live threads, started with its detail: the review adopts the store when it
     /// exists, so the threads never wait for the head fetch and the diff.
     private var prefetchedThreads: PRThreadsStore?
@@ -514,12 +524,12 @@ final class PRsModel: ObservableObject {
                     wantedStarted = nil
                     // A deep-linked PR outside the list is on its way from its checkout (`openDirect`):
                     // that answer selects it, so the list neither reports it missing nor picks another row.
-                    if !select(wanted), directOpen?.ref != wanted {
+                    if !select(wanted), directOpen?.ref != wanted, directAnswered != wanted {
                         if widen(to: wanted) {
                             widening = true
                             return
                         }
-                        errors.append(PRListNotice("\(wanted.label) is not among these PRs"))
+                        errors.append(Self.notListed(wanted))
                     }
                 }
                 if directOpen == nil, selectedID == nil || selected == nil,
@@ -533,9 +543,26 @@ final class PRsModel: ObservableObject {
                 }
             case .failure(let error):
                 span.end("failed")
-                errors = [PRListNotice.failure("Could not list the PRs/MRs", error)]
+                listFailed(error)
             }
         }
+    }
+
+    /// A list load answered with its `own` notices: they replace the last list's, and a deep link's failure
+    /// stays beside them until dismissed or the next link, the only word on why that link opened nothing.
+    func listAnswered(_ own: [PRListNotice]) {
+        errors = own + (directFailure.map { [$0] } ?? [])
+    }
+
+    /// The list command failed: said in place of the last list's notices, beside a deep link's failure.
+    func listFailed(_ error: Error) {
+        listAnswered([PRListNotice.failure("Could not list the PRs/MRs", error)])
+    }
+
+    /// Why a deep link opened nothing, kept apart from the list's own notices (`listAnswered`).
+    func directFailed(_ notice: PRListNotice) {
+        directFailure = notice
+        errors.append(notice)
     }
 
     /// Selects the PR `ref` names, now when the list has it, else once it loads. `reveal` opens a file
@@ -547,8 +574,8 @@ final class PRsModel: ObservableObject {
         pendingReveal = reveal
         pendingCommit = nil
         if let commit {
-            if let sha = HubCommitSha.normalized(commit) {
-                pendingCommit = PRCommitPick(ref: ref, sha: sha, asked: Date())
+            if let span = HubCommitSpan(commit) {
+                pendingCommit = PRCommitPick(ref: ref, sha: span.from, to: span.to, asked: Date())
             } else {
                 notice = PRNotice(ref: ref, text: HubCommitSha.invalid(commit))
             }
@@ -559,15 +586,16 @@ final class PRsModel: ObservableObject {
             wantedStarted = nil
             startWanted()
         } else if !select(ref, opened: true) {
-            if widen(to: ref) {
-                reload()
-            } else {
-                // Not in the list (newer than it, or of a project it does not hold): straight from its checkout.
-                wanted = ref
-                wantedStarted = nil
-                if !startWanted() {
+            // Not in the list (newer, merged, or of a project it does not hold): straight from its checkout,
+            // before any reload. Only a bare number, which only the rows can place, waits for the All list.
+            wanted = ref
+            wantedStarted = nil
+            if !startWanted() {
+                if widen(to: ref) {
+                    reload()
+                } else {
                     wanted = nil
-                    errors.append(PRListNotice("\(ref.label) is not among these PRs"))
+                    errors.append(Self.notListed(ref))
                 }
             }
         }
@@ -590,10 +618,10 @@ final class PRsModel: ObservableObject {
             return true
         }
         guard matches.isEmpty else { return false }
-        // A checkout of the project among the list's folders, else the PR's page: `hub pr show` finds
-        // the checkout under the repo roots itself. Without the page fallback a PR of a project with no
-        // recent session ("Open in GenesisTools" on Reservine/ReservineBack#815) left another PR open.
-        guard let arg = ref.pageURL ?? directRoot(ref).map({ "\($0)#\(ref.number)" }) ?? ref.showURL else { return false }
+        // The PR's page, else a checkout already known here, else the project name: `hub pr show` finds
+        // its checkout under the repo roots itself. Waiting for this hub's project index lost a link that
+        // came before it loaded (`group/sub/app!12` from a link, 2026-10-19: "is not among these PRs").
+        guard let arg = ref.pageURL ?? directRoot(ref).map({ "\($0)#\(ref.number)" }) ?? ref.showArg else { return false }
         wantedStarted = ref
         openDirect(ref, arg: arg)
         return true
@@ -620,6 +648,10 @@ final class PRsModel: ObservableObject {
     /// its head commit. A cached row (`startWanted`) starts all three at once.
     private func openDirect(_ ref: HubPRRef, arg: String) {
         directOpen = (ref, selectedID)
+        if let failure = directFailure {
+            errors.removeAll { $0 == failure }
+            directFailure = nil
+        }
         Task {
             let span = HubPerf.begin("prs.show.direct", arg, awaits: true)
             let answer = await Task.detached(priority: .userInitiated) { () -> Result<(HubPR, HubPRDetail, Data), Error> in
@@ -634,6 +666,7 @@ final class PRsModel: ObservableObject {
             if request?.ref == ref {
                 directOpen = nil
             }
+            directAnswered = ref
             let fresh: (HubPR, HubPRDetail, Data)
             switch answer {
             case .success(let value):
@@ -641,17 +674,19 @@ final class PRsModel: ObservableObject {
             case .failure(let error):
                 span.end("failed")
                 // Said, not swallowed: the list's own answer no longer reports a ref it handed here.
+                let notice: PRListNotice
                 if let failure = error as? PRShowFailure, let summary = failure.summary {
-                    errors.append(PRListNotice("Could not open \(ref.label): \(summary)", more: failure.message))
+                    notice = PRListNotice("Could not open \(ref.label): \(summary)", more: failure.message)
                 } else {
-                    errors.append(PRListNotice.failure("Could not open \(ref.label)", error))
+                    notice = PRListNotice.failure("Could not open \(ref.label)", error)
                 }
+                directFailed(notice)
                 return
             }
             let (row, detail, data) = fresh
             guard ref.matches(row) else {
                 span.end("another PR")
-                errors.append(PRListNotice("\(arg) answered \(row.label), not \(ref.label)"))
+                directFailed(PRListNotice("\(arg) answered \(row.label), not \(ref.label)"))
                 return
             }
             span.end(row.label)
@@ -700,15 +735,65 @@ final class PRsModel: ObservableObject {
         let settled = (detailFetched[id].map { $0 >= pending.asked } ?? false) && reviewHeadSha == shown.headSha
         guard let commit = HubCommitSha.find(pending.sha, in: commits) else {
             if settled {
-                showMissingCommit(pending, in: shown, review: review)
+                showMissingCommit(pending, missing: pending.sha, in: shown, review: review)
             }
             return
+        }
+        var last: HubPRDetail.Commit?
+        if let to = pending.to {
+            guard let found = HubCommitSha.find(to, in: commits) else {
+                if settled {
+                    showMissingCommit(pending, missing: to, in: shown, review: review)
+                }
+                return
+            }
+            last = found
         }
         if settled {
             pendingCommit = nil
         }
-        HubPerf.log("prs.commit \(shown.label) \(commit.sha.prefix(10)) settled=\(settled)")
-        showLinkedCommit(commit, prID: id, review: review)
+        HubPerf.log("prs.commit \(shown.label) \(commit.sha.prefix(10))\(last.map { "..\($0.sha.prefix(10))" } ?? "") settled=\(settled)")
+        if let last {
+            showLinkedRange(commit, last, in: commits, pr: shown, review: review)
+        } else {
+            showLinkedCommit(commit, prID: id, review: review)
+        }
+    }
+
+    /// A link's `commit=<from>..<to>`: those commits of the PR, both ends included, in either order.
+    func showLinkedRange(_ one: HubPRDetail.Commit, _ other: HubPRDetail.Commit, in commits: [HubPRDetail.Commit], pr: HubPR, review: ReviewModel) {
+        guard let a = commits.firstIndex(of: one), let b = commits.firstIndex(of: other) else { return }
+        HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
+        HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
+        commitScroll = PRCommitScroll(prID: pr.id, sha: commits[max(a, b)].sha)
+        let scope = Self.rangeScope(commits, first: min(a, b), last: max(a, b), pr: pr, whole: Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)))
+        linkedRange = scope
+        if review.scope == scope { return }
+        review.setScope(scope)
+    }
+
+    /// Commits `first...last` of a PR (oldest first, as the host lists them): from the commit before
+    /// `first`, or from the PR's own base when `first` is its first commit, to `last`.
+    nonisolated static func rangeScope(_ commits: [HubPRDetail.Commit], first: Int, last: Int, pr: HubPR, whole: DiffScope) -> DiffScope {
+        let head = commits[last].sha
+        let label = "\(pr.label) \(commits[first].sha.prefix(7))..\(head.prefix(7)) (\(Plural.count(last - first + 1, "commit")))"
+        if first > 0 {
+            return .range(base: commits[first - 1].sha, head: head, label: label)
+        }
+        if case .range(let base, _, _, let fallback) = whole {
+            return .range(base: base, head: head, label: label, fallbackBase: fallback)
+        }
+        return .range(base: "\(commits[first].sha)^", head: head, label: label)
+    }
+
+    /// The commits of `commits` the range a link set (`linked`, from `rangeScope`) shows, for the commits list
+    /// to mark, all of them for a range over the whole PR; empty for any scope the link did not set.
+    nonisolated static func rangeShas(_ scope: DiffScope, linked: DiffScope?, in commits: [HubPRDetail.Commit]) -> Set<String> {
+        guard scope == linked, case .range(let base, let head, _, _) = scope,
+              let last = commits.firstIndex(where: { $0.sha == head }) else { return [] }
+        let first = commits.firstIndex(where: { $0.sha == base }).map { $0 + 1 } ?? 0
+        guard first <= last else { return [] }
+        return Set(commits[first...last].map(\.sha))
     }
 
     /// A repeated link reveals the diff and scrolls again even when its commit is already selected.
@@ -721,12 +806,24 @@ final class PRsModel: ObservableObject {
         review.setScope(.commit(sha: commit.sha, title: commit.title))
     }
 
-    /// A settled miss replaces any previously selected commit with the whole PR before saying so.
-    func showMissingCommit(_ pending: PRCommitPick, in shown: HubPR, review: ReviewModel) {
+    /// The detail of `pr` could not load: a link's commit waiting on it is said, not left waiting, unless the
+    /// cached commits hold it (a cached list may already have selected it), both ends of a range.
+    func detailFailed(_ pr: HubPR, cached commits: [HubPRDetail.Commit]?) {
+        guard let pending = pendingCommit, pending.ref.matches(pr) else { return }
         pendingCommit = nil
+        let ends = [pending.sha] + (pending.to.map { [$0] } ?? [])
+        if let missing = ends.first(where: { end in commits.flatMap { HubCommitSha.find(end, in: $0) } == nil }) {
+            notice = PRNotice(ref: pending.ref, text: "Could not load the commits of \(pr.label) to select \(missing)")
+        }
+    }
+
+    /// A settled miss replaces any previously selected commit with the whole PR before saying so.
+    func showMissingCommit(_ pending: PRCommitPick, missing: String? = nil, in shown: HubPR, review: ReviewModel) {
+        pendingCommit = nil
+        let sha = missing ?? pending.sha
         review.setScope(Self.scope(shown, detail: details[shown.id], fetch: fetchedHead(shown)))
-        HubPerf.log("prs.commit \(shown.label) \(pending.sha) not among its commits")
-        notice = PRNotice(ref: pending.ref, text: "\(pending.sha) is not a commit of \(shown.label), so the whole \(shown.isGitLab ? "MR" : "PR") shows")
+        HubPerf.log("prs.commit \(shown.label) \(sha) not among its commits")
+        notice = PRNotice(ref: pending.ref, text: "\(sha) is not a commit of \(shown.label), so the whole \(shown.isGitLab ? "MR" : "PR") shows")
     }
 
     /// The overview scrolled to `scroll`; a later appearance of the PR does not scroll again.
@@ -743,6 +840,11 @@ final class PRsModel: ObservableObject {
         wanted = ref
         state = "all"
         return true
+    }
+
+    /// Only a ref with no project gets here: one with a project or a page always goes to `openDirect`.
+    nonisolated static func notListed(_ ref: HubPRRef) -> PRListNotice {
+        PRListNotice("\(ref.label) is not in this list. Name its project (<project>\(ref.isMergeRequest ? "!" : "#")\(ref.number)) or paste its page URL")
     }
 
     /// Selects the one PR `ref` names; false when none matches. A bare number found in several
@@ -877,6 +979,9 @@ final class PRsModel: ObservableObject {
 
     func dismissError(_ notice: PRListNotice) {
         errors.removeAll { $0 == notice }
+        if directFailure == notice {
+            directFailure = nil
+        }
     }
 
     /// A project opened from "More projects" (not a session project, not starred) leaves the list
@@ -947,7 +1052,7 @@ final class PRsModel: ObservableObject {
             fullProjects = Set(list.repos.compactMap { repo in (repo.count ?? 0) >= limit ? repo.origin?.web : nil })
             changed = moved
         }
-        errors = PRListNotice.failures(list.repos)
+        listAnswered(PRListNotice.failures(list.repos))
         SWR.fade(moved, current: { [weak self] in self?.changed }, clear: { [weak self] in self?.changed = [] })
     }
 
@@ -1221,13 +1326,7 @@ final class PRsModel: ObservableObject {
                 if let detail = details[key] {
                     sessions.load(pr, detail: detail)
                 }
-                if let pending = pendingCommit, pending.ref.matches(pr) {
-                    // Said, not left waiting: a cached list may already have selected it, nothing else will.
-                    pendingCommit = nil
-                    if details[key]?.commits.flatMap({ HubCommitSha.find(pending.sha, in: $0) }) == nil {
-                        notice = PRNotice(ref: pending.ref, text: "Could not load the commits of \(pr.label) to select \(pending.sha)")
-                    }
-                }
+                detailFailed(pr, cached: details[key]?.commits)
                 return
             }
             let current = prs.first { $0.id == key } ?? pr
@@ -2067,7 +2166,10 @@ struct PRDetailView: View {
             // Lazy, rows included: every realized row is a focus responder, and SwiftUI walks all of
             // them whenever a sidebar group folds (1.1 s of main thread with #424's 92 commits shown).
             // The PR first (description, commits, checks), the agent sessions that touched it after.
-            LazyVStack(alignment: .leading, spacing: 0) {
+            // The description stays outside the lazy stack: as one lazy item, a long one (thousands of
+            // points of markdown) was made and dropped again on every layout pass once a link scrolled to
+            // the commit right under it, and the hub froze for good (!7553's newest commit, 2026-10-19).
+            VStack(alignment: .leading, spacing: 0) {
                 if let body = detail?.body?.trimmed, !body.isEmpty {
                     PRSection(title: "Description", folded: $foldDescription) {
                         MarkdownContentView(markdown: linkedDescription(body), style: .hub)
@@ -2090,28 +2192,30 @@ struct PRDetailView: View {
                         .accessibilityElement(children: .ignore)
                         .accessibilityLabel("Loading the description")
                 }
-                if let commits = detail?.commits, !commits.isEmpty {
-                    if let review = prs.review {
-                        PRCommitsSection(prs: prs, review: review, pr: pr, commits: commits, folded: $foldCommits) {
-                            showDiff = true
-                        }
-                    } else {
-                        PRSection(title: "Commits", count: commits.count, folded: $foldCommits, flat: true) {
-                            let authors = PRCommitRow.showsAuthors(commits)
-                            ForEach(commits.reversed()) { commit in
-                                PRCommitRow(pr: pr, commit: commit, selected: false, inApp: false, showsAuthor: authors) {
-                                    if let url = pr.commitURL(commit.sha) { ExternalOpener.open(url) }
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    if let commits = detail?.commits, !commits.isEmpty {
+                        if let review = prs.review {
+                            PRCommitsSection(prs: prs, review: review, pr: pr, commits: commits, folded: $foldCommits) {
+                                showDiff = true
+                            }
+                        } else {
+                            PRSection(title: "Commits", count: commits.count, folded: $foldCommits, flat: true) {
+                                let authors = PRCommitRow.showsAuthors(commits)
+                                ForEach(commits.reversed()) { commit in
+                                    PRCommitRow(pr: pr, commit: commit, selected: false, inApp: false, showsAuthor: authors) {
+                                        if let url = pr.commitURL(commit.sha) { ExternalOpener.open(url) }
+                                    }
                                 }
                             }
                         }
                     }
+                    if let checks = detail?.checks, !checks.isEmpty {
+                        PRChecksSection(model: model, pr: pr, checks: checks, folded: $foldChecks)
+                            .id(Self.checksID)
+                    }
+                    PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
+                        .id(Self.sessionsID)
                 }
-                if let checks = detail?.checks, !checks.isEmpty {
-                    PRChecksSection(model: model, pr: pr, checks: checks, folded: $foldChecks)
-                        .id(Self.checksID)
-                }
-                PRSessionsSection(model: model, prs: prs, store: prs.sessions, pr: pr, folded: $foldSessions)
-                    .id(Self.sessionsID)
             }
             .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2291,7 +2395,9 @@ struct PRCommitsSection: View {
 
     var body: some View {
         let shown = shownSha
-        PRSection(title: "Commits", count: commits.count, folded: $folded, flat: true, trailing: shown == nil ? nil : AnyView(
+        // A range link's commits, all marked.
+        let range = PRsModel.rangeShas(review.scope, linked: prs.linkedRange, in: commits)
+        PRSection(title: "Commits", count: commits.count, folded: $folded, flat: true, trailing: shown == nil && range.isEmpty ? nil : AnyView(
             Button("Whole PR") { prs.showWholePR() }
                 .buttonStyle(.genHoverPlain())
                 .font(.system(size: 11.5))
@@ -2299,7 +2405,7 @@ struct PRCommitsSection: View {
         )) {
             let authors = PRCommitRow.showsAuthors(commits)
             ForEach(commits.reversed()) { commit in
-                PRCommitRow(pr: pr, commit: commit, selected: commit.sha == shown, inApp: true, showsAuthor: authors) {
+                PRCommitRow(pr: pr, commit: commit, selected: commit.sha == shown || range.contains(commit.sha), inApp: true, showsAuthor: authors) {
                     if prs.showCommit(commit) { revealDiff() }
                 }
             }

@@ -13,7 +13,6 @@ import {
     type ProjectRef,
     type PrQuery,
     type PrSummary,
-    parsePrRef,
     parsePrUrl,
     projectRefFromRemote,
     spawnRunner,
@@ -31,6 +30,13 @@ import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { cached } from "@genesiscz/utils/storage/cache-flag";
 import { Storage } from "@genesiscz/utils/storage/storage";
+import {
+    type CheckoutSource,
+    liveCheckouts,
+    namedLikeProject,
+    preferredCheckout,
+    resolveHubPrRef,
+} from "./pr/project-ref";
 import { type ProposalSummary, proposalFor } from "./proposal";
 
 /** The hub's PR row: the host's PR plus where it lives on this machine. */
@@ -235,6 +241,16 @@ function groupByOrigin(facts: RepoFacts[]): { groups: ProjectGroup[]; skipped: H
         }
 
         groups.set(key, group);
+    }
+
+    // Two clones of one project: the folder named like the project names the group and is its checkout.
+    for (const group of groups.values()) {
+        const named = group.facts.findIndex((fact) => fact.root && namedLikeProject(fact.root, group.key));
+
+        if (named > 0) {
+            group.facts.unshift(...group.facts.splice(named, 1));
+            group.paths.unshift(...group.paths.splice(named, 1));
+        }
     }
 
     return { groups: [...groups.values()], skipped };
@@ -476,7 +492,15 @@ export async function hubPrProjects(): Promise<HubPrProject[]> {
         const web = fact.origin?.web;
         const kind = fact.origin?.kind;
 
-        if (!web || !fact.root || (kind !== "github" && kind !== "gitlab") || byProject.has(web)) {
+        if (!web || !fact.root || (kind !== "github" && kind !== "gitlab")) {
+            continue;
+        }
+
+        // Two clones of one project (`daf-app` and `daf-app-v2`): the one named like the project wins, whatever
+        // order the scan found them in. The first one found had named the PR group after the other folder.
+        const known = byProject.get(web);
+
+        if (known && (namedLikeProject(known.root, web) || !namedLikeProject(fact.root, web))) {
             continue;
         }
 
@@ -489,7 +513,10 @@ export async function hubPrProjects(): Promise<HubPrProject[]> {
 }
 
 /** The main checkout of a forge project under the configured repo roots (the browser extension's). */
-async function localCheckoutOf(project: ProjectRef): Promise<string | null> {
+export async function localCheckoutOf(
+    project: ProjectRef,
+    source: () => Promise<CheckoutSource> = liveCheckouts
+): Promise<string | null> {
     const wanted = checkoutProjectRef(`https://${project.host}/${project.path}`);
 
     if (!wanted) {
@@ -497,8 +524,9 @@ async function localCheckoutOf(project: ProjectRef): Promise<string | null> {
     }
 
     try {
-        const ranked = rankCheckouts({ project: wanted, checkouts: configuredCheckouts(await loadConfig()) });
-        const root = ranked.find((checkout) => checkout.isMain)?.root ?? ranked[0]?.root ?? null;
+        // The same checkout a named ref (`app!12`) opens: of two clones, the folder named like the project.
+        const ranked = rankCheckouts({ project: wanted, checkouts: (await source()).checkouts });
+        const root = preferredCheckout(ranked)?.root ?? null;
         log.debug({ project: wanted, root, candidates: ranked.length }, "hub pr: local checkout of a URL ref");
         return root;
     } catch (err) {
@@ -523,10 +551,10 @@ export async function hubPr({
     runner?: CommandRunner;
     storage?: Pick<Storage, "getCacheFile" | "putCacheFile">;
 }): Promise<HubPrDetail> {
-    const parsedRef = parsePrRef(ref);
+    const parsedRef = await prof.measureAsync("show.ref", () => resolveHubPrRef(ref));
 
-    if (!parsedRef) {
-        throw new PrRefError(`expected a PR/MR URL or <repoPath>#<number>, got "${ref}"`);
+    if ("problem" in parsedRef) {
+        throw new PrRefError(parsedRef.problem);
     }
 
     let project: ProjectRef;

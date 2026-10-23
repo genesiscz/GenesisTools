@@ -5,7 +5,6 @@ import {
     type PrSummary,
     parseGhPrRows,
     parseGlabMrRows,
-    parsePrRef,
     parsePrUrl,
     projectRefFromRemote,
     spawnRunner,
@@ -15,6 +14,7 @@ import { GH_LIST_FIELDS } from "@genesiscz/utils/git/origins/prs";
 import { type RepoFacts, repoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { resolveHubPrRef } from "./project-ref";
 import { type FindResult, type FoundPr, HubPrError } from "./types";
 
 const log = logger.child({ component: "hub/pr/find" });
@@ -280,10 +280,10 @@ export async function findPrByRef({
     runner?: CommandRunner;
     readFacts?: FactsReader;
 }): Promise<FoundPr> {
-    const parsed = parsePrRef(ref);
+    const parsed = await resolveHubPrRef(ref);
 
-    if (!parsed) {
-        throw new HubPrError("bad-input", `--pr takes a PR/MR URL, <repoPath>#<number> or <number>, got "${ref}"`);
+    if ("problem" in parsed) {
+        throw new HubPrError("bad-input", `--pr: ${parsed.problem}`);
     }
 
     let project: ProjectRef | null;
@@ -344,9 +344,9 @@ export async function explicitPrTarget({
     ref: string;
     readFacts?: FactsReader;
 }): Promise<ExplicitTarget | null> {
-    const parsed = parsePrRef(ref);
+    const parsed = await resolveHubPrRef(ref);
 
-    if (!parsed) {
+    if ("problem" in parsed) {
         return null;
     }
 
