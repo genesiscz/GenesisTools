@@ -16,8 +16,8 @@ import { askOnRow } from "./ask-row";
 import { bandTree } from "./band";
 import { cacheBand, cacheRow, markEnded } from "./cache-band";
 import { decisions } from "./decisions";
-import { gitBand, gitRow } from "./git-band";
-import { hookLedger, hooksChip, ledgerClassic } from "./hook-ledger";
+import { gitBand, gitRows } from "./git-band";
+import { hookLedger, hooksChip, hooksChipWidth, ledgerClassic } from "./hook-ledger";
 import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice, setIdleDueAt } from "./idle";
 import { linksStep, rememberToolPaths } from "./links";
 import {
@@ -533,15 +533,18 @@ export const register: Register = (on) => {
         const host = hostOf($);
         const ui = $.ui.resolve(e);
         const columns = e.props.bodyColumns;
-        const [git, hooks, ...rest] = await Promise.all([
-            gitRow(host, ui),
+        const [hooks, ...rest] = await Promise.all([
             hooksChip(host, ui),
             cacheRow(host, ui),
             agentsRow(host, ui, columns),
             tmpRow(host, ui),
         ]);
+        // The first row gives the hooks chip its text and its left margin. `bodyColumns` already leaves out the
+        // engine's five columns at the right end, which hold its `[-]`.
+        const git = await gitRows(host, ui, { columns, firstReserve: hooks ? hooksChipWidth() + 1 : 0 });
 
-        return bandTree(ui, [topRow(ui, git, hooks), ...rest], await next(e));
+        // The hooks chip shares the first git row; every other checkout's row has the whole width.
+        return bandTree(ui, [topRow(ui, git[0] ?? null, hooks), ...git.slice(1), ...rest], await next(e));
     });
 
     // Every feature's sidebar (`Feature.sidebars`), by the pane's id; another plugin's panes pass on.

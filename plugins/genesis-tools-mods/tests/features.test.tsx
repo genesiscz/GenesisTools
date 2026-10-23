@@ -16,6 +16,7 @@ import { forgetGenesisProbe, type GenesisProbe, probeOf } from "../hooks/genesis
 import {
     checkCounts,
     checksOf,
+    fitLabels,
     hubUrlOf,
     middleCut,
     namesCheckouts,
@@ -123,6 +124,13 @@ test("git band: the checkouts a command or an edit works in", async () => {
         "/work/wt-a",
     ]);
     expect(pickRoots([], "/work/main", { checkouts: 3, cwd: "touched" })).toEqual(["/work/main"]);
+    expect(fitLabels("col-tools", "main", 40)).toEqual({ name: "col-tools", branch: "main" });
+    // 30 columns: the name keeps 40% (12), the branch the other 18, each its start and end.
+    expect(fitLabels("acme-marketplace-2.0-foundation", "feat/2026-10-13-enhancements-unified", 30)).toEqual({
+        name: "acme-m…ation",
+        branch: "feat/2026…-unified",
+    });
+    expect(fitLabels(undefined, "feat/2026-10-13-enhancements-unified", 20).branch).toBe("feat/2026-…s-unified");
     expect(namesCheckouts([{ root: "/work/main" }], "/work/main")).toBe(false);
     expect(namesCheckouts([{ root: "/work/wt-a" }], "/work/main")).toBe(true);
 });

@@ -267,6 +267,23 @@ export const hookLedger: Feature = {
     ],
 };
 
+/** The band chip's two texts: `hooks ~38.2k · 41`, and what the dedupe dropped. */
+function chipTexts(): { total: string; dropped: string } {
+    const held = ledger;
+
+    return {
+        total: `hooks ${tokensText(held.main.chars + held.agents.chars)} · ${held.main.fires + held.agents.fires}`,
+        dropped: held.dropped.fires ? ` −${tokensText(held.dropped.chars)}` : "",
+    };
+}
+
+/** The columns the band chip's text takes. */
+export function hooksChipWidth(): number {
+    const { total, dropped } = chipTexts();
+
+    return [...total, ...dropped].length;
+}
+
 /** The band chip, `hooks ~38.2k · 41`, or null while `mods.hooks.tokens` is off. */
 export async function hooksChip(host: Host, ui: ElementTable): Promise<RenderElement | null> {
     if (!(await settingsOf(host)).hooks.tokens) {
@@ -274,13 +291,12 @@ export async function hooksChip(host: Host, ui: ElementTable): Promise<RenderEle
     }
 
     const { Button, Text } = ui;
-    const held = ledger;
-    const chars = held.main.chars + held.agents.chars;
+    const { total, dropped } = chipTexts();
 
     return (
         <Button key="hooks-chip" plain onPress={() => void host.togglePane(HOOKS_PANE, "Hooks")}>
-            <Text dimColor>{`hooks ${tokensText(chars)} · ${held.main.fires + held.agents.fires}`}</Text>
-            {held.dropped.fires ? <Text color="green">{` −${tokensText(held.dropped.chars)}`}</Text> : null}
+            <Text dimColor>{total}</Text>
+            {dropped ? <Text color="green">{dropped}</Text> : null}
         </Button>
     );
 }

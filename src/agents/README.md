@@ -268,6 +268,8 @@ checked against real use.
   works in two worktrees shows the two worktrees. `cwd` `touched` (the default) shows the session's own folder only
   when the session worked there, or when it has worked nowhere yet; `always` shows it first. A session that has no
   record yet starts from its GenesisTools file journal. `/mod-git pr add` acts on the first line's checkout.
+  Each line fits the band's width: the counts and the PRs keep theirs, and the checkout name (at most 40% of what
+  is left when both cannot fit) and the branch keep their start and end. Only the first line shares the hooks chip.
 - `mods.askRow`: `[ask]` beside a finished tool row puts the row, quoted, into the prompt.
 - `mods.spinner`: the spinner line names the running tool, its time and the working subagents.
 - `mods.cacheBand` (`cautionMinutes` 20, `warnMinutes` 10, `others`): the prompt cache countdown, yellow under

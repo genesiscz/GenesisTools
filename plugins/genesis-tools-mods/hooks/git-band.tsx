@@ -358,8 +358,10 @@ export function hubUrlOf(probe: GenesisProbe, pr: Pick<BandPr, "url" | "number">
     return slug ? hubLink(probe, { pr: `${slug}#${pr.number}` }) : undefined;
 }
 
-/** A branch longer than this keeps its start and end, so the hooks chip at the right keeps its room. */
-const BRANCH_MAX = 32;
+/** The share of the room left for the name and the branch that the checkout name may take when both cannot fit. */
+const NAME_SHARE = 0.4;
+/** The shortest a cut name or branch gets. */
+const LABEL_MIN = 8;
 
 /** `feat/2026-10-13-enhancements-unified` as `feat/2026-10-13…ements-unified` at 30. */
 export function middleCut(text: string, max: number): string {
@@ -372,60 +374,99 @@ export function middleCut(text: string, max: number): string {
     return `${text.slice(0, head)}…${text.slice(text.length - (max - 1 - head))}`;
 }
 
-/** A checkout name longer than this keeps its start and end. */
-const NAME_MAX = 28;
-
 /** Whether the rows name their checkout: always, unless the one row is the session's own folder. */
 export function namesCheckouts(shown: readonly Pick<GitBand, "root">[], own: string | undefined): boolean {
     return shown.length > 1 || (shown.length === 1 && shown[0]?.root !== own);
 }
 
+/** Columns a text takes in the terminal: one per character, as every symbol the band draws is narrow. */
+function widthOf(text: string): number {
+    return [...text].length;
+}
+
 /**
- * The band's git rows, one per checkout, or null while the band is off or has nothing yet. Each PR is a Button (it
- * inverts under the pointer, so it reads as one) that opens the Git sidebar; the sidebar opens the PR in the browser
- * or the hub.
+ * The checkout name and the branch, cut to `room` columns together. Both fit whole when they can; else the name
+ * keeps up to 40% of the room and the branch the rest, each keeping its start and end.
  */
-export async function gitRow(host: Host, ui: ElementTable): Promise<RenderElement | null> {
+export function fitLabels(name: string | undefined, branch: string, room: number): { name?: string; branch: string } {
+    const nameWidth = name === undefined ? 0 : widthOf(name);
+
+    if (nameWidth + widthOf(branch) <= room) {
+        return { name, branch };
+    }
+
+    const nameRoom = name === undefined ? 0 : Math.min(nameWidth, Math.max(LABEL_MIN, Math.floor(room * NAME_SHARE)));
+
+    return {
+        name: name === undefined ? undefined : middleCut(name, nameRoom),
+        branch: middleCut(branch, Math.max(LABEL_MIN, room - nameRoom)),
+    };
+}
+
+/** The texts after the branch, in order: unpushed and unpulled, the changed files, their lines, then each PR. */
+function countsOf(band: GitBand, labelled: boolean): { sync: string; dirty: string; lines: string; prs: string[] } {
+    return {
+        sync: [
+            band.ahead ? `↑${band.ahead}${labelled ? " to push" : ""}` : "",
+            band.behind ? `↓${band.behind}${labelled ? " to pull" : ""}` : "",
+        ]
+            .filter(Boolean)
+            .join(labelled ? " · " : " "),
+        dirty: band.dirty ? (labelled ? `${plural(band.dirty, "file")} changed` : `●${band.dirty}`) : "clean",
+        lines: band.dirty && (band.added || band.removed) ? `+${band.added} −${band.removed}` : "",
+        prs: band.prs.map((pr) => `#${pr.number}${prNote(pr)}`),
+    };
+}
+
+/**
+ * The band's git rows, one per checkout; none while the band is off or has nothing yet. Each row fits `columns`,
+ * the first one less `firstReserve` (the hooks chip beside it): the counts and the PRs keep their width, and the
+ * checkout name and the branch are cut to what is left. Each PR is a Button (it inverts under the pointer, so it
+ * reads as one) that opens the Git sidebar; the sidebar opens the PR in the browser or the hub.
+ */
+export async function gitRows(
+    host: Host,
+    ui: ElementTable,
+    room: { columns: number; firstReserve: number }
+): Promise<RenderElement[]> {
     const shown = rows;
 
     if (shown.length === 0 || !(await isOn(host))) {
-        return null;
+        return [];
     }
 
     const { Box, Button, Text } = ui;
     const labelled = (await settingsOf(host)).git.labels === "full";
     const named = namesCheckouts(shown, ownRoot);
     const open = () => void host.togglePane(GIT_PANE, "Git");
-    const rowOf = (band: GitBand) => {
-        const sync = [
-            band.ahead ? `↑${band.ahead}${labelled ? " to push" : ""}` : "",
-            band.behind ? `↓${band.behind}${labelled ? " to pull" : ""}` : "",
-        ]
-            .filter(Boolean)
-            .join(labelled ? " · " : " ");
-        const lines =
-            band.added || band.removed ? (
-                <Text>
-                    <Text color="green">{`+${band.added}`}</Text>
-                    <Text> </Text>
-                    <Text color="red">{`−${band.removed}`}</Text>
-                </Text>
-            ) : null;
+
+    return shown.map((band, index) => {
+        const counts = countsOf(band, labelled);
+        const parts = [counts.sync, counts.dirty, counts.lines, ...counts.prs].filter(Boolean);
+        // One column of gap before each part, then `⎇ ` and the space after the name.
+        const taken = parts.reduce((sum, part) => sum + widthOf(part) + 1, 0) + 2 + (named ? 1 : 0);
+        const labels = fitLabels(
+            named ? checkoutName(band.root) : undefined,
+            band.branch,
+            room.columns - (index === 0 ? room.firstReserve : 0) - taken
+        );
 
         return (
-            <Box key={`git-${band.root}`} flexDirection="row" gap={1}>
+            <Box key={`git-${band.root}`} flexDirection="row" gap={1} overflow="hidden">
                 <Button key="git-branch" plain onPress={open}>
-                    {named ? <Text color="cyan">{`${middleCut(checkoutName(band.root), NAME_MAX)} `}</Text> : null}
+                    {labels.name === undefined ? null : <Text color="cyan">{`${labels.name} `}</Text>}
                     <Text dimColor>⎇ </Text>
-                    <Text bold>{middleCut(band.branch, BRANCH_MAX)}</Text>
+                    <Text bold>{labels.branch}</Text>
                 </Button>
-                {sync ? <Text color="yellow">{sync}</Text> : null}
-                {band.dirty ? (
-                    <Text color="magenta">{labelled ? `${plural(band.dirty, "file")} changed` : `●${band.dirty}`}</Text>
-                ) : (
-                    <Text dimColor>clean</Text>
-                )}
-                {band.dirty ? lines : null}
+                {counts.sync ? <Text color="yellow">{counts.sync}</Text> : null}
+                {band.dirty ? <Text color="magenta">{counts.dirty}</Text> : <Text dimColor>clean</Text>}
+                {counts.lines ? (
+                    <Text>
+                        <Text color="green">{`+${band.added}`}</Text>
+                        <Text> </Text>
+                        <Text color="red">{`−${band.removed}`}</Text>
+                    </Text>
+                ) : null}
                 {band.prs.map((pr) => (
                     <Button key={`pr-${pr.number}`} plain onPress={open}>
                         <Text color={prColor(pr)} underline>{`#${pr.number}`}</Text>
@@ -434,13 +475,7 @@ export async function gitRow(host: Host, ui: ElementTable): Promise<RenderElemen
                 ))}
             </Box>
         );
-    };
-
-    return (
-        <Box key="git-band" flexDirection="column">
-            {shown.map(rowOf)}
-        </Box>
-    );
+    });
 }
 
 /**
