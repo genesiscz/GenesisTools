@@ -17,6 +17,10 @@ struct CaptureSelectionOptions {
     let transparent: Bool
     let codec: String
     let indicator: Bool
+    /// Windows the movie must never show, such as the host's own recording controls: a display capture leaves them
+    /// out of its content filter and an isolated capture never selects them. `NSWindow.sharingType = .none` does not
+    /// do it, because ScreenCaptureKit ignores it on macOS 15 and later.
+    let excludedWindowIDs: Set<CGWindowID>
 
     func dimensions(points: CGSize, nativeScale: CGFloat, video: Bool) -> CGSize {
         let requested = outputSize ?? CGSize(width: (points.width * (outputScale ?? nativeScale)).rounded(),
@@ -34,15 +38,19 @@ struct CaptureSelectionOptions {
     }
 }
 
-func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
-    var ids: [CGWindowID] = []
-    if let raw = argValue("--window-ids") {
-        let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
-        ids = parts.compactMap { UInt32($0) }
-        guard ids.count == parts.count, ids.allSatisfy({ $0 > 0 }) else {
-            errorExit("--window-ids requires positive CG window IDs separated by commas")
-        }
+/// A comma-separated list of positive CG window ids, or nil when the flag is absent.
+func windowIDList(_ flag: String) -> [CGWindowID]? {
+    guard let raw = argValue(flag) else { return nil }
+    let parts = raw.split(separator: ",", omittingEmptySubsequences: false)
+    let ids = parts.compactMap { UInt32($0) }
+    guard ids.count == parts.count, ids.allSatisfy({ $0 > 0 }) else {
+        errorExit("\(flag) requires positive CG window IDs separated by commas")
     }
+    return ids
+}
+
+func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
+    let ids = windowIDList("--window-ids") ?? []
     let args = CommandLine.arguments
     var apps: [String] = []
     for (index, value) in args.enumerated() where value == "--include-app" {
@@ -94,7 +102,8 @@ func captureSelectionOptions(mode: String) -> CaptureSelectionOptions {
     }
     return CaptureSelectionOptions(windowIDs: Array(Set(ids)).sorted(), apps: apps, canvas: canvas,
                                    outputSize: size, outputScale: scale, transparent: transparent,
-                                   codec: codec, indicator: !args.contains("--no-indicator"))
+                                   codec: codec, indicator: !args.contains("--no-indicator"),
+                                   excludedWindowIDs: Set(windowIDList("--exclude-window-ids") ?? []))
 }
 
 /// Same nonactivating panel contract as CursorOverlay. Core Animation supplies the pulse;
@@ -478,7 +487,7 @@ func captureIsolatedWindows(_ options: RecordOptions) {
     let rows = captureWindowRows()
     let selected = rows.compactMap { row -> SelectedWindow? in
         guard let id = row[kCGWindowNumber] as? CGWindowID, let pid = row[kCGWindowOwnerPID] as? pid_t,
-              explicit.contains(id) || pids.contains(pid),
+              explicit.contains(id) || pids.contains(pid), !options.selection.excludedWindowIDs.contains(id),
               let bounds = captureWindowBounds(row), bounds.width > 0, bounds.height > 0 else { return nil }
         let shareable = content.windows.first { $0.windowID == id }
         guard let shareable else { return nil }

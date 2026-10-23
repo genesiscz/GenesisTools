@@ -109,6 +109,24 @@ final class FrameSamplerTests: XCTestCase {
         XCTAssertEqual(policy.keptCount, 1)
     }
 
+    func testPastTheCapMotionStillKeepsTheActiveRate() {
+        var policy = KeepPolicy(thresholdPercent: 0, maxFrames: 1)
+        var rate = FrameRatePolicy(activeFps: 15, idleFps: 2, stillFramesBeforeIdle: 2)
+        let shades: [UInt8] = [0, 60, 120, 180, 240, 30]
+        for shade in shades {
+            let decision = policy.consider(signature(frame(width: 16, height: 16) { _, _ in (shade, shade, shade) }, width: 16, height: 16))
+            XCTAssertTrue(decision.moved, "shade \(shade) changed the frame")
+            _ = rate.observe(kept: decision.moved)
+        }
+        XCTAssertEqual(policy.keptCount, 1, "only the first frame is written")
+        XCTAssertEqual(rate.currentFps, 15, "a moving recording past the cap stays at the active rate")
+        let still = signature(frame(width: 16, height: 16) { _, _ in (30, 30, 30) }, width: 16, height: 16)
+        XCTAssertFalse(policy.consider(still).moved)
+        _ = rate.observe(kept: false)
+        _ = rate.observe(kept: policy.consider(still).moved)
+        XCTAssertEqual(rate.currentFps, 2, "a still screen past the cap still drops to the idle rate")
+    }
+
     func testTheRatePolicyDropsToIdleOnlyAfterARunOfStillFrames() {
         var rate = FrameRatePolicy(activeFps: 8, idleFps: 2, stillFramesBeforeIdle: 3)
         XCTAssertEqual(rate.currentFps, 8)

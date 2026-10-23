@@ -78,6 +78,7 @@ if args.count < 2 || args[1] == "--help" || args[1] == "-h" {
                       isolated: --window-ids ID,ID and/or repeated --include-app NAME|PID; --canvas crop|display
                       [--output-size WxH | --output-scale N] [--transparent --codec prores4444 --video-out f.mov]
                       [--no-indicator] default pulsing border is excluded from capture
+                      [--exclude-window-ids ID,ID] windows the movie never shows (a host's own controls)
                       [--screen-index N] [--region x,y,w,h] --duration <seconds> [--active-fps 8] [--idle-fps 2]
                       [--threshold 2.5] [--video-out f.mp4] [--out DIR]   ScreenCaptureKit recording: change-sampled
                       keep-NNNN.png frames, contact.png, metadata.json; JSON result in the capture-runner shape

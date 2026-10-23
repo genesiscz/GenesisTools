@@ -557,7 +557,8 @@ func cmdCaptureScreen() {
         guard let scDisplay = content.displays.first(where: { $0.displayID == display.id }) else {
             errorExit("display \(display.id) is not shareable")
         }
-        filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { indicator.windowIDs.contains($0.windowID) })
+        let excluded = indicator.windowIDs.union(options.selection.excludedWindowIDs)
+        filter = SCContentFilter(display: scDisplay, excludingWindows: content.windows.filter { excluded.contains($0.windowID) })
         pointSize = sourceRect?.size ?? display.bounds.size
     }
     let configuration = SCStreamConfiguration()
