@@ -454,6 +454,13 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   never deinitialises and fires every frame for the life of the process. Stop it wherever the owner is replaced (a
   `didSet` on the property), and count live ones for a test (`EdgeFrameTicker.live`). Find them in a sample of the
   idle app: `EdgeFrameTicker.step` under `CA::Display::DisplayLink` with nothing animating.
+- **A posted click on a hidden test window never reaches a SwiftUI gesture.** The window is not key, so AppKit
+  treats the click as the first mouse and drops it before SwiftUI sees it: a plain `Button` and an `.onTapGesture` both
+  stayed silent, while a click on a `TextField` worked (it is an AppKit view, hit-tested directly), which made the
+  harness look fine. Making the test window key would take the user's keyboard. Host the view in an `NSHostingView`
+  subclass whose `acceptsFirstMouse` returns true (`FirstClickHost` in WidgetInboxTasksPolishTests); that is how a
+  key panel delivers it. Prove the harness with a control (a `Button` that must fire) before you call a dead click
+  a bug.
 
 ## Hangs that reached the user on 2026-10-23, and why they got through — 2026-10-23 21:13
 

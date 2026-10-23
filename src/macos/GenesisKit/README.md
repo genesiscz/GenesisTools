@@ -1541,16 +1541,23 @@ InfoStrip(
 
 #### `NoticePill`
 
-A short status line: an icon, a message and an optional dim detail line. A close icon is always shown. A success notice calls `dismiss` six seconds after it appears (the timer restarts when `text` changes); an error stays until the person dismisses it. The text wraps rather than ending in an ellipsis, and it can be selected and copied.
+A status line: an icon, a message, an optional dim detail line, the ways to fix what it reports, and the full message behind "Details". A success notice without fixes calls `dismiss` six seconds after it appears (the timer restarts when `text` changes); an error, a warning, or a notice with a fix stays until the person dismisses it or it no longer applies. The text wraps rather than ending in an ellipsis, and it can be selected and copied.
 
 - `text: String`: the message.
 - `detail: String? = nil`: a dimmer second line.
-- `isError: Bool = false`: shows a red warning icon and keeps the pill on screen.
-- `dismiss: () -> Void`: called by the close icon, and by the timer for a success notice. The host removes the pill in it.
+- `more: String? = nil`: the full message (stderr, a stack, a path list), shown behind a "Details" disclosure.
+- `tone: NoticePill.Tone`: `.success` (green check), `.warning` (amber) or `.error` (red). The older `isError: Bool` initializer maps to `.error` or `.success`.
+- `fixes: [NoticeFix] = []`: one row per fix.
+  - `NoticeFix.button(_ label:symbol:confirm:perform:)`: the label says what a press does ("Quit the older Genesis (pid 1234)"). With `confirm:` (a `NoticeFix.Confirmation` with the question, an optional consequence and the confirming label) the notice asks inside itself before it acts, so the question also works in a panel that never becomes key.
+  - `NoticeFix.command(_ label:, _ command:)`: a command for the person's terminal; the notice shows it and copies it.
+- `dismiss: (() -> Void)? = nil`: called by the close icon, and by the timer for a success notice. The host removes the pill in it.
 
 ```swift
 if let notice {
-    NoticePill(text: notice.text, detail: notice.detail, isError: notice.isError) {
+    NoticePill(text: notice.text, detail: notice.detail, more: notice.stderr, tone: .warning, fixes: [
+        .button("Quit the older Genesis (pid \(pid))", confirm: .init("Quit it?", confirmLabel: "Quit")) { quit(pid) },
+        .command("Or from a terminal", "kill \(pid)"),
+    ]) {
         self.notice = nil
     }
 }
