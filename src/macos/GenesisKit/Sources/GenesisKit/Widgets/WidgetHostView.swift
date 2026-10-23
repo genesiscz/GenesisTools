@@ -58,8 +58,11 @@ struct WidgetHostView: View {
             joined: joined)
     }
 
+    /// Side panels pin their content to the top: content taller than its window (a measurement still on its way, a
+    /// screen too short) then loses its footer, never its header. Centred, the hover list opened with its header and
+    /// its last row both cut off (Martin's screenshot, 2026-10-23).
     private var edgeAlignment: Alignment {
-        surface.edge == .top ? .top : (surface.edge == .right ? .trailing : .leading)
+        surface.edge == .top ? .top : (surface.edge == .right ? .topTrailing : .topLeading)
     }
 
     private var topPadding: CGFloat {
@@ -165,9 +168,10 @@ struct WidgetHostView: View {
                                 model.toggleSession(session.key, on: surface)
                             } label: {
                                 sessionActivity(session)
-                                    .frame(minWidth: 24, minHeight: 30).fixedSize()
-                            }.buttonStyle(.genHoverPlain())
-                                .instantTooltip(sessionTooltip(session))
+                                    .frame(minWidth: 30, minHeight: 30).fixedSize()
+                                    .modifier(bubbleChrome(session))
+                            }.buttonStyle(.plain)
+                                .instantTooltip(model.bubbleTooltip(sessionTooltip(session)))
                                 .accessibilityLabel(sessionSummary(session))
                                 .accessibilityIdentifier("widget.agent." + session.key)
                                 .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
@@ -274,14 +278,15 @@ struct WidgetHostView: View {
                         } label: {
                             sessionActivity(session)
                                 .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
+                                .modifier(bubbleChrome(session))
                                 .overlay(alignment: .bottomTrailing) {
                                     // Which agent the count belongs to, at a glance; the tooltip names the session.
                                     AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 11)
                                         .opacity(0.85).allowsHitTesting(false)
                                 }
                         }
-                        .buttonStyle(.genHoverPlain())
-                        .instantTooltip(sessionTooltip(session))
+                        .buttonStyle(.plain)
+                        .instantTooltip(model.bubbleTooltip(sessionTooltip(session)))
                         .accessibilityLabel(sessionSummary(session))
                         .accessibilityIdentifier("widget.agent." + session.key)
                         .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
@@ -407,6 +412,14 @@ struct WidgetHostView: View {
         .accessibilityIdentifier("widget." + location + "." + surface.key + "." + id)
     }
 
+    /// The bubble's hover ring and the alert flash, in place of the rectangular hover plate of `.genHoverPlain`.
+    private func bubbleChrome(_ session: WidgetSession) -> WidgetBubbleChrome {
+        var style = model.attentionStyle
+        style.cornerRadius = 17
+        return WidgetBubbleChrome(trigger: model.attentionTrigger(session.key), attention: style,
+            reduceMotion: model.effectiveReduceMotion)
+    }
+
     private func sessionActivity(_ session: WidgetSession) -> some View {
         let inbox = model.inboxFor(session.key)
         return WidgetSessionActivity(status: session.visualStatus,
@@ -495,7 +508,14 @@ struct WidgetPeekView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(RowButtonStyle(cornerRadius: 10))
+        .attentionPulse(trigger: model.attentionTrigger(item.key), style: popupAttention)
         .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + (item.title ?? ""))
+    }
+
+    private var popupAttention: AttentionPulseStyle {
+        var style = model.attentionStyle
+        style.cornerRadius = 10
+        return style
     }
 }
 

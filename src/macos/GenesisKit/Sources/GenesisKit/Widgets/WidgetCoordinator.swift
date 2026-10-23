@@ -181,7 +181,10 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let wanted = WidgetAlerts.wanted(items, preferences: preferences)
         guard let item = WidgetAlerts.popupItem(wanted) else { return }
         PerfLog.mark("widget.alert items=\(wanted.count) id=\(item.id) kind=\(item.kind)")
-        playChime(preferences?.alertSound)
+        playChime(WidgetAlerts.sound(for: wanted, preferences: preferences))
+        // The session that asked flashes on its rail bubble and in the lists, popup or not: it says why the widget
+        // chimed or opened (Martin, 2026-10-23).
+        model.flashAttention(item.key, seconds: WidgetAlerts.flashSeconds(preferences))
         // Checked before the module switch: a popup the user's interaction refuses must not swap the pane they use.
         guard preferences?.alertPopup ?? true, let surface = peekSurface(), model.canPeek(on: surface) else { return }
         // The peek shows the agents module and gives the user's own module back when it ends.
@@ -693,7 +696,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                            answering: model.answerCard))
         {
         case .pass: return event
-        case .collapse: model.collapse()
+        case .collapse: if !model.escapeToList() { model.collapse() }
         case .previous: model.next(-1)
         case .next: model.next()
         case .choose(let choice): model.submit(choice: choice)

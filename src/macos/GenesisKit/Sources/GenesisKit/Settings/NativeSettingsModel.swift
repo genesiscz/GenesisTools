@@ -85,7 +85,7 @@ private struct NativeSettingsAnchor: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .attentionPulse(trigger: pulses, style: .flash(color: .accentColor, cornerRadius: 12))
+            .attentionPulse(trigger: pulses)
             // A window that opens on the page asks before the card exists: the card pulses once it is on screen.
             .onAppear { if center.anchor == id { pulseSoon() } }
             .onChange(of: center.token) { _, _ in if center.anchor == id { pulseSoon() } }

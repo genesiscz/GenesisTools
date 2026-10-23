@@ -71,6 +71,14 @@ export const widgetPreferencesSchema = z.object({
     previewFilter: z.enum(["needs-you", "active"]).default("needs-you"),
     /** The agents hover list's order: waiting for you first, newest activity first, or by project. */
     previewSort: z.enum(["attention", "recent", "project"]).default("attention"),
+    /** The sound an answer or message plays; "same" uses `alertSound`, "none" plays no sound. */
+    alertAnswerSound: z.string().trim().min(1).max(40).default("same"),
+    /** Seconds the session that raised an alert flashes in the widget; 0 does not flash it. */
+    alertFlashSeconds: z.number().int().min(0).max(30).default(5),
+    /** Where a session inbox puts its reply composer: under the tabs, or below the list. */
+    inboxComposer: z.enum(["top", "bottom"]).default("top"),
+    /** A rail session bubble's tooltip: only while hover previews are off ("auto"), always, or never. */
+    bubbleTooltip: z.enum(["auto", "always", "never"]).default("auto"),
 });
 
 // Zod defaults also run inside partial objects; a patch must retain only supplied keys.

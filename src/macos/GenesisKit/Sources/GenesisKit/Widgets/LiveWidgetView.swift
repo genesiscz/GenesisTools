@@ -182,6 +182,10 @@ public struct LiveWidgetView: View {
                     waitingSessions
                 }
             } else {
+                if composerOnTop { composer }
+                // Pinned above the list: inside it, a session that opened at its selected card scrolled the filter
+                // under the top fade (Martin's image 24, 2026-10-23).
+                if section == "Inbox", !model.cards.isEmpty { inboxFilterBar }
                 ScrollViewReader { reader in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 14) {
@@ -217,7 +221,7 @@ public struct LiveWidgetView: View {
                         .scrollOverflowHints()
                 }
                 // While a decision card holds the composer for an own answer, the bottom one would edit the same draft.
-                if !model.inboxOverview && section != "Sessions" && !(section == "Inbox" && model.ownAnswerCard != nil) {
+                if showsComposer && !composerOnTop {
                     composer
                 }
             }
@@ -269,10 +273,13 @@ public struct LiveWidgetView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(model.inboxOverview ? "Inbox" : model.selected?.title ?? "Agent inbox")
                         .font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                    Text(model.inboxOverview ? "Every session"
-                        : [model.selected?.target.provider.capitalized, model.selected?.project].compactMap { $0 }
-                            .joined(separator: " · "))
-                    .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    if model.inboxOverview {
+                        Text("Every session").font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                    } else if let selected = model.selected {
+                        WidgetSessionFacts(session: selected,
+                            contextTokens: WidgetModel.contextTokens(model.transcript) ?? model.contextTokens[selected.key],
+                            animate: !reduceMotion)
+                    }
                 }
                 .padding(.horizontal, 6).padding(.vertical, 3)
             }
@@ -332,6 +339,16 @@ public struct LiveWidgetView: View {
 
     private var reduceMotion: Bool { systemReduceMotion || model.effectiveReduceMotion }
 
+    /// While a decision card holds the composer for an own answer, a second one would edit the same draft.
+    private var showsComposer: Bool {
+        !model.inboxOverview && section != "Sessions" && !(section == "Inbox" && model.ownAnswerCard != nil)
+    }
+
+    /// The inbox's composer sits under the tabs unless the user moved it to the bottom (Widgets → Sessions).
+    private var composerOnTop: Bool {
+        showsComposer && section == "Inbox" && (model.snapshot?.state.preferences.inboxComposer ?? "top") == "top"
+    }
+
     /// No session picked: the sessions that hold inbox items, so nothing waits out of sight.
     private var waitingSessions: some View {
         ScrollView {
@@ -388,17 +405,25 @@ public struct LiveWidgetView: View {
 
     /// Every item of the session as a row; the open row carries the whole card in place. Several answers from one
     /// session read as a list, not as one card behind a drop-down.
-    @ViewBuilder private var inbox: some View {
-        if !model.cards.isEmpty {
+    private var inboxFilterBar: some View {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 GenSegmentedTabs(
                     "Inbox filter",
                     items: [.init("all", "All"), .init("inbox", "Inbox entries"), .init("decisions", "Decisions")],
-                    selection: $inboxFilter, minSegmentWidth: 64, identifier: "widget.inbox.filter")
+                    selection: Binding(get: { inboxFilter }, set: { value in
+                        model.holdAgentFit()
+                        inboxFilter = value
+                    }), minSegmentWidth: 64, identifier: "widget.inbox.filter")
                 Spacer()
                 markAllReadButton
             }
             Text(inboxHeadline).font(.system(size: 11)).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var inbox: some View {
+        if !model.cards.isEmpty {
             let shown = Self.filtered(model.cards, by: inboxFilter)
             if shown.isEmpty {
                 Text(inboxFilter == "decisions" ? "No decisions in this session." : "No inbox entries in this session.")
@@ -435,6 +460,7 @@ public struct LiveWidgetView: View {
     /// Opens or folds a row in one `GenMotion` animation; the panel around it grows or shrinks to fit (W3).
     private func toggle(_ card: WidgetCard) {
         let opening = !isOpen(card)
+        model.releaseAgentFit()
         GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) {
             if opening {
                 model.openCard(card)

@@ -28,8 +28,15 @@ struct AttentionPulseStyle: Equatable {
     /// Number of blinks. Never zero, and a zero period cannot divide by zero.
     var cycles: Int { max(1, Int((duration / max(period, 0.05)).rounded())) }
 
-    /// Three quick flashes of border and fill over about 1.4 s. Reads as "look here, now".
-    static func flash(color: Color, cornerRadius: CGFloat) -> Self {
+    /// Three quick flashes of the border over about 1.4 s. Reads as "look here, now" without covering the content,
+    /// so it is the default (Martin, 2026-10-23: a settings card under a tinted overlay read as covered, not pointed at).
+    static func borderFlash(color: Color, cornerRadius: CGFloat) -> Self {
+        Self(color: color, cornerRadius: cornerRadius, lineWidth: 2,
+             duration: 1.44, period: 0.48, fadeIn: 0.12, fadeOut: 0.2)
+    }
+
+    /// The same three flashes with a tinted fill over the whole view, for a target too small for a border to read.
+    static func filledFlash(color: Color, cornerRadius: CGFloat) -> Self {
         Self(color: color, cornerRadius: cornerRadius, fillOpacity: 0.30,
              duration: 1.44, period: 0.48, fadeIn: 0.12, fadeOut: 0.2)
     }
@@ -109,8 +116,11 @@ struct AttentionPulse<Trigger: Equatable>: ViewModifier {
 }
 
 extension View {
-    /// Blinks this view for attention each time `trigger` changes. Pass a counter you bump.
-    func attentionPulse<Trigger: Equatable>(trigger: Trigger, style: AttentionPulseStyle) -> some View {
+    /// Blinks this view for attention each time `trigger` changes. Pass a counter you bump. The default is a
+    /// border-only flash in the accent colour; `.filledFlash` and `.slowBorder` are the other presets.
+    func attentionPulse<Trigger: Equatable>(
+        trigger: Trigger, style: AttentionPulseStyle = .borderFlash(color: .accentColor, cornerRadius: 12)
+    ) -> some View {
         modifier(AttentionPulse(trigger: trigger, style: style))
     }
 }

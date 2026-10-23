@@ -3,7 +3,21 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
-- 2026-10-23 15:17 — **The widget's inbox and session lists (Martin's review with seven screenshots).**
+- 2026-10-23 16:30 — **Widget round 2 and the markdown tab bar (Martin's screenshots 23-28).**
+  - *Rail bubbles had no hover answer.* `.genHoverPlain` drew a rectangular plate a round bubble hid. Fix:
+    `WidgetBubbleChrome`, a round ring that pulses once on enter and settles (opacity only).
+  - *The hover list blinked and opened cut at the top.* One hover asked the panel for 336, 295 and 489 pt within 42 ms
+    (`edge.request` lines in `~/.genesis-tools/logs/app-perf.log`): the list is rebuilt per hover and its first layout
+    measured short. Fix: `FittedScroll(initialHeight:)` from the last height, shrinks wait 300 ms, side content pinned
+    to the top. Lesson: log every resize request with its branch before guessing at a blink.
+  - *A bubble showed its tooltip instead of the preview.* The panel's hover fires only on crossing its edge; after a
+    collapse under a resting pointer it never fired again. Fix: a bubble the pointer reaches starts the panel hover;
+    the bubble tooltip is off while previews are on (`bubbleTooltip`).
+  - *A filter that emptied the list dropped the open panel's height.* Fix: `holdAgentFit` before a filter change.
+  - *72 tabs wrapped into nine rows.* Fix: tab groups in GenesisKit (`MarkdownTabGrouping`), inline by default, the
+    wrapped bar capped at 4 rows with a fade. A first engine split big groups into singletons, so everything landed in
+    "Other": render the real data (`MARKDOWN_TAB_GROUPS_RENDER`) before calling a grouping rule done.
+- 2026-10-23 15:17 — **The widget's inbox and session lists (Martin's review with seven screenshots).** Commit 5e0a6e328d.
   - *Only the text line of the composer took a click.* The `TextField` was one line inside a padded box. Fix: the
     box is the target (`LiveWidgetView.composer`, legacy `AgentWidgetView` too).
   - *A second click on a rail session ("4") did nothing.* Every session button called `openInboxNotification`

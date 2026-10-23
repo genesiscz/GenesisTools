@@ -63,6 +63,20 @@ Walk it for every view you change. Each line exists because it was missed at lea
 - A scroll view reused for several sections (or sessions) gets an identity per content (`.id(section + key)`): it
   otherwise keeps the old offset, and a short section drew its rows over the header.
 
+## Widget and panel controls, round 2 (Martin, 2026-10-23 15:35)
+- Hover on every control, shaped like the control: a circle bubble gets a ring (`WidgetBubbleChrome`), which pulses
+  once on enter and settles. Opacity only, never a repeating animation.
+- A filter bar and its headline sit outside the scroll view they filter, pinned under the tabs.
+- A filter change in an open panel holds the panel's height (`WidgetModel.holdAgentFit`); folding a row or switching
+  view releases it. An empty filter result must not collapse the panel.
+- A header line under a title is the place for facts: agent · project · model · working / idle `LiveAgo` · ctx.
+- Rows: last active and newest question or answer, both `LiveAgo`.
+- An alert (sound, popup, auto-expand) has a setting each, a sound per kind with a play button, and flashes the
+  session that caused it for `alertFlashSeconds`.
+- A hover tooltip that duplicates a hover preview is off by default ("auto"), and the preview must open reliably:
+  a control the pointer reaches inside a panel starts the panel's hover itself, since the panel's own hover fires
+  only on crossing its edge.
+
 ## Feedback
 - Every action answers within 100 ms: visible state change, sound for capture, progress for slow work.
 - Errors say what happened and what to do, in a dialog when the user must act. A missing grant goes through

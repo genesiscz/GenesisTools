@@ -127,7 +127,8 @@ struct AgentWidgetPreview: View {
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 5).padding(.vertical, 6)
             } else {
-                FittedScroll(maxHeight: 360) {
+                FittedScroll(maxHeight: 360, initialHeight: model.previewListHeight,
+                             measured: { if $0 > 0 { model.previewListHeight = $0 } }) {
                     LazyVStack(spacing: 6) {
                         ForEach(model.previewList) { session in row(session) }
                     }
@@ -172,7 +173,7 @@ struct AgentWidgetPreview: View {
             } label: {
                 HStack(spacing: 9) {
                     AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 21)
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 3) {
                         Text(session.title).font(.system(size: 11.5, weight: .medium)).lineLimit(1)
                         HStack(spacing: 5) {
                             Text(session.project.isEmpty ? session.target.provider.capitalized : session.project)
@@ -180,6 +181,7 @@ struct AgentWidgetPreview: View {
                             Text("·")
                             Text(session.visualStatus.label).lineLimit(1)
                         }.font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.45))
+                        WidgetSessionTimes(session: session, inbox: model.inboxFor(session.key))
                     }
                     Spacer(minLength: 2)
                     if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {
@@ -204,5 +206,85 @@ struct AgentWidgetPreview: View {
             model.inboxFor(session.key).map { $0.needsAnswer > 0 } == true || session.status == "waiting"
                 ? Color.orange.opacity(0.065) : .white.opacity(0.025),
             in: RoundedRectangle(cornerRadius: 10))
+        .attentionPulse(trigger: model.attentionTrigger(session.key), style: rowAttention)
+    }
+
+    private var rowAttention: AttentionPulseStyle {
+        var style = model.attentionStyle
+        style.cornerRadius = 10
+        return style
+    }
+}
+
+/// When a session was last active and when its newest question or answer arrived: "working now · asked 3m ago",
+/// "active 12m ago · answered 1h ago". Both live, so a row left open keeps counting.
+struct WidgetSessionTimes: View {
+    let session: WidgetSession
+    let inbox: WidgetInboxSession?
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if session.visualStatus == .working {
+                Text("working now")
+            } else if session.activityAt > 0 {
+                LiveAgo(date: Date(timeIntervalSince1970: session.activityAt / 1000), style: .brief) { "active " + $0 }
+            }
+            if let entry = Self.latest(inbox) {
+                Text("·")
+                LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .brief) { entry.verb + " " + $0 }
+                    .foregroundStyle(entry.waiting ? Color.orange.opacity(0.8) : .white.opacity(0.45))
+            }
+        }
+        .font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+    }
+
+    /// The newest entry: a question still waiting wins, since that is what the row is about.
+    static func latest(_ inbox: WidgetInboxSession?) -> (verb: String, at: Double, waiting: Bool)? {
+        if let item = inbox?.pendingItem, item.at.isFinite, item.at > 0 {
+            return (item.kind == "decision" ? "decision asked" : "asked", item.at, true)
+        }
+        guard let item = inbox?.unreadItem ?? inbox?.latest, item.at.isFinite, item.at > 0 else { return nil }
+        switch item.kind {
+        case "answer": return ("answered", item.at, false)
+        case "result": return ("finished", item.at, false)
+        default: return ("new entry", item.at, false)
+        }
+    }
+}
+
+/// The header line under a session's title: agent, project and model, then whether it works now or how long it
+/// has been idle, and its context size (Martin, 2026-10-23: "the header probably can have way more info").
+struct WidgetSessionFacts: View {
+    let session: WidgetSession
+    let contextTokens: Int?
+    let animate: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(Self.origin(session)).lineLimit(1).truncationMode(.middle)
+            Text("·")
+            if session.visualStatus == .working {
+                WidgetActivityIndicator(status: .working, animate: animate)
+                Text("working").foregroundStyle(session.visualStatus.color)
+            } else if session.activityAt > 0 {
+                LiveAgo(date: Date(timeIntervalSince1970: session.activityAt / 1000), style: .brief) { "idle " + $0 }
+            } else {
+                Text(session.visualStatus.label)
+            }
+            if let contextTokens {
+                Text("·")
+                // The header is the session chooser's button, whose tooltip covers this line; VoiceOver says it.
+                Text("ctx " + SessionFormat.tokens(contextTokens)).monospacedDigit()
+                    .accessibilityLabel("Context size of the last model call, \(contextTokens) tokens")
+            }
+        }
+        .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+    }
+
+    /// "Claude · col-tools · opus-5-5": the agent, the project, and the model without its vendor prefix.
+    static func origin(_ session: WidgetSession) -> String {
+        let model = session.model.map { $0.replacingOccurrences(of: "claude-", with: "") }
+        return [AIProviders.meta(for: session.target.provider).displayName, session.project, model]
+            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }

@@ -290,6 +290,14 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var previewFilter: String?
     /// The agents hover list's order: "attention" (default), "recent" or "project".
     public var previewSort: String?
+    /// An answer's sound: "same" (default, `alertSound`), "none" or a system sound name.
+    public var alertAnswerSound: String?
+    /// Seconds the session that raised an alert flashes; 0 does not flash it. Default 5.
+    public var alertFlashSeconds: Double?
+    /// A session inbox's composer: "top" (default, under the tabs) or "bottom".
+    public var inboxComposer: String?
+    /// A rail bubble's tooltip: "auto" (default, only without hover previews), "always" or "never".
+    public var bubbleTooltip: String?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(

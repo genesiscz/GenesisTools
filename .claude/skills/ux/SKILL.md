@@ -26,6 +26,30 @@ thing for real, frame by frame, and comparing it with the checklist**, then fixi
    after sit next to each other.
 6. **Write down what was wrong on the first try** in the ledger, generically, with the commit.
 
+## What Martin asks for, before he has to (his reviews of 2026-10-23)
+
+Read this before a widget, hub or settings change, and do these without being asked. Each line is a request he had
+to make by screenshot.
+
+- **Every clickable thing answers the pointer.** Round bubbles get a round hover ring, not a rectangular plate or
+  nothing. If he cannot tell a thing is clickable by hovering it, it is a defect.
+- **Opinionated means configurable.** A sound, a popup, an auto-expand, a flash, a tooltip, a placement, an order:
+  ship a setting with your pick as its default (`.claude/rules/opinionated-settings.md`), and say which you added.
+- **Say why something moved.** When the widget chimes or opens by itself, the session that caused it flashes
+  (its bubble, its row, its popup) for a configurable few seconds. A cue without its cause is noise.
+- **Rows carry their times.** A session row says when it was last active and when its newest question or answer
+  arrived ("active 12m ago · asked 3m ago"), live (`LiveAgo`). A header says what the session is: agent, project,
+  model, working or idle for how long, context size.
+- **No jumps.** A filter that empties a list does not shrink an open panel; a tab, filter or headline never scrolls
+  under a fade; content never blinks empty while a panel grows or a hover changes it.
+- **The action is near the eye.** The reply box sits where the reading happens (under the tabs), not at the far
+  bottom of a tall panel.
+- **Attention cues point, they do not cover.** A flash is the border; a tinted overlay over a whole card reads as
+  covered. Border flash is the `AttentionPulse` default.
+- **A tooltip never stands in for the real hover behavior.** If hover should open a preview, a tooltip appearing
+  instead is a bug to fix, not a fallback.
+- **Every count opens what it counts**, and every session offers its terminal (cmux) and its inbox.
+
 ## Design authorities (load before a judgment call)
 
 | Question | Load |

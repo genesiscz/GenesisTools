@@ -35,6 +35,19 @@ public enum WidgetAlerts {
         }
     }
 
+    /// The sound for a burst: `alertSound` when anything in it waits for an answer, else the answers' own sound
+    /// (`alertAnswerSound`, where "same" means `alertSound`). nil plays the default sound.
+    public static func sound(for items: [WidgetInboxItem], preferences: WidgetPreferences?) -> String? {
+        let asks = items.contains { $0.needsAnswer || $0.kind == "decision" || $0.kind == "form" }
+        guard !asks, let answer = preferences?.alertAnswerSound, answer != "same" else { return preferences?.alertSound }
+        return answer
+    }
+
+    /// Seconds the session behind an alert flashes in the widget; 0 is off.
+    public static func flashSeconds(_ preferences: WidgetPreferences?) -> Double {
+        max(0, min(30, preferences?.alertFlashSeconds ?? 5))
+    }
+
     private static var lastChime = Date.distantPast
 
     /// Plays `name` once; a burst of arrivals within 1.5 s chimes once. "none" or an unknown name is silent.

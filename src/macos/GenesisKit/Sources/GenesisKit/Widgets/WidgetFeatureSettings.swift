@@ -173,6 +173,14 @@ private struct WidgetGeneralSettings: View {
                 NativeSettingsToggle(
                     "Hover previews", detail: "See a preview without changing keyboard focus.",
                     isOn: boolean("hoverPreviews", prefs?.hoverPreviews ?? true))
+                Divider()
+                NativeSettingsRow("Session bubble tooltips", detail: "Automatic shows them only while hover previews are off.") {
+                    Picker("Session bubble tooltips", selection: string("bubbleTooltip", prefs?.bubbleTooltip ?? "auto")) {
+                        Text("Automatic").tag("auto")
+                        Text("Always").tag("always")
+                        Text("Never").tag("never")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
             }
             NativeSettingsCard("Shape") {
                 NativeSettingsRow("Side style", detail: "Classic keeps a compact monochrome rail with its handle below.") {
@@ -219,6 +227,13 @@ private struct WidgetGeneralSettings: View {
                 NativeSettingsToggle(
                     "Changed files", detail: "Show a session's working changes alongside its conversation.",
                     isOn: boolean("showChanges", prefs?.showChanges ?? true))
+                Divider()
+                NativeSettingsRow("Reply box", detail: "Where a session's inbox puts the reply box.") {
+                    Picker("Reply box", selection: string("inboxComposer", prefs?.inboxComposer ?? "top")) {
+                        Text("Under the tabs").tag("top")
+                        Text("Below the list").tag("bottom")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
             }
             NativeSettingsCard("Alerts", subtitle: "When an agent asks or answers while the widget is closed.") {
                 NativeSettingsToggle(
@@ -229,24 +244,51 @@ private struct WidgetGeneralSettings: View {
                     "Answers and messages", detail: "A new logged answer or a message an agent sent you.",
                     identifier: "widget.alertAnswers", isOn: boolean("alertAnswers", prefs?.alertAnswers ?? true))
                 Divider()
-                NativeSettingsRow("Sound", detail: "One chime per burst of new items.") {
-                    HStack(spacing: 6) {
-                        Picker("Alert sound", selection: string("alertSound", prefs?.alertSound ?? WidgetAlerts.defaultSound)) {
-                            Text("None").tag("none")
-                            ForEach(WidgetAlerts.sounds, id: \.self) { Text($0).tag($0) }
-                        }.labelsHidden().frame(width: 140, alignment: .trailing)
-                        IconButton(systemName: "speaker.wave.2", tooltip: "Play the alert sound") {
-                            WidgetAlerts.preview(prefs?.alertSound ?? WidgetAlerts.defaultSound)
-                        }.disabled((prefs?.alertSound ?? WidgetAlerts.defaultSound) == "none")
-                    }
+                NativeSettingsRow("Sound for decisions", detail: "Decisions and questions that wait for you. One chime per burst.") {
+                    soundPicker("alertSound", prefs?.alertSound ?? WidgetAlerts.defaultSound, same: false)
+                }
+                Divider()
+                NativeSettingsRow("Sound for answers", detail: "Answers and messages, when nothing in the burst waits for you.") {
+                    soundPicker("alertAnswerSound", prefs?.alertAnswerSound ?? "same", same: true)
                 }
                 Divider()
                 NativeSettingsToggle(
-                    "Popup", detail: "The widget opens a short preview of the new item; a click on it answers.",
+                    "Open the widget", detail: "The widget opens a short preview of the new item; a click on it answers.",
                     identifier: "widget.alertPopup", isOn: boolean("alertPopup", prefs?.alertPopup ?? true))
+                Divider()
+                NativeSettingsRow("Flash the session", detail: "Its rail bubble and its row flash, so you see which session asked.") {
+                    Picker(
+                        "Flash the session",
+                        selection: Binding(
+                            get: { Int(WidgetAlerts.flashSeconds(prefs)) },
+                            set: { patch(["alertFlashSeconds": .number(Double($0))]) })
+                    ) {
+                        Text("Off").tag(0)
+                        Text("3 seconds").tag(3)
+                        Text("5 seconds").tag(5)
+                        Text("10 seconds").tag(10)
+                        Text("20 seconds").tag(20)
+                    }.labelsHidden().frame(width: 150, alignment: .trailing)
+                }
             }
+            .nativeSettingsAnchor("alerts")
             }
         }.task { model.refreshSettings() }
+    }
+
+    /// A system sound picker with a play button. `same` adds "Same as decisions", stored as "same".
+    private func soundPicker(_ key: String, _ value: String, same: Bool) -> some View {
+        let played = value == "same" ? prefs?.alertSound ?? WidgetAlerts.defaultSound : value
+        return HStack(spacing: 6) {
+            Picker(key == "alertSound" ? "Decision sound" : "Answer sound", selection: string(key, value)) {
+                if same { Text("Same as decisions").tag("same") }
+                Text("None").tag("none")
+                ForEach(WidgetAlerts.sounds, id: \.self) { Text($0).tag($0) }
+            }.labelsHidden().frame(width: 160, alignment: .trailing)
+            IconButton(systemName: "speaker.wave.2", tooltip: "Play this sound") {
+                WidgetAlerts.preview(played)
+            }.disabled(played == "none")
+        }
     }
 
     private func string(_ key: String, _ value: String) -> Binding<String> {

@@ -24,7 +24,10 @@ struct WidgetInboxOverview: View {
                 GenSegmentedTabs(
                     "Inbox entries",
                     items: [.init("all", "All"), .init("needs", "Needs you"), .init("unread", "Unread")],
-                    selection: $filter, minSegmentWidth: 70, identifier: "widget.overview.filter")
+                    selection: Binding(get: { filter }, set: { value in
+                        model.holdAgentFit()
+                        filter = value
+                    }), minSegmentWidth: 70, identifier: "widget.overview.filter")
                 Spacer(minLength: 4)
                 if model.inboxCount > 0 {
                     Button("Mark all read", action: model.markAllRead)
@@ -63,6 +66,7 @@ struct WidgetInboxOverview: View {
 
     private func toggle(_ item: WidgetInboxItem) {
         let opening = openID != item.id
+        model.releaseAgentFit()
         GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) { openID = opening ? item.id : nil }
     }
 

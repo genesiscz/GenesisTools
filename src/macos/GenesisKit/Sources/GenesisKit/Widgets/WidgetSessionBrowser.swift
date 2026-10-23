@@ -114,7 +114,11 @@ public struct WidgetSessionBrowser: View {
 
     private func open(_ session: WidgetSession) {
         if let onOpen { onOpen(session) }
-        else { model.select(session.key); model.section = "Inbox" }
+        else {
+            model.select(session.key)
+            model.section = "Inbox"
+            model.listOrigin = .sessions
+        }
     }
 
     /// A top-level session: its name, project, account and sub-agent count, the same for every session.

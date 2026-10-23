@@ -11,14 +11,23 @@ import SwiftUI
 public struct FittedScroll<Content: View>: View {
     public var maxHeight: CGFloat
     public var minHeight: CGFloat
+    /// The height until the content is first measured, and every measurement goes to `measured`. A view that is
+    /// built again each time it shows (the widget's hover list) passes its last height here: from 0, the first layout
+    /// pass reported a list-less height, its window shrank and grew back within 40 ms, and the panel blinked
+    /// (edge.request log, 2026-10-23: 336, then 295, then 489 pt for one hover).
+    public var initialHeight: CGFloat
+    private let measured: ((CGFloat) -> Void)?
     private let content: () -> Content
     @State private var height: CGFloat = 0
     @State private var expansion = FittedExpansionNote()
     @GenReduceMotion private var reduceMotion
 
-    public init(maxHeight: CGFloat, minHeight: CGFloat = 0, @ViewBuilder content: @escaping () -> Content) {
+    public init(maxHeight: CGFloat, minHeight: CGFloat = 0, initialHeight: CGFloat = 0,
+                measured: ((CGFloat) -> Void)? = nil, @ViewBuilder content: @escaping () -> Content) {
         self.maxHeight = maxHeight
         self.minHeight = minHeight
+        self.initialHeight = initialHeight
+        self.measured = measured
         self.content = content
     }
 
@@ -29,11 +38,12 @@ public struct FittedScroll<Content: View>: View {
                 .scrollOverflowContent()
         }
         .scrollOverflowHints()
-        .frame(height: min(maxHeight, max(minHeight, height)))
+        .frame(height: min(maxHeight, max(minHeight, height > 0 ? height : initialHeight)))
         .onGenExpansion { expansion.note($0) }
     }
 
     private func apply(_ value: CGFloat) {
+        measured?(value)
         guard height > 0, let expanding = expansion.recent() else {
             height = value
             return

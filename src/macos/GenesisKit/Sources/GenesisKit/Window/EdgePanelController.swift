@@ -249,6 +249,9 @@ public final class EdgePanelController<Content: View> {
         let wasReshaping = transition?.reshape == true
         end(outcome: "interrupted")
         isExpanded = expanded
+        let branch = reduceMotion || !panel.isVisible || from == target ? "settle"
+            : motion.presentation == presentation && (!wasTransitioning || wasReshaping) ? "reshape" : "begin"
+        PerfLog.mark("edge.request window=\(panel.windowNumber) edge=\(placement.rawValue) shown=\(motion.presentation) to=\(presentation) \(branch) from=\(Int(from.width))x\(Int(from.height)) target=\(Int(target.width))x\(Int(target.height)) transitioning=\(wasTransitioning)")
         if reduceMotion || !panel.isVisible || from == target {
             settle(presentation, frame: target)
         } else if motion.presentation == presentation, !wasTransitioning || wasReshaping {

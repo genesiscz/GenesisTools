@@ -241,26 +241,70 @@ public final class WidgetModel: ObservableObject {
     /// The agents preview's measured height. The old estimate (100 + 54 per row) was 11 pt plus 2 pt per row short,
     /// so the centred content lost its header and the top of its first row (2026-10-10, Martin's screenshot).
     public private(set) var previewFitHeight: CGFloat?
+    /// The hover list's last measured height. The list is built again on every hover; it starts at this height so its
+    /// first layout is already the real one (`FittedScroll.initialHeight`). Not published: it must not re-render.
+    var previewListHeight: CGFloat = 0
     public var previewHeight: CGFloat {
         if let previewFitHeight { return previewFitHeight }
         return sessionRoster.preview.isEmpty ? 180 : 112 + CGFloat(sessionRoster.preview.count) * 56
     }
 
     /// Whole points and a 2 pt hysteresis, as `reportAgentFit`, so the measurement cannot chase its own resize.
+    ///
+    /// A taller measurement applies at once; a shorter one only after it held for `previewShrinkDelay`. The list is
+    /// built again on every hover, and its first layout passes measured it short (header and footer, then the rows):
+    /// one hover asked for 336, 295 and 489 pt within 42 ms, the panel shrank and grew back, and its content blinked
+    /// or opened cut at the top (edge.request log and Martin's screenshots, 2026-10-23).
     func reportPreviewFit(_ height: CGFloat) {
         let rounded = ceil(height)
-        if let current = previewFitHeight, abs(rounded - current) < 2 { return }
+        if let current = previewFitHeight, abs(rounded - current) < 2 {
+            previewShrink?.cancel()
+            return
+        }
+        previewShrink?.cancel()
+        if let current = previewFitHeight, rounded < current {
+            previewShrink = Task { [weak self] in
+                do { try await Task.sleep(for: Self.previewShrinkDelay) } catch { return }
+                guard let self else { return }
+                self.previewFitHeight = rounded
+                self.presentationChanged?()
+            }
+            return
+        }
         previewFitHeight = rounded
         presentationChanged?()
     }
+
+    static let previewShrinkDelay = Duration.milliseconds(300)
+    private var previewShrink: Task<Void, Never>?
 
     public var selected: WidgetSession? {
         sessionIndex[selectedKey] ?? (lastSelected?.key == selectedKey ? lastSelected : nil)
     }
 
+    /// The height a filter change may not shrink the pane below, for the view (overview, section, session) it was
+    /// taken in. A filter that shows fewer rows, or none, used to drop the open panel by hundreds of points and grow
+    /// it back on the next click (Martin, 2026-10-23: "it probably doesn't need to lower the height").
+    private var agentFitFloor: (view: String, height: CGFloat)?
+    private var fitView: String { "\(inboxOverview)|\(section)|\(selectedKey)" }
+
+    /// Called just before a filter changes what an open pane lists: the pane keeps at least its current height.
+    public func holdAgentFit() {
+        guard expanded != nil, let height = agentFitHeight else { return }
+        agentFitFloor = (fitView, max(height, agentFitFloor?.view == fitView ? agentFitFloor?.height ?? 0 : 0))
+    }
+
+    /// A row folding or another view: the pane fits its content again.
+    public func releaseAgentFit() {
+        agentFitFloor = nil
+    }
+
     /// Whole points, and only a change of 2 pt or more, so a measurement cannot chase its own resize.
     func reportAgentFit(_ height: CGFloat?) {
-        let rounded = height.map { ceil($0) }
+        var rounded = height.map { ceil($0) }
+        if let floor = agentFitFloor {
+            if floor.view == fitView, let value = rounded { rounded = max(value, floor.height) } else { agentFitFloor = nil }
+        }
         if let rounded, let current = agentFitHeight, abs(rounded - current) < 2 { return }
         guard rounded != agentFitHeight else { return }
         agentFitHeight = rounded
@@ -592,6 +636,10 @@ public final class WidgetModel: ObservableObject {
             return
         }
         guard layout.hoverPreviews, !dialogOpen, !draggingSide, expanded == nil else { return }
+        // The panel's own hover fires only when the pointer crosses its edge. After a click collapsed the panel
+        // under a resting pointer it never fired again, so the next bubble showed its tooltip and no preview
+        // (Martin, 2026-10-23). A bubble the pointer reaches starts the panel's hover itself.
+        if hoveredSurface != surface { hover(surface, inside: true) }
         cancelHoverPrewarm()
         hoveredSession = (key, surface)
         transcriptHoverTask = Task { [weak self] in
@@ -728,6 +776,7 @@ public final class WidgetModel: ObservableObject {
         expanded = edge
         prewarmTranscript()
         resumeTranscript()
+        refreshContext()
         presentationChanged?()
         scheduleQuietReduction()
         if openingInbox == nil, let card, card.kind == "answer", !card.read {
@@ -837,6 +886,31 @@ public final class WidgetModel: ObservableObject {
 
     public func inboxFor(_ key: String) -> WidgetInboxSession? { inboxSessions[key] }
     public func inboxPulseFor(_ key: String) -> Int { inboxSessionPulses[key] ?? 0 }
+
+    /// The session an alert came from, flashed for `attentionSeconds` on its rail bubble, its hover row and its
+    /// popup. The counter restarts a running flash (`AttentionPulse`).
+    /// One counter per session, so flashing one session never changes another session's trigger.
+    @Published public private(set) var attentionCounts: [String: Int] = [:]
+    public private(set) var attentionSeconds: Double = 5
+
+    public func flashAttention(_ key: String, seconds: Double) {
+        guard seconds > 0 else { return }
+        attentionSeconds = seconds
+        attentionCounts[key, default: 0] += 1
+    }
+
+    /// The pulse trigger for one session: changes only when that session is flashed.
+    public func attentionTrigger(_ key: String) -> Int { attentionCounts[key] ?? 0 }
+
+    /// The style every flash of a session that needs you uses.
+    var attentionStyle: AttentionPulseStyle {
+        var style = AttentionPulseStyle.borderFlash(color: .orange, cornerRadius: 12)
+        style.duration = attentionSeconds
+        style.period = 0.8
+        style.fadeIn = 0.18
+        style.fadeOut = 0.3
+        return style
+    }
     public var inboxCount: Int { max(0, inbox.unread) + max(0, inbox.needsAnswer) }
 
     /// Expands one inbox card in place. An unread answer or result counts as read once the user opens it, the same
@@ -878,6 +952,7 @@ public final class WidgetModel: ObservableObject {
 
     public func openInboxNotification(on surface: WidgetSurfaceID, key: String? = nil, needsAnswer: Bool? = nil) {
         guard !stopping else { return }
+        listOrigin = .overview
         let candidates: [WidgetInboxSession]
         if let key {
             candidates = inboxSessions[key].map { [$0] } ?? []
@@ -917,8 +992,26 @@ public final class WidgetModel: ObservableObject {
     }
 
     /// An overview entry's "Open in session": that session's inbox with the entry open.
+    /// The list a session was opened from, which the first Esc goes back to (Martin, 2026-10-23: "it should first go
+    /// to the list and the second escape should close the expansion entirely").
+    public enum ListOrigin: Sendable { case overview, sessions }
+    public var listOrigin: ListOrigin = .overview
+
+    /// Esc in a session: back to the list it came from. False when a list (or no session) is on screen, so Esc then
+    /// closes the panel.
+    @discardableResult
+    public func escapeToList() -> Bool {
+        guard activeModuleID == "agents", selected != nil, !inboxOverview, section != "Sessions" else { return false }
+        switch listOrigin {
+        case .overview: inboxOverview = true
+        case .sessions: section = "Sessions"
+        }
+        return true
+    }
+
     public func openInboxItem(_ item: WidgetInboxItem) {
         guard !stopping else { return }
+        listOrigin = .overview
         openingInbox = item
         select(item.key)
         selectedCardID = item.id
@@ -969,6 +1062,7 @@ public final class WidgetModel: ObservableObject {
 
     public func collapse() {
         cancelHoverPrewarm()
+        agentFitFloor = nil
         openingInbox = nil
         followedTranscript = nil
         hoveredSurface = nil
@@ -993,6 +1087,7 @@ public final class WidgetModel: ObservableObject {
         inboxOverview = false
         selectedKey = key
         lastSelected = snapshot?.sessions.first { $0.key == key }
+        if expanded != nil { refreshContext() }
         selectedCardID = nil
         action(["action": "selection", "key": .string(key)])
         if let edge { open(edge) }
@@ -1775,6 +1870,31 @@ public final class WidgetModel: ObservableObject {
     private func transcriptQuery(_ session: WidgetSession) -> SessionTranscriptCache.Query {
         SessionTranscriptCache.Query(identity: session.key, query: session.transcriptPath ?? session.target.sessionId,
                                      provider: session.target.provider)
+    }
+
+    /// Context size per session key, for the header (`WidgetSessionFacts`). Read from the transcript cache when a
+    /// session opens: the conversation itself loads only on the Conversation tab, and the header shows on every tab.
+    @Published public private(set) var contextTokens: [String: Int] = [:]
+    private var contextTask: Task<Void, Never>?
+
+    private func refreshContext() {
+        guard let session = selected, session.target.provider != "unknown" else { return }
+        let key = session.key
+        let query = transcriptQuery(session)
+        contextTask?.cancel()
+        contextTask = Task { [weak self] in
+            guard let self, let envelope = try? await self.transcriptCache.value(for: query), !Task.isCancelled,
+                  let tokens = Self.contextTokens(envelope.turns) else { return }
+            if self.contextTokens[key] != tokens { self.contextTokens[key] = tokens }
+        }
+    }
+
+    /// The context the session's last model call carried: its fresh input plus its cache reads. nil when the turns
+    /// have no call with usage (a provider that reports none, or nothing loaded yet).
+    nonisolated static func contextTokens(_ turns: [TranscriptTurn]) -> Int? {
+        guard let usage = turns.last(where: { $0.role == "assistant" && $0.usage != nil })?.usage else { return nil }
+        let total = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0)
+        return total > 0 ? total : nil
     }
 
     private func prewarmTranscript(on surface: WidgetSurfaceID? = nil) {

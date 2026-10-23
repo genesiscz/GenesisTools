@@ -617,6 +617,59 @@ final class WidgetInboxPolishTests: XCTestCase {
             .first?.key, "asks", "Beta before Fixture")
     }
 
+    func testAnAlertPlaysItsKindsSoundAndFlashesForTheConfiguredTime() throws {
+        let decision = WidgetInboxItem(id: "decision:d_1_s", sourceId: "d_1_s", kind: "decision", key: "k", at: 1,
+            needsAnswer: true)
+        let answer = WidgetInboxItem(id: "answer:a", sourceId: "a", kind: "answer", key: "k", at: 2, needsAnswer: false)
+        func prefs(_ json: String) throws -> WidgetPreferences {
+            let base = #"{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"side","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","#
+            return try JSONDecoder().decode(WidgetPreferences.self, from: Data((base + json.dropFirst()).utf8))
+        }
+        let split = try prefs(#"{"alertSound":"Ping","alertAnswerSound":"Pop","alertFlashSeconds":10}"#)
+        XCTAssertEqual(WidgetAlerts.sound(for: [answer], preferences: split), "Pop")
+        XCTAssertEqual(WidgetAlerts.sound(for: [answer, decision], preferences: split), "Ping",
+                       "a burst with a question in it plays the decisions' sound")
+        XCTAssertEqual(WidgetAlerts.sound(for: [answer], preferences: try prefs(#"{"alertSound":"Ping","alertAnswerSound":"same"}"#)),
+                       "Ping", "\"same\" follows the decisions' sound")
+        XCTAssertNil(WidgetAlerts.sound(for: [answer], preferences: nil), "no preferences: the default sound")
+        XCTAssertEqual(WidgetAlerts.flashSeconds(split), 10)
+        XCTAssertEqual(WidgetAlerts.flashSeconds(nil), 5, "flashing is on by default")
+        XCTAssertEqual(WidgetAlerts.flashSeconds(try prefs(#"{"alertFlashSeconds":0}"#)), 0)
+    }
+
+    @MainActor
+    func testFlashingOneSessionLeavesEveryOtherSessionsTriggerAlone() {
+        let defaults = UserDefaults(suiteName: "widget.attention.\(UUID().uuidString)")!
+        let model = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults)
+        model.flashAttention("a", seconds: 5)
+        let other = model.attentionTrigger("b")
+        model.flashAttention("a", seconds: 5)
+        XCTAssertEqual(model.attentionTrigger("a"), 2)
+        XCTAssertEqual(model.attentionTrigger("b"), other, "an unchanged trigger never replays another session's flash")
+        model.flashAttention("b", seconds: 0)
+        XCTAssertEqual(model.attentionTrigger("b"), other, "0 seconds is off")
+    }
+
+    func testTheHeaderReadsTheLastCallsContextAndRowsTheirNewestEntry() {
+        func turn(_ role: String, _ usage: TranscriptUsage?) -> TranscriptTurn {
+            TranscriptTurn(id: UUID().uuidString, role: role, at: nil, text: "", tools: [], usage: usage)
+        }
+        XCTAssertEqual(WidgetModel.contextTokens([
+            turn("assistant", TranscriptUsage(inputTokens: 10, cacheReadTokens: 90)),
+            turn("assistant", TranscriptUsage(inputTokens: 5, cacheReadTokens: 120_000)), turn("user", nil),
+        ]), 120_005, "the newest call that reports usage, input plus cache reads")
+        XCTAssertNil(WidgetModel.contextTokens([turn("user", nil)]))
+
+        let asked = WidgetInboxItem(id: "form:f", sourceId: "f", kind: "form", key: "k", at: 3_000, needsAnswer: true)
+        let answered = WidgetInboxItem(id: "answer:a", sourceId: "a", kind: "answer", key: "k", at: 9_000,
+            needsAnswer: false)
+        let both = WidgetInboxSession(key: "k", unread: 1, needsAnswer: 1, unreadItem: answered, pendingItem: asked)
+        XCTAssertEqual(WidgetSessionTimes.latest(both)?.verb, "asked", "a waiting question wins over a newer answer")
+        let read = WidgetInboxSession(key: "k", unread: 1, needsAnswer: 0, unreadItem: answered)
+        XCTAssertEqual(WidgetSessionTimes.latest(read)?.verb, "answered")
+        XCTAssertNil(WidgetSessionTimes.latest(nil))
+    }
+
     func testTheSessionInboxFilterSplitsInboxEntriesFromDecisions() {
         let cards = ["answer", "result", "form", "decision", "todo"].map { kind in
             WidgetCard(id: kind, kind: kind, sessionKey: "k", sourceId: kind, at: 1, title: kind, body: "",
