@@ -437,7 +437,7 @@ private struct MarkdownTabGroupChip: View {
     }
 
     private func click() {
-        if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+        if MouseClick.current >= 2 {
             // The first click of the double-click already folded or opened it: put that back, then rename.
             model.toggleGroup(group.id)
             startRename()
@@ -645,6 +645,7 @@ private struct MarkdownDocumentTab: View, Equatable {
         }
         .instantTooltip(previews ? "" : doc.url.path)
         .markdownHoverPreview(active ? nil : doc.url, model: model)
+        .frameProbe("md.tab." + doc.id)
     }
 
     /// A click selects. The second click of a double-click also keeps a preview tab, as in an editor;
@@ -656,7 +657,7 @@ private struct MarkdownDocumentTab: View, Equatable {
     private func selectOrKeep(via gesture: String) {
         MarkdownDocumentWindow.input.notice("\(MarkdownTabLog.note(action: "select", index: tabIndex, gesture: gesture), privacy: .public)")
         model.select(doc.id)
-        if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+        if MouseClick.current >= 2 {
             model.keep(doc)
         }
     }

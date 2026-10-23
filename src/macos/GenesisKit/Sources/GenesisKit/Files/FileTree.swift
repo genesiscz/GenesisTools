@@ -609,9 +609,7 @@ enum FileTreeClick: Equatable {
     /// The click count of the event that activated a row: 1 unless it is a mouse event. A row activated from the
     /// keyboard has a key event as the current one, and `clickCount` raises on any event that is not a mouse event.
     static func clickCount(of event: NSEvent?) -> Int {
-        guard let event, [.leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp]
-            .contains(event.type) else { return 1 }
-        return event.clickCount
+        MouseClick.count(of: event)
     }
 }
 

@@ -146,4 +146,94 @@ final class MarkdownTabGroupingTests: XCTestCase {
         try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: out))
         print("groups:", model.tabGroups.map { "\($0.title)(\($0.tabIDs.count))" }.joined(separator: " "))
     }
+
+    /// A real click on a tab must select it (Martin, 2026-10-23: "the whole panel is not clickable anywhere"). A
+    /// rendered image passed while no tab took a click; only a click proves a control works. The click lands on one
+    /// known tab, found by its accessibility frame, in a hidden window: never a scan over points, which pressed the
+    /// toolbar's Obsidian button and opened dialogs on the user's screen (2026-10-23 16:45).
+    func testAClickOnATabSelectsIt() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("md-tab-click-\(UUID().uuidString)")
+        let names = (0 ..< 40).map { "\($0 % 2 == 0 ? "A" : "B")/note\($0).md" }
+        let paths = names.map { folder.appendingPathComponent($0) }
+        for url in paths {
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try "# \(url.lastPathComponent)".write(to: url, atomically: true, encoding: .utf8)
+        }
+        FrameProbe.enabled = true
+        defer { FrameProbe.enabled = false }
+        var results: [String] = []
+        for (grouped, count, files) in [(false, 4, false), (true, 4, false), (false, 40, false), (true, 40, false),
+                                        (false, 40, true), (true, 40, true)] {
+            let model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-tab-click-\(UUID().uuidString)")!)
+            model.configuration = GenesisKitMarkdownConfiguration(
+                defaults: UserDefaults(suiteName: "md-tab-click-config-\(UUID().uuidString)")!)
+            model.configuration.wrapTabs = true
+            model.configuration.tabGroupFrom = grouped ? 0 : 1000
+            model.open(Array(paths.suffix(count)))
+            model.showFiles = files
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
+                                  styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = MarkdownDocumentWindowController.contentView(model: model)
+            window.alphaValue = 0
+            window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+            window.order(.below, relativeTo: 0)
+            defer {
+                window.orderOut(nil)
+                window.close()
+            }
+            FrameProbe.reset()
+            pump(1.5)
+            // The page's AppKit frame must not reach into the tab bar: hit-testing ignores layer clips, so a page
+            // frame over the tabs takes their clicks while they still show through its transparent top.
+            func webViews(_ view: NSView) -> [NSView] {
+                (String(describing: type(of: view)).contains("WebView") ? [view] : []) + view.subviews.flatMap(webViews)
+            }
+            let tabBottom = FrameProbe.frames.filter { $0.key.hasPrefix("md.tab.") }.map(\.value.maxY).max() ?? 0
+            for web in webViews(try XCTUnwrap(window.contentView)) where !web.isHidden {
+                let frame = web.convert(web.bounds, to: nil)
+                let top = window.frame.height - frame.maxY
+                results.append("web \(type(of: web)) top=\(Int(top)) h=\(Int(frame.height)) tabsEnd=\(Int(tabBottom))")
+                XCTAssertGreaterThanOrEqual(top + 0.5, tabBottom, "the page starts below the last tab row")
+            }
+            let target = model.docs[model.docs.count - 2]
+            let frame = try XCTUnwrap(FrameProbe.frames["md.tab." + target.id], "the tab \(target.title) has a frame")
+            // SwiftUI's global space has its origin top left; a window event's location is bottom left.
+            let center = NSPoint(x: frame.midX, y: window.contentLayoutRect.height + (window.frame.height
+                - window.contentLayoutRect.height) - frame.midY)
+            click(window, at: NSPoint(x: center.x, y: window.frame.height - frame.midY))
+            let hit = model.selected?.id == target.id
+            results.append("grouped=\(grouped) tabs=\(count) files=\(files) at=\(Int(center.x)),\(Int(center.y)) selected=\(hit)")
+            XCTAssertTrue(hit, "a click on the tab selects it (grouped \(grouped), \(count) tabs, files \(files))")
+        }
+        print("tab clicks:", results.joined(separator: " | "))
+    }
+
+    private func pump(_ seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if let next = NSApp.nextEvent(matching: .any, until: deadline, inMode: .default, dequeue: true) {
+                NSApp.sendEvent(next)
+            }
+        }
+    }
+
+    /// As a pointer does it: moves onto the point and rests there (tooltips and hover previews arm), then clicks.
+    private func click(_ window: NSWindow, at location: NSPoint) {
+        func event(_ type: NSEvent.EventType, at point: NSPoint = location) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: type == .mouseMoved ? 0 : 1, pressure: 1)!
+        }
+        window.acceptsMouseMovedEvents = true
+        for step in 0 ... 4 {
+            let point = NSPoint(x: location.x - CGFloat(20 - step * 5), y: location.y)
+            NSApp.postEvent(event(.mouseMoved, at: point), atStart: false)
+            pump(0.03)
+        }
+        pump(Double(ProcessInfo.processInfo.environment["TAB_CLICK_REST"] ?? "") ?? 0.5)
+        NSApp.postEvent(event(.leftMouseDown), atStart: false)
+        NSApp.postEvent(event(.leftMouseUp), atStart: false)
+        pump(0.4)
+    }
 }

@@ -1048,7 +1048,7 @@ private struct PRThreadRow: View {
     }
 
     private func cardClicked() {
-        clicks.clicked(thread.id, clickCount: NSApp.currentEvent?.clickCount ?? 1)
+        clicks.clicked(thread.id, clickCount: MouseClick.current)
     }
 
     private var accent: Color {

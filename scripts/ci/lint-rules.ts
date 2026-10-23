@@ -755,6 +755,22 @@ const SWIFT_WAIT_RULE = {
 };
 const SWIFT_BARE_WAIT = /\.wait\(\s*\)/;
 
+const SWIFT_CLICK_COUNT_RULE = {
+    name: "swift-current-event-click-count",
+    severity: "error" as const,
+    message:
+        "`NSEvent.clickCount` raises an Objective-C exception for any event that is not a mouse click, and " +
+        "`NSApp.currentEvent` inside a button action can be a key or system event. One raise made a whole Genesis " +
+        "Markdown window ignore every click (2026-10-23). Use `MouseClick.current` or `MouseClick.count(of:)`, or " +
+        "`// lint-rules-ignore: <why the event is always a mouse event>`.",
+};
+const SWIFT_CURRENT_EVENT_CLICK_COUNT = /currentEvent\s*[?!]?\s*\.clickCount/;
+
+const SWIFT_LINE_RULES = [
+    { rule: SWIFT_WAIT_RULE, pattern: SWIFT_BARE_WAIT },
+    { rule: SWIFT_CLICK_COUNT_RULE, pattern: SWIFT_CURRENT_EVENT_CLICK_COUNT },
+];
+
 /**
  * Process tools (2026-10-14). The process table, command lines, executables, listening sockets and working
  * directories come from the kernel through `@genesiscz/utils/process` (libproc on macOS), measured at 9.5 ms where
@@ -1064,7 +1080,7 @@ function recordBusyWaitFindings(root: SgNode, record: RecordFinding): void {
     recordSleepSyncFindings(root.findAll(SLEEP_SYNC_IN_LOOP_MATCHER), record);
 }
 
-/** Swift has no grammar in the ast-grep napi package, so its one rule is a line regex. */
+/** Swift has no grammar in the ast-grep napi package, so its rules are line regexes. */
 export function checkSwiftSource(file: string, source: string): Finding[] {
     const lines = source.split("\n");
     const findings: Finding[] = [];
@@ -1074,21 +1090,23 @@ export function checkSwiftSource(file: string, source: string): Finding[] {
             continue;
         }
 
-        const column = text.search(SWIFT_BARE_WAIT);
+        for (const { rule, pattern } of SWIFT_LINE_RULES) {
+            const column = text.search(pattern);
 
-        if (column === -1) {
-            continue;
+            if (column === -1) {
+                continue;
+            }
+
+            findings.push({
+                file,
+                line: index + 1,
+                column: column + 1,
+                rule: rule.name,
+                severity: rule.severity,
+                message: rule.message,
+                text: text.trim().slice(0, 120),
+            });
         }
-
-        findings.push({
-            file,
-            line: index + 1,
-            column: column + 1,
-            rule: SWIFT_WAIT_RULE.name,
-            severity: SWIFT_WAIT_RULE.severity,
-            message: SWIFT_WAIT_RULE.message,
-            text: text.trim().slice(0, 120),
-        });
     }
 
     return findings;

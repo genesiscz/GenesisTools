@@ -43,3 +43,9 @@
   press and action log, or with the window key while the user agrees to give up focus.
 - A window whose text changes live (a "saved 1 min ago" status) makes `tools control act` refuse as stale. Pass the
   row's `--target-key <stableKey> --revalidate-scope element` from the same `see`.
+- `tools control click --app <app> --desc <label> --depth 40` presses one named control without taking focus (Martin,
+  2026-10-23: "you can control click it wont steal my focus"). Press by label, one control at a time. Never sweep
+  a grid of coordinates over a real window: a sweep hits the side-effect buttons (Obsidian, Editor) and opens dialogs
+  and files in the user's apps.
+- When a whole window stops reacting, first read its unified log for an exception (`command log show --predicate
+  'processID == <pid>' --last 10m | rg -i "exception|raise"`), then theorise.

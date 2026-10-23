@@ -37,6 +37,11 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
   or keyboard.
 - An overlay, scrim or note layer that is not a control passes clicks through (`.allowsHitTesting(false)`), unless
   it blocks on purpose. A `DragGesture(minimumDistance: 0)` on a container swallows the taps of its buttons.
+- 🛑 A render is not a click. After any change to a clickable view, press it once in the REAL installed app
+  (`tools control click --app <app> --desc <label>`, which does not take focus) and read the app's own action log
+  (`command log show --predicate 'subsystem == "genesiskit" AND category == "markdown.input"' --last 1m`). A PNG
+  proved the tab groups looked right while one press on a group chip had made the whole window deaf (2026-10-23).
+- Press each NEW kind of control at least once (a chip, a menu, a drop target), not only the old ones beside it.
 
 ## Windows and overlays (Martin, 2026-10-14)
 - No `isMovableByWindowBackground` on a window with SwiftUI content: the hosting view counts as background
