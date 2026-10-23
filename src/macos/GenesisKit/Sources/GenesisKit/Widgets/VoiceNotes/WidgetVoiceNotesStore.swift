@@ -201,11 +201,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         let configuration = settings()
         record(context: context, then: { [self] note in
             phase = "Transcribing"
-            var args = ["transcribe", note.id, "--revision", String(note.revision), "--provider", configuration.provider]
-            if let account = configuration.account { args += ["--account", account] }
-            if let model = configuration.model { args += ["--model", model] }
-            if let language = configuration.language { args += ["--language", language] }
-            let data = try await execute(args, nil) { _ in }
+            let data = try await execute(configuration.transcribeArguments(id: note.id, revision: note.revision), nil) { _ in }
             try Task.checkCancellation()
             let updated = try JSONDecoder().decode(WidgetVoiceNoteResult.self, from: data).note
             put(updated)
@@ -261,11 +257,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         let configuration = settings()
         begin("Transcribing") { [self] in
             let saved = try await save(note)
-            var args = ["transcribe", saved.id, "--revision", String(saved.revision), "--provider", configuration.provider]
-            if let account = configuration.account { args += ["--account", account] }
-            if let model = configuration.model { args += ["--model", model] }
-            if let language = configuration.language { args += ["--language", language] }
-            let data = try await execute(args, nil) { _ in }
+            let data = try await execute(configuration.transcribeArguments(id: saved.id, revision: saved.revision), nil) { _ in }
             try Task.checkCancellation()
             let updated = try JSONDecoder().decode(WidgetVoiceNoteResult.self, from: data).note
             put(updated)

@@ -51,6 +51,16 @@ struct WidgetVoiceNoteSnapshot: Decodable {
 struct WidgetVoiceNoteResult: Decodable { let note: WidgetVoiceNote }
 
 public struct WidgetVoiceNoteSettings: Sendable {
+    /// The `transcribe` command line. An empty setting is left out: it passed `--language ""`, which the vault key
+    /// window then showed as a bare `--language.` (Martin's screenshot, 2026-10-23).
+    func transcribeArguments(id: String, revision: Int) -> [String] {
+        var args = ["transcribe", id, "--revision", String(revision), "--provider", provider]
+        for (flag, value) in [("--account", account), ("--model", model), ("--language", language)] {
+            if let value, !value.isEmpty { args += [flag, value] }
+        }
+        return args
+    }
+
     public var provider: String
     public var account: String?
     public var model: String?

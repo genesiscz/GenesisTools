@@ -303,7 +303,7 @@ export function redactCredentialFields(value: unknown): unknown {
 /** `tools <tool> <args>`, with credentials redacted before cutting to a length a window can show. */
 export function currentCommandLine(argv: string[] = process.argv, max = 300): string {
     const words = redactCredentialArgs(["tools", currentToolName(argv), ...argv.slice(2)]).map((word) =>
-        word.includes(" ") ? `"${word}"` : word
+        word === "" || word.includes(" ") ? `"${word}"` : word
     );
     const line = words.join(" ");
 
