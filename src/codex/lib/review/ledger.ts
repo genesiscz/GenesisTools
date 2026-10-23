@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { codexRoot } from "@genesiscz/utils/codex/worker-paths";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -135,12 +135,39 @@ export function appendReviewRecords(
 ): { ok: true } | { ok: false; error: string } {
     try {
         mkdirSync(dirname(path), { recursive: true });
-        appendFileSync(path, records.map((record) => `${SafeJSON.stringify(record, { jsonl: true })}\n`).join(""));
+        // A torn last line (a full disk or a killed writer) must stay its own line: appended onto, it would swallow
+        // this batch's first record, and a redone import's turns would fold into the old start's row.
+        const lead = endsMidLine(path) ? "\n" : "";
+        appendFileSync(
+            path,
+            lead + records.map((record) => `${SafeJSON.stringify(record, { jsonl: true })}\n`).join("")
+        );
         log.debug({ path, records: records.length }, "review ledger records written");
         return { ok: true };
     } catch (err) {
         log.warn({ err, path, records: records.length }, "review ledger write failed");
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+}
+
+/** True when the file exists, is not empty and its last byte is not a newline. */
+function endsMidLine(path: string): boolean {
+    if (!existsSync(path)) {
+        return false;
+    }
+
+    const fd = openSync(path, "r");
+    try {
+        const size = fstatSync(fd).size;
+        if (size === 0) {
+            return false;
+        }
+
+        const last = Buffer.alloc(1);
+        readSync(fd, last, 0, 1, size - 1);
+        return last[0] !== 0x0a;
+    } finally {
+        closeSync(fd);
     }
 }
 

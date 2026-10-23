@@ -926,6 +926,37 @@ describe("reviews import: verdicts and failed writes", () => {
         expect(again.status).toBe("skipped");
     });
 
+    test("a redo after a torn last line keeps the line boundary, so the old batch's turns never fold into the new row", async () => {
+        const ledgerPath = join(mkdtempSync(join(tmpdir(), "gt-review-torn-")), "reviews.jsonl");
+        const { fake } = importReaders(ledgerPath);
+        const [first] = await importReviewSessions({
+            names: ["rv-full"],
+            base: "origin/master",
+            readers: fake,
+            ledgerPath,
+        });
+        expect(first.status).toBe("imported");
+        const clean = summarizeReviews(readReviewRecords(ledgerPath).records);
+
+        // The same batch again, torn inside its gate line: complete start and turn lines, then an unterminated fragment.
+        const text = readFileSync(ledgerPath, "utf8");
+        const gateAt = text.lastIndexOf('{"v":1');
+        writeFileSync(ledgerPath, text.slice(0, gateAt + 20));
+        const [redone] = await importReviewSessions({
+            names: ["rv-full"],
+            base: "origin/master",
+            readers: fake,
+            ledgerPath,
+        });
+        expect(redone.status).toBe("imported");
+
+        const { records, skipped } = readReviewRecords(ledgerPath);
+        expect(skipped).toBe(1);
+        expect(summarizeReviews(records).map((row) => [row.name, row.verdict, row.turns, row.costUsd])).toEqual(
+            clean.map((row) => [row.name, row.verdict, row.turns, row.costUsd])
+        );
+    });
+
     test("tools codex reviews import exits 1 for a missing session in table and --json output alike", async () => {
         const home = mkdtempSync(join(tmpdir(), "gt-review-import-cli-"));
         const previousExitCode = process.exitCode;
