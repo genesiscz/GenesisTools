@@ -25,6 +25,8 @@ export interface NativeRecorderOptions {
     excludeWindowIds?: number[];
     /** The recorder's frame rate while something moves (0.5–30). */
     fps?: number;
+    /** False hides the red border around what is recorded (it never shows in the movie either way). */
+    indicator?: boolean;
 }
 
 /** The capture spec one segment records: isolated windows or an app's windows, or a whole display. */
@@ -66,6 +68,10 @@ export function segmentCaptureSpec({
     }
 
     spec.maxFrames = 1;
+    if (options.indicator === false) {
+        spec.indicator = false;
+    }
+
     if (options.excludeWindowIds?.length) {
         spec.excludeWindowIds = options.excludeWindowIds;
     }

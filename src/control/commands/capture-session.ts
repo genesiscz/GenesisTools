@@ -28,6 +28,8 @@ interface SessionFlags {
     target?: string;
     excludeWindowIds?: string;
     fps?: string;
+    /** Commander's `--no-indicator`: true unless the flag is given. */
+    indicator?: boolean;
     maxSeconds?: string;
     output?: string;
 }
@@ -138,6 +140,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
         )
         .option("--exclude-window-ids <ids>", "CG window ids the movie never shows (the host's own controls)")
         .option("--fps <n>", "Frame rate while something moves, 0.5–30", "15")
+        .option("--no-indicator", "Hide the red border around what is recorded (never in the movie either way)")
         .option("--max-seconds <n>", `Longest recording, 1–${RECORDING_SESSION_MAX_SECONDS} s`)
         .option("--output <path>", "Where the joined movie goes (default ~/.genesis-tools/control/recordings/)")
         .action(async (flags: SessionFlags) => {
@@ -182,6 +185,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
                     recorder: nativeSegmentRecorder({
                         excludeWindowIds: parseIds(flags.excludeWindowIds),
                         fps: boundedNumber(flags.fps, "--fps", 0.5, 30),
+                        indicator: flags.indicator,
                     }),
                     join: ffmpegSegmentJoiner,
                     emit,
