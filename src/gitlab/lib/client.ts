@@ -524,6 +524,9 @@ export interface GitLabUser {
     name: string;
     web_url: string;
     state?: string;
+    /** Only `/user` (the token owner) returns these two. */
+    email?: string;
+    commit_email?: string;
 }
 
 export interface GitLabProject {

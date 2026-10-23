@@ -202,7 +202,7 @@ Fixed in the next push.
 - **Actions**: `T` reply, reply-resolve, none; `Y` reply, none; `D` keep, reword, move, delete; `N` comment, none.
 - **Anchors** carry the text of the line: `check` refuses a line outside the diff, or a line whose text differs, and names the line where that text really is.
 - **`check`** also wants a `[NN%]` badge on every verdict, the text each action sends, and the configured `review.draftRules`.
-- **`render`**: quoted comments are never shortened; text meant to be posted is a fenced block indented by three spaces (display only). An answer in my own thread is signed `[NN%] <agent>:` from its badge (`--agent`, default `Opus`).
+- **`render`**: quoted comments are never shortened; text meant to be posted is a fenced block indented by three spaces (display only). An answer in my own thread is signed `[NN%] <agent>:` from its badge, and `--proposal` puts the same name into `author.agent` (`--agent`, default `$GENESIS_TOOLS_AGENT`, else `Opus`). A review merged from two models names both, e.g. `--agent "Opus and Fable"`.
 - **`comments post`**: a dry run lists each step; `--apply` posts them as drafts, stops at the first failure, reads every result back and records it in the ledger. A D draft that `publish` turned into a thread is answered with `--answers D05`.
 
 ---

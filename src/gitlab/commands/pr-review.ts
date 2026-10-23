@@ -30,6 +30,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { type FetchReviewOptions, runFetchReview } from "@app/gitlab/commands/fetch-review";
 import { progress, type TargetOptions, withProject } from "@app/gitlab/commands/shared";
+import { defaultAgentName } from "@app/gitlab/lib/agent-name";
 import { currentUser, type ProjectApi, resolveProjectApi } from "@app/gitlab/lib/client";
 import { FETCH_FORMATS, loadConfig } from "@app/gitlab/lib/config";
 import { gitResult } from "@app/gitlab/lib/git";
@@ -184,7 +185,11 @@ export function registerPrReview(pr: Command): Command {
             .option("--expand <ids>", "Print these ids in full, e.g. F02,T01 (--give reads the saved facts)")
             .option("--refresh", "--give: with --expand, collect the facts again instead of reading the saved ones")
             .option("--proposal-skeleton", "--give: print a review proposal JSON pre-filled from the facts")
-            .option("--agent <name>", "--give: author.agent in the proposal skeleton", "agent")
+            .option(
+                "--agent <name>",
+                "--give: author.agent in the proposal skeleton (default: $GENESIS_TOOLS_AGENT, else agent)",
+                defaultAgentName("agent")
+            )
             .option("--no-impact", "--give: skip the scan of other open MRs")
             .option(
                 "--impact-limit <n>",

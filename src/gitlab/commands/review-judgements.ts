@@ -16,6 +16,7 @@ import { resolve } from "node:path";
 import { platform } from "node:process";
 import { pickMode } from "@app/gitlab/commands/pr-review";
 import { progress, type TargetOptions, withProject } from "@app/gitlab/commands/shared";
+import { defaultAgentName } from "@app/gitlab/lib/agent-name";
 import { resolveProjectApi } from "@app/gitlab/lib/client";
 import { loadConfig } from "@app/gitlab/lib/config";
 import { parseJudgementsFile, reportPathFor } from "@app/gitlab/lib/judgements";
@@ -131,7 +132,11 @@ export function registerReviewJudgements(review: Command): void {
                 "--repo <checkout>",
                 "The checkout file links and code views come from (default: the current directory)"
             )
-            .option("--agent <name>", "Who signs an answer in your own thread: [90%] <name>: …", "Opus")
+            .option(
+                "--agent <name>",
+                "Who signs: author.agent of the proposal and [90%] <name>: in your own thread (default: $GENESIS_TOOLS_AGENT, else Opus)",
+                defaultAgentName()
+            )
             .option("--context-lines <n>", "Lines around each thread's anchor (default: review.fetch.contextLines)")
     ).action(runRender);
 }
@@ -221,7 +226,11 @@ export function registerCommentsPost(comments: Command): void {
             .option("--do <ids>", "Run each item's Action, e.g. T01,D03,N01")
             .option("--answers <ids>", "Post each item's Proposed answer into my own thread (a D item after publish)")
             .option("--apply", "Post for real")
-            .option("--agent <name>", "Who signs an answer in your own thread: [90%] <name>: …", "Opus")
+            .option(
+                "--agent <name>",
+                "Who signs: author.agent of the proposal and [90%] <name>: in your own thread (default: $GENESIS_TOOLS_AGENT, else Opus)",
+                defaultAgentName()
+            )
     ).action(runPost);
 }
 

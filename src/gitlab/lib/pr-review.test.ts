@@ -4,6 +4,7 @@ import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { factsBaseName, factsPathOf } from "@app/gitlab/commands/pr-review";
+import { defaultAgentName } from "@app/gitlab/lib/agent-name";
 import type { ProjectApi } from "@app/gitlab/lib/client";
 import { mergeConfig, NEUTRAL_CONFIG } from "@app/gitlab/lib/config";
 import { applyRefs, emptyIdMap } from "@app/gitlab/lib/ids";
@@ -41,6 +42,7 @@ import type { DraftSummary } from "@app/gitlab/lib/review-drafts";
 import { collectThreadContext, type Discussion } from "@app/gitlab/lib/review-render";
 import { parseProposal } from "@app/hub/lib/proposal";
 import { type DetectProbes, detectGenesisTools, resetGenesisToolsCache } from "@genesiscz/utils/cli/genesis-tools";
+import { env } from "@genesiscz/utils/env";
 import { json2md } from "@genesiscz/utils/json2md";
 
 const GIT_DIFF = [
@@ -976,5 +978,24 @@ describe("the api impact source", () => {
         } finally {
             server.stop(true);
         }
+    });
+});
+
+describe("defaultAgentName", () => {
+    test("GENESIS_TOOLS_AGENT names the signer, trimmed", async () => {
+        await env.testing.withOverrides({ GENESIS_TOOLS_AGENT: "  Fable " }, async () => {
+            expect(defaultAgentName()).toBe("Fable");
+            expect(defaultAgentName("agent")).toBe("Fable");
+        });
+    });
+
+    test("an unset or blank variable falls back", async () => {
+        await env.testing.withOverrides({ GENESIS_TOOLS_AGENT: "   " }, async () => {
+            expect(defaultAgentName()).toBe("Opus");
+            expect(defaultAgentName("agent")).toBe("agent");
+        });
+        await env.testing.withOverrides({ GENESIS_TOOLS_AGENT: undefined }, async () => {
+            expect(defaultAgentName()).toBe("Opus");
+        });
     });
 });
