@@ -492,6 +492,9 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   `AVAudioEngine.isRunning` takes the engine lock that `start()` holds on the other queue, so the first fix still
   blocked the key tap for the whole start (21:14). Keep the state yourself (`running`, `starting`). The same holds
   for `NSSound.play()`: it waits for the output device, 0.8 s in the widget's alert; play it from a queue.
+- **The first read of `AVAudioEngine.mainMixerNode` creates the output unit and waits for CoreAudio too.** Clicky
+  wired its voices to the mixer in `init`, which cost 0.5 s on the main thread every time the settings face launched
+  (21:30). Create the nodes in `init`, attach and connect them on the start queue just before the first `start()`.
 
 ## A button that works once, and pictures that come out white — 2026-10-23 22:44
 
