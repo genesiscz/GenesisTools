@@ -309,6 +309,7 @@ private struct WidgetGeneralSettings: View {
                 }
             }
             .nativeSettingsAnchor("alerts")
+            WidgetAgentHooksCard(bridge: model.bridge)
             }
         }.task { model.refreshSettings() }
     }
@@ -771,6 +772,78 @@ private struct WidgetDictationSettings: View {
     }
     private func patch(_ value: [String: WidgetJSON]) {
         model.action(["action": "preferences", "patch": .object(value)])
+    }
+}
+
+/// What the Agents card reads from `tools agents hooks doctor --json`.
+private struct AgentHooksDoctor: Decodable {
+    struct Config: Decodable {
+        struct Decisions: Decodable { var questionNudge: String? }
+        var decisions: Decisions
+    }
+    var config: Config
+    var stopHookWired: Bool
+}
+
+/// The agents hooks' question nudge (`decisions.questionNudge` in `~/.genesis-tools/agents/hooks.json`), read and
+/// written through `tools agents hooks`. On writes `block`; a `warn` set from the CLI shows as on.
+private struct WidgetAgentHooksCard: View {
+    let bridge: ToolsBridge
+    @State private var nudge: String?
+    @State private var stopWired = true
+    @State private var busy = false
+    @State private var failure: String?
+
+    var body: some View {
+        NativeSettingsCard("Agents", subtitle: "Checks that run when a coding agent ends its turn.") {
+            NativeSettingsToggle(
+                "Remind agents to log decisions",
+                detail: "An agent that asks you to decide in its reply, without sending the decision to your inbox, is sent back once to send it.",
+                identifier: "widget.agentsQuestionNudge",
+                isOn: Binding(
+                    get: { (nudge ?? "off") != "off" },
+                    set: { on in Task { await run(["config", "set", "decisions.questionNudge", on ? "block" : "off", "--write"]) } }))
+            .disabled(nudge == nil || busy)
+            if (nudge ?? "off") != "off" && !stopWired {
+                Divider()
+                NativeSettingsRow("Stop hook not installed", detail: "The reminder runs in the agents' Stop hook, which is not in your Claude Code settings yet.") {
+                    Button("Install") { Task { await run(["install", "--write"]) } }
+                        .disabled(busy).nativeSettingsPointer()
+                }
+            }
+            if let failure {
+                Text(failure).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        do {
+            let result = try await bridge.run(subcommand: "agents", args: ["hooks", "doctor", "--json"], timeoutSeconds: 20)
+            guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
+            let doctor = try JSONDecoder().decode(AgentHooksDoctor.self, from: Data(result.stdout.utf8))
+            nudge = doctor.config.decisions.questionNudge ?? "off"
+            stopWired = doctor.stopHookWired
+            failure = nil
+        } catch {
+            if !Task.isCancelled { failure = "Could not read the agents hooks: \(error.localizedDescription)" }
+        }
+    }
+
+    /// One `tools agents hooks …` write, then a fresh read so the card shows what the file now holds.
+    private func run(_ args: [String]) async {
+        busy = true
+        defer { busy = false }
+        do {
+            let result = try await bridge.run(subcommand: "agents", args: ["hooks"] + args, timeoutSeconds: 30)
+            guard result.exitCode == 0 else { throw ToolsBridgeError.refused(result.stderr) }
+        } catch {
+            failure = error.localizedDescription
+            return
+        }
+        await load()
     }
 }
 
