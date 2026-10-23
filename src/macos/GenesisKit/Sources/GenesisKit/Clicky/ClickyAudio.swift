@@ -32,7 +32,7 @@ public enum ClickySynthesis {
 final class ClickyAudio {
     private let engine: AVAudioEngine
     private let format = AVAudioFormat(standardFormatWithSampleRate: ClickySynthesis.sampleRate, channels: 1)!
-    private var voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)] = []
+    private let voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)]
     private var buffers: [String: AVAudioPCMBuffer] = [:]
     private var cursor = 0
     private var idleStop: DispatchWorkItem?
@@ -50,10 +50,35 @@ final class ClickyAudio {
     private var stopAfterStart = false
     /// A hardware change stopped the engine while it was starting; the start then finished on a stopped engine.
     private var configChangedWhileStarting = false
+    /// The engine and its voices, used only on the start queue (or, rendering offline, on the caller's thread).
     private final class EngineBox: @unchecked Sendable {
         let engine: AVAudioEngine
-        init(_ engine: AVAudioEngine) { self.engine = engine }
+        let voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)]
+        let format: AVAudioFormat
+        private var wired = false
+
+        init(engine: AVAudioEngine, voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)], format: AVAudioFormat) {
+            self.engine = engine
+            self.voices = voices
+            self.format = format
+        }
+
+        /// Wires the voices once, then starts. The first `mainMixerNode` read creates the output unit, which waits for
+        /// CoreAudio: 0.5 s on the main thread when the settings face launched (HangWatch, 2026-10-23 21:30).
+        func start() throws {
+            if !wired {
+                for (player, rate) in voices {
+                    engine.attach(player)
+                    engine.attach(rate)
+                    engine.connect(player, to: rate, format: format)
+                    engine.connect(rate, to: engine.mainMixerNode, format: format)
+                }
+                wired = true
+            }
+            try engine.start()
+        }
     }
+    private let box: EngineBox
     private struct PackBank {
         let reference: ClickyPackReference
         let manifestHash: String
@@ -128,15 +153,9 @@ final class ClickyAudio {
 
     init(engine: AVAudioEngine = AVAudioEngine()) {
         self.engine = engine
-        for _ in 0..<12 {
-            let player = AVAudioPlayerNode()
-            let rate = AVAudioUnitVarispeed()
-            engine.attach(player)
-            engine.attach(rate)
-            engine.connect(player, to: rate, format: format)
-            engine.connect(rate, to: engine.mainMixerNode, format: format)
-            voices.append((player, rate))
-        }
+        let voices = (0..<12).map { _ in (AVAudioPlayerNode(), AVAudioUnitVarispeed()) }
+        self.voices = voices
+        box = EngineBox(engine: engine, voices: voices, format: format)
         for profile in ClickySwitch.allCases {
             for release in [false, true] {
                 for variant in 0..<3 {
@@ -150,7 +169,6 @@ final class ClickyAudio {
                 }
             }
         }
-        engine.prepare()
         // A hardware change stops the engine without telling `running`; the next click must start it again.
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -171,7 +189,7 @@ final class ClickyAudio {
         idleStop?.cancel()
         // Offline rendering (tests) starts at once: no hardware to wake.
         if !running, !starting, engine.isInManualRenderingMode {
-            try engine.start()
+            try box.start()
             running = true
         }
         guard running else {
@@ -189,11 +207,11 @@ final class ClickyAudio {
         stopAfterStart = false
         guard !starting else { return }
         starting = true
-        let box = EngineBox(engine)
+        let box = box
         startQueue.async {
             let begun = Date()
             var failure: Error?
-            do { try box.engine.start() } catch { failure = error }
+            do { try box.start() } catch { failure = error }
             let ms = Date().timeIntervalSince(begun) * 1000
             DispatchQueue.main.async { [weak self] in
                 MainActor.assumeIsolated {
@@ -253,6 +271,8 @@ final class ClickyAudio {
             stopAfterStart = true
             return
         }
+        // Never started: the voices are not wired yet, and a player outside an engine raises on stop.
+        guard running else { return }
         running = false
         for voice in voices { voice.0.stop() }
         engine.stop()
