@@ -784,7 +784,7 @@ function registerMods(hooks: Command): void {
                 [
                     "mods.git",
                     mods.git.enabled,
-                    `labels ${mods.git.labels} · up to ${mods.git.checkouts} checkouts · own folder ${mods.git.cwd}`,
+                    `labels ${mods.git.labels} · up to ${mods.git.checkouts} checkouts · own folder ${mods.git.cwd} · open ${mods.git.expand}`,
                 ],
                 ["mods.askRow", mods.askRow.enabled, ""],
                 ["mods.spinner", mods.spinner.enabled, ""],
@@ -797,7 +797,11 @@ function registerMods(hooks: Command): void {
                 ["mods.agentsBand", mods.agentsBand.enabled, `red past ${mods.agentsBand.warnMinutes} min`],
                 ["mods.hooks.tokens", mods.hooks.tokens, ""],
                 ["mods.hooks.dedupe", mods.hooks.dedupe, ""],
-                ["mods.sidebar.hints", mods.sidebar.hints, `feedback ${mods.sidebar.feedback}`],
+                [
+                    "mods.sidebar.hints",
+                    mods.sidebar.hints,
+                    `feedback ${mods.sidebar.feedback} · takes the keys ${mods.sidebar.focus === "command" ? "when a command opens it" : mods.sidebar.focus}`,
+                ],
             ];
 
             for (const [name, on, detail] of rows) {

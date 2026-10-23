@@ -18,7 +18,7 @@ import {
     writtenFiles,
 } from "../hooks/checkouts";
 import { openDecisions, stagedMessage } from "../hooks/decisions";
-import { forgetGenesisProbe, type GenesisProbe, probeOf } from "../hooks/genesis";
+import { forgetGenesisProbe, type GenesisProbe, genesisProbe, probeOf } from "../hooks/genesis";
 import {
     checkCounts,
     checksOf,
@@ -29,10 +29,12 @@ import {
     namesCheckouts,
     parseNumstat,
     parseStatus,
+    prChecksOf,
     wordingFor,
 } from "../hooks/git-band";
 import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
 import { targetFor } from "../hooks/links";
+import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live";
 import { forgetSettings, type Host } from "../hooks/shared";
 import { toolLabel } from "../hooks/spinner";
 
@@ -94,13 +96,38 @@ test("git band: status line and CI counts", async () => {
     ).toEqual({ passed: 2, failed: 1, pending: 2 });
     expect(
         checksOf([
-            { name: "lint", conclusion: "FAILURE" },
-            { context: "ci/deploy", state: "PENDING" },
+            { name: "lint", conclusion: "FAILURE", detailsUrl: "https://ci.example.test/run/1" },
+            { context: "ci/deploy", state: "PENDING", targetUrl: "https://deploy.example.test/2" },
         ])
     ).toEqual([
-        { name: "lint", verdict: "fail" },
-        { name: "ci/deploy", verdict: "pending" },
+        { name: "lint", verdict: "fail", description: "", link: "https://ci.example.test/run/1" },
+        { name: "ci/deploy", verdict: "pending", description: "", link: "https://deploy.example.test/2" },
     ]);
+    // `gh pr checks` carries the status's own words, which the rollup leaves out.
+    expect(
+        prChecksOf(
+            JSON.stringify([
+                { bucket: "pass", description: "", link: "https://ci.example.test/3", name: "Tests" },
+                {
+                    bucket: "fail",
+                    description: "Deployment was blocked",
+                    link: "https://deploy.example.test/4",
+                    name: "Deploy",
+                },
+                { bucket: "cancel", description: "", link: "", name: "Lint" },
+            ])
+        )
+    ).toEqual([
+        { name: "Tests", verdict: "pass", description: "", link: "https://ci.example.test/3" },
+        {
+            name: "Deploy",
+            verdict: "fail",
+            description: "Deployment was blocked",
+            link: "https://deploy.example.test/4",
+        },
+        { name: "Lint", verdict: "fail", description: "", link: "" },
+    ]);
+    expect(prChecksOf("no checks reported on the 'x' branch")).toBeUndefined();
     expect(hubUrlOf(ALL_LINKS, { url: "https://github.com/acme/widgets/pull/42", number: 42 })).toBe(
         "https://links.example.test/hub?pr=acme%2Fwidgets%2342"
     );
@@ -187,7 +214,11 @@ function checkoutHost(): Host {
     return {
         async run(argv, init) {
             if (argv.join(" ") === "zoxide query --list") {
-                return done("/home/test/notes\n/home/test/code/playground\n/home/test/code/play-old\n", 0);
+                // zoxide keeps the casing a `cd` typed: the same folder twice, and one folder that is gone.
+                return done(
+                    "/home/test/notes\n/home/test/code/playground\n/home/test/code/PlayGround\n/home/test/code/play-gone\n/home/test/code/play-old\n",
+                    0
+                );
             }
 
             if (argv[3] !== "check-ignore") {
@@ -306,10 +337,14 @@ test("git band: folders added by hand, and the folders proposed for them", async
         "/a/old-play",
         "/c/play/x",
     ]);
-    expect((await folderSuggestions(host, "playg")).map((found) => found.path)).toEqual(["/home/test/code/playground"]);
+    // One row per folder, in its casing on disk, and none for a folder that is gone.
+    expect(await folderSuggestions(host, "play")).toEqual([
+        { path: "/home/test/code/playground", from: "zoxide", isGit: true },
+        { path: "/home/test/code/play-old", from: "zoxide", isGit: false },
+    ]);
     expect(await folderSuggestions(host, "~/code/pl")).toEqual([
-        { path: "/home/test/code/play-old", from: "folder" },
-        { path: "/home/test/code/playground", from: "folder" },
+        { path: "/home/test/code/play-old", from: "folder", isGit: false },
+        { path: "/home/test/code/playground", from: "folder", isGit: true },
     ]);
 
     expect(await addCheckout(host, "~/notes")).toEqual({ error: "/home/test/notes is in no git checkout" });
@@ -334,7 +369,7 @@ test("git band: folders added by hand, and the folders proposed for them", async
     const typed = "/mod-git add playg";
     const rows = await gitBand.autocomplete?.(host, { text: typed, cursor: typed.length, token: "playg", start: 13 });
     expect(rows).toEqual([
-        { text: "/home/test/code/playground", label: "~/code/playground", description: "zoxide · git" },
+        { text: "/home/test/code/playground", label: "~/code/playground", description: "git checkout · zoxide" },
     ]);
     expect(await gitBand.autocomplete?.(host, { text: "playg", cursor: 5, token: "playg", start: 0 })).toEqual([]);
 
@@ -410,7 +445,14 @@ test("cache band: own row first, others only inside the warning window", async (
         { sessionId: "other", label: "b", lastAt: now - 55 * minute, ttlMs: 60 * minute, compactedAt: now - minute },
     ];
     expect(cacheRowsOf(compacted, "own", 10 * minute, now)).toEqual([
-        { sessionId: "own", label: "a", expiresAt: now + 10 * minute, own: true, compacted: true },
+        {
+            sessionId: "own",
+            label: "a",
+            expiresAt: now + 10 * minute,
+            own: true,
+            compacted: true,
+            compactedAt: now - 2 * minute,
+        },
     ]);
 
     // Dim above the caution window, yellow inside it, red inside the warning.
@@ -419,6 +461,53 @@ test("cache band: own row first, others only inside the warning window", async (
     expect(cacheTone(4 * minute, 10 * minute, 20 * minute)).toBe("red");
     // A caution under the warning means no yellow stage.
     expect(cacheTone(15 * minute, 10 * minute, 5 * minute)).toBeUndefined();
+});
+
+test("genesis probe: a run cut off by a newer render is not remembered", async () => {
+    forgetGenesisProbe();
+    let calls = 0;
+    const json = JSON.stringify({
+        router: { linkHost: "links.example.test" },
+        links: { hub: { opens: true } },
+    });
+    const host: Host = {
+        ...checkoutHost(),
+        async run() {
+            calls += 1;
+
+            if (calls === 1) {
+                throw new Error("HooksError: genesis-tools-mods: $.process.run(tools) aborted");
+            }
+
+            return { exitCode: 0, stdout: json, stderr: "", isStdoutTruncated: false, isStderrTruncated: false };
+        },
+    };
+
+    expect((await genesisProbe(host)).opens.hub).toBe(false);
+    // The abort said nothing about this Mac: the next call runs the probe again and finds the hub.
+    expect((await genesisProbe(host)).opens.hub).toBe(true);
+    expect(calls).toBe(2);
+    forgetGenesisProbe();
+});
+
+test("live times: the text, and when it next changes", async () => {
+    const now = 1_000_000;
+
+    forgetLive();
+    expect(liveAgo(now - 14_250, { now })).toBe("14s ago");
+    // "14s" reads "15s" in 750 ms.
+    expect(liveDue()).toBe(now + 750);
+    expect(liveSince(now - 125_000, now)).toBe("2m 05s");
+    expect(liveLeft(now + 4 * 60_000 + 500, { now })).toBe("4m 00s");
+    expect(liveDue()).toBe(now + 500);
+
+    // Minutes only change once a minute, so a dim chip does not redraw every second.
+    forgetLive();
+    expect(liveLeft(now + 4 * 60_000 + 500, { now, unit: "minute" })).toBe("5m");
+    expect(liveDue()).toBe(now + 500);
+    forgetLive();
+    expect(liveAgo(now - 3 * 60_000 - 1_000, { now, unit: "minute" })).toBe("3m ago");
+    expect(liveDue()).toBe(now + 59_000);
 });
 
 test("ask quote and spinner label", async () => {

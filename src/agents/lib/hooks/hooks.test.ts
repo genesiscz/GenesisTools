@@ -685,13 +685,22 @@ describe("applySetting", () => {
             labels: "minimal",
             checkouts: 3,
             cwd: "touched",
+            expand: "first",
         });
+        expect(set("mods.git.expand", "all").git.expand).toBe("all");
+        expect(() => set("mods.git.expand", "some")).toThrow("first, all or none");
         expect(() => set("mods.git.labels", "short")).toThrow("full or minimal");
         expect(set("mods.git.checkouts", "2").git.checkouts).toBe(2);
         expect(() => set("mods.git.checkouts", "9")).toThrow("1 to 6");
         expect(set("mods.git.cwd", "always").git.cwd).toBe("always");
         expect(() => set("mods.git.cwd", "never")).toThrow("touched or always");
-        expect(set("mods.sidebar.hints", "false").sidebar).toEqual({ hints: false, feedback: "line" });
+        expect(set("mods.sidebar.hints", "false").sidebar).toEqual({
+            hints: false,
+            feedback: "line",
+            focus: "command",
+        });
+        expect(set("mods.sidebar.focus", "never").sidebar.focus).toBe("never");
+        expect(() => set("mods.sidebar.focus", "sometimes")).toThrow("command, always or never");
         expect(set("mods.sidebar.feedback", "both").sidebar.feedback).toBe("both");
         expect(() => set("mods.sidebar.feedback", "popup")).toThrow("line, toast or both");
         expect(set("mods.links", "true").links.enabled).toBe(true);

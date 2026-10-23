@@ -16,28 +16,29 @@ import type { BandCheck, BandPr, GitBand, GitBandRows, GitBandSwitch } from "../
 import {
     addCheckout,
     addedCheckouts,
+    type FolderSuggestion,
     folderSuggestions,
     hideCheckout,
-    isInCheckout,
     noteToolCall,
     pickRoots,
     removeAdded,
     sessionCheckouts,
 } from "./checkouts";
 import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
-import { type Feature, type Host, isRecord, logMod, settingsOf, shortDuration } from "./shared";
+import { liveAgo } from "./live";
+import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
 import {
-    actionRow,
-    dimNote,
+    actionButton,
+    buttonsWidth,
     divider,
-    headerRow,
-    hintLine,
     type Kit,
+    line,
     listRow,
     type Pressable,
     plural,
     pressed,
     sidebarFrame,
+    wrapWords,
 } from "./sidebar";
 
 export const GIT_PANE = "mods-git";
@@ -123,19 +124,53 @@ export function checksOf(rollup: unknown): BandCheck[] {
         return {
             name: String(check.name || check.context || "check"),
             verdict: PASSED.includes(verdict) ? "pass" : FAILED.includes(verdict) ? "fail" : "pending",
+            description: typeof check.description === "string" ? check.description : "",
+            link: String(check.detailsUrl || check.targetUrl || ""),
         };
     });
 }
 
-/** CI counts out of `statusCheckRollup`. */
-export function checkCounts(rollup: unknown): { passed: number; failed: number; pending: number } {
-    const checks = checksOf(rollup);
+/**
+ * The checks out of `gh pr checks --json name,description,link,bucket`: one per check (a re-run counts once), with
+ * the description a commit status carries, which `statusCheckRollup` leaves out. Undefined when it is not that list.
+ */
+export function prChecksOf(stdout: string): BandCheck[] | undefined {
+    let parsed: unknown;
 
+    try {
+        parsed = JSON.parse(stdout);
+    } catch {
+        return undefined;
+    }
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+        return undefined;
+    }
+
+    return parsed.filter(isRecord).map((check) => {
+        const bucket = String(check.bucket ?? "");
+
+        return {
+            name: String(check.name || "check"),
+            verdict: bucket === "fail" || bucket === "cancel" ? "fail" : bucket === "pending" ? "pending" : "pass",
+            description: typeof check.description === "string" ? check.description : "",
+            link: typeof check.link === "string" ? check.link : "",
+        };
+    });
+}
+
+/** CI counts out of a list of checks. */
+export function countChecks(checks: readonly BandCheck[]): { passed: number; failed: number; pending: number } {
     return {
         passed: checks.filter((check) => check.verdict === "pass").length,
         failed: checks.filter((check) => check.verdict === "fail").length,
         pending: checks.filter((check) => check.verdict === "pending").length,
     };
+}
+
+/** CI counts out of `statusCheckRollup`. */
+export function checkCounts(rollup: unknown): { passed: number; failed: number; pending: number } {
+    return countChecks(checksOf(rollup));
 }
 
 async function prOf(host: Host, root: string, which: string, tracked: boolean): Promise<BandPr | null> {
@@ -176,6 +211,22 @@ async function prOf(host: Host, root: string, which: string, tracked: boolean): 
         }
     } catch {
         pr = null;
+    }
+
+    // A PR with a check to look at gets `gh pr checks`, which says why a status failed (`Deployment was blocked`)
+    // and counts a re-run once. It exits 1 with a failed check and 8 with a pending one, so its exit code says nothing.
+    if (pr && (pr.failed > 0 || pr.pending > 0)) {
+        const done = await host
+            .run(["gh", "pr", "checks", String(pr.number), "--json", "name,description,link,bucket"], {
+                cwd: root,
+                timeoutMs: 15_000,
+            })
+            .catch(() => undefined);
+        const checks = done ? prChecksOf(done.stdout) : undefined;
+
+        if (checks) {
+            pr = { ...pr, ...countChecks(checks), checks };
+        }
     }
 
     ghCache.set(key, { at: Date.now(), pr });
@@ -284,7 +335,7 @@ async function command(host: Host, args: string): Promise<string> {
     const [verb = "show", sub, ...rest] = args.trim().split(/\s+/).filter(Boolean);
 
     if (verb === "show") {
-        await host.togglePane(GIT_PANE, "Git");
+        await host.togglePane(GIT_PANE, "Git", "command");
 
         return "";
     }
@@ -421,13 +472,11 @@ export const gitBand: Feature = {
                 .map((root) => ({ text: root, label: tilde(root, home), description: "added to this session's band" }));
         }
 
-        return Promise.all(
-            (await folderSuggestions(host, e.token)).map(async (found) => ({
-                text: found.path,
-                label: tilde(found.path, home),
-                description: `${found.from}${(await isInCheckout(host, found.path)) ? " · git" : " · not in git"}`,
-            }))
-        );
+        return (await folderSuggestions(host, e.token)).map((found) => ({
+            text: found.path,
+            label: tilde(found.path, home),
+            description: `${found.isGit ? "git checkout" : "not in git"} · ${found.from}`,
+        }));
     },
     async afterTool(host, e) {
         if (!(await isOn(host))) {
@@ -634,7 +683,7 @@ export async function gitRows(
 
 /** What the add field holds, and the folders it proposes for it. */
 let addQuery = "";
-let addFound: { path: string; from: string }[] = [];
+let addFound: FolderSuggestion[] = [];
 let addAsked = 0;
 
 async function proposeFolders(host: Host, typed: string): Promise<void> {
@@ -655,6 +704,7 @@ async function addFolder(host: Host, typed: string): Promise<void> {
         return;
     }
 
+    await pressed(host, "git-add", `Adding ${text}…`, "busy");
     let done = await addCheckout(host, text);
 
     if ("error" in done && addFound[0]) {
@@ -662,14 +712,14 @@ async function addFolder(host: Host, typed: string): Promise<void> {
     }
 
     if ("error" in done) {
-        await pressed(host, "git-add", `Not added: ${done.error}`, false);
+        await pressed(host, "git-add", `Not added: ${done.error}.`, "error");
         return;
     }
 
     addQuery = "";
     addFound = [];
     await refresh(host, "sidebar add");
-    await pressed(host, "git-add", `Added ${checkoutName(done.root)} (${done.root}) to this session's band`);
+    await pressed(host, "git-add", `Added ${checkoutName(done.root)} (${done.root}) to this session's band.`);
 }
 
 /** Runs `open` on a URL or a folder and says how it went. */
@@ -677,16 +727,49 @@ async function openAndSay(host: Host, key: string, target: string, done: string)
     const run = await host.openUrl(target).catch((error: unknown) => error);
     const code = isRecord(run) && typeof run.exitCode === "number" ? run.exitCode : -1;
 
-    await pressed(host, key, code === 0 ? done : `open ${target} failed (exit ${code})`, code === 0);
+    await pressed(host, key, code === 0 ? done : `open ${target} failed (exit ${code}).`, code === 0 ? "ok" : "error");
 }
 
-/** Why a checkout is in the band, in words. */
+/** Why a checkout is in the band, in two or three words. */
 function whyText(band: GitBand): string {
-    return band.why === "added"
-        ? "added by hand"
-        : band.why === "worked"
-          ? "this session worked here"
-          : "this session's own folder";
+    return band.why === "added" ? "added by hand" : band.why === "worked" ? "worked in" : "own folder";
+}
+
+/** A checkout's state in short: `↑24 to push · ↓2 to pull · 16 changed +643 −1359`, or `clean`; zeros left out. */
+function stateParts(band: GitBand): { text: string; color?: string }[] {
+    const parts: { text: string; color?: string }[] = [];
+
+    if (band.ahead) {
+        parts.push({ text: `↑${band.ahead} to push`, color: "yellow" });
+    }
+
+    if (band.behind) {
+        parts.push({ text: `↓${band.behind} to pull`, color: "yellow" });
+    }
+
+    if (band.dirty) {
+        parts.push({ text: `${band.dirty} changed`, color: "magenta" });
+
+        if (band.added || band.removed) {
+            parts.push({ text: `+${band.added}`, color: "green" }, { text: `−${band.removed}`, color: "red" });
+        }
+    }
+
+    return parts.length ? parts : [{ text: "clean" }];
+}
+
+/** Runs a sidebar toggle: says it is busy, flips the row at once, stores it, reads git again, says it is done. */
+async function toggle(
+    host: Host,
+    key: string,
+    work: { busy: string; flip: () => void; store: () => Promise<unknown>; done: string }
+): Promise<void> {
+    await pressed(host, key, work.busy, "busy");
+    work.flip();
+    host.redraw();
+    await work.store();
+    await refresh(host, "sidebar");
+    await pressed(host, key, work.done);
 }
 
 /** The Git sidebar's actions for one checkout: Finder, and remove or hide where the band can drop it. */
@@ -696,8 +779,8 @@ function checkoutActions(host: Host, band: GitBand, at: string): Pressable[] {
         key: `${at}-finder`,
         label: "Finder",
         isDim: true,
-        hint: `show ${band.root} in Finder`,
-        onPress: () => void openAndSay(host, `${at}-finder`, band.root, `Opened ${band.root} in Finder`),
+        hint: `Show ${band.root} in Finder.`,
+        onPress: () => void openAndSay(host, `${at}-finder`, band.root, `Opened ${band.root} in Finder.`),
     };
 
     if (band.why === "added") {
@@ -707,11 +790,16 @@ function checkoutActions(host: Host, band: GitBand, at: string): Pressable[] {
                 key: `${at}-remove`,
                 label: "remove",
                 isDim: true,
-                hint: `take ${name} out of this session's band (you added it)`,
+                hint: `Take ${name} out of this session's band. You added it by hand.`,
                 onPress: () =>
-                    void removeAdded(host, band.root)
-                        .then(() => refresh(host, "sidebar remove"))
-                        .then(() => pressed(host, `${at}-remove`, `Removed ${name} from this session's band`)),
+                    void toggle(host, `${at}-remove`, {
+                        busy: `Removing ${name}…`,
+                        flip: () => {
+                            rows = rows.filter((row) => row.root !== band.root);
+                        },
+                        store: () => removeAdded(host, band.root),
+                        done: `Removed ${name} from this session's band.`,
+                    }),
             },
         ];
     }
@@ -723,16 +811,30 @@ function checkoutActions(host: Host, band: GitBand, at: string): Pressable[] {
                 key: `${at}-hide`,
                 label: "hide",
                 isDim: true,
-                hint: `drop ${name} from this session's band until the session writes a file or changes git there again`,
+                hint: `Hide ${name} until this session writes a file or changes git there again.`,
                 onPress: () =>
-                    void hideCheckout(host, band.root)
-                        .then(() => refresh(host, "sidebar hide"))
-                        .then(() => pressed(host, `${at}-hide`, `Hid ${name} from this session's band`)),
+                    void toggle(host, `${at}-hide`, {
+                        busy: `Hiding ${name}…`,
+                        flip: () => {
+                            rows = rows.filter((row) => row.root !== band.root);
+                        },
+                        store: () => hideCheckout(host, band.root),
+                        done: `Hid ${name}. It comes back when this session works there.`,
+                    }),
             },
         ];
     }
 
     return [finder];
+}
+
+/** Flips one flag of one PR in the rows the band and the sidebar draw, before git is read again. */
+function flipPr(root: string, n: number, flag: "tracked" | "hidden"): void {
+    rows = rows.map((row) =>
+        row.root === root
+            ? { ...row, prs: row.prs.map((pr) => (pr.number === n ? { ...pr, [flag]: !pr[flag] } : pr)) }
+            : row
+    );
 }
 
 /** The Git sidebar's actions for one PR: open, hub, copy link, track or untrack, and hide or show for the branch's own. */
@@ -744,39 +846,38 @@ function prActions(
     lists: { probe: GenesisProbe; tracked: number[]; hidden: number[] }
 ): Pressable[] {
     const n = pr.number;
+    const name = checkoutName(band.root);
     const link = `[#${n} (${pr.title})](${pr.url})`;
     const hub = hubUrlOf(lists.probe, pr);
-    const setList = async (key: string, list: number[], on: boolean) => {
-        const next = on ? [...new Set([...list, n])] : list.filter((held) => held !== n);
-        await host.storeSet(key, next);
+    const store = (key: string, list: number[], on: boolean) => async () => {
+        await host.storeSet(key, on ? [...new Set([...list, n])] : list.filter((held) => held !== n));
         await logMod(host, "git", {
             event: key.startsWith("git-band-hidden") ? "hide" : "track",
             on,
             n,
             root: band.root,
         });
-        await refresh(host, "sidebar");
     };
     const trackHint = pr.own
         ? pr.tracked
-            ? `stop keeping #${n} after a branch switch; it still shows while ${band.branch} is checked out (hide takes it out now)`
-            : `keep #${n} in this checkout's row after it leaves ${band.branch} (as /mod-git pr add ${n})`
-        : `take #${n} out of this checkout's row`;
+            ? `Stop keeping #${n} after a branch switch. It still shows while ${band.branch} is checked out.`
+            : `Keep #${n} in ${name}'s row even after ${name} switches to another branch.`
+        : `Take #${n} out of ${name}'s row.`;
     const actions: Pressable[] = [
         {
             key: `${at}-open`,
             label: "open",
             isPrimary: true,
-            hint: `open ${pr.url} in the browser`,
-            onPress: () => void openAndSay(host, `${at}-open`, pr.url, `Opened #${n} in the browser`),
+            hint: `Open #${n} in the browser: ${pr.url}`,
+            onPress: () => void openAndSay(host, `${at}-open`, pr.url, `Opened #${n} in the browser.`),
         },
         ...(hub
             ? [
                   {
                       key: `${at}-hub`,
                       label: "hub",
-                      hint: `open #${n} in the GenesisTools hub`,
-                      onPress: () => void openAndSay(host, `${at}-hub`, hub, `Opened #${n} in the hub`),
+                      hint: `Open #${n} in the GenesisTools hub.`,
+                      onPress: () => void openAndSay(host, `${at}-hub`, hub, `Opened #${n} in the hub.`),
                   },
               ]
             : []),
@@ -784,7 +885,7 @@ function prActions(
             key: `${at}-copy`,
             label: "copy link",
             isDim: true,
-            hint: `copy ${link}`,
+            hint: `Copy ${link}`,
             onPress: () =>
                 void host
                     .copy(link)
@@ -792,8 +893,8 @@ function prActions(
                         pressed(
                             host,
                             `${at}-copy`,
-                            result.isCopied ? `Copied ${link}` : `Not copied: ${result.reason}`,
-                            result.isCopied
+                            result.isCopied ? `Copied ${link}` : `Not copied: ${result.reason}.`,
+                            result.isCopied ? "ok" : "error"
                         )
                     ),
         },
@@ -803,17 +904,16 @@ function prActions(
             isDim: true,
             hint: trackHint,
             onPress: () =>
-                void setList(storeKey(band.root), lists.tracked, !pr.tracked).then(() =>
-                    pressed(
-                        host,
-                        `${at}-track`,
-                        pr.tracked
-                            ? pr.own
-                                ? `#${n} is no longer kept after a branch switch; it shows while ${band.branch} is checked out`
-                                : `#${n} is out of ${checkoutName(band.root)}'s row`
-                            : `#${n} stays in ${checkoutName(band.root)}'s row after a branch switch`
-                    )
-                ),
+                void toggle(host, `${at}-track`, {
+                    busy: pr.tracked ? `Untracking #${n}…` : `Tracking #${n}…`,
+                    flip: () => flipPr(band.root, n, "tracked"),
+                    store: store(storeKey(band.root), lists.tracked, !pr.tracked),
+                    done: pr.tracked
+                        ? pr.own
+                            ? `#${n} is no longer kept after a branch switch.`
+                            : `#${n} is out of ${name}'s row.`
+                        : `#${n} stays in ${name}'s row after a branch switch.`,
+                }),
         },
     ];
 
@@ -823,22 +923,278 @@ function prActions(
             label: pr.hidden ? "show" : "hide",
             isDim: true,
             hint: pr.hidden
-                ? `put #${n} back in the band`
-                : `take this branch's PR #${n} out of the band; it stays listed here, with show`,
+                ? `Put #${n} back in the band.`
+                : `Take #${n} out of the band. It stays listed here, with show.`,
             onPress: () =>
-                void setList(hiddenKey(band.root), lists.hidden, !pr.hidden).then(() =>
-                    pressed(host, `${at}-hide`, pr.hidden ? `#${n} is back in the band` : `#${n} is out of the band`)
-                ),
+                void toggle(host, `${at}-hide`, {
+                    busy: pr.hidden ? `Showing #${n}…` : `Hiding #${n}…`,
+                    flip: () => flipPr(band.root, n, "hidden"),
+                    store: store(hiddenKey(band.root), lists.hidden, !pr.hidden),
+                    done: pr.hidden ? `#${n} is back in the band.` : `#${n} is out of the band.`,
+                }),
         });
     }
 
     return actions;
 }
 
+/** Which checkouts the person opened or folded in the sidebar; the rest follow `mods.git.expand`. */
+const opened = new Set<string>();
+const folded = new Set<string>();
+
+function isOpen(root: string, index: number, expand: "first" | "all" | "none"): boolean {
+    if (opened.has(root)) {
+        return true;
+    }
+
+    if (folded.has(root)) {
+        return false;
+    }
+
+    return expand === "all" || (expand === "first" && index === 0);
+}
+
+type Lists = { probe: GenesisProbe; tracked: number[]; hidden: number[] };
+
+/** A checkout's state in signs for its folded line: `↑24 ●16`, `clean`. */
+function stateSigns(band: GitBand): { text: string; color?: string }[] {
+    const parts: { text: string; color?: string }[] = [];
+
+    if (band.ahead) {
+        parts.push({ text: `↑${band.ahead}`, color: "yellow" });
+    }
+
+    if (band.behind) {
+        parts.push({ text: `↓${band.behind}`, color: "yellow" });
+    }
+
+    if (band.dirty) {
+        parts.push({ text: `●${band.dirty}`, color: "magenta" });
+    }
+
+    if (parts.length === 0) {
+        parts.push({ text: "clean" });
+    }
+
+    for (const pr of band.prs.filter((held) => !held.hidden)) {
+        parts.push({ text: `#${pr.number} ${ciText(pr)}`, color: prColor(pr) });
+    }
+
+    return parts;
+}
+
 /**
- * The Git sidebar: the add field with the folders it proposes, then per checkout its name and branch, its counts,
- * its actions, and each PR with its title, its state, its failing and pending checks, and its actions. A focused
- * Button says under its row what a press does; after a press that line says what happened.
+ * A checkout's first line, one Button the width of the pane: the fold mark, its name and branch at the left, and at
+ * the right why it is here (open) or its state in signs (folded). The branch gives way first when the line is full.
+ */
+function checkoutLine(host: Host, kit: Kit, band: GitBand, at: string, isOpenNow: boolean): RenderElement {
+    const { Button, Text } = kit.ui;
+    const name = checkoutName(band.root);
+    const right = isOpenNow ? [{ text: whyText(band) }] : stateSigns(band);
+    const rightText = right.map((part) => part.text).join(" ");
+    const room = kit.columns - widthOf(rightText) - 1;
+    const labels = fitLabels(name, band.branch, room - 3);
+    const left = `${isOpenNow ? "▾" : "▸"} ${labels.name ?? name} ${labels.branch}`;
+    const pad = " ".repeat(Math.max(1, kit.columns - widthOf(left) - widthOf(rightText)));
+    const row: Pressable = {
+        key: `${at}-fold`,
+        label: name,
+        hint: isOpenNow ? `Fold ${name} to one line.` : `Open ${name}: its state, its actions and its pull requests.`,
+        onPress: () => {
+            if (isOpenNow) {
+                opened.delete(band.root);
+                folded.add(band.root);
+            } else {
+                folded.delete(band.root);
+                opened.add(band.root);
+            }
+
+            host.redraw();
+        },
+    };
+    kit.pressables?.push(row);
+
+    return line(
+        kit,
+        at,
+        <Button key={row.key} plain onPress={row.onPress}>
+            <Text dimColor>{isOpenNow ? "▾ " : "▸ "}</Text>
+            <Text color="cyan" bold>{`${labels.name ?? name} `}</Text>
+            <Text bold>{labels.branch}</Text>
+            <Text>{pad}</Text>
+            {right.map((part, index) => (
+                <Text key={`r-${index}`} color={part.color} dimColor={!part.color}>
+                    {`${index ? " " : ""}${part.text}`}
+                </Text>
+            ))}
+        </Button>
+    );
+}
+
+/** One failing or pending check, one line: its name, what it said, and a press that opens its page. */
+function checkLine(host: Host, kit: Kit, check: BandCheck, key: string): RenderElement {
+    const { Button, Text } = kit.ui;
+    const failed = check.verdict === "fail";
+    const row: Pressable = {
+        key,
+        label: check.name,
+        hint: check.link ? `Open the ${check.name} check: ${check.link}` : `${check.name} has no page to open.`,
+        onPress: () =>
+            void (check.link
+                ? openAndSay(host, key, check.link, `Opened the ${check.name} check.`)
+                : pressed(host, key, `${check.name} has no page to open.`, "error")),
+    };
+    kit.pressables?.push(row);
+
+    return line(
+        kit,
+        key,
+        <Button key={key} plain onPress={row.onPress}>
+            <Text>{"    "}</Text>
+            <Text color={failed ? "red" : "yellow"}>{`${failed ? "✗" : "…"} ${check.name}`}</Text>
+            {check.description ? <Text dimColor>{` · ${check.description}`}</Text> : null}
+        </Button>
+    );
+}
+
+/** A row of Buttons, indented, as the lines it takes: wrapped the way flex wraps them, greedily. */
+function buttonLines(kit: Kit, actions: Pressable[], key: string, indent: number): RenderElement[] {
+    const { Box } = kit.ui;
+    const room = kit.columns - indent;
+    const rowsOf: Pressable[][] = [];
+
+    for (const action of actions) {
+        const last = rowsOf.at(-1);
+
+        if (last && buttonsWidth([...last, action]) <= room) {
+            last.push(action);
+        } else {
+            rowsOf.push([action]);
+        }
+    }
+
+    return rowsOf.map((held, index) =>
+        line(
+            kit,
+            `${key}-${index}`,
+            <Box paddingLeft={indent} flexDirection="row" columnGap={1}>
+                {held.map((action) => actionButton(kit, action))}
+            </Box>
+        )
+    );
+}
+
+/** One PR under its open checkout, as lines: number and title (two lines at most), its state, its checks, its actions. */
+function prLines(host: Host, kit: Kit, band: GitBand, pr: BandPr, at: string, lists: Lists): RenderElement[] {
+    const { Text } = kit.ui;
+    const failing = pr.checks.filter((check) => check.verdict === "fail");
+    const pending = pr.checks.filter((check) => check.verdict === "pending");
+    const why = [
+        pr.own ? "this branch's PR" : "tracked",
+        pr.own && pr.tracked ? "kept after a switch" : "",
+        pr.hidden ? "hidden from the band" : "",
+    ]
+        .filter(Boolean)
+        .join(" · ");
+    const number = `#${pr.number} `;
+    const titleLines = wrapWords(`${number}${pr.title}`, kit.columns - 2, 2);
+    const out: RenderElement[] = [line(kit, `${at}-gap`, null)];
+
+    titleLines.forEach((text, index) => {
+        out.push(
+            line(
+                kit,
+                `${at}-title-${index}`,
+                index === 0 ? (
+                    <Text>
+                        <Text>{"  "}</Text>
+                        <Text color={prColor(pr)} bold>
+                            {number}
+                        </Text>
+                        <Text bold={!pr.hidden} dimColor={pr.hidden}>
+                            {text.slice(number.length)}
+                        </Text>
+                    </Text>
+                ) : (
+                    <Text bold={!pr.hidden} dimColor={pr.hidden}>{`  ${text}`}</Text>
+                )
+            )
+        );
+    });
+    out.push(
+        line(
+            kit,
+            `${at}-state`,
+            <Text dimColor>{`  ${pr.state.toLowerCase()}${pr.draft ? " draft" : ""} · ${ciText(pr)} · ${why}`}</Text>
+        )
+    );
+    failing.forEach((check, index) => {
+        out.push(checkLine(host, kit, check, `${at}-fail-${index}`));
+    });
+    pending.slice(0, 3).forEach((check, index) => {
+        out.push(checkLine(host, kit, check, `${at}-pending-${index}`));
+    });
+
+    if (pending.length > 3) {
+        out.push(line(kit, `${at}-more`, <Text dimColor>{`    … ${pending.length - 3} more pending`}</Text>));
+    }
+
+    out.push(...buttonLines(kit, prActions(host, band, pr, at, lists), `${at}-actions`, 2));
+
+    return out;
+}
+
+/** An open checkout's lines under its first one: its state with its actions at the right, then its PRs. */
+function openLines(host: Host, kit: Kit, band: GitBand, at: string, lists: Lists): RenderElement[] {
+    const { Box, Text } = kit.ui;
+    const actions = checkoutActions(host, band, at);
+    const state = stateParts(band);
+    const stateWidth = widthOf(state.map((part) => part.text).join(" ")) + 2;
+    const fits = stateWidth + 1 + buttonsWidth(actions) <= kit.columns;
+    const stateText = (
+        <Box flexShrink={1} minWidth={0}>
+            <Text wrap="truncate-end">
+                <Text>{"  "}</Text>
+                {state.map((part, index) => (
+                    <Text key={`s-${index}`} color={part.color} dimColor={!part.color}>
+                        {`${index ? " " : ""}${part.text}`}
+                    </Text>
+                ))}
+            </Text>
+        </Box>
+    );
+    const out: RenderElement[] = fits
+        ? [
+              line(
+                  kit,
+                  `${at}-state`,
+                  <Box flexDirection="row" flexGrow={1}>
+                      {stateText}
+                      <Box flexGrow={1} />
+                      <Box flexDirection="row" columnGap={1} flexShrink={0}>
+                          {actions.map((action) => actionButton(kit, action))}
+                      </Box>
+                  </Box>
+              ),
+          ]
+        : [line(kit, `${at}-state`, stateText), ...buttonLines(kit, actions, `${at}-actions`, 2)];
+
+    if (band.prs.length === 0) {
+        out.push(line(kit, `${at}-nopr`, <Text dimColor>{"  No pull request for this branch."}</Text>));
+    }
+
+    for (const pr of band.prs) {
+        out.push(...prLines(host, kit, band, pr, `${at}-pr-${pr.number}`, lists));
+    }
+
+    return out;
+}
+
+/**
+ * The Git sidebar, one row per line so the status bar can sit pinned at the pane's foot (`sidebar.tsx`): a header
+ * with when git was read and `refresh`, the add field with the folders it proposes, then each checkout, folded to
+ * one line or open with its state, actions and PRs. What the focused Button does, and what a press did, show in the
+ * status bar, so the focus ring moves nothing.
  */
 async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
     const { Box, Text } = kit.ui;
@@ -846,136 +1202,111 @@ async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
     const Input = "Input" in kit.ui ? kit.ui.Input : undefined;
     const shown = rows;
     const home = await host.env("HOME");
+    const expand = (await settingsOf(host)).git.expand;
+    const readAt = Math.max(0, ...shown.map((band) => band.at));
     const reload: Pressable = {
         key: "git-refresh",
         label: "refresh",
         isDim: true,
-        hint: "read every checkout's git state and PRs again now",
+        hint: "Read every checkout's git state and pull requests again.",
         onPress: () => {
             ghCache.clear();
-            void refresh(host, "sidebar").then(() =>
-                pressed(host, "git-refresh", `Read ${plural(rows.length, "checkout")} again`)
-            );
+            void pressed(host, "git-refresh", `Reading ${plural(rows.length, "checkout")}…`, "busy")
+                .then(() => refresh(host, "sidebar"))
+                .then(() => pressed(host, "git-refresh", `Read ${plural(rows.length, "checkout")} again.`));
         },
     };
     const field: Pressable = {
         key: "git-add",
-        label: "add",
-        hint: "type a path (/ or ~/) or part of a folder name; Enter adds the folder typed, else the first one below",
+        label: "add a folder",
+        hint: "Type a path (/ or ~/) or part of a folder name. Enter adds it, or the first match below it.",
         onPress: () => undefined,
     };
-    const proposed: Pressable[] = addFound.map((found, index) => ({
-        key: `git-add-${index}`,
-        label: tilde(found.path, home),
-        isDim: true,
-        hint: `add ${found.path} (${found.from})`,
-        onPress: () => void addFolder(host, found.path),
-    }));
+    kit.pressables?.push(field);
     const probe = await genesisProbe(host);
-    const sections = await Promise.all(
-        shown.map(async (band, index) => {
-            const at = `git-${index}`;
-            const lists = {
-                probe,
-                tracked: await trackedPrs(host, band.root),
-                hidden: await hiddenPrs(host, band.root),
-            };
-            const counts = [
-                `↑${band.ahead} to push`,
-                `↓${band.behind} to pull`,
-                band.dirty ? `${plural(band.dirty, "file")} changed +${band.added} −${band.removed}` : "clean",
-                whyText(band),
-                `read ${shortDuration(Date.now() - band.at)} ago`,
-            ].join(" · ");
-
-            return (
-                <Box key={at} flexDirection="column" marginTop={1}>
-                    {divider(kit)}
+    const lines: RenderElement[] = [
+        line(
+            kit,
+            "git-head",
+            <Box flexDirection="row" flexGrow={1}>
+                <Box flexShrink={1} minWidth={0}>
                     <Text wrap="truncate-end">
-                        <Text color="cyan">{`${checkoutName(band.root)} `}</Text>
-                        <Text bold>{band.branch}</Text>
+                        <Text bold>Git</Text>
+                        <Text dimColor>
+                            {shown.length
+                                ? ` · ${plural(shown.length, "checkout")} · read ${liveAgo(readAt)}`
+                                : " · no reading yet"}
+                        </Text>
                     </Text>
-                    <Text dimColor wrap="wrap">
-                        {counts}
-                    </Text>
-                    {actionRow(kit, checkoutActions(host, band, at))}
-                    {band.prs.length === 0 ? dimNote(kit, "No pull request for this branch.") : null}
-                    {band.prs.map((pr) => {
-                        const failing = pr.checks.filter((check) => check.verdict === "fail");
-                        const pending = pr.checks.filter((check) => check.verdict === "pending");
-                        const why = [
-                            pr.own ? "this branch's PR" : "tracked",
-                            pr.own && pr.tracked ? "kept after a branch switch" : "",
-                            pr.hidden ? "hidden from the band" : "",
-                        ]
-                            .filter(Boolean)
-                            .join(", ");
-
-                        return (
-                            <Box key={`${at}-pr-${pr.number}`} flexDirection="column" marginTop={1} marginLeft={2}>
-                                <Text wrap="wrap">
-                                    <Text color={prColor(pr)} bold>{`#${pr.number} `}</Text>
-                                    <Text bold dimColor={pr.hidden}>
-                                        {pr.title}
-                                    </Text>
-                                </Text>
-                                <Text dimColor wrap="wrap">
-                                    {`${pr.state.toLowerCase()}${pr.draft ? " draft" : ""} · ${ciText(pr)} · ${why}`}
-                                </Text>
-                                {failing.map((check) => (
-                                    <Text key={`fail-${check.name}`} color="red" wrap="truncate-end">
-                                        {`✗ ${check.name}`}
-                                    </Text>
-                                ))}
-                                {pending.slice(0, 6).map((check) => (
-                                    <Text key={`pending-${check.name}`} color="yellow" wrap="truncate-end">
-                                        {`… ${check.name}`}
-                                    </Text>
-                                ))}
-                                {pending.length > 6 ? dimNote(kit, `… ${pending.length - 6} more pending`) : null}
-                                {actionRow(kit, prActions(host, band, pr, `${at}-pr-${pr.number}`, lists))}
-                            </Box>
-                        );
-                    })}
                 </Box>
-            );
-        })
-    );
-
-    return sidebarFrame(
-        kit,
-        <Box flexDirection="column">
-            {headerRow(kit, dimNote(kit, shown.length ? plural(shown.length, "checkout") : "No git reading yet."), [
-                reload,
-            ])}
-            {hintLine(kit, [reload])}
-            <Box marginTop={1}>
-                {Input ? (
-                    <Input
-                        key="git-add"
-                        label="add a folder"
-                        placeholder="a path, or part of a folder name"
-                        value={addQuery}
-                        submitLabel="add"
-                        onInput={(value: string) => {
-                            addQuery = value;
-                            void proposeFolders(host, value);
-                        }}
-                        onSubmit={(value: string) => void addFolder(host, value)}
-                    />
-                ) : (
-                    dimNote(kit, "/mod-git add <folder> in the prompt adds a folder.")
-                )}
+                <Box flexGrow={1} />
+                <Box flexShrink={0}>{actionButton(kit, reload)}</Box>
             </Box>
-            {proposed.map((row) =>
+        ),
+        line(kit, "git-gap", null),
+        line(
+            kit,
+            "git-field",
+            Input ? (
+                <Input
+                    key="git-add"
+                    label="add a folder"
+                    placeholder="a path, or part of a folder name"
+                    value={addQuery}
+                    submitLabel="add"
+                    onInput={(value: string) => {
+                        addQuery = value;
+                        void proposeFolders(host, value);
+                    }}
+                    onSubmit={(value: string) => void addFolder(host, value)}
+                />
+            ) : (
+                <Text dimColor>/mod-git add &lt;folder&gt; in the prompt adds a folder.</Text>
+            )
+        ),
+    ];
+
+    addFound.forEach((found, index) => {
+        const row: Pressable = {
+            key: `git-add-${index}`,
+            label: tilde(found.path, home),
+            isDim: true,
+            hint: found.isGit
+                ? `Add ${found.path} to this session's band.`
+                : `${found.path} is in no git checkout, so the band cannot show it.`,
+            onPress: () => void addFolder(host, found.path),
+        };
+        lines.push(
+            line(
+                kit,
+                `git-found-${index}`,
                 listRow(
                     kit,
                     row,
-                    <Text dimColor>{addFound[Number(row.key.slice("git-add-".length))]?.from ?? ""}</Text>
+                    <Text color={found.isGit ? "green" : undefined} dimColor={!found.isGit}>
+                        {`${found.isGit ? "git" : "not in git"} · ${found.from}`}
+                    </Text>
                 )
-            )}
-            {hintLine(kit, [field, ...proposed])}
-            {sections}
-        </Box>
-    );
+            )
+        );
+    });
+
+    for (const [index, band] of shown.entries()) {
+        const at = `git-${index}`;
+        const isOpenNow = isOpen(band.root, index, expand);
+
+        lines.push(line(kit, `${at}-rule`, divider(kit)), checkoutLine(host, kit, band, at, isOpenNow));
+
+        if (isOpenNow) {
+            lines.push(
+                ...openLines(host, kit, band, at, {
+                    probe,
+                    tracked: await trackedPrs(host, band.root),
+                    hidden: await hiddenPrs(host, band.root),
+                })
+            );
+        }
+    }
+
+    return sidebarFrame(kit, <Box flexDirection="column">{lines}</Box>, lines.length);
 }

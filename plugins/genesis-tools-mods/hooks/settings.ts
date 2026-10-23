@@ -16,14 +16,20 @@ export interface ModsSettings {
     agentModel: { enabled: boolean; format: "label" | "short" };
     decisions: { enabled: boolean };
     links: { enabled: boolean };
-    git: { enabled: boolean; labels: "full" | "minimal"; checkouts: number; cwd: "touched" | "always" };
+    git: {
+        enabled: boolean;
+        labels: "full" | "minimal";
+        checkouts: number;
+        cwd: "touched" | "always";
+        expand: "first" | "all" | "none";
+    };
     askRow: { enabled: boolean };
     spinner: { enabled: boolean };
     cacheBand: { enabled: boolean; warnMinutes: number; cautionMinutes: number; others: boolean };
     tmpUsage: { enabled: boolean; minutes: number };
     agentsBand: { enabled: boolean; warnMinutes: number };
     hooks: { tokens: boolean; dedupe: boolean };
-    sidebar: { hints: boolean; feedback: "line" | "toast" | "both" };
+    sidebar: { hints: boolean; feedback: "line" | "toast" | "both"; focus: "command" | "always" | "never" };
 }
 
 /** Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`. */
@@ -33,14 +39,14 @@ export const MODS_DEFAULTS: ModsSettings = {
     agentModel: { enabled: false, format: "label" },
     decisions: { enabled: false },
     links: { enabled: false },
-    git: { enabled: false, labels: "full", checkouts: 3, cwd: "touched" },
+    git: { enabled: false, labels: "full", checkouts: 3, cwd: "touched", expand: "first" },
     askRow: { enabled: false },
     spinner: { enabled: false },
     cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
     tmpUsage: { enabled: false, minutes: 5 },
     agentsBand: { enabled: false, warnMinutes: 60 },
     hooks: { tokens: false, dedupe: false },
-    sidebar: { hints: true, feedback: "line" },
+    sidebar: { hints: true, feedback: "line", focus: "command" },
 };
 
 function whole(value: unknown, min: number, max: number, fallback: number): number {
@@ -111,6 +117,7 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
             labels: git.labels === "full" || git.labels === "minimal" ? git.labels : d.git.labels,
             checkouts: whole(git.checkouts, 1, 6, d.git.checkouts),
             cwd: git.cwd === "touched" || git.cwd === "always" ? git.cwd : d.git.cwd,
+            expand: git.expand === "first" || git.expand === "all" || git.expand === "none" ? git.expand : d.git.expand,
         },
         askRow: { enabled: enabled("askRow", d.askRow.enabled) },
         spinner: { enabled: enabled("spinner", d.spinner.enabled) },
@@ -135,6 +142,10 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
                 sidebar.feedback === "line" || sidebar.feedback === "toast" || sidebar.feedback === "both"
                     ? sidebar.feedback
                     : d.sidebar.feedback,
+            focus:
+                sidebar.focus === "command" || sidebar.focus === "always" || sidebar.focus === "never"
+                    ? sidebar.focus
+                    : d.sidebar.focus,
         },
     };
 }

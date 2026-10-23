@@ -150,7 +150,7 @@ export const decisions: Feature = {
                 }
 
                 const list = await refresh(host);
-                await host.openPane(DECISIONS_PANE, "Decisions");
+                await host.openPane(DECISIONS_PANE, "Decisions", "command");
                 await logMod(host, "decisions", { event: "open", open: list.map((decision) => decision.n) });
 
                 return list.length === 0 ? { text: "No open decisions in this session." } : {};

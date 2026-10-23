@@ -3,11 +3,14 @@
 // left dim, yellow under `mods.cacheBand.cautionMinutes` and red under `mods.cacheBand.warnMinutes`; with `others`
 // on, it also shows every other session whose cache runs out inside the yellow window, so a reply that would rewrite
 // a cold cache is visible from any open session. Reading the folder is a file listing, no process; it runs every 15 seconds.
+// The times are live (`live.ts`): a yellow or red chip counts each second, a dim one each minute. After a compaction
+// the chip says so and that the next reply starts a fresh cache, since there is nothing left to keep warm.
 import type { ElementTable, RenderElement } from "claude-code";
 import type { CacheRow, CacheRows } from "../types";
 import { genesisProbe } from "./genesis";
 import { idleDueAt } from "./idle";
-import { agentsDir, type Feature, type Host, isRecord, settingsOf, shortDuration } from "./shared";
+import { liveAgo, liveLeft } from "./live";
+import { agentsDir, type Feature, type Host, isRecord, settingsOf } from "./shared";
 
 let rows: CacheRows = [];
 
@@ -88,7 +91,14 @@ export function cacheRowsOf(marks: readonly CacheMark[], ownId: string, warnMs: 
         const compacted = held.compactedAt !== undefined && held.compactedAt >= held.lastAt;
 
         if (own) {
-            out.unshift({ sessionId: held.sessionId, label: held.label, expiresAt, own, compacted });
+            out.unshift({
+                sessionId: held.sessionId,
+                label: held.label,
+                expiresAt,
+                own,
+                compacted,
+                ...(compacted ? { compactedAt: held.compactedAt } : {}),
+            });
             continue;
         }
 
@@ -145,7 +155,6 @@ async function scan(host: Host): Promise<void> {
     }
 
     rows = cacheRowsOf(marks, ownId, alertMs(settings), Date.now());
-    // Redrawn on every pass, so a countdown under the warning moves each 15 s.
     host.redraw();
 }
 
@@ -223,10 +232,11 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
         const left = row.expiresAt - now;
         const name = row.own ? "cache" : `${row.label} cache`;
 
+        // After a compaction the next prompt is a new, small context: there is no cache worth keeping warm.
         if (row.compacted) {
             return (
                 <Text key={row.sessionId} dimColor>
-                    cache compacted
+                    {`compacted ${row.compactedAt ? liveAgo(row.compactedAt, { unit: "minute" }) : ""} · cache restarts`}
                 </Text>
             );
         }
@@ -242,10 +252,10 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
         const tone = cacheTone(left, warnMs, cautionMs);
         const text = tone ? (
             <Text backgroundColor={tone} color={tone === "red" ? "white" : "black"} bold>
-                {` ${name} ${shortDuration(left)} `}
+                {` ${name} ${liveLeft(row.expiresAt)} `}
             </Text>
         ) : (
-            <Text dimColor>{`${name} ${Math.ceil(left / 60_000)}m`}</Text>
+            <Text dimColor>{`${name} ${liveLeft(row.expiresAt, { unit: "minute" })}`}</Text>
         );
 
         // The own chip also counts down to the idle compaction, which comes before the cache runs out.
@@ -253,7 +263,7 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
         const idle =
             due !== undefined && due > now ? (
                 <Text color={due - now <= warnMs ? "cyan" : undefined} dimColor={due - now > warnMs}>
-                    {` · AC in ${shortDuration(due - now)}`}
+                    {` · AC in ${liveLeft(due)}`}
                 </Text>
             ) : null;
 
@@ -274,9 +284,18 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
         );
     };
 
+    // Every chip keeps its width and the row is cut at its right edge: a full row once squeezed the own chip to nothing.
     return (
-        <Box key="cache-band" flexDirection="row" gap={1}>
-            {held.map(cell)}
+        <Box key="cache-band" flexDirection="row" gap={1} overflow="hidden">
+            {held.map((row) => {
+                const drawn = cell(row);
+
+                return drawn ? (
+                    <Box key={`chip-${row.sessionId}`} flexShrink={0}>
+                        {drawn}
+                    </Box>
+                ) : null;
+            })}
         </Box>
     );
 }

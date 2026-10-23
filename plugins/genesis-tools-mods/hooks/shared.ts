@@ -45,9 +45,9 @@ export interface Host {
     fill: (args: PromptFillArgs) => Promise<unknown>;
     submit: (text: string) => Promise<unknown>;
     /** Opens a sidebar: docked beside the transcript in fullscreen, a dialog with the keyboard (Esc closes) otherwise. */
-    openPane: (id: string, title: string) => Promise<unknown>;
+    openPane: (id: string, title: string, from?: "command" | "band") => Promise<unknown>;
     /** Closes the sidebar when it shows, else opens it: what a press on its band chip does. */
-    togglePane: (id: string, title: string) => Promise<unknown>;
+    togglePane: (id: string, title: string, from?: "command" | "band") => Promise<unknown>;
     closePane: (id: string) => Promise<unknown>;
     copy: (text: string) => Promise<UiCopyResult>;
     /** Opens a URL with macOS `open`: a browser page, or a genesis.tools route. */

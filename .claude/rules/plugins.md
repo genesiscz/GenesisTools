@@ -18,6 +18,11 @@ Loaded by Claude Code when you read, write or edit a file under `plugins/` or `.
   one per session (2026-10-23, 18:44). Each save reloads every session, a half-finished edit too: on 2026-10-23 a
   session drew four git rows for a moment, because `git-band.tsx` already read a setting that `settings.ts` did not
   have yet. Finish the files of one change before you save the one that depends on them.
+- **Never start slow work from a mods `ui.render` hook.** The engine aborts a render's in-flight `$` calls when a newer
+  render of the same view replaces it (`$.process.run(...) aborted`), and the band redraws every second while a live
+  time shows. On 2026-10-23 the first `tools genesis-tools probe` ran from a render, was aborted, and the plugin kept
+  "no link opens" for 30 minutes in every session. Start such work from `session.start` or a timer
+  (`primeGenesisProbe`), let a render only read the result, and never remember a result that came from an abort.
 - **Skills load live from this working tree** when the session's folder is the marketplace folder (this repo). Any other folder gets the version-keyed cache: `claude plugin update genesis-tools@genesis-tools` refreshes it, and `/reload-plugins` re-reads it in the middle of a session.
 - **Codex runs this plugin too, hooks included**, from its own version-keyed cache (`~/.codex/plugins/cache/genesis-tools/genesis-tools/<version>/`, one per Codex home). An edit reaches Codex only after `codex plugin add genesis-tools@genesis-tools` in each home (`CODEX_HOME=<home> codex plugin add …`). A hook decides the harness from its payload, never from the environment (`hooks/harness.ts`).
 - **A hook runs on every matching tool call.** Keep it to one `bun` start (about 35 ms) and exit early when it has nothing to say. A PostToolUse payload from a subagent carries `agent_id`; key per-agent state on it.

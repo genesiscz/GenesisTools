@@ -5,10 +5,11 @@
 // with its controls at the right edge, list rows that are plain dim Buttons with their counts at the right edge,
 // dim rules and dim notes.
 //
-// A Button with a `hint` says what it does on a dim line under its row while the focus ring is on it (Tab, the
-// arrows, a click; the engine runs no plugin code on mere hover). After a press, `pressed()` puts what happened on
-// that line instead, in green or red, until the ring moves or 20 seconds pass. `mods.sidebar.hints` and
-// `mods.sidebar.feedback` switch them.
+// A Button with a `hint` says what it does in the sidebar's status bar: two rows of its own under a rule at the
+// bottom, so nothing above moves when the focus ring does. It shows, in order: what the last press did (`pressed()`:
+// busy, done or failed) until the ring moves or 20 seconds pass, the focused Button's hint (Tab, the arrows, a click;
+// the engine runs no plugin code on mere hover), else how to reach the hints. Docked, the body fills the pane, so the
+// bar sits at its foot. `mods.sidebar.hints` and `mods.sidebar.feedback` switch them.
 import type { ElementTable, RenderElement } from "claude-code";
 import { type Host, settingsOf } from "./shared";
 
@@ -18,10 +19,16 @@ export interface Kit {
     columns: number;
     rows: number;
     placement: "dock" | "inline";
+    /** Whether the pane holds the keyboard. */
+    isFocused?: boolean;
     /** The key of the element the pane's focus ring is on. */
     focused?: string;
+    /** The ring moved onto one of the engine's own stops (the close mark, another pane's tab). */
+    isOnEngineStop?: boolean;
     /** Whether a focused Button's `hint` is drawn (`mods.sidebar.hints`). */
     hints?: boolean;
+    /** Every Button drawn in this pass, for the status bar. */
+    pressables?: Pressable[];
 }
 
 export interface Sidebar {
@@ -37,81 +44,179 @@ export interface Pressable {
     onPress: () => void;
     isDim?: boolean;
     isPrimary?: boolean;
-    /** Drawn under the row while the focus ring is on this Button: what a press does, with its object. */
+    /** The status bar's line while the focus ring is on this Button: what a press does, as a sentence. */
     hint?: string;
 }
 
 const FEEDBACK_MS = 20_000;
+const STATUS_ROWS = 2;
 
-/** What the last press did, for the line under its row. */
-let feedback: { key: string; text: string; isOk: boolean; at: number } | undefined;
+type Tone = "busy" | "ok" | "error";
+
+/** What the last press did, for the status bar. */
+let feedback: { key: string; text: string; tone: Tone; at: number } | undefined;
 const focusedIn = new Map<string, string | undefined>();
 
 /** Notes where a pane's focus ring went (`ui.focus`); a move off the last pressed Button ends its feedback. */
 export function noteFocus(paneId: string, element: string | undefined): void {
     focusedIn.set(paneId, element);
 
-    if (feedback && feedback.key !== element) {
+    if (feedback && feedback.tone !== "busy" && feedback.key !== element) {
         feedback = undefined;
     }
 }
 
-/** The key the pane's focus ring is on. */
-export function focusOf(paneId: string): string | undefined {
-    return focusedIn.get(paneId);
+/** The key the pane's focus ring is on; `onEngineStop` when a move took it to the engine's close mark or a tab. */
+export function focusOf(paneId: string): { key?: string; onEngineStop: boolean } {
+    const key = focusedIn.get(paneId);
+
+    return { key, onEngineStop: focusedIn.has(paneId) && key === undefined };
 }
 
-/** What a press did, on the line under the Button's row (`mods.sidebar.feedback` `line` or `both`). */
-export function showFeedback(key: string, text: string, isOk: boolean): void {
-    feedback = { key, text, isOk, at: Date.now() };
+/** Forgets where a pane's ring was: it opens again with the ring on nothing. */
+export function forgetFocus(paneId: string): void {
+    focusedIn.delete(paneId);
 }
 
-/** Says what a press did: on the line under its row, as a toast, or both (`mods.sidebar.feedback`). */
-export async function pressed(host: Host, key: string, text: string, isOk = true): Promise<void> {
+/**
+ * Says what a press did: in the status bar, as a toast, or both (`mods.sidebar.feedback`). `busy` is for the
+ * moment between the press and the result (a `gh` read takes a second); it never goes to a toast.
+ */
+export async function pressed(host: Host, key: string, text: string, tone: Tone | boolean = "ok"): Promise<void> {
+    const kind: Tone = tone === true ? "ok" : tone === false ? "error" : tone;
     const mode = (await settingsOf(host)).sidebar.feedback;
 
-    if (mode !== "toast") {
-        showFeedback(key, text, isOk);
+    if (mode !== "toast" || kind === "busy") {
+        feedback = { key, text, tone: kind, at: Date.now() };
     }
 
-    if (mode !== "line") {
-        host.toast(`${isOk ? "✓" : "✗"} ${text}`);
+    if (mode !== "line" && kind !== "busy") {
+        host.toast(`${kind === "ok" ? "✓" : "✗"} ${text}`);
     }
 
     host.redraw();
 }
 
-/** The line under a row of Buttons: what the last press of one of them did, else the focused one's hint. */
-export function hintLine(kit: Kit, actions: readonly Pressable[]): RenderElement | null {
-    const { Text } = kit.ui;
+/** The status bar's text: the last press's result, else the focused Button's hint, else how to reach the hints. */
+function statusOf(kit: Kit): { text: string; tone: Tone | "hint" | "rest"; label?: string } {
     const done = feedback;
 
-    if (done && Date.now() - done.at < FEEDBACK_MS && actions.some((action) => action.key === done.key)) {
-        return (
-            <Text color={done.isOk ? "green" : "red"} wrap="wrap">
-                {`${done.isOk ? "✓" : "✗"} ${done.text}`}
-            </Text>
-        );
+    // A busy line that no result replaced (the work threw) gives way after a minute.
+    if (done && Date.now() - done.at < (done.tone === "busy" ? 60_000 : FEEDBACK_MS)) {
+        return { text: done.text, tone: done.tone };
     }
 
-    const focused = kit.hints === false ? undefined : actions.find((action) => action.key === kit.focused);
+    const focused = kit.pressables?.find((action) => action.key === kit.focused);
 
-    return focused?.hint ? (
-        <Text dimColor wrap="wrap">
-            {`${focused.label}: ${focused.hint}`}
-        </Text>
-    ) : null;
+    if (kit.hints !== false && focused?.hint) {
+        return { text: focused.hint, tone: "hint", label: focused.label };
+    }
+
+    if (kit.isFocused && kit.isOnEngineStop) {
+        return { text: "Enter closes this sidebar. Tab moves on, Esc gives the keys back.", tone: "hint", label: "✕" };
+    }
+
+    return {
+        text: kit.isFocused
+            ? "Tab moves between buttons and this line says what each does. Enter presses, Esc gives the keys back."
+            : "Click in this pane (or open it with its slash command), then Tab: this line says what each button does.",
+        tone: "rest",
+    };
 }
 
-/** The sidebar's body; docked, one column of room at the right, as the diff mod leaves. */
-export function sidebarFrame(kit: Kit, body: RenderElement): RenderElement {
+/** The status bar: a rule, then two fixed rows. */
+function statusBar(kit: Kit): RenderElement {
+    const { Box, Text } = kit.ui;
+    const status = statusOf(kit);
+    const mark = { busy: "… ", ok: "✓ ", error: "✗ ", hint: "", rest: "" }[status.tone];
+    const color = { busy: "yellow", ok: "green", error: "red", hint: undefined, rest: undefined }[status.tone];
+
+    return (
+        <Box key="sidebar-status" flexDirection="column" flexShrink={0}>
+            {divider(kit)}
+            <Box height={STATUS_ROWS} overflow="hidden">
+                <Text wrap="wrap" color={color} dimColor={status.tone === "rest"}>
+                    {status.label ? <Text bold>{`${status.label} `}</Text> : null}
+                    {`${mark}${status.text}`}
+                </Text>
+            </Box>
+        </Box>
+    );
+}
+
+/** The rows the status bar takes: its rule and its two lines. */
+export const STATUS_BAR_ROWS = 1 + STATUS_ROWS;
+
+/**
+ * The sidebar's body. With a Button that has a hint, the status bar follows it. A body that says how many rows it
+ * takes (`bodyRows`, every line one row) and fits with the bar gets the bar pinned to the pane's foot, so it stays
+ * in view; a taller body scrolls, the bar after it. One column of room at the right when docked, as the diff mod leaves.
+ */
+export function sidebarFrame(kit: Kit, body: RenderElement, bodyRows?: number): RenderElement {
+    const { Box } = kit.ui;
+    const hasBar = Boolean(kit.pressables?.some((action) => action.hint));
+    const docked = kit.placement === "dock";
+    const pinned = hasBar && docked && bodyRows !== undefined && bodyRows + STATUS_BAR_ROWS <= kit.rows;
+
+    return (
+        <Box flexDirection="column" paddingRight={docked ? 1 : 0} {...(pinned ? { height: kit.rows } : {})}>
+            {body}
+            {pinned ? <Box flexGrow={1} /> : null}
+            {hasBar ? statusBar(kit) : null}
+        </Box>
+    );
+}
+
+/** One row of a counted body: whatever it holds, cut to one row. */
+export function line(kit: Kit, key: string, content: RenderElement | null): RenderElement {
     const { Box } = kit.ui;
 
     return (
-        <Box flexDirection="column" paddingRight={kit.placement === "dock" ? 1 : 0}>
-            {body}
+        <Box key={key} height={1} overflow="hidden" flexDirection="row">
+            {content}
         </Box>
     );
+}
+
+/** Text wrapped at word breaks into lines of `width` columns, at most `max` of them, the last cut with `…`. */
+export function wrapWords(text: string, width: number, max: number): string[] {
+    const room = Math.max(4, width);
+    const lines: string[] = [];
+    let current = "";
+
+    for (const word of text.split(/\s+/).filter(Boolean)) {
+        const next = current ? `${current} ${word}` : word;
+
+        if ([...next].length <= room) {
+            current = next;
+            continue;
+        }
+
+        if (current) {
+            lines.push(current);
+        }
+
+        current = [...word].length > room ? `${[...word].slice(0, room - 1).join("")}…` : word;
+    }
+
+    if (current) {
+        lines.push(current);
+    }
+
+    if (lines.length <= max) {
+        return lines;
+    }
+
+    const kept = lines.slice(0, max);
+    const last = [...(kept[max - 1] ?? "")];
+    kept[max - 1] = `${last.slice(0, Math.max(0, room - 1)).join("")}…`;
+
+    return kept;
+}
+
+/** The columns a row of Buttons takes: `[ label ]` each, one column between. */
+export function buttonsWidth(actions: readonly Pick<Pressable, "label">[]): number {
+    return actions.reduce((sum, action, index) => sum + [...action.label].length + 4 + (index ? 1 : 0), 0);
 }
 
 /** The first line: what the sidebar counts, a spacer, its controls at the right edge. */
@@ -132,6 +237,7 @@ export function headerRow(kit: Kit, left: RenderElement, controls: readonly Pres
 /** One list row: a plain Button as wide as its label, a spacer, then the tail at the right edge. */
 export function listRow(kit: Kit, row: Pressable, tail: RenderElement | null = null): RenderElement {
     const { Box, Button } = kit.ui;
+    kit.pressables?.push(row);
 
     return (
         <Box key={`${row.key}:row`} flexDirection="row">
@@ -178,6 +284,7 @@ export function sectionTitle(kit: Kit, title: string, note = ""): RenderElement 
 
 export function actionButton(kit: Kit, action: Pressable): RenderElement {
     const { Button } = kit.ui;
+    kit.pressables?.push(action);
 
     return (
         <Button
@@ -191,16 +298,13 @@ export function actionButton(kit: Kit, action: Pressable): RenderElement {
     );
 }
 
-/** A row of action Buttons, wrapped when the body is narrow, with the focused one's hint or the last press's result under it. */
+/** A row of action Buttons, wrapped when the body is narrow. */
 export function actionRow(kit: Kit, actions: readonly Pressable[]): RenderElement {
     const { Box } = kit.ui;
 
     return (
-        <Box flexDirection="column">
-            <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
-                {actions.map((action) => actionButton(kit, action))}
-            </Box>
-            {hintLine(kit, actions)}
+        <Box flexDirection="row" flexWrap="wrap" columnGap={1}>
+            {actions.map((action) => actionButton(kit, action))}
         </Box>
     );
 }

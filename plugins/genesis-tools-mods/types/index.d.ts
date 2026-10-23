@@ -27,6 +27,10 @@ export type StagedDecisions = Record<string, string>;
 export interface BandCheck {
     name: string;
     verdict: "pass" | "fail" | "pending";
+    /** What the check said about itself (`Deployment was blocked`); empty when it said nothing. */
+    description: string;
+    /** Its page: the run, or the status's target. */
+    link: string;
 }
 
 /** One pull request the git band shows. */
@@ -79,6 +83,8 @@ export interface CacheRow {
     own: boolean;
     /** The session compacted after its last turn: its next prompt starts a new, small context, so no countdown. */
     compacted: boolean;
+    /** When it compacted, while `compacted`. */
+    compactedAt?: number;
 }
 
 /** The rows of the cache band: this session's, then other sessions under the warning threshold. */

@@ -5,8 +5,10 @@
 //
 // The answer comes from `tools genesis-tools probe --json` (GenesisTools `src/utils/genesis-tools/probe.ts`, which
 // this file cannot import): the spawn proves that `tools` runs, and its JSON says which link kinds open. One run per
-// 30 minutes per session, about 0.2 s. Every link this plugin writes is built here, from the probe's link host, and
-// only for a kind that opens; any other file asks for one and gets undefined when it would be dead.
+// 30 minutes per session, about 0.2 s, started by `session.start` and a timer (`primeGenesisProbe`), never by a
+// render: the engine aborts a render hook's process when a newer render replaces it, and on 2026-10-23 that left
+// every session believing no link kind opened. Every link this plugin writes is built here, from the probe's link
+// host, and only for a kind that opens; any other file asks for one and gets undefined when it would be dead.
 import type { Host } from "./shared";
 
 export const LINK_KINDS = ["md", "finder", "hub", "claude-find"] as const;
@@ -58,7 +60,8 @@ export function probeOf(stdout: string): GenesisProbe | undefined {
     };
 }
 
-async function runProbe(host: Host): Promise<GenesisProbe> {
+/** Undefined when the run was cut off (the hook that started it was replaced), which says nothing about this Mac. */
+async function runProbe(host: Host): Promise<GenesisProbe | undefined> {
     try {
         const run = await host.run(["tools", "genesis-tools", "probe", "--json"], { timeoutMs: 20_000 });
 
@@ -69,25 +72,51 @@ async function runProbe(host: Host): Promise<GenesisProbe> {
 
         // 127: the shell found no `tools`. Any other code: it runs, and the probe failed.
         return { ...NOTHING, tools: run.exitCode !== 127 };
-    } catch {
+    } catch (error) {
+        // A render hook's `$` calls are aborted when a newer render replaces it (the live clock redraws each
+        // second): that run never reached `tools`, so nothing is remembered and the next caller asks again.
+        if (String(error).includes("aborted")) {
+            return undefined;
+        }
+
         // No `tools` on PATH: the spawn itself fails.
         return NOTHING;
     }
 }
 
-/** What this Mac has, probed at most every 30 minutes; concurrent callers share one run. */
-export async function genesisProbe(host: Host): Promise<GenesisProbe> {
-    if (held && Date.now() - held.at < MAX_AGE_MS) {
-        return held.value;
-    }
-
+function probeWith(host: Host): Promise<GenesisProbe> {
     pending ??= runProbe(host).then((value) => {
-        held = { at: Date.now(), value };
         pending = undefined;
+
+        if (value === undefined) {
+            return held?.value ?? NOTHING;
+        }
+
+        held = { at: Date.now(), value };
         return value;
     });
 
     return pending;
+}
+
+/**
+ * Runs the probe from the session's start, outside any render, and again every 30 minutes on a timer, so a render
+ * only ever reads the answer. `register.tsx` calls it from `session.start`.
+ */
+export function primeGenesisProbe(host: Host): void {
+    void probeWith(host);
+    host.every(MAX_AGE_MS, () => {
+        void probeWith(host);
+    });
+}
+
+/** What this Mac has: the last answer, or the run in flight; concurrent callers share one run. */
+export async function genesisProbe(host: Host): Promise<GenesisProbe> {
+    if (held && (Date.now() - held.at < MAX_AGE_MS || pending)) {
+        return held.value;
+    }
+
+    return probeWith(host);
 }
 
 /** Drops the remembered probe: a test sets up another Mac. */

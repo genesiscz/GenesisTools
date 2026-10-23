@@ -299,8 +299,15 @@ export interface ModsConfig {
      * The git band above the prompt: branch, unpushed, dirty, PRs with CI; `/mod-git` switches it per session. One
      * row per checkout the session wrote files or changed git state in, the last first, up to `checkouts`; the
      * session's own folder shows only when it worked there (`cwd: touched`) or first in every session (`always`).
+     * The Git sidebar folds each checkout to one line; `expand` says which start open: the first, all, or none.
      */
-    git: { enabled: boolean; labels: "full" | "minimal"; checkouts: number; cwd: "touched" | "always" };
+    git: {
+        enabled: boolean;
+        labels: "full" | "minimal";
+        checkouts: number;
+        cwd: "touched" | "always";
+        expand: "first" | "all" | "none";
+    };
     /** `[ask]` beside a finished tool row: quotes the row into the prompt. */
     askRow: { enabled: boolean };
     /** The running tool, its time and the working subagents on the spinner line. */
@@ -320,10 +327,11 @@ export interface ModsConfig {
      */
     hooks: { tokens: boolean; dedupe: boolean };
     /**
-     * The sidebars a band row opens: `hints` says under a row of buttons what the focused one does, `feedback` shows
-     * what a press did on that line (`line`), as a toast (`toast`), or both.
+     * The sidebars a band row opens: `hints` says in the status bar at a sidebar's foot what the focused button does,
+     * `feedback` shows what a press did there (`line`), as a toast (`toast`), or both, and `focus` says when a docked
+     * sidebar takes the keys as it opens: when a slash command opened it (`command`), `always`, or `never`.
      */
-    sidebar: { hints: boolean; feedback: "line" | "toast" | "both" };
+    sidebar: { hints: boolean; feedback: "line" | "toast" | "both"; focus: "command" | "always" | "never" };
 }
 
 /**
@@ -476,14 +484,14 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         agentModel: { enabled: false, format: "label" },
         decisions: { enabled: false },
         links: { enabled: false },
-        git: { enabled: false, labels: "full", checkouts: 3, cwd: "touched" },
+        git: { enabled: false, labels: "full", checkouts: 3, cwd: "touched", expand: "first" },
         askRow: { enabled: false },
         spinner: { enabled: false },
         cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
         tmpUsage: { enabled: false, minutes: 5 },
         agentsBand: { enabled: false, warnMinutes: 60 },
         hooks: { tokens: false, dedupe: false },
-        sidebar: { hints: true, feedback: "line" },
+        sidebar: { hints: true, feedback: "line", focus: "command" },
     },
     unpushed: { enabled: true, maxCommits: 3, maxAgeMinutes: 60, remindEveryMinutes: 30 },
     logPath: defaultLogPath(),
@@ -1116,6 +1124,8 @@ export function mergeMods(stored: unknown): ModsConfig {
             labels: git.labels === "full" || git.labels === "minimal" ? git.labels : base.git.labels,
             checkouts: minutesOr("mods.git.checkouts", git.checkouts, base.git.checkouts, 6),
             cwd: git.cwd === "touched" || git.cwd === "always" ? git.cwd : base.git.cwd,
+            expand:
+                git.expand === "first" || git.expand === "all" || git.expand === "none" ? git.expand : base.git.expand,
         },
         askRow: { enabled: enabled("askRow", base.askRow.enabled) },
         spinner: { enabled: enabled("spinner", base.spinner.enabled) },
@@ -1150,6 +1160,10 @@ export function mergeMods(stored: unknown): ModsConfig {
                 sidebar.feedback === "line" || sidebar.feedback === "toast" || sidebar.feedback === "both"
                     ? sidebar.feedback
                     : base.sidebar.feedback,
+            focus:
+                sidebar.focus === "command" || sidebar.focus === "always" || sidebar.focus === "never"
+                    ? sidebar.focus
+                    : base.sidebar.focus,
         },
     };
 }

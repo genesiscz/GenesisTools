@@ -276,18 +276,27 @@ checked against real use.
   `/mod-git remove <folder>` and the sidebar's `remove` take it out, and `hide` drops a worked-in checkout until
   the session works there again. In the sidebar, a PR's `track` keeps it in its checkout's line after a branch
   switch (`/mod-git pr add`); the branch's own PR shows anyway, so its `hide` takes it out of the band and `show`
-  puts it back.
-- `mods.sidebar` (`hints` on, `feedback` `line`, `toast` or `both`): in a sidebar, the line under a row of buttons
-  says what the focused one does, and after a press what happened (`✓ Copied [#507 (…)](…)`). The engine runs no
-  plugin code on hover, so the hint follows the focus ring: Tab and the arrows in a pane that holds the keyboard, or
-  a click. A pane docks beside the transcript only in a fullscreen session; elsewhere Claude Code draws it above the
-  prompt. The plugin cannot choose (`$.ui.open` takes no placement).
+  puts it back. The sidebar folds each checkout to one line with its state in signs (`▸ GenesisPlayground
+  feat/… ↑24 ●16 #98 ✓1`); Enter or a click opens it to its state, its actions and its PRs. `expand` (`first`,
+  `all` or `none`, default `first`) says which start open. A failing or pending check shows what it said
+  (`✗ Vercel · Deployment was blocked`, from `gh pr checks`) and opens its page on Enter.
+- `mods.sidebar` (`hints` on, `feedback` `line`, `toast` or `both`, `focus` `command`, `always` or `never`): a
+  sidebar ends in a status bar of its own, pinned to the pane's foot when the content fits, which says what the
+  focused button does and, after a press, what happened (`… Reading 3 checkouts…`, then `✓ Read 3 checkouts
+  again.`). Nothing above it moves when the focus does. The engine runs no plugin code on hover, so the bar follows
+  the focus ring: Tab moves it, Enter presses, Esc gives the keys back. `focus` says when a docked sidebar takes the
+  keys as it opens: `command` (the default) when its slash command (`/mod-git`) opened it, not on a band click, so
+  typing stays in the prompt. A pane docks beside the transcript only in a fullscreen session; elsewhere Claude Code
+  draws it above the prompt. The plugin cannot choose (`$.ui.open` takes no placement). Times in the sidebars and
+  the band are live (`hooks/live.ts`): a time with seconds redraws each second while it is on screen, one in
+  minutes each minute, and nothing redraws while no live time shows.
 - `mods.askRow`: `[ask]` beside a finished tool row puts the row, quoted, into the prompt.
 - `mods.spinner`: the spinner line names the running tool, its time and the working subagents.
 - `mods.cacheBand` (`cautionMinutes` 20, `warnMinutes` 10, `others`): the prompt cache countdown, yellow under
   `cautionMinutes` and red under `warnMinutes`, and the other sessions whose cache runs out within the yellow window. A press on another session's chip focuses the cmux pane it runs in.
-  The own chip adds `AC in 1m 22s` while the idle compaction is armed, and says `cache compacted` after a compaction,
-  since the next prompt then starts a new, small context; another session that compacted gives no warning.
+  The own chip adds `AC in 1m 22s` while the idle compaction is armed, and says `compacted 4m ago · cache restarts`
+  after a compaction: the next prompt then starts a new, small context, so there is no cache to keep warm. Another
+  session that compacted gives no warning.
 - `mods.tmpUsage` (`minutes` 5): the size of the session's `/tmp/cc` folder and the free disk.
 - `mods.agentsBand` (`warnMinutes` 60): one band row per working subagent with model, age, idle time and tool calls;
   more than three fold into one `▸ 8 agents` line. A press on an agent, or `/mod-agents`, opens the Agents sidebar:

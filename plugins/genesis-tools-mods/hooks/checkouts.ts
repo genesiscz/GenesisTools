@@ -10,6 +10,7 @@
 // The person can also add a folder by hand (`/mod-git add <folder>`, the Git sidebar's field): its checkout shows
 // in this session's band until removed. `folderSuggestions` proposes folders for that, from zoxide when it is
 // installed (`GenesisPlayg` finds the GenesisPlayground path) and from the folder a typed `/` or `~/` path names.
+import type { FsEntry } from "claude-code";
 import type { Host } from "./shared";
 
 export interface Touch {
@@ -448,8 +449,11 @@ export async function removeAdded(host: Host, typed: string): Promise<string | u
 }
 
 export interface FolderSuggestion {
+    /** The folder with the casing it has on disk. */
     path: string;
     from: "zoxide" | "folder";
+    /** It is in a git checkout, so `/mod-git add` takes it. */
+    isGit: boolean;
 }
 
 /** zoxide's folders, best first; none without zoxide. One `zoxide query --list` per minute. */
@@ -487,8 +491,35 @@ export function rankByName(dirs: readonly string[], typed: string): string[] {
 }
 
 /**
+ * The folder as it is on disk: the casing of each name, from its parent's listing, since zoxide keeps whatever casing
+ * a `cd` typed (`ReservineBack` and `Reservineback` on a case-blind disk). Undefined when it is gone.
+ */
+async function onDisk(
+    host: Host,
+    path: string,
+    listings: Map<string, Promise<FsEntry[]>>
+): Promise<string | undefined> {
+    const parent = parentOf(path);
+    const name = path.slice(path.lastIndexOf("/") + 1).toLowerCase();
+
+    if (!listings.has(parent)) {
+        listings.set(
+            parent,
+            host.list(parent).catch(() => [])
+        );
+    }
+
+    const entry = (await listings.get(parent))?.find(
+        (held) => held.name.toLowerCase() === name && (held.kind === "dir" || held.kind === "other")
+    );
+
+    return entry ? `${parent === "/" ? "" : parent}/${entry.name}` : undefined;
+}
+
+/**
  * Folders for what the person typed: for a `/` or `~/` path, the folders in the folder it names that start with
- * its last part, then zoxide's under it; for a name, zoxide's folders that match it.
+ * its last part, then zoxide's under it; for a name, zoxide's folders that match it. Each with its casing on disk,
+ * once, and gone ones left out.
  */
 export async function folderSuggestions(host: Host, typed: string, limit = 8): Promise<FolderSuggestion[]> {
     const text = typed.trim();
@@ -499,7 +530,7 @@ export async function folderSuggestions(host: Host, typed: string, limit = 8): P
 
     const home = await host.env("HOME");
     const path = absolute(text, home);
-    const found: FolderSuggestion[] = [];
+    const found: { path: string; from: FolderSuggestion["from"] }[] = [];
 
     if (path) {
         const dir = text.endsWith("/") ? path : parentOf(path);
@@ -516,27 +547,37 @@ export async function folderSuggestions(host: Host, typed: string, limit = 8): P
 
         found.sort((a, b) => a.path.localeCompare(b.path));
 
-        for (const dir of await zoxideDirs(host)) {
-            if (dir.startsWith(path) && dir !== path) {
-                found.push({ path: dir, from: "zoxide" });
+        for (const zdir of await zoxideDirs(host)) {
+            if (zdir.toLowerCase().startsWith(path.toLowerCase()) && zdir !== path) {
+                found.push({ path: zdir, from: "zoxide" });
             }
         }
     } else {
-        for (const dir of rankByName(await zoxideDirs(host), text)) {
-            found.push({ path: dir, from: "zoxide" });
+        for (const zdir of rankByName(await zoxideDirs(host), text)) {
+            found.push({ path: zdir, from: "zoxide" });
         }
     }
 
+    const listings = new Map<string, Promise<FsEntry[]>>();
     const seen = new Set<string>();
+    const out: FolderSuggestion[] = [];
 
-    return found
-        .filter((suggestion) => !seen.has(suggestion.path) && Boolean(seen.add(suggestion.path)))
-        .slice(0, limit);
-}
+    for (const candidate of found) {
+        if (out.length >= limit) {
+            break;
+        }
 
-/** Whether a folder is in a git checkout (the walk up is cached). */
-export async function isInCheckout(host: Host, path: string): Promise<boolean> {
-    return (await rootAbove(host, path)) !== null;
+        const real = candidate.from === "folder" ? candidate.path : await onDisk(host, candidate.path, listings);
+
+        if (!real || seen.has(real.toLowerCase())) {
+            continue;
+        }
+
+        seen.add(real.toLowerCase());
+        out.push({ path: real, from: candidate.from, isGit: (await rootAbove(host, real)) !== null });
+    }
+
+    return out;
 }
 
 /** Forgets this module's memory: a test sets up another session. */

@@ -75,12 +75,12 @@ export const SETTABLE_KEYS = [
     "mods.idleCompact.<enabled|minutes|minTokens>",
     "mods.agentModel.<enabled|format>",
     "mods.<decisions|links|git|askRow|spinner>.enabled",
-    "mods.git.<labels|checkouts|cwd>",
+    "mods.git.<labels|checkouts|cwd|expand>",
     "mods.cacheBand.<enabled|warnMinutes|cautionMinutes|others>",
     "mods.tmpUsage.<enabled|minutes>",
     "mods.agentsBand.<enabled|warnMinutes>",
     "mods.hooks.<tokens|dedupe>",
-    "mods.sidebar.<hints|feedback>",
+    "mods.sidebar.<hints|feedback|focus>",
 ] as const;
 
 /** The flat keys of before 2026-10-23, still taken; `mods.<feature>` alone means its `enabled`. */
@@ -143,9 +143,21 @@ function withMods(mods: ModsConfig, key: string, value: string): ModsConfig {
         }
 
         part[field] = value;
+    } else if (feature === "git" && field === "expand") {
+        if (value !== "first" && value !== "all" && value !== "none") {
+            throw new Error(`${key} takes first, all or none, not ${SafeJSON.stringify(value)}`);
+        }
+
+        part[field] = value;
     } else if (feature === "sidebar" && field === "feedback") {
         if (value !== "line" && value !== "toast" && value !== "both") {
             throw new Error(`${key} takes line, toast or both, not ${SafeJSON.stringify(value)}`);
+        }
+
+        part[field] = value;
+    } else if (feature === "sidebar" && field === "focus") {
+        if (value !== "command" && value !== "always" && value !== "never") {
+            throw new Error(`${key} takes command, always or never, not ${SafeJSON.stringify(value)}`);
         }
 
         part[field] = value;

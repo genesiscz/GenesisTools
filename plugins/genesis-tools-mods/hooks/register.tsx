@@ -16,10 +16,12 @@ import { askOnRow } from "./ask-row";
 import { bandTree } from "./band";
 import { cacheBand, cacheRow, markEnded } from "./cache-band";
 import { decisions } from "./decisions";
+import { primeGenesisProbe } from "./genesis";
 import { gitBand, gitRows } from "./git-band";
 import { hookLedger, hooksChip, hooksChipWidth, ledgerClassic } from "./hook-ledger";
 import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice, setIdleDueAt } from "./idle";
 import { linksStep, rememberToolPaths } from "./links";
+import { startLiveClock } from "./live";
 import {
     type CallSection,
     collapseGitSyncEnabled,
@@ -31,7 +33,7 @@ import {
     sectionsOfCalls,
 } from "./sections";
 import { agentsDir, type Feature, type Host, readHooksFile, settingsOf } from "./shared";
-import { focusOf, noteFocus } from "./sidebar";
+import { focusOf, forgetFocus, noteFocus } from "./sidebar";
 import { progressSuffix, spinner } from "./spinner";
 import { tmpRow, tmpUsage } from "./tmp-usage";
 
@@ -57,6 +59,28 @@ interface Diffs {
     omitted: string[];
 }
 
+/**
+ * A call's diff note never changes once the diff hook wrote it, and a tool row draws again on every redraw (the live
+ * clock's included), so a note read once is kept; a missing one is asked for again. The hooks file is read at most
+ * every 5 seconds.
+ */
+const noteText = new Map<string, string>();
+const NOTES_KEPT = 80;
+let hooksFileHeld: { at: number; dir: string; text: string | undefined } | undefined;
+
+async function hooksFileOf(host: Host, dir: string): Promise<string | undefined> {
+    const held = hooksFileHeld;
+
+    if (held && held.dir === dir && Date.now() - held.at < 5_000) {
+        return held.text;
+    }
+
+    const text = await readHooksFile(host, dir);
+    hooksFileHeld = { at: Date.now(), dir, text };
+
+    return text;
+}
+
 async function fullDiffs($: EngineInterface, calls: readonly { id: string; input: unknown }[]): Promise<Diffs> {
     const none: Diffs = { sections: [], syncs: new Map(), omitted: [] };
     const host = hostOf($);
@@ -66,7 +90,7 @@ async function fullDiffs($: EngineInterface, calls: readonly { id: string; input
         return none;
     }
 
-    const hooksFile = await readHooksFile(host, dir);
+    const hooksFile = await hooksFileOf(host, dir);
 
     if (!fullDiffEnabled(hooksFile)) {
         return none;
@@ -76,7 +100,23 @@ async function fullDiffs($: EngineInterface, calls: readonly { id: string; input
     const note = (id: string) => `${dir}/hook-diffs/${id}.md`;
     const { sections, omitted } = await sectionsOfCalls({
         ids,
-        read: (id) => $.fs.read(note(id)),
+        read: async (id) => {
+            const held = noteText.get(id);
+
+            if (held !== undefined) {
+                return held;
+            }
+
+            const text = await $.fs.read(note(id));
+            noteText.set(id, text);
+
+            // The rows on screen are a few dozen; the oldest note goes first.
+            if (noteText.size > NOTES_KEPT) {
+                noteText.delete(noteText.keys().next().value ?? id);
+            }
+
+            return text;
+        },
         maxChars: MAX_CHARS,
     });
     const syncs = new Map<string, string>();
@@ -350,11 +390,11 @@ function hostOf($: EngineInterface): Host {
         status: (text) => $.ui.status(text),
         fill: (args) => $.prompt.fill(args),
         submit: (text) => $.prompt.submit({ text }),
-        openPane: (id, title) => openSidebar($, id, title),
-        togglePane: async (id, title) => {
+        openPane: (id, title, from) => openSidebar($, id, title, from),
+        togglePane: async (id, title, from) => {
             const isShown = (await $.ui.panes()).some((pane) => pane.id === id && pane.isShown);
 
-            return isShown ? $.ui.close({ id }) : openSidebar($, id, title);
+            return isShown ? $.ui.close({ id }) : openSidebar($, id, title, from);
         },
         closePane: (id) => $.ui.close({ id }),
         copy: (text) => $.ui.copy({ text }),
@@ -372,10 +412,24 @@ let terminalRows = 30;
  * Docked beside the transcript, a sidebar leaves the keyboard on the prompt; as a dialog above the prompt it takes the
  * keyboard and closes on Escape, as the diff mod's dialog does.
  */
-function openSidebar($: EngineInterface, id: string, title: string) {
+/**
+ * Opens a sidebar. Above the prompt it takes the keys, and Esc closes it. Docked beside the transcript it takes them
+ * only as `mods.sidebar.focus` says (`command`: when a slash command opened it, typed at the keyboard; `always`;
+ * `never`), so a click on the band leaves the prompt typing; there Esc gives the keys back and the sidebar stays.
+ */
+async function openSidebar($: EngineInterface, id: string, title: string, from: "command" | "band" = "band") {
     const rows = Math.max(12, Math.floor(terminalRows * 0.6));
+    forgetFocus(id);
 
-    return $.ui.open(docksPanes === true ? { id, title } : { id, title, focus: true, closeOnEscape: true, rows });
+    if (docksPanes !== true) {
+        return $.ui.open({ id, title, focus: true, closeOnEscape: true, rows });
+    }
+
+    const focus = (await settingsOf(hostOf($))).sidebar.focus;
+
+    return $.ui.open(
+        focus === "always" || (focus === "command" && from === "command") ? { id, title, focus: true } : { id, title }
+    );
 }
 
 // The features that share events. The engine takes one unmatched hook per event from a plugin, so each event
@@ -387,6 +441,10 @@ export const register: Register = (on) => {
         const host = hostOf($);
         // A reload runs `session.start` again in the middle of a turn: mark the session at once, not at the next turn.
         await announceSession($);
+        // Times drawn with `liveAgo` / `liveLeft` redraw when their text changes.
+        startLiveClock(host);
+        // Which genesis.tools links open here, asked outside any render (a newer render aborts an older one's runs).
+        primeGenesisProbe(host);
 
         for (const feature of FEATURES) {
             for (const command of feature.commands ?? []) {
@@ -562,8 +620,11 @@ export const register: Register = (on) => {
             columns: Math.max(1, e.props.bodyColumns - (e.props.placement === "dock" ? 1 : 0)),
             rows: e.props.scroll.bodyRows,
             placement: e.props.placement,
-            focused: focusOf(e.requestId),
+            isFocused: e.props.isFocused,
+            focused: focusOf(e.requestId).key,
+            isOnEngineStop: focusOf(e.requestId).onEngineStop,
             hints: (await settingsOf(host)).sidebar.hints,
+            pressables: [],
         };
 
         return sidebar.draw(host, kit);

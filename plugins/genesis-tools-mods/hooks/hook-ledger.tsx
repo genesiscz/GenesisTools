@@ -8,7 +8,8 @@
 // one-line receipt. Each injection and each drop goes to `mods-log/hooks.jsonl`.
 import type { ElementTable, RenderElement } from "claude-code";
 import type { HookCount, HookLedger } from "../types";
-import { agentsDir, type Feature, type Host, isRecord, logMod, settingsOf, shortDuration } from "./shared";
+import { liveSince } from "./live";
+import { agentsDir, type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
 import { barText, dimNote, divider, headerRow, type Kit, listRow, plural, sectionTitle, sidebarFrame } from "./sidebar";
 
 export const HOOKS_PANE = "mods-hooks";
@@ -259,7 +260,7 @@ export const hookLedger: Feature = {
             name: "mod-hooks",
             description: "The Hooks sidebar: what the hooks handed the model, per event, with the latest injections",
             async run(host) {
-                await host.togglePane(HOOKS_PANE, "Hooks");
+                await host.togglePane(HOOKS_PANE, "Hooks", "command");
 
                 return {};
             },
@@ -302,7 +303,7 @@ export async function hooksChip(host: Host, ui: ElementTable): Promise<RenderEle
 }
 
 function ago(at: number, now: number): string {
-    return shortDuration(now - at);
+    return liveSince(at, now);
 }
 
 /** The Hooks sidebar: the totals, the count per event as bars, and the latest injections, each opening its text. */

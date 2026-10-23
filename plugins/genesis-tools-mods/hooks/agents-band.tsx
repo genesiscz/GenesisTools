@@ -10,7 +10,8 @@
 import type { AgentInfo, AgentSpawnInput, AgentSpawnResult, ElementTable, RenderElement } from "claude-code";
 import type { SpawnedAgents } from "../types";
 import { modelLabel } from "./agent-model";
-import { type Feature, type Host, isRecord, settingsOf, shortDuration } from "./shared";
+import { liveAgo, liveSince } from "./live";
+import { type Feature, type Host, isRecord, settingsOf } from "./shared";
 import {
     actionRow,
     dimNote,
@@ -84,7 +85,7 @@ export const agentsBand: Feature = {
             name: "mod-agents",
             description: "The Agents sidebar: every subagent with its model, recent tools, last words and actions",
             async run(host) {
-                await host.togglePane(AGENTS_PANE, "Agents");
+                await host.togglePane(AGENTS_PANE, "Agents", "command");
 
                 return {};
             },
@@ -221,6 +222,8 @@ interface AgentFacts {
     model: string | undefined;
     description: string;
     age: number | undefined;
+    /** When it started, for its live run time. */
+    startedAt: number | undefined;
     late: boolean;
     seen: ReturnType<typeof activity.get>;
 }
@@ -246,6 +249,7 @@ async function factsOf(host: Host, list: readonly AgentInfo[]): Promise<AgentFac
             model: model ? modelLabel(model, all.agentModel.format) : undefined,
             description: known?.description ?? bareDescription(agent.description),
             age,
+            startedAt: at,
             late: BUSY.has(agent.status) && age !== undefined && age > all.agentsBand.warnMinutes * 60_000,
             seen: activity.get(agent.id),
         };
@@ -257,10 +261,10 @@ function nameOf(facts: AgentFacts): string {
 }
 
 function tailOf(facts: AgentFacts, now: number): string {
-    const parts = [facts.age === undefined ? "" : shortDuration(facts.age)];
+    const parts = [facts.startedAt === undefined ? "" : liveSince(facts.startedAt, now)];
 
     if (facts.seen) {
-        parts.push(`idle ${shortDuration(now - facts.seen.lastAt)}`, plural(facts.seen.tools, "tool"));
+        parts.push(`idle ${liveSince(facts.seen.lastAt, now)}`, plural(facts.seen.tools, "tool"));
     }
 
     return parts.filter(Boolean).join(" · ");
@@ -413,9 +417,9 @@ async function detailOf(host: Host, kit: Kit, facts: AgentFacts, now: number): P
     const quoted = `"${facts.description}" (${agent.id})`;
     const facts1 = [agent.type, agent.status, agent.name, agent.id].filter(Boolean).join(" · ");
     const facts2 = [
-        facts.age === undefined ? "" : `ran ${shortDuration(facts.age)}`,
+        facts.startedAt === undefined ? "" : `ran ${liveSince(facts.startedAt, now)}`,
         seen ? plural(seen.tools, "tool call") : "",
-        seen ? `last ${seen.lastTool} ${shortDuration(now - seen.lastAt)} ago` : "",
+        seen ? `last ${seen.lastTool} ${liveAgo(seen.lastAt, { now })}` : "",
     ]
         .filter(Boolean)
         .join(" · ");
@@ -463,7 +467,7 @@ async function detailOf(host: Host, kit: Kit, facts: AgentFacts, now: number): P
                                 {call.label}
                             </Text>
                             <Box flexGrow={1} />
-                            <Text dimColor>{shortDuration(now - call.at)}</Text>
+                            <Text dimColor>{liveSince(call.at, now)}</Text>
                         </Box>
                     ))}
                 </Box>
