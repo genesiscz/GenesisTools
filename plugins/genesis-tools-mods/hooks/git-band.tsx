@@ -4,8 +4,11 @@
 // `/mod-git refresh`; `gh` answers are reused for 2 minutes. `/mod-git on|off|toggle` switches it for this
 // session, `mods.git.enabled` for every session. Each refresh and command goes to `mods-log/git.jsonl`.
 import type { ElementTable, RenderElement } from "claude-code";
-import type { BandPr, GitBand, GitBandLine, GitBandSwitch } from "../types";
-import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
+import type { BandCheck, BandPr, GitBand, GitBandLine, GitBandSwitch } from "../types";
+import { type Feature, type Host, isRecord, logMod, settingsOf, shortDuration } from "./shared";
+import { actionRow, dimNote, divider, headerRow, type Kit, sidebarFrame } from "./sidebar";
+
+export const GIT_PANE = "mods-git";
 
 /** The last refresh; null until one finished. */
 let line: GitBandLine = null;
@@ -37,29 +40,30 @@ export async function trackedPrs(host: Host, root: string): Promise<number[]> {
     return Array.isArray(held) ? held.filter((n): n is number => typeof n === "number") : [];
 }
 
-/** CI counts out of `statusCheckRollup`: a check run has `conclusion`, a commit status has `state`. */
-export function checkCounts(rollup: unknown): { passed: number; failed: number; pending: number } {
-    const counts = { passed: 0, failed: 0, pending: 0 };
+const PASSED = ["SUCCESS", "NEUTRAL", "SKIPPED"];
+const FAILED = ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"];
 
-    for (const check of Array.isArray(rollup) ? rollup : []) {
-        if (!isRecord(check)) {
-            continue;
-        }
-
+/** Each check of `statusCheckRollup`: a check run has `name` and `conclusion`, a commit status `context` and `state`. */
+export function checksOf(rollup: unknown): BandCheck[] {
+    return (Array.isArray(rollup) ? rollup : []).filter(isRecord).map((check) => {
         const verdict = String(check.conclusion || check.state || "").toUpperCase();
 
-        if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(verdict)) {
-            counts.passed++;
-        } else if (
-            ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"].includes(verdict)
-        ) {
-            counts.failed++;
-        } else {
-            counts.pending++;
-        }
-    }
+        return {
+            name: String(check.name || check.context || "check"),
+            verdict: PASSED.includes(verdict) ? "pass" : FAILED.includes(verdict) ? "fail" : "pending",
+        };
+    });
+}
 
-    return counts;
+/** CI counts out of `statusCheckRollup`. */
+export function checkCounts(rollup: unknown): { passed: number; failed: number; pending: number } {
+    const checks = checksOf(rollup);
+
+    return {
+        passed: checks.filter((check) => check.verdict === "pass").length,
+        failed: checks.filter((check) => check.verdict === "fail").length,
+        pending: checks.filter((check) => check.verdict === "pending").length,
+    };
 }
 
 async function prOf(host: Host, root: string, which: string, tracked: boolean): Promise<BandPr | null> {
@@ -93,6 +97,7 @@ async function prOf(host: Host, root: string, which: string, tracked: boolean): 
                 draft: parsed.isDraft === true,
                 tracked,
                 ...checkCounts(parsed.statusCheckRollup),
+                checks: checksOf(parsed.statusCheckRollup),
             };
         }
     } catch {
@@ -173,11 +178,17 @@ export function refresh(host: Host, why: string): Promise<void> {
     return refreshing;
 }
 
-const USAGE = "/mod-git on | off | toggle | refresh | status | pr add <n…> | pr rm <n…> | pr list";
+const USAGE = "/mod-git [show] | on | off | toggle | refresh | status | pr add <n…> | pr rm <n…> | pr list";
 
 /** The answer to `/mod-git <args>`. */
 async function command(host: Host, args: string): Promise<string> {
-    const [verb = "status", sub, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+    const [verb = "show", sub, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+
+    if (verb === "show") {
+        await host.togglePane(GIT_PANE, "Git");
+
+        return "";
+    }
 
     if (verb === "on" || verb === "off" || verb === "toggle") {
         const now = verb === "toggle" ? !(await isOn(host)) : verb === "on";
@@ -246,16 +257,18 @@ export const gitBand: Feature = {
     commands: [
         {
             name: "mod-git",
-            description: "The git band: on, off, toggle, refresh, status, pr add <n>, pr rm <n>, pr list",
+            description:
+                "The git band: no argument opens its sidebar; on, off, toggle, refresh, status, pr add <n>, pr rm <n>, pr list",
             argumentHint: "on|off|toggle|refresh|status|pr add <n>",
             async run(host, args) {
                 const text = await command(host, args);
                 await logMod(host, "git", { event: "command", args, answer: text });
 
-                return { text };
+                return text ? { text } : {};
             },
         },
     ],
+    sidebars: [{ id: GIT_PANE, title: "Git", draw: gitPane }],
     async afterTool(host, e) {
         if (e.tool === "Bash" && /(^|[\s;&|(])(git|gh)\s/.test(e.command) && (await isOn(host))) {
             void refresh(host, "tool");
@@ -273,7 +286,25 @@ function ciText(pr: BandPr): string {
     return parts.filter(Boolean).join(" ") || "no CI";
 }
 
-/** The band's git row, or null while the band is off or has nothing yet. */
+function prColor(pr: BandPr): string {
+    return pr.failed ? "red" : pr.pending ? "yellow" : pr.state === "MERGED" ? "magenta" : "green";
+}
+
+function prNote(pr: BandPr): string {
+    return `${pr.draft ? " draft" : ""}${pr.state === "OPEN" ? "" : ` ${pr.state.toLowerCase()}`} ${ciText(pr)}`;
+}
+
+/** `https://genesis.tools/hub?pr=owner%2Frepo%23507` out of the PR's GitHub URL; undefined for another forge. */
+export function hubUrlOf(pr: Pick<BandPr, "url" | "number">): string | undefined {
+    const slug = /github\.com\/([^/]+\/[^/]+)\/pull\//.exec(pr.url)?.[1];
+
+    return slug ? `https://genesis.tools/hub?pr=${encodeURIComponent(`${slug}#${pr.number}`)}` : undefined;
+}
+
+/**
+ * The band's git row, or null while the band is off or has nothing yet. Each PR is a Button (it inverts under the
+ * pointer, so it reads as one) that opens the Git sidebar; the sidebar opens the PR in the browser or the hub.
+ */
 export async function gitRow(host: Host, ui: ElementTable): Promise<RenderElement | null> {
     const band = line;
 
@@ -281,26 +312,133 @@ export async function gitRow(host: Host, ui: ElementTable): Promise<RenderElemen
         return null;
     }
 
-    const { Box, Link, Text } = ui;
+    const { Box, Button, Text } = ui;
     const sync = [band.ahead ? `↑${band.ahead}` : "", band.behind ? `↓${band.behind}` : ""].filter(Boolean).join(" ");
+    const open = () => void host.togglePane(GIT_PANE, "Git");
 
     return (
         <Box key="git-band" flexDirection="row" gap={1}>
-            <Text dimColor>⎇</Text>
-            <Text bold>{band.branch}</Text>
+            <Button key="git-branch" plain onPress={open}>
+                <Text dimColor>⎇ </Text>
+                <Text bold>{band.branch}</Text>
+            </Button>
             {sync ? <Text color="yellow">{sync}</Text> : null}
             {band.dirty ? <Text color="magenta">●{band.dirty}</Text> : <Text dimColor>clean</Text>}
             {band.prs.map((pr) => (
-                // A Link, so a click on `#507` opens the PR (asked for on 2026-10-23: "the PR is again not clickable").
-                <Link key={`pr-${pr.number}`} href={pr.url}>
-                    <Text
-                        color={pr.failed ? "red" : pr.pending ? "yellow" : pr.state === "MERGED" ? "magenta" : "green"}
-                        wrap="truncate-end"
-                    >
-                        {`· #${pr.number}${pr.draft ? " draft" : ""}${pr.state === "OPEN" ? "" : ` ${pr.state.toLowerCase()}`} ${ciText(pr)}`}
-                    </Text>
-                </Link>
+                <Button key={`pr-${pr.number}`} plain onPress={open}>
+                    <Text color={prColor(pr)} underline>{`#${pr.number}`}</Text>
+                    <Text color={prColor(pr)}>{prNote(pr)}</Text>
+                </Button>
             ))}
+        </Box>
+    );
+}
+
+/** The Git sidebar: the branch, then each PR with its title, its failing and pending checks, and its actions. */
+async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
+    const { Box, Text } = kit.ui;
+    const band = line;
+    const reload = {
+        key: "git-refresh",
+        label: "refresh",
+        isDim: true,
+        onPress: () => {
+            ghCache.clear();
+            void refresh(host, "sidebar");
+        },
+    };
+
+    if (!band) {
+        return sidebarFrame(kit, headerRow(kit, dimNote(kit, "No git reading yet."), [reload]));
+    }
+
+    const root = (await rootOf(host)) ?? "";
+    const tracked = root ? await trackedPrs(host, root) : [];
+    const setTracked = async (n: number, on: boolean) => {
+        const next = on ? [...new Set([...tracked, n])] : tracked.filter((held) => held !== n);
+        await host.storeSet(storeKey(root), next);
+        await logMod(host, "git", { event: on ? "track" : "untrack", n, from: "sidebar" });
+        await refresh(host, "sidebar");
+    };
+    const sync = [`↑${band.ahead}`, `↓${band.behind}`, band.dirty ? `${band.dirty} dirty` : "clean"].join(" · ");
+
+    return sidebarFrame(
+        kit,
+        <Box flexDirection="column">
+            {headerRow(
+                kit,
+                <Text wrap="truncate-end">
+                    <Text bold>{band.branch}</Text>
+                    <Text dimColor>{` ${sync} · read ${shortDuration(Date.now() - band.at)} ago`}</Text>
+                </Text>,
+                [reload]
+            )}
+            {band.prs.length === 0 ? dimNote(kit, "No pull request here. /mod-git pr add <n> tracks one.") : null}
+            {band.prs.map((pr) => {
+                const hub = hubUrlOf(pr);
+                const failing = pr.checks.filter((check) => check.verdict === "fail");
+                const pending = pr.checks.filter((check) => check.verdict === "pending");
+
+                return (
+                    <Box key={`pr-${pr.number}`} flexDirection="column" marginTop={1}>
+                        {divider(kit)}
+                        <Text wrap="wrap">
+                            <Text color={prColor(pr)} bold>{`#${pr.number} `}</Text>
+                            <Text bold>{pr.title}</Text>
+                        </Text>
+                        {dimNote(kit, `${pr.state.toLowerCase()}${pr.draft ? " draft" : ""} · ${ciText(pr)}`)}
+                        {failing.map((check) => (
+                            <Text key={`fail-${check.name}`} color="red" wrap="truncate-end">
+                                {`✗ ${check.name}`}
+                            </Text>
+                        ))}
+                        {pending.slice(0, 6).map((check) => (
+                            <Text key={`pending-${check.name}`} color="yellow" wrap="truncate-end">
+                                {`… ${check.name}`}
+                            </Text>
+                        ))}
+                        {pending.length > 6 ? dimNote(kit, `… ${pending.length - 6} more pending`) : null}
+                        <Box marginTop={1}>
+                            {actionRow(kit, [
+                                {
+                                    key: `pr-${pr.number}-open`,
+                                    label: "open",
+                                    isPrimary: true,
+                                    onPress: () => void host.openUrl(pr.url),
+                                },
+                                ...(hub
+                                    ? [
+                                          {
+                                              key: `pr-${pr.number}-hub`,
+                                              label: "hub",
+                                              onPress: () => void host.openUrl(hub),
+                                          },
+                                      ]
+                                    : []),
+                                {
+                                    key: `pr-${pr.number}-copy`,
+                                    label: "copy link",
+                                    isDim: true,
+                                    onPress: () => void host.copy(`[#${pr.number} (${pr.title})](${pr.url})`),
+                                },
+                                tracked.includes(pr.number)
+                                    ? {
+                                          key: `pr-${pr.number}-untrack`,
+                                          label: "untrack",
+                                          isDim: true,
+                                          onPress: () => void setTracked(pr.number, false),
+                                      }
+                                    : {
+                                          key: `pr-${pr.number}-track`,
+                                          label: "track",
+                                          isDim: true,
+                                          onPress: () => void setTracked(pr.number, true),
+                                      },
+                            ])}
+                        </Box>
+                    </Box>
+                );
+            })}
         </Box>
     );
 }

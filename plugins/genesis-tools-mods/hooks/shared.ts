@@ -18,6 +18,7 @@ import type {
     TurnCompleteInput,
 } from "claude-code";
 import { type ModsSettings, modsSettings } from "./settings";
+import type { Sidebar } from "./sidebar";
 
 export { isRecord, MODS_DEFAULTS, type ModsSettings, modsSettings } from "./settings";
 
@@ -40,8 +41,14 @@ export interface Host {
     status: (text: string | undefined) => void;
     fill: (args: PromptFillArgs) => Promise<unknown>;
     submit: (text: string) => Promise<unknown>;
+    /** Opens a sidebar: docked beside the transcript in fullscreen, a dialog with the keyboard (Esc closes) otherwise. */
     openPane: (id: string, title: string) => Promise<unknown>;
+    /** Closes the sidebar when it shows, else opens it: what a press on its band chip does. */
+    togglePane: (id: string, title: string) => Promise<unknown>;
     closePane: (id: string) => Promise<unknown>;
+    copy: (text: string) => Promise<unknown>;
+    /** Opens a URL with macOS `open`: a browser page, or a genesis.tools route. */
+    openUrl: (url: string) => Promise<unknown>;
     /** Draws this plugin's `ui.render` hooks again, so a band or pane shows the state just changed. */
     redraw: () => void;
 }
@@ -131,4 +138,6 @@ export interface Feature {
     afterTurn?: (host: Host, e: TurnCompleteInput) => Promise<void>;
     /** After a loop compacted (the main loop when `agentId` is undefined). */
     compacted?: (agentId: string | undefined) => void;
+    /** The sidebars it opens from the band (`sidebar.tsx`). */
+    sidebars?: Sidebar[];
 }

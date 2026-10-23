@@ -308,7 +308,7 @@ export interface ModsConfig {
     /** One band row per working subagent: model, age, idle time, tool calls; red past `warnMinutes`. */
     agentsBand: { enabled: boolean; warnMinutes: number };
     /**
-     * What the classic hooks hand the model: `tokens` pins the estimate as the plugin's status line, `dedupe`
+     * What the classic hooks hand the model: `tokens` shows the estimate as a band chip that opens a sidebar, `dedupe`
      * replaces a context block already given to the same loop since its last compaction with a one-line receipt.
      */
     hooks: { tokens: boolean; dedupe: boolean };

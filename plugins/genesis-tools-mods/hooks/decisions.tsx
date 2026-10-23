@@ -8,6 +8,7 @@
 import type { ElementTable, RenderElement } from "claude-code";
 import type { DecisionOption, OpenDecision, OpenDecisions, StagedDecisions } from "../types";
 import { type Feature, type Host, logMod, settingsOf } from "./shared";
+import { sidebarFrame } from "./sidebar";
 
 export const DECISIONS_PANE = "genesis-decisions";
 let open: OpenDecisions = [];
@@ -134,6 +135,9 @@ async function refresh(host: Host): Promise<OpenDecisions> {
 }
 
 export const decisions: Feature = {
+    sidebars: [
+        { id: DECISIONS_PANE, title: "Decisions", draw: (host, kit) => sidebarFrame(kit, decisionsPane(host, kit.ui)) },
+    ],
     commands: [
         {
             name: "decisions",

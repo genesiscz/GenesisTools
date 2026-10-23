@@ -11,13 +11,13 @@ import type {
 import { atom, read, update } from "claude-code";
 import type { FlippedFiles, ShownCalls } from "../types";
 import { agentModelStep, spawnWithModel } from "./agent-model";
-import { agentsBand, agentsRow, recordSpawn } from "./agents-band";
+import { agentsBand, agentsRow, noteTranscript, recordSpawn } from "./agents-band";
 import { askOnRow } from "./ask-row";
 import { bandTree } from "./band";
 import { cacheBand, cacheRow, markEnded } from "./cache-band";
-import { DECISIONS_PANE, decisions, decisionsPane } from "./decisions";
+import { decisions } from "./decisions";
 import { gitBand, gitRow } from "./git-band";
-import { hookLedger, ledgerClassic } from "./hook-ledger";
+import { hookLedger, hooksChip, ledgerClassic } from "./hook-ledger";
 import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice } from "./idle";
 import { linksStep, rememberToolPaths } from "./links";
 import {
@@ -347,10 +347,31 @@ function hostOf($: EngineInterface): Host {
         status: (text) => $.ui.status(text),
         fill: (args) => $.prompt.fill(args),
         submit: (text) => $.prompt.submit({ text }),
-        openPane: (id, title) => $.ui.open({ id, title, focus: true }),
+        openPane: (id, title) => openSidebar($, id, title),
+        togglePane: async (id, title) => {
+            const isShown = (await $.ui.panes()).some((pane) => pane.id === id && pane.isShown);
+
+            return isShown ? $.ui.close({ id }) : openSidebar($, id, title);
+        },
         closePane: (id) => $.ui.close({ id }),
+        copy: (text) => $.ui.copy({ text }),
+        openUrl: (url) => $.process.run(["open", url], { timeoutMs: 10_000 }),
         redraw: () => $.ui.invalidate("ui.render"),
     };
+}
+
+/** Whether the terminal docks panes (fullscreen), and its height, as the band's last drawing said. */
+let docksPanes: boolean | undefined;
+let terminalRows = 30;
+
+/**
+ * Docked beside the transcript, a sidebar leaves the keyboard on the prompt; as a dialog above the prompt it takes the
+ * keyboard and closes on Escape, as the diff mod's dialog does.
+ */
+function openSidebar($: EngineInterface, id: string, title: string) {
+    const rows = Math.max(12, Math.floor(terminalRows * 0.6));
+
+    return $.ui.open(docksPanes === true ? { id, title } : { id, title, focus: true, closeOnEscape: true, rows });
 }
 
 // The features that share events. The engine takes one unmatched hook per event from a plugin, so each event
@@ -435,6 +456,7 @@ export const register: Register = (on) => {
     });
 
     on("classic.*", async ($, e, next) => {
+        noteTranscript(e);
         const result = await next(e);
         const kept = await ledgerClassic(hostOf($), e, result);
 
@@ -493,15 +515,38 @@ export const register: Register = (on) => {
             return next(e);
         }
 
+        docksPanes = e.viewport?.isFullscreen ?? docksPanes;
+        terminalRows = e.viewport?.rows ?? terminalRows;
         const host = hostOf($);
         const ui = $.ui.resolve(e);
-        const rows = await Promise.all([gitRow(host, ui), cacheRow(host, ui), agentsRow(host, ui), tmpRow(host, ui)]);
+        const columns = e.props.bodyColumns;
+        const [git, hooks, ...rest] = await Promise.all([
+            gitRow(host, ui),
+            hooksChip(host, ui),
+            cacheRow(host, ui),
+            agentsRow(host, ui, columns),
+            tmpRow(host, ui),
+        ]);
 
-        return bandTree(ui, rows, await next(e));
+        return bandTree(ui, [topRow(ui, git, hooks), ...rest], await next(e));
     });
 
-    on("ui.render", { component: "Pane", requestId: DECISIONS_PANE }, async ($, e) => {
-        return decisionsPane(hostOf($), $.ui.resolve(e));
+    // Every feature's sidebar (`Feature.sidebars`), by the pane's id; another plugin's panes pass on.
+    on("ui.render", { component: "Pane" }, async ($, e, next) => {
+        const sidebar = FEATURES.flatMap((feature) => feature.sidebars ?? []).find((held) => held.id === e.requestId);
+
+        if (!sidebar) {
+            return next(e);
+        }
+
+        const kit = {
+            ui: $.ui.resolve(e),
+            columns: Math.max(1, e.props.bodyColumns - (e.props.placement === "dock" ? 1 : 0)),
+            rows: e.props.scroll.bodyRows,
+            placement: e.props.placement,
+        };
+
+        return sidebar.draw(hostOf($), kit);
     });
 
     on("ui.render", { component: "Spinner" }, async ($, e, next) => {
@@ -532,6 +577,23 @@ export const register: Register = (on) => {
         return askOnRow(hostOf($), ui, drawn, { id: tool_use_id, isRunning, calls: [{ tool, input, output }] });
     });
 };
+/** The band's first row: the git row at the left, the hooks chip at the right edge; either may be missing. */
+function topRow(ui: ElementTable, git: RenderElement | null, hooks: RenderElement | null): RenderElement | null {
+    if (!hooks) {
+        return git;
+    }
+
+    const { Box } = ui;
+
+    return (
+        <Box key="band-top" flexDirection="row">
+            {git}
+            <Box flexGrow={1} />
+            {hooks}
+        </Box>
+    );
+}
+
 async function withGroupDiffs(
     $: EngineInterface,
     props: {

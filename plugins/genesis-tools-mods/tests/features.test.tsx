@@ -1,10 +1,11 @@
 import type { On, TurnStepChunk } from "claude-code";
 import { expect, mock, test } from "claude-code/testing";
+import { bareDescription, lastSaidOf } from "../hooks/agents-band";
 import { quoteOf } from "../hooks/ask-row";
 import { cacheRowsOf } from "../hooks/cache-band";
 import { openDecisions, stagedMessage } from "../hooks/decisions";
-import { checkCounts, parseStatus } from "../hooks/git-band";
-import { dedupeEntry, tokensText } from "../hooks/hook-ledger";
+import { checkCounts, checksOf, hubUrlOf, parseStatus } from "../hooks/git-band";
+import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
 import { targetFor } from "../hooks/links";
 import { toolLabel } from "../hooks/spinner";
 
@@ -47,6 +48,37 @@ test("git band: status line and CI counts", async () => {
             { state: "SUCCESS" },
         ])
     ).toEqual({ passed: 2, failed: 1, pending: 2 });
+    expect(
+        checksOf([
+            { name: "lint", conclusion: "FAILURE" },
+            { context: "ci/deploy", state: "PENDING" },
+        ])
+    ).toEqual([
+        { name: "lint", verdict: "fail" },
+        { name: "ci/deploy", verdict: "pending" },
+    ]);
+    expect(hubUrlOf({ url: "https://github.com/acme/widgets/pull/42", number: 42 })).toBe(
+        "https://genesis.tools/hub?pr=acme%2Fwidgets%2342"
+    );
+    expect(hubUrlOf({ url: "https://gitlab.example.com/a/b/-/merge_requests/3", number: 3 })).toBeUndefined();
+});
+
+test("agents sidebar: an agent's last words from its transcript's end, past a byte-cut first line", async () => {
+    const row = (text: string) =>
+        JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text }, { type: "tool_use" }] } });
+    const tail = [
+        'cut": "half a row"}',
+        row("Reading the tests."),
+        JSON.stringify({ type: "user", message: { content: [{ type: "tool_result" }] } }),
+        row("Found it: the timeout is 5 s."),
+        JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use" }] } }),
+    ].join("\n");
+
+    expect(lastSaidOf(tail)).toBe("Found it: the timeout is 5 s.");
+    expect(lastSaidOf("")).toBe("");
+    expect(bareDescription("(H) Sleeper one")).toBe("Sleeper one");
+    expect(bareDescription("haiku-5-5 · Sleeper one")).toBe("Sleeper one");
+    expect(bareDescription("Fix the (B) case")).toBe("Fix the (B) case");
 });
 
 test("hook ledger: a repeated entry and a repeated area block become receipts", async () => {
@@ -66,6 +98,13 @@ test("hook ledger: a repeated entry and a repeated area block become receipts", 
     expect(whole.text.startsWith("[genesis-tools-mods:")).toBe(true);
     expect(dedupeEntry("short", new Map([["5:0", 1]]), 4).text).toBe("short");
     expect(tokensText(38_200 * 4)).toBe("~38.2k");
+
+    const stored = { main: { fires: 2, chars: 90 }, agents: { fires: 0, chars: 0 }, dropped: { fires: 0, chars: 0 } };
+    expect(ledgerOf({ ...stored, byEvent: { PostToolUse: { fires: 2, chars: 90 }, Bad: 3 } })).toEqual({
+        ...stored,
+        byEvent: { PostToolUse: { fires: 2, chars: 90 } },
+    });
+    expect(ledgerOf({ main: 1 })).toBeUndefined();
 });
 
 test("cache band: own row first, others only inside the warning window", async () => {

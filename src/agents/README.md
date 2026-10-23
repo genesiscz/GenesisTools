@@ -251,16 +251,23 @@ checked against real use.
   an optional `:line` or `:line-line`, a commit SHA that `git cat-file` knows, and a repeated `❓ DECISION N` become
   links; code fences, inline code that does not resolve, existing links and URLs stay as they are.
 - `mods.git`: a band line above the prompt with the branch, unpushed and unpulled commits, the dirty count and the
-  PRs (the branch's own and the ones `/mod-git pr add 123` tracks) with CI counts. `/mod-git on|off|toggle|refresh`.
+  PRs (the branch's own and the ones `/mod-git pr add 123` tracks) with CI counts. A press on the branch or a PR, or a
+  bare `/mod-git`, opens the Git sidebar: each PR's title, failing and pending checks, and `open`, `hub`, `copy link`
+  and `track` buttons. `/mod-git on|off|toggle|refresh`.
 - `mods.askRow`: `[ask]` beside a finished tool row puts the row, quoted, into the prompt.
 - `mods.spinner`: the spinner line names the running tool, its time and the working subagents.
 - `mods.cacheBand` (`warnMinutes` 10, `others`): the prompt cache countdown, red under `warnMinutes`, and the other
   sessions whose cache runs out within it.
 - `mods.tmpUsage` (`minutes` 5): the size of the session's `/tmp/cc` folder and the free disk.
-- `mods.agentsBand` (`warnMinutes` 60): one band row per working subagent with model, age, idle time and tool calls.
-- `mods.hooks` (`tokens`, `dedupe`): the status line counts what the settings and plugin hooks handed the model
-  (`hooks ~38.2k tok · 41 fires`, characters / 4), and a block already handed to the same loop since its last
-  compaction is replaced with a one-line receipt.
+- `mods.agentsBand` (`warnMinutes` 60): one band row per working subagent with model, age, idle time and tool calls;
+  more than three fold into one `▸ 8 agents` line. A press on an agent, or `/mod-agents`, opens the Agents sidebar:
+  its recent tools, what it said last, and `message`, `ask about it`, `stop`, `copy id` and `copy transcript path`.
+- `mods.hooks` (`tokens`, `dedupe`): a band chip counts what the settings and plugin hooks handed the model in this
+  session (`hooks ~38.2k · 41`, characters / 4); a press on it, or `/mod-hooks`, opens the Hooks sidebar with the
+  count per event, the latest injections and a dedupe switch for the session. A block already handed to the same
+  loop since its last compaction is replaced with a one-line receipt.
+- The sidebars dock beside the transcript in fullscreen and open as a dialog above the prompt otherwise, as Claude
+  Code's own `/diff` panel does; a second press on the chip, or the same command again, closes one.
 
 A file or a whole folder moved with `mv` or
 `git mv` is one line, `old/ → new/ (284 files)`, when the new copies match the old ones byte for byte

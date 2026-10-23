@@ -23,6 +23,12 @@ export type OpenDecisions = OpenDecision[];
 /** What the person staged per decision number: `a)` for an option, or their own words. */
 export type StagedDecisions = Record<string, string>;
 
+/** One CI check of a pull request. */
+export interface BandCheck {
+    name: string;
+    verdict: "pass" | "fail" | "pending";
+}
+
 /** One pull request the git band shows. */
 export interface BandPr {
     number: number;
@@ -33,6 +39,7 @@ export interface BandPr {
     passed: number;
     failed: number;
     pending: number;
+    checks: BandCheck[];
     tracked: boolean;
 }
 
