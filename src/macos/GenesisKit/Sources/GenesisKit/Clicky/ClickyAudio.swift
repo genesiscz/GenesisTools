@@ -36,6 +36,18 @@ final class ClickyAudio {
     private var buffers: [String: AVAudioPCMBuffer] = [:]
     private var cursor = 0
     private var idleStop: DispatchWorkItem?
+    /// The engine starts here, never on the main thread: the start ran inside the keyboard event tap and took 0.4 to
+    /// 1 s after each 3 s pause on 2026-10-23 (HangWatch stalls in the settings face), and a tap that waits delays
+    /// every key the user types.
+    private let startQueue = DispatchQueue(label: "genesiskit.clicky.audio-start", qos: .userInteractive)
+    private var starting = false
+    /// The click that arrived while the engine starts; it plays once the engine runs (a newer one replaces it).
+    private var pendingClick: (() -> Void)?
+    private var stopAfterStart = false
+    private final class EngineBox: @unchecked Sendable {
+        let engine: AVAudioEngine
+        init(_ engine: AVAudioEngine) { self.engine = engine }
+    }
     private struct PackBank {
         let reference: ClickyPackReference
         let manifestHash: String
@@ -144,9 +156,51 @@ final class ClickyAudio {
     private func schedule(_ buffer: AVAudioPCMBuffer, preferences: ClickyPreferences, pan: Float, gain: Float, pitchVariation: Float) throws {
         guard preferences.volume > 0 else { return }
         idleStop?.cancel()
-        if !engine.isRunning {
-            try PerfLog.span("clicky.audio.start") { try engine.start() }
+        // Offline rendering (tests) starts at once: no hardware to wake.
+        if !engine.isRunning, engine.isInManualRenderingMode {
+            try engine.start()
         }
+        guard engine.isRunning else {
+            pendingClick = { [weak self] in
+                try? self?.play(buffer, preferences: preferences, pan: pan, gain: gain, pitchVariation: pitchVariation)
+            }
+            startEngine()
+            return
+        }
+        try play(buffer, preferences: preferences, pan: pan, gain: gain, pitchVariation: pitchVariation)
+    }
+
+    private func startEngine() {
+        guard !starting else { return }
+        starting = true
+        stopAfterStart = false
+        let box = EngineBox(engine)
+        startQueue.async {
+            let begun = Date()
+            var failure: Error?
+            do { try box.engine.start() } catch { failure = error }
+            let ms = Date().timeIntervalSince(begun) * 1000
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.starting = false
+                    PerfLog.mark(String(format: "clicky.audio.start %.1fms off-main", ms)
+                        + (failure.map { " failed: \($0.localizedDescription)" } ?? ""))
+                    if self.stopAfterStart {
+                        self.pendingClick = nil
+                        self.stopVoices()
+                        return
+                    }
+                    let click = self.pendingClick
+                    self.pendingClick = nil
+                    if failure == nil { click?() }
+                }
+            }
+        }
+    }
+
+    private func play(_ buffer: AVAudioPCMBuffer, preferences: ClickyPreferences, pan: Float, gain: Float,
+                      pitchVariation: Float) throws {
         let voice = voices[cursor]
         cursor = (cursor + 1) % voices.count
         voice.0.volume = min(1, max(0, Float(preferences.volume) * gain))
@@ -169,6 +223,11 @@ final class ClickyAudio {
     private func stopVoices() {
         idleStop?.cancel()
         idleStop = nil
+        // A start in flight finishes first; the engine stops right after it.
+        if starting {
+            stopAfterStart = true
+            return
+        }
         for voice in voices { voice.0.stop() }
         engine.stop()
     }
