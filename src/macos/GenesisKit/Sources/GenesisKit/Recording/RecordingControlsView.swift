@@ -71,6 +71,26 @@ public enum RecordingClock {
     }
 }
 
+/// The controls' state as something to observe, so a host sets the view up once and only the values change (its
+/// own state, such as an open discard question, survives the clock's ticks).
+@MainActor
+final class RecordingControlsModel: ObservableObject {
+    @Published var state: RecordingControlsState
+
+    init(state: RecordingControlsState) {
+        self.state = state
+    }
+}
+
+struct RecordingControlsHost: View {
+    @ObservedObject var model: RecordingControlsModel
+    let actions: RecordingControlsActions
+
+    var body: some View {
+        RecordingControlsView(state: model.state, actions: actions)
+    }
+}
+
 /// The icon of a running app by pid, looked up once per pid: the controls redraw every second while recording.
 @MainActor
 enum RecordingAppIcon {

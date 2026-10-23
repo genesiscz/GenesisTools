@@ -49,6 +49,7 @@ public final class ScreenRecorder: ObservableObject {
     private var controllerWatch: AnyCancellable?
     private var settingsWatch: AnyCancellable?
     private var controls: RecordingControlsPanel?
+    private var controlsModel: RecordingControlsModel?
     private let picker = RecordingPickerPanel()
     private var targets: RecordingTargets?
     private var pickerLoad: RecordingTargetPicker.Load = .loading
@@ -199,13 +200,21 @@ public final class ScreenRecorder: ObservableObject {
         }
     }
 
+    /// The view goes in once per recording; each tick only changes its state, so what the view holds itself (an open
+    /// discard question) survives the clock.
     private func renderControls() {
         guard let controller, let controls, let host else { return }
         let state = RecordingControlsState(
             phase: controller.phase, elapsedMs: controller.elapsedMs, limitMs: controller.limitMs,
             target: controller.target, pauseReason: controller.pauseReason, notice: controller.notice,
             useTitle: host.useTitle, useSymbol: host.useSymbol, confirmsDiscard: settings.confirmsDiscard)
-        controls.setContent(RecordingControlsView(state: state, actions: RecordingControlsActions(
+        if let controlsModel {
+            if controlsModel.state != state { controlsModel.state = state }
+            return
+        }
+        let model = RecordingControlsModel(state: state)
+        controlsModel = model
+        controls.setContent(RecordingControlsHost(model: model, actions: RecordingControlsActions(
             pause: { [weak controller] in controller?.pause() },
             resume: { [weak controller] in controller?.resume() },
             switchTarget: { [weak self] in self?.switchTarget() },
@@ -281,6 +290,7 @@ public final class ScreenRecorder: ObservableObject {
         picker.dismiss()
         controls?.close()
         controls = nil
+        controlsModel = nil
         controllerWatch = nil
         settingsWatch = nil
         controller = nil

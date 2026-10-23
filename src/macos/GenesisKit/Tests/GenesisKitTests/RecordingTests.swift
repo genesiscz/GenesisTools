@@ -310,6 +310,21 @@ final class RecordingControlsClickTests: XCTestCase {
         XCTAssertEqual(fired.last, "restart")
     }
 
+    func testAnOpenDiscardQuestionSurvivesTheClockTicking() throws {
+        let model = RecordingControlsModel(state: RecordingControlsState(
+            phase: .recording, elapsedMs: 4_000, target: .display(index: 0, name: nil), useTitle: "Stop and paste"))
+        let window = host(RecordingControlsHost(model: model, actions: actions()), size: NSSize(width: 640, height: 60))
+        defer { window.orderOut(nil); window.close() }
+        pump(0.8)
+        try click("recording.discard", in: window)
+        model.state.elapsedMs = 5_000
+        pump(0.3)
+        model.state.elapsedMs = 6_000
+        pump(0.3)
+        try click("recording.confirm", in: window)
+        XCTAssertEqual(fired, ["discard"], "the question was still open after two ticks")
+    }
+
     func testPausedShowsResumeAndDiscardWithoutTheQuestionWhenAsked() throws {
         let state = RecordingControlsState(phase: .paused, elapsedMs: 30_000, target: .display(index: 0, name: "Built-in"),
                                            pauseReason: "user", useTitle: "Stop and save", confirmsDiscard: false)
