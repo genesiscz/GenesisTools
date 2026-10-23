@@ -65,9 +65,14 @@ public struct FlowWidget: View {
                         }
                         windowLinks
                         if !flow.history.isEmpty { recentDictation }
-                        if let error = runtime.lastError ?? flow.lastError ?? focus.lastError {
-                            Text(error).font(.system(size: 11)).foregroundStyle(Color.genError)
-                                .fixedSize(horizontal: false, vertical: true)
+                        if !runtime.legacyHosts.isEmpty {
+                            // Not an error: this host leaves dictation and Focus to an older Genesis while it runs.
+                            let notice = runtime.legacyNotice()
+                            NoticePill(text: notice.text, detail: notice.detail, more: notice.found, tone: .warning,
+                                       fixes: notice.fixes)
+                                .accessibilityIdentifier("flow-widget-legacy")
+                        } else if let error = runtime.lastError ?? flow.lastError ?? focus.lastError {
+                            NoticePill(text: error, tone: .error)
                         }
                     }.padding(18)
                 }
@@ -123,6 +128,7 @@ public struct FlowWidget: View {
     }
 
     private var dictationStatus: String {
+        if !runtime.legacyHosts.isEmpty { return "In the older Genesis while it runs" }
         if !ready { return "Waiting for Flow" }
         if !flow.labEnabled || !flow.config.enabled { return "Dictation is off in Settings" }
         switch flow.phase {

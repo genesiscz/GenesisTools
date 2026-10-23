@@ -11,9 +11,62 @@ public extension WidgetVoiceNotesStore {
     }
 }
 
+/// The notice for an error the store reports: the message, what was found, and the fixes for that kind of failure.
+/// The store keeps only the text, so the kinds are told apart by their exact messages.
+@MainActor
+enum WidgetVoiceNotesNotice {
+    struct Content {
+        let text: String
+        var detail: String?
+        var more: String?
+        var fixes: [NoticeFix] = []
+    }
+
+    static let failedRunsCommand = "tools genesis-tools logs failures --tool hub --grep voice-notes --limit 5"
+
+    static func content(for error: String, permission: VoiceMicrophonePermission, bundleID: String?,
+                        reviewMicrophone: @escaping @MainActor () -> Void,
+                        recordAgain: @escaping @MainActor () -> Void) -> Content {
+        if let refusal = FlowFocusRuntime.lastAudioRefusal, refusal.text == error {
+            return Content(text: error, detail: refusal.detail, more: refusal.found,
+                           fixes: refusal.fixes + [.button("Record again", symbol: "mic.fill", perform: recordAgain)])
+        }
+        let reset = "tccutil reset Microphone \(bundleID ?? "com.genesiscz.genesistools")"
+        let kinds: [VoiceCommandFailure] = [.microphonePermission, .microphonePromptOpen, .noAudio, .interrupted,
+                                            .captureFailed, .cancelled, .operationFailed, .timedOut]
+        switch kinds.first(where: { $0.errorDescription == error }) {
+        case .microphonePermission:
+            return Content(text: error, detail: "macOS answers \"\(describe(permission))\" for this app's microphone access.",
+                           fixes: [.button("Review microphone access", symbol: "mic", perform: reviewMicrophone),
+                                   .command("Or reset the grant from a terminal, so macOS asks again on the next Record", reset)])
+        case .microphonePromptOpen:
+            return Content(text: error, fixes: [.button("Review microphone access", symbol: "mic", perform: reviewMicrophone)])
+        case .noAudio, .captureFailed, .interrupted:
+            return Content(text: error, fixes: [.button("Record again", symbol: "mic.fill", perform: recordAgain),
+                                                .command("See why the recorder failed", failedRunsCommand)])
+        case .operationFailed, .timedOut:
+            return Content(text: error, fixes: [.command("See why it failed", failedRunsCommand)])
+        case .cancelled, nil:
+            return Content(text: error, fixes: [.command("See recent failed voice runs", failedRunsCommand)])
+        }
+    }
+
+    private static func describe(_ permission: VoiceMicrophonePermission) -> String {
+        switch permission {
+        case .notDetermined: return "not asked yet"
+        case .authorized: return "allowed"
+        case .denied: return "denied"
+        case .restricted: return "restricted"
+        case .unknown: return "unknown"
+        }
+    }
+}
+
 private struct WidgetVoiceNotesView: View {
     @ObservedObject var store: WidgetVoiceNotesStore
     let presentation: WidgetModulePresentation
+    /// The error the person dismissed; it stays hidden until the next operation starts (the store clears its error then).
+    @State private var dismissedError: String?
 
     var body: some View {
         Group {
@@ -44,7 +97,14 @@ private struct WidgetVoiceNotesView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             store.refreshMicrophonePermission()
         }
+        .onChange(of: store.phase) { _, phase in
+            if phase != nil { dismissedError = nil }
+        }
+    }
 
+    private var shownError: String? {
+        guard let error = store.error, error != dismissedError else { return nil }
+        return error
     }
 
     @ViewBuilder private var expanded: some View {
@@ -69,7 +129,9 @@ private struct WidgetVoiceNotesView: View {
                 if phase == "Recording" { WidgetVoiceNoteMeterView(meter: store.meter) }
             }
         }
-        if let guidance = store.microphoneGuidance {
+        // The permission notice below carries the same "Review microphone access" fix, so the box steps aside for it.
+        if let guidance = store.microphoneGuidance,
+           shownError != VoiceCommandFailure.microphonePermission.errorDescription {
             VStack(alignment: .leading, spacing: 6) {
                 Label(guidance, systemImage: "mic.slash").font(.system(size: 11))
                     .fixedSize(horizontal: false, vertical: true)
@@ -80,8 +142,14 @@ private struct WidgetVoiceNotesView: View {
             .background(.orange.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
             .accessibilityIdentifier("voice-microphone-permission")
         }
-        if let error = store.error {
-            Text(error).font(.system(size: 11)).foregroundStyle(KitPalette.removed).textSelection(.enabled)
+        if let error = shownError {
+            let notice = WidgetVoiceNotesNotice.content(
+                for: error, permission: store.microphonePermission, bundleID: Bundle.main.bundleIdentifier,
+                reviewMicrophone: store.reviewMicrophoneAccess, recordAgain: { store.record() })
+            NoticePill(text: notice.text, detail: notice.detail, more: notice.more, tone: .error, fixes: notice.fixes) {
+                dismissedError = error
+            }
+            .accessibilityIdentifier("voice-notes-error")
         } else if let receipt = store.receipt {
             Label(receipt, systemImage: "checkmark.circle").font(.system(size: 11)).foregroundStyle(.secondary)
         }

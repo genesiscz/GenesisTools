@@ -21,6 +21,21 @@ public final class FlowFocusRuntime: ObservableObject {
 
     @Published public private(set) var role: Role = .stopped
     @Published public private(set) var lastError: String?
+    /// The older Genesis copies this host steps back for. They run their own dictation shortcut, capture, Focus timer
+    /// and Do Not Disturb, so this host owns none of those while they run. An explicit recording still works
+    /// (`acquireExternalAudio`), and the host takes its part back when they quit.
+    @Published public private(set) var legacyHosts: [FlowFocusPeerApp] = []
+    /// Why the last `acquireExternalAudio` was refused, with what was found and the fixes. The Voice Notes module
+    /// shows it for the error text it matches (its store keeps only the text).
+    public private(set) static var lastAudioRefusal: FlowFocusNotice?
+    /// The running Genesis.app copies to check before this host owns anything. Only the shared data root is the one
+    /// an older Genesis also uses, so a runtime on an explicit root sees none. Tests replace it.
+    var peerApps: @MainActor () -> [FlowFocusPeerApp]
+    /// Asks a peer app to quit (the legacy notice's fix). Tests replace it.
+    var terminatePeer: @MainActor (Int32) -> Bool = { pid in
+        NSRunningApplication(processIdentifier: pid)?.terminate() ?? false
+    }
+    private var legacyExits: [DispatchSourceProcess] = []
     public let flow: FlowSession
     public let focus: FocusController
     public let configuration: FlowFocusConfiguration
@@ -66,7 +81,9 @@ public final class FlowFocusRuntime: ObservableObject {
     public init(dataRoot: URL? = nil, hostID: String? = nil, liveServices: Bool = true,
                 presentsWindows: Bool = true, sharedModels: Bool = false) {
         let root = dataRoot ?? Self.defaultDataRoot
-        let usesSharedModels = sharedModels && root.standardizedFileURL == Self.defaultDataRoot.standardizedFileURL
+        let sharedRoot = root.standardizedFileURL == Self.defaultDataRoot.standardizedFileURL
+        let usesSharedModels = sharedModels && sharedRoot
+        peerApps = sharedRoot ? { FlowFocusPeerApp.running() } : { [] }
         self.dataRoot = root
         directory = root.appendingPathComponent("feature-runtime", isDirectory: true)
         self.hostID = hostID ?? Bundle.main.bundleIdentifier ?? "dev.genesis.feature-host"
@@ -102,7 +119,7 @@ public final class FlowFocusRuntime: ObservableObject {
         do {
             try registerParticipant()
             installDiscovery()
-            try rejectLegacyOwner()
+            let legacy = legacyPeers()
             for _ in 0 ..< 20 {
                 guard isCurrentStart() else { return }
                 if Task.isCancelled {
@@ -111,17 +128,33 @@ public final class FlowFocusRuntime: ObservableObject {
                     return
                 }
                 if !settingsOnly, let acquired = try FlowFocusLease.acquire(directory: directory, hostID: hostID) {
+                    guard legacy.isEmpty else {
+                        // The lock was free, so no current host owns Flow and Focus, and an older Genesis runs them
+                        // itself. Owning them here would run its shortcut, capture, timer and DND twice: this host
+                        // steps back from them, and from nothing else.
+                        acquired.release()
+                        stepBack(for: legacy)
+                        return
+                    }
+                    clearLegacy()
                     lease = acquired
                     try becomeOwner(acquired)
                     return
                 }
+                // A live owner already runs every service, so joining it as a client duplicates nothing, whatever
+                // else runs.
                 if let owner = try? FlowFocusLease.readOwner(directory: directory) {
+                    clearLegacy()
                     try becomeClient(owner)
                     return
                 }
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
             guard isCurrentStart() else { return }
+            guard legacy.isEmpty else {
+                stepBack(for: legacy)
+                return
+            }
             throw FlowFocusMailbox.Failure.unavailable("The Flow and Focus owner is still starting. Try again shortly.")
         } catch is CancellationError {
             // The host withdrew the start while it waited for another owner to finish starting. That is not a
@@ -200,6 +233,7 @@ public final class FlowFocusRuntime: ObservableObject {
         lease = nil
         if let applicationObserver { NSWorkspace.shared.notificationCenter.removeObserver(applicationObserver) }
         applicationObserver = nil
+        clearLegacy()
         unregisterParticipant()
     }
 
@@ -209,6 +243,12 @@ public final class FlowFocusRuntime: ObservableObject {
     }
 
     public func acquireExternalAudio() async throws -> FlowFocusAudioLease {
+        // While this host steps back for an older Genesis, no current host owns audio to admit a recorder, and the
+        // older copy captures without admissions anyway: an explicit recording goes ahead on its own lease.
+        if mailbox == nil, !legacyHosts.isEmpty {
+            PerfLog.mark("flow-focus.audio standalone legacy=\(legacyHosts.map { String($0.pid) }.joined(separator: ","))")
+            return FlowFocusAudioLease(standaloneFor: self)
+        }
         guard let holder = FlowAudioProcess.read(pid: ProcessInfo.processInfo.processIdentifier) else {
             throw FlowFocusMailbox.Failure.unavailable("The recording host could not be identified.")
         }
@@ -219,6 +259,7 @@ public final class FlowFocusRuntime: ObservableObject {
             _ = try await send(action: "audio.acquire", payload: JSONEncoder().encode(request))
             return FlowFocusAudioLease(runtime: self, token: token)
         } catch {
+            Self.lastAudioRefusal = audioRefusal(error)
             do { _ = try await send(action: "audio.release", payload: JSONEncoder().encode(token)) }
             catch { FlowFocusLog.flow.warning("Unacknowledged audio admission cleanup: \(error.localizedDescription)") }
             throw error
@@ -605,31 +646,164 @@ public final class FlowFocusRuntime: ObservableObject {
             }
     }
 
-    private var participantURL: URL { directory.appendingPathComponent("participant-\(participant.pid).json") }
+    private func participantURL(_ pid: Int32) -> URL { directory.appendingPathComponent("participant-\(pid).json") }
 
     private func registerParticipant() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
                                                 attributes: [.posixPermissions: 0o700])
-        try FlowFocusLease.writePrivate(try JSONEncoder().encode(participant), to: participantURL)
+        try FlowFocusLease.writePrivate(try JSONEncoder().encode(participant), to: participantURL(participant.pid))
     }
 
     private func unregisterParticipant() {
-        guard let data = try? Data(contentsOf: participantURL),
+        guard let data = try? Data(contentsOf: participantURL(participant.pid)),
               let current = try? JSONDecoder().decode(Participant.self, from: data), current.nonce == participant.nonce else { return }
-        do { try FileManager.default.removeItem(at: participantURL) }
+        do { try FileManager.default.removeItem(at: participantURL(participant.pid)) }
         catch { FlowFocusLog.focus.warning("participant cleanup failed: \(error.localizedDescription)") }
     }
 
-    private func rejectLegacyOwner() throws {
-        guard dataRoot.standardizedFileURL == Self.defaultDataRoot.standardizedFileURL else { return }
-        for app in NSRunningApplication.runningApplications(withBundleIdentifier: "dev.foltyn.genesis")
-            where app.processIdentifier != participant.pid {
-            let record = directory.appendingPathComponent("participant-\(app.processIdentifier).json")
-            if let data = try? Data(contentsOf: record),
-               let peer = try? JSONDecoder().decode(Participant.self, from: data),
-               peer.version == 1, peer.launchDate != nil, peer.launchDate == app.launchDate { continue }
-            throw FlowFocusMailbox.Failure.unavailable(
-                "An older Genesis is running its own Flow and Focus services. Update or quit that copy before enabling this host.")
+    /// The running Genesis copies that do not speak this protocol.
+    private func legacyPeers() -> [FlowFocusPeerApp] {
+        peerApps().filter { $0.pid != participant.pid && !isParticipant($0) }
+    }
+
+    /// A peer speaks this protocol when its participant record was written by the process running now: the launch
+    /// dates match, or the record is not older than the process. A record left by an earlier process with the same
+    /// pid predates it. LaunchServices gives no launch date to an app started another way, so the date alone called a
+    /// current Genesis "older" and refused this host (2026-10-23).
+    private func isParticipant(_ peer: FlowFocusPeerApp) -> Bool {
+        let record = participantURL(peer.pid)
+        guard let data = try? Data(contentsOf: record),
+              let found = try? JSONDecoder().decode(Participant.self, from: data),
+              found.version == 1, found.pid == peer.pid else { return false }
+        if let launched = found.launchDate, launched == peer.launchDate { return true }
+        guard let started = peer.startedAt,
+              let written = (try? FileManager.default.attributesOfItem(atPath: record.path))?[.modificationDate] as? Date
+        else { return false }
+        // One second of slack for a file system that stores whole seconds.
+        return written >= started.addingTimeInterval(-1)
+    }
+
+    private func stepBack(for hosts: [FlowFocusPeerApp]) {
+        let message = Self.legacyMessage(hosts)
+        legacyHosts = hosts
+        role = .unavailable(message)
+        // The runtime's own error only (a command sent meanwhile names the reason; the next start clears it). Not the
+        // Flow and Focus models' errors: nothing clears those when the host takes its part back.
+        lastError = message
+        watchLegacyExits(hosts)
+        PerfLog.mark("flow-focus.legacy pids=\(hosts.map { String($0.pid) }.joined(separator: ","))")
+    }
+
+    static func legacyMessage(_ hosts: [FlowFocusPeerApp]) -> String {
+        let pids = hosts.map { String($0.pid) }.joined(separator: ", ")
+        return "An older Genesis (\(hosts.count == 1 ? "pid" : "pids") \(pids)) runs its own dictation shortcut, Focus "
+            + "timer and Do Not Disturb, so this host leaves them to it. Voice Notes still record."
+    }
+
+    /// When an older copy quits, this host takes its part back: it starts again, as owner or client.
+    private func watchLegacyExits(_ hosts: [FlowFocusPeerApp]) {
+        legacyExits.forEach { $0.cancel() }
+        legacyExits = hosts.map { host in
+            let source = DispatchSource.makeProcessSource(identifier: host.pid, eventMask: .exit, queue: .main)
+            source.setEventHandler { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, case .unavailable = self.role, self.legacyHosts.contains(host) else { return }
+                    Task { await self.start() }
+                }
+            }
+            source.resume()
+            return source
+        }
+    }
+
+    private func clearLegacy() {
+        legacyExits.forEach { $0.cancel() }
+        legacyExits = []
+        if !legacyHosts.isEmpty { legacyHosts = [] }
+    }
+
+    /// The notice the Flow module shows while this host steps back: each older copy, how it was found, and how to quit it.
+    public func legacyNotice() -> FlowFocusNotice {
+        let found = legacyHosts.map { host in
+            [
+                "Genesis, pid \(host.pid)",
+                "App: \(host.bundlePath.map(PathDisplay.tilde) ?? "unknown")",
+                "Version: \(host.version ?? "unknown")",
+                "Started: \(FlowFocusDiagnostics.stamp(host.startedAt ?? host.launchDate))",
+                "Why it counts as older: since it started, it wrote no Flow and Focus participant record "
+                    + "(\(PathDisplay.tilde(participantURL(host.pid).path))).",
+            ].joined(separator: "\n")
+        }.joined(separator: "\n\n")
+        var fixes: [NoticeFix] = []
+        for host in legacyHosts {
+            let confirm = NoticeFix.Confirmation(
+                "Quit Genesis (pid \(host.pid))?",
+                consequence: "Genesis may ask to save open work. Dictation and Focus then start in this host.",
+                confirmLabel: "Quit Genesis")
+            fixes.append(.button("Quit the older Genesis (pid \(host.pid))", symbol: "power", confirm: confirm) { [weak self] in
+                let asked = self?.terminatePeer(host.pid) ?? false
+                PerfLog.mark("flow-focus.legacy quit pid=\(host.pid) asked=\(asked)")
+            })
+            fixes.append(.command("Or quit it from a terminal", "kill \(host.pid)"))
+        }
+        return FlowFocusNotice(
+            text: "An older Genesis runs dictation and Focus",
+            detail: "This host leaves the dictation shortcut, the Focus timer and Do Not Disturb to that copy until it "
+                + "quits or is updated. Voice Notes record as usual.",
+            found: found, fixes: fixes)
+    }
+
+    /// What was found when the owner refused audio, and the fixes that apply: the owner, a dictation in progress, the
+    /// process that holds the microphone.
+    private func audioRefusal(_ error: Error) -> FlowFocusNotice {
+        var lines = ["This host: \(hostID), pid \(participant.pid), \(Self.describe(role))"]
+        var fixes: [NoticeFix] = []
+        if let owner = try? FlowFocusLease.readOwner(directory: directory) {
+            lines.append("Flow and Focus owner: \(owner.hostID), pid \(owner.pid), since \(FlowFocusDiagnostics.stamp(owner.startedAt))")
+        } else {
+            lines.append("Flow and Focus owner: none (\(PathDisplay.tilde(directory.appendingPathComponent("owner.json").path)))")
+        }
+        if [.listening, .transcribing, .injecting].contains(flow.phase) {
+            lines.append("Dictation: \(flow.phase.rawValue)")
+            fixes.append(.button("Cancel the dictation in progress", symbol: "xmark.circle",
+                                 confirm: .init("Cancel the dictation in progress?",
+                                                consequence: "The words heard so far are not inserted.",
+                                                confirmLabel: "Cancel dictation")) { [weak self] in self?.flow.cancelTurn() })
+        }
+        let admissionURL = directory.appendingPathComponent("audio-admission.json")
+        if let data = try? Data(contentsOf: admissionURL),
+           let admission = try? JSONDecoder().decode(FlowAudioAdmission.self, from: data) {
+            let process = admission.recorder ?? admission.holder
+            let name = FlowFocusPeerApp.processName(process.pid) ?? "a process"
+            lines.append("Microphone admitted to: \(name), pid \(process.pid), "
+                + (admission.recorder == nil ? "recorder not started yet" : "recording"))
+            if admission.recorder != nil, process.isAlive, process.pid != participant.pid {
+                fixes.append(.button("Stop the other recording (\(name), pid \(process.pid))", symbol: "stop.circle",
+                                     confirm: .init("Stop \(name) (pid \(process.pid))?",
+                                                    consequence: "That recording ends now; what it captured may not be saved.",
+                                                    confirmLabel: "Stop it")) {
+                    let sent = kill(process.pid, SIGTERM) == 0
+                    PerfLog.mark("flow-focus.audio stop pid=\(process.pid) sent=\(sent)")
+                })
+                fixes.append(.command("Or stop it from a terminal", "kill \(process.pid)"))
+            }
+        }
+        if case .unavailable = role {
+            fixes.append(.button("Connect to Flow and Focus again", symbol: "arrow.clockwise") { [weak self] in
+                guard let self, case .unavailable = self.role else { return }
+                Task { await self.start() }
+            })
+        }
+        return FlowFocusNotice(text: error.localizedDescription, detail: nil, found: lines.joined(separator: "\n"), fixes: fixes)
+    }
+
+    private static func describe(_ role: Role) -> String {
+        switch role {
+        case .stopped: return "stopped"
+        case .starting: return "starting"
+        case .owner: return "owner"
+        case .client(let owner): return "client of \(owner)"
+        case .unavailable(let why): return "unavailable: \(why)"
         }
     }
 

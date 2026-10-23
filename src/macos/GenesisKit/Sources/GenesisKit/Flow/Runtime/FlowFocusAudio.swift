@@ -3,27 +3,44 @@ import Foundation
 
 /// Admission to the elected runtime's microphone. Attach a gated recorder before allowing it
 /// to open input, then release after the recorder has closed input and exited.
+///
+/// A standalone lease has no owner behind it: the host steps back for an older Genesis, so no current host owns audio
+/// to coordinate with. Attach and release then only check the recorder, and the recording goes ahead.
 @MainActor
 public final class FlowFocusAudioLease {
     private weak var runtime: FlowFocusRuntime?
     private let token: UUID
+    let standalone: Bool
     private var released = false
 
     init(runtime: FlowFocusRuntime, token: UUID) {
         self.runtime = runtime
         self.token = token
+        standalone = false
+    }
+
+    init(standaloneFor runtime: FlowFocusRuntime) {
+        self.runtime = runtime
+        token = UUID()
+        standalone = true
     }
 
     public func attachRecorder(pid: Int32) async throws {
-        guard !released, let runtime, let identity = FlowAudioProcess.read(pid: pid) else {
+        guard !released, let identity = FlowAudioProcess.read(pid: pid) else {
             throw FlowFocusMailbox.Failure.unavailable("The recorder is no longer available.")
         }
+        if standalone { return }
+        guard let runtime else { throw FlowFocusMailbox.Failure.unavailable("The recorder is no longer available.") }
         let value = FlowAudioAttachment(token: token, recorder: identity)
         _ = try await runtime.send(action: "audio.attach", payload: JSONEncoder().encode(value))
     }
 
     public func release() async throws {
         guard !released else { return }
+        if standalone {
+            released = true
+            return
+        }
         guard let runtime else {
             throw FlowFocusMailbox.Failure.unavailable("The audio owner is no longer available.")
         }
