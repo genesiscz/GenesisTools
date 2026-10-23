@@ -594,6 +594,39 @@ final class WidgetInboxPolishTests: XCTestCase {
         XCTAssertEqual(roster.active, 2, "952 sessions, 2 of them active: the preview shows 2, not 952")
     }
 
+    func testTheHoverListShowsEverySessionThatNeedsYouAndActiveOnesOnlyWhenAsked() {
+        let target = WidgetTarget(hostId: "local", provider: "claude", sessionId: "s", sourceHome: "", cwd: "/fixture")
+        func session(_ key: String, _ status: String, at: Double, project: String = "Fixture", visible: Bool = true)
+            -> WidgetSession {
+            WidgetSession(key: key, target: target, title: key, project: project, activityAt: at,
+                          status: status, pinned: true, visible: visible, hiddenByFilter: false)
+        }
+        let sessions = [session("asks", "recent", at: 1, project: "Beta"), session("waits", "waiting", at: 2),
+                        session("hidden-asks", "recent", at: 3, visible: false), session("works", "working", at: 9),
+                        session("quiet", "finished", at: 8)]
+        let inbox = ["asks": WidgetInboxSession(key: "asks", unread: 0, needsAnswer: 2),
+                     "hidden-asks": WidgetInboxSession(key: "hidden-asks", unread: 0, needsAnswer: 1)]
+        let needs = WidgetModel.previewRows(sessions: sessions, inbox: inbox, filter: "needs-you", sort: "attention")
+        XCTAssertEqual(needs.map(\.key), ["hidden-asks", "waits", "asks"],
+                       "every session that needs you, also one the rail does not show, newest first")
+        let active = WidgetModel.previewRows(sessions: sessions, inbox: inbox, filter: "active", sort: "attention")
+        XCTAssertEqual(active.map(\.key), ["hidden-asks", "waits", "asks", "works"], "working ones join after them")
+        XCTAssertEqual(WidgetModel.previewRows(sessions: sessions, inbox: inbox, filter: "active", sort: "recent")
+            .map(\.key), ["works", "hidden-asks", "waits", "asks"])
+        XCTAssertEqual(WidgetModel.previewRows(sessions: sessions, inbox: inbox, filter: "needs-you", sort: "project")
+            .first?.key, "asks", "Beta before Fixture")
+    }
+
+    func testTheSessionInboxFilterSplitsInboxEntriesFromDecisions() {
+        let cards = ["answer", "result", "form", "decision", "todo"].map { kind in
+            WidgetCard(id: kind, kind: kind, sessionKey: "k", sourceId: kind, at: 1, title: kind, body: "",
+                       status: "open", choices: [], attachments: [], refs: [], read: true)
+        }
+        XCTAssertEqual(LiveWidgetView.filtered(cards, by: "inbox").map(\.kind), ["answer", "result", "form"])
+        XCTAssertEqual(LiveWidgetView.filtered(cards, by: "decisions").map(\.kind), ["decision", "todo"])
+        XCTAssertEqual(LiveWidgetView.filtered(cards, by: "all").count, 5)
+    }
+
     @MainActor
     func testASnapshotDecodedForAStoppedWatchIsDroppedAfterARestart() async throws {
         let decoder = WidgetSnapshotDecoder()

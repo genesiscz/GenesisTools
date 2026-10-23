@@ -8,6 +8,7 @@ public struct WidgetSessionBrowser: View {
     @State private var limit = 40
     @State private var expanded = Set<String>()
     @State private var collapsed = Set<String>()
+    @GenReduceMotion private var reduceMotion
 
     public init(model: WidgetModel, onOpen: ((WidgetSession) -> Void)? = nil) {
         self.model = model
@@ -52,29 +53,15 @@ public struct WidgetSessionBrowser: View {
                     .frame(maxWidth: .infinity)
             } else {
                 ForEach(Array(groups.prefix(limit))) { group in
-                    if group.children.isEmpty {
-                        row(group.parent, title: group.parent.title, depth: 0)
-                    } else {
-                        GenDisclosure(isExpanded: Binding(get: {
-                            if !query.isEmpty { return true }
-                            if collapsed.contains(group.id) { return false }
-                            return expanded.contains(group.id) || group.id == model.selectedKey
-                                || group.children.contains { $0.id == model.selectedKey }
-                        }, set: { value in
-                            if value { expanded.insert(group.id); collapsed.remove(group.id) }
-                            else { expanded.remove(group.id); collapsed.insert(group.id) }
-                        }), minHeight: 34, identifier: "widget.sessions.group." + group.id) {
+                    // Every top-level session is the same row, with or without sub-agents; a chevron folds them.
+                    VStack(alignment: .leading, spacing: 2) {
+                        topRow(group)
+                        if !group.children.isEmpty && isOpen(group) {
                             LazyVStack(spacing: 2) {
-                                row(group.parent, title: "Main", depth: 0)
-                                ForEach(group.children) { child in row(child.session, title: child.session.title, depth: child.depth) }
-                            }.padding(.top, 6)
-                        } label: {
-                            AgentRosterGroupLabel(title: group.parent.title, provider: group.parent.target.provider,
-                                project: group.parent.project, account: group.parent.account,
-                                total: group.children.count, running: group.running,
-                                live: group.parent.status == "working" || group.running > 0,
-                                lastAt: Date(timeIntervalSince1970: group.parent.activityAt / 1000))
-                                .padding(.vertical, 4)
+                                ForEach(group.children) { child in
+                                    row(child.session, title: child.session.title, depth: child.depth + 1)
+                                }
+                            }.transition(.genReveal)
                         }
                     }
                 }
@@ -111,12 +98,71 @@ public struct WidgetSessionBrowser: View {
         .fixedSize()
     }
 
+    private func isOpen(_ group: WidgetAgentTree.Group) -> Bool {
+        if !query.isEmpty { return true }
+        if collapsed.contains(group.id) { return false }
+        return expanded.contains(group.id) || group.children.contains { $0.id == model.selectedKey }
+    }
+
+    private func toggle(_ group: WidgetAgentTree.Group) {
+        let opening = !isOpen(group)
+        GenMotion.perform(expanding: opening, reduceMotion: reduceMotion) {
+            if opening { expanded.insert(group.id); collapsed.remove(group.id) }
+            else { expanded.remove(group.id); collapsed.insert(group.id) }
+        }
+    }
+
+    private func open(_ session: WidgetSession) {
+        if let onOpen { onOpen(session) }
+        else { model.select(session.key); model.section = "Inbox" }
+    }
+
+    /// A top-level session: its name, project, account and sub-agent count, the same for every session.
+    private func topRow(_ group: WidgetAgentTree.Group) -> some View {
+        let session = group.parent
+        let selected = session.key == model.selectedKey
+        return WidgetHoverRow { hovering in HStack(alignment: .center, spacing: 2) {
+            if group.children.isEmpty {
+                Color.clear.frame(width: 18, height: 18)
+            } else {
+                Button { toggle(group) } label: {
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary).rotationEffect(.degrees(isOpen(group) ? 90 : 0))
+                        .frame(width: 18, height: 26).contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip(isOpen(group) ? "Hide its sub-agents" : "Show its \(Plural.count(group.children.count, "sub-agent"))")
+                .accessibilityLabel((isOpen(group) ? "Hide sub-agents of " : "Show sub-agents of ") + session.title)
+                .accessibilityIdentifier("widget.sessions.group." + group.id)
+            }
+            Button { open(session) } label: {
+                VStack(alignment: .leading, spacing: 3) {
+                    AgentRosterGroupLabel(title: session.title, provider: session.target.provider,
+                        project: session.project, account: session.account,
+                        total: group.children.count, running: group.running,
+                        live: session.status == "working" || group.running > 0,
+                        lastAt: Date(timeIntervalSince1970: session.activityAt / 1000),
+                        unread: model.inboxFor(session.key).map { $0.unread + $0.needsAnswer } ?? 0)
+                    if session.hiddenByFilter {
+                        Text("Hidden by widget filters").font(.caption2).foregroundStyle(.orange).padding(.leading, 31)
+                    }
+                }
+                .padding(.vertical, 7).padding(.horizontal, 4)
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            }
+            .buttonStyle(RowButtonStyle(cornerRadius: 8))
+            .accessibilityLabel("Open session " + session.title + ", " + session.visualStatus.label)
+            trailing(session, hovering: hovering)
+        } }
+        .padding(.horizontal, 4)
+        .background(selected ? Color.blue.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? Color.blue.opacity(0.35) : .clear))
+    }
+
     private func row(_ session: WidgetSession, title: String, depth: Int) -> some View {
-        HStack(alignment: .top, spacing: 5) {
-            Button {
-                if let onOpen { onOpen(session) }
-                else { model.select(session.key); model.section = "Inbox" }
-            } label: {
+        let selected = session.key == model.selectedKey
+        return WidgetHoverRow { hovering in HStack(alignment: .center, spacing: 2) {
+            Button { open(session) } label: {
                 VStack(alignment: .leading, spacing: 3) {
                     AgentRosterRow(title: title, provider: session.target.provider, role: session.role ?? "lead",
                         model: session.model, account: session.account,
@@ -125,28 +171,42 @@ public struct WidgetSessionBrowser: View {
                         lastAt: Date(timeIntervalSince1970: session.activityAt / 1000),
                         toolCalls: session.toolCalls ?? 0,
                         unread: model.inboxFor(session.key).map { $0.unread + $0.needsAnswer } ?? 0,
-                        selected: session.key == model.selectedKey, showsRunningLabel: session.agentId == nil)
+                        selected: selected, showsRunningLabel: session.agentId == nil)
                     if session.hiddenByFilter {
                         Text("Hidden by widget filters").font(.caption2).foregroundStyle(.orange).padding(.leading, 15)
                     }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }.buttonStyle(.genHoverRow())
-                .accessibilityLabel("Open session " + session.title + ", " + session.visualStatus.label)
+                }
+                .padding(.vertical, 6).padding(.horizontal, 6)
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            }
+            .buttonStyle(RowButtonStyle(cornerRadius: 8))
+            .accessibilityLabel("Open session " + session.title + ", " + session.visualStatus.label)
+            trailing(session, hovering: hovering)
+        } }
+        .padding(.leading, CGFloat(min(depth, 4)) * 14).padding(.trailing, 4)
+        .background(selected ? Color.blue.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? Color.blue.opacity(0.35) : .clear))
+    }
+
+    /// cmux and pin, inside the row's own box so its selection and hover cover them. cmux is live only on the
+    /// hovered or selected row.
+    private func trailing(_ session: WidgetSession, hovering: Bool) -> some View {
+        HStack(spacing: 0) {
+            WidgetCmuxButton(model: model, session: session, size: 10.5,
+                             live: hovering || session.key == model.selectedKey)
             Button {
                 model.action(["action": "visibility", "key": .string(session.key), "pinned": .bool(!session.pinned)])
             } label: {
                 Image(systemName: session.pinned ? "pin.fill" : "pin")
                     .font(.system(size: 10)).foregroundStyle(session.pinned ? Color.blue : .secondary)
-                    .frame(width: 22, height: 25)
+                    .frame(width: 24, height: 24).contentShape(Rectangle())
             }.buttonStyle(.genHoverPlain()).instantTooltip(session.pinned ? "Unpin from widget" : "Pin to widget")
                 .accessibilityLabel((session.pinned ? "Unpin " : "Pin ") + session.title)
         }
-        .padding(.leading, CGFloat(min(depth, 4)) * 12).padding(.vertical, 5).padding(.horizontal, 6)
-        .background(session.key == model.selectedKey ? Color.blue.opacity(0.12) : .clear,
-                    in: RoundedRectangle(cornerRadius: 9))
     }
 
     private func setProjects(_ projects: [String]) {
         model.action(["action": "preferences", "patch": ["projects": .array(projects.map(WidgetJSON.string))]])
     }
 }
+

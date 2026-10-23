@@ -2826,8 +2826,9 @@ private struct ScopeLink: View {
 }
 
 /// Codex's review source menu: what the diff compares. Its label is the chip the markdown viewer's scope picker shows
-/// (GenesisKit `GitPickerChip`); "Pick a Commit…" opens the commit chooser (`gitCommitPopover`), with each commit's
-/// author, date and line counts, a filter and the keyboard.
+/// (GenesisKit `GitPickerChip`); "Pick Commit(s)…" opens the commit chooser (`gitCommitPopover`), with each commit's
+/// author, date and line counts, a filter and the keyboard. Shift with the arrows or a Shift-click picks several
+/// commits in a row, shown as one range from the parent of the oldest to the newest.
 struct ScopeMenu: View {
     @ObservedObject var model: ReviewModel
     @State private var pickingCommit = false
@@ -2846,9 +2847,20 @@ struct ScopeMenu: View {
         .instantTooltip("What this diff compares: \(label)")
         // The list exists only while it is open: a closed chooser builds nothing (GenesisKit GitCommitPicker.swift).
         .gitCommitPopover(isPresented: $pickingCommit, choices: model.commits.map { GitCommitChoice($0) }, selection: shownCommit,
-                          title: "Commits ahead of \(model.base ?? "the base")", details: GitCommitDetailsLoader(folder: model.repo)) { choice in
-            model.setScope(.commit(sha: choice.sha, title: choice.subject))
-        }
+                          title: "Commits ahead of \(model.base ?? "the base")", details: GitCommitDetailsLoader(folder: model.repo),
+                          onPick: { choice in model.setScope(.commit(sha: choice.sha, title: choice.subject)) },
+                          onPickRange: { range in
+                              if let scope = Self.rangeScope(range) { model.setScope(scope) }
+                          })
+    }
+
+    /// Several commits of the list (newest first, as `model.commits` holds them) as one range: from the parent of the
+    /// oldest to the newest. One commit stays a commit scope.
+    static func rangeScope(_ range: [GitCommitChoice]) -> DiffScope? {
+        guard let newest = range.first, let oldest = range.last else { return nil }
+        guard range.count > 1 else { return .commit(sha: newest.sha, title: newest.subject) }
+        return .range(base: oldest.sha + "^", head: newest.sha,
+                      label: "\(oldest.sha.prefix(7))..\(newest.sha.prefix(7)) (\(Plural.count(range.count, "commit")))")
     }
 
     /// The commit the diff shows now, for the chooser's check.
@@ -2864,10 +2876,13 @@ struct ScopeMenu: View {
         // fills, not a greyed-out item.
         let turns = model.session != nil && model.remoteHead == nil
         let onCommit: Bool = {
-            if case .commit = model.scope { return true }
-            return false
+            switch model.scope {
+            case .commit: return true
+            case .range(_, let head, _, _): return model.commits.contains { $0.sha == head }
+            default: return false
+            }
         }()
-        let committed: MenuButtonItem = .action(model.commits.isEmpty ? "No Commits Ahead of the Base" : "Pick a Commit…",
+        let committed: MenuButtonItem = .action(model.commits.isEmpty ? "No Commits Ahead of the Base" : "Pick Commit(s)…",
                                                 checked: onCommit, enabled: !model.commits.isEmpty, run: pickCommit)
         let prItem: [MenuButtonItem] = model.prScope.map { scope in
             [.action("PR \(model.prLabel)", checked: model.scope == scope) { model.setScope(scope) }]

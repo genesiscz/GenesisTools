@@ -390,3 +390,19 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
 - **Driving a background app's context menu with `tools control` is not safe yet.** `AXShowMenu` on a SwiftUI tab
   blocked 2 s and opened the parent's menu first; the menu rows were not in `see --scope menu`; a coordinate click
   into the open menu closed it without choosing. Trigger the code path from a test instead.
+
+## Row-only controls with popovers, key modifiers, shared builds — 2026-10-23 15:17
+
+- **A control that exists only on the hovered row must keep its popover open after the pointer leaves.** The
+  popover's `isPresented` lives in the control; remove the control on hover-out and SwiftUI closes the popover.
+  Keep the `.popover` modifier on a same-size `Color.clear` placeholder while the row is not live, and treat "popover
+  open" as live (`WidgetCmuxButton(live:)`, GenesisKit Widgets). Hover is the row's, not the control's: a hover
+  sensor on the button covers only the button (`WidgetHoverRow { hovering in … }`).
+- **A popover from an edge panel needs its own "dialog open" flag.** Setting the host's shared `dialogOpen` from the
+  popover's `onChange` can release a window the host opened when the popover closes. One flag per presenter, ORed
+  into the getter (`sessionChooserOpen`, `cmuxPopoverOpen`).
+- **`.onKeyPress(.downArrow) { … }` has no key press to read.** Its closure takes no argument; to read Shift use
+  `.onKeyPress(.downArrow, phases: [.down, .repeat]) { press in press.modifiers.contains(.shift) }`. A click's
+  modifiers come from `NSEvent.modifierFlags` inside the button action.
+- **"input file … was modified during the build" is another session editing GenesisKit**, not your code. Rerun the
+  build through `.claude/skills/babysit/scripts/swift-slot.ts`; do not stash or touch their file.

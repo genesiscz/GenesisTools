@@ -25,6 +25,8 @@ public struct LiveWidgetView: View {
     }
 
     @State private var retry: WidgetOutgoing?
+    /// The session inbox's filter: every entry, the inbox entries (answers, results, questions) or the decisions.
+    @State private var inboxFilter = "all"
     @State private var choosingSession = false
     @State private var sourcesExpanded = false
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -147,14 +149,26 @@ public struct LiveWidgetView: View {
                         .textSelection(.enabled)
                 }.font(.caption).foregroundStyle(.orange)
             }
-            GenSegmentedTabs("View", items: sectionItems, selection: Binding(get: { section }, set: { section = $0 }))
-                .accessibilityIdentifier("widget.sections")
+            if !model.inboxOverview {
+                GenSegmentedTabs("View", items: sectionItems, selection: Binding(get: { section }, set: { section = $0 }))
+                    .accessibilityIdentifier("widget.sections")
+            }
             if model.snapshot == nil || (model.selected == nil && model.snapshot?.rosterLoading == true) {
                 VStack(spacing: 12) {
                     ProgressView()
                     Text("Connecting to your local agents…").font(.callout).foregroundStyle(.secondary)
                     if model.error != nil || model.connectionLost { Button("Reconnect", action: model.start) }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if model.inboxOverview {
+                ScrollView {
+                    WidgetInboxOverview(model: model)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
+                        .scrollOverflowContent()
+                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.document = $0; reportFit() }
+                }
+                .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.viewport = $0; reportFit() }
+                .onDisappear { fit.viewport = nil; fit.document = nil; reportFit() }
+                .scrollOverflowHints()
             } else if model.selected == nil {
                 if model.inbox.sessions.isEmpty {
                     VStack(spacing: 10) {
@@ -190,6 +204,9 @@ public struct LiveWidgetView: View {
                             .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.document = $0; reportFit() }
                     }
                         .modifier(LatestScrollAnchor(enabled: section == "Conversation", identity: model.selectedKey))
+                        // A new view (section or session) starts at its own top: the Sessions list's deep offset,
+                        // kept for the much shorter inbox, drew its rows over the header (Martin, 2026-10-23).
+                        .id(section + "|" + model.selectedKey)
                         .onChange(of: WidgetOutgoingPosition(session: model.selectedKey, messageID: model.outgoing.last?.id)) { previous, next in
                             guard section == "Inbox", previous.session == next.session, let id = next.messageID else { return }
                             ScrollViewPositioning.scroll(reader, to: "outgoing-" + id, anchor: .bottom)
@@ -200,7 +217,9 @@ public struct LiveWidgetView: View {
                         .scrollOverflowHints()
                 }
                 // While a decision card holds the composer for an own answer, the bottom one would edit the same draft.
-                if section != "Sessions" && !(section == "Inbox" && model.ownAnswerCard != nil) { composer }
+                if !model.inboxOverview && section != "Sessions" && !(section == "Inbox" && model.ownAnswerCard != nil) {
+                    composer
+                }
             }
         }
         .mediaPreviewHost()
@@ -232,7 +251,7 @@ public struct LiveWidgetView: View {
             fit.scheduled = false
             guard let outer = fit.outer else { return }
             // The same condition that chooses the list over the connecting / nothing-selected placeholders.
-            if model.snapshot != nil, model.selected != nil {
+            if model.snapshot != nil, model.selected != nil || model.inboxOverview {
                 // The list is shown but not measured yet: wait instead of reporting the placeholder for a moment.
                 guard let viewport = fit.viewport, let document = fit.document else { return }
                 model.reportAgentFit(outer - viewport + document)
@@ -248,12 +267,11 @@ public struct LiveWidgetView: View {
                 choosingSession = true
             } label: {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(model.selected?.title ?? "Agent inbox").font(.system(size: 13, weight: .semibold))
-                        .lineLimit(1)
-                    Text(
-                        [model.selected?.target.provider.capitalized, model.selected?.project].compactMap { $0 }
-                            .joined(separator: " · ")
-                    )
+                    Text(model.inboxOverview ? "Inbox" : model.selected?.title ?? "Agent inbox")
+                        .font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    Text(model.inboxOverview ? "Every session"
+                        : [model.selected?.target.provider.capitalized, model.selected?.project].compactMap { $0 }
+                            .joined(separator: " · "))
                     .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                 }
                 .padding(.horizontal, 6).padding(.vertical, 3)
@@ -273,12 +291,29 @@ public struct LiveWidgetView: View {
             .onChange(of: choosingSession) { _, value in model.sessionChooserOpen = value }
             .onDisappear { model.sessionChooserOpen = false }
             Spacer(minLength: 0)
-            IconButton(systemName: "pin.slash", tooltip: "Unpin this session from the widget", action: model.unpinSelected)
-                .accessibilityLabel("Unpin selected session")
-            IconButton(systemName: "rectangle.on.rectangle", tooltip: "Open this session in Hub") {
-                model.openHub?(model.selected)
+            if model.inboxOverview {
+                if model.selected != nil {
+                    IconButton(systemName: "chevron.left", tooltip: "Back to " + (model.selected?.title ?? "the session")) {
+                        model.inboxOverview = false
+                    }.accessibilityLabel("Back to the session")
+                }
+            } else {
+                IconButton(systemName: "tray.full", tooltip: "Inbox entries from every session") {
+                    model.inboxOverview = true
+                }.accessibilityLabel("Inbox from every session")
+                if let selected = model.selected {
+                    WidgetCmuxButton(model: model, session: selected, size: 12)
+                }
             }
-            .accessibilityLabel("Open session in Hub")
+            // Both act on one session, which the overview of every session does not show.
+            if !model.inboxOverview {
+                IconButton(systemName: "pin.slash", tooltip: "Unpin this session from the widget", action: model.unpinSelected)
+                    .accessibilityLabel("Unpin selected session")
+                IconButton(systemName: "rectangle.on.rectangle", tooltip: "Open this session in Hub") {
+                    model.openHub?(model.selected)
+                }
+                .accessibilityLabel("Open session in Hub")
+            }
             IconButton(systemName: "slider.horizontal.3", tooltip: "Widget settings and filters") {
                 model.showSettings?()
             }
@@ -356,11 +391,20 @@ public struct LiveWidgetView: View {
     @ViewBuilder private var inbox: some View {
         if !model.cards.isEmpty {
             HStack(spacing: 8) {
-                Text(inboxHeadline).font(.system(size: 11)).foregroundStyle(.secondary)
+                GenSegmentedTabs(
+                    "Inbox filter",
+                    items: [.init("all", "All"), .init("inbox", "Inbox entries"), .init("decisions", "Decisions")],
+                    selection: $inboxFilter, minSegmentWidth: 64, identifier: "widget.inbox.filter")
                 Spacer()
                 markAllReadButton
             }
-            ForEach(model.cards.reversed()) { card in
+            Text(inboxHeadline).font(.system(size: 11)).foregroundStyle(.secondary)
+            let shown = Self.filtered(model.cards, by: inboxFilter)
+            if shown.isEmpty {
+                Text(inboxFilter == "decisions" ? "No decisions in this session." : "No inbox entries in this session.")
+                    .font(.callout).foregroundStyle(.secondary).padding(.vertical, 6)
+            }
+            ForEach(shown.reversed()) { card in
                 inboxRow(card).id("card-" + card.id)
             }
         } else if model.inboxLoading {
@@ -557,6 +601,15 @@ public struct LiveWidgetView: View {
             WidgetOwnAnswerRow {
                 GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { model.ownAnswerCardID = card.id }
             }.disabled(model.importing > 0 || model.cardPending)
+        }
+    }
+
+    /// "inbox": answers, results and questions; "decisions": decisions and tasks; anything else: every card.
+    static func filtered(_ cards: [WidgetCard], by filter: String) -> [WidgetCard] {
+        switch filter {
+        case "inbox": return cards.filter { !["decision", "todo"].contains($0.kind) }
+        case "decisions": return cards.filter { ["decision", "todo"].contains($0.kind) }
+        default: return cards
         }
     }
 
@@ -914,6 +967,10 @@ public struct LiveWidgetView: View {
             }.font(.system(size: 12)).foregroundStyle(.secondary).buttonStyle(.genHoverIcon())
         }
         .padding(11).background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 13))
+        // The whole box is the field's target: a click beside the one-line field (or under it, in the padding) starts
+        // typing. The buttons inside keep their own clicks, because a child's gesture wins over this one.
+        .contentShape(RoundedRectangle(cornerRadius: 13))
+        .onTapGesture { editing = true }
     }
 
     private func attachments(_ ids: [String], tile: CGSize, removable: Bool) -> some View {

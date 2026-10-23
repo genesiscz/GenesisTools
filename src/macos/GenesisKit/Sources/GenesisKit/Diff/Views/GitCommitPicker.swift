@@ -10,6 +10,7 @@
 //  `git log --no-walk` for all of its commits.
 //
 
+import AppKit
 import SwiftUI
 
 /// How much a commit changed: every file, and the chooser's own file when it names one.
@@ -218,10 +219,19 @@ public extension GitCommitPicker where Label == GitPickerChip {
 
 public extension View {
     /// The commit list as a popover from this view. Its rows are built when it opens, never while it is closed.
+    /// With `onPickRange`, Shift with the arrows or a Shift-click picks several commits in a row: the callback gets
+    /// them in list order, every commit between the two ends included, even ones the filter hides.
     func gitCommitPopover(isPresented: Binding<Bool>, choices: [GitCommitChoice], selection: String?, title: String? = nil,
-                          details: GitCommitDetailsLoader? = nil, onPick: @escaping (GitCommitChoice) -> Void) -> some View {
+                          details: GitCommitDetailsLoader? = nil, onPick: @escaping (GitCommitChoice) -> Void,
+                          onPickRange: (([GitCommitChoice]) -> Void)? = nil) -> some View {
         popover(isPresented: isPresented, arrowEdge: .bottom) {
-            GitCommitPickerList(choices: choices, selection: selection, title: title, details: details) { choice in
+            GitCommitPickerList(choices: choices, selection: selection, title: title, details: details,
+                pickRange: onPickRange.map { pickRange in
+                    { range in
+                        isPresented.wrappedValue = false
+                        pickRange(range)
+                    }
+                }) { choice in
                 isPresented.wrappedValue = false
                 onPick(choice)
             }
@@ -246,6 +256,8 @@ struct GitCommitPickerState {
     private(set) var rows: [GitCommitChoice] = []
     /// The row the keyboard or the pointer is on: Return picks it.
     var highlighted: String?
+    /// Where a Shift-extended range started; nil while one commit is chosen.
+    var anchor: String?
 
     init(choices: [GitCommitChoice], selection: String?, query: String = "") {
         self.choices = choices
@@ -254,8 +266,35 @@ struct GitCommitPickerState {
         highlighted = selection.flatMap { sha in rows.first { $0.sha == sha }?.id } ?? rows.first?.id
     }
 
-    /// Moves the highlight `step` rows, stopping at either end; from no highlight, down starts at the top.
+    /// Moves the highlight `step` rows, stopping at either end; from no highlight, down starts at the top. A plain move
+    /// ends a range.
     mutating func move(_ step: Int) {
+        anchor = nil
+        advance(step)
+    }
+
+    /// Shift with an arrow: the range grows from where it started.
+    mutating func extend(_ step: Int) {
+        if anchor == nil { anchor = highlighted }
+        advance(step)
+    }
+
+    /// Shift-click: the range runs from where it started (or the highlighted row) to `id`.
+    mutating func extend(to id: String) {
+        if anchor == nil { anchor = highlighted }
+        highlighted = id
+    }
+
+    /// The commits of a range, in the list's order and with every commit between its ends (also the ones the filter
+    /// hides, so the diff never skips one); nil while one commit is chosen.
+    var range: [GitCommitChoice]? {
+        guard let anchor, let highlighted, anchor != highlighted,
+              let start = choices.firstIndex(where: { $0.id == anchor }),
+              let end = choices.firstIndex(where: { $0.id == highlighted }) else { return nil }
+        return Array(choices[min(start, end)...max(start, end)])
+    }
+
+    private mutating func advance(_ step: Int) {
         guard !rows.isEmpty else { return }
         let index = highlighted.flatMap { id in rows.firstIndex { $0.id == id } } ?? (step > 0 ? -1 : rows.count)
         highlighted = rows[min(max(index + step, 0), rows.count - 1)].id
@@ -280,6 +319,8 @@ struct GitCommitPickerList: View {
     let selection: String?
     let title: String?
     let details: GitCommitDetailsLoader?
+    /// Several commits in a row; nil offers one commit only.
+    let pickRange: (([GitCommitChoice]) -> Void)?
     let pick: (GitCommitChoice) -> Void
 
     @State private var state: GitCommitPickerState
@@ -296,10 +337,11 @@ struct GitCommitPickerList: View {
     static let page = 8
 
     init(choices: [GitCommitChoice], selection: String?, title: String?, details: GitCommitDetailsLoader?, query: String = "",
-         pick: @escaping (GitCommitChoice) -> Void) {
+         pickRange: (([GitCommitChoice]) -> Void)? = nil, pick: @escaping (GitCommitChoice) -> Void) {
         self.selection = selection
         self.title = title
         self.details = details
+        self.pickRange = pickRange
         self.pick = pick
         _state = State(initialValue: GitCommitPickerState(choices: choices, selection: selection, query: query))
     }
@@ -344,11 +386,9 @@ struct GitCommitPickerList: View {
                 .textFieldStyle(.plain)
                 .font(.system(size: 12.5))
                 .focused($searchFocused)
-                .onSubmit {
-                    if let choice = state.highlightedChoice { pick(choice) }
-                }
-                .onKeyPress(.upArrow) { move(-1) }
-                .onKeyPress(.downArrow) { move(1) }
+                .onSubmit { submit() }
+                .onKeyPress(.upArrow, phases: [.down, .repeat]) { press in move(-1, extending: press.modifiers.contains(.shift)) }
+                .onKeyPress(.downArrow, phases: [.down, .repeat]) { press in move(1, extending: press.modifiers.contains(.shift)) }
                 .onKeyPress(.pageUp) { move(-Self.page) }
                 .onKeyPress(.pageDown) { move(Self.page) }
                 .accessibilityLabel("Filter commits")
@@ -374,13 +414,17 @@ struct GitCommitPickerList: View {
             ScrollViewReader { proxy in
                 FittedScroll(maxHeight: Self.maxListHeight) {
                     LazyVStack(spacing: 1) {
+                        let inRange = Set(state.range?.map(\.id) ?? [])
                         ForEach(state.rows) { choice in
-                            GitCommitPickerRow(choice: choice, current: choice.sha == selection, highlighted: choice.id == state.highlighted) {
-                                pick(choice)
+                            GitCommitPickerRow(choice: choice, current: choice.sha == selection,
+                                               highlighted: choice.id == state.highlighted || inRange.contains(choice.id)) {
+                                click(choice)
                             }
                             .id(choice.id)
                             .onHover { inside in
-                                guard inside, state.highlighted != choice.id, Date().timeIntervalSince(keyMovedAt) > 0.4 else { return }
+                                // A range keeps its ends while the pointer crosses other rows.
+                                guard inside, state.anchor == nil, state.highlighted != choice.id,
+                                      Date().timeIntervalSince(keyMovedAt) > 0.4 else { return }
                                 state.highlighted = choice.id
                             }
                         }
@@ -413,7 +457,7 @@ struct GitCommitPickerList: View {
                     .accessibilityLabel("Reading the line counts")
             }
             Spacer(minLength: 8)
-            Text("↑↓ move  ·  ↩ show  ·  esc close")
+            Text(verbatim: keysHint)
                 .accessibilityHidden(true)
         }
         .font(.system(size: 10.5))
@@ -422,8 +466,40 @@ struct GitCommitPickerList: View {
         .padding(.vertical, 6)
     }
 
-    private func move(_ step: Int) -> KeyPress.Result {
-        state.move(step)
+    /// The keys, and with a range how many commits Return shows.
+    private var keysHint: String {
+        if let range = state.range {
+            return "\(Plural.count(range.count, "commit")) chosen  ·  ↩ show them  ·  ↑↓ back to one"
+        }
+        return pickRange == nil ? "↑↓ move  ·  ↩ show  ·  esc close"
+            : "↑↓ move  ·  ⇧↑↓ or ⇧-click more  ·  ↩ show  ·  esc close"
+    }
+
+    private func submit() {
+        if pickRange != nil, let range = state.range {
+            pickRange?(range)
+        } else if let choice = state.highlightedChoice {
+            pick(choice)
+        }
+    }
+
+    /// A click shows that one commit; with Shift (when ranges are offered) it extends the range instead.
+    private func click(_ choice: GitCommitChoice) {
+        if pickRange != nil, NSEvent.modifierFlags.contains(.shift) {
+            state.extend(to: choice.id)
+            keyMovedAt = Date()
+            return
+        }
+
+        pick(choice)
+    }
+
+    private func move(_ step: Int, extending: Bool = false) -> KeyPress.Result {
+        if extending, pickRange != nil {
+            state.extend(step)
+        } else {
+            state.move(step)
+        }
         scrollTarget = state.highlighted
         keyMovedAt = Date()
         return .handled

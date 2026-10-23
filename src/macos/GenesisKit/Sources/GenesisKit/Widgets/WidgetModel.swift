@@ -30,6 +30,9 @@ public final class WidgetModel: ObservableObject {
     /// Rail sessions that are working or hold unread items. Stored, because every layout pass of every edge panel reads
     /// it: filtering ~1000 sessions there cost a quarter of the main thread while panels animated.
     public private(set) var railActivitySessions: [WidgetSession] = []
+    /// The agents hover list (`previewRows`): every session that needs you, with the "active" filter also the
+    /// sessions that work now. Stored with the inbox, because every hover layout reads it.
+    public private(set) var previewList: [WidgetSession] = []
     @Published public private(set) var inbox = WidgetInboxSummary.empty
     @Published public private(set) var inboxPulse = 0
     private var inboxSessions: [String: WidgetInboxSession] = [:]
@@ -40,6 +43,9 @@ public final class WidgetModel: ObservableObject {
     private var openingInbox: WidgetInboxItem?
     private var inboxReadRequests: Set<String> = []
     @Published public var selectedKey = ""
+    /// The expanded agents pane shows the inbox entries of every session instead of one session (the inbox button).
+    /// Opening a session ends it.
+    @Published public var inboxOverview = false { didSet { if inboxOverview != oldValue { presentationChanged?() } } }
     @Published public var selectedCardID: String? { didSet { presentationChanged?() } }
     @Published public var section = "Inbox" {
         didSet {
@@ -109,9 +115,11 @@ public final class WidgetModel: ObservableObject {
     @Published private var hostDialogOpen = false
     /// Set by the session chooser alone, so closing it (or its view going away) cannot release a window still open.
     @Published public var sessionChooserOpen = false
+    /// Set by a session's cmux popover alone, for the same reason.
+    @Published public var cmuxPopoverOpen = false
     /// Hover previews and the outside-click collapse stay off while a window, picker or the chooser is open.
     public var dialogOpen: Bool {
-        get { hostDialogOpen || sessionChooserOpen }
+        get { hostDialogOpen || sessionChooserOpen || cmuxPopoverOpen }
         set { hostDialogOpen = newValue }
     }
     private var mediaPicker: NSOpenPanel?
@@ -119,6 +127,8 @@ public final class WidgetModel: ObservableObject {
     /// The pointer entered or left an edge panel, before any hover delay.
     public var pointerChanged: ((WidgetSurfaceID, Bool) -> Void)?
     public var showSettings: (() -> Void)?
+    /// Opens Settings at a page, or at a card on it (`widgets.sessions#inbox-preview`), which then pulses.
+    public var showSettingsPage: ((String) -> Void)?
     public var showMedia: ((WidgetMediaSelection) -> Void)?
     public var openHub: ((WidgetSession?) -> Void)?
     public var recordVoiceNote: ((String) -> Void)?
@@ -776,6 +786,53 @@ public final class WidgetModel: ObservableObject {
             let inbox = inboxSessions[session.key]
             return session.visualStatus == .working || (inbox?.unread ?? 0) + (inbox?.needsAnswer ?? 0) > 0
         }
+        inboxOverviewItems = Self.overviewItems(value.sessions)
+        previewList = Self.previewRows(
+            sessions: snapshot?.sessions ?? [], inbox: inboxSessions,
+            filter: previewFilter, sort: previewSort)
+    }
+
+    public var previewFilter: String { snapshot?.state.preferences.previewFilter ?? "needs-you" }
+    public var previewSort: String { snapshot?.state.preferences.previewSort ?? "attention" }
+
+    /// The hover list. "Needs you": a session with an unanswered item, or a shown session that waits. With the
+    /// "active" filter, shown top-level sessions that work or hold unread items join it. Orders: "attention" (waiting
+    /// for you, then working, then newest), "recent" (newest activity) and "project" (by project, then newest).
+    nonisolated static func previewRows(
+        sessions: [WidgetSession], inbox: [String: WidgetInboxSession], filter: String, sort: String
+    ) -> [WidgetSession] {
+        func needs(_ session: WidgetSession) -> Bool {
+            (inbox[session.key]?.needsAnswer ?? 0) > 0 || (session.visible && session.status == "waiting")
+        }
+        let rows = sessions.filter { session in
+            if needs(session) { return true }
+            guard filter == "active", session.visible, session.parentKey == nil, session.agentId == nil else { return false }
+            return session.status == "working" || (inbox[session.key]?.unread ?? 0) > 0
+        }
+        func rank(_ session: WidgetSession) -> Int {
+            needs(session) ? 0 : session.status == "working" ? 1 : 2
+        }
+        return rows.sorted { lhs, rhs in
+            switch sort {
+            case "recent":
+                return lhs.activityAt > rhs.activityAt
+            case "project":
+                let order = lhs.project.localizedCaseInsensitiveCompare(rhs.project)
+                return order == .orderedSame ? lhs.activityAt > rhs.activityAt : order == .orderedAscending
+            default:
+                let (left, right) = (rank(lhs), rank(rhs))
+                return left == right ? lhs.activityAt > rhs.activityAt : left < right
+            }
+        }
+    }
+
+    /// Stores the hover list's filter or order.
+    public func setPreview(filter: String? = nil, sort: String? = nil) {
+        var patch: [String: WidgetJSON] = [:]
+        if let filter { patch["previewFilter"] = .string(filter) }
+        if let sort { patch["previewSort"] = .string(sort) }
+        guard !patch.isEmpty else { return }
+        updatePreferences(patch)
     }
 
     public func inboxFor(_ key: String) -> WidgetInboxSession? { inboxSessions[key] }
@@ -847,6 +904,54 @@ public final class WidgetModel: ObservableObject {
         acknowledgeOpenedInbox()
     }
 
+    /// The overview's entries from every session: the waiting ones first, then newest first. A hub from before the
+    /// per-session list gives each session's pending and unread item. Stored when the inbox changes: up to 512
+    /// sessions × 8 entries, sorted, is too much to derive in a body that reads it several times per pass.
+    public private(set) var inboxOverviewItems: [WidgetInboxItem] = []
+
+    nonisolated static func overviewItems(_ sessions: [WidgetInboxSession]) -> [WidgetInboxItem] {
+        sessions.flatMap { entry in entry.items ?? [entry.pendingItem, entry.unreadItem].compactMap { $0 } }
+            .sorted { lhs, rhs in
+                lhs.needsAnswer == rhs.needsAnswer ? (lhs.at == rhs.at ? lhs.id < rhs.id : lhs.at > rhs.at) : lhs.needsAnswer
+            }
+    }
+
+    /// An overview entry's "Open in session": that session's inbox with the entry open.
+    public func openInboxItem(_ item: WidgetInboxItem) {
+        guard !stopping else { return }
+        openingInbox = item
+        select(item.key)
+        selectedCardID = item.id
+        foldedCardIDs.remove(item.id)
+        section = "Inbox"
+        acknowledgeOpenedInbox()
+    }
+
+    /// The inbox button: every session's entries in one list. A second click while that list is open hides the panel.
+    public func toggleInboxOverview(on surface: WidgetSurfaceID) {
+        guard !stopping else { return }
+        if presentation(for: surface) == .expanded, activeModuleID == "agents", inboxOverview {
+            collapse()
+            return
+        }
+
+        inboxOverview = true
+        section = "Inbox"
+        openModule("agents", on: surface)
+    }
+
+    /// A session button on the rail or the top strip: opens that session's inbox, or hides the panel when the same
+    /// session is already open there (Martin, 2026-10-23: a second click did nothing).
+    public func toggleSession(_ key: String, on surface: WidgetSurfaceID) {
+        guard !stopping else { return }
+        if presentation(for: surface) == .expanded, activeModuleID == "agents", !inboxOverview, selectedKey == key {
+            collapse()
+            return
+        }
+
+        openInboxNotification(on: surface, key: key)
+    }
+
     private func acknowledgeOpenedInbox() {
         guard !stopping, let item = openingInbox, expanded != nil, activeModuleID == "agents", section == "Inbox",
             selectedKey == item.key, let displayed = cards.first(where: { $0.id == item.id }), displayed.at == item.at
@@ -885,6 +990,7 @@ public final class WidgetModel: ObservableObject {
 
     public func select(_ key: String, edge: EdgePanelPlacement? = nil) {
         if openingInbox?.key != key { openingInbox = nil }
+        inboxOverview = false
         selectedKey = key
         lastSelected = snapshot?.sessions.first { $0.key == key }
         selectedCardID = nil

@@ -405,6 +405,8 @@ public struct AgentWidgetView: View {
                         action: actions.submit)
                 }
                 .padding(11).background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 12))
+                .contentShape(RoundedRectangle(cornerRadius: 12))
+                .onTapGesture { composerFocused = true }
                 HStack(spacing: 6) {
                     if sending {
                         ProgressView().controlSize(.mini)

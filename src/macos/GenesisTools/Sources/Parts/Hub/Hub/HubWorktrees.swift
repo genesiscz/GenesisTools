@@ -120,12 +120,7 @@ enum WorktreeDiscovery {
 
 enum AgentLauncher {
     static func resumeCommand(for session: HubSession) -> [String]? {
-        switch session.provider {
-        case "claude": return ["tools", "claude", "resume", session.sessionId]
-        case "codex": return ["codex", "resume", session.sessionId]
-        case "grok": return ["grok", "--resume", session.sessionId]
-        default: return nil
-        }
+        CmuxCommandRunner.resumeCommand(provider: session.provider, sessionId: session.sessionId)
     }
 
     /// Runs `command` in `cwd` in a new workspace of the current terminal host (cmux today, see

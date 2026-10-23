@@ -125,6 +125,9 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
             if parts.count > 1, let target = surface(2) { model.openModule(parts[1], on: target) }
         case "hover", "unhover":
             if let target = surface(1) { model.hover(target, inside: parts.first == "hover") }
+        // What the inbox button and a rail session button do: open, or hide when already open.
+        case "inbox": if let target = surface(1) { model.toggleInboxOverview(on: target) }
+        case "session": if parts.count > 1, let target = surface(2) { model.toggleSession(parts[1], on: target) }
         case "collapse": model.collapse()
         case "select": if parts.count > 1 { model.select(parts[1]) }
         case "settings": coordinator.showSettings(pageID: parts.count > 1 ? parts[1] : "widgets.general")

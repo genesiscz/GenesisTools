@@ -195,6 +195,8 @@ export interface WidgetInboxItem {
     title?: string;
     /** A decision's number. */
     number?: number;
+    /** How many inbox items this entry stands for: an answers group lists only its newest item. */
+    count?: number;
 }
 export interface WidgetInboxSession {
     key: string;
@@ -203,6 +205,18 @@ export interface WidgetInboxSession {
     latest?: WidgetInboxItem;
     unreadItem?: WidgetInboxItem;
     pendingItem?: WidgetInboxItem;
+    /** The session's listed entries, the ones waiting for an answer first, then newest first; at most `INBOX_ITEMS_PER_SESSION`. */
+    items?: WidgetInboxItem[];
+}
+
+/** The entries one session lists in the widget's inbox overview; its counts still cover every item. */
+export const INBOX_ITEMS_PER_SESSION = 8;
+
+/** A session's entries for the overview: the ones waiting for an answer first, then newest first, capped. */
+export function listedInboxItems(items: WidgetInboxItem[]): WidgetInboxItem[] {
+    return [...items]
+        .sort((a, b) => Number(b.needsAnswer) - Number(a.needsAnswer) || b.at - a.at)
+        .slice(0, INBOX_ITEMS_PER_SESSION);
 }
 export interface WidgetInboxSummary {
     unread: number;
@@ -1000,6 +1014,8 @@ export async function widgetSnapshot({
         if (!entry[target] || item.at > entry[target].at) {
             entry[target] = item;
         }
+
+        entry.items = [...(entry.items ?? []), count > 1 ? { ...item, count } : item];
         inboxSessions.set(session.key, entry);
     };
     // Counted per item: each SQL group carries its session's newest item and how many of its items fall after the
@@ -1125,7 +1141,8 @@ export async function widgetSnapshot({
         truncated: inboxData.truncated || inboxSessions.size > 512,
         sessions: [...inboxSessions.values()]
             .sort((a, b) => b.needsAnswer - a.needsAnswer || b.unread - a.unread)
-            .slice(0, 512),
+            .slice(0, 512)
+            .map((entry) => ({ ...entry, items: listedInboxItems(entry.items ?? []) })),
         ...(prof.enabled ? { profile: { hostId: "local" as const } } : {}),
     };
     const inboxMetadata: { notifications?: WidgetInboxSummary } = { notifications };

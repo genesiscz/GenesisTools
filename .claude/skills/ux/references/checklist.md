@@ -45,6 +45,24 @@ Walk it for every view you change. Each line exists because it was missed at lea
 - One navigation per surface; no two controls that do the same thing side by side.
 - Distinct icons for distinct features (two modules once shared `waveform`).
 
+## Widget and panel controls (Martin, 2026-10-23 14:40)
+- A text field inside a padded box: the whole box focuses the field (`.contentShape` + `.onTapGesture { focus = true }`
+  on the box); a click beside or under the one-line field did nothing.
+- A button that opened something closes it on a second click when what it opened is still on screen (a rail
+  session's inbox, the inbox overview). A second click that does nothing reads as a dead control.
+- A count leads to the list of exactly what it counts. "35 need you" over 4 rows, and "99+ unread" that opened one
+  arbitrary session, are both defects: the count opens a list of every counted item (scrollable, filterable), and
+  each item says which session it belongs to (name, project, short id) and how to get there.
+- Every session row offers a way to its terminal: the cmux button with GenesisKit `CmuxSessionPanel` (focus, open
+  in its last pane, choose a pane), one shared component in the hub and the widget.
+- A list's filter and order live next to the list, with a settings shortcut that opens the page at the card and
+  pulses it (`<page>#<anchor>` + `.nativeSettingsAnchor(id)`, GenesisKit `AttentionPulse`).
+- One row style for every top-level item of a list. Sessions with sub-agents drew as disclosure headers and sessions
+  without as plain rows, in one list: same row, a chevron only where there is something to fold, and selection, pin
+  and cmux inside the row's own box.
+- A scroll view reused for several sections (or sessions) gets an identity per content (`.id(section + key)`): it
+  otherwise keeps the old offset, and a short section drew its rows over the header.
+
 ## Feedback
 - Every action answers within 100 ms: visible state change, sound for capture, progress for slow work.
 - Errors say what happened and what to do, in a dialog when the user must act. A missing grant goes through

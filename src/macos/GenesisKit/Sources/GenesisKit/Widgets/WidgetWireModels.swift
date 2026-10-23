@@ -286,6 +286,10 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var alertAnswers: Bool?
     public var alertSound: String?
     public var alertPopup: Bool?
+    /// The agents hover list: "needs-you" (default) or "active" (sessions that work now too).
+    public var previewFilter: String?
+    /// The agents hover list's order: "attention" (default), "recent" or "project".
+    public var previewSort: String?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(
@@ -375,6 +379,8 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     /// A short title (a decision's title or prompt, an answer's question) and a decision's number, for alerts.
     public var title: String? = nil
     public var number: Int? = nil
+    /// How many items this entry stands for: an answers group lists only its newest item.
+    public var count: Int? = nil
 }
 public struct WidgetInboxSession: Codable, Equatable, Sendable {
     public var key: String
@@ -383,6 +389,8 @@ public struct WidgetInboxSession: Codable, Equatable, Sendable {
     public var latest: WidgetInboxItem?
     public var unreadItem: WidgetInboxItem?
     public var pendingItem: WidgetInboxItem?
+    /// The session's listed entries for the inbox overview, waiting ones first, then newest; nil from an older hub.
+    public var items: [WidgetInboxItem]? = nil
 }
 public struct WidgetInboxSummary: Codable, Equatable, Sendable {
     public struct Profile: Codable, Equatable, Sendable { public var hostId: String }

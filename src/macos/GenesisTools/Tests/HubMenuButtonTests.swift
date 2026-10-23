@@ -79,17 +79,17 @@ final class HubMenuButtonTests: XCTestCase {
         ]
         var opened = 0
         var items = MenuButtonPresenter.menu(ScopeMenu.items(model: model) { opened += 1 }).items
-        let pick = items.first { $0.title == "Pick a Commit…" }
+        let pick = items.first { $0.title == "Pick Commit(s)…" }
         XCTAssertEqual(pick?.isEnabled, true)
         XCTAssertEqual(pick?.state, .off)
         XCTAssertNil(pick?.submenu, "the chooser is a popover built when it opens, not a submenu")
         let menu = MenuButtonPresenter.menu(ScopeMenu.items(model: model) { opened += 1 })
-        menu.performActionForItem(at: menu.items.firstIndex { $0.title == "Pick a Commit…" } ?? -1)
+        menu.performActionForItem(at: menu.items.firstIndex { $0.title == "Pick Commit(s)…" } ?? -1)
         XCTAssertEqual(opened, 1)
 
         model.scope = .commit(sha: model.commits[1].sha, title: model.commits[1].subject)
         items = MenuButtonPresenter.menu(ScopeMenu.items(model: model)).items
-        XCTAssertEqual(items.first { $0.title == "Pick a Commit…" }?.state, .on)
+        XCTAssertEqual(items.first { $0.title == "Pick Commit(s)…" }?.state, .on)
         XCTAssertEqual(GitCommitChoice(model.commits[0]).relative, "2 hours ago", "the git words show until the details arrive")
     }
 

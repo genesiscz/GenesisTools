@@ -3,6 +3,24 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-23 15:17 — **The widget's inbox and session lists (Martin's review with seven screenshots).**
+  - *Only the text line of the composer took a click.* The `TextField` was one line inside a padded box. Fix: the
+    box is the target (`LiveWidgetView.composer`, legacy `AgentWidgetView` too).
+  - *A second click on a rail session ("4") did nothing.* Every session button called `openInboxNotification`
+    again. Fix: `WidgetModel.toggleSession` / `toggleInboxOverview` collapse when that view is already open.
+  - *"35 need you" with four rows.* The preview took `prefix(4)` of the visible sessions. Fix: `previewRows`, every
+    session that needs you in a `FittedScroll`, an "Active too" filter, three orders, and a settings shortcut to
+    Projects / Sessions `#inbox-preview`, which pulses.
+  - *"99+ unread" opened one random session with no name or way to its terminal, and nothing else was reachable.*
+    The button picked the newest item of the whole inbox. Fix: an inbox overview over every session (the snapshot
+    now lists up to eight entries per session, `WidgetInboxSession.items`), each entry with its session and "Open in
+    its session", a session inbox filter (All / Inbox entries / Decisions), and a cmux button on every session.
+  - *A session opened from Sessions drew its inbox rows over the header.* The pane's one `ScrollView` kept the long
+    Sessions list's offset. Fix: `.id(section + "|" + selectedKey)`.
+  - *Sessions with and without sub-agents looked different.* Two row styles in one list. Fix: one top-level row.
+  - The first cut put the cmux button on every row of a list of hundreds; the swift skill's dense-list rule caught
+    it before commit (row-only controls, `WidgetHoverRow`).
+
 - 2026-10-15 00:50 — **The vault approval window (GenesisTools.app `vault.unlock`).**
   - *"This can be probably nicer": one block of text with full paths, the raw command, two UUIDs and five buttons
     in a row.* It was an `NSAlert`. Now a SwiftUI panel (GenesisKit Permissions/ApprovalDialog.swift): the reason

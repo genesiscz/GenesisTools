@@ -132,7 +132,7 @@ struct WidgetHostView: View {
             }
         }) {
             Button {
-                if selected?.id == "agents", model.inboxCount > 0 { model.openInboxNotification(on: surface) }
+                if selected?.id == "agents" { model.toggleInboxOverview(on: surface) }
                 else { expand() }
             } label: {
                 HStack(spacing: 7) {
@@ -162,7 +162,7 @@ struct WidgetHostView: View {
                     HStack(spacing: 5) {
                         ForEach(Array(model.railActivitySessions.prefix(3))) { session in
                             Button {
-                                model.openInboxNotification(on: surface, key: session.key)
+                                model.toggleSession(session.key, on: surface)
                             } label: {
                                 sessionActivity(session)
                                     .frame(minWidth: 24, minHeight: 30).fixedSize()
@@ -270,7 +270,7 @@ struct WidgetHostView: View {
                 VStack(spacing: WidgetSideStripMetrics.sessionSpacing) {
                     ForEach(Array(model.railActivitySessions.prefix(sideMetrics.sessionCount))) { session in
                         Button {
-                            model.openInboxNotification(on: surface, key: session.key)
+                            model.toggleSession(session.key, on: surface)
                         } label: {
                             sessionActivity(session)
                                 .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
@@ -368,7 +368,9 @@ struct WidgetHostView: View {
             }
         }
         .frame(width: selected.previewSize.width)
-        .frame(maxHeight: .infinity)
+        // Pinned to the top: while the window still has the last measured height, an overflow hides the footer, never
+        // the header (the hover list opened on its middle rows, 2026-10-23).
+        .frame(maxHeight: .infinity, alignment: .top)
     }
 
     /// Inbox counts describe only the Agents module; every other module button names its module.
@@ -378,7 +380,7 @@ struct WidgetHostView: View {
 
     private func moduleButton(_ id: String, size: CGFloat, location: String = "content") -> some View {
         Button {
-            if id == "agents", model.inboxCount > 0 { model.openInboxNotification(on: surface) }
+            if id == "agents" { model.toggleInboxOverview(on: surface) }
             else { model.openModule(id, on: surface) }
         } label: {
             let layout = surface.edge == .top ? AnyLayout(HStackLayout(spacing: 3)) : AnyLayout(VStackLayout(spacing: 4))
@@ -422,7 +424,7 @@ struct WidgetHostView: View {
             if inbox.needsAnswer > 0 { lines.append("\(inbox.needsAnswer) waiting for your answer") }
             if inbox.unread > 0 { lines.append("\(inbox.unread) unread") }
         }
-        lines.append("Click to open its inbox")
+        lines.append("Click to open its inbox, again to hide it")
         return TooltipContent(title: session.title, bullets: lines)
     }
 

@@ -166,6 +166,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             motion.pointerInside = inside
         }
         model.showSettings = { [weak self] in self?.showSettings() }
+        model.showSettingsPage = { [weak self] in self?.showSettings(pageID: $0) }
         model.showMedia = { [weak self] selection in self?.showMedia(selection) }
         model.inboxArrived = { [weak self] items in self?.alert(items) }
     }

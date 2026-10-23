@@ -74,9 +74,11 @@ import {
 import {
     claudeAssistantText,
     discoverWidgetCatalog,
+    INBOX_ITEMS_PER_SESSION,
     inboxWindowCounts,
     lastAssistantTextOf,
     lastClaudeAssistantText,
+    listedInboxItems,
     readWidgetChanges,
     readWidgetDecisionEvents,
     realWidgetSources,
@@ -1677,6 +1679,8 @@ test("decision cards carry recorded answers and supersede links; only open decis
         number: 3,
         title: widgetTitle(replacement.prompt),
     });
+    // The overview lists the session's entries, the waiting one first.
+    expect(session?.items?.[0]).toMatchObject({ id: `decision:${replacement.id}`, needsAnswer: true });
     expect(
         snapshot.notifications?.sessions.find((entry) => entry.pendingItem?.sourceId === elsewhere.id)?.pendingItem
     ).toMatchObject({ number: 1, title: "Other" });
@@ -1692,6 +1696,22 @@ test("decision cards carry recorded answers and supersede links; only open decis
         title: "Other",
     });
     expect(moved.notifications?.sessions.find((entry) => entry.key === sessionKey)?.needsAnswer ?? 0).toBe(0);
+});
+
+test("a session lists its waiting entries first, then the newest, at most eight", () => {
+    const item = (id: string, at: number, needsAnswer = false) => ({
+        id,
+        sourceId: id,
+        kind: needsAnswer ? ("decision" as const) : ("answer" as const),
+        key: "k",
+        at,
+        needsAnswer,
+    });
+    const items = [item("old", 1), item("ask", 2, true), ...Array.from({ length: 9 }, (_, i) => item(`n${i}`, 10 + i))];
+    const listed = listedInboxItems(items);
+    expect(listed).toHaveLength(INBOX_ITEMS_PER_SESSION);
+    expect(listed.map((entry) => entry.id).slice(0, 3)).toEqual(["ask", "n8", "n7"]);
+    expect(listed.map((entry) => entry.id)).not.toContain("old");
 });
 
 test("alert preferences default on with the Glass sound, load from an older state, and refuse a bad sound", async () => {

@@ -95,6 +95,26 @@ final class GitPickerTests: XCTestCase {
         XCTAssertEqual(unpicked.highlighted, choices[0].id, "Down from nothing starts at the top")
     }
 
+    func testShiftExtendsARangeThatKeepsEveryCommitBetweenItsEnds() {
+        let choices = Self.choices(10)
+        var state = GitCommitPickerState(choices: choices, selection: choices[2].sha)
+        XCTAssertNil(state.range, "one commit is no range")
+        state.extend(1)
+        state.extend(1)
+        XCTAssertEqual(state.range?.map(\.subject), ["Change number 2", "Change number 3", "Change number 4"])
+        state.extend(-3)
+        XCTAssertEqual(state.range?.map(\.subject), ["Change number 1", "Change number 2"], "the range grows from its start")
+        state.move(1)
+        XCTAssertNil(state.range, "a plain move is back to one commit")
+
+        // A Shift-click across a filter: the hidden commits between the ends still belong to the range.
+        state.highlighted = choices[1].id
+        state.extend(to: choices[1].id)
+        state.query = "number 6"
+        state.extend(to: choices[6].id)
+        XCTAssertEqual(state.range?.count, 6, "commits 1 to 6, though the filter shows only one row")
+    }
+
     func testTheDetailsComeFromOneGitLogWithTheFileAndTheCommitCounts() throws {
         let repo = FileManager.default.temporaryDirectory.appendingPathComponent("commit-details-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: repo.appendingPathComponent("notes"), withIntermediateDirectories: true)

@@ -56,6 +56,56 @@ public enum NativeSettingsCatalogError: Error, Equatable, CustomStringConvertibl
     }
 }
 
+/// A settings link can name a card on its page: `widgets.sessions#inbox-preview` selects the page and pulses the card
+/// that carries `.nativeSettingsAnchor("inbox-preview")`. One settings window per process, so one shared center.
+@MainActor
+public final class NativeSettingsHighlightCenter: ObservableObject {
+    public static let shared = NativeSettingsHighlightCenter()
+    @Published public private(set) var anchor: String?
+    /// Bumped on every request, so the same card asked for twice pulses twice.
+    @Published public private(set) var token = 0
+
+    public func request(_ anchor: String) {
+        self.anchor = anchor
+        token += 1
+    }
+
+    /// "page#anchor" into its page id and the anchor; a plain page id has no anchor.
+    public nonisolated static func split(_ requested: String) -> (page: String, anchor: String?) {
+        guard let mark = requested.firstIndex(of: "#") else { return (requested, nil) }
+        let anchor = String(requested[requested.index(after: mark)...])
+        return (String(requested[..<mark]), anchor.isEmpty ? nil : anchor)
+    }
+}
+
+private struct NativeSettingsAnchor: ViewModifier {
+    let id: String
+    @ObservedObject private var center = NativeSettingsHighlightCenter.shared
+    @State private var pulses = 0
+
+    func body(content: Content) -> some View {
+        content
+            .attentionPulse(trigger: pulses, style: .flash(color: .accentColor, cornerRadius: 12))
+            // A window that opens on the page asks before the card exists: the card pulses once it is on screen.
+            .onAppear { if center.anchor == id { pulseSoon() } }
+            .onChange(of: center.token) { _, _ in if center.anchor == id { pulseSoon() } }
+    }
+
+    private func pulseSoon() {
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(350))
+            pulses += 1
+        }
+    }
+}
+
+extension View {
+    /// Names this card for a settings link (`<page>#<id>`): following the link pulses it.
+    public func nativeSettingsAnchor(_ id: String) -> some View {
+        modifier(NativeSettingsAnchor(id: id))
+    }
+}
+
 @MainActor
 public final class NativeSettingsStore: ObservableObject {
     @Published public private(set) var sections: [NativeSettingsSection]
@@ -78,25 +128,30 @@ public final class NativeSettingsStore: ObservableObject {
         catalogError = error
         let acceptedSections = error == nil ? sections.sorted { $0.order < $1.order } : []
         self.sections = acceptedSections
-        let requested = initialPageID ?? defaults.string(forKey: selectionKey)
+        let link = initialPageID.map(NativeSettingsHighlightCenter.split)
+        let requested = link?.page ?? defaults.string(forKey: selectionKey)
         let pages = acceptedSections.flatMap(\.pages)
         selectedPageID = pages.first(where: { $0.id == requested })?.id ?? pages.first?.id
         pendingPageID = requested != selectedPageID ? requested : nil
+        if let anchor = link?.anchor { NativeSettingsHighlightCenter.shared.request(anchor) }
     }
 
     public var selectedPage: NativeSettingsPage? {
         sections.lazy.flatMap(\.pages).first { $0.id == selectedPageID }
     }
 
+    /// `pageID` may name a card too (`<page>#<anchor>`): the page opens and the card pulses.
     @discardableResult
-    public func select(pageID: String) -> Bool {
+    public func select(pageID requested: String) -> Bool {
+        let (pageID, anchor) = NativeSettingsHighlightCenter.split(requested)
         guard sections.contains(where: { $0.pages.contains(where: { $0.id == pageID }) }) else {
-            pendingPageID = pageID
+            pendingPageID = requested
             return false
         }
         pendingPageID = nil
         selectedPageID = pageID
         defaults.set(pageID, forKey: selectionKey)
+        if let anchor { NativeSettingsHighlightCenter.shared.request(anchor) }
         return true
     }
 
@@ -115,7 +170,9 @@ public final class NativeSettingsStore: ObservableObject {
         catalogError = nil
         candidate.sort { $0.order < $1.order }
         sections = candidate
-        if let pendingPageID, candidate.contains(where: { $0.pages.contains(where: { $0.id == pendingPageID }) }) {
+        if let pendingPageID, candidate.contains(where: {
+            $0.pages.contains(where: { $0.id == NativeSettingsHighlightCenter.split(pendingPageID).page })
+        }) {
             return select(pageID: pendingPageID)
         }
         if selectedPage == nil { selectedPageID = candidate.lazy.flatMap(\.pages).first?.id }

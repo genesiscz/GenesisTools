@@ -303,12 +303,29 @@ private struct WidgetSessionSettings: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
+            previewCard
             NativeSettingsCard("Your sessions", subtitle: "Pin a session to keep it in the widget's rail. Click one to open it in the widget.") {
                 WidgetSessionBrowser(model: model, onOpen: openSession)
             }
             filterCard
             WidgetSettingsError(model: model)
         }.task { model.refreshSettings() }
+    }
+
+    /// The agents hover list. Its settings button opens this page at `#inbox-preview`, and the card pulses.
+    private var previewCard: some View {
+        NativeSettingsCard("Inbox preview", subtitle: "The list that opens when the pointer rests on the agents button.") {
+            NativeSettingsSegmented(
+                "Show", identifier: "widget.preview.filter",
+                options: WidgetPreviewChoices.filters,
+                selection: Binding(get: { model.previewFilter }, set: { model.setPreview(filter: $0) }),
+                minSegmentWidth: 96)
+            NativeSettingsPicker(
+                "Order", identifier: "widget.preview.sort",
+                options: WidgetPreviewChoices.sorts,
+                selection: Binding(get: { model.previewSort }, set: { model.setPreview(sort: $0) }))
+        }
+        .nativeSettingsAnchor("inbox-preview")
     }
 
     private var filterCard: some View {
@@ -720,4 +737,19 @@ private struct WidgetSettingsError: View {
             }.padding(10).background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         }
     }
+}
+
+/// The hover list's filter and order choices, shared by the settings card and the list's own controls.
+enum WidgetPreviewChoices {
+    static let filters: [NativeSettingsOption<String>] = [
+        .init("needs-you", "Needs you", detail: "Sessions with a question or decision waiting for your answer."),
+        .init("active", "Active too", detail: "Also the sessions that work now or hold unread answers."),
+    ]
+    static let sorts: [NativeSettingsOption<String>] = [
+        .init("attention", "Waiting first", detail: "Sessions that wait for you first, then working ones, newest first."),
+        .init("recent", "Newest activity", detail: "The session that did something last comes first."),
+        .init("project", "By project", detail: "Grouped by project name, newest first inside a project."),
+    ]
+
+    static func title(sort: String) -> String { sorts.first { $0.value == sort }?.title ?? sort }
 }

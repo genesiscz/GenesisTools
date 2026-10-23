@@ -30,14 +30,8 @@ extension TerminalHost {
     func send(sessionId: String, text: String) -> String? { send(sessionId: sessionId, provider: nil, text: text) }
 }
 
-/// The `tools <agent>` that owns a session's cmux resolver: `tools codex cmux` and `tools grok cmux` know
-/// their own history (Grok has no journal and its own fallback); anything else goes through Claude's.
-func cmuxTool(provider: String?) -> String {
-    switch provider {
-    case "codex", "grok": return provider ?? "claude"
-    default: return "claude"
-    }
-}
+/// The `tools <agent>` that owns a session's cmux resolver (GenesisKit `CmuxCommandRunner.tool`).
+func cmuxTool(provider: String?) -> String { CmuxCommandRunner.tool(provider: provider) }
 
 enum TerminalHosts {
     static let current: TerminalHost = CmuxHost()
@@ -54,11 +48,7 @@ struct CmuxHost: TerminalHost {
 
     var isAvailable: Bool { Self.binary != nil }
 
-    static var binary: String? {
-        ["/Applications/cmux.app/Contents/Resources/bin/cmux", "~/.local/bin/cmux", "/usr/local/bin/cmux", "/opt/homebrew/bin/cmux"]
-            .map { ($0 as NSString).expandingTildeInPath }
-            .first { FileManager.default.isExecutableFile(atPath: $0) }
-    }
+    static var binary: String? { CmuxCommandRunner.binary }
 
     func tree() -> CmuxTree? {
         let span = HubPerf.begin("cmux.tree")
@@ -83,31 +73,11 @@ struct CmuxHost: TerminalHost {
         }
     }
 
-    /// What `tools claude cmux focus --json` said, in words: nil when it focused. A recorded tab that
-    /// was closed answers `gone`; before, the hub and Genesis showed cmux's raw "[socket] RPC error".
     static func focusFailure(status: Int32, stdout: Data, stderr: Data) -> String? {
-        guard status != 0 else { return nil }
-        struct Opaque: Decodable {
-            init(from decoder: Decoder) throws {}
-        }
-        struct Result: Decodable {
-            let gone: Bool?
-            let matches: [Opaque]?
-        }
-        if let result = try? JSONDecoder().decode(Result.self, from: stdout) {
-            if result.gone == true {
-                return CmuxHost.paneGone
-            }
-            if result.matches?.isEmpty == true {
-                return "No cmux pane shows this session. Choose a pane to resume it in."
-            }
-        }
-        let lines = String(decoding: stderr, as: UTF8.self).split(whereSeparator: \.isNewline)
-        let said = lines.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "│■▲● ").union(.whitespaces)) }.last { !$0.isEmpty }
-        return said.map { String($0) } ?? "tools claude cmux focus exited \(status)"
+        CmuxCommandRunner.focusFailure(status: status, stdout: stdout, stderr: stderr)
     }
 
-    static let paneGone = "That cmux pane is gone. Choose a pane to resume the session in."
+    static let paneGone = CmuxCommandRunner.paneGone
 
     func send(sessionId: String, provider: String?, text: String) -> String? {
         do {
@@ -142,69 +112,25 @@ struct CmuxHost: TerminalHost {
         }
     }
 
-    /// `open-session --json` reports a failure as {ok: false, error} on stdout, with stderr empty.
     private static func failure(of capture: ProcessCapture) -> String {
-        struct Failure: Decodable { let error: String }
-        if let failure = try? JSONDecoder().decode(Failure.self, from: capture.stdout) {
-            return failure.error
-        }
-        let stderr = String(decoding: capture.stderr, as: UTF8.self).trimmed
-        return stderr.isEmpty ? "tools claude cmux open-session exited \(capture.status)" : String(stderr.suffix(300))
+        CmuxCommandRunner.openSessionFailure(status: capture.status, stdout: capture.stdout, stderr: capture.stderr)
+            ?? "tools claude cmux open-session failed"
     }
 
     private static func openSessionArgs(_ target: CmuxTarget) -> [String]? {
         target.openSessionArgs
     }
 
-    /// Words are shell-quoted here because cmux takes one command string; nothing in them comes from a URL.
     private func run(_ command: [String], cwd: String, name: String, at target: CmuxTarget) -> String? {
-        let words = command.map(ShellWords.word).joined(separator: " ")
-        let line = cwd.isEmpty ? words : "cd \(ShellWords.word(cwd)) && \(words)"
-        switch target {
-        case .newWorkspace(let window):
-            let result = Self.cmux(["new-workspace", "--name", name, "--cwd", cwd, "--command", words, "--focus", "true"] + (window.map { ["--window", $0] } ?? []))
-            return result.ok ? nil : result.out.trimmed
-        case .newPane(let workspace):
-            return typeInto(Self.cmux(["new-pane", "--type", "terminal", "--direction", "right", "--workspace", workspace, "--focus", "true"]), workspace: workspace, line: line)
-        case .newTab(let workspace, let pane):
-            return typeInto(Self.cmux(["new-surface", "--type", "terminal", "--workspace", workspace, "--pane", pane, "--focus", "true"]), workspace: workspace, line: line)
-        case .surface(let workspace, let surface):
-            return send(line, workspace: workspace, surface: surface)
-        }
-    }
-
-    /// new-surface / new-pane print the new surface ref; the command is typed into it, then Enter.
-    private func typeInto(_ created: (ok: Bool, out: String), workspace: String, line: String) -> String? {
-        guard created.ok else { return created.out.trimmed }
-        guard let range = created.out.range(of: "surface:[0-9]+", options: .regularExpression) else {
-            return "cmux did not report the new surface: \(created.out.trimmed)"
-        }
-        return send(line, workspace: workspace, surface: String(created.out[range]))
-    }
-
-    private func send(_ line: String, workspace: String, surface: String) -> String? {
-        let sent = Self.cmux(["send", "--workspace", workspace, "--surface", surface, line])
-        guard sent.ok else { return sent.out.trimmed }
-        let enter = Self.cmux(["send-key", "--workspace", workspace, "--surface", surface, "Enter"])
-        return enter.ok ? nil : enter.out.trimmed
+        CmuxCommandRunner.run(command, cwd: cwd, name: name, at: target)
     }
 
     @discardableResult
     static func cmux(_ args: [String]) -> (ok: Bool, out: String) {
-        guard let binary else { return (false, "cmux is not installed") }
         let span = HubPerf.begin("cmux.\(args.first ?? "")")
         defer { span.end() }
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: binary)
-        process.arguments = args
-        var environment = ProcessInfo.processInfo.environment
-        environment["CMUX_QUIET"] = "1"
-        process.environment = environment
-        guard let result = try? process.runCapturing() else { return (false, "cmux failed to start") }
-        let text = String(decoding: result.stdout, as: UTF8.self)
-        return (result.status == 0, result.status == 0 ? text : String(decoding: result.stderr, as: UTF8.self) + text)
+        return CmuxCommandRunner.cmux(args)
     }
-
 }
 
 // MARK: - Loading the tree off the main thread

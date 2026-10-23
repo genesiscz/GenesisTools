@@ -106,9 +106,12 @@ public struct AgentRosterGroupLabel: View {
     public let running: Int
     public var live: Bool
     public var lastAt: Date?
+    /// Inbox items waiting in the session, shown beside its name (the widget's session list).
+    public var unread: Int
 
     public init(title: String, provider: String, project: String? = nil, account: String? = nil,
-                total: Int, running: Int, live: Bool, lastAt: Date? = nil) {
+                total: Int, running: Int, live: Bool, lastAt: Date? = nil, unread: Int = 0) {
+        self.unread = unread
         self.title = title
         self.provider = provider
         self.project = project
@@ -129,7 +132,13 @@ public struct AgentRosterGroupLabel: View {
                 }
             }.padding(.top, 1)
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 12.5, weight: .semibold)).lineLimit(2)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(title).font(.system(size: 12.5, weight: .semibold)).lineLimit(2)
+                    if unread > 0 {
+                        Spacer(minLength: 0)
+                        CountBadge(unread, tooltip: "\(Plural.count(unread, "inbox item"))", color: KitPalette.modified)
+                    }
+                }
                 HStack(spacing: 6) {
                     if let project { Text(project).layoutPriority(-2) }
                     if let account {

@@ -13,6 +13,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
  *
  * Commands (WidgetWindow.swift runTestCommand): `expand <edge> [group]`, `module <id> <edge> [group]`,
  * `hover <edge> [group]`, `unhover <edge> [group]`, `collapse`, `select <session key>`, `settings [page]`,
+ * `inbox <edge> [group]` (the inbox button), `session <key> <edge> [group]` (a rail session button),
  * `passive on|off`. Send `passive on` before `expand` on the user's own screen: an expanded panel otherwise takes the
  * keyboard from the app in front.
  * Edges: top, right, left. The face honours them only with staging on (`bun scripts/native/staging.ts on`) or in the
