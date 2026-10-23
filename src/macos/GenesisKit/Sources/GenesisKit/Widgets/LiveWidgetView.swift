@@ -1002,8 +1002,10 @@ public struct LiveWidgetView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(model.voiceMode == .note ? "Voice note" : "Dictation")
                             .font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-                        Text(model.voiceText.isEmpty ? "Listening… the words appear here as you talk" : model.voiceText)
-                            .font(.caption).lineLimit(3)
+                        let transcript = model.voiceTranscript
+                        // The newest words stay in view: a long dictation drops its beginning, not its end.
+                        Text(transcript.isEmpty ? "Listening… the words appear here as you talk" : transcript)
+                            .font(.caption).lineLimit(3).truncationMode(.head)
                     }
                     Spacer(minLength: 0)
                 }

@@ -97,6 +97,10 @@ public final class WidgetModel: ObservableObject {
     @Published public var transcriptLoading = false
     @Published public var importing = 0
     @Published public var voiceText = ""
+    /// Everything said in the running dictation: the finished sentences and the one still being recognised.
+    public var voiceTranscript: String {
+        (voiceFinals + [voiceText]).filter { !$0.isEmpty }.joined(separator: " ")
+    }
     @Published public var voiceLevel = 0.0
     @Published public var voiceActive = false
     @Published public var reading = false

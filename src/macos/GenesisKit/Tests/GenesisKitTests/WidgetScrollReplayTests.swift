@@ -27,6 +27,16 @@ final class WidgetScrollReplayTests: XCTestCase {
         case "$*" in
           *watch*) cat '\(snapshot.path)'; printf '\\n'; cat > /dev/null; exit 0 ;;
           *snapshot*) cat '\(snapshot.path)'; exit 0 ;;
+          *"voice listen"*)
+            text=""; i=0
+            for word in Ship the composer waves. While I talk the words appear here; do
+              i=$((i + 1)); text="$text $word"
+              printf '{"kind":"level","rms":0.0%d}\n' $(( (i * 37) % 8 + 2 ))
+              printf '{"kind":"partial","text":"%s"}\n' "${text# }"
+              case "$word" in *.) printf '{"kind":"final","text":"%s"}\n' "${text# }"; text="" ;; esac
+              sleep 0.05
+            done
+            sleep 4; exit 0 ;;
         esac
         printf '{}'
         """.write(to: script, atomically: true, encoding: .utf8)
@@ -74,11 +84,12 @@ final class WidgetScrollReplayTests: XCTestCase {
         try await Task.sleep(for: .seconds(2))
         print("replay: window visible to the user: \(window.occlusionState.contains(.visible))")
         // `GENESIS_WIDGET_REPLAY_PNG=<path>`: a picture of the panel (it shows the window at 0.02 alpha for the capture), with `GENESIS_WIDGET_REPLAY_VIEW` = "staged" (the
-        // staged list) or "leave" (the question before closing) set first.
+        // staged list), "leave" (the question before closing) or "voice" (a dictation streaming words) set first.
         if let png = environment["GENESIS_WIDGET_REPLAY_PNG"] {
             switch environment["GENESIS_WIDGET_REPLAY_VIEW"] {
             case "staged": model.stagedView = "session"
             case "leave": model.stagedLeavePrompt = true
+            case "voice": model.startVoice(.dictate)
             default: break
             }
             try await Task.sleep(for: .seconds(1))
