@@ -25,11 +25,13 @@ import { livePaneTargets, noPaneTargets } from "./deliver.fixtures";
 import { decisionPayload, validateQuestionItems } from "./items";
 import {
     decisionLine,
+    decisionQuestion,
     decisionsMarkdown,
     deliverDecisions,
     listSessions,
     mentionedDecisions,
     parseDecisionBlocks,
+    questionNudgeVerdict,
     sendSessionDecisions,
     sessionAnswers,
     staleCrossings,
@@ -572,6 +574,47 @@ describe("decision store", () => {
         expect(stopHookVerdict({ stopHook: "block", maxBlocksPerSession: 1 }, "❓ DECISION 2", []).action).toBe(
             "block"
         );
+    });
+
+    test("a decision question needs a cue and a question in the reply's own prose", () => {
+        expect(decisionQuestion("Done. One decision is yours.\nShould I keep the cache?")).toBe(
+            "Should I keep the cache?"
+        );
+        expect(decisionQuestion("Intro?\n❓ Which store do you want: **sqlite?**")).toBe(
+            "❓ Which store do you want: **sqlite?**"
+        );
+        expect(decisionQuestion("Choose one, see https://x.example/?a=1 for details.")).toBeNull();
+        expect(decisionQuestion("Tests pass. Should I push?")).toBeNull();
+        expect(decisionQuestion("I decided on sqlite. Should I push?")).toBeNull();
+        expect(decisionQuestion("Done.\n```\nconst decision = ask('choose?');\n```")).toBeNull();
+        expect(decisionQuestion("Done. The `decision` field stays.\nShould I push?")).toBeNull();
+        expect(decisionQuestion("Martin wrote:\n> which decision do you want?\nDone.")).toBeNull();
+        expect(decisionQuestion(`Decide: ${"x".repeat(300)}?`)).toHaveLength(200);
+    });
+
+    test("the question nudge is off, allows a turn that logged a decision, warns, or blocks", () => {
+        const question = "Should I keep the cache?";
+
+        expect(questionNudgeVerdict({ questionNudge: "off", maxBlocksPerSession: 2 }, question, false)).toEqual({
+            action: "off",
+        });
+        expect(questionNudgeVerdict({ questionNudge: "block", maxBlocksPerSession: 2 }, question, true)).toEqual({
+            action: "allow",
+        });
+        expect(questionNudgeVerdict({ questionNudge: "warn", maxBlocksPerSession: 2 }, question, false).action).toBe(
+            "warn"
+        );
+        expect(
+            questionNudgeVerdict({ questionNudge: "block", maxBlocksPerSession: 2, blocksUsed: 2 }, question, false)
+                .action
+        ).toBe("warn");
+
+        const block = questionNudgeVerdict({ questionNudge: "block", maxBlocksPerSession: 2 }, question, false);
+
+        expect(block.action).toBe("block");
+        expect(block.reason).toContain('("Should I keep the cache?")');
+        expect(block.reason).toContain('question_post as an item of type "decision"');
+        expect(block.reason).toContain("say so in one line and stop");
     });
 });
 

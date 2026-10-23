@@ -41,6 +41,15 @@ export function bumpContextCounts(sessionId: string, ruleIds: string[]): void {
         counts[id] = (counts[id] ?? 0) + 1;
     }
 
+    writeContextCounts(sessionId, counts);
+}
+
+/** Sets numbers in the same per-session file that are not counts, such as the start of the turn a check spoke in. */
+export function setContextValues(sessionId: string, values: Record<string, number>): void {
+    writeContextCounts(sessionId, { ...readContextCounts(sessionId), ...values });
+}
+
+function writeContextCounts(sessionId: string, counts: Record<string, number>): void {
     try {
         mkdirSync(hooksStateDir(), { recursive: true });
         writeFileSync(join(hooksStateDir(), `${sessionId}.json`), SafeJSON.stringify(counts));

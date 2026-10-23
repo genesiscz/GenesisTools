@@ -19,6 +19,7 @@ import {
 } from "../lib/hooks/codex";
 import {
     DEFAULT_HOOKS_CONFIG,
+    decisionStopWanted,
     diffFor,
     type HarnessName,
     type HooksConfig,
@@ -41,6 +42,7 @@ import {
     readSettings,
     repoRoot,
     type SubagentLinePlan,
+    stopHookWired,
     uninstallHooks,
     wiringStatus,
 } from "../lib/hooks/install";
@@ -241,8 +243,21 @@ export function registerHooksCommands(program: Command): void {
     hooks
         .command("doctor")
         .description("Is it wired for each harness, what is configured, which custom rules loaded")
-        .action(async () => {
+        .option("--json", "The config in effect, the Claude and Codex wiring and whether the Stop hook is wired")
+        .action(async (options: { json?: boolean }) => {
             const config = loadHooksConfig();
+            const stopWired = stopHookWired();
+
+            if (options.json) {
+                out.result({
+                    configPath: hooksConfigPath(),
+                    config,
+                    wiring: { claude: wiringStatus(), codex: codexWiring().state },
+                    stopHookWired: stopWired,
+                });
+                return;
+            }
+
             const set = await loadRuleSet(config);
 
             renderCliHeader("Agent hooks", hooksConfigPath());
@@ -269,6 +284,9 @@ export function registerHooksCommands(program: Command): void {
             table.push(["native Bash diff", nativeDiffLabel(config)]);
             table.push(["diff per harness", perHarnessDiff(config)]);
             table.push(["agentsTalk.hint", String(config.agentsTalk.hint)]);
+            table.push(["decisions.stopHook", config.decisions.stopHook]);
+            table.push(["decisions.questionNudge", config.decisions.questionNudge]);
+            table.push(["Stop hook", stopWired ? "wired" : "not wired"]);
             table.push(["shadow", config.shadow ? "ON (decides, says nothing)" : "off (it speaks)"]);
             table.push(["log", config.logPath]);
             table.push(["log rotates at", `${config.maxLogMB} MB, keeping one generation`]);
@@ -306,6 +324,12 @@ export function registerHooksCommands(program: Command): void {
             if (wired.state === "stale") {
                 ui.warn(
                     `settings.json holds an older wiring of these hooks. Fix: ${suggestCommand("tools agents", { replaceCommand: ["hooks", "install", "--write"] })}`
+                );
+            }
+
+            if (decisionStopWanted(config) && !stopWired) {
+                ui.warn(
+                    `A decision check is on, but no Stop hook of ours is wired, so it never runs. Fix: ${suggestCommand("tools agents", { replaceCommand: ["hooks", "install", "--write"] })}`
                 );
             }
 
@@ -350,7 +374,7 @@ export function registerHooksCommands(program: Command): void {
     hooks
         .command("install")
         .description(
-            "Wire the hooks into a harness, additively. Claude: ~/.claude/settings.json; the decision hub's Stop and UserPromptSubmit hooks are wired only while decisions.stopHook, decisions.harvest or decisions.injectAnswers is on. Codex: <CODEX_HOME>/hooks.json (the guard, plus the Bash diff while it is on for Codex). Grok runs Claude's hooks"
+            "Wire the hooks into a harness, additively. Claude: ~/.claude/settings.json; the decision hub's Stop and UserPromptSubmit hooks are wired only while decisions.stopHook, decisions.harvest or decisions.injectAnswers is on, and the Stop hook alone while decisions.questionNudge or unpushed.enabled is on. Codex: <CODEX_HOME>/hooks.json (the guard, plus the Bash diff while it is on for Codex). Grok runs Claude's hooks"
         )
         .option("--harness [name]", "claude (default) or codex")
         .option("--dist <path>", "Stable path the entries call (default: the agents dist symlink)")

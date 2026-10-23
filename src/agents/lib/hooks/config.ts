@@ -244,6 +244,15 @@ export interface DecisionsHookConfig {
      * times per session, then it only warns (the loop guard).
      */
     stopHook: DecisionStopHook;
+    /**
+     * A final reply that asks the user to decide (a cue: the word decision, decisions, decide or
+     * choose, or ❓; and a sentence that ends in "?", both outside code and quotes) while this
+     * session logged no decision since the turn's prompt: `warn` tells the user, `block` sends the
+     * agent back once per turn to post it with question_post. A reply that names `❓ DECISION N`
+     * belongs to `stopHook`. Its blocks count against `maxBlocksPerSession` apart from `stopHook`'s.
+     * It needs only the Stop entry, so turning it on wires no UserPromptSubmit hook.
+     */
+    questionNudge: DecisionStopHook;
     maxBlocksPerSession: number;
     harnesses: HarnessName[];
     /** Safety net: store an unposted `❓ DECISION N` block as an open decision under its number. */
@@ -511,6 +520,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
     },
     decisions: {
         stopHook: "off",
+        questionNudge: "off",
         maxBlocksPerSession: 2,
         harnesses: ["claude", "codex", "grok"],
         harvest: false,
@@ -1295,6 +1305,9 @@ function mergeDecisions(stored: Partial<DecisionsHookConfig> | undefined): Decis
         stopHook: STOP_HOOK_MODES.includes(stored?.stopHook as DecisionStopHook)
             ? (stored?.stopHook as DecisionStopHook)
             : base.stopHook,
+        questionNudge: STOP_HOOK_MODES.includes(stored?.questionNudge as DecisionStopHook)
+            ? (stored?.questionNudge as DecisionStopHook)
+            : base.questionNudge,
         maxBlocksPerSession: countOr({
             field: "decisions.maxBlocksPerSession",
             value: stored?.maxBlocksPerSession,
@@ -1323,6 +1336,11 @@ function mergeDecisions(stored: Partial<DecisionsHookConfig> | undefined): Decis
 /** Whether the decision hub needs its Stop and UserPromptSubmit hooks wired at all. */
 export function decisionHooksWanted(config: HooksConfig): boolean {
     return config.decisions.stopHook !== "off" || config.decisions.harvest || config.decisions.injectAnswers;
+}
+
+/** Whether the Stop hook has decision work: the hub's own checks, or the question nudge, which needs only Stop. */
+export function decisionStopWanted(config: HooksConfig): boolean {
+    return decisionHooksWanted(config) || config.decisions.questionNudge !== "off";
 }
 
 /** Whether this run should record the command verbatim in the decision log. */

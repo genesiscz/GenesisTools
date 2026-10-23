@@ -163,6 +163,24 @@ tools agents hooks config set shadow false --write
 Every writing command is a **dry run by default**; `--write` applies it. The one exception is the
 `config rules` picker in a terminal: saving the selection is the write.
 
+## The question nudge
+
+`decisions.questionNudge` (`off`, the default; `warn`; `block`) catches a final reply that asks the user to decide
+something that never reached the widget inbox. It fires when the reply's own prose (fenced code, inline code and `>`
+quoted lines left out) holds a cue, the word `decision`, `decisions`, `decide` or `choose` in any case or `❓`, and a
+sentence that ends in `?`, while this session posted no decision since the turn's prompt. The prompt's time is the
+last transcript row that opened a turn: a Claude `user` row that is not `isMeta` and carries text, or a Codex user
+message. `block` sends the agent back once per turn, quoting the question, to post it with `question_post` as type
+`decision` or to say in one line that it is not a decision for the user. A second Stop of the turn always passes
+(Claude's `stop_hook_active`, or the turn it already spoke in), and past `decisions.maxBlocksPerSession` blocks it
+only warns. A reply that names `❓ DECISION N` stays with `decisions.stopHook`. It needs only the Stop entry, which
+`doctor` lists as `Stop hook`; the widget settings (Widgets > General > Agents) switch it too.
+
+```bash
+tools agents hooks config set decisions.questionNudge block --write
+tools agents hooks install --write   # only when doctor says the Stop hook is not wired
+```
+
 ## How a diff looks
 
 `diff.theme` picks the look. `claude` (the default) copies Claude Code's own Bash diff in the theme

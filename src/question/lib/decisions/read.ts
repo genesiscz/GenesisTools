@@ -344,6 +344,107 @@ export function stopHookVerdict(
     return { action: "block", reason, missing };
 }
 
+/**
+ * What makes a question a decision for the user: one of these whole words in any case, or ❓.
+ * "decided" and "chose" are left out on purpose, because they report a choice already made.
+ */
+const DECISION_CUE = /\b(?:decisions?|decide|choose)\b|❓/i;
+/** A sentence that ends in "?": the mark before a space, a closing bracket, quote or emphasis, or the line end. */
+const QUESTION_END = /\?(?=[\s)\]"'*_]|$)/;
+const FENCE = /^\s*(`{3,}|~{3,})/;
+const QUOTED_LINE = /^\s*>/;
+const INLINE_CODE = /`[^`\n]*`/g;
+const QUESTION_LINE_MAX = 200;
+
+/** The reply's own prose, line by line: fenced code blocks, `>` quoted lines and inline code are left out. */
+function proseLines(reply: string): string[] {
+    const lines: string[] = [];
+    let fence: string | null = null;
+
+    for (const line of reply.split("\n")) {
+        const marker = FENCE.exec(line)?.[1];
+
+        if (fence) {
+            if (marker && marker[0] === fence[0] && marker.length >= fence.length) {
+                fence = null;
+            }
+
+            continue;
+        }
+
+        if (marker) {
+            fence = marker;
+            continue;
+        }
+
+        if (!QUOTED_LINE.test(line)) {
+            lines.push(line.replace(INLINE_CODE, ""));
+        }
+    }
+
+    return lines;
+}
+
+/**
+ * The line of a reply that asks the user to decide, or null. The prose (see `proseLines`) must hold a decision cue
+ * (`DECISION_CUE`) and a sentence that ends in "?". The line returned is the first question that carries the cue,
+ * else the first question.
+ */
+export function decisionQuestion(reply: string): string | null {
+    const lines = proseLines(reply);
+
+    if (!lines.some((line) => DECISION_CUE.test(line))) {
+        return null;
+    }
+
+    const questions = lines.filter((line) => QUESTION_END.test(line));
+    const line = questions.find((question) => DECISION_CUE.test(question)) ?? questions[0];
+
+    if (!line) {
+        return null;
+    }
+
+    const trimmed = line.trim();
+
+    return trimmed.length > QUESTION_LINE_MAX ? `${trimmed.slice(0, QUESTION_LINE_MAX - 1)}…` : trimmed;
+}
+
+export interface QuestionNudgeConfig {
+    questionNudge: "off" | "warn" | "block";
+    maxBlocksPerSession: number;
+    blocksUsed?: number;
+}
+
+/**
+ * The question nudge for a reply whose `question` asks the user to decide (`decisionQuestion`). `loggedThisTurn`:
+ * the session posted a decision after the turn's prompt. Past `maxBlocksPerSession` blocks it only warns.
+ */
+export function questionNudgeVerdict(
+    config: QuestionNudgeConfig,
+    question: string,
+    loggedThisTurn: boolean
+): { action: "off" | "warn" | "block" | "allow"; reason?: string } {
+    if (config.questionNudge === "off") {
+        return { action: "off" };
+    }
+
+    if (loggedThisTurn) {
+        return { action: "allow" };
+    }
+
+    const reason =
+        `Your reply asks the user to decide ("${question}"), but this session logged no decision ` +
+        "this turn, so it does not reach the user's widget inbox. If it is a decision for the user, post it with " +
+        'question_post as an item of type "decision" (pass `number` when your reply numbers it) and keep working. ' +
+        "If it is not a decision for the user, say so in one line and stop.";
+
+    if (config.questionNudge === "warn" || (config.blocksUsed ?? 0) >= config.maxBlocksPerSession) {
+        return { action: "warn", reason };
+    }
+
+    return { action: "block", reason };
+}
+
 const OPTION_LINE = /^\s*(?:[-*]\s*)?\**([a-z])\)\**\s*(.+)$/;
 const MARKER_LINE = /❓\s*\**\s*DECISION\s+(\d+)\**\s*(?:[—–:-]+\s*(.*))?$/;
 /** The reply text kept as one decision's context; the whole reply stays readable in the transcript. */

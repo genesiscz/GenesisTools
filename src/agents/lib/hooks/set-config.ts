@@ -66,6 +66,7 @@ export const SETTABLE_KEYS = [
     "rules.<rule-id>",
     "harnesses.<claude|codex|grok>.<rule-id>",
     "decisions.stopHook",
+    "decisions.questionNudge",
     "decisions.maxBlocksPerSession",
     "decisions.harnesses",
     "decisions.harvest",
@@ -177,18 +178,19 @@ function withMods(mods: ModsConfig, key: string, value: string): ModsConfig {
     return mergeMods({ ...mods, [feature]: part });
 }
 
-/** One `decisions.*` key. The stop hook takes off|warn|block; `harnesses` a comma list. */
+/** One `decisions.*` key. The stop hook and the question nudge take off|warn|block; `harnesses` a comma list. */
 function withDecisions(next: HooksConfig, key: string, value: string): HooksConfig {
     const decisions = { ...next.decisions, staleness: { ...next.decisions.staleness } };
     next.decisions = decisions;
 
     switch (key) {
-        case "decisions.stopHook": {
+        case "decisions.stopHook":
+        case "decisions.questionNudge": {
             if (value !== "off" && value !== "warn" && value !== "block") {
                 throw new Error(`${key} takes off, warn or block, not ${SafeJSON.stringify(value)}`);
             }
 
-            decisions.stopHook = value;
+            decisions[key === "decisions.stopHook" ? "stopHook" : "questionNudge"] = value;
             return next;
         }
         case "decisions.maxBlocksPerSession":

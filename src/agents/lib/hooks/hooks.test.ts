@@ -28,6 +28,7 @@ import {
     DEFAULT_HOOKS_CONFIG,
     type DecisionsHookConfig,
     decisionHooksWanted,
+    decisionStopWanted,
     defaultLogPath,
     diffFor,
     keepsCommand,
@@ -39,7 +40,7 @@ import {
 } from "./config";
 import { recentBashCommands } from "./corpus";
 import { type DetectFailure, expandRulePath, guardRules, loadCustomRules, loadRuleSet } from "./custom-rules";
-import { finalReply, type PromptHookOutput, runDecisionInject, runDecisionStop } from "./decisions";
+import { finalReply, type PromptHookOutput, runDecisionInject, runDecisionStop, turnStartedAt } from "./decisions";
 import { collectStaleCaptures, parseHorizon } from "./gc";
 import { evaluateCommand, evaluateGuard } from "./guard";
 import { lastSeenPerHarness } from "./harnesses";
@@ -2063,6 +2064,182 @@ describe("decision hub hooks", () => {
         ]);
         expect(() => applySetting(next, "decisions.stopHook", "loud")).toThrow(/off, warn or block/);
         expect(() => applySetting(next, "decisions.harnesses", "cursor")).toThrow(/no such harness/);
+        expect(applySetting(next, "decisions.questionNudge", "block").decisions.questionNudge).toBe("block");
+        expect(DEFAULT_HOOKS_CONFIG.decisions.questionNudge).toBe("off");
+        expect(() => applySetting(next, "decisions.questionNudge", "on")).toThrow(/off, warn or block/);
+    });
+
+    describe("the question nudge", () => {
+        const promptAt = "2026-10-23T09:00:00.000Z";
+        const transcript = (prompt: string) =>
+            [
+                SafeJSON.stringify({ type: "user", timestamp: "2026-10-23T08:00:00.000Z", message: { content: "x" } }),
+                SafeJSON.stringify({ type: "user", timestamp: prompt, message: { content: "go" } }),
+                SafeJSON.stringify({
+                    type: "user",
+                    timestamp: "2026-10-23T09:05:00.000Z",
+                    message: { content: [{ type: "tool_result", content: "ok" }] },
+                }),
+                SafeJSON.stringify({
+                    type: "user",
+                    isMeta: true,
+                    timestamp: "2026-10-23T09:06:00.000Z",
+                    message: { content: "Stop hook feedback:\nanother hook" },
+                }),
+            ].join("\n");
+        const asks = "Done. One decision is yours.\nShould I keep the cache?";
+        const nudgeOn = (overrides: Partial<DecisionsHookConfig> = {}): DecisionsHookConfig =>
+            decisionsOn({ stopHook: "off", questionNudge: "block", ...overrides });
+        const stop = (reply: string, extra: Record<string, unknown> = {}) =>
+            stopPayload(reply, { transcript_path: "/fixture.jsonl", ...extra });
+
+        function nudgeHarness() {
+            const base = harness();
+            const turns = new Map<string, number>();
+            const blocks = new Map<string, number>();
+            const tail = { text: transcript(promptAt) };
+            const nudge = {
+                blocks: (session: string) => blocks.get(session) ?? 0,
+                lastTurn: (session: string) => turns.get(session),
+                record: (session: string, turn: number, blocked: boolean) => {
+                    turns.set(session, turn);
+                    blocks.set(session, (blocks.get(session) ?? 0) + (blocked ? 1 : 0));
+                },
+            };
+            const post = (at: string) =>
+                postDecisions(
+                    base.log.file,
+                    base.log.events,
+                    { sessionId: "sess-1", decisions: [{ prompt: "Keep the cache?", options: ["yes", "no"] }] },
+                    { now: () => at }
+                );
+
+            return { ...base, blocks, tail, post, deps: { ...base.deps, nudge, readTail: () => tail.text } };
+        }
+
+        it("blocks a reply that asks the user to decide when the turn logged no decision, quoting the line", async () => {
+            const { deps, blocks } = nudgeHarness();
+            const output = await runDecisionStop(stop(asks), nudgeOn(), deps);
+
+            expect(output).toMatchObject({ decision: "block" });
+            expect(output && "reason" in output ? output.reason : "").toContain('("Should I keep the cache?")');
+            expect(blocks.get("sess-1")).toBe(1);
+        });
+
+        it("passes once the session logged a decision after the turn's prompt", async () => {
+            const { deps, post } = nudgeHarness();
+
+            await post("2026-10-23T09:03:00.000Z");
+            expect(await runDecisionStop(stop(asks), nudgeOn(), deps)).toBeNull();
+        });
+
+        it("does not count a decision logged before the turn's prompt", async () => {
+            const { deps, post } = nudgeHarness();
+
+            await post("2026-10-23T08:30:00.000Z");
+            expect(await runDecisionStop(stop(asks), nudgeOn(), deps)).toMatchObject({ decision: "block" });
+        });
+
+        it("passes a question with no decision cue, and a cue inside code or a quote", async () => {
+            const { deps } = nudgeHarness();
+            const replies = [
+                "Tests pass. Should I push?",
+                "Should I push?\n```ts\nconst decision = choose();\n```",
+                "Should I push? The `decision` field stays.",
+                "> Which decision do you want?\nDone. Should I push?",
+            ];
+
+            for (const reply of replies) {
+                expect(await runDecisionStop(stop(reply), nudgeOn(), deps)).toBeNull();
+            }
+        });
+
+        it("lets the second Stop of the same turn pass, by Claude's flag or by the turn it already spoke in", async () => {
+            const flagged = nudgeHarness();
+
+            expect(await runDecisionStop(stop(asks, { stop_hook_active: true }), nudgeOn(), flagged.deps)).toBeNull();
+
+            const { deps, tail } = nudgeHarness();
+
+            expect(await runDecisionStop(stop(asks), nudgeOn(), deps)).toMatchObject({ decision: "block" });
+            expect(await runDecisionStop(stop(asks), nudgeOn(), deps)).toBeNull();
+
+            tail.text = transcript("2026-10-23T10:00:00.000Z");
+            expect(await runDecisionStop(stop(asks), nudgeOn(), deps)).toMatchObject({ decision: "block" });
+        });
+
+        it("only warns past the per-session cap, and in warn mode", async () => {
+            const { deps, tail } = nudgeHarness();
+
+            expect(await runDecisionStop(stop(asks), nudgeOn({ maxBlocksPerSession: 1 }), deps)).toMatchObject({
+                decision: "block",
+            });
+            tail.text = transcript("2026-10-23T10:00:00.000Z");
+            expect(await runDecisionStop(stop(asks), nudgeOn({ maxBlocksPerSession: 1 }), deps)).toHaveProperty(
+                "systemMessage"
+            );
+            expect(
+                await runDecisionStop(stop(asks), nudgeOn({ questionNudge: "warn" }), nudgeHarness().deps)
+            ).toHaveProperty("systemMessage");
+        });
+
+        it("never fires while off, and the shipped default is off", async () => {
+            const { deps } = nudgeHarness();
+
+            expect(DEFAULT_HOOKS_CONFIG.decisions.questionNudge).toBe("off");
+            expect(decisionStopWanted(DEFAULT_HOOKS_CONFIG)).toBe(false);
+            expect(await runDecisionStop(stop(asks), decisionsOn({ questionNudge: "off" }), deps)).toBeNull();
+            expect(await runDecisionStop(stop(asks), DEFAULT_HOOKS_CONFIG.decisions, deps)).toBeNull();
+        });
+
+        it("leaves a reply that names ❓ DECISION N to the existing check", async () => {
+            const { deps, post } = nudgeHarness();
+            const both = decisionsOn({ questionNudge: "block" });
+            const blocked = await runDecisionStop(stop(asking), both, deps);
+
+            expect(blocked && "reason" in blocked ? blocked.reason : "").toContain(
+                "Your reply asks ❓ DECISION 1 without posting it."
+            );
+
+            await post("2026-10-23T08:30:00.000Z");
+            expect(await runDecisionStop(stop(asking), both, deps)).toBeNull();
+            expect(await runDecisionStop(stop(asking), nudgeOn(), nudgeHarness().deps)).toBeNull();
+        });
+
+        it("stays quiet when the transcript holds no prompt", async () => {
+            const { deps } = nudgeHarness();
+
+            expect(await runDecisionStop(stopPayload(asks), nudgeOn(), deps)).toBeNull();
+            expect(await runDecisionStop(stop(asks), nudgeOn(), { ...deps, readTail: () => "" })).toBeNull();
+        });
+
+        it("finds the turn's prompt in Claude and Codex transcripts", () => {
+            const codex = [
+                SafeJSON.stringify({
+                    timestamp: "2026-10-23T09:00:00.000Z",
+                    type: "response_item",
+                    payload: { type: "message", role: "user", content: [{ type: "input_text", text: "go" }] },
+                }),
+                SafeJSON.stringify({
+                    timestamp: "2026-10-23T09:01:00.000Z",
+                    type: "response_item",
+                    payload: { type: "function_call_output", output: "ok" },
+                }),
+            ].join("\n");
+
+            expect(turnStartedAt(stop(asks), () => `{"torn":${transcript(promptAt)}`)).toBe(Date.parse(promptAt));
+            expect(turnStartedAt(stop(asks), () => codex)).toBe(Date.parse("2026-10-23T09:00:00.000Z"));
+        });
+
+        it("wires the Stop hook alone, and the Stop entrypoint loads the decision checks for it", () => {
+            const nudging = { ...DEFAULT_HOOKS_CONFIG, decisions: nudgeOn() };
+            const events = entriesFor("/dist", { questionNudge: true }).map((item) => item.event);
+
+            expect(events).toContain("Stop");
+            expect(events).not.toContain("UserPromptSubmit");
+            expect(decisionStopWanted(nudging)).toBe(true);
+            expect(decisionHooksWanted(nudging)).toBe(false);
+        });
     });
 });
 

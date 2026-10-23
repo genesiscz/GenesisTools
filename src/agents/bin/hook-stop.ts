@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { decisionHooksWanted, loadHooksConfig, megabytes } from "../lib/hooks/config";
+import { decisionStopWanted, loadHooksConfig, megabytes } from "../lib/hooks/config";
 import { readSessionState } from "../lib/hooks/diff/mentions";
 import { gitOut } from "../lib/hooks/git";
 import { hookDiag, logDecision, setDiagLogPath, setMaxLogBytes } from "../lib/hooks/log";
@@ -26,9 +26,9 @@ if (!payload || normalizeEvent(payload.event) !== "stop") {
 
 let output: { decision?: "block"; reason?: string; systemMessage?: string } | null = null;
 
-// The decision hub's module graph is loaded only when one of its hooks is on: this entrypoint
+// The decision hub's module graph is loaded only when one of its Stop checks is on: this entrypoint
 // now runs at the end of every turn for the unpushed reminder alone.
-if (decisionHooksWanted(config)) {
+if (decisionStopWanted(config)) {
     try {
         const { decisionFiles } = await import("@app/question/lib/decisions/read");
         const { runDecisionStop } = await import("../lib/hooks/decisions");

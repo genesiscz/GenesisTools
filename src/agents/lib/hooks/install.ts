@@ -48,16 +48,20 @@ export interface SettingsShape {
 /** Every command string this installer writes carries this, so uninstall is exact. */
 export const INSTALL_MARKER = "src/agents/bin/hook-";
 
+/** What the Stop and UserPromptSubmit entries serve; each omitted feature is off. */
+export interface StopFeatures {
+    decisions?: boolean;
+    unpushed?: boolean;
+    questionNudge?: boolean;
+}
+
 /**
- * The Stop entry serves two features, the decision hub and the unpushed reminder, so it is wired
- * while either is on. UserPromptSubmit belongs to the decision hub alone.
+ * The Stop entry serves three features, the decision hub, the unpushed reminder and the question
+ * nudge, so it is wired while any of them is on. UserPromptSubmit belongs to the decision hub alone.
  */
-function stopEntries(
-    script: (name: string) => string,
-    options: { decisions?: boolean; unpushed?: boolean }
-): { event: string; entry: HookEntry }[] {
+function stopEntries(script: (name: string) => string, options: StopFeatures): { event: string; entry: HookEntry }[] {
     return [
-        ...(options.decisions || options.unpushed
+        ...(options.decisions || options.unpushed || options.questionNudge
             ? [
                   {
                       event: "Stop",
@@ -76,10 +80,7 @@ function stopEntries(
     ];
 }
 
-export function entriesFor(
-    dist: string,
-    options: { decisions?: boolean; unpushed?: boolean } = {}
-): { event: string; entry: HookEntry }[] {
+export function entriesFor(dist: string, options: StopFeatures = {}): { event: string; entry: HookEntry }[] {
     // The harness runs each command through a shell, so a `dist` under a home directory or a
     // `--dist` with a space in it split into two arguments and every hook call failed. The
     // quoted form still contains INSTALL_MARKER, so a re-install converges an older entry.
@@ -457,6 +458,8 @@ export function installHooks(options: {
     agentRow?: boolean;
     /** Replace a `subagentStatusLine` of someone else's, kept for `disable` and `uninstall` to restore. */
     replaceSubagentLine?: boolean;
+    /** Wire the Stop hook for the question nudge. Omitted: whether `decisions.questionNudge` is on. */
+    questionNudge?: boolean;
 }): InstallResult {
     const dist = options.dist ?? hooksDistPath();
     const settingsPath = options.settingsPath ?? claudeSettingsPath();
@@ -470,6 +473,7 @@ export function installHooks(options: {
     const wanted = entriesFor(dist, {
         decisions: options.decisions ?? decisionHooksWanted(config),
         unpushed: options.unpushed ?? config.unpushed.enabled,
+        questionNudge: options.questionNudge ?? config.decisions.questionNudge !== "off",
     });
     const wantedEvents = new Set(wanted.map((item) => item.event));
 
@@ -594,9 +598,7 @@ export interface WiringStatus {
  * install (the post hook on `Bash` only) read as fine while no Edit or Write call reached the
  * session change log.
  */
-export function wiringStatus(
-    options: { dist?: string; settingsPath?: string; decisions?: boolean; unpushed?: boolean } = {}
-): WiringStatus {
+export function wiringStatus(options: { dist?: string; settingsPath?: string } & StopFeatures = {}): WiringStatus {
     const settingsPath = options.settingsPath ?? claudeSettingsPath();
 
     if (!existsSync(settingsPath) || !SafeJSON.stringify(readSettings(settingsPath)).includes(INSTALL_MARKER)) {
@@ -607,6 +609,13 @@ export function wiringStatus(
     const events = [...plan.added, ...plan.updated, ...plan.removed];
 
     return events.length > 0 ? { state: "stale", events } : { state: "installed", events: [] };
+}
+
+/** Whether `settings.json` holds a Stop entry of ours, the one the question nudge and the unpushed reminder run in. */
+export function stopHookWired(settingsPath = claudeSettingsPath()): boolean {
+    return (readSettings(settingsPath).hooks?.Stop ?? []).some(
+        (entry) => isOurs(entry) && Boolean(entry.hooks?.some((hook) => hook.command?.includes("hook-stop.ts")))
+    );
 }
 
 export interface UninstallResult {
