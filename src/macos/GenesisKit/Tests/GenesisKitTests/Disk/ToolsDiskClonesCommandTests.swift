@@ -157,6 +157,136 @@ final class ToolsDiskClonesCommandTests: XCTestCase {
         XCTAssertThrowsError(try ToolsDiskProvider.clonesConfigArguments(addDirs: ["/a,b"]), "the CLI splits commas")
     }
 
+    func testPresetsListDecodesTheWholeSelectorAndOptionalAutoLimits() async throws {
+        let listing = try provider(printing: """
+            {"presets": [{"id": "back", "dirs": ["/Users/alice/Projects/Back"], "worktreesOf": "/Users/alice/Projects/Back",
+              "targets": ["all"], "exclude": ["*.log"], "minReal": 102400, "keepPartners": [], "rewriteStores": ["bun"],
+              "keepUnfreeable": true, "createdAt": "2026-10-19T14:41:45.348Z",
+              "auto": {"enabled": true}, "lastRunAt": "2026-10-19T14:41:58.764Z", "lastReclaimable": 0}]}
+            """)
+        let presets = try await listing.clonesPresets()
+        let back = try XCTUnwrap(presets.first)
+        XCTAssertEqual(back.worktreesOf, "/Users/alice/Projects/Back")
+        XCTAssertEqual(back.targets, ["all"])
+        XCTAssertEqual(back.rewriteStores, [ClonesKeepPartnerID(rawValue: "bun")])
+        XCTAssertEqual(back.keepUnfreeable, true)
+        XCTAssertEqual(back.auto, ClonesPreset.Auto(enabled: true), "an armed preset without limits clones every set")
+        XCTAssertEqual(try argv(), ["macos", "clones", "reclaim", "presets", "list", "--format", "json"])
+    }
+
+    func testPresetRunPlansAndAppliesTheSavedSelectorById() async throws {
+        let planning = try provider(printing: fixture("clones-reclaim-plan"))
+        let plan = try await planning.clonesPresetPlan(id: "back")
+        XCTAssertFalse(plan.runId.isEmpty)
+        XCTAssertEqual(try argv(), ["macos", "clones", "reclaim", "presets", "run", "back", "--format", "json", "--silent",
+                                    "--no-daemon"], "the preset's own selector, not folders the app passes")
+
+        let applying = try provider(printing: fixture("contract-clones-apply-result"))
+        guard case .applied(let run) = try await applying.clonesPresetApply(id: "back", usesCachedPlan: false) else {
+            return XCTFail("applied")
+        }
+        XCTAssertEqual(run.state, "applied")
+        XCTAssertEqual(try argv(), ["macos", "clones", "reclaim", "presets", "run", "back", "--format", "json", "--silent",
+                                    "--no-daemon", "--apply", "--yes", "--no-cache"])
+
+        let unknown = try provider(printing: """
+            {"error": {"kind": "unknown-preset", "message": "Unknown preset", "presetId": "x", "known": ["back"]}}
+            """, exitCode: 1)
+        do {
+            _ = try await unknown.clonesPresetPlan(id: "x")
+            XCTFail("expected the envelope")
+        } catch let error as ClonesCommandError {
+            XCTAssertEqual(error.kind, "unknown-preset")
+        }
+    }
+
+    func testPresetAutoArmsStopsAndSetsOrClearsItsLimits() async throws {
+        XCTAssertEqual(ToolsDiskProvider.clonesPresetAutoArguments(id: "back", enabled: true, maxBytes: .set(5_368_709_120),
+                                                                   maxFiles: .set(500)),
+                       ["clones", "reclaim", "presets", "auto", "back", "--json", "--on", "--max-bytes", "5368709120B",
+                        "--max-files", "500"])
+        XCTAssertEqual(ToolsDiskProvider.clonesPresetAutoArguments(id: "back", enabled: nil, maxBytes: .none),
+                       ["clones", "reclaim", "presets", "auto", "back", "--json", "--max-bytes", "none"])
+        XCTAssertEqual(ToolsDiskProvider.clonesPresetAutoArguments(id: "back", enabled: false),
+                       ["clones", "reclaim", "presets", "auto", "back", "--json", "--off"])
+
+        let arming = try provider(printing: """
+            {"id": "back", "dirs": ["/b"], "targets": ["all"], "exclude": [], "minReal": 102400, "keepPartners": [],
+             "createdAt": "2026-10-19T14:41:45.348Z", "auto": {"enabled": true, "maxFiles": 500}}
+            """)
+        let armed = try await arming.clonesPresetAuto(id: "back", enabled: true, maxFiles: .set(500))
+        XCTAssertEqual(armed.auto?.maxFiles, 500)
+        XCTAssertNil(armed.auto?.maxBytes)
+        XCTAssertNil(armed.auto?.dryRunAt, "armed, its first run is still the dry run")
+    }
+
+    func testProcessLogReplaysARunAndOptimizePinsItsArgv() async throws {
+        let log = try provider(printing: fixture("contract-clones-apply-result"))
+        let run = try await log.clonesProcessLog(processId: "2026-10-08T20-41-40-760Z.51673.1")
+        XCTAssertFalse(run.ops.isEmpty)
+        XCTAssertEqual(try argv(), ["macos", "clones", "optimize", "--log", "--process",
+                                    "2026-10-08T20-41-40-760Z.51673.1", "--format", "json", "--silent"])
+
+        let options = ClonesOptimizeOptions(roots: ["/Users/alice/Media", "-odd"],
+                                            filters: ClonesScanFilters(minReal: 1_048_576, include: ["*.mov"],
+                                                                       exclude: ["cache/*"]))
+        XCTAssertEqual(ToolsDiskProvider.clonesOptimizeArguments(options, apply: false),
+                       ["clones", "optimize", "/Users/alice/Media", "./-odd", "--format", "json", "--silent",
+                        "--min-real", "1048576B", "--include", "*.mov", "--exclude", "cache/*"])
+        let found = ClonesOptimizeOptions(dirs: ["/Users/alice/Projects"], worktreesOf: "/Users/alice/Projects/App",
+                                          targets: ["all"])
+        XCTAssertEqual(ToolsDiskProvider.clonesOptimizeArguments(found, apply: true, usesCachedPlan: false),
+                       ["clones", "optimize", "--format", "json", "--silent", "--dir", "/Users/alice/Projects",
+                        "--worktrees-of", "/Users/alice/Projects/App", "--targets", "all", "--apply", "--yes",
+                        "--no-cache"])
+        let nothing = try provider(printing: "{}")
+        do {
+            _ = try await nothing.clonesOptimize(ClonesOptimizeOptions(), apply: false)
+            XCTFail("optimize without roots or dirs must not fall back to the CLI's watched folders")
+        } catch ToolsDiskProviderError.invalidArgument {}
+
+        do {
+            _ = try await nothing.clonesOptimize(ClonesOptimizeOptions(roots: [""]), apply: false)
+            XCTFail("an empty path string must not reach the CLI, which would read it as its own working folder")
+        } catch ToolsDiskProviderError.invalidArgument {}
+
+        // A failed operation keeps the reason the audit log wrote under `message`.
+        let failed = try JSONDecoder().decode(ClonesApplyOp.self, from: Data(
+            #"{"seq": 3, "op": "error", "status": "prestate", "message": "EACCES: permission denied"}"#.utf8))
+        XCTAssertEqual(failed.message, "EACCES: permission denied")
+
+        // `--worktrees-of` alone selects the repo's worktrees, so it reaches the CLI.
+        let worktrees = try provider(printing: fixture("contract-clones-apply-result"))
+        _ = try await worktrees.clonesOptimize(ClonesOptimizeOptions(worktreesOf: "/Users/alice/Projects/App",
+                                                                     targets: ["all"]), apply: false)
+        XCTAssertEqual(try argv(), ["macos", "clones", "optimize", "--format", "json", "--silent",
+                                    "--worktrees-of", "/Users/alice/Projects/App", "--targets", "all"])
+    }
+
+    func testStoreReportDecodesAndPassesTheSizeWithItsUnit() async throws {
+        let stores = try provider(printing: """
+            {"store": {"id": "bun", "root": "/Users/alice/.bun/install/cache"}, "minBytes": 65536, "filesListed": 812,
+             "entries": [{"entry": "@scope/pkg@1.0.0@@@1", "files": 3, "privateBytes": 9437184}],
+             "totalPrivate": 9437184}
+            """)
+        let report = try await stores.clonesStoreReport(minBytes: 1_048_576)
+        XCTAssertEqual(report.store.id, ClonesKeepPartnerID(rawValue: "bun"))
+        XCTAssertEqual(report.entries.first?.id, "@scope/pkg@1.0.0@@@1")
+        XCTAssertEqual(report.totalPrivate, 9_437_184)
+        XCTAssertEqual(try argv(), ["macos", "clones", "reclaim", "stores", "--format", "json", "--min-size", "1048576B"])
+    }
+
+    func testConfigSetsTheScanDefaultsAndMeasureAndDuplicatesPassTheirFilters() throws {
+        XCTAssertEqual(try ToolsDiskProvider.clonesConfigArguments(minReal: 102_400, nodeModules: false),
+                       ["clones", "config", "--list", "--set-min-real", "102400B", "--node-modules", "off"])
+        let measure = ClonesMeasureOptions(filters: ClonesScanFilters(minReal: 10_485_760, nodeModules: true),
+                                           top: 20, sort: .real, unique: false, showPartners: true)
+        XCTAssertEqual(measure.arguments, ["--node-modules", "--min-real", "10485760B", "--top", "20", "--sort", "real",
+                                           "--no-unique", "--show-partners"])
+        let duplicates = ClonesDuplicatesOptions(filters: ClonesScanFilters(exclude: ["*.lock"]), prefixHash: true)
+        XCTAssertEqual(duplicates.arguments, ["--exclude", "*.lock", "--prefix-hash"])
+    }
+
     func testDoctorFindingsCarryThePathsHashAndTheTypedPhrase() throws {
         let report = try ToolsDiskProvider.decode(DoctorReport.self, from: fixture("contract-doctor-findings"),
                                                   command: "doctor")
