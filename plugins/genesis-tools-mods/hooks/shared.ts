@@ -29,6 +29,8 @@ export interface Host {
     run: (argv: readonly string[], init?: ProcessRunInit) => Promise<ProcessRunResult>;
     read: (path: string) => Promise<string>;
     write: (path: string, text: string) => Promise<void>;
+    /** Adds `text` at the end of a file, making it and its folder when missing; rejects when the write failed. */
+    append: (path: string, text: string) => Promise<void>;
     list: (path: string) => Promise<FsEntry[]>;
     exists: (path: string) => Promise<boolean>;
     stat: (path: string) => Promise<FsStat>;
@@ -90,25 +92,21 @@ export function forgetSettings(): void {
     cached = undefined;
 }
 
+/** Appends one JSON line, `at` first, to a `.jsonl` file (`Host.append`); a line that could not be written is dropped. */
+export async function appendJsonl(host: Host, path: string, record: Record<string, unknown>): Promise<void> {
+    await host.append(path, `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`).catch(() => undefined);
+}
+
 /**
  * Appends one JSON line to `<agents>/mods-log/<feature>.jsonl`, the record of what a feature did, so its heuristics
- * can be checked against what the person then did. `$.fs.write` replaces a file, so the append goes through `sh`.
+ * can be checked against what the person then did.
  */
 export async function logMod(host: Host, feature: string, record: Record<string, unknown>): Promise<void> {
     const dir = await agentsDir(host);
 
-    if (!dir) {
-        return;
+    if (dir) {
+        await appendJsonl(host, `${dir}/mods-log/${feature}.jsonl`, record);
     }
-
-    const line = `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`;
-
-    await host
-        .run(["/bin/sh", "-c", 'mkdir -p "$(dirname "$1")" && cat >> "$1"', "sh", `${dir}/mods-log/${feature}.jsonl`], {
-            stdin: line,
-            timeoutMs: 5_000,
-        })
-        .catch(() => undefined);
 }
 
 /** `12s`, `4m 05s`, `1h 02m`. */

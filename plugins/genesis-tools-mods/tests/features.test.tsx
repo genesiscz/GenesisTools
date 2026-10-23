@@ -243,6 +243,7 @@ function checkoutHost(): Host {
             throw new Error(`ENOENT ${path}`);
         },
         async write() {},
+        async append() {},
         async list(path) {
             return [...dirs]
                 .filter((dir) => dir.startsWith(`${path}/`) && !dir.slice(path.length + 1).includes("/"))

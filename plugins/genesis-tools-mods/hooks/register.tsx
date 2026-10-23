@@ -374,6 +374,21 @@ function hostOf($: EngineInterface): Host {
         run: (argv, init) => $.process.run(argv, init),
         read: (path) => $.fs.read(path),
         write: (path, text) => $.fs.write(path, text),
+        // `$.fs.write` replaces a file and the engine has no append, so this is the one place an append runs `cat >>`
+        // in `sh` (making the folder first). When `$.fs` gets an append, only these lines change.
+        append: async (path, text) => {
+            const done = await $.process.run(
+                ["/bin/sh", "-c", 'mkdir -p "$(dirname "$1")" && cat >> "$1"', "sh", path],
+                {
+                    stdin: text,
+                    timeoutMs: 5_000,
+                }
+            );
+
+            if (done.exitCode !== 0) {
+                throw new Error(`append to ${path} failed (exit ${done.exitCode}): ${done.stderr.trim()}`);
+            }
+        },
         list: (path) => $.fs.list(path),
         exists: (path) => $.fs.exists(path),
         stat: (path) => $.fs.stat(path),
