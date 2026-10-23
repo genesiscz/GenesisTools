@@ -1,6 +1,6 @@
 import { parseSince } from "@genesiscz/utils/date";
 import { parseDuration } from "@genesiscz/utils/format";
-import type { ReviewLedgerRecord } from "./ledger";
+import type { ReviewGateRecord, ReviewLedgerRecord } from "./ledger";
 import type { ReviewVerdict } from "./types";
 
 /** One review session, folded from its ledger lines: what `tools codex reviews` prints as a row. */
@@ -82,7 +82,8 @@ function emptySummary(record: ReviewLedgerRecord): ReviewSummary {
 
 /**
  * Folds the ledger into one summary per review session. A `start` line opens a new review, so a name that was
- * reused later shows twice; turn and gate lines without a start (a ledger cut by hand) open one too.
+ * reused later shows twice; turn and gate lines without a start (a ledger cut by hand) open one too. An imported
+ * review that never got its gate line is a partial import: the next import of that name replaces its row.
  */
 export function summarizeReviews(records: readonly ReviewLedgerRecord[]): ReviewSummary[] {
     const open = new Map<string, ReviewSummary>();
@@ -92,6 +93,16 @@ export function summarizeReviews(records: readonly ReviewLedgerRecord[]): Review
         let summary = open.get(record.name);
 
         if (!summary || record.kind === "start") {
+            if (
+                summary &&
+                record.kind === "start" &&
+                record.imported &&
+                summary.imported &&
+                summary.verdict === "open"
+            ) {
+                all.splice(all.indexOf(summary), 1);
+            }
+
             summary = emptySummary(record);
             open.set(record.name, summary);
             all.push(summary);
@@ -139,6 +150,63 @@ export function summarizeReviews(records: readonly ReviewLedgerRecord[]): Review
     }
 
     return all;
+}
+
+/**
+ * The ledger lines of one review session's current run. A reused name (and a fresh spawn, whose chain is its name)
+ * matches every earlier run too, so only the lines from its last `start` on count; with no start line, all of them.
+ */
+export function currentReviewRecords(
+    records: readonly ReviewLedgerRecord[],
+    name: string,
+    chain: string
+): ReviewLedgerRecord[] {
+    const mine = records.filter((record) => record.name === name && record.chain === chain);
+    const start = mine.findLastIndex((record) => record.kind === "start");
+    return start < 0 ? mine : mine.slice(start);
+}
+
+export interface GateCheckRow {
+    label: "coverage" | "reasoning" | "shape";
+    ok: boolean;
+    detail: string;
+}
+
+/**
+ * The three checks of one gate line as `review-depth` prints them: the result and sentence the gate recorded, or
+ * for an older line without them an approximation from its counts.
+ */
+export function gateCheckRows(gate: ReviewGateRecord): GateCheckRow[] {
+    const unread =
+        gate.unread.length > 0
+            ? `; unread: ${gate.unread.slice(0, 8).join(", ")}${gate.unread.length > 8 ? ", …" : ""}`
+            : "";
+
+    if (gate.checks) {
+        return [
+            { label: "coverage", ...gate.checks.coverage, detail: `${gate.checks.coverage.detail}${unread}` },
+            { label: "reasoning", ...gate.checks.reasoning },
+            { label: "shape", ...gate.checks.shape },
+        ];
+    }
+
+    return [
+        {
+            label: "coverage",
+            ok: gate.coverage.reviewed !== null && gate.coverage.reviewed >= gate.coverage.total,
+            detail: `${gate.coverage.reviewed ?? "no line"} of ${gate.coverage.total} files${unread}`,
+        },
+        {
+            label: "reasoning",
+            ok: gate.reasoningPer100Lines === null || gate.reasoningPer100Lines >= gate.floor,
+            detail: `${gate.reasoningPer100Lines ?? "unknown"} tokens per 100 changed lines (floor ${gate.floor})`,
+        },
+        {
+            label: "shape",
+            ok: gate.malformedFindings === 0,
+            detail: `${gate.findings} findings, ${gate.malformedFindings} malformed`,
+        },
+    ];
 }
 
 /** `24h`, `90m`, `7d` back from now; otherwise the `--since` grammar of the other reports (`HH:MM`, a date). */

@@ -35,13 +35,27 @@ export interface ParsedReviewReport {
     ran: boolean;
 }
 
-/** Markdown emphasis and code ticks a model wraps around the fixed lines; they carry no meaning here. */
+/**
+ * A pair of `*`, `**`, `_` or `__` around a phrase: opened after a space or the line start, closed before a space,
+ * punctuation or the line end. An underscore inside a word (`app_icon.png`, `__init__.py`) is not emphasis.
+ */
+const EMPHASIS = /(^|[\s([])(\*{1,2}|_{1,2})(?=\S)(.*?\S)\2(?=$|[\s)\]:,;!?]|\.(?:\s|$))/g;
+
+/** Markdown emphasis, code ticks and a bullet a model wraps around the fixed lines; they carry no meaning here. */
 function plain(line: string): string {
-    return line.replace(/[*_`]/g, "").trim();
+    let text = line.replace(/`/g, "").replace(/^\s*[*-]\s+/, "");
+
+    // Twice at most: `***both***` is one pair inside another.
+    for (let pass = 0; pass < 2; pass++) {
+        text = text.replace(EMPHASIS, "$1$3");
+    }
+
+    return text.trim();
 }
 
 const FINDING_START = /^(\d+)[.)]\s+(.*)$/;
-const FINDING_SHAPE = /^\[(critical|high|medium|low)\]\s+\S+:\d+/i;
+/** `[Severity] path:line`: the path runs up to its `:line`, so a path with spaces in it (`src/my file.ts:12`) parses. */
+const FINDING_SHAPE = /^\[(critical|high|medium|low)\]\s+\S(?:[^:]*?\S)?:\d+(?=$|[\s:,;)\-\u2013\u2014])/i;
 const SECTION_END = /^(ran|files reviewed|not reviewed|result|at|changed|verify|open|findings):/i;
 
 function parseNotReviewed(value: string): ParsedReviewReport["notReviewed"] {
@@ -137,7 +151,12 @@ export function reasoningPer100Lines(reasoningTokens: number | null, manifest: R
     return Math.round((reasoningTokens * 100) / Math.max(1, manifestChangedLines(manifest)));
 }
 
-function checkCoverage(
+/**
+ * Coverage against the manifest: the reported total is the manifest's, the reviewed count plus the excused binary
+ * files reach it, and the Not reviewed line names no text file. Exported for `reviews import`, which reaches the
+ * same verdict from a backfilled final message.
+ */
+export function checkCoverage(
     parsed: ParsedReviewReport,
     manifest: ReviewManifest,
     report: string
@@ -156,15 +175,19 @@ function checkCoverage(
 
     const { reviewed } = parsed.coverage;
     const binary = new Set(manifest.files.filter((file) => file.binary).map((file) => file.path));
-    // A binary file has no text to read: named with a reason, it does not count as unread.
-    const excused = parsed.notReviewed.filter((entry) => entry.reason && binary.has(entry.path)).length;
-    const ok = parsed.coverage.total === total && reviewed + excused >= total;
+    // A binary file has no text to read: named with a reason, it does not count as unread. Each one counts once,
+    // so naming the same binary twice cannot make up for a text file left unread.
+    const excused = new Set(
+        parsed.notReviewed.filter((entry) => entry.reason && binary.has(entry.path)).map((entry) => entry.path)
+    ).size;
+    // A text file on the Not reviewed line is an admitted gap, whatever the count says.
+    const named = [...new Set(parsed.notReviewed.map((entry) => entry.path).filter((path) => !binary.has(path)))];
+    const ok = parsed.coverage.total === total && reviewed + excused >= total && named.length === 0;
 
     if (ok) {
         return { ok, detail: `${reviewed} of ${total} files reviewed`, reviewed, total, unread: [] };
     }
 
-    const named = parsed.notReviewed.map((entry) => entry.path).filter((path) => !binary.has(path));
     const missing = total - reviewed - excused;
     // The worker named fewer files than it skipped: the manifest files its report never mentions are the best guess.
     const unmentioned =
@@ -174,7 +197,9 @@ function checkCoverage(
     const detail =
         parsed.coverage.total !== total
             ? `reported ${reviewed} of ${parsed.coverage.total}, but the manifest has ${total} files`
-            : `${reviewed} of ${total} files reviewed`;
+            : reviewed + excused >= total
+              ? `${reviewed} of ${total} files reviewed, but Not reviewed names ${named.length} text file(s)`
+              : `${reviewed} of ${total} files reviewed`;
 
     return { ok, detail, reviewed, total, unread: [...new Set([...named, ...unmentioned])] };
 }

@@ -15,15 +15,12 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import { checkReview, type ReviewGateChecks } from "../lib/review/gate";
 import { importReviewSessions, lastAgentMessage } from "../lib/review/import";
-import {
-    type ReviewGateRecord,
-    type ReviewLedgerRecord,
-    readReviewRecords,
-    reviewLedgerPath,
-} from "../lib/review/ledger";
+import { type ReviewGateRecord, readReviewRecords, reviewLedgerPath } from "../lib/review/ledger";
 import { buildManifest, defaultReviewGitReaders } from "../lib/review/prepare";
 import {
+    currentReviewRecords,
     filterReviews,
+    gateCheckRows,
     parseReviewSince,
     type ReviewSummary,
     reviewTotals,
@@ -184,12 +181,18 @@ interface ImportOptions {
     json?: boolean;
 }
 
-async function runImport(names: string[], options: ImportOptions): Promise<void> {
+/** Exported for the test of both output formats; the CLI reaches it through `reviews import`. */
+export async function runImport(names: string[], options: ImportOptions): Promise<void> {
     const results = await importReviewSessions({
         names,
         ...(options.base ? { base: options.base } : {}),
         cwdFromSession: options.cwdFromSession,
     });
+
+    // Before either output: automation reading --json needs the same exit status as a person reading the table.
+    if (results.some((result) => result.status === "missing" || result.status === "failed")) {
+        process.exitCode = 1;
+    }
 
     if (options.json) {
         out.result({ ledger: reviewLedgerPath(), results });
@@ -213,10 +216,6 @@ async function runImport(names: string[], options: ImportOptions): Promise<void>
     out.println(table.toString());
     const imported = results.filter((result) => result.status === "imported").length;
     out.println(`${imported} imported, ${results.length - imported} not, into ${reviewLedgerPath()}`);
-
-    if (results.some((result) => result.status === "missing")) {
-        process.exitCode = 1;
-    }
 }
 
 interface DepthOptions {
@@ -229,26 +228,7 @@ function checkLine(label: string, ok: boolean, detail: string): string {
 }
 
 function gateLines(gate: ReviewGateRecord): string[] {
-    const coverageOk = gate.coverage.reviewed !== null && gate.coverage.reviewed >= gate.coverage.total;
-    const reasoningOk = gate.reasoningPer100Lines === null || gate.reasoningPer100Lines >= gate.floor;
-
-    return [
-        checkLine(
-            "coverage",
-            coverageOk,
-            `${gate.coverage.reviewed ?? "no line"} of ${gate.coverage.total} files${gate.unread.length > 0 ? `; unread: ${gate.unread.slice(0, 8).join(", ")}${gate.unread.length > 8 ? ", …" : ""}` : ""}`
-        ),
-        checkLine(
-            "reasoning",
-            reasoningOk,
-            `${gate.reasoningPer100Lines ?? "unknown"} tokens per 100 changed lines (floor ${gate.floor})`
-        ),
-        checkLine(
-            "shape",
-            gate.malformedFindings === 0,
-            `${gate.findings} findings, ${gate.malformedFindings} malformed`
-        ),
-    ];
+    return gateCheckRows(gate).map((row) => checkLine(row.label, row.ok, row.detail));
 }
 
 function checksLines(checks: ReviewGateChecks): string[] {
@@ -319,9 +299,7 @@ async function runReviewDepth(name: string, options: DepthOptions): Promise<void
         return;
     }
 
-    const records = readReviewRecords().records.filter(
-        (record: ReviewLedgerRecord) => record.name === name && record.chain === review.chain
-    );
+    const records = currentReviewRecords(readReviewRecords().records, name, review.chain);
     const gates = records.filter((record): record is ReviewGateRecord => record.kind === "gate");
     const lastGate = gates.at(-1);
 

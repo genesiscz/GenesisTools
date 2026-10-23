@@ -1,10 +1,13 @@
-import { join } from "node:path";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { codexRoot } from "@genesiscz/utils/codex/worker-paths";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
 import { JsonlWriter } from "@genesiscz/utils/log-session/jsonl-writer";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { manifestChangedLines } from "@genesiscz/utils/worker/contract";
+import type { GateCheck } from "./gate";
 import type { CodexReviewConfig, CodexReviewSpent, ReviewVerdict } from "./types";
 
 const log = logger.child({ component: "codex:review-ledger" });
@@ -68,6 +71,11 @@ export interface ReviewGateRecord extends ReviewLedgerBase {
     malformedFindings: number;
     /** The unread files the gate named, first 40. */
     unread: string[];
+    /**
+     * Each check's own result and sentence, as the gate decided it. Absent on a gate line written before this field,
+     * on an imported one and on a `markReviewShallow` one; `review-depth` then rebuilds an approximation.
+     */
+    checks?: { coverage: GateCheck; reasoning: GateCheck; shape: GateCheck };
     escalatedTo?: string;
     spent: CodexReviewSpent;
 }
@@ -113,6 +121,26 @@ export function appendReviewRecord(
     } catch (err) {
         log.warn({ err, path, kind: record.kind, name: record.name }, "review ledger write failed");
         return null;
+    }
+}
+
+/**
+ * Appends several records in one write, so they land together or not at all (a torn last line is skipped by the
+ * reader). Unlike {@link appendReviewRecord} it reports the failure: `reviews import` must not call a review
+ * imported when its lines never reached the ledger.
+ */
+export function appendReviewRecords(
+    records: readonly ReviewLedgerRecord[],
+    path = reviewLedgerPath()
+): { ok: true } | { ok: false; error: string } {
+    try {
+        mkdirSync(dirname(path), { recursive: true });
+        appendFileSync(path, records.map((record) => `${SafeJSON.stringify(record, { jsonl: true })}\n`).join(""));
+        log.debug({ path, records: records.length }, "review ledger records written");
+        return { ok: true };
+    } catch (err) {
+        log.warn({ err, path, records: records.length }, "review ledger write failed");
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
 }
 

@@ -1,21 +1,31 @@
-import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
+import { describe, expect, spyOn, test } from "bun:test";
+import { appendFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WorkerCostRow } from "@app/ai-spend/lib/workers/ledger";
 import type { CodexFinishedTurn } from "@genesiscz/utils/codex/turn-cost";
+import { env } from "@genesiscz/utils/env";
 import type { NumstatEntry, PrInfo } from "@genesiscz/utils/git";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { out } from "@genesiscz/utils/logger";
 import type { ReviewManifest } from "@genesiscz/utils/worker/contract";
+import { runImport } from "../../commands/reviews";
 import { codexDriver } from "../driver";
 import { spawnCodexSession } from "../spawn";
 import type { CodexSessionMeta } from "../store";
 import { escalatedReviewName, markReviewShallow, recordReviewTurn } from "./controller";
 import { checkReview, decideGate, parseReviewReport } from "./gate";
 import { importReviewSessions, type ReviewImportReaders } from "./import";
-import { type ReviewLedgerRecord, readReviewRecords } from "./ledger";
+import { type ReviewGateRecord, type ReviewLedgerRecord, readReviewRecords } from "./ledger";
 import { prepareReview, type ReviewGitReaders } from "./prepare";
-import { filterReviews, parseReviewSince, reviewTotals, summarizeReviews } from "./report";
+import {
+    currentReviewRecords,
+    filterReviews,
+    gateCheckRows,
+    parseReviewSince,
+    reviewTotals,
+    summarizeReviews,
+} from "./report";
 import type { CodexReviewConfig } from "./types";
 
 function entry(path: string, insertions: number, deletions = 0, binary = false): NumstatEntry {
@@ -247,6 +257,67 @@ describe("the depth gate", () => {
         expect(decideGate(miss, { effort: "medium", step: 0, allowShallow: true }).verdict).toBe("shallow");
         expect(decideGate(miss, { effort: "low", step: 0, allowShallow: true }).verdict).toBe("shallow");
     });
+
+    test("a text file on the Not reviewed line fails coverage even when the count is full; a repeated binary counts once", () => {
+        const admitted = checkReview({
+            report: GOOD_REPORT.replace("Files reviewed: 3 of 4", "Files reviewed: 4 of 4").replace(
+                "Not reviewed: assets/logo.png (binary image)",
+                "Not reviewed: src/c.ts (ran out of time)"
+            ),
+            manifest: MANIFEST,
+            effort: "high",
+            reasoningTokens: 400,
+        });
+        expect(admitted.coverage).toMatchObject({ ok: false, unread: ["src/c.ts"] });
+        expect(admitted.coverage.detail).toContain("Not reviewed names 1 text file(s)");
+
+        const twoBinaries: ReviewManifest = {
+            ...MANIFEST,
+            files: [...MANIFEST.files, { path: "assets/icon.png", added: 0, deleted: 0, binary: true }],
+        };
+        const repeated = checkReview({
+            report: GOOD_REPORT.replace("Files reviewed: 3 of 4", "Files reviewed: 3 of 5").replace(
+                "Not reviewed: assets/logo.png (binary image)",
+                "Not reviewed: assets/logo.png (binary image), assets/logo.png (binary image)"
+            ),
+            manifest: twoBinaries,
+            effort: "high",
+            reasoningTokens: 400,
+        });
+        expect(repeated.coverage.ok).toBe(false);
+    });
+
+    test("markdown is stripped around words, never inside a path: underscores and spaces in paths survive", () => {
+        const manifest: ReviewManifest = {
+            base: "origin/master",
+            files: [
+                { path: "src/my_mod.ts", added: 60, deleted: 10 },
+                { path: "src/my file.ts", added: 30, deleted: 0 },
+                { path: "assets/app_icon.png", added: 0, deleted: 0, binary: true },
+            ],
+            added: 90,
+            deleted: 10,
+        };
+        const report = [
+            "1. **[High]** src/my_mod.ts:12 - the lock leaks. Scenario: a throw. Fix: release in finally.",
+            "2. [Medium] src/my file.ts:7 - stale read. Scenario: a retry. Fix: reload.",
+            "__Ran:__ `bun test src/my_mod.test.ts`",
+            "**Files reviewed:** 2 of 3",
+            "_Not reviewed:_ `assets/app_icon.png` (binary image)",
+        ].join("\n");
+        const parsed = parseReviewReport(report);
+
+        expect(parsed.notReviewed).toEqual([{ path: "assets/app_icon.png", reason: "binary image" }]);
+        expect(parsed.findings.map((finding) => [finding.ok, finding.text.split(" - ")[0]])).toEqual([
+            [true, "[High] src/my_mod.ts:12"],
+            [true, "[Medium] src/my file.ts:7"],
+        ]);
+        expect(parsed.ran).toBe(true);
+
+        const checks = checkReview({ report, manifest, effort: "high", reasoningTokens: 400 });
+        expect(checks.coverage).toMatchObject({ ok: true, unread: [] });
+        expect(checks.shape.ok).toBe(true);
+    });
 });
 
 function finishedTurn(over: Partial<CodexFinishedTurn> = {}): CodexFinishedTurn {
@@ -319,6 +390,11 @@ describe("recordReviewTurn", () => {
             reasoningTokens: 50,
         });
         expect(records[1]).toMatchObject({ verdict: "steered", step: 1, reasoningPer100Lines: 50, floor: 100 });
+        expect((records[1] as ReviewGateRecord).checks).toEqual({
+            coverage: { ok: false, detail: "1 of 4 files reviewed" },
+            reasoning: { ok: false, detail: "50 reasoning tokens per 100 changed lines, high floor 100" },
+            shape: { ok: true, detail: "0 findings parse" },
+        });
 
         const second = recordReviewTurn({
             name: "rv",
@@ -514,6 +590,42 @@ describe("the review ledger report", () => {
         expect(reviews.map((review) => [review.name, review.turns, review.startedAt])).toEqual([
             ["rv", 1, "2026-10-22T10:00:00Z"],
             ["rv", 0, "2026-10-23T09:00:00Z"],
+        ]);
+    });
+
+    test("review-depth reads only the current run of a reused name", () => {
+        const [start, turn, gate] = ledgerFixture();
+        const again = { ...start, ts: "2026-10-23T09:00:00Z" };
+
+        expect(currentReviewRecords([start, turn, gate, again], "rv", "rv")).toEqual([again]);
+        expect(currentReviewRecords([turn, gate], "rv", "rv")).toEqual([turn, gate]);
+    });
+
+    test("review-depth prints the checks the gate recorded, and approximates only for a line without them", () => {
+        const gate = ledgerFixture()[2] as ReviewGateRecord;
+        // 3 of 4 with an excused binary passed the gate; a missing Ran line failed shape with no malformed finding.
+        const recorded: ReviewGateRecord = {
+            ...gate,
+            coverage: { reviewed: 3, total: 4 },
+            unread: [],
+            checks: {
+                coverage: { ok: true, detail: "3 of 4 files reviewed" },
+                reasoning: { ok: true, detail: "400 reasoning tokens per 100 changed lines, high floor 100" },
+                shape: { ok: false, detail: "no `Ran:` line" },
+            },
+        };
+        expect(gateCheckRows(recorded).map((row) => [row.label, row.ok, row.detail])).toEqual([
+            ["coverage", true, "3 of 4 files reviewed"],
+            ["reasoning", true, "400 reasoning tokens per 100 changed lines, high floor 100"],
+            ["shape", false, "no `Ran:` line"],
+        ]);
+
+        // Without the recorded checks the counts are all there is: coverage reads as a miss, shape as clean.
+        const { checks: _dropped, ...older } = recorded;
+        expect(gateCheckRows(older).map((row) => [row.label, row.ok])).toEqual([
+            ["coverage", false],
+            ["reasoning", false],
+            ["shape", true],
         ]);
     });
 
@@ -737,5 +849,108 @@ describe("reviews import", () => {
         });
         expect(skipped.notes[0]).toContain("manifest skipped");
         expect(readReviewRecords(ledgerPath).records.filter((record) => record.kind === "gate")).toHaveLength(2);
+    });
+});
+
+describe("reviews import: verdicts and failed writes", () => {
+    test("a full count whose total differs from the rebuilt manifest stays imported, never pass", async () => {
+        const ledgerPath = join(mkdtempSync(join(tmpdir(), "gt-review-import-")), "reviews.jsonl");
+        const { fake } = importReaders(ledgerPath);
+        const mismatched: ReviewImportReaders = {
+            ...fake,
+            lastAgentMessage: async () =>
+                "1. [High] src/a.ts:3 - bug. Scenario: x. Fix: y.\nRan: bun test\nFiles reviewed: 1 of 1\nNot reviewed: none",
+        };
+        const [result] = await importReviewSessions({
+            names: ["rv-full"],
+            base: "origin/master",
+            readers: mismatched,
+            ledgerPath,
+        });
+
+        expect(result.verdict).toBe("imported");
+        expect(summarizeReviews(readReviewRecords(ledgerPath).records)[0].verdict).toBe("imported");
+        expect(readReviewRecords(ledgerPath).records.at(-1)).toMatchObject({
+            kind: "gate",
+            reason: "imported: reported 1 of 1, but the manifest has 2 files; the scope is not confirmed",
+        });
+    });
+
+    test("a failed ledger write is reported, and a partial earlier import is redone instead of skipped", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-review-import-"));
+        const blocker = join(dir, "not-a-folder");
+        writeFileSync(blocker, "");
+        const unwritable = join(blocker, "reviews.jsonl");
+        const { fake: failing } = importReaders(unwritable);
+        const [failed] = await importReviewSessions({
+            names: ["rv-full"],
+            base: "origin/master",
+            readers: { ...failing, ledgerRecords: () => [] },
+            ledgerPath: unwritable,
+        });
+        expect(failed.status).toBe("failed");
+        expect(failed.notes.at(-1)).toContain("the review ledger write failed");
+
+        // An older import wrote its start line and then failed: the rerun completes it and its row replaces the stub.
+        const ledgerPath = join(dir, "reviews.jsonl");
+        const { fake } = importReaders(ledgerPath);
+        const stub = {
+            v: 1,
+            ts: "2026-10-22T19:00:00.000Z",
+            name: "rv-full",
+            chain: "rv-full",
+            base: "origin/master",
+            files: 2,
+            lines: 45,
+            effort: "medium",
+            imported: true,
+            kind: "start",
+            cwd: "/wt/rv-full",
+            effortSource: "imported",
+            allowShallow: false,
+        };
+        appendFileSync(ledgerPath, `${SafeJSON.stringify(stub)}\n`);
+        const [redone] = await importReviewSessions({
+            names: ["rv-full"],
+            base: "origin/master",
+            readers: fake,
+            ledgerPath,
+        });
+        expect(redone).toMatchObject({ status: "imported", verdict: "pass" });
+        expect(redone.notes).toContain("an earlier import of this name has no gate line; this import replaces it");
+        expect(
+            summarizeReviews(readReviewRecords(ledgerPath).records).map((review) => [review.name, review.verdict])
+        ).toEqual([["rv-full", "pass"]]);
+
+        const [again] = await importReviewSessions({ names: ["rv-full"], readers: fake, ledgerPath });
+        expect(again.status).toBe("skipped");
+    });
+
+    test("tools codex reviews import exits 1 for a missing session in table and --json output alike", async () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-review-import-cli-"));
+        const previousExitCode = process.exitCode;
+        const printed: unknown[] = [];
+        const result = spyOn(out, "result").mockImplementation((value) => {
+            printed.push(value);
+        });
+        const println = spyOn(out, "println").mockImplementation(() => {});
+        // Read through a call: after the reset below, TypeScript would narrow a direct read to undefined.
+        const exitCode = (): typeof process.exitCode => process.exitCode;
+
+        try {
+            await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, async () => {
+                for (const json of [true, false]) {
+                    process.exitCode = undefined;
+                    await runImport(["absent-review"], { cwdFromSession: true, json });
+                    expect(exitCode()).toBe(1);
+                }
+            });
+            expect(printed).toHaveLength(1);
+            expect(printed[0]).toMatchObject({ results: [{ name: "absent-review", status: "missing" }] });
+        } finally {
+            result.mockRestore();
+            println.mockRestore();
+            process.exitCode = previousExitCode;
+        }
     });
 });
