@@ -76,7 +76,7 @@ export const SETTABLE_KEYS = [
     "mods.agentModel.<enabled|format>",
     "mods.<decisions|links|git|askRow|spinner>.enabled",
     "mods.git.labels",
-    "mods.cacheBand.<enabled|warnMinutes|others>",
+    "mods.cacheBand.<enabled|warnMinutes|cautionMinutes|others>",
     "mods.tmpUsage.<enabled|minutes>",
     "mods.agentsBand.<enabled|warnMinutes>",
     "mods.hooks.<tokens|dedupe>",
@@ -95,6 +95,7 @@ const MOD_NUMBER_LIMITS: Record<string, { max: number; min?: number; why: string
     "idleCompact.minutes": { max: 59, why: "at 60 the 1-hour prompt cache has expired" },
     "idleCompact.minTokens": { max: Number.MAX_SAFE_INTEGER, min: 0, why: "" },
     "cacheBand.warnMinutes": { max: 59, why: "the cache lives 60 minutes" },
+    "cacheBand.cautionMinutes": { max: 59, why: "the cache lives 60 minutes" },
     "tmpUsage.minutes": { max: 120, why: "a reading older than 2 hours says little" },
     "agentsBand.warnMinutes": { max: 24 * 60, why: "a day" },
 };

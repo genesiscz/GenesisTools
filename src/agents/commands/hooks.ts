@@ -787,7 +787,7 @@ function registerMods(hooks: Command): void {
                 [
                     "mods.cacheBand",
                     mods.cacheBand.enabled,
-                    `red under ${mods.cacheBand.warnMinutes} min · others ${mods.cacheBand.others ? "on" : "off"}`,
+                    `yellow under ${mods.cacheBand.cautionMinutes} min · red under ${mods.cacheBand.warnMinutes} min · others ${mods.cacheBand.others ? "on" : "off"}`,
                 ],
                 ["mods.tmpUsage", mods.tmpUsage.enabled, `every ${mods.tmpUsage.minutes} min`],
                 ["mods.agentsBand", mods.agentsBand.enabled, `red past ${mods.agentsBand.warnMinutes} min`],

@@ -2,7 +2,7 @@ import type { On, TurnStepChunk } from "claude-code";
 import { expect, mock, test } from "claude-code/testing";
 import { bareDescription, lastSaidOf } from "../hooks/agents-band";
 import { quoteOf } from "../hooks/ask-row";
-import { cacheRowsOf } from "../hooks/cache-band";
+import { cacheRowsOf, cacheTone } from "../hooks/cache-band";
 import { openDecisions, stagedMessage } from "../hooks/decisions";
 import { checkCounts, checksOf, hubUrlOf, middleCut, parseNumstat, parseStatus } from "../hooks/git-band";
 import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
@@ -137,6 +137,13 @@ test("cache band: own row first, others only inside the warning window", async (
     expect(cacheRowsOf(compacted, "own", 10 * minute, now)).toEqual([
         { sessionId: "own", label: "a", expiresAt: now + 10 * minute, own: true, compacted: true },
     ]);
+
+    // Dim above the caution window, yellow inside it, red inside the warning.
+    expect(cacheTone(25 * minute, 10 * minute, 20 * minute)).toBeUndefined();
+    expect(cacheTone(15 * minute, 10 * minute, 20 * minute)).toBe("yellow");
+    expect(cacheTone(4 * minute, 10 * minute, 20 * minute)).toBe("red");
+    // A caution under the warning means no yellow stage.
+    expect(cacheTone(15 * minute, 10 * minute, 5 * minute)).toBeUndefined();
 });
 
 test("ask quote and spinner label", async () => {

@@ -259,8 +259,8 @@ checked against real use.
   and `track` buttons. `/mod-git on|off|toggle|refresh`.
 - `mods.askRow`: `[ask]` beside a finished tool row puts the row, quoted, into the prompt.
 - `mods.spinner`: the spinner line names the running tool, its time and the working subagents.
-- `mods.cacheBand` (`warnMinutes` 10, `others`): the prompt cache countdown, red under `warnMinutes`, and the other
-  sessions whose cache runs out within it. A press on another session's chip focuses the cmux pane it runs in.
+- `mods.cacheBand` (`cautionMinutes` 20, `warnMinutes` 10, `others`): the prompt cache countdown, yellow under
+  `cautionMinutes` and red under `warnMinutes`, and the other sessions whose cache runs out within the yellow window. A press on another session's chip focuses the cmux pane it runs in.
   The own chip adds `AC in 1m 22s` while the idle compaction is armed, and says `cache compacted` after a compaction,
   since the next prompt then starts a new, small context; another session that compacted gives no warning.
 - `mods.tmpUsage` (`minutes` 5): the size of the session's `/tmp/cc` folder and the free disk.

@@ -301,8 +301,11 @@ export interface ModsConfig {
     askRow: { enabled: boolean };
     /** The running tool, its time and the working subagents on the spinner line. */
     spinner: { enabled: boolean };
-    /** The prompt cache countdown in the band, red under `warnMinutes`; `others` adds other sessions under it. */
-    cacheBand: { enabled: boolean; warnMinutes: number; others: boolean };
+    /**
+     * The prompt cache countdown in the band: yellow under `cautionMinutes`, red under `warnMinutes`; `others` adds
+     * the other sessions inside the yellow window.
+     */
+    cacheBand: { enabled: boolean; warnMinutes: number; cautionMinutes: number; others: boolean };
     /** The size of the session's /tmp/cc scratch folder and the free disk, every `minutes`. */
     tmpUsage: { enabled: boolean; minutes: number };
     /** One band row per working subagent: model, age, idle time, tool calls; red past `warnMinutes`. */
@@ -467,7 +470,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         git: { enabled: false, labels: "full" },
         askRow: { enabled: false },
         spinner: { enabled: false },
-        cacheBand: { enabled: false, warnMinutes: 10, others: true },
+        cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
         tmpUsage: { enabled: false, minutes: 5 },
         agentsBand: { enabled: false, warnMinutes: 60 },
         hooks: { tokens: false, dedupe: false },
@@ -1106,6 +1109,12 @@ export function mergeMods(stored: unknown): ModsConfig {
         cacheBand: {
             enabled: boolOr(cache.enabled, base.cacheBand.enabled),
             warnMinutes: minutesOr("mods.cacheBand.warnMinutes", cache.warnMinutes, base.cacheBand.warnMinutes, 59),
+            cautionMinutes: minutesOr(
+                "mods.cacheBand.cautionMinutes",
+                cache.cautionMinutes,
+                base.cacheBand.cautionMinutes,
+                59
+            ),
             others: boolOr(cache.others, base.cacheBand.others),
         },
         tmpUsage: {

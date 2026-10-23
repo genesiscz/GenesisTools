@@ -19,7 +19,7 @@ export interface ModsSettings {
     git: { enabled: boolean; labels: "full" | "minimal" };
     askRow: { enabled: boolean };
     spinner: { enabled: boolean };
-    cacheBand: { enabled: boolean; warnMinutes: number; others: boolean };
+    cacheBand: { enabled: boolean; warnMinutes: number; cautionMinutes: number; others: boolean };
     tmpUsage: { enabled: boolean; minutes: number };
     agentsBand: { enabled: boolean; warnMinutes: number };
     hooks: { tokens: boolean; dedupe: boolean };
@@ -35,7 +35,7 @@ export const MODS_DEFAULTS: ModsSettings = {
     git: { enabled: false, labels: "full" },
     askRow: { enabled: false },
     spinner: { enabled: false },
-    cacheBand: { enabled: false, warnMinutes: 10, others: true },
+    cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
     tmpUsage: { enabled: false, minutes: 5 },
     agentsBand: { enabled: false, warnMinutes: 60 },
     hooks: { tokens: false, dedupe: false },
@@ -112,6 +112,7 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
         cacheBand: {
             enabled: bool(cache.enabled, d.cacheBand.enabled),
             warnMinutes: whole(cache.warnMinutes, 1, 59, d.cacheBand.warnMinutes),
+            cautionMinutes: whole(cache.cautionMinutes, 1, 59, d.cacheBand.cautionMinutes),
             others: bool(cache.others, d.cacheBand.others),
         },
         tmpUsage: {

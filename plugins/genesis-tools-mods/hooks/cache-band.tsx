@@ -1,8 +1,8 @@
 // The cache countdown. Each session writes `<agents>/mods-state/cache/<session>.json` when its main loop finishes a
 // turn (the prompt cache was written then), and an `ended` mark when it ends. The band shows this session's minutes
-// left dim, and red with a background under `mods.cacheBand.warnMinutes`; with `others` on, it also shows every
-// other session whose cache runs out within that threshold, so a reply that would rewrite a cold cache is visible
-// from any open session. Reading the folder is a file listing, no process; it runs every 15 seconds.
+// left dim, yellow under `mods.cacheBand.cautionMinutes` and red under `mods.cacheBand.warnMinutes`; with `others`
+// on, it also shows every other session whose cache runs out inside the yellow window, so a reply that would rewrite
+// a cold cache is visible from any open session. Reading the folder is a file listing, no process; it runs every 15 seconds.
 import type { ElementTable, RenderElement } from "claude-code";
 import type { CacheRow, CacheRows } from "../types";
 import { idleDueAt } from "./idle";
@@ -143,7 +143,7 @@ async function scan(host: Host): Promise<void> {
         }
     }
 
-    rows = cacheRowsOf(marks, ownId, settings.warnMinutes * 60_000, Date.now());
+    rows = cacheRowsOf(marks, ownId, alertMs(settings), Date.now());
     // Redrawn on every pass, so a countdown under the warning moves each 15 s.
     host.redraw();
 }
@@ -174,6 +174,20 @@ export async function markEnded(host: Host): Promise<void> {
     await mark(host, "ended").catch(() => undefined);
 }
 
+/** The wider of the two windows: a chip turns yellow, or red, from this much time left. */
+function alertMs(settings: { warnMinutes: number; cautionMinutes: number }): number {
+    return Math.max(settings.warnMinutes, settings.cautionMinutes) * 60_000;
+}
+
+/** `red` under the warning, `yellow` under the caution, undefined above both. */
+export function cacheTone(left: number, warnMs: number, cautionMs: number): "red" | "yellow" | undefined {
+    if (left <= warnMs) {
+        return "red";
+    }
+
+    return left <= cautionMs ? "yellow" : undefined;
+}
+
 /** Focuses the cmux pane the row's session runs in (`tools claude cmux focus`); says so when no pane has it. */
 async function focusSession(host: Host, row: CacheRow): Promise<void> {
     try {
@@ -201,6 +215,7 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
     const { Box, Button, Text } = ui;
     const now = Date.now();
     const warnMs = settings.warnMinutes * 60_000;
+    const cautionMs = settings.cautionMinutes * 60_000;
     const cell = (row: CacheRow) => {
         const left = row.expiresAt - now;
         const name = row.own ? "cache" : `${row.label} cache`;
@@ -221,14 +236,14 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
             ) : null;
         }
 
-        const text =
-            left <= warnMs ? (
-                <Text backgroundColor="red" color="white" bold>
-                    {` ${name} ${shortDuration(left)} `}
-                </Text>
-            ) : (
-                <Text dimColor>{`${name} ${Math.ceil(left / 60_000)}m`}</Text>
-            );
+        const tone = cacheTone(left, warnMs, cautionMs);
+        const text = tone ? (
+            <Text backgroundColor={tone} color={tone === "red" ? "white" : "black"} bold>
+                {` ${name} ${shortDuration(left)} `}
+            </Text>
+        ) : (
+            <Text dimColor>{`${name} ${Math.ceil(left / 60_000)}m`}</Text>
+        );
 
         // The own chip also counts down to the idle compaction, which comes before the cache runs out.
         const due = row.own ? idleDueAt() : undefined;

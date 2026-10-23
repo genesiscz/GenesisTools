@@ -685,6 +685,7 @@ describe("applySetting", () => {
         expect(set("mods.links", "true").links.enabled).toBe(true);
         expect(set("mods.cacheBand.warnMinutes", "15").cacheBand.warnMinutes).toBe(15);
         expect(() => set("mods.cacheBand.warnMinutes", "75")).toThrow("1 to 59");
+        expect(set("mods.cacheBand.cautionMinutes", "30").cacheBand.cautionMinutes).toBe(30);
         expect(set("mods.hooks.dedupe", "true").hooks).toEqual({ tokens: false, dedupe: true });
         expect(() => set("mods.nonsense.enabled", "true")).toThrow("Unknown mods key");
         expect(() => set("mods.links.colour", "red")).toThrow("Unknown mods key");
