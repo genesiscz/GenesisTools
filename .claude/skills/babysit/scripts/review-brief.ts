@@ -19,6 +19,7 @@
 
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { shellWord } from "@genesiscz/utils/shell/quote";
 import { flag, has, loadRun, reviewScratch } from "./run";
 
 export interface ReviewBriefInput {
@@ -75,13 +76,22 @@ export interface ReviewSpawnInput {
     postMerge?: { mergeCommit: string; files: string[] };
 }
 
-/** The reviewer's spawn line: `--mode review` with the base, so the harness computes the manifest and gates the depth. */
+/**
+ * The reviewer's spawn line: `--mode review` with the base, so the harness computes the manifest and gates the depth.
+ * Every value is one shell word: a file name, branch or path from the repository may hold a space or `$(...)`, and
+ * the lead runs this line as printed.
+ */
 export function reviewSpawnCommand({ pr, wt, base, briefPath, postMerge }: ReviewSpawnInput): string {
     const target = postMerge
-        ? `--base ${postMerge.mergeCommit}^ --paths ${postMerge.files.join(" ")}`
-        : `--base origin/${base}`;
+        ? ["--base", `${postMerge.mergeCommit}^`, "--paths", ...postMerge.files]
+        : ["--base", `origin/${base}`];
+    const argv = [
+        ...["tools", "codex", "spawn", "--mode", "review", ...target],
+        ...["--name", `bs-${pr}-review`, "--model", "gpt-6.1-sol", "--write", "ask", "--cwd", wt],
+        ...["--label", `babysit pr${pr} review`, "--prompt-file", briefPath],
+    ];
 
-    return `tools codex spawn --mode review ${target} --name bs-${pr}-review --model gpt-6.1-sol --write ask --cwd ${wt} --label "babysit pr${pr} review" --prompt-file ${briefPath}`;
+    return argv.map(shellWord).join(" ");
 }
 
 interface PrView {

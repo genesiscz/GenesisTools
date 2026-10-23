@@ -673,7 +673,7 @@ describe("independent review brief", () => {
         expect(
             reviewSpawnCommand({ pr: 498, wt: "/w", base: "feat/parent", briefPath: "/run/steer-review-498.md" })
         ).toBe(
-            'tools codex spawn --mode review --base origin/feat/parent --name bs-498-review --model gpt-6.1-sol --write ask --cwd /w --label "babysit pr498 review" --prompt-file /run/steer-review-498.md'
+            "tools codex spawn --mode review --base origin/feat/parent --name bs-498-review --model gpt-6.1-sol --write ask --cwd /w --label 'babysit pr498 review' --prompt-file /run/steer-review-498.md"
         );
         expect(
             reviewSpawnCommand({
@@ -683,7 +683,31 @@ describe("independent review brief", () => {
                 briefPath: "/b.md",
                 postMerge: { mergeCommit: "abc123", files: ["src/a.ts", "src/b.ts"] },
             })
-        ).toContain("--mode review --base abc123^ --paths src/a.ts src/b.ts --name bs-498-review");
+        ).toContain("--mode review --base 'abc123^' --paths src/a.ts src/b.ts --name bs-498-review");
+    });
+
+    test("every value of the spawn line stays one literal shell word: spaces and $(...) in names do not split or run", () => {
+        const command = reviewSpawnCommand({
+            pr: 498,
+            wt: "/tmp/my wt",
+            base: "feat/$(id)",
+            briefPath: "/run/brief file.md",
+            postMerge: { mergeCommit: "abc123", files: ["src/my file.ts", "$(touch /tmp/review-probe).ts"] },
+        });
+        expect(command).toContain("--paths 'src/my file.ts' '$(touch /tmp/review-probe).ts' --name");
+        expect(command).toContain("--cwd '/tmp/my wt'");
+        expect(command).toContain("--prompt-file '/run/brief file.md'");
+
+        // The shell itself reads it back as the intended argv, without running the substitution.
+        const parsed = Bun.spawnSync(["sh", "-c", `printf '%s\\n' ${command}`], { env: process.env, stdout: "pipe" });
+        const argv = parsed.stdout.toString().trimEnd().split("\n");
+        expect(argv).toContain("src/my file.ts");
+        expect(argv).toContain("$(touch /tmp/review-probe).ts");
+        expect(argv).toContain("/tmp/my wt");
+        expect(argv[argv.indexOf("--label") + 1]).toBe("babysit pr498 review");
+        expect(reviewSpawnCommand({ pr: 498, wt: "/w", base: "feat/$(id)", briefPath: "/b.md" })).toContain(
+            "--base 'origin/feat/$(id)'"
+        );
     });
 });
 describe("planted-regression summary", () => {

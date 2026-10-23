@@ -163,6 +163,15 @@ function writeGateRecord(options: {
             findings: checks?.shape.findings ?? 0,
             malformedFindings: checks?.shape.malformed.length ?? 0,
             unread: checks?.coverage.unread.slice(0, UNREAD_RECORDED) ?? [],
+            ...(checks
+                ? {
+                      checks: {
+                          coverage: { ok: checks.coverage.ok, detail: checks.coverage.detail },
+                          reasoning: { ok: checks.reasoning.ok, detail: checks.reasoning.detail },
+                          shape: { ok: checks.shape.ok, detail: checks.shape.detail },
+                      },
+                  }
+                : {}),
             ...(options.escalatedTo ? { escalatedTo: options.escalatedTo } : {}),
             spent: review.spent ?? {
                 turns: 0,

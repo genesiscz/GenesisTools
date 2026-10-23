@@ -4,9 +4,15 @@ import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { isReviewEffort, manifestChangedLines, type ReviewManifest } from "@genesiscz/utils/worker/contract";
 import { type CodexSessionMeta, CodexSessionStore } from "../store";
-import { parseReviewReport, REASONING_FLOOR_PER_100_LINES, reasoningPer100Lines } from "./gate";
 import {
-    appendReviewRecord,
+    checkCoverage,
+    type ParsedReviewReport,
+    parseReviewReport,
+    REASONING_FLOOR_PER_100_LINES,
+    reasoningPer100Lines,
+} from "./gate";
+import {
+    appendReviewRecords,
     type ReviewLedgerBase,
     type ReviewLedgerRecord,
     readReviewRecords,
@@ -85,7 +91,8 @@ export interface ReviewImportManifest {
 
 export interface ReviewImportResult {
     name: string;
-    status: "imported" | "skipped" | "missing";
+    /** `failed`: the ledger write failed, nothing of this review is in the ledger, and a rerun imports it. */
+    status: "imported" | "skipped" | "missing" | "failed";
     verdict?: ReviewVerdict;
     manifest: ReviewImportManifest | null;
     /** Why something is missing or approximate, in one sentence per fact. */
@@ -158,11 +165,18 @@ function spentOf(rows: readonly WorkerCostRow[]): CodexReviewSpent {
     };
 }
 
-/** The verdict the final message's coverage line implies: n of n passes, fewer is shallow, none is `imported`. */
+/**
+ * The verdict the final message's coverage line implies: fewer files than its own total is `shallow`; a pass needs
+ * the gate's coverage check against the rebuilt manifest. A full count whose scope cannot be confirmed (no manifest,
+ * another total, an unread text file named) stays `imported`, and so does a message with no coverage line.
+ */
 function impliedVerdict(
-    coverage: { reviewed: number; total: number } | null,
-    manifest: ReviewManifest | null
+    parsed: ParsedReviewReport,
+    manifest: ReviewManifest | null,
+    report: string
 ): { verdict: ReviewVerdict; reason: string } {
+    const { coverage } = parsed;
+
     if (!coverage) {
         return {
             verdict: "imported",
@@ -175,17 +189,39 @@ function impliedVerdict(
             ? `; the reviewed manifest has ${manifest.files.length} files`
             : "";
 
-    if (coverage.reviewed >= coverage.total) {
+    if (coverage.reviewed < coverage.total) {
         return {
-            verdict: "pass",
-            reason: `imported: Files reviewed ${coverage.reviewed} of ${coverage.total}${mismatch}`,
+            verdict: "shallow",
+            reason: `imported: Files reviewed ${coverage.reviewed} of ${coverage.total}, ${coverage.total - coverage.reviewed} unread${mismatch}`,
         };
     }
 
-    return {
-        verdict: "shallow",
-        reason: `imported: Files reviewed ${coverage.reviewed} of ${coverage.total}, ${coverage.total - coverage.reviewed} unread${mismatch}`,
-    };
+    if (!manifest) {
+        return {
+            verdict: "imported",
+            reason: `imported: Files reviewed ${coverage.reviewed} of ${coverage.total}, but no manifest to confirm the scope`,
+        };
+    }
+
+    const check = checkCoverage(parsed, manifest, report);
+
+    return check.ok
+        ? { verdict: "pass", reason: `imported: Files reviewed ${coverage.reviewed} of ${coverage.total}` }
+        : { verdict: "imported", reason: `imported: ${check.detail}; the scope is not confirmed` };
+}
+
+/**
+ * Whether the ledger already holds this name: a live review line, or an import that reached its gate line. An
+ * imported start without a gate is a partial import (an older run whose later writes failed): it is redone.
+ */
+function ledgerState(records: readonly ReviewLedgerRecord[], name: string): "absent" | "present" | "partial" {
+    const mine = records.filter((record) => record.name === name);
+
+    if (mine.length === 0) {
+        return "absent";
+    }
+
+    return mine.some((record) => !record.imported || record.kind === "gate") ? "present" : "partial";
 }
 
 async function importOne(name: string, input: ReviewImportInput, readers: ReviewImportReaders, ledgerPath: string) {
@@ -200,7 +236,9 @@ async function importOne(name: string, input: ReviewImportInput, readers: Review
         } satisfies ReviewImportResult;
     }
 
-    if (readers.ledgerRecords().some((record) => record.name === name)) {
+    const state = ledgerState(readers.ledgerRecords(), name);
+
+    if (state === "present") {
         return {
             name,
             status: "skipped",
@@ -223,6 +261,10 @@ async function importOne(name: string, input: ReviewImportInput, readers: Review
     const report = await readers.lastAgentMessage(meta);
     const parsed = parseReviewReport(report);
     const notes = [...outcome.notes];
+
+    if (state === "partial") {
+        notes.push("an earlier import of this name has no gate line; this import replaces it");
+    }
 
     if (rows.length === 0) {
         notes.push("no booked turns in the worker cost ledger");
@@ -248,18 +290,14 @@ async function importOne(name: string, input: ReviewImportInput, readers: Review
         imported: true,
         ...(outcome.head ? { head: outcome.head } : {}),
     };
-    const at = (ts: string) => ({ ...base, ts });
-
-    appendReviewRecord(
-        base,
-        { kind: "start", cwd: meta.cwd, effortSource: "imported", allowShallow: false },
-        ledgerPath
-    );
-
-    rows.forEach((row, index) => {
-        appendReviewRecord(
-            at(row.ts),
-            {
+    const spent = spentOf(rows);
+    const { verdict, reason } = impliedVerdict(parsed, manifest, report);
+    const records: ReviewLedgerRecord[] = [
+        { ...base, kind: "start", cwd: meta.cwd, effortSource: "imported", allowShallow: false },
+        ...rows.map(
+            (row, index): ReviewLedgerRecord => ({
+                ...base,
+                ts: row.ts,
                 kind: "turn",
                 turn: row.turn ?? index + 1,
                 outcome: row.outcome ?? "completed",
@@ -271,16 +309,11 @@ async function importOne(name: string, input: ReviewImportInput, readers: Review
                 costUsd: row.cost.apiEquivalentUsd,
                 // Only the final message survives, so only the last turn carries a coverage line.
                 coverage: index === rows.length - 1 ? parsed.coverage : null,
-            },
-            ledgerPath
-        );
-    });
-
-    const spent = spentOf(rows);
-    const { verdict, reason } = impliedVerdict(parsed.coverage, manifest);
-    appendReviewRecord(
-        at(rows.at(-1)?.ts ?? meta.lastEventAt),
+            })
+        ),
         {
+            ...base,
+            ts: rows.at(-1)?.ts ?? meta.lastEventAt,
             kind: "gate",
             step: 0,
             verdict,
@@ -296,8 +329,19 @@ async function importOne(name: string, input: ReviewImportInput, readers: Review
             unread: parsed.notReviewed.map((entry) => entry.path).slice(0, 40),
             spent,
         },
-        ledgerPath
-    );
+    ];
+    // One write for the whole review: a failure leaves nothing behind that the already-imported check would trust.
+    const written = appendReviewRecords(records, ledgerPath);
+
+    if (!written.ok) {
+        return {
+            name,
+            status: "failed",
+            manifest: null,
+            notes: [...notes, `the review ledger write failed (${written.error}); nothing was imported`],
+        } satisfies ReviewImportResult;
+    }
+
     log.debug({ name, verdict, files: base.files, base: base.base, head: base.head }, "review imported");
 
     return {
@@ -319,8 +363,9 @@ async function importOne(name: string, input: ReviewImportInput, readers: Review
 
 /**
  * Backfills the review ledger from codex sessions that ran before it existed: one start line, one turn line per
- * booked turn, and one gate line whose verdict the final message's coverage line implies. A session already in the
- * ledger is skipped, so a second import of the same names adds nothing.
+ * booked turn, and one gate line whose verdict the final message's coverage line implies, written together. A
+ * session already in the ledger is skipped, so a second import of the same names adds nothing; one whose earlier
+ * import never reached its gate line is imported again.
  */
 export async function importReviewSessions(input: ReviewImportInput): Promise<ReviewImportResult[]> {
     const ledgerPath = input.ledgerPath ?? reviewLedgerPath();
