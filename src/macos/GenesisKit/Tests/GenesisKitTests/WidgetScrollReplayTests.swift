@@ -59,7 +59,7 @@ final class WidgetScrollReplayTests: XCTestCase {
             .frame(width: 914, height: 900).background(Color(white: 0.11)).environment(\.colorScheme, .dark))
         // `GENESIS_WIDGET_REPLAY_VISIBLE=1`: an almost transparent window above the others that ignores the mouse. A window
         // below the desktop is occluded, and AppKit skips the display passes of an occluded window.
-        if environment["GENESIS_WIDGET_REPLAY_VISIBLE"] == "1" {
+        if environment["GENESIS_WIDGET_REPLAY_VISIBLE"] == "1" || environment["GENESIS_WIDGET_REPLAY_PNG"] != nil {
             window.alphaValue = 0.02
             window.ignoresMouseEvents = true
             window.level = .floating
@@ -73,7 +73,7 @@ final class WidgetScrollReplayTests: XCTestCase {
         defer { window.orderOut(nil); window.close() }
         try await Task.sleep(for: .seconds(2))
         print("replay: window visible to the user: \(window.occlusionState.contains(.visible))")
-        // `GENESIS_WIDGET_REPLAY_PNG=<path>`: a picture of the panel, with `GENESIS_WIDGET_REPLAY_VIEW` = "staged" (the
+        // `GENESIS_WIDGET_REPLAY_PNG=<path>`: a picture of the panel (it shows the window at 0.02 alpha for the capture), with `GENESIS_WIDGET_REPLAY_VIEW` = "staged" (the
         // staged list) or "leave" (the question before closing) set first.
         if let png = environment["GENESIS_WIDGET_REPLAY_PNG"] {
             switch environment["GENESIS_WIDGET_REPLAY_VIEW"] {
@@ -82,10 +82,28 @@ final class WidgetScrollReplayTests: XCTestCase {
             default: break
             }
             try await Task.sleep(for: .seconds(1))
-            let view = try XCTUnwrap(window.contentView)
-            let rep = try XCTUnwrap(view.bitmapImageRepForCachingDisplay(in: view.bounds))
-            view.cacheDisplay(in: view.bounds, to: rep)
-            try XCTUnwrap(rep.representation(using: .png, properties: [:])).write(to: URL(fileURLWithPath: png))
+            // The window server's picture of the window: cacheDisplay leaves out SwiftUI's materials and layer-drawn
+            // backgrounds, and the panel's white text came out on white.
+            let capture = Process()
+            capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+            capture.arguments = ["-x", "-o", "-l", String(window.windowNumber), png]
+            try capture.run()
+            capture.waitUntilExit()
+            XCTAssertEqual(capture.terminationStatus, 0, "screencapture of the replay window")
+            // The capture keeps the window's 0.02 alpha with the colours stored unassociated, so a viewer shows it
+            // almost white. Dropping the alpha channel gives the panel as it looks on screen.
+            let url = URL(fileURLWithPath: png)
+            let source = try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+            let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+            let skip: CGImageAlphaInfo = [.first, .premultipliedFirst].contains(image.alphaInfo) ? .noneSkipFirst : .noneSkipLast
+            let info = CGBitmapInfo(rawValue: image.bitmapInfo.rawValue & ~CGBitmapInfo.alphaInfoMask.rawValue | skip.rawValue)
+            let opaque = try XCTUnwrap(CGImage(width: image.width, height: image.height,
+                bitsPerComponent: image.bitsPerComponent, bitsPerPixel: image.bitsPerPixel, bytesPerRow: image.bytesPerRow,
+                space: try XCTUnwrap(image.colorSpace), bitmapInfo: info, provider: try XCTUnwrap(image.dataProvider),
+                decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+            let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil))
+            CGImageDestinationAddImage(destination, opaque, nil)
+            XCTAssertTrue(CGImageDestinationFinalize(destination), "the opaque picture is written")
             print("replay: picture \(png)")
             return
         }

@@ -1173,3 +1173,27 @@ final class WidgetBubbleHitTests: XCTestCase {
         }
     }
 }
+
+/// A click on another GenesisTools window keeps the panel open: the vault key window belongs to the app process, the
+/// panel to the widget process (Martin, 2026-10-23: "allow with touch id does literally hide the widget").
+@MainActor
+final class WidgetOwnWindowClickTests: XCTestCase {
+    func testAPointOverOneOfOurWindowsCountsAsOurs() async throws {
+        _ = NSApplication.shared
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let frame = NSRect(x: screen.frame.minX + 40, y: screen.frame.minY + 40, width: 60, height: 60)
+        let window = NSWindow(contentRect: frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.alphaValue = 0.02
+        window.ignoresMouseEvents = true
+        window.level = .popUpMenu
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil); window.close() }
+        try await Task.sleep(for: .milliseconds(300))
+        let point = NSPoint(x: frame.midX, y: frame.midY)
+        XCTAssertTrue(WidgetCoordinator.ownWindowOwnsPoint(point), "our window at the point")
+        window.orderOut(nil)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(WidgetCoordinator.ownWindowOwnsPoint(point), "another app's window, or none, once ours is gone")
+    }
+}
