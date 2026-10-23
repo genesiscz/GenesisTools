@@ -37,10 +37,17 @@ private struct ScrollOverflowFrameKey: PreferenceKey {
 
 public extension View {
     /// Inside a `ScrollView`, on its content: reports the content frame to `scrollOverflowHints()` on that scroll view.
-    func scrollOverflowContent() -> some View {
-        background(GeometryReader { proxy in
-            Color.clear.preference(key: ScrollOverflowFrameKey.self, value: proxy.frame(in: .named(ScrollOverflowSpace.name)))
-        })
+    /// macOS 15 and later need nothing here: the hints read the scroll view's own geometry. The background reader
+    /// measured the whole content (every row of a lazy list) on each layout pass, a quarter of the 2026-10-23 widget
+    /// spins.
+    @ViewBuilder func scrollOverflowContent() -> some View {
+        if #available(macOS 15, *) {
+            self
+        } else {
+            background(GeometryReader { proxy in
+                Color.clear.preference(key: ScrollOverflowFrameKey.self, value: proxy.frame(in: .named(ScrollOverflowSpace.name)))
+            })
+        }
     }
 
     /// On a `ScrollView` whose content carries `scrollOverflowContent()`: a soft fade at each edge that has more
@@ -67,6 +74,23 @@ private struct ScrollOverflowHints: ViewModifier {
     }
 
     func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            masked(content.onScrollGeometryChange(for: ScrollOverflow.self) { geometry in
+                let visible = geometry.visibleRect
+                return axis == .vertical
+                    ? ScrollOverflow(above: visible.minY > 0.5, below: visible.maxY < geometry.contentSize.height - 0.5)
+                    : ScrollOverflow(above: visible.minX > 0.5, below: visible.maxX < geometry.contentSize.width - 0.5)
+            } action: { _, next in
+                guard next != overflow else { return }
+                overflow = next
+                changed?(next)
+            })
+        } else {
+            masked(measuredByPreference(content))
+        }
+    }
+
+    private func measuredByPreference(_ content: Content) -> some View {
         content
             .coordinateSpace(.named(ScrollOverflowSpace.name))
             .onPreferenceChange(ScrollOverflowFrameKey.self) { frame in
@@ -87,6 +111,10 @@ private struct ScrollOverflowHints: ViewModifier {
                         update()
                     }
             })
+    }
+
+    private func masked(_ view: some View) -> some View {
+        view
             .mask {
                 if axis == .vertical {
                     VStack(spacing: 0) {

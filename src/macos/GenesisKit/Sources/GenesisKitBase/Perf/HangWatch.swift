@@ -39,6 +39,10 @@ public enum HangWatch {
     private nonisolated(unsafe) static var alertedThisStall = false
     /// Set by the test that must not raise a real user notification.
     public nonisolated(unsafe) static var onWedge: ((CFAbsoluteTime) -> Void)?
+    /// Runs on the main thread when a main-spin begins (5 s above 85% CPU), after it is logged and sampled. A face can
+    /// take down the view that spins: the widget collapses its open panel (2026-10-23, an inbox list that relaid itself
+    /// out on every run-loop pass for minutes). The main queue still runs between the passes of such a loop.
+    public nonisolated(unsafe) static var onSpin: (@MainActor @Sendable (CFAbsoluteTime) -> Void)?
 
     /// The main thread's port, read from the watchdog's queue for its CPU time.
     private nonisolated(unsafe) static var mainThread: thread_act_t = 0
@@ -367,6 +371,10 @@ public enum HangWatch {
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
                 PerfLog.mark("main-spin bodies in 2s:" + RenderProbe.summary(since: start))
                 if !wasOn { RenderProbe.enabled = false }
+                // After the bodies are counted, so the recovery does not hide what the loop evaluated.
+                if let onSpin {
+                    DispatchQueue.main.async { MainActor.assumeIsolated { onSpin(seconds + 2) } }
+                }
             }
         case let .ended(seconds)?:
             PerfLog.mark(String(format: "main-spin ended after %.0fs", seconds) + PerfContext.describe())

@@ -171,6 +171,16 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.inboxArrived = { [weak self] items in self?.alert(items) }
     }
 
+    /// A main-spin with a panel open: the panel closes, so the app answers again, and says why. The spin's stack and
+    /// the bodies it evaluated are already in app-perf.log (HangWatch). Not a setting: it recovers from a bug, and the
+    /// other way is an app that does not respond.
+    func recoverFromSpin(_ seconds: CFAbsoluteTime) {
+        guard model.expanded != nil else { return }
+        PerfLog.mark("widget.spin-recovered after \(Int(seconds))s section=\(model.section) overview=\(model.inboxOverview)")
+        model.collapse()
+        model.notice = "The panel closed: it redrew for \(Int(seconds)) s without a pause. The details are in app-perf.log."
+    }
+
     /// Plays the alert chime. Tests replace it.
     var playChime: (String?) -> Void = { WidgetAlerts.chime($0) }
 
@@ -206,6 +216,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     public func start(showSettings: Bool = false, settingsWhenOff: Bool = true) {
         guard !started, !stopped else { return }
         started = true
+        HangWatch.onSpin = { [weak self] seconds in self?.recoverFromSpin(seconds) }
         runtimeStart = Task { [flowRuntime] in await flowRuntime.start() }
         rebuildPanels()
         screenObserver = NotificationCenter.default.addObserver(

@@ -203,6 +203,9 @@ package func runAgentWidget(_ args: [String]) -> Never {
             exit(0)
         }
         let app = NSApplication.shared
+        // Stalls and main-thread spins land in app-perf.log and logs/hangs/. The widget is where the 2026-10-23
+        // spins happened, and only the hub, review and relay faces watched for them.
+        HangWatch.start()
         let delegate = AgentWidgetDelegate(args: args, descriptor: descriptor)
         app.delegate = delegate
         app.setActivationPolicy(.accessory)

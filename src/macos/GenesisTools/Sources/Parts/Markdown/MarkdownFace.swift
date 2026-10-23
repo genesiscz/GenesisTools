@@ -50,6 +50,7 @@ package func runMarkdown(_ args: [String]) -> Never {
             }
         }
         _ = NSApplication.shared
+        HangWatch.start()
         WindowCycle.install()
         MarkdownViewerApp.run(MarkdownViewerAppConfiguration(
             appName: "GenesisTools",

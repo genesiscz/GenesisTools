@@ -165,8 +165,9 @@ public struct LiveWidgetView: View {
                     WidgetInboxOverview(model: model)
                         .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
                         .scrollOverflowContent()
-                        .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.document = $0; reportFit() }
+                        .modifier(DocumentHeight(onScrollView: false) { fit.document = $0; reportFit() })
                 }
+                .modifier(DocumentHeight(onScrollView: true) { fit.document = $0; reportFit() })
                 .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.viewport = $0; reportFit() }
                 .onDisappear { fit.viewport = nil; fit.document = nil; reportFit() }
                 .scrollOverflowHints()
@@ -206,16 +207,18 @@ public struct LiveWidgetView: View {
                             }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
                             .scrollOverflowContent()
-                            .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.document = $0; reportFit() }
+                            .modifier(DocumentHeight(onScrollView: false) { fit.document = $0; reportFit() })
                     }
                         .modifier(LatestScrollAnchor(enabled: section == "Conversation", identity: model.selectedKey))
                         // A new view (section or session) starts at its own top: the Sessions list's deep offset,
                         // kept for the much shorter inbox, drew its rows over the header (Martin, 2026-10-23).
                         .id(section + "|" + model.selectedKey)
                         .onChange(of: WidgetOutgoingPosition(session: model.selectedKey, messageID: model.outgoing.last?.id)) { previous, next in
-                            guard section == "Inbox", previous.session == next.session, let id = next.messageID else { return }
+                            guard section == "Inbox", previous.session == next.session, let id = next.messageID,
+                                  Self.followsOutgoing(model.outgoing.last) else { return }
                             ScrollViewPositioning.scroll(reader, to: "outgoing-" + id, anchor: .bottom)
                         }
+                        .modifier(DocumentHeight(onScrollView: true) { fit.document = $0; reportFit() })
                         .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.viewport = $0; reportFit() }
                         .onDisappear { fit.viewport = nil; fit.document = nil; reportFit() }
                         // Outermost, so the scroll view's own anchor modifiers still sit directly on it.
@@ -641,6 +644,16 @@ public struct LiveWidgetView: View {
         }
     }
 
+    /// A composer message lands under the list, and the list follows it. An answer sent from a card leaves the list
+    /// where it is: three scrolls to the bottom moved the answered card away (Martin, 2026-10-23: "the whole widget
+    /// jumped around … i totally lost idea about which one was it").
+    static func followsOutgoing(_ message: WidgetOutgoing?) -> Bool {
+        guard let message, case .object(let payload) = message.payload, case .string(let kind) = payload["kind"] else {
+            return false
+        }
+        return kind == "followup"
+    }
+
     static func kindSymbol(_ kind: String) -> String {
         switch kind {
         case "answer": return "text.bubble"
@@ -1041,6 +1054,30 @@ public struct LiveWidgetView: View {
         text.replacingOccurrences(
             of: "<from(?:Image|Video)>[\\s\\S]*?</from(?:Image|Video)>", with: "",
             options: .regularExpression)
+    }
+}
+
+/// The scroll document's height for the pane's fit. macOS 15 and later read it from the scroll view itself
+/// (`onScrollView: true`); before, a geometry query of the content (`onScrollView: false`) measures it, which lays out
+/// every row of a lazy list on each pass. Each scroll view carries both; one of them reports.
+private struct DocumentHeight: ViewModifier {
+    let onScrollView: Bool
+    let report: (CGFloat) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            if onScrollView {
+                content.onScrollGeometryChange(for: CGFloat.self, of: { $0.contentSize.height.rounded() }) { _, height in
+                    report(height)
+                }
+            } else {
+                content
+            }
+        } else if onScrollView {
+            content
+        } else {
+            content.onGeometryChange(for: CGFloat.self, of: \.size.height) { report($0) }
+        }
     }
 }
 
