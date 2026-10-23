@@ -496,7 +496,7 @@ struct WidgetPeekView: View {
                     LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
-                Text(item.title ?? "Open the inbox to see it.").font(.system(size: 12.5, weight: .medium))
+                Text(item.numberedTitle ?? "Open the inbox to see it.").font(.system(size: 12.5, weight: .medium))
                     .lineLimit(3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
                 if let session = model.session(forKey: item.key) {
                     Text(session.title + " · " + session.project).font(.system(size: 10.5)).foregroundStyle(.secondary)
@@ -510,7 +510,7 @@ struct WidgetPeekView: View {
         }
         .buttonStyle(RowButtonStyle(cornerRadius: 10))
         .attentionPulse(trigger: model.attentionTrigger(item.key), style: popupAttention, since: model.attentionStart(item.key))
-        .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + (item.title ?? ""))
+        .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + (item.numberedTitle ?? ""))
     }
 
     private var popupAttention: AttentionPulseStyle {
@@ -534,7 +534,7 @@ struct AgentWidgetModuleView: View {
                 Text(model.selected?.title ?? "Your agent inbox").font(.system(size: 13, weight: .semibold))
                     .lineLimit(2)
                 if let card = model.card {
-                    Text(card.title).font(.system(size: 12)).lineLimit(3)
+                    Text(card.numberedTitle).font(.system(size: 12)).lineLimit(3)
                     if !card.body.isEmpty {
                         Text(card.body).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(3)
                     }

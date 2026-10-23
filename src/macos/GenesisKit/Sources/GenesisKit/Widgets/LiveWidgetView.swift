@@ -499,7 +499,7 @@ public struct LiveWidgetView: View {
                         // A one-question form's title is its prompt, which the open card does not repeat: open, it
                         // shows whole and as Markdown, the way the form drew it.
                         let isPrompt = Self.asksOneQuestion(card)
-                        (isPrompt ? Text(.init(card.title)) : Text(card.title))
+                        (isPrompt ? Text(.init(card.title)) : Text(card.numberedTitle))
                             .font(.system(size: 12.5, weight: open ? .semibold : .medium))
                             .lineLimit(open ? (isPrompt ? nil : 4) : 2).fixedSize(horizontal: false, vertical: true)
                         if !open, let preview = Self.previewLine(card.body) {
@@ -522,7 +522,7 @@ public struct LiveWidgetView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(RowButtonStyle(cornerRadius: 11))
-            .accessibilityLabel(Self.kindLabel(card) + ": " + card.title)
+            .accessibilityLabel(Self.kindLabel(card) + ": " + card.numberedTitle)
             .accessibilityValue(open ? "Expanded" : "Collapsed")
             .accessibilityIdentifier("widget.inbox.row." + card.id)
             if open {
@@ -834,7 +834,7 @@ public struct LiveWidgetView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(card.kind.capitalized + " · " + card.status).font(.caption2).foregroundStyle(
                             .secondary)
-                        Text(card.title).font(.system(size: 12, weight: .semibold)).textSelection(.enabled)
+                        Text(card.numberedTitle).font(.system(size: 12, weight: .semibold)).textSelection(.enabled)
                         if !card.body.isEmpty {
                             WidgetMarkdown(text: card.body)
                         }
@@ -1027,6 +1027,7 @@ public struct LiveWidgetView: View {
                         .onSubmit { model.send() }
                         .accessibilityLabel(ownAnswer == nil ? "Reply to selected agent" : "Your own answer")
                         .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { composerFieldHeight = $0 }
+                        .frameProbe("widget.composer.field")
                 }
                 Button {
                     model.send()
@@ -1071,6 +1072,7 @@ public struct LiveWidgetView: View {
         // typing. The buttons inside keep their own clicks, because a child's gesture wins over this one.
         .contentShape(RoundedRectangle(cornerRadius: 13))
         .onTapGesture { editing = true }
+        .frameProbe("widget.composer")
     }
 
     private func attachments(_ ids: [String], tile: CGSize, removable: Bool) -> some View {

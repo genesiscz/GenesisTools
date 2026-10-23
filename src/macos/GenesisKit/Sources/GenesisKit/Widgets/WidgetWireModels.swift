@@ -507,3 +507,20 @@ public struct WidgetReceiptContext: Codable, Equatable, Sendable {
     public var transcript: Window?
     public var error: String?
 }
+
+/// A numbered decision shows its number wherever its title shows: "DECISION 20: Which mods to build next" (Martin,
+/// 2026-10-23: "i dont see decision number anywhere around this and i should"). The chat, the log and the widget
+/// then name it the same way.
+public enum WidgetDecisionTitle {
+    public static func numbered(_ title: String, number: Int?) -> String {
+        number.map { "DECISION \($0): " + title } ?? title
+    }
+}
+
+public extension WidgetCard {
+    var numberedTitle: String { WidgetDecisionTitle.numbered(title, number: number) }
+}
+
+public extension WidgetInboxItem {
+    var numberedTitle: String? { title.map { WidgetDecisionTitle.numbered($0, number: number) } }
+}

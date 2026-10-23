@@ -922,13 +922,12 @@ final class WarmPaneVisibilityTests: XCTestCase {
     }
 }
 
-/// Staged decisions (Martin, 2026-10-23): a click stages the pick, closing with staged ones asks first, and the
-/// answer to that question sends, keeps or discards them.
+/// One session with one open decision, as the widget's snapshot carries it.
 @MainActor
-final class WidgetStagingTests: XCTestCase {
-    private let key = "local:codex:fixture-staged:"
+private enum StagingFixture {
+    static let key = "local:codex:fixture-staged:"
 
-    private func snapshot(draftOption: String?, decisionClick: String = "stage") throws -> String {
+    static func snapshot(draftOption: String?, decisionClick: String = "stage") throws -> String {
         var item: [String: Any] = ["id": "decision:d1", "sourceId": "d1", "kind": "decision", "key": key, "at": 1,
                                    "needsAnswer": true, "title": "Keep it?", "number": 7, "options": ["keep", "drop"],
                                    "revision": 1]
@@ -951,6 +950,24 @@ final class WidgetStagingTests: XCTestCase {
             "assets": [:], "drafts": [:], "outgoing": []], "sessions": [session], "cards": [card],
             "manifests": [:], "errors": [], "selectedKey": key, "notifications": notifications])
         return String(decoding: data, as: UTF8.self)
+    }
+
+    static func model() -> WidgetModel {
+        let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
+        return WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
+            defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
+                notificationNamespace: "staging." + UUID().uuidString, observeExternalChanges: false))
+    }
+}
+
+/// Staged decisions (Martin, 2026-10-23): a click stages the pick, closing with staged ones asks first, and the
+/// answer to that question sends, keeps or discards them.
+@MainActor
+final class WidgetStagingTests: XCTestCase {
+    private let key = StagingFixture.key
+
+    private func snapshot(draftOption: String?, decisionClick: String = "stage") throws -> String {
+        try StagingFixture.snapshot(draftOption: draftOption, decisionClick: decisionClick)
     }
 
     private func names(_ actions: [WidgetJSON]) -> [String] {
@@ -1034,5 +1051,68 @@ final class WidgetStagingTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertFalse(names(actions).contains("ledger"), "the send setting does not stage")
         XCTAssertNil(model.pendingStage["d1"])
+    }
+}
+
+/// The widget panel is key while it is expanded (`EdgePanelController` makes it key on expand), so a click reaches
+/// its controls at once. A hidden test window is never key, and becoming key would take the user's keyboard; without
+/// this AppKit drops the first click on any SwiftUI control in it (a plain `Button` did not fire either).
+private final class FirstClickHost: NSHostingView<AnyView> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
+/// The reply box is one click target (Martin asked for it on 2026-10-23): a click beside the one-line field, in the
+/// box's padding, starts typing. Real mouse events at a probed frame, in a hidden window.
+@MainActor
+final class WidgetComposerClickTests: XCTestCase {
+    func testAClickInTheBoxBesideTheFieldStartsTyping() throws {
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try StagingFixture.snapshot(draftOption: nil)])
+        model.select(StagingFixture.key)
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false }
+        let size = NSSize(width: 520, height: 700)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = FirstClickHost(rootView: AnyView(LiveWidgetView(model: model, edge: .right, embedded: true)
+            .frame(width: size.width, height: size.height)))
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.order(.below, relativeTo: 0)
+        defer { window.orderOut(nil); window.close() }
+        pump(1.0)
+        let box = try XCTUnwrap(FrameProbe.frames["widget.composer"], "the reply box has a frame")
+        let field = try XCTUnwrap(FrameProbe.frames["widget.composer.field"], "the reply field has a frame")
+        XCTAssertFalse(window.firstResponder is NSTextView, "nothing is being typed before the click")
+        // The box's left padding at the field's height: inside the box, outside the field and every button.
+        let point = NSPoint(x: box.minX + 4, y: size.height - field.midY)
+        XCTAssertLessThan(box.minX + 4, field.minX, "the click lands beside the field, not on it")
+        click(window, at: point)
+        XCTAssertTrue(window.firstResponder is NSTextView, "a click in the box's padding focuses the reply field")
+    }
+
+    private func pump(_ seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if let next = NSApp.nextEvent(matching: .any, until: deadline, inMode: .default, dequeue: true) {
+                NSApp.sendEvent(next)
+            }
+        }
+    }
+
+    private func click(_ window: NSWindow, at location: NSPoint) {
+        func event(_ type: NSEvent.EventType) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        NSApp.postEvent(event(.leftMouseDown), atStart: false)
+        NSApp.postEvent(event(.leftMouseUp), atStart: false)
+        pump(0.5)
     }
 }

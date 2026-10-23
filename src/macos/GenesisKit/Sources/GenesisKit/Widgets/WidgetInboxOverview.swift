@@ -254,8 +254,8 @@ struct WidgetInboxOverview: View {
     }
 
     static func title(_ item: WidgetInboxItem) -> String {
-        if let title = item.title, !title.isEmpty {
-            return item.number.map { "DECISION \($0): " + title } ?? title
+        if let title = item.numberedTitle, item.title?.isEmpty == false {
+            return title
         }
         return kindLabel(item)
     }
