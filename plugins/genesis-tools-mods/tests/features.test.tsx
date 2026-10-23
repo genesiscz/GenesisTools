@@ -35,8 +35,11 @@ import {
 import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
 import { targetFor } from "../hooks/links";
 import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live";
+import { modsSettings } from "../hooks/settings";
 import { forgetSettings, type Host } from "../hooks/shared";
 import { toolLabel } from "../hooks/spinner";
+import { clearStall, continueText, lastSentence, noteStop, pressStall, stallNow, stallSentence } from "../hooks/stall";
+import { lockedToSession, samePath, sessionTotalKb, statusOf } from "../hooks/tmp-usage";
 
 /** A Mac where every GenesisTools link opens, on an invented link host. */
 const ALL_LINKS: GenesisProbe = {
@@ -687,4 +690,116 @@ test("without GenesisTools the link fixer writes no genesis.tools link", async (
     expect(text).toContain("[src/a.ts:12](cursor://file/repo/src/a.ts:12) and `docs/` and **abc1234f**.");
     expect(text).toContain("Repeat ❓ DECISION 3 now");
     expect(text).toContain("[notes/plan.md](/repo/notes/plan.md)");
+});
+
+test("stall catcher: the closing sentence that stops on intent, and the endings that are no stall", async () => {
+    expect(lastSentence("Done.\n\n- **Let me** check the logs.\n")).toBe("Let me check the logs.");
+    expect(stallSentence("The suite passes. Next I'll run the tests.")).toBe("Next I'll run the tests.");
+    expect(stallSentence("Committed it.\n\nI'll fix the two findings next.")).toBe("I'll fix the two findings next.");
+    // Gated on an event, a decision not to act, work in flight elsewhere, or a finished turn.
+    expect(stallSentence("I'll report the verdict when it fires.")).toBeUndefined();
+    expect(stallSentence("I won't rewrite the history while others push.")).toBeUndefined();
+    expect(stallSentence("The review agent is still running. I'll fix its findings next.")).toBeUndefined();
+    expect(stallSentence("All 24 tests pass, and the commit is in.")).toBeUndefined();
+    expect(continueText("Next I'll run the tests.")).toContain('"Next I\'ll run the tests."');
+});
+
+test("stall catcher: a stop with nothing pending shows the row, a pending task does not, a press continues", async () => {
+    forgetSettings();
+    const sent: string[] = [];
+    const base = checkoutHost();
+    let agents: Awaited<ReturnType<Host["agents"]>> = [];
+    const host: Host = {
+        ...base,
+        async agents() {
+            return agents;
+        },
+        async read(path) {
+            return path === "/home/test/.genesis-tools/agents/hooks.json"
+                ? JSON.stringify({ mods: { stall: { enabled: true } } })
+                : base.read(path);
+        },
+        async submit(text) {
+            sent.push(text);
+            return undefined;
+        },
+    };
+    const stop = (extra: Record<string, unknown>) => ({
+        hook_event_name: "Stop",
+        last_assistant_message: "Rebased. Next I'll run the tests.",
+        background_tasks: [],
+        session_crons: [],
+        ...extra,
+    });
+
+    await noteStop(
+        host,
+        stop({ background_tasks: [{ id: "b1", type: "shell", status: "running", description: "x" }] })
+    );
+    expect(stallNow()).toBeUndefined();
+    await noteStop(host, stop({ session_crons: [{ id: "c1" }] }));
+    expect(stallNow()).toBeUndefined();
+    await noteStop(host, { ...stop({}), hook_event_name: "SubagentStop" });
+    expect(stallNow()).toBeUndefined();
+    // No task list means unknown, and a subagent at work can still report back: neither fires.
+    const { background_tasks: _dropped, ...noList } = stop({});
+    await noteStop(host, noList);
+    expect(stallNow()).toBeUndefined();
+    agents = [{ id: "a1", description: "x", type: "general-purpose", status: "running" }];
+    await noteStop(host, stop({}));
+    expect(stallNow()).toBeUndefined();
+    agents = [{ id: "a1", description: "x", type: "general-purpose", status: "completed" }];
+
+    await noteStop(host, stop({}));
+    expect(stallNow()?.sentence).toBe("Next I'll run the tests.");
+    clearStall(host, "tool call");
+    expect(stallNow()).toBeUndefined();
+
+    await noteStop(host, stop({}));
+    await pressStall(host, "dismiss");
+    expect(sent).toEqual([]);
+    await noteStop(host, stop({}));
+    await pressStall(host, "continue");
+    expect(stallNow()).toBeUndefined();
+    expect(sent).toEqual([continueText("Next I'll run the tests.")]);
+    forgetSettings();
+});
+
+test("session files: worktrees locked to the session, their state, and the total without double counts", async () => {
+    expect(samePath("/private/tmp/cc/p/s/worktrees/a/")).toBe("/tmp/cc/p/s/worktrees/a");
+    const porcelain = [
+        "worktree /work/main\nHEAD 1\nbranch refs/heads/master",
+        "worktree /work/wt-a\nHEAD 2\nbranch refs/heads/a\nlocked claude session sess-1 pid 12 since 2026-10-23T10:00:00Z",
+        "worktree /private/tmp/cc/p/other/worktrees/b\nHEAD 3\nlocked claude session sess-2 pid 13 since 2026-10-23T10:00:00Z",
+    ].join("\n\n");
+    expect(lockedToSession(porcelain, "sess-1")).toEqual(["/work/wt-a"]);
+    expect(statusOf("## feat/x...origin/feat/x [ahead 2]\n M a.ts\n?? b.ts\n")).toEqual({
+        branch: "feat/x",
+        changes: 2,
+    });
+    expect(statusOf("## HEAD (no branch)\n")).toEqual({ branch: "detached", changes: 0 });
+    const tree = (path: string, kb: number) => ({ path, source: "", branch: "b", changes: 0, isLocked: false, kb });
+    expect(
+        sessionTotalKb({
+            scratch: { path: "/tmp/cc/p/s", kb: 400 },
+            tasks: { path: "/tmp/claude-1/p/s", kb: 12 },
+            // The one inside the scratch folder is already in its 400.
+            worktrees: [tree("/work/.claude/worktrees/agent-1", 3000), tree("/tmp/cc/p/s/worktrees/w", 100)],
+        })
+    ).toBe(3412);
+});
+
+test("mods settings: a value equal to the file's shipped copy follows today's default, as the CLI reads it", async () => {
+    const file = (git: boolean, shippedGit: boolean) =>
+        JSON.stringify({
+            mods: { git: { enabled: git }, tmpUsage: { enabled: true, minutes: 7 } },
+            _shippedDefaults: { mods: { git: { enabled: shippedGit }, tmpUsage: { enabled: false, minutes: 5 } } },
+        });
+
+    // Written while git shipped on: the `true` is that day's default, not the user's, so today's default (off) holds.
+    expect(modsSettings(file(true, true)).git.enabled).toBe(false);
+    expect(modsSettings(file(true, false)).git.enabled).toBe(true);
+    expect(modsSettings(file(true, true)).tmpUsage).toEqual({ enabled: true, minutes: 7 });
+    // A hand-written file has no shipped copy: every value is the user's.
+    expect(modsSettings(JSON.stringify({ mods: { git: { enabled: true } } })).git.enabled).toBe(true);
 });

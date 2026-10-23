@@ -81,6 +81,7 @@ export const SETTABLE_KEYS = [
     "mods.agentsBand.<enabled|warnMinutes>",
     "mods.hooks.<tokens|dedupe>",
     "mods.sidebar.<hints|feedback|focus>",
+    "mods.stall.<enabled|action|minutes>",
 ] as const;
 
 /** The flat keys of before 2026-10-23, still taken; `mods.<feature>` alone means its `enabled`. */
@@ -100,6 +101,7 @@ const MOD_NUMBER_LIMITS: Record<string, { max: number; min?: number; why: string
     "tmpUsage.minutes": { max: 120, why: "a reading older than 2 hours says little" },
     "git.checkouts": { max: 6, why: "each checkout takes a row above the prompt" },
     "agentsBand.warnMinutes": { max: 24 * 60, why: "a day" },
+    "stall.minutes": { max: 120, why: "a reply left two hours is no longer a stall to resume" },
 };
 
 function isFields(value: unknown): value is Record<string, unknown> {
@@ -158,6 +160,12 @@ function withMods(mods: ModsConfig, key: string, value: string): ModsConfig {
     } else if (feature === "sidebar" && field === "focus") {
         if (value !== "command" && value !== "always" && value !== "never") {
             throw new Error(`${key} takes command, always or never, not ${SafeJSON.stringify(value)}`);
+        }
+
+        part[field] = value;
+    } else if (feature === "stall" && field === "action") {
+        if (value !== "button" && value !== "auto") {
+            throw new Error(`${key} takes button or auto, not ${SafeJSON.stringify(value)}`);
         }
 
         part[field] = value;

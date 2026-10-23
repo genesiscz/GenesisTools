@@ -802,6 +802,13 @@ function registerMods(hooks: Command): void {
                     mods.sidebar.hints,
                     `feedback ${mods.sidebar.feedback} · takes the keys ${mods.sidebar.focus === "command" ? "when a command opens it" : mods.sidebar.focus}`,
                 ],
+                [
+                    "mods.stall",
+                    mods.stall.enabled,
+                    mods.stall.action === "auto"
+                        ? `continues by itself after ${mods.stall.minutes} min`
+                        : "a continue button",
+                ],
             ];
 
             for (const [name, on, detail] of rows) {

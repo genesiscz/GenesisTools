@@ -91,9 +91,29 @@ export interface CacheRow {
 export type CacheRows = CacheRow[];
 
 /** The last /tmp reading: KB of this session's scratch folder and free KB on the system disk. */
+/** A git worktree this session made or holds: where it is, where it came from, its branch, changes, lock and size. */
+export interface SessionWorktree {
+    path: string;
+    /** `subagent: <description>`, `made in its scratch folder` or `locked to this session`. */
+    source: string;
+    branch: string;
+    changes: number;
+    isLocked: boolean;
+    kb: number | null;
+}
+
+/** A folder and its size in KB (`null` when `du` failed). */
+export interface SizedFolder {
+    path: string;
+    kb: number | null;
+}
+
 export interface TmpReading {
     at: number;
-    sessionKb: number | null;
+    scratch: SizedFolder;
+    /** Claude Code's task output for the session; an empty path when it could not be named. */
+    tasks: SizedFolder;
+    worktrees: SessionWorktree[];
     freeKb: number | null;
 }
 

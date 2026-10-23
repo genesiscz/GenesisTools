@@ -30,6 +30,7 @@ export interface ModsSettings {
     agentsBand: { enabled: boolean; warnMinutes: number };
     hooks: { tokens: boolean; dedupe: boolean };
     sidebar: { hints: boolean; feedback: "line" | "toast" | "both"; focus: "command" | "always" | "never" };
+    stall: { enabled: boolean; action: "button" | "auto"; minutes: number };
 }
 
 /** Every mod past the full diff and the idle compaction starts off: `tools agents hooks mods enable <name> --write`. */
@@ -47,6 +48,7 @@ export const MODS_DEFAULTS: ModsSettings = {
     agentsBand: { enabled: false, warnMinutes: 60 },
     hooks: { tokens: false, dedupe: false },
     sidebar: { hints: true, feedback: "line", focus: "command" },
+    stall: { enabled: false, action: "button", minutes: 5 },
 };
 
 function whole(value: unknown, min: number, max: number, fallback: number): number {
@@ -58,7 +60,37 @@ function bool(value: unknown, fallback: boolean): boolean {
 }
 
 /**
- * The `mods` section of a hooks file. A missing or broken file, and a value of the wrong kind, keep the default.
+ * The part of `value` that differs from `shipped`: how the CLI's `storedOverrides` (`src/agents/lib/hooks/config.ts`)
+ * reads a hooks file. Its writer stores every setting plus the defaults of that day (`_shippedDefaults`), and only a
+ * value that differs from that copy is the user's own; the rest follows today's default.
+ */
+function changedOnly(value: unknown, shipped: unknown): unknown {
+    if (Array.isArray(value) || Array.isArray(shipped)) {
+        return JSON.stringify(value) === JSON.stringify(shipped) ? undefined : value;
+    }
+
+    if (isRecord(value) && isRecord(shipped)) {
+        const out: Record<string, unknown> = {};
+
+        for (const [key, held] of Object.entries(value)) {
+            const own = changedOnly(held, shipped[key]);
+
+            if (own !== undefined) {
+                out[key] = own;
+            }
+        }
+
+        return Object.keys(out).length > 0 ? out : undefined;
+    }
+
+    return value === shipped ? undefined : value;
+}
+
+/**
+ * The `mods` section of a hooks file, read as the CLI reads it (`changedOnly`), so the two never disagree: on
+ * 2026-10-23 a file written while the new mods shipped on kept them on here, while the CLI read them as the new
+ * default (off) and its next write turned them off. A missing or broken file, and a value of the wrong kind, keep the
+ * default.
  * The flat keys of before 2026-10-23 (`mods.fullDiff`, `mods.collapseGitSync`, `mods.idleCompact` as a boolean,
  * `mods.idleCompactMinutes`, `mods.idleCompactMinTokens`) still count where the object leaves a field out.
  */
@@ -68,7 +100,10 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
     try {
         const stored: unknown = hooksFile === undefined ? undefined : JSON.parse(hooksFile);
         const mods = isRecord(stored) ? stored.mods : undefined;
-        held = isRecord(mods) ? mods : {};
+        const shipped =
+            isRecord(stored) && isRecord(stored._shippedDefaults) ? stored._shippedDefaults.mods : undefined;
+        const own = shipped === undefined ? mods : changedOnly(mods, shipped);
+        held = isRecord(own) ? own : {};
     } catch {
         held = {};
     }
@@ -88,6 +123,7 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
     const agents = part("agentsBand");
     const hooks = part("hooks");
     const sidebar = part("sidebar");
+    const stall = part("stall");
     const enabled = (key: string, fallback: boolean) => bool(part(key).enabled, fallback);
     const git = part("git");
 
@@ -146,6 +182,11 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
                 sidebar.focus === "command" || sidebar.focus === "always" || sidebar.focus === "never"
                     ? sidebar.focus
                     : d.sidebar.focus,
+        },
+        stall: {
+            enabled: bool(stall.enabled, d.stall.enabled),
+            action: stall.action === "button" || stall.action === "auto" ? stall.action : d.stall.action,
+            minutes: whole(stall.minutes, 1, 120, d.stall.minutes),
         },
     };
 }

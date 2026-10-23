@@ -700,6 +700,10 @@ describe("applySetting", () => {
             focus: "command",
         });
         expect(set("mods.sidebar.focus", "never").sidebar.focus).toBe("never");
+        expect(set("mods.stall.action", "auto").stall).toEqual({ enabled: false, action: "auto", minutes: 5 });
+        expect(() => set("mods.stall.action", "nag")).toThrow("button or auto");
+        expect(set("mods.stall.minutes", "15").stall.minutes).toBe(15);
+        expect(() => set("mods.stall.minutes", "500")).toThrow("1 to 120");
         expect(() => set("mods.sidebar.focus", "sometimes")).toThrow("command, always or never");
         expect(set("mods.sidebar.feedback", "both").sidebar.feedback).toBe("both");
         expect(() => set("mods.sidebar.feedback", "popup")).toThrow("line, toast or both");

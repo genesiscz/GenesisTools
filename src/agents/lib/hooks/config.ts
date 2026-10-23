@@ -317,7 +317,10 @@ export interface ModsConfig {
      * the other sessions inside the yellow window.
      */
     cacheBand: { enabled: boolean; warnMinutes: number; cautionMinutes: number; others: boolean };
-    /** The size of the session's /tmp/cc scratch folder and the free disk, every `minutes`. */
+    /**
+     * What the session keeps on disk (its /tmp/cc scratch folder, Claude Code's task output, the worktrees it made or
+     * holds) and the free disk, every `minutes`; the row opens the Session files sidebar.
+     */
     tmpUsage: { enabled: boolean; minutes: number };
     /** One band row per working subagent: model, age, idle time, tool calls; red past `warnMinutes`. */
     agentsBand: { enabled: boolean; warnMinutes: number };
@@ -332,6 +335,11 @@ export interface ModsConfig {
      * sidebar takes the keys as it opens: when a slash command opened it (`command`), `always`, or `never`.
      */
     sidebar: { hints: boolean; feedback: "line" | "toast" | "both"; focus: "command" | "always" | "never" };
+    /**
+     * A main-loop reply that ends on what it was about to do while nothing can wake the session: the band shows the
+     * sentence with `continue` and `dismiss` (`button`), or continues by itself after `minutes` (`auto`).
+     */
+    stall: { enabled: boolean; action: "button" | "auto"; minutes: number };
 }
 
 /**
@@ -492,6 +500,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         agentsBand: { enabled: false, warnMinutes: 60 },
         hooks: { tokens: false, dedupe: false },
         sidebar: { hints: true, feedback: "line", focus: "command" },
+        stall: { enabled: false, action: "button", minutes: 5 },
     },
     unpushed: { enabled: true, maxCommits: 3, maxAgeMinutes: 60, remindEveryMinutes: 30 },
     logPath: defaultLogPath(),
@@ -1089,6 +1098,7 @@ export function mergeMods(stored: unknown): ModsConfig {
     const agents = partOf(held.agentsBand);
     const hooks = partOf(held.hooks);
     const sidebar = partOf(held.sidebar);
+    const stall = partOf(held.stall);
     const enabled = (key: string, fallback: boolean) => boolOr(partOf(held[key]).enabled, fallback);
     const git = partOf(held.git);
     const minutes = countOr({
@@ -1164,6 +1174,11 @@ export function mergeMods(stored: unknown): ModsConfig {
                 sidebar.focus === "command" || sidebar.focus === "always" || sidebar.focus === "never"
                     ? sidebar.focus
                     : base.sidebar.focus,
+        },
+        stall: {
+            enabled: boolOr(stall.enabled, base.stall.enabled),
+            action: stall.action === "button" || stall.action === "auto" ? stall.action : base.stall.action,
+            minutes: minutesOr("mods.stall.minutes", stall.minutes, base.stall.minutes, 120),
         },
     };
 }

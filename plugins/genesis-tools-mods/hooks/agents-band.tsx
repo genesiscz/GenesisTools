@@ -118,7 +118,7 @@ export function noteTranscript(input: unknown): void {
     }
 }
 
-async function sessionDirOf(host: Host): Promise<string | undefined> {
+export async function sessionDirOf(host: Host): Promise<string | undefined> {
     if (sessionDir) {
         return sessionDir;
     }

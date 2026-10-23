@@ -35,6 +35,7 @@ import {
 import { agentsDir, type Feature, type Host, readHooksFile, settingsOf } from "./shared";
 import { focusOf, forgetFocus, noteFocus } from "./sidebar";
 import { progressSuffix, spinner } from "./spinner";
+import { clearStall, noteStop, stallCatcher, stallRow } from "./stall";
 import { tmpRow, tmpUsage } from "./tmp-usage";
 
 // The full-diff mod. When the diff hook (`tools agents hooks`) cut a Bash call's message, it wrote the
@@ -449,7 +450,7 @@ async function openSidebar($: EngineInterface, id: string, title: string, from: 
 
 // The features that share events. The engine takes one unmatched hook per event from a plugin, so each event
 // below has one hook that calls every feature's part in this order.
-const FEATURES: Feature[] = [decisions, gitBand, spinner, cacheBand, tmpUsage, agentsBand, hookLedger];
+const FEATURES: Feature[] = [decisions, gitBand, spinner, cacheBand, tmpUsage, agentsBand, hookLedger, stallCatcher];
 
 export const register: Register = (on) => {
     on("session.start", async ($, e, next) => {
@@ -538,6 +539,7 @@ export const register: Register = (on) => {
 
     on("classic.*", async ($, e, next) => {
         noteTranscript(e);
+        await noteStop(hostOf($), e);
         const result = await next(e);
         const kept = await ledgerClassic(hostOf($), e, result);
 
@@ -546,6 +548,7 @@ export const register: Register = (on) => {
 
     on("turn.start", async ($, e, next) => {
         stopIdleTimer();
+        clearStall(hostOf($), "new turn");
         await announceSession($);
 
         return next(e);
@@ -609,6 +612,7 @@ export const register: Register = (on) => {
         const columns = e.props.bodyColumns;
         const [hooks, ...rest] = await Promise.all([
             hooksChip(host, ui),
+            stallRow(host, ui),
             cacheRow(host, ui),
             agentsRow(host, ui, columns),
             tmpRow(host, ui),

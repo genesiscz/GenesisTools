@@ -243,7 +243,10 @@ turns it off, also for a timer already armed. A reload of the mod drops the time
 by default. `tools agents hooks mods enable git agentsBand --write` turns mods on by name (`all` is every mod,
 `disable` turns them off, `mods status` shows each one); `config set mods.<feature> true --write` does the same for one
 (it means `mods.<feature>.enabled`). The flat keys of before 2026-10-23 (`mods.fullDiff`, `mods.idleCompactMinutes`, …)
-are still read and still set.
+are still read and still set. The plugin reads the file as the CLI does: a value equal to the file's
+`_shippedDefaults` copy (the defaults on the day it was written) follows today's default. On 2026-10-23 the plugin
+still read raw values, so a file written while the new mods shipped on kept them on in the sessions, the CLI read
+them as off, and the next `mods enable` wrote them off.
 Each feature appends what it did to `~/.genesis-tools/agents/mods-log/<feature>.jsonl`, so its heuristics can be
 checked against real use.
 
@@ -297,10 +300,23 @@ checked against real use.
   The own chip adds `AC in 1m 22s` while the idle compaction is armed, and says `compacted 4m ago · cache restarts`
   after a compaction: the next prompt then starts a new, small context, so there is no cache to keep warm. Another
   session that compacted gives no warning.
-- `mods.tmpUsage` (`minutes` 5): the size of the session's `/tmp/cc` folder and the free disk.
+- `mods.tmpUsage` (`minutes` 5): what the session keeps on disk and the free disk (`tmp: session 4.2G · 1 worktree ·
+  disk free 5.0G`). The session's share is its `/tmp/cc` scratch folder, Claude Code's task output for it
+  (`/tmp/claude-<uid>/…/<session>`) and every git worktree it made or holds: one its subagents got
+  (`isolation: "worktree"`), one under its scratch folder's `worktrees/`, one locked to it. A worktree inside the
+  scratch folder counts once. A press on the row (or `/mod-tmp`) opens the Session files sidebar: each folder and
+  worktree by size, with its branch, changed files, lock and source, `Finder` and `copy path`.
 - `mods.agentsBand` (`warnMinutes` 60): one band row per working subagent with model, age, idle time and tool calls;
   more than three fold into one `▸ 8 agents` line. A press on an agent, or `/mod-agents`, opens the Agents sidebar:
   its recent tools, what it said last, and `message`, `ask about it`, `stop`, `copy id` and `copy transcript path`.
+- `mods.stall` (`action` `button` or `auto`, `minutes` 5): when a main-loop reply ends on what it was about to do
+  (`Next I'll run the tests.`) and nothing can wake the session, the band shows `⏸ stopped on "…"` with `continue`
+  and `dismiss`; `continue` sends a prompt that quotes the sentence, and `auto` sends it by itself after `minutes`.
+  It never fires while anything runs: the Stop hook's `background_tasks` (shells, monitors, subagents, workflows) or
+  `session_crons` not empty, an agent of `$.agent.list()` pending, running or waiting, or a Stop input without the
+  task list. The sentence tests are the session-analyzer's stall scorer: the last sentence only, and a conditional
+  ("I'll report when it fires"), a negated ("I won't …") or a gated reply ("waiting for your answer") is no stall.
+  A tool call or a new turn takes the row down. Each finding and press goes to `mods-log/stall.jsonl`.
 - `mods.hooks` (`tokens`, `dedupe`): a band chip counts what the settings and plugin hooks handed the model in this
   session (`hooks ~38.2k · 41`, characters / 4); a press on it, or `/mod-hooks`, opens the Hooks sidebar with the
   count per event, the latest injections and a dedupe switch for the session. A block already handed to the same
