@@ -14,6 +14,7 @@ import { computerUseOverrides } from "./lib/computer-use";
 import { ControlLogCursor, respondToControl } from "./lib/control-channel";
 import { buildAccountLaunchOptions } from "./lib/launch-options";
 import { sessionControlPath, sessionDaemonLogPath, sessionLaunchPath } from "./lib/paths";
+import { escalateCodexReview } from "./lib/review/escalate";
 import { CodexSessionRuntime } from "./lib/session";
 import type { LaunchConfig } from "./lib/spawn";
 import { CodexSessionStore } from "./lib/store";
@@ -131,6 +132,11 @@ async function run(): Promise<void> {
         store,
         meta: (await store.readMeta(name)) ?? meta,
         ...(launch.project ? { project: launch.project } : {}),
+        escalateReview: (request) => escalateCodexReview(request, launch),
+        onReviewGate: async (event) => {
+            store.appendEvent(name, { source: "daemon", method: "review_gate", params: event });
+            await bridge?.publishEvent(event);
+        },
         onApprovalRequest: async (notice) => {
             store.appendEvent(name, { source: "daemon", method: "approval_request", params: notice });
             if (!meta.agentsEnabled) {

@@ -1,4 +1,4 @@
-import { buildWorkerContract, type WorkerSandbox } from "@genesiscz/utils/worker/contract";
+import { buildWorkerContract, type WorkerReviewInput, type WorkerSandbox } from "@genesiscz/utils/worker/contract";
 
 /** The contract's name for a codex sandbox mode: `danger-full-access` (`--write full`) has no sandbox at all. */
 export function contractSandbox(sandbox: string | undefined): WorkerSandbox {
@@ -19,10 +19,12 @@ export function buildAgentInstructions(options: {
     rendezvousSession: string;
     leadName: string;
     sandbox?: string;
+    review?: WorkerReviewInput | null;
 }): string {
     return buildWorkerContract({
         backend: "codex",
         sandbox: contractSandbox(options.sandbox),
         bus: { agentName: options.agentName, leadName: options.leadName, rendezvousSession: options.rendezvousSession },
+        ...(options.review ? { review: options.review } : {}),
     });
 }

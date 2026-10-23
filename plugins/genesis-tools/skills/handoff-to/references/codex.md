@@ -15,6 +15,12 @@ The `tools codex spawn` command accepts an explicit model string. Availability s
 depends on the selected account and backend. Verify the recorded model after dispatch;
 do not treat a requested model or the parent's config as proof of what ran.
 Code-review workers should explicitly select Sol; `review_model` does not route arbitrary workers.
+Spawn a review with `--mode review --base <ref>` (or let it read the branch's PR target or upstream) and omit
+`--effort`: the harness picks high or xhigh from the diff size, injects the manifest and the tier's contract, and
+gates the depth after each turn (parent skill, "Effort is the review's depth"). At `medium` a review spent about
+two thousand reasoning tokens however large the diff was, so `low` and `medium` need `--allow-shallow`. Every run
+lands in `~/.genesis-tools/codex/reviews.jsonl`: `tools codex reviews` lists them, `tools codex review-depth <name>`
+shows one.
 
 ## Choose the orchestration layer
 
@@ -114,7 +120,7 @@ tools codex spawn --name <task> --account work \
 
 Named login defaults to a new vault-owned grant. `tools codex login work`, `tools ai codex login work`, and `tools ai accounts login work --provider codex` use one core. `--broker` is a compatibility alias. Explicit `--auth-file`/`--home` and `--import-native` are native-file opt-ins, not worker-startup repairs. Do not run login, import or migration without authorization; stop and report auth failures.
 
-Other flags: `--model` / `--effort`, `--mode review|task`, `--session <id>` when no parent session can be discovered (resolution order: the explicit flag, then `$GENESIS_AGENTS_SESSION`, then `$GT_RENDEZVOUS_SESSION`, and only then the host session id of whoever runs the spawn — Claude Code, Codex or grok. An assigned swarm always outranks an inherited host id, so a nested worker cannot re-parent its children), `--no-agents` to disable the bus (do not — the bus is the point), `--project <id|name|root>` to set the thread's app-server project (without it the project that owns the cwd is used, and a worktree falls back to its main checkout). ⚠️ Codex Desktop ignores that id while its `localProjectTaskMembership` flag is off: it groups by cwd, and it sees a worker's thread only after it re-reads its thread list (`src/codex/README.md`).
+Other flags: `--model` / `--effort`, `--mode review|task` (`review` with `--base <ref>`, `--allow-shallow`, `--paths <path...>`), `--session <id>` when no parent session can be discovered (resolution order: the explicit flag, then `$GENESIS_AGENTS_SESSION`, then `$GT_RENDEZVOUS_SESSION`, and only then the host session id of whoever runs the spawn — Claude Code, Codex or grok. An assigned swarm always outranks an inherited host id, so a nested worker cannot re-parent its children), `--no-agents` to disable the bus (do not — the bus is the point), `--project <id|name|root>` to set the thread's app-server project (without it the project that owns the cwd is used, and a worktree falls back to its main checkout). ⚠️ Codex Desktop ignores that id while its `localProjectTaskMembership` flag is off: it groups by cwd, and it sees a worker's thread only after it re-reads its thread list (`src/codex/README.md`).
 
 Worker records live in `~/.genesis-tools/codex/sessions/<name>.*` (event log, metadata and daemon log). With `--account`, the worker stays bound to that GenesisTools account; without it, native authentication follows the effective home. Worker event logs are separate from native conversation history.
 

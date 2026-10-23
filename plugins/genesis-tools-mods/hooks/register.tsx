@@ -1,6 +1,7 @@
 import type { ElementTable, EngineInterface, Register, RenderElement, Timer } from "claude-code";
 import { atom, read, update } from "claude-code";
 import type { FlippedFiles, ShownCalls } from "../types";
+import { agentModelHooks } from "./agent-model";
 import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice } from "./idle";
 import {
     type CallSection,
@@ -284,6 +285,8 @@ async function announceSession($: EngineInterface): Promise<void> {
 }
 
 export const register: Register = (on) => {
+    agentModelHooks(on);
+
     on("turn.start", async ($, e, next) => {
         stopIdleTimer();
         await announceSession($);

@@ -9,6 +9,7 @@ import { registerLogsCommand } from "./commands/logs";
 import { registerMigrateHomeCommand } from "./commands/migrate-home";
 import { registerCodexMessageCommands } from "./commands/queue";
 import { registerReviewCommand } from "./commands/review";
+import { registerReviewsCommands } from "./commands/reviews";
 import { registerRollbackCommand } from "./commands/rollback";
 import { codexSpec } from "./lib/spec";
 
@@ -24,6 +25,7 @@ registerMigrateHomeCommand(program);
 registerDesktopCommand(program);
 registerRollbackCommand(program);
 registerReviewCommand(program);
+registerReviewsCommands(program);
 registerApprovalCommands(program);
 registerLogsCommand(program);
 
