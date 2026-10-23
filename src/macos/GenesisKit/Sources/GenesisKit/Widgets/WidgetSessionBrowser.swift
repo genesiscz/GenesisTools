@@ -16,6 +16,7 @@ public struct WidgetSessionBrowser: View {
     }
 
     public var body: some View {
+        let _ = RenderProbe.hit("widget.sessions")
         let groups = WidgetAgentTree.groups(model.snapshot?.sessions ?? [], query: query, onlyPinned: onlyPinned)
         LazyVStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {

@@ -39,3 +39,33 @@ final class RenderProbeTests: XCTestCase {
         XCTAssertEqual(RenderProbe.summary(since: start), "")
     }
 }
+
+/// A main thread that never idles is a spin even though every ping is served on time (the widget, 2026-10-23).
+final class SpinTrackerTests: XCTestCase {
+    func testFiveBusySecondsAreASpinReportedOnceThenItsEnd() {
+        var tracker = HangWatch.SpinTracker()
+        var events: [HangWatch.SpinTracker.Event] = []
+        for tick in 0 ... 30 {
+            if let event = tracker.step(share: 0.99, now: Double(tick) * 0.25) { events.append(event) }
+        }
+        if let event = tracker.step(share: 0.1, now: 8) { events.append(event) }
+        XCTAssertEqual(events, [.began(seconds: 5), .ended(seconds: 8)])
+    }
+
+    func testABusyBurstShorterThanTheThresholdIsNoSpin() {
+        var tracker = HangWatch.SpinTracker()
+        for tick in 0 ..< 12 { XCTAssertNil(tracker.step(share: 1, now: Double(tick) * 0.25)) }
+        XCTAssertNil(tracker.step(share: 0.2, now: 3), "an unreported burst ends silently")
+        XCTAssertNil(tracker.step(share: 1, now: 3.25), "a new burst starts its own clock")
+    }
+
+    func testTheThreadCPUClockAdvancesWithWork() throws {
+        let thread = mach_thread_self()
+        let before = try XCTUnwrap(HangWatch.cpuTime(of: thread))
+        let deadline = Date().addingTimeInterval(0.08)
+        var spins = 0
+        while Date() < deadline { spins &+= 1 }
+        let after = try XCTUnwrap(HangWatch.cpuTime(of: thread))
+        XCTAssertGreaterThan(after - before, 0.05, "80 ms of busy work shows as CPU time (\(spins) spins)")
+    }
+}

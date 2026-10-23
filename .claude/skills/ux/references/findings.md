@@ -195,3 +195,20 @@ checklist.md or motion.md as well.
   user saw no feedback at all. Fix: the tree watches its root (FSEvents) and a reveal re-reads a folder that lacks the
   file; the reveal jumps a far row to the nearer edge, glides the last stretch and pulses the row. Before and after
   recordings in the notes vault's `GenesisTools.native/MarkdownViewer/Screenshots/2026-10-15-0618-*`.
+- 2026-10-23 — **One press on a new tab group chip made the whole Genesis Markdown window ignore clicks.** The chip
+  read `NSApp.currentEvent?.clickCount`, which raises for a non-mouse event; the exception left SwiftUI's event
+  dispatch broken. I had checked the groups only as a rendered PNG and never pressed a chip in the real app, and my
+  synthesized test clicks always made a mouse event current, so no test could see it. Fix: GenesisKit `MouseClick`,
+  lint-rules `swift-current-event-click-count`, an exact-click test through `FrameProbe`, and the checklist line
+  "a render is not a click". My first test also swept clicks across the toolbar and opened Obsidian and the Editor in
+  Martin's apps; targets now come from `FrameProbe`.
+- 2026-10-23 — **The alert flashed only the rail bubble, and the rail and the hover list disagreed on order.** The hover
+  list opened after the alert bumped the flash counter, so its rows never saw the change; the rail kept a sticky
+  order while the list sorted by attention. Fix: `AttentionPulse(since:)` plays the rest of a running flash on
+  appear; the rail follows the list order, with "Keep places" as the setting for the old one.
+- 2026-10-23 — **The widget spun at 100% CPU for three minutes and nothing logged it.** A SwiftUI update loop
+  returns to the run loop between passes, so HangWatch's ping never ran late. HangWatch now also reads the main
+  thread's CPU time: 5 s above 85% logs `main-spin`, samples the stack and counts the bodies that ran (the dev
+  monitor shows it as `spin`). Strongest lead, fixed in the same commit: every preview open lost a resize and leaked
+  a display link that fired every frame for good (sampled live in the collapsed widget); not proven to be that spin,
+  because three hidden-window replays with the real inbox stayed idle.

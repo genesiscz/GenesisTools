@@ -76,6 +76,10 @@ Walk it for every view you change. Each line exists because it was missed at lea
 - A hover tooltip that duplicates a hover preview is off by default ("auto"), and the preview must open reliably:
   a control the pointer reaches inside a panel starts the panel's hover itself, since the panel's own hover fires
   only on crossing its edge.
+- Two views of the same sessions (the rail bubbles and the hover list) read in one order; a bubble and its row sit
+  at the same place. A sticky order that never moves is an option, not the default (Martin, 2026-10-23 17:47).
+- A flash reaches every place the session shows, including a list the alert itself opened: such a list is built
+  after the trigger changed, so it needs the flash start time, not only the trigger.
 
 ## Feedback
 - Every action answers within 100 ms: visible state change, sound for capture, progress for slow work.

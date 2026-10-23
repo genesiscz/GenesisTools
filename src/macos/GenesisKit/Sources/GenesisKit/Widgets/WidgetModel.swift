@@ -255,14 +255,18 @@ public final class WidgetModel: ObservableObject {
     /// built again on every hover, and its first layout passes measured it short (header and footer, then the rows):
     /// one hover asked for 336, 295 and 489 pt within 42 ms, the panel shrank and grew back, and its content blinked
     /// or opened cut at the top (edge.request log and Martin's screenshots, 2026-10-23).
+    ///
+    /// Before the first measurement the panel opens at the estimate (`previewHeight`), so a short first pass waits as
+    /// well: the first alert after a launch asked for 336 (the estimate), 295 and 489 pt (2026-10-23 17:10).
     func reportPreviewFit(_ height: CGFloat) {
         let rounded = ceil(height)
-        if let current = previewFitHeight, abs(rounded - current) < 2 {
-            previewShrink?.cancel()
+        let current = previewFitHeight ?? previewHeight
+        previewShrink?.cancel()
+        if abs(rounded - current) < 2 {
+            if previewFitHeight == nil { previewFitHeight = rounded }
             return
         }
-        previewShrink?.cancel()
-        if let current = previewFitHeight, rounded < current {
+        if rounded < current {
             previewShrink = Task { [weak self] in
                 do { try await Task.sleep(for: Self.previewShrinkDelay) } catch { return }
                 guard let self else { return }
@@ -831,10 +835,14 @@ public final class WidgetModel: ObservableObject {
         inboxSessionPulses = inboxSessionPulses.filter { activeKeys.contains($0.key) }
         inbox = value
         inboxSessions = Dictionary(value.sessions.map { ($0.key, $0) }, uniquingKeysWith: { _, last in last })
-        railActivitySessions = railSessions.filter { session in
+        let railActive = railSessions.filter { session in
             let inbox = inboxSessions[session.key]
             return session.visualStatus == .working || (inbox?.unread ?? 0) + (inbox?.needsAnswer ?? 0) > 0
         }
+        // The rail reads in the hover list's order, so a bubble and its row sit at the same place (Martin,
+        // 2026-10-23: "the order should be the same in the right and the expanded list"); "stable" keeps places.
+        railActivitySessions = snapshot?.state.preferences.railOrder == "stable"
+            ? railActive : railActive.sorted(by: Self.previewOrder(inbox: inboxSessions, sort: previewSort))
         inboxOverviewItems = Self.overviewItems(value.sessions)
         previewList = Self.previewRows(
             sessions: snapshot?.sessions ?? [], inbox: inboxSessions,
@@ -850,27 +858,39 @@ public final class WidgetModel: ObservableObject {
     nonisolated static func previewRows(
         sessions: [WidgetSession], inbox: [String: WidgetInboxSession], filter: String, sort: String
     ) -> [WidgetSession] {
-        func needs(_ session: WidgetSession) -> Bool {
-            (inbox[session.key]?.needsAnswer ?? 0) > 0 || (session.visible && session.status == "waiting")
-        }
         let rows = sessions.filter { session in
-            if needs(session) { return true }
+            if needsYou(session, inbox: inbox) { return true }
             guard filter == "active", session.visible, session.parentKey == nil, session.agentId == nil else { return false }
             return session.status == "working" || (inbox[session.key]?.unread ?? 0) > 0
         }
+        return rows.sorted(by: previewOrder(inbox: inbox, sort: sort))
+    }
+
+    nonisolated static func needsYou(_ session: WidgetSession, inbox: [String: WidgetInboxSession]) -> Bool {
+        (inbox[session.key]?.needsAnswer ?? 0) > 0 || (session.visible && session.status == "waiting")
+    }
+
+    /// The hover list's order, which the rail's session bubbles share. Equal times fall back to the key, so the two
+    /// lists never disagree on a tie.
+    nonisolated static func previewOrder(
+        inbox: [String: WidgetInboxSession], sort: String
+    ) -> (WidgetSession, WidgetSession) -> Bool {
         func rank(_ session: WidgetSession) -> Int {
-            needs(session) ? 0 : session.status == "working" ? 1 : 2
+            needsYou(session, inbox: inbox) ? 0 : session.status == "working" ? 1 : 2
         }
-        return rows.sorted { lhs, rhs in
+        func newer(_ lhs: WidgetSession, _ rhs: WidgetSession) -> Bool {
+            lhs.activityAt == rhs.activityAt ? lhs.key < rhs.key : lhs.activityAt > rhs.activityAt
+        }
+        return { lhs, rhs in
             switch sort {
             case "recent":
-                return lhs.activityAt > rhs.activityAt
+                return newer(lhs, rhs)
             case "project":
                 let order = lhs.project.localizedCaseInsensitiveCompare(rhs.project)
-                return order == .orderedSame ? lhs.activityAt > rhs.activityAt : order == .orderedAscending
+                return order == .orderedSame ? newer(lhs, rhs) : order == .orderedAscending
             default:
                 let (left, right) = (rank(lhs), rank(rhs))
-                return left == right ? lhs.activityAt > rhs.activityAt : left < right
+                return left == right ? newer(lhs, rhs) : left < right
             }
         }
     }
@@ -896,11 +916,19 @@ public final class WidgetModel: ObservableObject {
     public func flashAttention(_ key: String, seconds: Double) {
         guard seconds > 0 else { return }
         attentionSeconds = seconds
+        attentionStarts[key] = Date()
         attentionCounts[key, default: 0] += 1
     }
 
+    /// When each session's flash began, so a row built while it runs flashes for the rest (`AttentionPulse.since`).
+    /// Not published: the counter already re-renders the views that flash.
+    private var attentionStarts: [String: Date] = [:]
+
     /// The pulse trigger for one session: changes only when that session is flashed.
     public func attentionTrigger(_ key: String) -> Int { attentionCounts[key] ?? 0 }
+
+    /// When the session's current flash began.
+    public func attentionStart(_ key: String) -> Date? { attentionStarts[key] }
 
     /// The style every flash of a session that needs you uses.
     var attentionStyle: AttentionPulseStyle {

@@ -72,6 +72,7 @@ struct WidgetHostView: View {
     private var keepsExpandedPane: Bool { warm && selected?.id == "agents" }
 
     var body: some View {
+        let _ = RenderProbe.hit("widget.host")
         Color.clear
             .overlay(alignment: .topLeading) { panelLayers }
             // The side rail anchors itself to the screen (ScreenAnchoredWidgetRail), so it needs the whole window
@@ -417,7 +418,7 @@ struct WidgetHostView: View {
         var style = model.attentionStyle
         style.cornerRadius = 17
         return WidgetBubbleChrome(trigger: model.attentionTrigger(session.key), attention: style,
-            reduceMotion: model.effectiveReduceMotion)
+            reduceMotion: model.effectiveReduceMotion, since: model.attentionStart(session.key))
     }
 
     private func sessionActivity(_ session: WidgetSession) -> some View {
@@ -508,7 +509,7 @@ struct WidgetPeekView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(RowButtonStyle(cornerRadius: 10))
-        .attentionPulse(trigger: model.attentionTrigger(item.key), style: popupAttention)
+        .attentionPulse(trigger: model.attentionTrigger(item.key), style: popupAttention, since: model.attentionStart(item.key))
         .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + (item.title ?? ""))
     }
 

@@ -280,4 +280,14 @@ final class AttentionPulseMotionTests: XCTestCase {
         XCTAssertEqual(blinking.count, style.cycles * 2)
         XCTAssertTrue(blinking.allSatisfy { $0.animation != nil })
     }
+
+    /// A row built while a flash runs plays the rest of it (the widget's hover list opens after the alert flashed).
+    func testAViewThatAppearsMidFlashPlaysTheRest() {
+        let now = Date()
+        XCTAssertNil(AttentionPulse<Int>.remaining(since: nil, now: now, duration: 5))
+        XCTAssertEqual(AttentionPulse<Int>.remaining(since: now.addingTimeInterval(-2), now: now, duration: 5) ?? 0, 3,
+                       accuracy: 0.001)
+        XCTAssertNil(AttentionPulse<Int>.remaining(since: now.addingTimeInterval(-6), now: now, duration: 5), "over")
+        XCTAssertNil(AttentionPulse<Int>.remaining(since: now.addingTimeInterval(1), now: now, duration: 5), "future")
+    }
 }

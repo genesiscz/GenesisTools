@@ -49,9 +49,14 @@ struct AttentionPulseStyle: Equatable {
 
 /// Plays one `AttentionPulseStyle` over the view each time `trigger` changes. A new trigger
 /// while a pulse runs restarts it rather than stacking a second one on top.
+///
+/// `since` is when the flash began. A view that appears while it runs plays the rest of it: a list built after the
+/// trigger changed (the widget's hover list, opened by the alert that flashed the session) never saw the change, so
+/// only the rail bubble flashed (Martin, 2026-10-23).
 struct AttentionPulse<Trigger: Equatable>: ViewModifier {
     let trigger: Trigger
     let style: AttentionPulseStyle
+    var since: Date?
 
     @State private var isOn = false
     @State private var running: Task<Void, Never>?
@@ -77,6 +82,13 @@ struct AttentionPulse<Trigger: Equatable>: ViewModifier {
         }
     }
 
+    /// What is left of a flash that began at `since`, or nil when none runs.
+    static func remaining(since: Date?, now: Date = Date(), duration: TimeInterval) -> TimeInterval? {
+        guard let since else { return nil }
+        let left = duration - now.timeIntervalSince(since)
+        return left > 0.05 && left <= duration ? left : nil
+    }
+
     func body(content: Content) -> some View {
         content
             // Drawn over everything and never hit-testable: a pulse must not eat the next click.
@@ -92,14 +104,20 @@ struct AttentionPulse<Trigger: Equatable>: ViewModifier {
                 .accessibilityHidden(true)
             }
             .onChange(of: trigger) { _, _ in play() }
+            .onAppear {
+                guard running == nil, let left = Self.remaining(since: since, duration: style.duration) else { return }
+                var rest = style
+                rest.duration = left
+                play(rest)
+            }
             // Turning Reduce Motion on mid-pulse replaces the blinking with the static border at once.
             .onChange(of: reduceMotion) { _, _ in if running != nil { play() } }
             .onDisappear { running?.cancel() }
     }
 
-    private func play() {
+    private func play(_ style: AttentionPulseStyle? = nil) {
         running?.cancel()
-        let steps = Self.steps(style: style, reduceMotion: reduceMotion)
+        let steps = Self.steps(style: style ?? self.style, reduceMotion: reduceMotion)
         running = Task { @MainActor in
             for step in steps {
                 if let duration = step.animation {
@@ -119,8 +137,9 @@ extension View {
     /// Blinks this view for attention each time `trigger` changes. Pass a counter you bump. The default is a
     /// border-only flash in the accent colour; `.filledFlash` and `.slowBorder` are the other presets.
     func attentionPulse<Trigger: Equatable>(
-        trigger: Trigger, style: AttentionPulseStyle = .borderFlash(color: .accentColor, cornerRadius: 12)
+        trigger: Trigger, style: AttentionPulseStyle = .borderFlash(color: .accentColor, cornerRadius: 12),
+        since: Date? = nil
     ) -> some View {
-        modifier(AttentionPulse(trigger: trigger, style: style))
+        modifier(AttentionPulse(trigger: trigger, style: style, since: since))
     }
 }

@@ -19,6 +19,7 @@ struct WidgetInboxOverview: View {
 
     var body: some View {
         let items = items
+        let _ = RenderProbe.hit("widget.overview")
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 GenSegmentedTabs(

@@ -16,7 +16,18 @@ const log = logger.child({ component: "hub:dev-monitor" });
  * agent on each instead of the user finding a "not responding" banner first.
  */
 export interface DevEvent {
-    kind: "wedge" | "hang" | "stall" | "layout-loop" | "slow-main" | "jank" | "error" | "relay" | "crash" | "slow";
+    kind:
+        | "wedge"
+        | "spin"
+        | "hang"
+        | "stall"
+        | "layout-loop"
+        | "slow-main"
+        | "jank"
+        | "error"
+        | "relay"
+        | "crash"
+        | "slow";
     /** The time the source line carries ("01:46:40.479"), or the file's time for a crash or a hang file. */
     time: string;
     text: string;
@@ -137,7 +148,7 @@ export function classifyPerfLine(line: string, options: ClassifyOptions = DEFAUL
         return { kind: "wedge", time, text: short(body) };
     }
 
-    const sampled = body.match(/main-stall .*sampling to (\S+)/);
+    const sampled = body.match(/main-(?:stall|spin) .*sampling to (\S+)/);
     if (sampled) {
         return { kind: "hang", time, text: short(body), file: genesisToolsDir("logs", "hangs", sampled[1]) };
     }
@@ -145,6 +156,11 @@ export function classifyPerfLine(line: string, options: ClassifyOptions = DEFAUL
     const stacks = body.match(/main-stall stacks .*→ (\S+)/);
     if (stacks) {
         return { kind: "hang", time, text: short(body), file: genesisToolsDir("logs", "hangs", stacks[1]) };
+    }
+
+    // A main thread that never idles (an update loop) never delays a ping, so HangWatch reports it by CPU time.
+    if (/^main-spin /.test(body)) {
+        return { kind: "spin", time, text: short(body) };
     }
 
     const recovered = body.match(/main-stall recovered after (\d+)ms/);

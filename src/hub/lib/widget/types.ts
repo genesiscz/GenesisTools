@@ -79,6 +79,8 @@ export const widgetPreferencesSchema = z.object({
     inboxComposer: z.enum(["top", "bottom"]).default("top"),
     /** A rail session bubble's tooltip: only while hover previews are off ("auto"), always, or never. */
     bubbleTooltip: z.enum(["auto", "always", "never"]).default("auto"),
+    /** The rail's session bubbles: in the hover list's order ("list"), or each keeps its place ("stable"). */
+    railOrder: z.enum(["list", "stable"]).default("list"),
 });
 
 // Zod defaults also run inside partial objects; a patch must retain only supplied keys.

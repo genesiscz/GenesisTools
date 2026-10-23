@@ -11,6 +11,10 @@
 //  A block on the main queue only runs late when the main thread is actually
 //  busy or starved.
 //
+//  A loop that returns to the run loop between its passes never delays the ping, so the same watchdog also
+//  reads the main thread's own CPU time: busy above 85% for 5 s is a "main-spin", sampled the same way (the
+//  widget sat at 100% CPU for three minutes in a SwiftUI update loop and logged nothing, 2026-10-23 17:10).
+//
 //  Stalls > 0.5 s land in PerfLog (the app's perf file + unified log).
 //  When one crosses 1 s the watchdog runs `sample` on this process and writes
 //  the main-thread call graph to `<log folder>/hangs/<time>.txt`, so the
@@ -35,6 +39,12 @@ public enum HangWatch {
     private nonisolated(unsafe) static var alertedThisStall = false
     /// Set by the test that must not raise a real user notification.
     public nonisolated(unsafe) static var onWedge: ((CFAbsoluteTime) -> Void)?
+
+    /// The main thread's port, read from the watchdog's queue for its CPU time.
+    private nonisolated(unsafe) static var mainThread: thread_act_t = 0
+    /// Timer queue only (the timer's handler runs serially).
+    private nonisolated(unsafe) static var spin = SpinTracker()
+    private nonisolated(unsafe) static var lastCPU: (wall: CFAbsoluteTime, cpu: Double)?
 
     public static let stallThreshold: CFAbsoluteTime = 0.5
     public static let sampleThreshold: CFAbsoluteTime = 1.0
@@ -84,7 +94,11 @@ public enum HangWatch {
         // An explicit leeway: the default one lets App Nap push a tick of a background window by
         // ~0.5 s, and a 843 ms stall was first seen 2 ms before it ended (GenesisTools hub).
         timer.schedule(deadline: .now() + 1, repeating: 0.25, leeway: .milliseconds(10))
-        timer.setEventHandler { tick() }
+        mainThread = mach_thread_self()
+        timer.setEventHandler {
+            checkSpin()
+            tick()
+        }
         timer.resume()
         monitor = timer
         // `sample` attaches about a second in, so every Genesis capture on 2026-09-26 said
@@ -151,7 +165,7 @@ public enum HangWatch {
         }
         lock.unlock()
 
-        if shouldSample { captureStack(stallSoFar: gap) }
+        if shouldSample { captureStack(stallSoFar: gap, reason: "main-stall") }
         if shouldLog { PerfLog.mark(String(format: "main-stall ongoing %.1fs load=%.1f", gap, PerfLog.loadAverage()) + PerfContext.describe()) }
         if shouldAlert { reportWedge(stallSoFar: gap) }
     }
@@ -216,12 +230,12 @@ public enum HangWatch {
 
     /// `sample <pid> 2` from a utility thread. Only the main thread's call
     /// graph is kept; the rest of a full sample is idle worker threads.
-    private static func captureStack(stallSoFar: CFAbsoluteTime) {
+    private static func captureStack(stallSoFar: CFAbsoluteTime, reason: String) {
         let stamp = Self.fileStamp.string(from: Date())
         let file = hangsDirectory.appendingPathComponent("hang-\(stamp).txt")
         lastCaptureFile = file
         try? FileManager.default.createDirectory(at: hangsDirectory, withIntermediateDirectories: true)
-        PerfLog.mark(String(format: "main-stall %.1fs so far — sampling to %@", stallSoFar, file.lastPathComponent) + PerfContext.describe())
+        PerfLog.mark(String(format: "%@ %.1fs so far — sampling to %@", reason, stallSoFar, file.lastPathComponent) + PerfContext.describe())
         // The ping this stall belongs to. `sample` attaches ~1 s after the
         // stall was noticed and then samples for 2 s, so a 1.2 s stall is over
         // before the first sample lands and the capture shows an idle main
@@ -280,6 +294,85 @@ public enum HangWatch {
         }
         let trimmed = kept.joined(separator: "\n") + "\n"
         try? trimmed.write(to: file, atomically: true, encoding: .utf8)
+    }
+
+    // MARK: Spin
+
+    /// Busy and quiet stretches of the main thread, one tick at a time. Pure, so a test can feed it shares.
+    public struct SpinTracker {
+        public enum Event: Equatable {
+            case began(seconds: CFAbsoluteTime)
+            case ended(seconds: CFAbsoluteTime)
+        }
+
+        public static let threshold: CFAbsoluteTime = 5
+        public static let busyShare = 0.85
+        private var since: CFAbsoluteTime?
+        private var reported = false
+
+        public init() {}
+
+        /// `share` is the main thread's CPU over the last tick (1 = a whole core).
+        public mutating func step(share: Double, now: CFAbsoluteTime) -> Event? {
+            guard share >= Self.busyShare else {
+                defer {
+                    since = nil
+                    reported = false
+                }
+                guard let since, reported else { return nil }
+                return .ended(seconds: now - since)
+            }
+            let start = since ?? now
+            since = start
+            guard !reported, now - start >= Self.threshold else { return nil }
+            reported = true
+            return .began(seconds: now - start)
+        }
+    }
+
+    /// A thread's user and system CPU time in seconds, or nil when the kernel refuses.
+    static func cpuTime(of thread: thread_act_t) -> Double? {
+        guard thread != 0 else { return nil }
+        var info = thread_basic_info()
+        var count = mach_msg_type_number_t(MemoryLayout<thread_basic_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                thread_info(thread, thread_flavor_t(THREAD_BASIC_INFO), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        return Double(info.user_time.seconds) + Double(info.user_time.microseconds) / 1_000_000
+            + Double(info.system_time.seconds) + Double(info.system_time.microseconds) / 1_000_000
+    }
+
+    private static func checkSpin() {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard let cpu = cpuTime(of: mainThread) else { return }
+        defer { lastCPU = (now, cpu) }
+        guard let last = lastCPU, now - last.wall > 0.05, now - last.wall < sleepGap else { return }
+        let share = (cpu - last.cpu) / (now - last.wall)
+        switch spin.step(share: share, now: now) {
+        case let .began(seconds)?:
+            PerfLog.mark(String(format: "main-spin %.0fs at %.0f%% cpu: the main thread never idles", seconds, share * 100)
+                + PerfContext.describe())
+            lock.lock()
+            let sample = now - lastSampleAt > sampleCooldown && PerfContext.run == nil
+            if sample { lastSampleAt = now }
+            lock.unlock()
+            if sample { captureStack(stallSoFar: seconds, reason: "main-spin") }
+            // Which bodies the loop evaluates, for two seconds: one Bool read per body while off.
+            let wasOn = RenderProbe.enabled
+            let start = RenderProbe.snapshot()
+            RenderProbe.enabled = true
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) {
+                PerfLog.mark("main-spin bodies in 2s:" + RenderProbe.summary(since: start))
+                if !wasOn { RenderProbe.enabled = false }
+            }
+        case let .ended(seconds)?:
+            PerfLog.mark(String(format: "main-spin ended after %.0fs", seconds) + PerfContext.describe())
+        case nil:
+            break
+        }
     }
 
     private static let fileStamp: DateFormatter = {

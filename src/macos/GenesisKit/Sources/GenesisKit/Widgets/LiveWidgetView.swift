@@ -59,6 +59,7 @@ public struct LiveWidgetView: View {
     }
 
     public var body: some View {
+        let _ = RenderProbe.hit("widget.live")
         Group {
             if embedded {
                 content
@@ -472,6 +473,7 @@ public struct LiveWidgetView: View {
 
     private func inboxRow(_ card: WidgetCard) -> some View {
         let open = isOpen(card)
+        let _ = RenderProbe.hit("widget.inbox.row")
         return VStack(alignment: .leading, spacing: 0) {
             Button { toggle(card) } label: {
                 HStack(alignment: .top, spacing: 9) {

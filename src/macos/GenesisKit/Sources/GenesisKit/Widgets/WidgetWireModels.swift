@@ -298,6 +298,8 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var inboxComposer: String?
     /// A rail bubble's tooltip: "auto" (default, only without hover previews), "always" or "never".
     public var bubbleTooltip: String?
+    /// The rail's session bubbles: "list" (default, the hover list's order) or "stable" (each keeps its place).
+    public var railOrder: String?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(

@@ -1205,6 +1205,44 @@ final class EdgePanelControllerTests: XCTestCase {
         }
     }
 
+    /// The hover list measures itself in the layout that opening the panel runs, and asks for its real height from
+    /// inside it. That nested request was overwritten when the opening stored its own transition, so the panel stayed
+    /// at the estimate and cut its last row (2026-10-23 17:48: a reshape to 489 pt logged, the window stayed 336 pt).
+    @MainActor
+    final class Box { var controller: EdgePanelController<AnyView>?; var asked = false }
+
+    func testASizeRequestedDuringTheOpeningLayoutIsNotLost() async throws {
+        _ = NSApplication.shared
+        let screen = try XCTUnwrap(NSScreen.screens.first)
+        let box = Box()
+        let value = EdgePanelController<AnyView>(
+            placement: .right, screen: screen, compactSize: CGSize(width: 40, height: 100),
+            expandedSize: CGSize(width: 340, height: 400), title: "Hidden reentrancy test") {
+            AnyView(Color.black.onGeometryChange(for: CGFloat.self, of: \.size.width) { width in
+                guard width > 100, !box.asked, let controller = box.controller else { return }
+                box.asked = true
+                controller.setPreviewSize(CGSize(width: 300, height: 360))
+                controller.setPresentation(.preview, reduceMotion: false)
+            })
+        }
+        box.controller = value
+        value.panel.alphaValue = 0
+        value.panel.level = NSWindow.Level(rawValue: -1000)
+        defer { value.hide(); value.panel.close() }
+        value.setSideCenterY(400)
+        value.setPreviewSize(CGSize(width: 300, height: 240))
+        value.setPresentation(.compact, reduceMotion: true)
+        value.show()
+        value.setPresentation(.preview, reduceMotion: false)
+        let deadline = ContinuousClock.now + .seconds(3)
+        while (value.lastTransitionTiming?.outcome != "completed" || value.panel.frame.height < 359), ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(box.asked, "the content asked for its height while the panel opened")
+        XCTAssertEqual(value.panel.frame.height, 360, accuracy: 0.5, "the height asked during the opening wins")
+        XCTAssertEqual(EdgeFrameTicker.live, 0, "no frame ticker keeps firing once the panel has settled")
+    }
+
     func testContentReplacementRetainsWindowAndAnimatesNewCompactSize() async throws {
         let value = try controller()
         defer { value.hide(); value.panel.close() }
@@ -1477,6 +1515,52 @@ final class WidgetRosterTests: XCTestCase {
                 let afterLeaving = await probe.identities
                 XCTAssertEqual(afterLeaving, [pointed.key, selected], "Reentering the surface must not retain an old agent target")
             }
+        }
+    }
+
+    /// The first preview after a launch opens at the estimate; its short first layout pass must not shrink the panel
+    /// before the rows arrive (2026-10-23 17:10: 336, 295, 489 pt for one alert).
+    func testTheFirstPreviewMeasurementDoesNotShrinkBelowTheEstimateBeforeTheRowsArrive() async throws {
+        try await withFixture(sessionCount: 4) { model, _, _ in
+            XCTAssertNil(model.previewFitHeight)
+            let estimate = model.previewHeight
+            model.reportPreviewFit(estimate - 41)
+            XCTAssertNil(model.previewFitHeight, "the short first pass waits")
+            model.reportPreviewFit(estimate + 153)
+            XCTAssertEqual(model.previewFitHeight, estimate + 153, "the full list applies at once")
+            try await Task.sleep(for: .milliseconds(450))
+            XCTAssertEqual(model.previewFitHeight, estimate + 153, "the short pass never lands afterwards")
+
+            model.reportPreviewFit(estimate - 41)
+            try await Task.sleep(for: .milliseconds(450))
+            XCTAssertEqual(model.previewFitHeight, estimate - 41, "a shrink that holds still applies")
+        }
+    }
+
+    /// The rail's bubbles read in the hover list's order (Martin, 2026-10-23: "the order should be the same in the
+    /// right and the expanded list"); "stable" keeps the old sticky places.
+    func testTheRailFollowsTheHoverListOrderUnlessSetToKeepPlaces() async throws {
+        try await withFixture(sessionCount: 12) { model, _, original in
+            var snapshot = original
+            let keys = snapshot.sessions.map(\.key)
+            snapshot.notifications = WidgetInboxSummary(
+                unread: 0, needsAnswer: 3, complete: true, truncated: false,
+                sessions: [keys[1], keys[4], keys[10]].map {
+                    WidgetInboxSession(key: $0, unread: 0, needsAnswer: 1, latest: nil, unreadItem: nil, pendingItem: nil)
+                })
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            let list = model.previewList.map(\.key)
+            let rail = model.railActivitySessions.map(\.key)
+            XCTAssertFalse(list.isEmpty)
+            XCTAssertEqual(rail.filter(list.contains), list.filter(rail.contains), "bubbles and rows share one order")
+
+            snapshot.state.preferences.railOrder = "stable"
+            snapshot.state.revision += 1
+            model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
+            let kept = model.railActivitySessions.map(\.key)
+            XCTAssertEqual(kept, model.railSessions.map(\.key).filter(kept.contains), "Keep places is the sticky order")
+            XCTAssertNotEqual(kept.filter(list.contains), list.filter(kept.contains),
+                              "this fixture's sticky order differs, so the first assertion proves the change")
         }
     }
 

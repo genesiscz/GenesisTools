@@ -53,6 +53,18 @@ describe("classifyPerfLine", () => {
         ).toBe("hang");
     });
 
+    test("a main thread spinning at full CPU is an event, and its sample names the file", () => {
+        expect(classifyPerfLine("[17:10:32.100] mark main-spin 5s at 99% cpu: the main thread never idles")?.kind).toBe(
+            "spin"
+        );
+        expect(classifyPerfLine("[17:10:34.200] mark main-spin bodies in 2s: bodies[widget.inbox.row=812]")?.kind).toBe(
+            "spin"
+        );
+        expect(
+            classifyPerfLine("[17:10:32.101] mark main-spin 5.0s so far — sampling to hang-2026-10-23-171032.txt")?.file
+        ).toEndWith("logs/hangs/hang-2026-10-23-171032.txt");
+    });
+
     test("short stalls, quick main-thread spans and routine lines are left out", () => {
         expect(classifyPerfLine("[01:48:30.597] mark main-stall recovered after 319ms load=6.3")).toBeNull();
         expect(classifyPerfLine("[01:48:30.597] mark main-stall recovered after 819ms load=6.3")?.kind).toBe("stall");

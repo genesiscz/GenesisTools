@@ -181,6 +181,13 @@ private struct WidgetGeneralSettings: View {
                         Text("Never").tag("never")
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
+                Divider()
+                NativeSettingsRow("Session bubble order", detail: "Same as the list follows the hover list's order. Keep places holds each bubble where it appeared.") {
+                    Picker("Session bubble order", selection: string("railOrder", prefs?.railOrder ?? "list")) {
+                        Text("Same as the list").tag("list")
+                        Text("Keep places").tag("stable")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
             }
             NativeSettingsCard("Shape") {
                 NativeSettingsRow("Side style", detail: "Classic keeps a compact monochrome rail with its handle below.") {

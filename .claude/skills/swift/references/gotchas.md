@@ -406,3 +406,51 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   modifiers come from `NSEvent.modifierFlags` inside the button action.
 - **"input file … was modified during the build" is another session editing GenesisKit**, not your code. Rerun the
   build through `.claude/skills/babysit/scripts/swift-slot.ts`; do not stash or touch their file.
+
+## A whole window ignores clicks after one exception in an action — 2026-10-23 16:58
+
+- **`NSEvent.clickCount` raises for any event that is not a mouse click.** It is an Objective-C exception
+  (`NSInternalInconsistencyException`), not a Swift error, and `NSApp.currentEvent` inside a SwiftUI button action is
+  not always a mouse event: a key press, an accessibility press or a system-defined event can be current. The raise
+  unwound through SwiftUI's event dispatch and left the Genesis Markdown window ignoring every click, tab bar and
+  sidebar included, until relaunch (2026-10-23 16:36, the tab group chip's double-click check). Read the count through
+  GenesisKit `MouseClick.current` or `MouseClick.count(of:)`, which checks the event type first. lint-rules
+  `swift-current-event-click-count` fails `currentEvent?.clickCount`. Inside `mouseDown(with:)` or a monitor
+  filtered to mouse types, `event.clickCount` is safe.
+- **When "nothing is clickable", read the app's unified log for an exception first.** `command log show --predicate
+  'processID == <pid>' --last 10m | rg -i "exception|raise|terminat"` found the line in one query; hit tests, AX
+  walks and layout theories had found nothing.
+- **A test window's synthesized click always makes a mouse event current.** `NSApp.postEvent` down and up gives the
+  action a real `leftMouseUp`, so a test can never reproduce a crash that needs a key or AX event as the current
+  one. A unit test of the reader with a key event (`NSEvent.keyEvent(...)`) covers it; a passing click test does not.
+- **An AX hit test over a `WKWebView` names the web area, not the view on top.** `tools control hittest` at a tab
+  that sat above the page reported `AXWebArea` (the web document's rect), while real clicks reached the tab. Judge
+  delivery by the app's own action log, never by the AX hit test.
+- **A hidden test window has no accessibility tree, so find click targets with `FrameProbe`.** GenesisKit
+  `.frameProbe("name")` records a view's window frame only while `FrameProbe.enabled` (a test sets it); click the
+  centre of `FrameProbe.frames["name"]`. Never scan a grid of clicks to find a target: the scan pressed the toolbar's
+  Obsidian and Editor buttons and opened dialogs and editor tabs in the user's real apps.
+
+## Trigger animations, and loops no stall detector sees — 2026-10-23 17:47
+
+- **An animation started from `onChange(of: trigger)` never plays in a view built after the change.** The widget's
+  hover list was opened by the same alert that bumped the flash counter, so its rows started with the new value and
+  did not flash. Pass the start time too and play the rest on appear (`AttentionPulse(since:)`).
+- **A SwiftUI update loop never delays a main-queue ping.** Each pass returns to the run loop, so a queue-latency
+  watchdog reports nothing while the app burns a whole core (the widget, 2026-10-23 17:10, three minutes, no
+  log line). Read the main thread's CPU time instead: `thread_info(THREAD_BASIC_INFO)` on the port from
+  `mach_thread_self()` taken on the main thread (`HangWatch.SpinTracker`, `main-spin` lines).
+- **Read a spin's sample for who schedules the next pass.** Inside the transaction, look for
+  `asyncTransaction` callers: `LazyLayoutViewCache.signalPrefetch` (a lazy stack that never settles) and
+  `EventBindingManager.enqueueHoverUpdateIfNeeded` (hover re-checked after every update) were the two in the widget's.
+- **A test process has no `NSApp` until something makes one.** `NSApp.postEvent` or `nextEvent` then crashes
+  with "unexpectedly found nil" on the line that reads `NSApp`; call `_ = NSApplication.shared` first.
+- **A window resize lays SwiftUI out synchronously, and content can call back into its controller from there.** The
+  edge panel moved its window in `begin`, the hover list measured itself in that layout and asked for its real size,
+  and the nested request started a reshape that `begin` then overwrote with its own transition: the panel kept the
+  estimate (336 instead of 489 pt). Defer a request made while a transition is being set up, and run the latest one
+  after it (`EdgePanelController.applyingPresentation`).
+- **A `CADisplayLink` keeps a strong reference to its target.** A ticker held only by a struct that gets overwritten
+  never deinitialises and fires every frame for the life of the process. Stop it wherever the owner is replaced (a
+  `didSet` on the property), and count live ones for a test (`EdgeFrameTicker.live`). Find them in a sample of the
+  idle app: `EdgeFrameTicker.step` under `CA::Display::DisplayLink` with nothing animating.

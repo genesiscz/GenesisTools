@@ -65,6 +65,7 @@ struct AgentWidgetPreview: View {
     let surface: WidgetSurfaceID
 
     var body: some View {
+        let _ = RenderProbe.hit("widget.preview")
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Image(systemName: "tray").font(.system(size: 12, weight: .medium))
@@ -206,7 +207,7 @@ struct AgentWidgetPreview: View {
             model.inboxFor(session.key).map { $0.needsAnswer > 0 } == true || session.status == "waiting"
                 ? Color.orange.opacity(0.065) : .white.opacity(0.025),
             in: RoundedRectangle(cornerRadius: 10))
-        .attentionPulse(trigger: model.attentionTrigger(session.key), style: rowAttention)
+        .attentionPulse(trigger: model.attentionTrigger(session.key), style: rowAttention, since: model.attentionStart(session.key))
     }
 
     private var rowAttention: AttentionPulseStyle {

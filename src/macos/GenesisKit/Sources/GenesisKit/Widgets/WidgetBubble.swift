@@ -10,6 +10,8 @@ struct WidgetBubbleChrome: ViewModifier {
     let trigger: Int
     let attention: AttentionPulseStyle
     let reduceMotion: Bool
+    /// When the session's flash began; a bubble rebuilt mid-flash (the rail reordered) plays the rest of it.
+    var since: Date?
     @State private var ring = 0.0
     @State private var settle: Task<Void, Never>?
 
@@ -17,7 +19,7 @@ struct WidgetBubbleChrome: ViewModifier {
         content
             .background(Circle().fill(Color.white.opacity(ring > 0 ? 0.07 : 0)).padding(2))
             .overlay(Circle().strokeBorder(Color.white.opacity(ring), lineWidth: 1.5).padding(2).allowsHitTesting(false))
-            .attentionPulse(trigger: trigger, style: attention)
+            .attentionPulse(trigger: trigger, style: attention, since: since)
             .onHover { inside in
                 settle?.cancel()
                 guard inside else {

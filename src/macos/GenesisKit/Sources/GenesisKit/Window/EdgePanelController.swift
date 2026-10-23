@@ -75,23 +75,31 @@ private final class EdgePanelRootView: NSView {
 
 /// Wakes once per display frame while a transition runs: it keeps the window shadow on the moving outline and records
 /// the callback timing. The motion itself runs in the render server and does not depend on these callbacks.
-private final class EdgeFrameTicker: NSObject {
+///
+/// A display link keeps a strong reference to its target, so a ticker nobody stops fires every frame for the life
+/// of the process: an overwritten transition left one behind per lost reshape (2026-10-23, `EdgeFrameTicker.step`
+/// in a sample of the collapsed widget). `live` counts the running ones for the tests.
+final class EdgeFrameTicker: NSObject {
+    @MainActor static var live = 0
     private var link: CADisplayLink?
     private let tick: () -> Void
 
-    init(view: NSView, tick: @escaping () -> Void) {
+    @MainActor init(view: NSView, tick: @escaping () -> Void) {
         self.tick = tick
         super.init()
         let link = view.displayLink(target: self, selector: #selector(step))
         link.add(to: .main, forMode: .common)
         self.link = link
+        Self.live += 1
     }
 
     @objc private func step(_ link: CADisplayLink) { tick() }
 
-    func stop() {
-        link?.invalidate()
-        link = nil
+    @MainActor func stop() {
+        guard let link else { return }
+        link.invalidate()
+        self.link = nil
+        Self.live -= 1
     }
 }
 
@@ -131,7 +139,12 @@ public final class EdgePanelController<Content: View> {
     private var sideCenterY: CGFloat?
     private var lastTarget: CGRect?
     private var lastPresentation: WidgetModulePresentation?
-    private var transition: Transition?
+    /// A transition that is replaced stops its ticker, whoever replaces it.
+    private var transition: Transition? {
+        didSet {
+            if let old = oldValue, old.token != transition?.token { old.ticker.stop() }
+        }
+    }
     private var generation = 0
     public private(set) var isExpanded = false
     /// An expanded panel takes the keyboard (its composer). Off only for scripted motion checks on the user's own
@@ -211,6 +224,7 @@ public final class EdgePanelController<Content: View> {
 
     public func hide() {
         lastTarget = nil
+        deferredPresentation = nil
         generation += 1
         end(outcome: "interrupted")
         if let presentation = lastPresentation, motion.presentation != presentation {
@@ -224,7 +238,29 @@ public final class EdgePanelController<Content: View> {
         setPresentation(expanded ? .expanded : .compact, reduceMotion: reduceMotion)
     }
 
+    /// Set while a request sets up its transition. Moving the window lays SwiftUI out at once, and content that
+    /// measures itself there (the widget's hover list) asks for its real size from inside that layout: the nested
+    /// request then started a reshape that the outer one overwrote with its own transition, and the panel stayed at
+    /// the estimate (2026-10-23 17:48, a reshape to 489 pt logged, the window kept 336 pt).
+    private var applyingPresentation = false
+    private var deferredPresentation: (presentation: WidgetModulePresentation, reduceMotion: Bool)?
+
     public func setPresentation(_ presentation: WidgetModulePresentation, reduceMotion: Bool) {
+        if applyingPresentation {
+            deferredPresentation = (presentation, reduceMotion)
+            return
+        }
+        applyingPresentation = true
+        applyPresentation(presentation, reduceMotion: reduceMotion)
+        applyingPresentation = false
+        // The latest nested request runs against the transition that is now in place.
+        if let next = deferredPresentation {
+            deferredPresentation = nil
+            setPresentation(next.presentation, reduceMotion: next.reduceMotion)
+        }
+    }
+
+    private func applyPresentation(_ presentation: WidgetModulePresentation, reduceMotion: Bool) {
         let expanded = presentation == .expanded
         let becameExpanded = expanded && !isExpanded
         let size: CGSize
