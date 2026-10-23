@@ -4,7 +4,7 @@ import { bareDescription, lastSaidOf } from "../hooks/agents-band";
 import { quoteOf } from "../hooks/ask-row";
 import { cacheRowsOf } from "../hooks/cache-band";
 import { openDecisions, stagedMessage } from "../hooks/decisions";
-import { checkCounts, checksOf, hubUrlOf, parseStatus } from "../hooks/git-band";
+import { checkCounts, checksOf, hubUrlOf, parseNumstat, parseStatus } from "../hooks/git-band";
 import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
 import { targetFor } from "../hooks/links";
 import { toolLabel } from "../hooks/spinner";
@@ -39,6 +39,8 @@ test("git band: status line and CI counts", async () => {
         dirty: 2,
     });
     expect(parseStatus("## HEAD (no branch)\n").branch).toBe("detached");
+    expect(parseNumstat("12\t3\ta.ts\n-\t-\tlogo.png\n0\t9\tb.ts\n")).toEqual({ added: 12, removed: 12 });
+    expect(parseNumstat("")).toEqual({ added: 0, removed: 0 });
     expect(
         checkCounts([
             { conclusion: "SUCCESS" },

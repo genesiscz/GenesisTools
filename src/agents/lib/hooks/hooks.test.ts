@@ -680,6 +680,8 @@ describe("applySetting", () => {
 
         expect(set("mods.agentModel.format", "short").agentModel).toEqual({ enabled: false, format: "short" });
         expect(() => set("mods.agentModel.format", "tiny")).toThrow("label or short");
+        expect(set("mods.git.labels", "minimal").git).toEqual({ enabled: false, labels: "minimal" });
+        expect(() => set("mods.git.labels", "short")).toThrow("full or minimal");
         expect(set("mods.links", "true").links.enabled).toBe(true);
         expect(set("mods.cacheBand.warnMinutes", "15").cacheBand.warnMinutes).toBe(15);
         expect(() => set("mods.cacheBand.warnMinutes", "75")).toThrow("1 to 59");

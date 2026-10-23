@@ -50,6 +50,9 @@ export interface GitBand {
     ahead: number;
     behind: number;
     dirty: number;
+    /** Lines added and removed in tracked files against HEAD, staged and unstaged together. */
+    added: number;
+    removed: number;
     prs: BandPr[];
 }
 

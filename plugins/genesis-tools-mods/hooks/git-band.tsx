@@ -6,7 +6,7 @@
 import type { ElementTable, RenderElement } from "claude-code";
 import type { BandCheck, BandPr, GitBand, GitBandLine, GitBandSwitch } from "../types";
 import { type Feature, type Host, isRecord, logMod, settingsOf, shortDuration } from "./shared";
-import { actionRow, dimNote, divider, headerRow, type Kit, sidebarFrame } from "./sidebar";
+import { actionRow, dimNote, divider, headerRow, type Kit, plural, sidebarFrame } from "./sidebar";
 
 export const GIT_PANE = "mods-git";
 
@@ -122,6 +122,20 @@ export function parseStatus(text: string): Pick<GitBand, "branch" | "ahead" | "b
     };
 }
 
+/** The line totals of `git diff --numstat HEAD`; a binary file (`-`) counts no lines. */
+export function parseNumstat(text: string): Pick<GitBand, "added" | "removed"> {
+    let added = 0;
+    let removed = 0;
+
+    for (const row of text.split("\n")) {
+        const [plus = "", minus = ""] = row.split("\t");
+        added += /^\d+$/.test(plus) ? Number(plus) : 0;
+        removed += /^\d+$/.test(minus) ? Number(minus) : 0;
+    }
+
+    return { added, removed };
+}
+
 async function isOn(host: Host): Promise<boolean> {
     const held = turnedOn;
 
@@ -144,6 +158,7 @@ async function refreshNow(host: Host, why: string): Promise<void> {
         return;
     }
 
+    const numstat = parseNumstat((await run(host, ["git", "diff", "--numstat", "HEAD"], root)) ?? "");
     const tracked = await trackedPrs(host, root);
     const own = await prOf(host, root, "", false);
     const others = await Promise.all(
@@ -152,7 +167,7 @@ async function refreshNow(host: Host, why: string): Promise<void> {
     const prs = [own ? { ...own, tracked: tracked.includes(own.number) } : null, ...others].filter(
         (pr): pr is BandPr => pr !== null
     );
-    const band: GitBand = { at: Date.now(), ...parseStatus(status), prs };
+    const band: GitBand = { at: Date.now(), ...parseStatus(status), ...numstat, prs };
 
     line = band;
     host.redraw();
@@ -164,6 +179,8 @@ async function refreshNow(host: Host, why: string): Promise<void> {
         ahead: band.ahead,
         behind: band.behind,
         dirty: band.dirty,
+        added: band.added,
+        removed: band.removed,
         prs: prs.map((pr) => ({ n: pr.number, passed: pr.passed, failed: pr.failed, pending: pr.pending })),
         ms: Date.now() - started,
     });
@@ -313,8 +330,22 @@ export async function gitRow(host: Host, ui: ElementTable): Promise<RenderElemen
     }
 
     const { Box, Button, Text } = ui;
-    const sync = [band.ahead ? `↑${band.ahead}` : "", band.behind ? `↓${band.behind}` : ""].filter(Boolean).join(" ");
+    const labelled = (await settingsOf(host)).git.labels === "full";
+    const sync = [
+        band.ahead ? `↑${band.ahead}${labelled ? " to push" : ""}` : "",
+        band.behind ? `↓${band.behind}${labelled ? " to pull" : ""}` : "",
+    ]
+        .filter(Boolean)
+        .join(labelled ? " · " : " ");
     const open = () => void host.togglePane(GIT_PANE, "Git");
+    const lines =
+        band.added || band.removed ? (
+            <Text>
+                <Text color="green">{`+${band.added}`}</Text>
+                <Text> </Text>
+                <Text color="red">{`−${band.removed}`}</Text>
+            </Text>
+        ) : null;
 
     return (
         <Box key="git-band" flexDirection="row" gap={1}>
@@ -323,7 +354,12 @@ export async function gitRow(host: Host, ui: ElementTable): Promise<RenderElemen
                 <Text bold>{band.branch}</Text>
             </Button>
             {sync ? <Text color="yellow">{sync}</Text> : null}
-            {band.dirty ? <Text color="magenta">●{band.dirty}</Text> : <Text dimColor>clean</Text>}
+            {band.dirty ? (
+                <Text color="magenta">{labelled ? `${plural(band.dirty, "file")} changed` : `●${band.dirty}`}</Text>
+            ) : (
+                <Text dimColor>clean</Text>
+            )}
+            {band.dirty ? lines : null}
             {band.prs.map((pr) => (
                 <Button key={`pr-${pr.number}`} plain onPress={open}>
                     <Text color={prColor(pr)} underline>{`#${pr.number}`}</Text>
@@ -360,7 +396,11 @@ async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
         await logMod(host, "git", { event: on ? "track" : "untrack", n, from: "sidebar" });
         await refresh(host, "sidebar");
     };
-    const sync = [`↑${band.ahead}`, `↓${band.behind}`, band.dirty ? `${band.dirty} dirty` : "clean"].join(" · ");
+    const sync = [
+        `↑${band.ahead} to push`,
+        `↓${band.behind} to pull`,
+        band.dirty ? `${plural(band.dirty, "file")} changed +${band.added} −${band.removed}` : "clean",
+    ].join(" · ");
 
     return sidebarFrame(
         kit,

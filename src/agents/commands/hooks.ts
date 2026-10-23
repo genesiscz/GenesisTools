@@ -781,7 +781,7 @@ function registerMods(hooks: Command): void {
                 ["mods.agentModel", mods.agentModel.enabled, `format ${mods.agentModel.format}`],
                 ["mods.decisions", mods.decisions.enabled, ""],
                 ["mods.links", mods.links.enabled, ""],
-                ["mods.git", mods.git.enabled, ""],
+                ["mods.git", mods.git.enabled, `labels ${mods.git.labels}`],
                 ["mods.askRow", mods.askRow.enabled, ""],
                 ["mods.spinner", mods.spinner.enabled, ""],
                 [

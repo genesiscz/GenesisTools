@@ -252,9 +252,10 @@ checked against real use.
   `~/`, relative to the working folder or the repository, or a bare file name a tool of the session named), with
   an optional `:line` or `:line-line`, a commit SHA that `git cat-file` knows, and a repeated `❓ DECISION N` become
   links; code fences, inline code that does not resolve, existing links and URLs stay as they are.
-- `mods.git`: a band line above the prompt with the branch, unpushed and unpulled commits, the dirty count and the
-  PRs (the branch's own and the ones `/mod-git pr add 123` tracks) with CI counts. A press on the branch or a PR, or a
-  bare `/mod-git`, opens the Git sidebar: each PR's title, failing and pending checks, and `open`, `hub`, `copy link`
+- `mods.git` (`labels` `full` or `minimal`): a band line above the prompt with the branch, unpushed and unpulled
+  commits, the changed files with their added and removed lines (`↑14 to push · ↓2 to pull 4 files changed +120 −30`,
+  or `↑14 ↓2 ●4 +120 −30` with `minimal`), and the PRs (the branch's own and the ones `/mod-git pr add 123` tracks)
+  with CI counts. A press on the branch or a PR, or a bare `/mod-git`, opens the Git sidebar: each PR's title, failing and pending checks, and `open`, `hub`, `copy link`
   and `track` buttons. `/mod-git on|off|toggle|refresh`.
 - `mods.askRow`: `[ask]` beside a finished tool row puts the row, quoted, into the prompt.
 - `mods.spinner`: the spinner line names the running tool, its time and the working subagents.

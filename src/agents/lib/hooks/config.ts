@@ -296,7 +296,7 @@ export interface ModsConfig {
     /** Bare paths, folders, commits and repeated decisions in the main loop's reply become links as it streams. */
     links: { enabled: boolean };
     /** The git band above the prompt: branch, unpushed, dirty, PRs with CI; `/mod-git` switches it per session. */
-    git: { enabled: boolean };
+    git: { enabled: boolean; labels: "full" | "minimal" };
     /** `[ask]` beside a finished tool row: quotes the row into the prompt. */
     askRow: { enabled: boolean };
     /** The running tool, its time and the working subagents on the spinner line. */
@@ -464,7 +464,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         agentModel: { enabled: false, format: "label" },
         decisions: { enabled: false },
         links: { enabled: false },
-        git: { enabled: false },
+        git: { enabled: false, labels: "full" },
         askRow: { enabled: false },
         spinner: { enabled: false },
         cacheBand: { enabled: false, warnMinutes: 10, others: true },
@@ -1068,6 +1068,7 @@ export function mergeMods(stored: unknown): ModsConfig {
     const agents = partOf(held.agentsBand);
     const hooks = partOf(held.hooks);
     const enabled = (key: string, fallback: boolean) => boolOr(partOf(held[key]).enabled, fallback);
+    const git = partOf(held.git);
     const minutes = countOr({
         field: "mods.idleCompact.minutes",
         value: idle.minutes ?? held.idleCompactMinutes,
@@ -1096,7 +1097,10 @@ export function mergeMods(stored: unknown): ModsConfig {
         },
         decisions: { enabled: enabled("decisions", base.decisions.enabled) },
         links: { enabled: enabled("links", base.links.enabled) },
-        git: { enabled: enabled("git", base.git.enabled) },
+        git: {
+            enabled: enabled("git", base.git.enabled),
+            labels: git.labels === "full" || git.labels === "minimal" ? git.labels : base.git.labels,
+        },
         askRow: { enabled: enabled("askRow", base.askRow.enabled) },
         spinner: { enabled: enabled("spinner", base.spinner.enabled) },
         cacheBand: {

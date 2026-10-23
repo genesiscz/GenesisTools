@@ -16,7 +16,7 @@ export interface ModsSettings {
     agentModel: { enabled: boolean; format: "label" | "short" };
     decisions: { enabled: boolean };
     links: { enabled: boolean };
-    git: { enabled: boolean };
+    git: { enabled: boolean; labels: "full" | "minimal" };
     askRow: { enabled: boolean };
     spinner: { enabled: boolean };
     cacheBand: { enabled: boolean; warnMinutes: number; others: boolean };
@@ -32,7 +32,7 @@ export const MODS_DEFAULTS: ModsSettings = {
     agentModel: { enabled: false, format: "label" },
     decisions: { enabled: false },
     links: { enabled: false },
-    git: { enabled: false },
+    git: { enabled: false, labels: "full" },
     askRow: { enabled: false },
     spinner: { enabled: false },
     cacheBand: { enabled: false, warnMinutes: 10, others: true },
@@ -80,6 +80,7 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
     const agents = part("agentsBand");
     const hooks = part("hooks");
     const enabled = (key: string, fallback: boolean) => bool(part(key).enabled, fallback);
+    const git = part("git");
 
     return {
         diff: {
@@ -102,7 +103,10 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
         },
         decisions: { enabled: enabled("decisions", d.decisions.enabled) },
         links: { enabled: enabled("links", d.links.enabled) },
-        git: { enabled: enabled("git", d.git.enabled) },
+        git: {
+            enabled: enabled("git", d.git.enabled),
+            labels: git.labels === "full" || git.labels === "minimal" ? git.labels : d.git.labels,
+        },
         askRow: { enabled: enabled("askRow", d.askRow.enabled) },
         spinner: { enabled: enabled("spinner", d.spinner.enabled) },
         cacheBand: {

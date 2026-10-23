@@ -75,6 +75,7 @@ export const SETTABLE_KEYS = [
     "mods.idleCompact.<enabled|minutes|minTokens>",
     "mods.agentModel.<enabled|format>",
     "mods.<decisions|links|git|askRow|spinner>.enabled",
+    "mods.git.labels",
     "mods.cacheBand.<enabled|warnMinutes|others>",
     "mods.tmpUsage.<enabled|minutes>",
     "mods.agentsBand.<enabled|warnMinutes>",
@@ -127,6 +128,12 @@ function withMods(mods: ModsConfig, key: string, value: string): ModsConfig {
         }
 
         part[field] = count;
+    } else if (feature === "git" && field === "labels") {
+        if (value !== "full" && value !== "minimal") {
+            throw new Error(`${key} takes full or minimal, not ${SafeJSON.stringify(value)}`);
+        }
+
+        part[field] = value;
     } else if (feature === "agentModel" && field === "format") {
         if (value !== "label" && value !== "short") {
             throw new Error(`${key} takes label or short, not ${SafeJSON.stringify(value)}`);
