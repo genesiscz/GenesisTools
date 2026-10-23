@@ -609,20 +609,14 @@ public final class ClickyModel: ObservableObject {
 
     private func notify(_ title: String, body: String) {
         guard preferences.notifications, !previewOnly else { return }
-        let content = UNMutableNotificationContent()
-        content.title = title
-        content.body = body
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(
-                identifier: "clicky.status", content: content,
-                trigger: nil)
-        ) { [weak self] error in
+        NotificationEngine.shared.post(EngineNotification(
+            source: "clicky", title: title, body: body, identifier: "clicky.status"
+        )) { [weak self] error in
             if let error {
                 Task { @MainActor in
                     self?.log.error("Notification failed: \(error.localizedDescription, privacy: .public)")
                 }
             }
         }
-        NotificationLedger.record(source: "clicky", channel: "macos", title: title, body: body)
     }
 }

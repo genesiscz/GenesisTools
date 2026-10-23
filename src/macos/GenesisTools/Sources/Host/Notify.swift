@@ -17,6 +17,7 @@
 
 import AppKit
 import Foundation
+import GenesisKitBase
 import UserNotifications
 
 // MARK: - Request shapes
@@ -130,6 +131,8 @@ func emitError(code: String, message: String, exitCode: Int32) -> Never {
 }
 
 private func emit(_ payload: [String: Any]) {
+    // Every RPC exits right after this; the notification ledger writes on its own queue.
+    NotificationLedger.flush()
     guard
         let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
         let line = String(data: data, encoding: .utf8)
@@ -155,25 +158,10 @@ private func writeReply(_ text: String) {
 /// `sound` defaults to the system default, matching the DarwinKit and osascript backends this
 /// replaces. terminal-notifier stays silent unless asked, so a caller that relied on that gets a
 /// sound it did not before; that is the one deliberate behaviour change here.
-func notificationContent(_ params: NotifyPostParams, identifier: String) -> UNMutableNotificationContent {
-    let content = UNMutableNotificationContent()
-    content.title = params.title ?? "GenesisTools"
-    content.body = params.message
-
-    if let subtitle = params.subtitle, !subtitle.isEmpty {
-        content.subtitle = subtitle
-    }
-
-    if let sound = params.sound, !sound.isEmpty, sound.lowercased() != "default" {
-        content.sound = UNNotificationSound(named: UNNotificationSoundName(sound))
-    } else {
-        content.sound = .default
-    }
-
-    if let group = params.group, !group.isEmpty {
-        content.threadIdentifier = group
-    }
-
+/// The banner as GenesisKit's `NotificationEngine` posts it. The engine registers the buttons as a
+/// category named after the id, in a union with every category already registered, and writes the
+/// notification ledger line (`source` is the poster's group, as the TypeScript side names it).
+func engineNotification(_ params: NotifyPostParams, identifier: String) -> EngineNotification {
     // Keyed by the action that should run it. The body click is "default"; a button click uses the
     // button's own id. Reading it back needs no knowledge of the category that rendered the buttons.
     var routes: [String: [String: String]] = [:]
@@ -193,30 +181,32 @@ func notificationContent(_ params: NotifyPostParams, identifier: String) -> UNMu
         userInfo["routes"] = filteredRoutes
     }
 
-    content.userInfo = userInfo
-
-    // Best effort only. Punching through a Focus mode needs the time-sensitive entitlement, which a
-    // Developer ID signature cannot carry, so this degrades to a normal banner rather than failing.
-    if params.ignoreDnD == true {
-        content.interruptionLevel = .timeSensitive
+    let sound: UNNotificationSound = if let name = params.sound, !name.isEmpty, name.lowercased() != "default" {
+        UNNotificationSound(named: UNNotificationSoundName(name))
+    } else {
+        .default
     }
 
     // appIcon first, so it is the thumbnail on the banner. UNUserNotificationCenter has no way to
     // replace the app icon itself (terminal-notifier's -appIcon meaning), so the closest honest
     // mapping is to show the image as the notification's own artwork.
     let files = [params.appIcon].compactMap { $0 } + (params.attachments ?? [])
-    content.attachments = files.enumerated().compactMap { index, path in
-        buildAttachment(path: path, index: index)
-    }
 
-    if let actions = params.actions, !actions.isEmpty {
-        // Category registration happens in `post()`, as a union with whatever is already
-        // registered. `setNotificationCategories` replaces the entire set, so doing it here
-        // with `[one]` would wipe every other notification's buttons.
-        content.categoryIdentifier = identifier
-    }
-
-    return content
+    return EngineNotification(
+        source: params.group.flatMap { $0.isEmpty ? nil : $0 } ?? "tools",
+        title: params.title ?? "GenesisTools",
+        subtitle: params.subtitle ?? "",
+        body: params.message,
+        identifier: identifier,
+        threadId: params.group.flatMap { $0.isEmpty ? nil : $0 },
+        userInfo: userInfo,
+        sound: sound,
+        // Best effort only. Punching through a Focus mode needs the time-sensitive entitlement, which a
+        // Developer ID signature cannot carry, so this degrades to a normal banner rather than failing.
+        interruption: params.ignoreDnD == true ? .timeSensitive : nil,
+        attachments: files.enumerated().compactMap { index, path in buildAttachment(path: path, index: index) },
+        actions: (params.actions ?? []).map(buildAction)
+    )
 }
 
 private func route(open: String?, execute: String?) -> [String: String] {
@@ -562,41 +552,25 @@ private func post(_ params: NotifyPostParams) {
                 exitCode: 77
             )
         default:
-            let request = UNNotificationRequest(
-                identifier: identifier,
-                content: notificationContent(params, identifier: identifier),
-                trigger: nil
-            )
-            let add = {
-                center.add(request) { addError in
-                    if let addError {
-                        emitError(
-                            code: "internal",
-                            message: "could not post: \(addError.localizedDescription)",
-                            exitCode: 70
-                        )
-                    }
-
-                    emitResult(["id": identifier])
+            let result = NotificationEngine.shared.post(engineNotification(params, identifier: identifier)) { addError in
+                if let addError {
+                    emitError(
+                        code: "internal",
+                        message: "could not post: \(addError.localizedDescription)",
+                        exitCode: 70
+                    )
                 }
+
+                emitResult(["id": identifier])
             }
 
-            guard let actions = params.actions, !actions.isEmpty else {
-                add()
-                return
-            }
-
-            let category = UNNotificationCategory(
-                identifier: identifier,
-                actions: actions.map(buildAction),
-                intentIdentifiers: [],
-                options: []
-            )
-            center.getNotificationCategories { existing in
-                var next = existing.filter { $0.identifier != identifier }
-                next.insert(category)
-                center.setNotificationCategories(next)
-                add()
+            switch result {
+            case .posted:
+                break
+            case .suppressed(let reason):
+                emitResult(["id": identifier, "suppressed": reason])
+            case .unavailable:
+                emitError(code: "internal", message: "no notification center in this process", exitCode: 70)
             }
         }
     }

@@ -75,24 +75,20 @@ public enum FocusChime {
         // Genesis.app, and `UNUserNotificationCenter.current()` does not fail there, it raises
         // and takes the test process down with it.
         guard FlowFocusHost.shared.notificationsEnabled else { return }
-        let content = UNMutableNotificationContent()
-        content.title = "\(finished.label) finished"
-        content.body = autoStarted
-            ? "\(next.label) has started."
-            : "\(next.label) is ready when you are."
-        content.sound = nil // the chime already played; two sounds for one event is noise
-        content.categoryIdentifier = "focus.phase"
-        content.userInfo = ["kind": notificationKind]
-
-        let request = UNNotificationRequest(
-            identifier: "focus.phase.\(Int(Date().timeIntervalSince1970))",
-            content: content,
-            trigger: nil)
-        UNUserNotificationCenter.current().add(request) { error in
+        // One phase card at a time: the next phase replaces the last one instead of stacking under it.
+        NotificationEngine.shared.post(EngineNotification(
+            source: "focus",
+            title: "\(finished.label) finished",
+            body: autoStarted ? "\(next.label) has started." : "\(next.label) is ready when you are.",
+            idPrefix: "focus.phase",
+            replaceKey: "focus.phase",
+            category: "focus.phase",
+            userInfo: ["kind": notificationKind],
+            sound: nil // the chime already played; two sounds for one event is noise
+        )) { error in
             if let error {
                 FlowFocusLog.focus.debug("focus phase notification failed: \(error.localizedDescription)")
             }
         }
-        NotificationLedger.record(source: "focus", channel: "macos", title: content.title, body: content.body)
     }
 }

@@ -444,6 +444,13 @@ export interface PostedNotification {
  */
 export async function postNotification(opts: NotificationOptions): Promise<PostedNotification> {
     const posted = await postThroughChain(opts);
+
+    // GenesisTools.app posts through GenesisKit's NotificationEngine, which records the line itself with
+    // the real outcome of the add. Recording here too would count every banner twice.
+    if (posted.backend === NotificationBackend.GenesisApp) {
+        return posted;
+    }
+
     recordNotification({
         source: opts.group ?? "tools",
         channel: "macos",

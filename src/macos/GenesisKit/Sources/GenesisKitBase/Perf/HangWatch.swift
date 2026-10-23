@@ -195,20 +195,18 @@ public enum HangWatch {
         // the test runner has none and no notification center to abort in.
         let config = PerfConfiguration.current
         guard let prefix = config.alertBundlePrefix, Bundle.main.bundleIdentifier?.hasPrefix(prefix) == true else { return }
-        let content = UNMutableNotificationContent()
-        content.title = "\(config.appName) is not responding"
-        content.body = String(
-            format: "The main thread has been blocked for %.0f seconds. %@",
-            stallSoFar,
-            lastCaptureFile.map { "Stack: \(($0.path as NSString).abbreviatingWithTildeInPath)" }
-                ?? "No stack was captured."
-        )
-        content.sound = .default
-        UNUserNotificationCenter.current().add(
-            UNNotificationRequest(identifier: "genesis.hang.\(UUID().uuidString)", content: content, trigger: nil)
-        )
-        NotificationLedger.record(source: "hang", channel: "macos", title: content.title, body: content.body,
-                                  fields: ["stallSeconds": Int(stallSoFar)])
+        NotificationEngine.shared.post(EngineNotification(
+            source: "hang",
+            title: "\(config.appName) is not responding",
+            body: String(
+                format: "The main thread has been blocked for %.0f seconds. %@",
+                stallSoFar,
+                lastCaptureFile.map { "Stack: \(($0.path as NSString).abbreviatingWithTildeInPath)" }
+                    ?? "No stack was captured."
+            ),
+            idPrefix: "genesis.hang",
+            ledgerFields: ["stallSeconds": Int(stallSoFar)]
+        ))
     }
 
     /// Test seam: the reporter without a 20 s real stall in front of it.
