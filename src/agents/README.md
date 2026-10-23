@@ -261,6 +261,8 @@ checked against real use.
 - `mods.spinner`: the spinner line names the running tool, its time and the working subagents.
 - `mods.cacheBand` (`warnMinutes` 10, `others`): the prompt cache countdown, red under `warnMinutes`, and the other
   sessions whose cache runs out within it. A press on another session's chip focuses the cmux pane it runs in.
+  The own chip adds `AC in 1m 22s` while the idle compaction is armed, and says `cache compacted` after a compaction,
+  since the next prompt then starts a new, small context; another session that compacted gives no warning.
 - `mods.tmpUsage` (`minutes` 5): the size of the session's `/tmp/cc` folder and the free disk.
 - `mods.agentsBand` (`warnMinutes` 60): one band row per working subagent with model, age, idle time and tool calls;
   more than three fold into one `▸ 8 agents` line. A press on an agent, or `/mod-agents`, opens the Agents sidebar:

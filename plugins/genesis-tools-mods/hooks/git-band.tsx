@@ -318,6 +318,20 @@ export function hubUrlOf(pr: Pick<BandPr, "url" | "number">): string | undefined
     return slug ? `https://genesis.tools/hub?pr=${encodeURIComponent(`${slug}#${pr.number}`)}` : undefined;
 }
 
+/** A branch longer than this keeps its start and end, so the hooks chip at the right keeps its room. */
+const BRANCH_MAX = 32;
+
+/** `feat/2026-10-13-enhancements-unified` as `feat/2026-10-13…ements-unified` at 30. */
+export function middleCut(text: string, max: number): string {
+    if (text.length <= max) {
+        return text;
+    }
+
+    const head = Math.ceil((max - 1) / 2);
+
+    return `${text.slice(0, head)}…${text.slice(text.length - (max - 1 - head))}`;
+}
+
 /**
  * The band's git row, or null while the band is off or has nothing yet. Each PR is a Button (it inverts under the
  * pointer, so it reads as one) that opens the Git sidebar; the sidebar opens the PR in the browser or the hub.
@@ -351,7 +365,7 @@ export async function gitRow(host: Host, ui: ElementTable): Promise<RenderElemen
         <Box key="git-band" flexDirection="row" gap={1}>
             <Button key="git-branch" plain onPress={open}>
                 <Text dimColor>⎇ </Text>
-                <Text bold>{band.branch}</Text>
+                <Text bold>{middleCut(band.branch, BRANCH_MAX)}</Text>
             </Button>
             {sync ? <Text color="yellow">{sync}</Text> : null}
             {band.dirty ? (

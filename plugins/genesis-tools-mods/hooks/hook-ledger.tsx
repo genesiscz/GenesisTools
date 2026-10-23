@@ -250,7 +250,7 @@ export const hookLedger: Feature = {
             host.redraw();
         }
     },
-    compacted(agentId) {
+    compacted(_host, agentId) {
         seen.delete(agentId ?? "main");
     },
     sidebars: [{ id: HOOKS_PANE, title: "Hooks", draw: hooksPane }],

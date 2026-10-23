@@ -5,6 +5,7 @@
 // from any open session. Reading the folder is a file listing, no process; it runs every 15 seconds.
 import type { ElementTable, RenderElement } from "claude-code";
 import type { CacheRow, CacheRows } from "../types";
+import { idleDueAt } from "./idle";
 import { agentsDir, type Feature, type Host, isRecord, settingsOf, shortDuration } from "./shared";
 
 let rows: CacheRows = [];
@@ -19,6 +20,8 @@ interface CacheMark {
     lastAt: number;
     ttlMs: number;
     ended?: boolean;
+    /** When the main loop last compacted; at or after `lastAt` the old cache no longer matters. */
+    compactedAt?: number;
 }
 
 async function folder(host: Host): Promise<string | undefined> {
@@ -34,7 +37,7 @@ async function labelOf(host: Host): Promise<string> {
     return `${cwd.split("/").filter(Boolean).pop() ?? "~"}·${id.slice(0, 6)}`;
 }
 
-async function mark(host: Host, ended: boolean): Promise<void> {
+async function mark(host: Host, why: "turn" | "ended" | "compacted"): Promise<void> {
     const dir = await folder(host);
 
     if (!dir) {
@@ -42,9 +45,18 @@ async function mark(host: Host, ended: boolean): Promise<void> {
     }
 
     const sessionId = await host.sessionId();
-    const held: CacheMark = { sessionId, label: await labelOf(host), lastAt: Date.now(), ttlMs: TTL_MS, ended };
+    const now = Date.now();
+    const held: CacheMark = {
+        sessionId,
+        label: await labelOf(host),
+        lastAt: now,
+        ttlMs: TTL_MS,
+        ended: why === "ended",
+        ...(why === "compacted" ? { compactedAt: now } : {}),
+    };
 
-    if (ended) {
+    // A turn writes the cache again; an end or a compaction keeps the time of the last write.
+    if (why !== "turn") {
         const before = await host.read(`${dir}/${sessionId}.json`).catch(() => undefined);
 
         try {
@@ -52,6 +64,10 @@ async function mark(host: Host, ended: boolean): Promise<void> {
 
             if (isRecord(parsed) && typeof parsed.lastAt === "number") {
                 held.lastAt = parsed.lastAt;
+            }
+
+            if (why === "ended" && isRecord(parsed) && typeof parsed.compactedAt === "number") {
+                held.compactedAt = parsed.compactedAt;
             }
         } catch {
             // A broken mark is rewritten whole.
@@ -68,14 +84,15 @@ export function cacheRowsOf(marks: readonly CacheMark[], ownId: string, warnMs: 
     for (const held of marks) {
         const expiresAt = held.lastAt + held.ttlMs;
         const own = held.sessionId === ownId;
+        const compacted = held.compactedAt !== undefined && held.compactedAt >= held.lastAt;
 
         if (own) {
-            out.unshift({ sessionId: held.sessionId, label: held.label, expiresAt, own });
+            out.unshift({ sessionId: held.sessionId, label: held.label, expiresAt, own, compacted });
             continue;
         }
 
-        if (!held.ended && expiresAt > now && expiresAt - now <= warnMs) {
-            out.push({ sessionId: held.sessionId, label: held.label, expiresAt, own });
+        if (!held.ended && !compacted && expiresAt > now && expiresAt - now <= warnMs) {
+            out.push({ sessionId: held.sessionId, label: held.label, expiresAt, own, compacted });
         }
     }
 
@@ -118,6 +135,7 @@ async function scan(host: Host): Promise<void> {
                     lastAt: parsed.lastAt,
                     ttlMs: typeof parsed.ttlMs === "number" ? parsed.ttlMs : TTL_MS,
                     ended: parsed.ended === true,
+                    ...(typeof parsed.compactedAt === "number" ? { compactedAt: parsed.compactedAt } : {}),
                 });
             }
         } catch {
@@ -139,7 +157,13 @@ export const cacheBand: Feature = {
     },
     async afterTurn(host, e) {
         if (e.agentId === undefined && (await settingsOf(host)).cacheBand.enabled) {
-            await mark(host, false);
+            await mark(host, "turn");
+            void scan(host);
+        }
+    },
+    async compacted(host, agentId) {
+        if (agentId === undefined && (await settingsOf(host)).cacheBand.enabled) {
+            await mark(host, "compacted");
             void scan(host);
         }
     },
@@ -147,7 +171,7 @@ export const cacheBand: Feature = {
 
 /** The `ended` mark, so other sessions stop counting this one down. */
 export async function markEnded(host: Host): Promise<void> {
-    await mark(host, true).catch(() => undefined);
+    await mark(host, "ended").catch(() => undefined);
 }
 
 /** Focuses the cmux pane the row's session runs in (`tools claude cmux focus`); says so when no pane has it. */
@@ -181,6 +205,14 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
         const left = row.expiresAt - now;
         const name = row.own ? "cache" : `${row.label} cache`;
 
+        if (row.compacted) {
+            return (
+                <Text key={row.sessionId} dimColor>
+                    cache compacted
+                </Text>
+            );
+        }
+
         if (left <= 0) {
             return row.own ? (
                 <Text key={row.sessionId} dimColor>
@@ -198,9 +230,21 @@ export async function cacheRow(host: Host, ui: ElementTable): Promise<RenderElem
                 <Text dimColor>{`${name} ${Math.ceil(left / 60_000)}m`}</Text>
             );
 
+        // The own chip also counts down to the idle compaction, which comes before the cache runs out.
+        const due = row.own ? idleDueAt() : undefined;
+        const idle =
+            due !== undefined && due > now ? (
+                <Text color={due - now <= warnMs ? "cyan" : undefined} dimColor={due - now > warnMs}>
+                    {` · AC in ${shortDuration(due - now)}`}
+                </Text>
+            ) : null;
+
         // Another session's chip is a Button: a press focuses the cmux pane that session runs in.
         return row.own ? (
-            <Box key={row.sessionId}>{text}</Box>
+            <Box key={row.sessionId}>
+                {text}
+                {idle}
+            </Box>
         ) : (
             <Button key={row.sessionId} plain onPress={() => void focusSession(host, row)}>
                 {text}

@@ -18,7 +18,7 @@ import { cacheBand, cacheRow, markEnded } from "./cache-band";
 import { decisions } from "./decisions";
 import { gitBand, gitRow } from "./git-band";
 import { hookLedger, hooksChip, ledgerClassic } from "./hook-ledger";
-import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice } from "./idle";
+import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice, setIdleDueAt } from "./idle";
 import { linksStep, rememberToolPaths } from "./links";
 import {
     type CallSection,
@@ -104,10 +104,12 @@ let idleTimer: Timer | undefined;
 function stopIdleTimer(): void {
     idleTimer?.cancel();
     idleTimer = undefined;
+    setIdleDueAt(undefined);
 }
 
 async function compactIfIdle($: EngineInterface): Promise<void> {
     idleTimer = undefined;
+    setIdleDueAt(undefined);
 
     // Read again at the fire time, so `config set mods.idleCompact.enabled false` stops a timer already armed.
     const host = hostOf($);
@@ -485,9 +487,14 @@ export const register: Register = (on) => {
             const settings = idleCompactSettings(await readHooksFile(host, await agentsDir(host)));
 
             if (settings.enabled) {
-                idleTimer = $.clock.after(settings.minutes * 60_000, () => {
+                const ms = settings.minutes * 60_000;
+                idleTimer = $.clock.after(ms, () => {
                     void compactIfIdle($);
                 });
+
+                // The band shows the countdown only when the timer will compact: a small context is skipped at fire time.
+                const tokens = (await $.session.usage().catch(() => undefined))?.context.tokens;
+                setIdleDueAt(tokens === undefined || tokens >= settings.minTokens ? Date.now() + ms : undefined);
             }
         }
 
@@ -498,8 +505,9 @@ export const register: Register = (on) => {
         return done;
     });
 
-    on("session.compact", async (_$, e, next) => {
+    on("session.compact", async ($, e, next) => {
         const result = await next(e);
+        const host = hostOf($);
 
         // The person's /compact, the engine's own auto or idle compaction: nothing is left to save.
         if (compactionEndsIdleWait({ agentId: e.agentId, trigger: e.trigger, skipped: result.skip !== undefined })) {
@@ -508,7 +516,7 @@ export const register: Register = (on) => {
 
         if (result.skip === undefined) {
             for (const feature of FEATURES) {
-                feature.compacted?.(e.agentId);
+                await feature.compacted?.(host, e.agentId);
             }
         }
 
@@ -592,9 +600,13 @@ function topRow(ui: ElementTable, git: RenderElement | null, hooks: RenderElemen
 
     return (
         <Box key="band-top" flexDirection="row">
-            {git}
+            <Box flexShrink={1} minWidth={0} overflow="hidden">
+                {git}
+            </Box>
             <Box flexGrow={1} />
-            {hooks}
+            <Box flexShrink={0} marginLeft={1}>
+                {hooks}
+            </Box>
         </Box>
     );
 }

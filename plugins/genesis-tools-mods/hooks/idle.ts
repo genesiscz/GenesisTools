@@ -16,6 +16,17 @@ export interface IdleCompactSettings {
  */
 export const IDLE_COMPACT_DEFAULTS: IdleCompactSettings = { enabled: true, minutes: 56, minTokens: 200_000 };
 
+let dueAt: number | undefined;
+
+/** When the armed idle compaction fires (ms since the epoch), or `undefined` while none will: the cache band shows it. */
+export function idleDueAt(): number | undefined {
+    return dueAt;
+}
+
+export function setIdleDueAt(at: number | undefined): void {
+    dueAt = at;
+}
+
 /** The start of the notice the mod appends. GenesisClaude's session-analyzer `idle-compact.ts scan` counts it. */
 export const IDLE_NOTICE = "Compacted while idle";
 

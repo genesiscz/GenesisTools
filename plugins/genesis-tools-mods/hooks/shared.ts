@@ -139,7 +139,7 @@ export interface Feature {
     /** After a turn completed, the main loop's or a subagent's (`e.agentId`). */
     afterTurn?: (host: Host, e: TurnCompleteInput) => Promise<void>;
     /** After a loop compacted (the main loop when `agentId` is undefined). */
-    compacted?: (agentId: string | undefined) => void;
+    compacted?: (host: Host, agentId: string | undefined) => void | Promise<void>;
     /** The sidebars it opens from the band (`sidebar.tsx`). */
     sidebars?: Sidebar[];
 }

@@ -68,6 +68,8 @@ export interface CacheRow {
     label: string;
     expiresAt: number;
     own: boolean;
+    /** The session compacted after its last turn: its next prompt starts a new, small context, so no countdown. */
+    compacted: boolean;
 }
 
 /** The rows of the cache band: this session's, then other sessions under the warning threshold. */

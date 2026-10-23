@@ -4,7 +4,7 @@ import { bareDescription, lastSaidOf } from "../hooks/agents-band";
 import { quoteOf } from "../hooks/ask-row";
 import { cacheRowsOf } from "../hooks/cache-band";
 import { openDecisions, stagedMessage } from "../hooks/decisions";
-import { checkCounts, checksOf, hubUrlOf, parseNumstat, parseStatus } from "../hooks/git-band";
+import { checkCounts, checksOf, hubUrlOf, middleCut, parseNumstat, parseStatus } from "../hooks/git-band";
 import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
 import { targetFor } from "../hooks/links";
 import { toolLabel } from "../hooks/spinner";
@@ -41,6 +41,8 @@ test("git band: status line and CI counts", async () => {
     expect(parseStatus("## HEAD (no branch)\n").branch).toBe("detached");
     expect(parseNumstat("12\t3\ta.ts\n-\t-\tlogo.png\n0\t9\tb.ts\n")).toEqual({ added: 12, removed: 12 });
     expect(parseNumstat("")).toEqual({ added: 0, removed: 0 });
+    expect(middleCut("feat/2026-10-13-enhancements-unified", 30)).toBe("feat/2026-10-13…ements-unified");
+    expect(middleCut("main", 30)).toBe("main");
     expect(
         checkCounts([
             { conclusion: "SUCCESS" },
@@ -125,6 +127,15 @@ test("cache band: own row first, others only inside the warning window", async (
         "own",
         "other-soon",
         "other-late",
+    ]);
+
+    // A compaction after the last turn: the own row says so, and another session gives no warning.
+    const compacted = [
+        { sessionId: "own", label: "a", lastAt: now - 50 * minute, ttlMs: 60 * minute, compactedAt: now - 2 * minute },
+        { sessionId: "other", label: "b", lastAt: now - 55 * minute, ttlMs: 60 * minute, compactedAt: now - minute },
+    ];
+    expect(cacheRowsOf(compacted, "own", 10 * minute, now)).toEqual([
+        { sessionId: "own", label: "a", expiresAt: now + 10 * minute, own: true, compacted: true },
     ]);
 });
 
