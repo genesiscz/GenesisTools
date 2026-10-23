@@ -93,6 +93,12 @@ public enum WidgetFeatureSettings {
                     ) {
                         WidgetModuleSettings(model: model, modules: modules)
                     },
+                    NativeSettingsPage(
+                        id: "widgets.recording", title: "Screen recording", symbol: "record.circle",
+                        tint: .red, subtitle: "Where the recording controls float and how a recording looks."
+                    ) {
+                        RecordingSettingsView()
+                    },
                 ], order: 30),
             NativeSettingsSection(
                 id: "dictation", title: "Dictation",

@@ -70,6 +70,7 @@ import {
     readShelfAttachment,
     removeShelfItem,
     stageShelfImage,
+    stageShelfMedia,
 } from "../widget/shelf";
 import {
     claudeAssistantText,
@@ -2389,6 +2390,36 @@ test("explicit shelf images deduplicate while general image files remain file re
     await writeFile(bad, "not image bytes");
     await expect(stageShelfImage({ root: directory, input: bad })).rejects.toThrow();
     expect((await listWidgetShelf(directory)).items).toHaveLength(2);
+});
+
+test("a screen recording stages as a video capture and attaches to a draft as that video asset", async () => {
+    const directory = await root();
+    const input = join(directory, "recording-20261023-221500.mp4");
+    await writeFile(input, "fixture-recording");
+    const probe = spyOn(videos, "probeVideo").mockImplementation(async ({ input: path }) => ({
+        path: resolve(path),
+        durationUs: 12_000_000,
+        width: 1280,
+        height: 720,
+        displayWidth: 1280,
+        displayHeight: 720,
+        rotation: 0,
+        bytes: (await files.stat(path)).size,
+        codec: "fixture",
+    }));
+    try {
+        const item = await stageShelfMedia({ root: directory, input, name: "Screen recording.mp4", type: "video" });
+        expect(item).toMatchObject({ kind: "capture", name: "Screen recording.mp4", bytes: 17 });
+        const asset = (await readWidgetState(directory)).assets[item.assetId!];
+        expect(asset).toMatchObject({ type: "video", durationUs: 12_000_000, status: "pending" });
+        expect(await attachShelfItem({ root: directory, id: item.id, key: widgetSessionKey(target) })).toEqual({
+            added: true,
+            mode: "image",
+        });
+        expect((await readWidgetState(directory)).drafts[widgetSessionKey(target)].assetIds).toEqual([item.assetId!]);
+    } finally {
+        probe.mockRestore();
+    }
 });
 
 test("cancel after producing a capture cleans temporary bytes and allows restart", async () => {

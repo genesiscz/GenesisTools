@@ -18,6 +18,7 @@ import {
     readShelfAttachment,
     removeShelfItem,
     stageShelfImage,
+    stageShelfMedia,
 } from "./lib/widget/shelf";
 import { discoverWidgetCatalog, widgetSnapshot } from "./lib/widget/snapshot";
 import { watchWidget } from "./lib/widget/watch";
@@ -191,6 +192,28 @@ shelf
         await withInterrupt(
             async (signal) => {
                 out.result(await stageShelfImage({ root: command.optsWithGlobals().stateRoot, input, signal }));
+            },
+            { handleTermination: true }
+        );
+    });
+shelf
+    .command("video <input>")
+    .description(
+        "Stage a screen recording for later attachment; attached, it gets the frame review a pasted video gets"
+    )
+    .option("--name <name>", "The name the shelf shows")
+    .action(async (input: string, options: { name?: string }, command) => {
+        await withInterrupt(
+            async (signal) => {
+                out.result(
+                    await stageShelfMedia({
+                        root: command.optsWithGlobals().stateRoot,
+                        input,
+                        name: options.name,
+                        signal,
+                        type: "video",
+                    })
+                );
             },
             { handleTermination: true }
         );

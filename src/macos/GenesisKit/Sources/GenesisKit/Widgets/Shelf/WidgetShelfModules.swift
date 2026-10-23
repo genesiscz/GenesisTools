@@ -88,6 +88,13 @@ struct WidgetShelfModuleView: View {
                 }
                 .disabled(store.isBusy && !store.isCapturing)
                 .accessibilityIdentifier("shelf-capture")
+                Button(action: store.isRecording ? store.showRecordingControls : store.recordScreen) {
+                    Label(store.isRecording ? "Recording…" : "Record screen…", systemImage: "record.circle")
+                }
+                .disabled(store.isCapturing || !store.canRecord)
+                .instantTooltip(store.isRecording ? "Show the recording's controls"
+                                : "Record a window, an app or a display, then keep the movie here")
+                .accessibilityIdentifier("shelf-record")
             } else {
                 Button { store.chooseFiles() } label: { Label("Add files", systemImage: "plus") }
                     .disabled(store.isBusy)
@@ -188,7 +195,8 @@ private struct WidgetShelfRow: View {
     @State private var recipientSelection: WidgetShelfRecipientSelection?
 
     static func preview(_ item: WidgetShelfItem) -> MediaPreviewItem {
-        MediaPreviewItem(id: item.id, path: item.path, name: item.name, kind: item.kind == .capture ? .image : nil)
+        MediaPreviewItem(id: item.id, path: item.path, name: item.name,
+                         kind: item.kind == .capture ? (item.isVideo ? .video : .image) : nil)
     }
 
     var body: some View {
@@ -208,7 +216,8 @@ private struct WidgetShelfRow: View {
             Spacer(minLength: 0)
             IconButton(
                 systemName: "tray.and.arrow.down",
-                tooltip: item.kind == .capture ? "Attach image to an inbox draft" : "Add file reference to an inbox draft"
+                tooltip: item.kind == .capture ? "Attach \(item.isVideo ? "video" : "image") to an inbox draft"
+                    : "Add file reference to an inbox draft"
             ) {
                 recipientSelection = WidgetShelfRecipientSelection(item: item, recipients: store.recipients)
             }
@@ -258,7 +267,8 @@ private struct WidgetShelfRecipientPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(selection.item.kind == .capture ? "Attach image to inbox" : "Add file reference to inbox")
+            Text(selection.item.kind == .capture ? "Attach \(selection.item.isVideo ? "video" : "image") to inbox"
+                 : "Add file reference to inbox")
                 .font(.system(size: 13, weight: .semibold))
             Text("This adds to the draft. It does not send.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)

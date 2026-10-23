@@ -1757,46 +1757,59 @@ public final class WidgetModel: ObservableObject {
     static let screenRecordingRefused = "macOS refused the screenshot: Screen Recording is off for this app. Turn it on "
         + "in System Settings → Privacy & Security → Screen & System Audio Recording, then try again."
 
-    /// A video recording for the reply box runs: the camera's video sibling shows Stop.
+    /// A screen recording for the reply box runs (from the picker until it ends): the video button shows Stop.
     @Published public var recordingVideo = false
 
-    /// The video button: records the app the user was in (the widget panel never takes the front) with the
-    /// ScreenCaptureKit recorder of `tools control capture record`, until Stop or 90 s, and adds the movie to the draft
-    /// as a video, with the frame review a pasted video gets (Martin, 2026-10-23: "wheres the button to capture the
-    /// video?"). A second press stops it.
+    /// The recorder behind the video button: GenesisKit's generic target picker, floating controls and session.
+    public private(set) lazy var screenRecorder = ScreenRecorder(bridge: bridge)
+    private var screenRecorderActivity: AnyCancellable?
+
+    /// The video button: lets the person pick a window, an app or a display, records it with floating controls next to
+    /// it (pause, switch what is recorded, restart, "Stop and paste", stop and discard), and adds the movie to this
+    /// session's draft as a video, with the frame review a pasted video gets (Martin, 2026-10-23: "it should let me
+    /// pick what i want to record ... a widget somewhere around the recording panel"). A second press stops and pastes.
     public func toggleVideoCapture() {
         if recordingVideo {
-            action(["action": "record-video-stop"])
+            screenRecorder.stopAndUse()
             return
         }
-        guard let app = NSWorkspace.shared.frontmostApplication,
-              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else {
-            error = "Bring the app to record to the front first; the widget records that app's windows."
-            return
-        }
+        guard !stopping, !selectedKey.isEmpty else { return }
         let key = selectedKey
-        let need = PermissionNeed(
-            .screenRecording,
-            reason: "The video button records the windows of the app you were using and attaches the movie to this session's draft.",
-            grantWorksInNewProcess: true,
-            onGranted: { [weak self] in self?.toggleVideoCapture() })
-        recordingVideo = true
-        notice = "Recording \(app.localizedName ?? "the front app"). Press the video button again to stop (at most 90 s)."
-        Task { [weak self] in
-            guard let self else { return }
-            defer { self.recordingVideo = false }
-            guard await self.screenCaptureGate(need) else { return }
-            do {
-                _ = try await self.call(
-                    ["action": "record-video", "key": .string(key), "app": .string(String(app.processIdentifier))],
-                    timeoutSeconds: 150)
-                self.notice = "The video is in the draft. Review its frames before you send it."
-            } catch where WidgetCaptureError.isScreenRecordingDenied(error) {
-                if await self.screenCaptureGate(need) { self.report(ToolsBridgeError.refused(Self.screenRecordingRefused)) }
-            } catch {
-                self.report(error)
-            }
+        let recorder = screenRecorder
+        screenRecorderActivity = recorder.$isActive.removeDuplicates().sink { [weak self] active in
+            self?.recordingVideo = active
         }
+        recorder.begin(host: ScreenRecordingHost(
+            useTitle: "Stop and paste",
+            permissionReason: "The video button records the window, app or display you choose and adds the movie to this session's draft.",
+            onUse: { [weak self] movie in
+                guard let self, !self.stopping else { return }
+                try await self.importRecording(movie, to: key)
+            },
+            onDiscard: { [weak self] in self?.notice = "Recording discarded. Nothing was added to the draft." },
+            onError: { [weak self] message in self?.report(ToolsBridgeError.refused(message)) },
+            onStart: { [weak self] in self?.collapse() }))
+    }
+
+    /// Imports a finished recording into the draft of `key` behind every pending mutation, and removes the recorder's
+    /// file once the draft holds its copy. A failed import keeps the file and throws, so the recorder names where it is.
+    func importRecording(_ movie: URL, to key: String) async throws {
+        importing += 1
+        defer { importing -= 1 }
+        let previous = mutationTask
+        let imported = Task { [weak self] in
+            await previous?.value
+            guard let self else { throw CancellationError() }
+            _ = try await self.call([
+                "action": "import", "key": .string(key), "input": .string(movie.path), "type": "video",
+            ], timeoutSeconds: 300)
+        }
+        mutationTask = Task {
+            do { try await imported.value } catch { PerfLog.mark("widget.recording import \(error.localizedDescription)") }
+        }
+        try await imported.value
+        removeStaging(movie)
+        notice = "The recording is in the draft. Review its frames before you send it."
     }
 
     /// The panel steps aside for the selection, then reopens with the new attachment in the draft. Escape returns

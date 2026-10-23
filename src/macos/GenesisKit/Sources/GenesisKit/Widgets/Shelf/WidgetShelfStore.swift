@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import CoreGraphics
 import SwiftUI
 
@@ -13,6 +14,9 @@ public struct WidgetShelfItem: Codable, Identifiable, Equatable, Sendable {
     public let bytes: Int64
     public let createdAt: Double
     public let assetId: String?
+
+    /// A capture that is a screen recording rather than a screenshot (by its file's extension).
+    public var isVideo: Bool { MediaKind.of(path: path) == .video }
 }
 
 struct WidgetShelfAttachment: Codable, Sendable {
@@ -57,6 +61,11 @@ public final class WidgetShelfStore: ObservableObject {
     @Published public private(set) var notice: String?
     /// True once the first inventory read finished, so a view can tell a first load from an item arriving.
     @Published public private(set) var loaded = false
+    /// A screen recording started from the Capture shelf runs (from its picker until it ends).
+    @Published public private(set) var isRecording = false
+    /// "Record screen…": GenesisKit's generic recorder; "Stop and save" stages the movie here as a capture.
+    private let screenRecorder: ScreenRecorder?
+    private var recorderActivity: AnyCancellable?
     private let request: ([String], Int) async throws -> Data
     private let recipientSource: () -> [WidgetSession]
     private let didAttach: (WidgetSession) -> Void
@@ -103,6 +112,7 @@ public final class WidgetShelfStore: ObservableObject {
             }
             return Data(result.stdout.utf8)
         }
+        screenRecorder = ScreenRecorder(bridge: bridge)
         recipientSource = recipients
         self.didAttach = didAttach
         self.onCaptureWillBegin = onCaptureWillBegin
@@ -115,6 +125,7 @@ public final class WidgetShelfStore: ObservableObject {
         request: @escaping ([String], Int) async throws -> Data,
         screenCaptureAccess: @escaping () -> Bool = { true },
         permissionGate: @escaping @MainActor (PermissionNeed) async -> Bool = { _ in true },
+        screenRecorder: ScreenRecorder? = nil,
         recipients: @escaping () -> [WidgetSession] = { [] },
         didAttach: @escaping (WidgetSession) -> Void = { _ in },
         onCaptureWillBegin: @escaping () -> Void = {},
@@ -123,6 +134,7 @@ public final class WidgetShelfStore: ObservableObject {
         attachToDraft: ((WidgetShelfItem, WidgetSession) async throws -> Void)? = nil
     ) {
         self.request = request
+        self.screenRecorder = screenRecorder
         self.screenCaptureAccess = screenCaptureAccess
         self.permissionGate = permissionGate
         recipientSource = recipients
@@ -294,6 +306,45 @@ public final class WidgetShelfStore: ObservableObject {
     public func cancelCapture() {
         guard isCapturing else { return }
         operation?.cancel()
+    }
+
+    /// Whether "Record screen…" can run here (the store has a recorder; previews and tests may not).
+    public var canRecord: Bool { screenRecorder != nil && !stopped }
+
+    /// "Record screen…": the person picks a window, an app or a display, records it with the floating controls, and
+    /// "Stop and save" stages the movie here as a capture, ready for any inbox with the frame review of a video.
+    public func recordScreen() {
+        guard !stopped, let screenRecorder else { return }
+        recorderActivity = screenRecorder.$isActive.removeDuplicates().sink { [weak self] active in
+            self?.isRecording = active
+        }
+        screenRecorder.begin(host: ScreenRecordingHost(
+            useTitle: "Stop and save",
+            permissionReason: "Record screen records the window, app or display you choose and keeps the movie on the shelf until you choose an inbox.",
+            onUse: { [weak self] movie in try await self?.stageRecording(movie) },
+            onDiscard: { [weak self] in self?.notice = "Recording discarded." },
+            onError: { [weak self] message in self?.report(ToolsBridgeError.refused(message)) },
+            onStart: { [weak self] in self?.onCaptureWillBegin() }))
+    }
+
+    public func showRecordingControls() {
+        screenRecorder?.showControls()
+    }
+
+    /// Stages a finished recording as a capture, then removes the recorder's file (the shelf keeps its own copy).
+    func stageRecording(_ movie: URL) async throws {
+        guard !stopped else { return }
+        let stamp = Date().formatted(.dateTime.hour().minute().second())
+        let data = try await request(["video", movie.path, "--name", "Screen recording \(stamp).mp4"], 300)
+        let item = try JSONDecoder().decode(WidgetShelfItem.self, from: data)
+        guard item.kind == .capture else { throw ToolsBridgeError.refused("The recording was not staged as a capture.") }
+        do { try FileManager.default.removeItem(at: movie) } catch {
+            GenesisKit.log("widget shelf: recording cleanup \(error.localizedDescription)")
+        }
+        guard !stopped else { return }
+        notice = "Recording staged. Choose an inbox when you are ready."
+        refresh()
+        onCaptureStaged()
     }
 
     public func importFiles(_ urls: [URL], asImages: Bool = false) {

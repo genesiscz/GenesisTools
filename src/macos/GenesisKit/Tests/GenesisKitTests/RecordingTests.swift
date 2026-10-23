@@ -413,3 +413,82 @@ final class RecordingRenderTests: XCTestCase {
         }
     }
 }
+
+/// What the two hosts do with a finished movie: the widget imports it into the session's draft as a video, the
+/// Capture shelf stages it as a capture. Each removes the recorder's file only once its own copy exists.
+@MainActor
+final class RecordingHostTests: XCTestCase {
+    private var suites: [String] = []
+
+    override func tearDown() {
+        for suite in suites { UserDefaults.standard.removePersistentDomain(forName: suite) }
+        super.tearDown()
+    }
+
+    private func movie() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("recording-\(UUID().uuidString).mp4")
+        try Data("fixture movie".utf8).write(to: url)
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        return url
+    }
+
+    private func model() -> WidgetModel {
+        let suite = "genesiskit-tests-recording-" + UUID().uuidString
+        suites.append(suite)
+        let defaults = UserDefaults(suiteName: suite)!
+        return WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
+                           defaults: defaults, appearance: NativeSettingsAppearance(
+                               defaults: defaults, notificationNamespace: suite, observeExternalChanges: false))
+    }
+
+    func testStopAndPasteImportsTheMovieIntoTheDraftAsAVideo() async throws {
+        let model = model()
+        defer { model.stop() }
+        var requests: [WidgetJSON] = []
+        model.actionRunner = { request in
+            requests.append(request)
+            return ["ok": true]
+        }
+        let file = try movie()
+        try await model.importRecording(file, to: "local:codex:fixture:")
+        XCTAssertEqual(requests, [[
+            "action": "import", "key": "local:codex:fixture:", "input": .string(file.path), "type": "video",
+        ]])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path), "the draft holds its copy; the recorder's file goes")
+        XCTAssertEqual(model.importing, 0)
+    }
+
+    func testAFailedImportKeepsTheMovieAndThrows() async throws {
+        let model = model()
+        defer { model.stop() }
+        model.actionRunner = { _ in throw ToolsBridgeError.refused("Video exceeds the 10-minute limit") }
+        let file = try movie()
+        do {
+            try await model.importRecording(file, to: "local:codex:fixture:")
+            XCTFail("a refused import throws")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("10-minute"))
+        }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path), "the movie stays where the recorder put it")
+    }
+
+    func testStopAndSaveStagesTheMovieAsACaptureOnTheShelf() async throws {
+        var calls: [[String]] = []
+        var staged = 0
+        let file = try movie()
+        let captured = #"{"id":"rec-1","kind":"capture","name":"Screen recording.mp4","path":"/fixture/assets/rec.mp4","sha256":"h","bytes":13,"createdAt":1,"assetId":"a1"}"#
+        let store = WidgetShelfStore(request: { args, _ in
+            calls.append(args)
+            return Data((args.first == "video" ? captured : #"{"revision":0,"items":[],"statePath":"/fixture/state.json"}"#).utf8)
+        }, onCaptureStaged: { staged += 1 })
+        defer { store.stop() }
+        try await store.stageRecording(file)
+        let video = try XCTUnwrap(calls.first { $0.first == "video" })
+        XCTAssertEqual(Array(video.prefix(3)), ["video", file.path, "--name"])
+        XCTAssertTrue(video[3].hasPrefix("Screen recording "))
+        XCTAssertEqual(staged, 1, "the shelf reopens to show the new capture")
+        XCTAssertEqual(store.notice, "Recording staged. Choose an inbox when you are ready.")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertFalse(store.canRecord, "a store made without a recorder offers no Record screen button")
+    }
+}

@@ -30,7 +30,6 @@ import {
     widgetPreferencesSchema,
     widgetTargetSchema,
 } from "./types";
-import { recordWidgetVideo, stopWidgetVideo } from "./video-capture";
 
 export const widgetActionSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("selection"), key: z.string().nullable() }),
@@ -67,8 +66,6 @@ export const widgetActionSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("append-draft"), key: z.string(), text: z.string().max(64_000) }),
     z.object({ action: z.literal("import"), key: z.string(), input: z.string(), type: z.enum(["image", "video"]) }),
     z.object({ action: z.literal("capture"), key: z.string() }),
-    z.object({ action: z.literal("record-video"), key: z.string(), app: z.string().min(1) }),
-    z.object({ action: z.literal("record-video-stop") }),
     z.object({ action: z.literal("remove-asset"), key: z.string(), id: z.string() }),
     z.object({ action: z.literal("video-settings"), id: z.string(), settings: videoSettingsSchema }),
     z.object({ action: z.literal("confirm-video"), id: z.string(), revision: z.number().int() }),
@@ -214,24 +211,6 @@ export async function performWidgetAction({
                 }
             }
         }
-        case "record-video": {
-            const recorded = await recordWidgetVideo({ root, app: request.app, signal });
-            try {
-                return await performWidgetAction({
-                    root,
-                    input: { action: "import", key: request.key, type: "video", input: recorded.path },
-                    signal,
-                });
-            } finally {
-                try {
-                    await unlink(recorded.path);
-                } catch (error) {
-                    logger.debug({ error, path: recorded.path }, "Video staging cleanup ended");
-                }
-            }
-        }
-        case "record-video-stop":
-            return stopWidgetVideo(root);
         case "remove-asset":
             return mutateWidgetState(root, (state) => {
                 const draft = state.drafts[request.key];

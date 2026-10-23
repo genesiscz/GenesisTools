@@ -221,16 +221,31 @@ export async function captureShelfImage({
     );
 }
 
-export async function stageShelfImage({
+export function stageShelfImage(options: {
+    root?: string;
+    input: string;
+    name?: string;
+    signal?: AbortSignal;
+}): Promise<ShelfItem> {
+    return stageShelfMedia({ ...options, type: "image" });
+}
+
+/**
+ * Stages a screenshot or a screen recording as a capture: a widget asset with no recipient yet. A video asset gets the
+ * same frame review a pasted video gets once it is attached to a draft.
+ */
+export async function stageShelfMedia({
     root,
     input,
     name,
     signal,
+    type,
 }: {
     root?: string;
     input: string;
     name?: string;
     signal?: AbortSignal;
+    type: "image" | "video";
 }): Promise<ShelfItem> {
     signal?.throwIfAborted();
     const digest = await sha256FileAsync(resolve(input), { signal });
@@ -248,11 +263,11 @@ export async function stageShelfImage({
         }
     }
 
-    const asset = await importWidgetAsset({ root, input, type: "image" });
+    const asset = await importWidgetAsset({ root, input, type });
     try {
         signal?.throwIfAborted();
-        if (asset.type !== "image") {
-            throw new Error("Capture did not produce an image");
+        if (asset.type !== type) {
+            throw new Error(`Capture did not produce ${type === "image" ? "an image" : "a video"}`);
         }
 
         const item: ShelfItem = {
@@ -261,7 +276,7 @@ export async function stageShelfImage({
             name: name ?? basename(input),
             path: asset.path,
             sha256: asset.sha256,
-            bytes: asset.bytes,
+            bytes: asset.type === "image" ? asset.bytes : (await stat(asset.path)).size,
             assetId: asset.id,
             createdAt: Date.now(),
         };
@@ -351,7 +366,7 @@ export async function readShelfAttachment({ root, id, key }: { root?: string; id
     const draft = state.drafts[key] ?? { text: "", assetIds: [] };
     if (item.kind === "capture") {
         if (!item.assetId || !state.assets[item.assetId]) {
-            throw new Error("The captured image is unavailable; capture it again");
+            throw new Error("The capture is unavailable; capture it again");
         }
 
         return { mode: "image" as const, assetId: item.assetId, draft };
@@ -382,7 +397,7 @@ export async function attachShelfItem({
         const draft = state.drafts[key] ?? { text: "", assetIds: [] };
         if (item.kind === "capture") {
             if (!item.assetId || !state.assets[item.assetId]) {
-                throw new Error("The captured image is unavailable; capture it again");
+                throw new Error("The capture is unavailable; capture it again");
             }
 
             const added = !draft.assetIds.includes(item.assetId);

@@ -1056,9 +1056,9 @@ public struct LiveWidgetView: View {
                     Image(systemName: model.recordingVideo ? "stop.circle.fill" : "video")
                 }
                 .foregroundStyle(model.recordingVideo ? .red : .secondary)
-                .instantTooltip(model.recordingVideo ? "Stop the recording and add the video to the draft"
-                                : "Record a video of the app you are in (up to 90 s)")
-                .accessibilityLabel(model.recordingVideo ? "Stop video recording" : "Record video")
+                .instantTooltip(model.recordingVideo ? "Stop the recording and paste it into the draft"
+                                : "Record a window, an app or a display (up to 10 min)")
+                .accessibilityLabel(model.recordingVideo ? "Stop and paste the recording" : "Record the screen")
                 voiceButton
                 Spacer()
                 Text(WidgetKeymap.mediaFooter).font(.system(size: 9)).foregroundStyle(.tertiary)
