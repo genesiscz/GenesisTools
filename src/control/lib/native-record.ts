@@ -98,6 +98,14 @@ export function nativeCaptureArgv(cap: CaptureSpec, outDir: string): string[] {
         argv.push("--video-out", cap.videoOut);
     }
 
+    if (cap.maxFrames !== undefined) {
+        argv.push("--max-frames", String(cap.maxFrames));
+    }
+
+    if (cap.excludeWindowIds?.length) {
+        argv.push("--exclude-window-ids", cap.excludeWindowIds.join(","));
+    }
+
     return argv;
 }
 
@@ -112,6 +120,7 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         ["activeFps", cap.activeFps, 0.5, 30],
         ["idleFps", cap.idleFps, 0.1, 5],
         ["threshold", cap.threshold, 0, 100],
+        ["maxFrames", cap.maxFrames, 1, 5000],
     ];
     for (const [name, value, min, max] of numbers) {
         if (value !== undefined && (!Number.isFinite(value) || value < min || value > max)) {
@@ -132,6 +141,8 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
         cap.transparent,
         cap.codec,
         cap.indicator,
+        cap.maxFrames,
+        cap.excludeWindowIds,
     ];
     if (cap.backend === "peekaboo" && (cap.mode === "isolated" || extended.some((value) => value !== undefined))) {
         throw new Error(
@@ -163,6 +174,14 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
             cap.windowIds.some((id) => !Number.isInteger(id) || id <= 0 || id > 0xffffffff))
     ) {
         throw new Error("windowIds must contain positive CG window IDs");
+    }
+
+    if (
+        cap.excludeWindowIds !== undefined &&
+        (!Array.isArray(cap.excludeWindowIds) ||
+            cap.excludeWindowIds.some((id) => !Number.isInteger(id) || id <= 0 || id > 0xffffffff))
+    ) {
+        throw new Error("excludeWindowIds must contain positive CG window IDs");
     }
 
     if (

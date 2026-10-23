@@ -263,15 +263,22 @@ export function vitrinkaRefusal(input: {
     return undefined;
 }
 
-/** `signal` is the run's cancellation; `stopGraceMs` exists for tests of the SIGINT-then-kill escalation. */
+/**
+ * `signal` is the run's cancellation; `stopGraceMs` exists for tests of the SIGINT-then-kill escalation.
+ * `onRecording` runs once the recorder wrote its first frame, which is when the movie's clock starts: arming (a
+ * private recorder copy, ScreenCaptureKit's enumeration, one stream per window) takes seconds, and a host that shows
+ * "recording" before it would count time that is not in the movie.
+ */
 export async function runCapturePlanWithSignal({
     plan,
     signal,
     stopGraceMs = RECORDER_STOP_GRACE_MS,
+    onRecording,
 }: {
     plan: Plan;
     signal: AbortSignal;
     stopGraceMs?: number;
+    onRecording?: () => void;
 }): Promise<RunResult> {
     const throwIfCancelled = (stage: string) => {
         if (signal.aborted) {
@@ -399,6 +406,9 @@ export async function runCapturePlanWithSignal({
     }
     // non-null: the retry block above throws when no attempt produced a dir
     const sessionDir = attempt.sessionDir!;
+    if (attempt.sessionDir && !signal.aborted) {
+        onRecording?.();
+    }
 
     const t0 = Date.now();
     const fired: FiredAction[] = [];

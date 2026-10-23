@@ -104,6 +104,25 @@ describe("nativeCaptureArgv", () => {
             "/tmp/v.mp4",
         ]);
     });
+
+    it("passes the PNG frame cap and the windows a movie must never show", () => {
+        const argv = nativeCaptureArgv(
+            {
+                mode: "screen",
+                screenIndex: 0,
+                duration: 5,
+                maxFrames: 1,
+                excludeWindowIds: [71, 72],
+                videoOut: "/v.mp4",
+            },
+            "/o"
+        );
+        expect(argv.slice(-4)).toEqual(["--max-frames", "1", "--exclude-window-ids", "71,72"]);
+        expect(() => validateCaptureOptions({ mode: "screen", duration: 1, excludeWindowIds: [0] })).toThrow(
+            /excludeWindowIds/
+        );
+        expect(() => validateCaptureOptions({ mode: "screen", duration: 1, maxFrames: 0 })).toThrow(/maxFrames/);
+    });
 });
 
 describe("parseScreenList", () => {

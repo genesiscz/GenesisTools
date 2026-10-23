@@ -9,6 +9,7 @@ import { nativeCapturePreflight } from "../lib/capture-native";
 import { CAPTURE_HELP, type Plan } from "../lib/capture-plan";
 import { CaptureRunError, type RunResult, runCapturePlan, runClickmap, runRecrop } from "../lib/capture-runner";
 import { addCaptureFlags, type CaptureFlags, captureFromFlags, resolveCaptureEnumFlags } from "../lib/native-record";
+import { registerCaptureSessionCommands } from "./capture-session";
 
 function fail(msg: string, exitCode = 2): never {
     console.error(`capture-with-actions: ${msg}`);
@@ -97,6 +98,8 @@ export function registerCaptureCommands(program: Command): void {
                 fail(e instanceof Error ? e.message : String(e));
             }
         });
+
+    registerCaptureSessionCommands(capture);
 
     capture
         .command("recrop <result> <plan>")

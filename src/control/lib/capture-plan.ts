@@ -452,6 +452,10 @@ export interface CaptureSpec {
     idleFps?: number;
     threshold?: number;
     videoOut?: string;
+    /** Most PNG frames the recorder writes beside the movie (1–5000, recorder default 800). */
+    maxFrames?: number;
+    /** CG window ids the movie never shows, such as a host's own recording controls (native backend). */
+    excludeWindowIds?: number[];
     countdownSec?: number;
     noRemote?: boolean;
     captureEngine?: "cg" | "sc";
