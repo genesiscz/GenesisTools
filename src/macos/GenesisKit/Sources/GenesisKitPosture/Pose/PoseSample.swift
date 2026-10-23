@@ -55,6 +55,15 @@ public enum PoseEngineKind: String, CaseIterable, Codable, Sendable {
     case headphones
 }
 
+/// Which Vision request placed the shoulders and the neck. The two place them differently (3D about a third
+/// narrower, at another tilt), so a baseline is only comparable with readings from the same request.
+public enum PoseShoulderSource: String, CaseIterable, Codable, Sendable {
+    /// `VNDetectHumanBodyPoseRequest`.
+    case body2D
+    /// `VNDetectHumanBodyPose3DRequest`, projected into the image.
+    case body3D
+}
+
 /// One reading of the user's pose. Engines fill what they can see; every field is optional except the
 /// time and the engine.
 public struct PoseSample: Equatable, Codable, Sendable {
@@ -71,10 +80,16 @@ public struct PoseSample: Equatable, Codable, Sendable {
     public var imageAspect: Double
     /// True when the frame was too dark to judge. A dark frame is "unknown", never "away".
     public var lowLight: Bool
+    /// The request behind the shoulders and the neck. Nil when the sample has no shoulders, or when the engine does
+    /// not say (test samples).
+    public var shoulderSource: PoseShoulderSource?
+    /// Seconds since the request behind the shoulders ran: 0 when it ran on this frame. A throttled 3D request is
+    /// reused for several seconds, so this tells a held reading from a fresh one.
+    public var shoulderAge: TimeInterval?
 
     public init(time: TimeInterval, engine: PoseEngineKind, joints: [PoseJoint: PoseJointPoint] = [:],
                 face: PoseFace? = nil, headphonePitch: Double? = nil, imageAspect: Double = 4.0 / 3.0,
-                lowLight: Bool = false) {
+                lowLight: Bool = false, shoulderSource: PoseShoulderSource? = nil, shoulderAge: TimeInterval? = nil) {
         self.time = time
         self.engine = engine
         self.joints = joints
@@ -82,7 +97,12 @@ public struct PoseSample: Equatable, Codable, Sendable {
         self.headphonePitch = headphonePitch
         self.imageAspect = imageAspect
         self.lowLight = lowLight
+        self.shoulderSource = shoulderSource
+        self.shoulderAge = shoulderAge
     }
+
+    /// Whether the shoulders were read on this frame rather than held from an earlier 3D request.
+    public var hasFreshShoulders: Bool { shoulderAge == 0 }
 
     /// The lowest confidence a joint needs to count. Dorso and Apple's own samples gate at 0.3.
     public static let minimumConfidence = 0.3
@@ -112,7 +132,7 @@ extension Dictionary where Key == PoseJoint, Value == PoseJointPoint {
 
 extension PoseSample {
     private enum CodingKeys: String, CodingKey {
-        case time, engine, joints, face, headphonePitch, imageAspect, lowLight
+        case time, engine, joints, face, headphonePitch, imageAspect, lowLight, shoulderSource, shoulderAge
     }
 
     public init(from decoder: Decoder) throws {
@@ -125,6 +145,8 @@ extension PoseSample {
         headphonePitch = try container.decodeIfPresent(Double.self, forKey: .headphonePitch)
         imageAspect = try container.decodeIfPresent(Double.self, forKey: .imageAspect) ?? 4.0 / 3.0
         lowLight = try container.decodeIfPresent(Bool.self, forKey: .lowLight) ?? false
+        shoulderSource = try container.decodeIfPresent(PoseShoulderSource.self, forKey: .shoulderSource)
+        shoulderAge = try container.decodeIfPresent(TimeInterval.self, forKey: .shoulderAge)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -136,5 +158,7 @@ extension PoseSample {
         try container.encodeIfPresent(headphonePitch, forKey: .headphonePitch)
         try container.encode(imageAspect, forKey: .imageAspect)
         try container.encode(lowLight, forKey: .lowLight)
+        try container.encodeIfPresent(shoulderSource, forKey: .shoulderSource)
+        try container.encodeIfPresent(shoulderAge, forKey: .shoulderAge)
     }
 }

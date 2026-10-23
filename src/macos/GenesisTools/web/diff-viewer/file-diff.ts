@@ -34,3 +34,17 @@ export function parseFileDiff(file: FileSides): FileDiffMetadata {
 
     return fileDiff;
 }
+
+/**
+ * Drops every entry whose file id is not in `ids` (the file set the page shows now). The page's per-file caches keep
+ * whole file texts, so a long-lived review would hold every file it ever showed without this.
+ */
+export function keepOnlyFiles(ids: Set<string>, ...caches: Array<Map<string, unknown> | Set<string>>): void {
+    for (const cache of caches) {
+        for (const id of [...cache.keys()]) {
+            if (!ids.has(id)) {
+                cache.delete(id);
+            }
+        }
+    }
+}

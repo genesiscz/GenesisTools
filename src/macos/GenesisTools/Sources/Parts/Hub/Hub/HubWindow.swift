@@ -221,6 +221,7 @@ package func runHub(_ args: [String]) -> Never {
     installBrowserURLForwarder()
     if !request.isScripted {
         installNotificationClicksForWindowFace()
+        MainActor.assumeIsolated { WindowCycle.install() }
     }
 
     let model = HubModel(wantedSession: wantedSession, tab: tab)

@@ -36,6 +36,7 @@ final class PostureCore: @unchecked Sendable {
     private var machine: PostureStateMachine
     private var baseline: PostureBaseline?
     private var smoother = PostureSmoother()
+    private var shoulderGate = PostureShoulderGate()
     private var health: PostureHealth
     private var minutes = PostureMinuteAccumulator()
     private var lastScore: PostureScore?
@@ -95,6 +96,7 @@ final class PostureCore: @unchecked Sendable {
         lock.withLock {
             self.engine = engine
             smoother.reset()
+            shoulderGate.reset()
         }
     }
 
@@ -103,6 +105,7 @@ final class PostureCore: @unchecked Sendable {
         let (store, rows) = locked { () -> [PostureEvent] in
             self.baseline = baseline
             smoother.reset()
+            shoulderGate.reset()
             lastScore = nil
             return machine.restartPosture(at: time)
         }
@@ -117,6 +120,7 @@ final class PostureCore: @unchecked Sendable {
             guard hold != scoringHeld else { return [] }
             scoringHeld = hold
             smoother.reset()
+            shoulderGate.reset()
             lastScore = nil
             return machine.restartPosture(at: time)
         }
@@ -142,6 +146,7 @@ final class PostureCore: @unchecked Sendable {
                                             usesCamera: usesCamera, at: time)
             if !machine.state.isPosturePhase {
                 smoother.reset()
+                shoulderGate.reset()
                 lastScore = nil
                 pendingRows += minutes.flush()
             }
@@ -174,7 +179,9 @@ final class PostureCore: @unchecked Sendable {
             guard machine.usesCamera, !shutDown else { return (nil, false, false) }
             let watching = machine.state.isWatching && machine.state != .needsCalibration
             return (watching || collector != nil ? self.engine : nil,
-                    Self.needsFaceOnEveryFrame(calibrating: collector != nil, baseline: baseline), collector != nil)
+                    Self.needsFaceOnEveryFrame(calibrating: collector != nil, baseline: baseline,
+                                               liveShoulders: Self.shoulderSource(of: self.engine)),
+                    collector != nil)
         }
         guard let engine else { return }
         let body = engine as? VisionBodyPoseEngine
@@ -184,7 +191,7 @@ final class PostureCore: @unchecked Sendable {
         let sample = engine.analyze(frame)
         if let body, let saved { (body.faceDetection, body.body3D) = saved }
         if let slot = shots.take() { shots.write(frame, sample: sample, to: slot) }
-        if let sample { ingest(sample) }
+        if let sample, ingest(sample) { body?.readShouldersOnNextFrame() }
         let (recorder, score, state) = lock.withLock { (debugRecorder, lastScore, machine.state) }
         if let recorder, !recorder.append(frame: frame, sample: sample, score: sample == nil ? nil : score, state: state) {
             lock.withLock { if debugRecorder === recorder { debugRecorder = nil } }
@@ -211,17 +218,30 @@ final class PostureCore: @unchecked Sendable {
         recorder?.stop()
     }
 
-    /// Calibration, a face-only baseline, or a body baseline whose Forward head ratio is capped by face
-    /// growth needs the face on every frame. A body-only baseline still uses fallback face detection.
-    static func needsFaceOnEveryFrame(calibrating: Bool, baseline: PostureBaseline?) -> Bool {
+    /// Calibration, a face-only baseline, a body baseline whose Forward head ratio is capped by face
+    /// growth, or a baseline that cannot judge the live shoulders (`PostureBaseline.shoulderSourceDiffers`, so the
+    /// face is all that is left) needs the face on every frame. A body-only baseline still uses fallback face detection.
+    static func needsFaceOnEveryFrame(calibrating: Bool, baseline: PostureBaseline?,
+                                      liveShoulders: PoseShoulderSource? = nil) -> Bool {
         if calibrating { return true }
-        guard let metrics = baseline?.metrics else { return false }
-        if metrics[.shoulderWidth] == nil { return true }
+        guard let baseline else { return false }
+        let metrics = baseline.metrics
+        if metrics[.shoulderWidth] == nil || baseline.shoulderSourceDiffers(from: liveShoulders) { return true }
         let hasForwardRatio = metrics[.eyeSpanRatio] != nil || metrics[.faceWidthRatio] != nil
         return hasForwardRatio && (metrics[.faceWidth] ?? 0) > 0
     }
 
-    func ingest(_ sample: PoseSample) {
+    /// The request a body engine takes the shoulders from, as configured; nil for an engine without shoulders.
+    static func shoulderSource(of engine: FramePoseEngine) -> PoseShoulderSource? {
+        guard let body = engine as? VisionBodyPoseEngine else { return nil }
+        return body.body3D == .never ? .body2D : .body3D
+    }
+
+    /// Scores one sample and steps the state machine. Returns true when a shoulder fault waits for a fresh 3D
+    /// reading (`PostureShoulderGate`), so the caller asks the engine for one on the next frame.
+    @discardableResult
+    func ingest(_ sample: PoseSample) -> Bool {
+        var readAgain = false
         var finished: Collector?
         var good = false
         var score: PostureScore?
@@ -237,13 +257,20 @@ final class PostureCore: @unchecked Sendable {
                 return []
             }
             if scoringHeld { return [] }
-            let metrics = PostureMetrics(sample: sample)
+            var metrics = PostureMetrics(sample: sample)
             if let baseline, !metrics.isEmpty, !sample.lowLight {
+                let source = sample.shoulderSource
+                // Shoulders the baseline cannot judge stay out of the smoother: a later frame without shoulders has
+                // no source, so it would score them as comparable.
+                if baseline.shoulderSourceDiffers(from: source) { metrics.removeShoulderMeasures() }
                 let smoothed = smoother.add(metrics, at: sample.time)
                 var scorer = configuration.scorer
                 // The face engine never sees shoulders: the face width is its own Forward head measure.
                 if sample.engine == .visionFace { scorer.forwardHeadWithoutShoulders = nil }
-                score = scorer.score(smoothed, against: baseline)
+                let smoothedScore = scorer.score(smoothed, against: baseline, shoulderSource: source)
+                let fresh = sample.hasFreshShoulders && source == .body3D
+                    ? scorer.score(metrics, against: baseline, shoulderSource: source) : nil
+                (score, readAgain) = shoulderGate.apply(smoothedScore, fresh: fresh, source: source, scorer: scorer)
             }
             lastScore = score
             let step = machine.observe(PostureReading(sample: sample, score: score), at: sample.time)
@@ -266,6 +293,7 @@ final class PostureCore: @unchecked Sendable {
                 MainActor.assumeIsolated { feed.publish(sample, score: score, good: good) }
             }
         }
+        return readAgain
     }
 
     // MARK: - Calibration

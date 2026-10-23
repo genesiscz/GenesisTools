@@ -7,11 +7,26 @@ import Foundation
 /// execs into such a binary while keeping the read end is not seen. That exception trusts the system
 /// binary's code not to relay the bytes; it does not prove the read end was closed.
 enum VaultRecipient {
+    /// One process image: the pid, its start time, and the kernel's exec generation and image UUID.
+    /// `==` leaves `executable` out. For a hard-linked binary (every `~/.genesis-tools/bin/gt-<tool>` is one
+    /// inode) proc_pidpath reports whichever name was looked up last, so any other `gt-*` start during the
+    /// approval changed it and the key was refused (2026-10-20). `execGeneration` is new on every exec of
+    /// the pid, so it catches every exec a path compare caught, and an exec into the same path too.
     struct Identity: Equatable {
         var pid: pid_t
         var startSeconds: UInt64
         var startMicroseconds: UInt64
+        /// The kernel's `p_idversion`.
+        var execGeneration: Int32
+        /// LC_UUID of the main executable.
+        var imageUUID: UUID
+        /// For display and grant keys only.
         var executable: String
+
+        static func == (lhs: Identity, rhs: Identity) -> Bool {
+            lhs.pid == rhs.pid && lhs.startSeconds == rhs.startSeconds && lhs.startMicroseconds == rhs.startMicroseconds
+                && lhs.execGeneration == rhs.execGeneration && lhs.imageUUID == rhs.imageUUID
+        }
     }
 
     enum Endpoint: Equatable {
@@ -71,8 +86,14 @@ enum VaultRecipient {
         guard stdout.connected else { return "vault stdout must be a connected pipe or Unix-domain socket" }
         guard let caller, let current else { return "the caller's process identity could not be read" }
         guard current == caller else { return "the caller's process instance or executable changed before key release" }
-        guard processes.allSatisfy({ $0.endpoints != nil || $0.maySkip }) else {
-            return "the vault recipient could not be verified because a process fd table was unreadable"
+        if let unreadable = processes.first(where: { $0.endpoints == nil && !$0.maySkip }) {
+            // Name the process: 37 refusals on 2026-10-20 and 21 said only "a process", so nobody could tell which.
+            var detail = "pid \(unreadable.pid)"
+            if case let .unavailable(code, executable) = unreadable.failure {
+                detail += ", \(String(cString: strerror(code)))"
+                if let executable { detail += ", \(executable)" }
+            }
+            return "\(unreadableTable) (\(detail))"
         }
         let holders = Set(processes.filter { process in
             process.endpoints?.contains(where: { $0.isPeer(of: stdout) }) == true
@@ -89,10 +110,23 @@ enum VaultRecipient {
         let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
               info.pbi_pid == UInt32(pid), info.pbi_start_tvsec != 0 else { return nil }
-        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
-        guard proc_pidpath(pid, &buffer, UInt32(buffer.count)) > 0 else { return nil }
+        guard let image = image(pid), let executable = executablePath(pid) else { return nil }
         return Identity(pid: pid, startSeconds: info.pbi_start_tvsec, startMicroseconds: info.pbi_start_tvusec,
-                        executable: String(cString: buffer))
+                        execGeneration: image.generation, imageUUID: image.uuid, executable: executable)
+    }
+
+    /// `PROC_PIDUNIQIDENTIFIERINFO` is private: its struct is read by offset from XNU's proc_info_private.h
+    /// (`p_uuid[16]`, `p_uniqueid`, `p_puniqueid`, `int32_t p_idversion`, then reserved fields; 56 bytes).
+    /// A short read or a zero generation is no identity, so release is denied.
+    private static func image(_ pid: pid_t) -> (generation: Int32, uuid: UUID)? {
+        let flavor: Int32 = 17
+        var bytes = [UInt8](repeating: 0, count: 56)
+        let read = bytes.withUnsafeMutableBytes { proc_pidinfo(pid, flavor, 0, $0.baseAddress, Int32($0.count)) }
+        guard read == Int32(bytes.count) else { return nil }
+        let generation = bytes.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 32, as: Int32.self) }
+        let uuid = bytes.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: 0, as: uuid_t.self) }
+        guard generation != 0 else { return nil }
+        return (generation, UUID(uuid: uuid))
     }
 
     private struct InspectionFailure: Error {
@@ -211,16 +245,53 @@ enum VaultRecipient {
         }
     }
 
+    /// Inspects every user process, then each process that appeared meanwhile, until two lists in a row
+    /// add nothing. A busy session starts processes all the time, so one strict before/after pair denied
+    /// the key many times a day (82 on 2026-10-19). Exits cannot introduce a new reader; a process that
+    /// left the list without exiting changed uid, and a list that never settles still denies.
+    static func settledTables(rounds: Int, list: () throws -> Set<pid_t>, inspect: (pid_t) -> ProcessFDs,
+                              exited: (pid_t) -> Bool) rethrows -> [ProcessFDs]? {
+        var seen = try list()
+        var tables = seen.sorted().map(inspect)
+        for _ in 0..<rounds {
+            let current = try list()
+            guard seen.subtracting(current).allSatisfy(exited) else { return nil }
+            let added = current.subtracting(seen)
+            if added.isEmpty { return tables }
+            tables += added.sorted().map(inspect)
+            seen.formUnion(added)
+        }
+        return nil
+    }
+
+    static let unreadableTable = "the vault recipient could not be verified because a process fd table was unreadable"
+    static let unsettledList = "the user's process list changed during vault recipient inspection"
+
+    /// Runs the whole inspection again, up to `attempts` times, while it fails only because a table could not be read
+    /// or the list did not settle. Those are moments, not holders: 7 releases in the logs of 2026-10-20 and 21 met one,
+    /// and each failed a whole usage poll, and a probe of all 1,726 user processes later found only login and ps,
+    /// which the check skips. Every attempt is the full check, so a release still needs one that passes completely.
+    static func retryingTransient(attempts: Int, pause: () -> Void, _ inspect: () -> String?) -> String? {
+        var reason = inspect()
+        for _ in 1..<max(1, attempts) {
+            guard let current = reason, current.hasPrefix(unreadableTable) || current == unsettledList else { break }
+            pause()
+            reason = inspect()
+        }
+        return reason
+    }
+
     static func releaseRejection(caller: Identity?) -> String? {
+        retryingTransient(attempts: 3, pause: { usleep(50_000) }) { inspectRelease(caller: caller) }
+    }
+
+    private static func inspectRelease(caller: Identity?) -> String? {
         do {
             let output = try stdoutEndpoint()
             guard output.connected else { return "vault stdout must be a connected pipe or Unix-domain socket" }
-            let pids = try userPids()
-            let tables = pids.sorted().map { processFDs($0, output: output) }
-            let currentPids = try userPids()
-            // Exits cannot introduce a new reader; new processes or uid changes still require a fresh request.
-            guard currentPids.isSubset(of: pids), pids.subtracting(currentPids).allSatisfy(hasExited) else {
-                return "the user's process list changed during vault recipient inspection"
+            guard let tables = try settledTables(rounds: 16, list: userPids,
+                                                 inspect: { processFDs($0, output: output) }, exited: hasExited) else {
+                return unsettledList
             }
             guard try stdoutEndpoint() == output else { return "vault stdout changed during recipient inspection" }
             return rejection(stdout: output, caller: caller, current: caller.flatMap { identity($0.pid) }, processes: tables)

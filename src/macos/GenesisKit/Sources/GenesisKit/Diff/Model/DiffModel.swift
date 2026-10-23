@@ -18,6 +18,9 @@ public struct DiffFile: Codable, Identifiable, Hashable {
     public var newContents: String?
     /// Binary or too large to show; renderers show a placeholder instead of lines.
     public var skipped: String?
+    /// A skipped file that is an image, or any SVG: where its two sides' bytes are, so a renderer can show the
+    /// picture (an SVG shows as code until the reader asks for the picture).
+    public var image: DiffImage?
 
     public var name: String {
         (path as NSString).lastPathComponent
@@ -28,7 +31,7 @@ public struct DiffFile: Codable, Identifiable, Hashable {
         return dir.isEmpty ? "" : dir
     }
 
-    public init(id: String, path: String, oldPath: String? = nil, status: Status, additions: Int, deletions: Int, oldContents: String? = nil, newContents: String? = nil, skipped: String? = nil) {
+    public init(id: String, path: String, oldPath: String? = nil, status: Status, additions: Int, deletions: Int, oldContents: String? = nil, newContents: String? = nil, skipped: String? = nil, image: DiffImage? = nil) {
         self.id = id
         self.path = path
         self.oldPath = oldPath
@@ -38,6 +41,51 @@ public struct DiffFile: Codable, Identifiable, Hashable {
         self.oldContents = oldContents
         self.newContents = newContents
         self.skipped = skipped
+        self.image = image
+    }
+}
+
+/// The two sides of an image in a diff. Nil for the side a file does not have (added: no old, deleted: no new).
+public struct DiffImage: Codable, Hashable {
+    public enum Source: Codable, Hashable {
+        /// A file on disk (the working tree).
+        case file(String)
+        /// `git -C <repo> cat-file blob <object>`: the object id the diff read, or `<rev>:<path>` (an empty rev is the
+        /// index) when it had none. `path` names the file, whose extension is the picture's type. `gitDirectory` reads
+        /// the object from another store (the agents change log's) instead of the repository's.
+        case blob(repo: String, object: String, path: String, gitDirectory: String? = nil)
+    }
+
+    public var old: Source?
+    public var new: Source?
+    /// What both sides were when the diff was read: a blob side's object id, a working-tree side's modification time
+    /// and size. A file source names a place, not its bytes, so an image overwritten while its diff stays open is a new
+    /// `DiffImage` only through this.
+    public var revision: String?
+
+    public init(old: Source?, new: Source?, revision: String? = nil) {
+        self.old = old
+        self.new = new
+        self.revision = revision
+    }
+
+    /// `revision` for a file on disk: its modification time and size, nil when it cannot be read.
+    public static func revision(ofFile path: String) -> String? {
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: path),
+              let modified = attributes[.modificationDate] as? Date,
+              let size = attributes[.size] as? NSNumber else { return nil }
+        return "\(modified.timeIntervalSince1970)-\(size)"
+    }
+
+    /// The binary formats WebKit draws. SVG is text: it has code to show, so it is asked for by `isSVG`.
+    public static let extensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif", "avif", "bmp", "ico", "tif", "tiff"]
+
+    public static func isImage(_ path: String) -> Bool {
+        extensions.contains((path as NSString).pathExtension.lowercased())
+    }
+
+    public static func isSVG(_ path: String) -> Bool {
+        (path as NSString).pathExtension.lowercased() == "svg"
     }
 }
 

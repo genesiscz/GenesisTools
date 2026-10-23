@@ -20,6 +20,10 @@
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>13.0</string>
+	<!-- Every face starts as an accessory, so a link or a reopen never makes it regular. Those flips left
+	     stale Dock tiles behind; the hub, the window faces and the markdown viewer turn regular in code. -->
+	<key>LSUIElement</key>
+	<true/>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<!-- macOS 13 reads the pre-14 keys; PermissionsModel calls requestAccess(to:) there. -->
@@ -54,7 +58,7 @@
 	<key>NSSystemAdministrationUsageDescription</key>
 	<string>Full Disk Access lets tools macos mail, messages and voice-memos read the Mail, Messages and Voice Memos databases. Nothing else in GenesisTools needs it.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>A program you started through tools (a dev server, a language server, a Claude session) reaches a device on your network. Every tools command runs inside GenesisTools, so macOS asks in its name. After a rebuild, a program still running the old build asks once more.</string>
+	<string>A program you started through tools (a dev server, a language server, a Claude session) reaches a device on your network. Every tools command runs inside GenesisTools, so macOS asks in its name. After a rebuild, a program still running the old build asks once more. A GenesisTools panel beside this dialog names the program; tools macos permissions local-network lists earlier ones.</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

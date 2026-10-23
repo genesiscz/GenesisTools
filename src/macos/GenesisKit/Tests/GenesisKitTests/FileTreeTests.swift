@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import XCTest
 @testable import GenesisKitBase
@@ -53,6 +54,26 @@ final class FileTreeTests: XCTestCase {
         var sameFont = style
         sameFont.font = { .system(size: 18, weight: $0 ? .semibold : .regular) }
         XCTAssertTrue(view(style) == view(sameFont), "font values, not closure identities, decide equality")
+    }
+
+    func testDoubleClickOnAFolderSetsTheRootAndASingleClickToggles() {
+        XCTAssertEqual(FileTreeClick.forRow(isFolder: true, clickCount: 1), .toggleFolder)
+        XCTAssertEqual(FileTreeClick.forRow(isFolder: true, clickCount: 2), .setRoot)
+        XCTAssertEqual(FileTreeClick.forRow(isFolder: true, clickCount: 3), .setRoot)
+        XCTAssertEqual(FileTreeClick.forRow(isFolder: false, clickCount: 1), .openFile)
+        XCTAssertEqual(FileTreeClick.forRow(isFolder: false, clickCount: 2), .keepFile)
+    }
+
+    /// A row activated from the keyboard reads as one click; reading `clickCount` of a key event raises.
+    func testOnlyAMouseEventHasAClickCount() throws {
+        let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                 windowNumber: 0, context: nil, characters: " ",
+                                                 charactersIgnoringModifiers: " ", isARepeat: false, keyCode: 49))
+        XCTAssertEqual(FileTreeClick.clickCount(of: key), 1)
+        XCTAssertEqual(FileTreeClick.clickCount(of: nil), 1)
+        let double = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: .zero, modifierFlags: [], timestamp: 0,
+                                                      windowNumber: 0, context: nil, eventNumber: 0, clickCount: 2, pressure: 0))
+        XCTAssertEqual(FileTreeClick.clickCount(of: double), 2)
     }
 
     func testListingPutsFoldersFirstInFinderOrderAndSkipsHiddenFiles() {

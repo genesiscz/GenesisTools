@@ -212,12 +212,13 @@ final class PostureDebugRecorder: @unchecked Sendable {
         [
             "isBad": score.isBad, "isClear": score.isClear, "severity": score.severity.rounded(toPlaces: 4),
             "worst": score.worst?.rawValue ?? NSNull(), "unjudged": score.unjudged.map(\.rawValue).sorted(),
+            "held": score.held.map(\.rawValue).sorted(), "shoulderSourceMismatch": score.shoulderSourceMismatch,
             "signals": score.signals.map { signal -> [String: Any] in
                 [
                     "kind": signal.kind.rawValue, "measure": signal.measure.rawValue,
                     "deviation": signal.deviation.rounded(toPlaces: 4), "enter": signal.enterThreshold.rounded(toPlaces: 4),
                     "exit": signal.exitThreshold.rounded(toPlaces: 4), "severity": signal.severity.rounded(toPlaces: 4),
-                    "bad": signal.isBad,
+                    "bad": signal.isBad, "held": signal.held,
                 ]
             },
         ]

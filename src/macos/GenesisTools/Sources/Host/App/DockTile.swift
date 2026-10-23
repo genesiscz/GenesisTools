@@ -23,6 +23,11 @@ import Foundation
 /// `applicationShouldHandleReopen` runs (measured with a probe bundle on macOS 26.3, 2026-10-08), and
 /// the link relay was found `.regular` with no reopen in its journal. So every reopen handler calls
 /// `enforce()`, and each face checks again on activation changes and on a slow timer.
+///
+/// Since 2026-10-22 the bundle declares `LSUIElement`, which stops those promotions (a probe bundle
+/// with the key stayed `UIElement` through `open -a` and still got the reopen). The Dock kept a stale
+/// tile after some of the flips back: four tiles with one regular process. The checks above stay as
+/// a guard.
 @MainActor
 package enum DockTile {
     package enum Role: String {

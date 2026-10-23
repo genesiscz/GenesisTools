@@ -1,15 +1,24 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import {
+    GENESIS_TOOLS_LAUNCHER_SUFFIX,
+    isGenesisToolsBinary,
+    retiredAtOf,
+} from "@genesiscz/utils/genesis-tools/app-binary";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
+import * as processes from "@genesiscz/utils/process/processes";
 import { skip } from "@genesiscz/utils/test/skip";
 import {
+    deleteRetiredStamps,
     describeSource,
+    listRetiredStamps,
     parseCodesignInfo,
     pickCodesignIdentity,
     readSourceInfo,
+    retiredStampsToDelete,
     signByHashes,
     signStagedBundle,
     staleAppFacePids,
@@ -18,7 +27,17 @@ import {
     timedSteps,
 } from "./app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "./kinds";
-import { type AppProcess, groupOldBuilds, localNetworkAnswer, parseLocalNetworkRules } from "./local-network";
+import {
+    type AppProcess,
+    describePromptProcesses,
+    groupOldBuilds,
+    localNetworkAnswer,
+    parseLocalNetworkPrompts,
+    parseLocalNetworkRules,
+    promptProcess,
+    promptsFromLogShow,
+    withoutPreloads,
+} from "./local-network";
 import {
     ALL_PART_IDS,
     bundleStepsFor,
@@ -638,6 +657,53 @@ describe("staleRegistrations", () => {
     });
 });
 
+describe("retired copies", () => {
+    it("lists a missing root as empty and an unreadable one as unknown", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-retired-"));
+        try {
+            mkdirSync(join(dir, "root", "100"), { recursive: true });
+            mkdirSync(join(dir, "root", "300"));
+            mkdirSync(join(dir, "root", "notes"));
+            writeFileSync(join(dir, "file"), "");
+            expect(listRetiredStamps(join(dir, "root"))).toEqual(["300", "100"]);
+            expect(listRetiredStamps(join(dir, "missing"))).toEqual([]);
+            expect(listRetiredStamps(join(dir, "file"))).toBeNull();
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("never deletes a copy a running process still executes, nor any when the processes are unknown", () => {
+        const inodes: Record<string, number | null> = { "4": 40, "3": 30, "2": 20, "1": 10, "0": null };
+        const plan = (running: Set<number> | null) =>
+            retiredStampsToDelete({ stamps: ["4", "3", "2", "1", "0"], keep: 2, running, inodeOf: (s) => inodes[s] });
+        expect(plan(new Set([10]))).toEqual(["2"]);
+        expect(plan(new Set())).toEqual(["2", "1"]);
+        expect(plan(null)).toEqual([]);
+    });
+
+    it("keeps deleting after one copy fails", () => {
+        if (process.getuid?.() === 0) {
+            return;
+        }
+
+        const root = mkdtempSync(join(tmpdir(), "gt-retired-rm-"));
+        const locked = join(root, "2", "inner");
+        try {
+            mkdirSync(locked, { recursive: true });
+            writeFileSync(join(locked, "file"), "");
+            mkdirSync(join(root, "1"));
+            chmodSync(locked, 0o500);
+            expect(deleteRetiredStamps(root, ["2", "1"])).toEqual(["1"]);
+            expect(existsSync(join(root, "1"))).toBe(false);
+            expect(existsSync(join(root, "2"))).toBe(true);
+        } finally {
+            chmodSync(locked, 0o700);
+            rmSync(root, { recursive: true, force: true });
+        }
+    });
+});
+
 describe("timedSteps", () => {
     it("times each step until the next one and lists them slowest first", () => {
         let clock = 0;
@@ -682,6 +748,62 @@ describe("Local Network answers", () => {
         expect(parseLocalNetworkRules("GenesisTools: unknown face")).toBeNull();
         expect(parseLocalNetworkRules(`{"rules":[]}`)).toBeNull();
         expect(localNetworkAnswer(null)).toBe("unknown");
+    });
+
+    it("reads the prompting pid and build from nehelper's log", () => {
+        const log = [
+            "Timestamp               Ty Process[PID:TID]",
+            "2026-10-21 22:16:06.926 I  nehelper[419:2a66e2b] [com.apple.networkextension:] Found new path /Users/x/.genesis-tools/app/retired.noindex/1792613086315/GenesisTools.app/Contents/MacOS/GenesisTools for PID 97417, allowing a new prompt",
+            "2026-10-21 22:16:06.930 I  nehelper[419:2a66e2b] [com.apple.networkextension:] Local network preference not yet set, prompting for GenesisTools (com.genesiscz.genesistools)",
+            "2026-10-21 22:17:01.100 I  nehelper[419:2a66e2b] [com.apple.networkextension:] Found new path /Applications/Other.app/Contents/MacOS/Other for PID 51200, allowing a new prompt",
+        ].join("\n");
+        const [prompt, ...rest] = parseLocalNetworkPrompts(log);
+        expect(rest).toEqual([]);
+        expect(prompt).toEqual({
+            at: "2026-10-21 22:16:06",
+            pid: 97417,
+            executable:
+                "/Users/x/.genesis-tools/app/retired.noindex/1792613086315/GenesisTools.app/Contents/MacOS/GenesisTools",
+        });
+        expect(retiredAtOf(prompt.executable)?.getTime()).toBe(1792613086315);
+        expect(retiredAtOf("/Users/x/Applications/GenesisTools.app/Contents/MacOS/GenesisTools")).toBeNull();
+        expect(isGenesisToolsBinary(`/Users/x/Applications${GENESIS_TOOLS_LAUNCHER_SUFFIX}`)).toBe(true);
+        expect(isGenesisToolsBinary("/Applications/Other.app/Contents/MacOS/Other")).toBe(false);
+        expect(isGenesisToolsBinary(`/x${GENESIS_TOOLS_LAUNCHER_SUFFIX}-helper`)).toBe(false);
+        expect(withoutPreloads("gt-cc --preload /a.ts --preload /b.ts --resume abc")).toBe("gt-cc --resume abc");
+    });
+
+    it("tells a failed log show from a quiet one", () => {
+        const bytes = (text: string) => new TextEncoder().encode(text);
+        const failed = { since: "2x", exitCode: 64, stdout: bytes(""), stderr: bytes("log: invalid duration") };
+        expect(promptsFromLogShow(failed)).toBeNull();
+        expect(promptsFromLogShow({ ...failed, exitCode: null })).toBeNull();
+        expect(
+            promptsFromLogShow({ since: "5m", exitCode: 0, stdout: bytes("Timestamp\n"), stderr: bytes("") })
+        ).toEqual([]);
+    });
+
+    it("reads no process table when no prompt names a pid", () => {
+        const list = spyOn(processes, "listProcesses").mockImplementation(() => {
+            throw new Error("the process table was read");
+        });
+        try {
+            expect(describePromptProcesses("/x/GenesisTools", []).size).toBe(0);
+            expect(() => describePromptProcesses("/x/GenesisTools", [1])).toThrow("the process table was read");
+        } finally {
+            list.mockRestore();
+        }
+    });
+
+    it("does not blame a process that took the pid after the prompt", () => {
+        const at = "2026-10-21 22:16:06";
+        const running = (started: string) =>
+            new Map([[97417, { started: new Date(started), command: "gt-cc", cwd: null, children: [] }]]);
+        expect(promptProcess({ at, pid: 97417 }, running("2026-10-21T21:00:00"))?.command).toBe("gt-cc");
+        // the log drops the fraction: a process started within the prompt's own second still asked
+        expect(promptProcess({ at, pid: 97417 }, running("2026-10-21T22:16:06.900"))?.command).toBe("gt-cc");
+        expect(promptProcess({ at, pid: 97417 }, running("2026-10-21T22:16:07"))).toBeNull();
+        expect(promptProcess({ at, pid: 97417 }, new Map())).toBeNull();
     });
 });
 

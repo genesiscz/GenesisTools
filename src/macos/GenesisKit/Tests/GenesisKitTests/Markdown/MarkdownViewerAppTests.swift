@@ -12,6 +12,10 @@ final class MarkdownViewerAppTests: XCTestCase {
         XCTAssertEqual(closeTab?.keyEquivalent, "w")
         XCTAssertEqual(closeTab?.keyEquivalentModifierMask, [.command])
         XCTAssertEqual(closeTab?.action, #selector(MarkdownDocumentWindowController.closeSelectedTab(_:)))
+        let copyPath = file?.items.first { $0.title == "Copy Path" }
+        XCTAssertEqual(copyPath?.keyEquivalent, "c")
+        XCTAssertEqual(copyPath?.keyEquivalentModifierMask, [.control, .shift])
+        XCTAssertEqual(copyPath?.action, #selector(MarkdownDocumentWindowController.copyPath(_:)))
         let closeWindow = file?.items.first { $0.title == "Close Window" }
         XCTAssertEqual(closeWindow?.keyEquivalent, "w")
         XCTAssertEqual(closeWindow?.keyEquivalentModifierMask, [.command, .shift])

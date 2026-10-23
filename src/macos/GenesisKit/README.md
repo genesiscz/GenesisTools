@@ -6396,6 +6396,8 @@ One reading of the user's pose. A `Codable`, `Equatable`, `Sendable` struct with
 - `headphonePitch: Double? = nil`: AirPods pitch in radians, positive nodding down.
 - `imageAspect: Double = 4/3`: what the overlay needs to match an aspect-fill preview.
 - `lowLight: Bool = false`: too dark to judge.
+- `shoulderSource: PoseShoulderSource? = nil`: the request behind the shoulders and the neck, `.body2D` or `.body3D`. Nil without shoulders.
+- `shoulderAge: TimeInterval? = nil`: seconds since that request ran, 0 on the frame it ran (`hasFreshShoulders`). A throttled 3D reading is reused for several seconds.
 
 Members: `joint(_:) -> PoseJointPoint?` returns a joint above `minimumConfidence` (0.3, Dorso's and Apple's gate); `hasPerson` is true for a confident nose, a face, both shoulders or AirPods motion. The shoulders count so that a head bent out of the frame reads as a slouch, not as away.
 
@@ -6408,7 +6410,7 @@ Members: `joint(_:) -> PoseJointPoint?` returns a joint above `minimumConfidence
 Vision 2D body pose (`VNDetectHumanBodyPoseRequest`, `preferBackgroundProcessing`). It keeps the nearest person: the widest confident shoulders, else the most confident nose.
 
 - `faceDetection: FaceDetection = .fallback`: `.fallback` runs face rectangles on the same frame when the body has no confident nose or misses a shoulder (a seated upper body sometimes yields no body, which is why Dorso has the same fallback); `.always` runs both on every frame (use it while calibrating, so the baseline also holds the face measures); `.never`. Change it only from the queue that calls `analyze`.
-- `body3D: Body3D = .throttled`, `body3DInterval: TimeInterval = 4`: the shoulders and the neck come from `VNDetectHumanBodyPose3DRequest` instead of the 2D request, which often finds no body for a person close to a laptop camera (real frames, 2026-10-14). The two place the shoulders differently (3D about a third narrower), so a reading never mixes them. 3D costs about 80 ms of CPU a frame against 7 ms for 2D plus face: `.throttled` runs it at most once per interval and keeps its shoulders for two intervals; `.always` runs it on every frame (calibration); `.never` keeps the 2D shoulders.
+- `body3D: Body3D = .throttled`, `body3DInterval: TimeInterval = 4`: the shoulders and the neck come from `VNDetectHumanBodyPose3DRequest` instead of the 2D request, which often finds no body for a person close to a laptop camera (real frames, 2026-10-14). The two place the shoulders differently (3D about a third narrower), so a reading never mixes them. 3D costs about 80 ms of CPU a frame against 7 ms for 2D plus face: `.throttled` runs it at most once per interval and keeps its shoulders for two intervals; `.always` runs it on every frame (calibration); `.never` keeps the 2D shoulders. Each sample says which request placed its shoulders and how old they are (`shoulderSource`, `shoulderAge`). `readShouldersOnNextFrame()` makes the next `analyze` run the 3D request even when it is not due.
 
 #### `VisionFaceEngine`
 
@@ -6486,7 +6488,8 @@ A fault reads its first available measure in that order, so body joints win over
 
 The calibrated upright posture: the upright `metrics` (median), the `tolerance` each measure may always drift (noise, looking around the screen: the spread of the upright readings, never below the measure's minimum), and the `span`, the drift that counts as one whole slouch (from the slouch sample when there was one). `Codable`.
 
-- `static calibrate(upright: [PostureMetrics], slouch: [PostureMetrics] = []) -> PostureBaseline?`: nil with fewer than `minimumUprightReadings` (4, Dorso) usable readings.
+- `static calibrate(upright: [PostureMetrics], slouch: [PostureMetrics] = [], shoulderSource: PoseShoulderSource? = nil) -> PostureBaseline?`: nil with fewer than `minimumUprightReadings` (4, Dorso) usable readings. `PostureCalibrationSession.baseline()` passes the source most of its upright samples had.
+- `shoulderSource: PoseShoulderSource?`: the request that placed the shoulders while calibrating; nil in a file saved before 2026-10-20. `shoulderSourceDiffers(from:)` is true when the baseline has shoulder measures (`PostureMeasure.usesShoulders`) and its source is not the live one or is unknown: the 2D and 3D requests place the shoulders differently, so such a baseline cannot judge live shoulders.
 
 Defaults without a slouch sample: span 0.15 and minimum tolerance 0.05 for `faceWidth` and `eyeSpanRatio` (Dorso's forward-head numbers), span 0.3 rad and tolerance 0.15 rad for pitch (Dorso's AirPods numbers); the other measures use proposals in the same units (head height span 0.2 shoulder widths, shoulder tilt 0.17 rad).
 
@@ -6500,7 +6503,9 @@ Scores a reading against a baseline. Pure.
 
 Per fault: bad above `tolerance + deadZone × span`, clear again below `0.85 × tolerance + 0.7 × deadZone × span` (Dorso exits at 0.7 of its threshold), severity `(drift − enter) / (span × (1 − deadZone))` clamped to 0...1. The reading takes the worst fault (Dorso takes the max). Shoulders in view with no nose and no face, against a baseline with a head height, score as a full head drop (severity 1): the head went below the frame.
 
-`score(_:against:) -> PostureScore` gives `signals` (one `PostureSignal` per fault, with drift, thresholds and severity), `severity`, `strength`, `isBad`, `isClear` and `worst`, the fault to name in the UI ("Head drop"), so the score is never opaque.
+`score(_:against:shoulderSource:) -> PostureScore` gives `signals` (one `PostureSignal` per fault, with drift, thresholds and severity), `severity`, `strength`, `isBad`, `isClear` and `worst`, the fault to name in the UI ("Head drop"), so the score is never opaque. When the baseline's shoulder source differs from `shoulderSource` (the live one; nil skips the check), every measure that needs the shoulders is left out, the faults only they measure go to `unjudged`, and `shoulderSourceMismatch` is true: the UI asks for a new calibration.
+
+The monitor lets a shoulder fault from the throttled 3D request turn bad only when two fresh 3D readings in a row are bad, each scored without the smoother. Until the second one agrees, the signal is `held` (neither bad nor clear, severity 0, listed in `PostureScore.held`) and the engine reads the shoulders again on the next frame. A fresh reading that is no longer bad lets the fault go at once. Without this, one wrong 3D reading held a tilt for 6.8 s (debug recording 2026-10-19).
 
 `PostureSmoother(window: 1, maxCount: 5)` takes the median of the readings of the last second; Dorso averages 5 readings, and a time window keeps the lag the same at 2 and 10 fps.
 

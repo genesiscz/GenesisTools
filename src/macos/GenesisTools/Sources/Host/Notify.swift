@@ -134,12 +134,18 @@ private func emit(_ payload: [String: Any]) {
         let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
         let line = String(data: data, encoding: .utf8)
     else {
-        let fallback = "{\"ok\":false,\"error\":{\"code\":\"internal\",\"message\":\"could not encode reply\"}}\n"
-        FileHandle.standardOutput.write(Data(fallback.utf8))
+        writeReply("{\"ok\":false,\"error\":{\"code\":\"internal\",\"message\":\"could not encode reply\"}}\n")
         return
     }
 
-    FileHandle.standardOutput.write(Data("\(line)\n".utf8))
+    writeReply("\(line)\n")
+}
+
+/// The caller may be gone by the time a slow notification call answers (its RPC deadline passed, or it was killed).
+/// `FileHandle.write(_:)` raises an Objective-C exception on a closed pipe and aborts the app (crash reports
+/// 2026-10-21 04:37 and 18:12); the throwing `write(contentsOf:)` lets the reply drop instead.
+private func writeReply(_ text: String) {
+    try? FileHandle.standardOutput.write(contentsOf: Data(text.utf8))
 }
 
 // MARK: - Content

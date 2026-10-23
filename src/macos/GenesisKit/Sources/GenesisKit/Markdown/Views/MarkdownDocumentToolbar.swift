@@ -220,9 +220,8 @@ struct MarkdownDocumentToolbar: View {
                     openInObsidian()
                 }
                 groupDivider
-                toolButton("doc.on.doc", label: "Copy Path", tooltip: "Copy the file path", id: "markdown-copy-path", labels: labels) {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(doc.url.path, forType: .string)
+                toolButton("doc.on.doc", label: "Copy Path", tooltip: keymap.hint("Copy the file path", "markdown.file.copyPath"), id: "markdown-copy-path", labels: labels) {
+                    model.copySelectedPath()
                 }
             }
 

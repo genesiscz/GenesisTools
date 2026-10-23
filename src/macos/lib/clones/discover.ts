@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, realpathSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve, sep } from "node:path";
 import { listWorktrees } from "@genesiscz/utils/git/worktree";
 import { logger } from "@genesiscz/utils/logger";
 import { getFsType } from "@genesiscz/utils/macos/apfs";
@@ -138,6 +138,32 @@ export function partitionApfs(
     return { apfs, skipped };
 }
 
+/** A filesystem root (`/`) already ends with the separator, so it gets none appended. */
+function isSameOrInside(dir: string, parent: string): boolean {
+    return dir === parent || dir.startsWith(parent.endsWith(sep) ? parent : parent + sep);
+}
+
+/**
+ * With `--worktrees-of`, the search dirs that still need scanning beside the repo's worktrees. A dir that is an
+ * ancestor of the repo only narrows the search (`--dir ~/Projects --worktrees-of app`), and a dir that is a worktree
+ * or sits inside one is already covered. Any other dir is its own root: these used to be dropped without a word
+ * while the saved selector still listed them (2026-10-21).
+ */
+export function extraRootDirs({
+    searchDirs,
+    repoRoot,
+    worktrees,
+}: {
+    searchDirs: string[];
+    repoRoot: string;
+    worktrees: string[];
+}): string[] {
+    const repo = realpathSync(repoRoot);
+    return searchDirs.filter(
+        (dir) => !isSameOrInside(repo, dir) && !worktrees.some((worktree) => isSameOrInside(dir, worktree))
+    );
+}
+
 export async function discoverRoots(args: DiscoverArgs): Promise<DiscoverResult> {
     const end = clonesProfile.start("discover");
     const skipped: SkippedRoot[] = [];
@@ -155,7 +181,13 @@ export async function discoverRoots(args: DiscoverArgs): Promise<DiscoverResult>
     let scanDirs = searchDirs;
     if (args.worktreesOf !== undefined && searchDirs.length > 0) {
         const repoRoot = resolveRepoRoot(searchDirs, args.worktreesOf);
-        scanDirs = await worktreeDirs(repoRoot);
+        const worktrees = await worktreeDirs(repoRoot);
+        const extra = extraRootDirs({ searchDirs, repoRoot, worktrees });
+        if (extra.length > 0) {
+            log.info({ repoRoot, extra }, "search dirs outside the repo's worktrees are scanned as their own roots");
+        }
+
+        scanDirs = [...worktrees, ...extra];
     }
 
     const expanded = await expandTargets({ dirs: scanDirs, targets: args.targets });

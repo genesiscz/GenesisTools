@@ -38,6 +38,10 @@ package func runHost() -> Never {
         runLocalNetworkRules()
     }
 
+    if firstArgument == "--local-network-panel" {
+        runLocalNetworkPanel(Array(arguments.dropFirst()))
+    }
+
     // A face of a part this build does not link says so first, before the staging gate would only say "staging".
     if AppParts.partOfFace[firstArgument] != nil, !AppParts.has(face: firstArgument) {
         AppParts.run(face: firstArgument, Array(arguments.dropFirst()))

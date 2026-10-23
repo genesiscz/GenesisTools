@@ -98,14 +98,32 @@ public struct PostureBaseline: Equatable, Codable, Sendable {
     public var span: PostureMetrics
     public var uprightCount: Int
     public var slouchCount: Int
+    /// The request that placed the shoulders while calibrating. Nil in a calibration saved before it was recorded
+    /// (2026-10-20), so a baseline with shoulder measures and no source cannot be trusted against live shoulders.
+    public var shoulderSource: PoseShoulderSource?
 
     public init(metrics: PostureMetrics, tolerance: PostureMetrics = PostureMetrics(),
-                span: PostureMetrics = PostureMetrics(), uprightCount: Int = 0, slouchCount: Int = 0) {
+                span: PostureMetrics = PostureMetrics(), uprightCount: Int = 0, slouchCount: Int = 0,
+                shoulderSource: PoseShoulderSource? = nil) {
         self.metrics = metrics
         self.tolerance = tolerance
         self.span = span
         self.uprightCount = uprightCount
         self.slouchCount = slouchCount
+        self.shoulderSource = shoulderSource
+    }
+
+    /// Whether the baseline holds any measure that needs the shoulders.
+    public var hasShoulderMeasures: Bool {
+        metrics.values.keys.contains(where: \.usesShoulders)
+    }
+
+    /// Whether live shoulders from `live` cannot be compared with this baseline: it has shoulder measures, and they
+    /// came from another request or from one it did not record. A 2D baseline against 3D shoulders read a level
+    /// shoulder line as a tilt of 0.12 and kept Leaning in at −0.4 (debug recording 2026-10-19 22:28:57, Home).
+    public func shoulderSourceDiffers(from live: PoseShoulderSource?) -> Bool {
+        guard let live, hasShoulderMeasures else { return false }
+        return shoulderSource != live
     }
 
     /// Readings an upright calibration needs. Dorso refuses a calibration with fewer than 4.
@@ -114,7 +132,8 @@ public struct PostureBaseline: Equatable, Codable, Sendable {
     /// Builds a baseline from readings taken while the user sat upright (looking around the screen is
     /// welcome: that spread becomes the tolerance) and, optionally, while they slouched on purpose.
     /// Returns nil with fewer than `minimumUprightReadings` usable readings.
-    public static func calibrate(upright: [PostureMetrics], slouch: [PostureMetrics] = []) -> PostureBaseline? {
+    public static func calibrate(upright: [PostureMetrics], slouch: [PostureMetrics] = [],
+                                 shoulderSource: PoseShoulderSource? = nil) -> PostureBaseline? {
         let usable = upright.filter { !$0.isEmpty }
         guard usable.count >= minimumUprightReadings else { return nil }
         let median = PostureMetrics.median(usable)
@@ -136,8 +155,8 @@ public struct PostureBaseline: Equatable, Codable, Sendable {
                   drift > tol * 1.5 else { continue }
             span[measure] = max(drift - tol, measure.defaultSpan * 0.25)
         }
-        return PostureBaseline(metrics: median, tolerance: tolerance, span: span,
-                               uprightCount: usable.count, slouchCount: slouch.count)
+        return PostureBaseline(metrics: median, tolerance: tolerance, span: span, uprightCount: usable.count,
+                               slouchCount: slouch.count, shoulderSource: shoulderSource)
     }
 }
 
@@ -151,19 +170,23 @@ public struct PostureSignal: Equatable, Sendable {
     public var exitThreshold: Double
     /// 0 at the enter threshold, 1 at the calibrated slouch.
     public var severity: Double
+    /// Past the enter threshold on held 3D shoulders, waiting for a fresh reading to agree
+    /// (`PostureShoulderGate`). A held signal is neither bad nor clear, so it starts nothing and ends nothing.
+    public var held: Bool
 
     public init(kind: PostureMetricKind, measure: PostureMeasure, deviation: Double,
-                enterThreshold: Double, exitThreshold: Double, severity: Double) {
+                enterThreshold: Double, exitThreshold: Double, severity: Double, held: Bool = false) {
         self.kind = kind
         self.measure = measure
         self.deviation = deviation
         self.enterThreshold = enterThreshold
         self.exitThreshold = exitThreshold
         self.severity = severity
+        self.held = held
     }
 
-    public var isBad: Bool { deviation > enterThreshold }
-    public var isClear: Bool { deviation < exitThreshold }
+    public var isBad: Bool { !held && deviation > enterThreshold }
+    public var isClear: Bool { !held && deviation < exitThreshold }
 }
 
 /// The verdict on one reading.
@@ -174,15 +197,24 @@ public struct PostureScore: Equatable, Sendable {
     /// `severity ^ (1 / sensitivity exponent)`: what a screen effect shows, 0...1.
     public var strength: Double
     /// Faults left out on purpose: Forward head when the shoulders are out of view and the scorer's
-    /// `forwardHeadWithoutShoulders` is `.needsShoulders`.
+    /// `forwardHeadWithoutShoulders` is `.needsShoulders`, and every shoulder fault while
+    /// `shoulderSourceMismatch` holds.
     public var unjudged: Set<PostureMetricKind>
+    /// The baseline's shoulders came from another request than the live ones (`PostureBaseline.shoulderSourceDiffers`),
+    /// so the shoulder measures were left out. A new calibration fixes it.
+    public var shoulderSourceMismatch: Bool
 
-    public init(signals: [PostureSignal], severity: Double, strength: Double, unjudged: Set<PostureMetricKind> = []) {
+    public init(signals: [PostureSignal], severity: Double, strength: Double, unjudged: Set<PostureMetricKind> = [],
+                shoulderSourceMismatch: Bool = false) {
         self.signals = signals
         self.severity = severity
         self.strength = strength
         self.unjudged = unjudged
+        self.shoulderSourceMismatch = shoulderSourceMismatch
     }
+
+    /// Faults past their threshold on held shoulders, waiting for a fresh reading.
+    public var held: Set<PostureMetricKind> { Set(signals.filter(\.held).map(\.kind)) }
 
     /// Nothing could be compared (no shared measure between the reading and the baseline).
     public var isEmpty: Bool { signals.isEmpty }
@@ -192,7 +224,7 @@ public struct PostureScore: Equatable, Sendable {
     public var isClear: Bool { !signals.isEmpty && signals.allSatisfy(\.isClear) }
     /// The fault furthest past its threshold, so the UI can say what triggered.
     public var worst: PostureMetricKind? {
-        signals.max { lhs, rhs in
+        signals.filter { !$0.held }.max { lhs, rhs in
             (lhs.deviation - lhs.enterThreshold) / max(lhs.enterThreshold, 1e-6)
                 < (rhs.deviation - rhs.enterThreshold) / max(rhs.enterThreshold, 1e-6)
         }.flatMap { $0.deviation > $0.exitThreshold ? $0.kind : nil }
@@ -254,10 +286,16 @@ public struct PostureScorer: Equatable, Sendable {
     }
 
     /// Scores the first comparable measure of each enabled fault, using the same drift as calibration.
-    public func score(_ metrics: PostureMetrics, against baseline: PostureBaseline) -> PostureScore {
+    /// `shoulderSource` is the request behind the live shoulders. When the baseline's differs, every shoulder
+    /// measure is left out and the faults that only the shoulders measure are unjudged; nil skips the check.
+    public func score(_ metrics: PostureMetrics, against baseline: PostureBaseline,
+                      shoulderSource: PoseShoulderSource? = nil) -> PostureScore {
         let zone = deadZone.fraction
         var signals: [PostureSignal] = []
         var unjudged: Set<PostureMetricKind> = []
+        let mismatch = baseline.shoulderSourceDiffers(from: shoulderSource)
+        var metrics = metrics
+        if mismatch { metrics.removeShoulderMeasures() }
         for kind in PostureMetricKind.allCases where enabled.contains(kind) {
             if kind == .headDrop, let lost = headLost(metrics, baseline: baseline, zone: zone) {
                 signals.append(lost)
@@ -281,10 +319,34 @@ public struct PostureScorer: Equatable, Sendable {
                                              enterThreshold: enter, exitThreshold: exit, severity: severity))
                 break
             }
+            if mismatch, !signals.contains(where: { $0.kind == kind }),
+               PostureMeasure.preference(for: kind).contains(where: { baseline.metrics[$0] != nil && $0.usesShoulders }) {
+                unjudged.insert(kind)
+            }
         }
         let severity = signals.map(\.severity).max() ?? 0
-        let strength = severity > 0 ? pow(severity, 1 / sensitivity.exponent) : 0
-        return PostureScore(signals: signals, severity: severity, strength: strength, unjudged: unjudged)
+        return PostureScore(signals: signals, severity: severity, strength: strength(severity), unjudged: unjudged,
+                            shoulderSourceMismatch: mismatch)
+    }
+
+    /// What a screen effect shows for a severity: `severity ^ (1 / sensitivity exponent)`.
+    func strength(_ severity: Double) -> Double {
+        severity > 0 ? pow(severity, 1 / sensitivity.exponent) : 0
+    }
+
+    /// The score with every bad shoulder signal of `kinds` held, and the severity and strength taken again
+    /// without them.
+    func holding(_ kinds: Set<PostureMetricKind>, in score: PostureScore) -> PostureScore {
+        var held = score
+        for index in held.signals.indices {
+            let signal = held.signals[index]
+            guard kinds.contains(signal.kind), signal.measure.usesShoulders, signal.isBad else { continue }
+            held.signals[index].held = true
+            held.signals[index].severity = 0
+        }
+        held.severity = held.signals.map(\.severity).max() ?? 0
+        held.strength = strength(held.severity)
+        return held
     }
 }
 

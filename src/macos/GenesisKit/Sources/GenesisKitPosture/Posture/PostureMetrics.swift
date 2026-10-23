@@ -87,6 +87,15 @@ public enum PostureMeasure: String, CaseIterable, Codable, Sendable {
         }
     }
 
+    /// Whether the measure needs the shoulders: it is the shoulder line itself, or it is divided by the shoulder
+    /// width. These change meaning when the request behind the shoulders changes (`PoseShoulderSource`).
+    public var usesShoulders: Bool {
+        switch self {
+        case .headHeight, .shoulderWidth, .eyeSpanRatio, .faceWidthRatio, .shoulderTilt, .lateralOffset: true
+        case .faceCenterX, .faceCenterY, .faceWidth, .faceRoll, .facePitch, .headphonePitch: false
+        }
+    }
+
     var comparison: Comparison {
         switch self {
         case .headHeight: .falls
@@ -158,6 +167,11 @@ public struct PostureMetrics: Equatable, Codable, Sendable {
     }
 
     public var isEmpty: Bool { values.isEmpty }
+
+    /// Leaves out every measure that divides by or reads the shoulders.
+    public mutating func removeShoulderMeasures() {
+        values = values.filter { !$0.key.usesShoulders }
+    }
 
     /// Reads every measure the sample supports. Horizontal distances are scaled by the image aspect
     /// first, so every length is in image heights and angles are true angles (a 4:3 frame no longer

@@ -90,6 +90,7 @@ package func runReview(_ args: [String]) -> Never {
     installBrowserURLForwarder()
     if snapshotPath == nil {
         installNotificationClicksForWindowFace()
+        MainActor.assumeIsolated { WindowCycle.install() }
     }
     MainActor.assumeIsolated { AppMainMenu.install() }
 

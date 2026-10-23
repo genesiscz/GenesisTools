@@ -41,6 +41,18 @@ final class PathMenuTests: XCTestCase {
         ])
     }
 
+    func testASearchHitOffersTheSameFileMenuAsAListingRow() {
+        let env = environment()
+        let verbs = outline(file, .file, PathAction.fileDefaults, everyHandler, env)
+        var opened = false
+        let entries = MarkdownSearchResultMenu.entries(
+            url: file, actions: PathAction.fileDefaults, handlers: everyHandler, environment: env
+        ) { opened = true }
+        XCTAssertEqual(PathMenuEntry.outline(entries), ["Open", "-"] + verbs)
+        if case .item(let open) = entries[0] { open.run() }
+        XCTAssertTrue(opened)
+    }
+
     func testAFileOffersItsAppObsidianAndTheChangesWhenTheHostHearsThem() {
         XCTAssertEqual(outline(file, .file, PathAction.fileDefaults, everyHandler, environment()), [
             "Show in Sidebar", "-",

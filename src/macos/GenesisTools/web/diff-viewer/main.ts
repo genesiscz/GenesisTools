@@ -15,7 +15,7 @@ import {
 } from "@pierre/diffs";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
 import { fenceCloses, fencedParts, fenceLanguage, fenceMarker } from "./code-lang";
-import { parseFileDiff } from "./file-diff";
+import { keepOnlyFiles, parseFileDiff } from "./file-diff";
 import { createGlide } from "./glide";
 import { installReviewState } from "./review-state";
 
@@ -40,6 +40,14 @@ interface BridgeFile {
     newContents: string | null;
     /** Changes when either side's text changes: an unchanged file keeps its parsed diff and its item. */
     key: string;
+    /** An image file's two sides as URLs the page's own scheme serves; null for a side the file lacks. */
+    image?: BridgeImage | null;
+}
+
+/** Swift leaves a nil side out, so a missing side is undefined here. */
+interface BridgeImage {
+    old?: string | null;
+    new?: string | null;
 }
 
 /** What the page keeps of a file once its diff is parsed: the text lives in the parsed diff only. */
@@ -159,7 +167,10 @@ interface Composer {
     body: string;
 }
 
-type AnnotationMeta = { kind: "comments"; comments: BridgeComment[] } | { kind: "composer"; composer: Composer };
+type AnnotationMeta =
+    | { kind: "comments"; comments: BridgeComment[] }
+    | { kind: "composer"; composer: Composer }
+    | { kind: "image"; image: BridgeImage };
 
 /** The part of pierre's per-item callback context this page reads; both item kinds carry an id. */
 interface ItemContext {
@@ -344,6 +355,45 @@ function foldChevron(path: string): HTMLElement {
     return chevron;
 }
 
+/** The SVG's switch between its code and its picture, after its name in the header. Nothing for other files. */
+function svgModeButton(path: string): HTMLElement | undefined {
+    // From the image map, not `files`: a batch's headers draw before its files join that list.
+    const file = [...imagesByFile.values()].find((entry) => entry.svg?.path === path)?.svg;
+
+    if (!file) {
+        return undefined;
+    }
+
+    const asImage = svgAsImage.has(file.id);
+    const button = element(
+        "button",
+        "margin-left:8px;font:11px -apple-system,sans-serif;color:rgba(255,255,255,.75);background:transparent;border:1px solid rgba(255,255,255,.15);border-radius:999px;padding:1px 8px;cursor:pointer;-webkit-user-select:none;user-select:none",
+        asImage ? "Show code" : "Show image"
+    );
+    button.title = asImage ? "Show this SVG's code diff" : "Show this SVG as a picture, before and after";
+    button.addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggleSvgImage(file.id);
+    });
+    return button;
+}
+
+function toggleSvgImage(fileId: string): void {
+    const svg = imagesByFile.get(fileId)?.svg;
+
+    if (!svg) {
+        return;
+    }
+
+    if (svgAsImage.has(fileId)) {
+        svgAsImage.delete(fileId);
+    } else {
+        svgAsImage.add(fileId);
+    }
+
+    viewer.updateItem(toItem(svg));
+}
+
 /**
  * Folding a file read from its middle keeps its header at the top of the pane; without it the rows
  * below moved up under the reader, who landed in a different file ("it should scroll to the top of the
@@ -466,6 +516,9 @@ function viewOptions(): CodeViewOptions<AnnotationMeta, undefined> {
         },
         renderHeaderPrefix(fileDiff) {
             return foldChevron(fileDiff.name);
+        },
+        renderHeaderFilenameSuffix(fileDiff) {
+            return svgModeButton(fileDiff.name);
         },
     };
 }
@@ -637,6 +690,23 @@ host.addEventListener("contextmenu", (event) => {
     post({ type: "header.menu", fileId: file.id, selection: document.getSelection()?.toString() ?? "" });
 });
 
+/**
+ * Image files by id: their one line carries the picture instead of the "(binary file)" note alone. An SVG keeps its
+ * file here too, because it shows as code until the reader asks for the picture (`toggleSvgImage`).
+ */
+const imagesByFile = new Map<string, { image: BridgeImage; svg: BridgeFile | null }>();
+/** SVG files the reader switched to their picture, by id. Code is the default. */
+const svgAsImage = new Set<string>();
+
+function isSvg(path: string): boolean {
+    return path.toLowerCase().endsWith(".svg");
+}
+
+/** An SVG shown as its picture: one line under the header, with the picture under it, as a binary image has. */
+function svgShownAsImage(fileId: string): boolean {
+    return svgAsImage.has(fileId) && imagesByFile.get(fileId)?.svg != null;
+}
+
 function annotationsFor(fileId: string): DiffLineAnnotation<AnnotationMeta>[] {
     const grouped = new Map<string, BridgeComment[]>();
 
@@ -660,6 +730,11 @@ function annotationsFor(fileId: string): DiffLineAnnotation<AnnotationMeta>[] {
         lineNumber: group[0].endLine,
         metadata: { kind: "comments", comments: group },
     }));
+    const entry = imagesByFile.get(fileId);
+
+    if (entry && (!entry.svg || svgShownAsImage(fileId))) {
+        annotations.unshift({ side: "additions", lineNumber: 1, metadata: { kind: "image", image: entry.image } });
+    }
 
     if (composer && composer.fileId === fileId) {
         annotations.push({
@@ -676,19 +751,30 @@ function annotationsFor(fileId: string): DiffLineAnnotation<AnnotationMeta>[] {
 const parsed = new Map<string, { key: string; fileDiff: FileDiffMetadata }>();
 
 function toItem(file: BridgeFile): CodeViewItem<AnnotationMeta> {
+    if (file.image) {
+        imagesByFile.set(file.id, { image: file.image, svg: isSvg(file.path) ? file : null });
+    } else {
+        imagesByFile.delete(file.id);
+    }
+
+    // An SVG shown as its picture is a one-line file of its own, so its code rows give way to the picture.
+    const asImage = svgShownAsImage(file.id);
+    const key = asImage ? `${file.key}:image` : file.key;
     const cached = parsed.get(file.id);
     const existing = viewer.getItem(file.id);
 
     // Same text, same item: CodeView keeps its layout and its rendered rows (annotations follow setComments).
-    if (cached?.key === file.key && existing?.type === "diff") {
+    if (cached?.key === key && existing?.type === "diff") {
         return existing;
     }
 
-    let fileDiff = cached?.key === file.key ? cached.fileDiff : undefined;
+    let fileDiff = cached?.key === key ? cached.fileDiff : undefined;
 
     if (!fileDiff) {
-        fileDiff = parseFileDiff(file);
-        parsed.set(file.id, { key: file.key, fileDiff });
+        fileDiff = parseFileDiff(
+            asImage ? { ...file, key, oldContents: null, newContents: "(SVG shown as its picture)\n" } : file
+        );
+        parsed.set(file.id, { key, fileDiff });
     }
 
     return {
@@ -2327,6 +2413,49 @@ function renderComposer(current: Composer): HTMLElement {
     return card;
 }
 
+/**
+ * An image file's picture, before and after side by side when both exist. CodeView builds an annotation only near
+ * the viewport, and `loading="lazy"` waits for the viewport again, so a diff of many images loads only what is seen.
+ * The box has a fixed height: the row never changes height when the picture arrives.
+ */
+function renderImage(image: BridgeImage): HTMLElement {
+    const box = element(
+        "div",
+        "display:flex;gap:12px;margin:6px 12px 10px 12px;-webkit-user-select:none;user-select:none"
+    );
+    const sides: Array<[string, string | null | undefined]> = [
+        ["Before", image.old],
+        ["After", image.new],
+    ];
+    const shown = sides.flatMap(([label, url]) => (typeof url === "string" ? [{ label, url }] : []));
+
+    for (const { label, url } of shown) {
+        const panel = element("div", "flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:4px");
+
+        if (shown.length > 1) {
+            panel.appendChild(element("div", css.dim, label));
+        }
+
+        const frame = element(
+            "div",
+            "height:220px;border:1px solid rgba(255,255,255,.10);border-radius:8px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:repeating-conic-gradient(#202226 0% 25%,#17181b 0% 50%) 50%/16px 16px"
+        );
+        const picture = element("img", "max-width:100%;max-height:100%;object-fit:contain");
+        picture.loading = "lazy";
+        picture.decoding = "async";
+        picture.alt = label;
+        picture.addEventListener("error", () => {
+            frame.replaceChildren(element("div", css.dim, "This image cannot be shown"));
+        });
+        picture.src = url;
+        frame.appendChild(picture);
+        panel.appendChild(frame);
+        box.appendChild(panel);
+    }
+
+    return box;
+}
+
 function renderAnnotation(meta: AnnotationMeta | undefined): HTMLElement | undefined {
     if (!meta) {
         return undefined;
@@ -2334,6 +2463,10 @@ function renderAnnotation(meta: AnnotationMeta | undefined): HTMLElement | undef
 
     if (meta.kind === "composer") {
         return renderComposer(meta.composer);
+    }
+
+    if (meta.kind === "image") {
+        return renderImage(meta.image);
     }
 
     const card = element("div", css.card);
@@ -3260,14 +3393,8 @@ function addFiles(batch: FilesBatch): void {
     applyPendingReveal();
 
     if (batch.last) {
-        const ids = new Set(files.map((file) => file.id));
-
-        for (const id of parsed.keys()) {
-            if (!ids.has(id)) {
-                parsed.delete(id);
-            }
-        }
-
+        // The image map keeps an SVG's whole file, so it goes with the files that left, as the parsed diffs do.
+        keepOnlyFiles(new Set(files.map((file) => file.id)), parsed, imagesByFile, svgAsImage);
         post({
             type: "log",
             message: `diff.files ${batch.total} files in ${loadBatches} batches, ${loadProgressive ? "shown as they came" : "swapped in at the end"}: parse ${Math.round(loadParseMs)}ms, all on the page ${Math.round(performance.now() - loadStarted)}ms`,

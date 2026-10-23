@@ -1,13 +1,24 @@
 import { createHash } from "node:crypto";
+import { existsSync, statSync } from "node:fs";
 import { cp, mkdir, rename } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { buildDiffViewer } from "@app/macos/lib/permissions/app";
+import {
+    buildDiffViewer,
+    deleteRetiredStamps,
+    LSREGISTER,
+    listRetiredStamps,
+    readRunningExecutableInodes,
+    retiredStampsToDelete,
+    staleRegistrations,
+} from "@app/macos/lib/permissions/app";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 
 const bundleId = "com.genesiscz.genesistools.widget-preview";
+/** Replaced previews kept for a rollback; older ones are deleted after each build. */
+const RETIRED_PREVIEWS_KEPT = 2;
 const appName = "GenesisTools Preview.app";
 const repo = resolve(import.meta.dir, "..");
 const packagePath = join(repo, "src/macos/GenesisTools");
@@ -232,7 +243,53 @@ async function buildPreview(): Promise<void> {
         throw error;
     }
 
+    await pruneRetiredPreviews(destination);
     out.result({ appPath: destination, bundleId, executable: "GenesisWidgetPreview", productionAppTargeted: false });
+}
+
+/**
+ * Every retired preview is unregistered from Launch Services, only the newest {@link RETIRED_PREVIEWS_KEPT} stay on
+ * disk (plus any a running Preview still executes), and every record of this bundle id at another path than
+ * `destination` goes. Before this, each build left its retired copy registered and on disk forever: 72 records of
+ * deleted copies on 2026-10-20, all offered to `open -b`. A failure is logged, never fatal: the new preview is already
+ * installed.
+ */
+async function pruneRetiredPreviews(destination: string): Promise<void> {
+    const root = toolDataDir("widget-preview", "retired");
+    try {
+        const stamps = listRetiredStamps(root) ?? [];
+        for (const stamp of stamps) {
+            await command([LSREGISTER, "-u", join(root, stamp, appName)]).catch((error) =>
+                logger.warn({ error, stamp }, "retired preview not unregistered")
+            );
+        }
+        const binary = (stamp: string) => join(root, stamp, appName, "Contents", "MacOS", "GenesisWidgetPreview");
+        const deleted = deleteRetiredStamps(
+            root,
+            retiredStampsToDelete({
+                stamps,
+                keep: RETIRED_PREVIEWS_KEPT,
+                running: readRunningExecutableInodes(),
+                inodeOf: (stamp) => (existsSync(binary(stamp)) ? statSync(binary(stamp)).ino : null),
+            })
+        );
+        const stale = staleRegistrations(await command([LSREGISTER, "-dump"]), bundleId, destination);
+        for (const path of stale) {
+            await command([LSREGISTER, "-u", path]).catch((error) =>
+                logger.warn({ error, path }, "stale preview record not unregistered")
+            );
+        }
+        logger.info(
+            {
+                kept: stamps.length - deleted.length,
+                deleted: deleted.length,
+                unregistered: stale.length,
+            },
+            "pruned retired widget previews"
+        );
+    } catch (error) {
+        logger.warn({ error, root }, "pruning retired widget previews failed; they stay");
+    }
 }
 
 await buildPreview();

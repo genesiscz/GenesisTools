@@ -35,6 +35,13 @@ final class MarkdownKeymapTests: XCTestCase {
         KeyStroke(keyCode: code, character: character, modifiers: modifiers)
     }
 
+    func testCopyPathIsControlShiftC() {
+        let keys = Keymap(library: MarkdownKeymap.library, store: nil, layout: TableKeyLayout.us)
+        let chord = keys.chord(for: "markdown.file.copyPath")
+        XCTAssertEqual(chord, .character("c", [.control, .shift]))
+        XCTAssertEqual(chord?.label(layout: TableKeyLayout.us), "⌃⇧C")
+    }
+
     func testTheViewersKeysHaveNoConflictOnACzechOrAUSKeyboard() {
         XCTAssertEqual(Keymap(library: MarkdownKeymap.library, store: nil, layout: czech).conflicts(), [])
         XCTAssertEqual(Keymap(library: MarkdownKeymap.library, store: nil, layout: TableKeyLayout.us).conflicts(), [])

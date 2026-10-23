@@ -156,6 +156,8 @@ enum LinkRelay {
             HangWatch.start()
             // The relay was found regular with a Dock tile of its own (2026-10-08): keep it an accessory.
             DockTile.keep(.windowless)
+            // One process per machine that always runs: it names the program behind each Local Network dialog.
+            LocalNetworkWatch.start()
         }
         startHeartbeat()
         note("running as pid \(getpid()), version \(bundleVersion()), parent pid \(getppid())")

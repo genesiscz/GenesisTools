@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { retiredAtOf } from "@genesiscz/utils/genesis-tools/app-binary";
 import { out } from "@genesiscz/utils/logger";
 import { requestFullDiskAccess } from "@genesiscz/utils/macos/full-disk-access";
 import {
@@ -16,7 +17,13 @@ import { truncateDisplay } from "@genesiscz/utils/table";
 import { Command } from "commander";
 import { buildApp, describeSource } from "../../lib/permissions/app";
 import { isPermissionKind, PERMISSION_KINDS, permissionStatusLabel } from "../../lib/permissions/kinds";
-import type { LocalNetworkAnswer, OldBuild } from "../../lib/permissions/local-network";
+import {
+    describePromptProcesses,
+    type LocalNetworkAnswer,
+    type OldBuild,
+    promptProcess,
+    readLocalNetworkPrompts,
+} from "../../lib/permissions/local-network";
 import {
     ALL_PART_IDS,
     APP_PARTS,
@@ -344,6 +351,70 @@ export function registerPermissionsCommand(program: Command): void {
                 ui.warn(`${kind}: ${label}`);
                 ui.raw(`  Open its pane: ${toolCommand("macos permissions ui")} (the window lists every grant)`);
             }
+        });
+
+    permissions
+        .command("local-network")
+        .description('Which program made macOS ask "Allow GenesisTools to find devices on local networks?"')
+        .option("--since <duration>", "How far back to look (30m, 2h, 1d)", "2h")
+        .option("--json", "Print the prompts as JSON")
+        .action((options: { since: string; json?: boolean }) => {
+            const prompts = readLocalNetworkPrompts(options.since);
+
+            if (prompts === null) {
+                ui.err(
+                    `Could not read the Local Network prompts: log show --last ${options.since} failed (see the log).`
+                );
+                process.exitCode = 1;
+                return;
+            }
+
+            const launcher = genesisAppLauncherPath();
+            const live = describePromptProcesses(
+                launcher,
+                prompts.map((prompt) => prompt.pid)
+            );
+            const rows = prompts.map((prompt) => ({
+                ...prompt,
+                retiredAt: retiredAtOf(prompt.executable)?.toISOString() ?? null,
+                process: promptProcess(prompt, live),
+            }));
+
+            if (options.json) {
+                out.result({ prompts: rows });
+                return;
+            }
+
+            if (rows.length === 0) {
+                ui.info(`No Local Network prompt for GenesisTools in the last ${options.since}.`);
+                return;
+            }
+
+            for (const row of rows) {
+                const retired = retiredAtOf(row.executable);
+                const build = retired ? `old build, retired ${clock(retired)}` : "installed build";
+                ui.raw(`${row.at}  pid ${row.pid}  ${build}`);
+
+                if (!row.process) {
+                    ui.raw("    the process has exited");
+                    continue;
+                }
+
+                ui.raw(`    runs     ${truncateDisplay(row.process.command, 100)}`);
+                ui.raw(`    started  ${clock(row.process.started)}`);
+
+                if (row.process.cwd) {
+                    ui.raw(`    in       ${row.process.cwd}`);
+                }
+
+                for (const child of row.process.children.slice(0, 3)) {
+                    ui.raw(`    child    ${truncateDisplay(child, 100)}`);
+                }
+            }
+
+            ui.raw(
+                "  The pid is the launcher that macOS holds responsible: a program it started reached your network. A process keeps the build it started with, so after a rebuild an old build asks once more."
+            );
         });
 
     permissions

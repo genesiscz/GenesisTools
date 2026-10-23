@@ -89,7 +89,7 @@ const ICON_NAME = "AppIcon";
 const BUILD_LOCK_TIMEOUT_MS = 240_000;
 const PLIST_VERSION_MARKER = "<string>0.0.0</string>";
 const PLIST_BUILD_MARKER = "<key>CFBundleVersion</key>\n\t<string>1</string>";
-const LSREGISTER =
+export const LSREGISTER =
     "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister";
 
 /** Which checkout and commit an install was built from, so "what is running?" is one `bun run app:status`. */
@@ -1362,6 +1362,63 @@ export function readRunningExecutableInodes(): Set<number> | null {
         listProcesses({ commands: false }).map((entry) => entry.pid),
         executableInode
     );
+}
+
+/**
+ * The retired copies under `root` (folders named by their retirement time in ms), newest first. Empty when `root` does
+ * not exist yet; null when it could not be read (logged with `root`), so a caller deletes nothing on a guess.
+ */
+export function listRetiredStamps(root: string): string[] | null {
+    try {
+        return readdirSync(root, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory() && Number.isFinite(Number(entry.name)))
+            .map((entry) => entry.name)
+            .sort((a, b) => Number(b) - Number(a));
+    } catch (error) {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return [];
+        }
+
+        logger.warn({ error, root }, "retired copies not listed; none deleted");
+        return null;
+    }
+}
+
+/**
+ * The retired copies to delete, from `stamps` newest first: those past the newest `keep`, except a pinned one
+ * ({@link pinnedRetiredBundles}: a running process still executes its binary, or the binary cannot be stat'ed).
+ * Running processes that could not be listed (`running` null) delete nothing.
+ */
+export function retiredStampsToDelete({
+    stamps,
+    keep,
+    running,
+    inodeOf,
+}: {
+    stamps: string[];
+    keep: number;
+    running: Set<number> | null;
+    inodeOf: (stamp: string) => number | null;
+}): string[] {
+    if (running === null) {
+        return [];
+    }
+
+    const pinned = pinnedRetiredBundles({ entries: stamps, inodeOf, running });
+    return stamps.slice(keep).filter((stamp) => !pinned.has(stamp));
+}
+
+/** Deletes each stamp folder under `root`; a failure is logged and the rest still go. Returns the deleted stamps. */
+export function deleteRetiredStamps(root: string, stamps: string[]): string[] {
+    return stamps.filter((stamp) => {
+        try {
+            rmSync(join(root, stamp), { recursive: true, force: true });
+            return true;
+        } catch (error) {
+            logger.warn({ error, root, stamp }, "retired copy not deleted");
+            return false;
+        }
+    });
 }
 
 /**

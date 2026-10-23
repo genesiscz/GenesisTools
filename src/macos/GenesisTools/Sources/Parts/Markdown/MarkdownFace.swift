@@ -49,6 +49,8 @@ package func runMarkdown(_ args: [String]) -> Never {
                 MarkdownDocumentWindowController.shared.show(paths: request.paths, focus: request.focus, diff: request.diff)
             }
         }
+        _ = NSApplication.shared
+        WindowCycle.install()
         MarkdownViewerApp.run(MarkdownViewerAppConfiguration(
             appName: "GenesisTools",
             paths: paths,
