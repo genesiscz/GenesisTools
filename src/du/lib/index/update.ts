@@ -28,6 +28,7 @@ import {
 } from "./store";
 import type { DirRow, IndexEvent, RegionResult, UpdateResult } from "./types";
 import { IndexError } from "./types";
+import { sameVolume, volumeUuidAt } from "./volume";
 import { runIndexWalk, type WalkOutput } from "./walk";
 
 const log = logger.child({ component: "du:index:update" });
@@ -372,6 +373,10 @@ async function runUpdate(opts: UpdateOptions, targets: Target[], startedAt: numb
         const bigFileFloor = Number(getMeta(db, "big_file_floor") ?? INDEX_DEFAULTS.bigFileFloor);
         const bigFileLimit = Number(getMeta(db, "big_file_limit") ?? INDEX_DEFAULTS.bigFileLimit);
         const fsid = getMeta(db, "volume_fsid");
+        const knownUuid = getMeta(db, "volume_uuid");
+        // Read once, and only when needed: a moved fsid, or an index that has no UUID stored yet.
+        let currentUuid: string | null | undefined = knownUuid === null ? volumeUuidAt(root.name) : undefined;
+        let movedFsid: string | null = null;
 
         const queueReadAt = now();
         const queued = opts.fromQueue
@@ -484,10 +489,18 @@ async function runUpdate(opts: UpdateOptions, targets: Target[], startedAt: numb
                 }
 
                 if (fsid !== null && walk.end.fsid !== "" && walk.end.fsid !== fsid) {
-                    throw new IndexError(
-                        "volume_changed",
-                        `${owner.path} is on another volume than the index (${walk.end.fsid}, built on ${fsid}). Run a build.`
-                    );
+                    if (currentUuid === undefined) {
+                        currentUuid = volumeUuidAt(root.name);
+                    }
+
+                    if (!sameVolume({ fsid, uuid: knownUuid }, { fsid: walk.end.fsid, uuid: currentUuid })) {
+                        throw new IndexError(
+                            "volume_changed",
+                            `${owner.path} is on another volume than the index (${walk.end.fsid}, built on ${fsid}). Run a build.`
+                        );
+                    }
+
+                    movedFsid = walk.end.fsid;
                 }
 
                 walks.push({ owner, walk });
@@ -535,6 +548,13 @@ async function runUpdate(opts: UpdateOptions, targets: Target[], startedAt: numb
             assertConsistent(db, touched);
             setMeta(db, "last_update_scan_id", String(scanId));
             setMeta(db, "blocked_dirs", String(countBlocked(db)));
+            if (movedFsid !== null) {
+                setMeta(db, "volume_fsid", movedFsid);
+            }
+
+            if (knownUuid === null && currentUuid) {
+                setMeta(db, "volume_uuid", currentUuid);
+            }
             if (queued.length > 0) {
                 db.run("DELETE FROM dirty_queue WHERE path IN (SELECT value FROM json_each(?)) AND queued_at_ms <= ?", [
                     SafeJSON.stringify(queued.map((q) => q.path)),

@@ -334,13 +334,18 @@ public final class DuIndexReader: @unchecked Sendable {
     }
 
     /// The most recent scans, newest first.
-    public func scans(limit: Int = 10) throws -> [DuIndexScan] {
+    /// The newest scans first. `status` and `kind` filter in SQL, so "the last finished build" is found
+    /// however many failed updates came after it (a volume-id mismatch failed 176 in a row by 2026-10-23,
+    /// and a 20-row window then showed "no index" over a good one).
+    public func scans(limit: Int = 10, status: String? = nil, kind: String? = nil) throws -> [DuIndexScan] {
         try locked {
             var result: [DuIndexScan] = []
             try query("""
                 SELECT id, kind, status, started_at_ms, finished_at_ms, files, dirs, alloc_bytes, walk_ms, threads
-                FROM scans ORDER BY id DESC LIMIT ?1
-                """, [.int(Int64(max(0, limit)))]) { row in
+                FROM scans WHERE (?2 IS NULL OR status = ?2) AND (?3 IS NULL OR kind = ?3)
+                ORDER BY id DESC LIMIT ?1
+                """, [.int(Int64(max(0, limit))), status.map { .text($0) } ?? .null,
+                      kind.map { .text($0) } ?? .null]) { row in
                 result.append(DuIndexScan(id: row.int(0), kind: row.text(1), status: row.text(2), startedAtMs: row.int(3),
                                           finishedAtMs: row.optionalInt(4), files: row.optionalInt(5),
                                           dirs: row.optionalInt(6), allocBytes: row.optionalInt(7),
@@ -360,6 +365,7 @@ public final class DuIndexReader: @unchecked Sendable {
     enum Value {
         case int(Int64)
         case text(String)
+        case null
     }
 
     struct Row {
@@ -440,6 +446,7 @@ public final class DuIndexReader: @unchecked Sendable {
             switch value {
             case .int(let number): sqlite3_bind_int64(statement, position, number)
             case .text(let text): sqlite3_bind_text(statement, position, text, -1, Self.transient)
+            case .null: sqlite3_bind_null(statement, position)
             }
         }
         while true {

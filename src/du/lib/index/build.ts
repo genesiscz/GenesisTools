@@ -21,6 +21,7 @@ import {
 } from "./store";
 import type { BuildResult, IndexEvent, ProgressEvent } from "./types";
 import { IndexError } from "./types";
+import { sameVolume, volumeUuidAt } from "./volume";
 import { runIndexWalk, type WalkNode, type WalkOutput, type WalkProgress } from "./walk";
 
 const log = logger.child({ component: "du:index:build" });
@@ -307,7 +308,12 @@ export async function buildIndex(opts: BuildOptions): Promise<BuildResult> {
                 // Once the rows are in, a cancel no longer helps anyone: the commit is about a second.
                 let reset: BuildResult["reset"] = opts.reset ? "requested" : null;
                 const knownFsid = getMeta(db, "volume_fsid");
-                if (!reset && knownFsid !== null && walk.end.fsid !== "" && knownFsid !== walk.end.fsid) {
+                const knownUuid = getMeta(db, "volume_uuid");
+                const volumeUuid = volumeUuidAt(root);
+                if (
+                    !reset &&
+                    !sameVolume({ fsid: knownFsid, uuid: knownUuid }, { fsid: walk.end.fsid || null, uuid: volumeUuid })
+                ) {
                     reset = "volume_changed";
                     log.warn({ knownFsid, fsid: walk.end.fsid, root }, "volume changed; rebuilding from empty");
                 }
@@ -366,6 +372,7 @@ export async function buildIndex(opts: BuildOptions): Promise<BuildResult> {
                     const meta: Record<string, string> = {
                         root,
                         volume_fsid: walk.end.fsid,
+                        ...(volumeUuid ? { volume_uuid: volumeUuid } : {}),
                         private: withPrivate ? "1" : "0",
                         min_dir_bytes: String(minDirBytes),
                         big_file_floor: String(bigFileFloor),

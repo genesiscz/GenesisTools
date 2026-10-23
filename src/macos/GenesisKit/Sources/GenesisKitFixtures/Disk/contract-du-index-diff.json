@@ -63,6 +63,15 @@
       "status": "shrunk",
       "files_delta": -300,
       "approx": false
+    },
+    {
+      "path": "/Users/example/Library/Caches/Below-Floor",
+      "before": 268435456,
+      "after": null,
+      "delta": -251658240,
+      "status": "shrunk",
+      "files_delta": -41,
+      "approx": true
     }
   ],
   "truncated": false

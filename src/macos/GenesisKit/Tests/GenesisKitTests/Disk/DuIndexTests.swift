@@ -60,7 +60,9 @@ final class DuIndexContractTests: XCTestCase {
         XCTAssertEqual(info.dbBytes, 1_835_008)
 
         let diff = try decodeIndex(DuIndexDiff.self, "contract-du-index-diff")
-        XCTAssertEqual(diff.rows.map(\.status), ["grown", "new", "grown", "gone", "shrunk"])
+        XCTAssertEqual(diff.rows.map(\.status), ["grown", "new", "grown", "gone", "shrunk", "shrunk"])
+        XCTAssertNil(diff.rows[5].after, "a folder below the floor keeps its new size unknown (diff.ts writes null)")
+        XCTAssertEqual(diff.rows[5].approx, true)
         XCTAssertNil(diff.rows[2].before, "an approximate old side")
         XCTAssertEqual(diff.rows[2].approx, true)
         XCTAssertEqual(diff.to.live, true)
@@ -289,6 +291,21 @@ final class DuIndexReaderTests: XCTestCase {
         XCTAssertEqual(try reader.lookup("/etc"), .notIndexed)
         XCTAssertEqual(try reader.path(of: 17), "/Users/example/Library/Containers")
         XCTAssertEqual(try reader.node(id: 22)?.path, "/Users/example/Library/Logs")
+    }
+
+    func testTheLastFinishedScanIsFoundBehindARunOfFailedUpdates() throws {
+        let failed = (44 ..< 69).map {
+            "(\($0), 'update', '/Users/example', \(1760390000000 + Int64($0) * 1_200_000), NULL, 'failed', NULL, NULL, NULL, NULL, NULL, '{}')"
+        }
+        try exec("""
+            INSERT INTO scans (id, kind, root, started_at_ms, finished_at_ms, status, files, dirs, alloc_bytes, walk_ms, threads, options_json)
+              VALUES \(failed.joined(separator: ",\n"));
+            """)
+        let reader = try DuIndexReader(path: dbPath)
+        XCTAssertEqual(try reader.scans(limit: 20).filter { $0.status == "done" }.count, 0, "the old window saw only failures")
+        XCTAssertEqual(try reader.scans(limit: 1, status: "done").first?.id, 43)
+        XCTAssertEqual(try reader.scans(limit: 1, status: "done", kind: "build").first?.id, 42)
+        XCTAssertEqual(try reader.scans(limit: 1).first?.status, "failed")
     }
 
     func testChildrenLocalTopFilesAndScansMatchTheContract() throws {

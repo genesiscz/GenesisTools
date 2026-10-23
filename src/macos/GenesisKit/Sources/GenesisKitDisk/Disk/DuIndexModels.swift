@@ -374,7 +374,10 @@ public struct DuIndexDiffRow: Codable, Equatable, Identifiable, Sendable {
     public var path: String
     /// nil when the old side is not known exactly (`approx`).
     public var before: Int64?
-    public var after: Int64
+    /// nil when the folder fell below the storage floor or out of the index (`approx`): the CLI keeps
+    /// that side unknown rather than inventing zero bytes. Required before 2026-10-23, so one such row
+    /// failed the whole Radar "Fast-growing folders" card ("no value for Int64 at rows.Index 21.after").
+    public var after: Int64?
     public var delta: Int64
     /// `grown`, `shrunk`, `new` or `gone`.
     public var status: String
@@ -383,7 +386,7 @@ public struct DuIndexDiffRow: Codable, Equatable, Identifiable, Sendable {
 
     public var id: String { path }
 
-    public init(path: String, before: Int64?, after: Int64, delta: Int64, status: String, filesDelta: Int64? = nil,
+    public init(path: String, before: Int64?, after: Int64?, delta: Int64, status: String, filesDelta: Int64? = nil,
                 approx: Bool? = nil) {
         self.path = path
         self.before = before
