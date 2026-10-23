@@ -13,7 +13,7 @@ import type { Command } from "commander";
 import { Option } from "commander";
 import pc from "picocolors";
 import { listCloudFiles } from "./engine";
-import { applyEviction, type CloudCtl, type EvictionPlan, planEviction, realCloudCtl } from "./evict";
+import { applyEviction, type CloudCtl, type EvictionPlan, planEviction, providerRefusal, realCloudCtl } from "./evict";
 import { humanBytes, shellQuote, tildePath } from "./format";
 import { intOpt } from "./options";
 import type { CloudFileEntry, CloudFilesResult } from "./types";
@@ -151,10 +151,16 @@ export async function runEvict(opts: {
         }
     }
 
+    const requested = opts.cli.apply ? (opts.cli.path ?? []) : [];
     if (plan.eligible.length === 0) {
         out.println(
             `Nothing is safe to evict: none of the ${opts.files.length} offered file(s) is confirmed uploaded.`
         );
+        // `--apply --path` asked for these files by name, so not evicting them is a failure, not "nothing to do".
+        if (requested.length > 0) {
+            process.exitCode = 1;
+        }
+
         return;
     }
 
@@ -197,6 +203,31 @@ export async function runEvict(opts: {
     for (const r of results.filter((x) => !x.evicted)) {
         out.println(pc.yellow(`     not evicted: ${tildePath(r.path)} (${r.reason ?? "unknown"})`));
     }
+
+    // A refused or failed eviction, or a file asked for by --path that was not eligible, fails the command, so a
+    // script can tell a partial reclaim from a full one.
+    const evicted = new Set(ok.map((r) => r.path));
+    if (results.some((r) => !r.evicted) || requested.some((path) => !evicted.has(path))) {
+        process.exitCode = 1;
+    }
+}
+
+/**
+ * The files `evict` offers: the ones named by --path (refused ones too, so their reason is printed), else the `top`
+ * largest of the providers it can evict. Taking the top N before that filter let other providers' big files push
+ * every iCloud file out of the offer.
+ */
+export function offerForEviction(
+    files: CloudFileEntry[],
+    o: { paths?: string[]; top?: number }
+): { files: CloudFileEntry[]; otherProviders: number } {
+    if (o.paths) {
+        const want = new Set(o.paths);
+        return { files: files.filter((f) => want.has(f.path)), otherProviders: 0 };
+    }
+
+    const evictable = files.filter((f) => providerRefusal(f.provider) === null);
+    return { files: evictable.slice(0, o.top ?? 50), otherProviders: files.length - evictable.length };
 }
 
 export function registerCloudCommands(program: Command): void {
@@ -282,12 +313,30 @@ export function registerCloudCommands(program: Command): void {
             const root = resolveDir(dir);
             const listing = listCloudFiles({ root, minBytes: o.minBytes, threads: o.threads });
             const paths = o.path?.map((x) => resolve(x));
-            const want = paths ? new Set(paths) : null;
-            const files = want ? listing.files.filter((f) => want.has(f.path)) : listing.files.slice(0, o.top ?? 50);
-            logger.debug({ root, listed: listing.files.length, offered: files.length }, "du evict: candidates");
+            const { files, otherProviders } = offerForEviction(listing.files, { paths, top: o.top });
+            logger.debug(
+                { root, listed: listing.files.length, offered: files.length, otherProviders },
+                "du evict: candidates"
+            );
             renderCliHeader("Evict local copies", root);
+            if (otherProviders > 0) {
+                out.println(
+                    pc.dim(
+                        `  ${otherProviders.toLocaleString()} downloaded file(s) of other providers are not offered: only iCloud Drive eviction is supported.`
+                    )
+                );
+            }
+
             if (files.length === 0) {
-                out.println("No downloaded cloud files found here.");
+                out.println(
+                    otherProviders > 0
+                        ? "No downloaded iCloud Drive files found here."
+                        : "No downloaded cloud files found here."
+                );
+                if (o.apply && paths && paths.length > 0) {
+                    process.exitCode = 1;
+                }
+
                 return;
             }
 

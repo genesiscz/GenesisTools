@@ -47,21 +47,21 @@ export type WorkItemUpdateResult =
     | { ok: true; dryRun: false; rev: number; images: Record<string, UploadedImage>; plan: WorkItemUpdatePlan }
     | { ok: false; error: string; mismatches?: { field: string; sent: string; stored: string }[] };
 
+/** An `<img>` tag's `src` in any valid HTML spelling: any case, spaces around `=`, double, single or no quotes. */
+const IMG_SRC = /(<img\b[^>]*?\bsrc\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s>"']+))/gi;
+
 /** Local `<img src>` values. `http`, `https` and `data` sources are already remote. */
 export function localImageSources(html: string): string[] {
-    const sources = [...html.matchAll(/<img\b[^>]*\bsrc="([^"]+)"/g)].map((match) => match[1] ?? "");
+    const sources = [...html.matchAll(IMG_SRC)].map((match) => match[2] ?? match[3] ?? match[4] ?? "");
 
-    return [...new Set(sources.filter((src) => src !== "" && !/^(https?:|data:)/.test(src)))];
+    return [...new Set(sources.filter((src) => src !== "" && !/^(https?:|data:)/i.test(src)))];
 }
 
 export function replaceImageSources(html: string, urls: ReadonlyMap<string, string>): string {
-    let out = html;
-
-    for (const [src, url] of urls) {
-        out = out.replaceAll(`src="${src}"`, `src="${url}"`);
-    }
-
-    return out;
+    return html.replace(IMG_SRC, (tag: string, prefix: string, dq?: string, sq?: string, bare?: string) => {
+        const url = urls.get(dq ?? sq ?? bare ?? "");
+        return url === undefined ? tag : `${prefix}"${url}"`;
+    });
 }
 
 export function sha256Hex(bytes: Uint8Array): string {
@@ -148,8 +148,8 @@ export function sameStoredText(input: {
 function normalizeAdoText(value: string, format: "markdown" | "html"): string {
     const text = value
         .replace(/<!--[\s\S]*?-->/g, "")
-        .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number(code)))
-        .replace(/&#x([0-9a-fA-F]+);/g, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+        .replace(/&#(\d+);/g, (match, code: string) => codePointOr(Number(code), match))
+        .replace(/&#x([0-9a-fA-F]+);/g, (match, hex: string) => codePointOr(Number.parseInt(hex, 16), match))
         .replace(/&quot;/g, '"')
         .replace(/&apos;/g, "'")
         .replace(/&lt;/g, "<")
@@ -159,16 +159,23 @@ function normalizeAdoText(value: string, format: "markdown" | "html"): string {
         .replace(/<[^>]+>/g, (tag) => tag.replace(/;(?=\s*["'>])/g, ""));
 
     if (format === "html") {
-        return text
-            .replace(/\s*(<[^>]+>)\s*/g, "$1")
-            .replace(/\s+/g, " ")
-            .trim();
+        // Space around a block tag is layout the server re-indents; space beside an inline tag is text.
+        return text.replace(BLOCK_TAG_SPACE, "$1").replace(/\s+/g, " ").trim();
     }
 
+    // Two or more trailing spaces are a Markdown hard break, so they survive as one canonical pair.
     return text
         .replace(/\r\n?/g, "\n")
-        .replace(/[ \t]+$/gm, "")
+        .replace(/[ \t]+$/gm, (space) => (space.length >= 2 ? "  " : ""))
         .trim();
+}
+
+const BLOCK_TAG_SPACE =
+    /\s*(<\/?(?:p|div|br|hr|ul|ol|li|table|thead|tbody|tfoot|tr|td|th|h[1-6]|blockquote|pre|section|article)\b[^>]*>)\s*/gi;
+
+/** A numeric character reference outside Unicode (or a lone surrogate) stays as written instead of throwing. */
+function codePointOr(code: number, original: string): string {
+    return code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff) ? String.fromCodePoint(code) : original;
 }
 
 /** Markdown when the field is (or is being switched to) Markdown, HTML when the field or either value is HTML. */

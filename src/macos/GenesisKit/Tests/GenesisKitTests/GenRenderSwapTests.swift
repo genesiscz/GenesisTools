@@ -69,6 +69,31 @@ final class GenRenderSwapTests: XCTestCase {
         XCTAssertEqual(rig.mounted, ["c"], "the timeout swaps without a ready")
     }
 
+    /// A, B, C, B before any timeout: the first B's timeout must not promote the second B, which has neither signalled
+    /// nor waited its own interval (review thread on PR #507).
+    func testAnEarlierSwitchsTimeoutDoesNotPromoteALaterSwitchToTheSameID() {
+        let rig = Rig()
+        let hosting = NSHostingView(rootView: Host(rig: rig, timeout: 1.2))
+        hosting.frame = NSRect(x: 0, y: 0, width: 300, height: 200)
+        let window = NSWindow(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = hosting
+        defer { window.contentView = nil }
+        pump(0.1)
+        XCTAssertEqual(rig.mounted, ["a"])
+
+        rig.id = "b"
+        pump(0.2)
+        rig.id = "c"
+        pump(0.2)
+        rig.id = "b"
+        // The first B's timeout fires 1.2 s after its switch; the second B's 1.2 s after the third switch.
+        pump(1.1)
+        XCTAssertEqual(rig.mounted, ["a", "b"], "the old content stays until the second B's own timeout")
+        pump(0.5)
+        XCTAssertEqual(rig.mounted, ["b"], "the second B arrives on its own timeout")
+    }
+
     /// The markdown viewer's fade: the old content goes in the swap's own pass, and the crossfade is an animation on the
     /// hosting view's layer, so no SwiftUI frame runs for it.
     func testALayerFadeSwapsAtOnceAndCrossfadesTheHostingLayer() throws {

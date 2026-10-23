@@ -386,6 +386,12 @@ describe("createReclaimCommand", () => {
             await run(["presets", "auto", "nightly", "--off"]);
             expect(getPreset("nightly")?.auto?.enabled).toBe(false);
 
+            // Limits passed with --off are saved, not dropped, and the next --on runs with them.
+            await run(["presets", "auto", "nightly", "--off", "--max-bytes", "none", "--max-files", "7"]);
+            expect(getPreset("nightly")?.auto).toEqual({ enabled: false, maxFiles: 7 });
+            await run(["presets", "auto", "nightly", "--on"]);
+            expect(getPreset("nightly")?.auto).toEqual({ enabled: true, maxFiles: 7 });
+
             const bad = await run(["presets", "auto", "nightly", "--max-bytes", "lots"]);
             expect(bad.code).toBe(1);
             const unknown = await run(["presets", "auto", "missing", "--on"]);

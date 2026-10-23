@@ -1190,6 +1190,8 @@ describe("top-level threads in the receive report", () => {
         expect(index).toContain(
             "  T03  plain comment  @dana  1n  @me Remember to delete the migration skill before the merge"
         );
-        expect(expandThreads(discussions, opts, ["T03", "note1"])).toContain("## Thread 1 — plain comment");
+        const expanded = expandThreads(discussions, { ...opts, refs: new Map([["note1", "T03"]]) }, ["T03"]);
+        expect(expanded).toContain("Remember to delete the migration skill before the merge");
+        expect(expanded).not.toContain("no unresolved thread has this id");
     });
 });

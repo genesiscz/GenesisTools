@@ -161,19 +161,67 @@ final class HubLogicTests: XCTestCase {
         """
         let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
         let whole = DiffScope.range(base: "base000", head: "d000000", label: "whole", fallbackBase: "origin/main")
-        let middle = PRsModel.rangeScope(commits, first: 1, last: 2, pr: pr, whole: whole)
-        XCTAssertEqual(middle, .range(base: "a000000", head: "c000000", label: "!7 b000000..c000000 (2 commits)"))
-        XCTAssertEqual(PRsModel.rangeShas(middle, linked: middle, in: commits), ["b000000", "c000000"])
-        let opening = PRsModel.rangeScope(commits, first: 0, last: 1, pr: pr, whole: whole)
-        XCTAssertEqual(opening, .range(base: "base000", head: "b000000", label: "!7 a000000..b000000 (2 commits)", fallbackBase: "origin/main"))
-        XCTAssertEqual(PRsModel.rangeShas(opening, linked: opening, in: commits), ["a000000", "b000000"])
+        let middle = PRsModel.rangeScope(commits, first: 1, last: 2, parent: "a000000", pr: pr, whole: whole)
+        XCTAssertEqual(middle.scope, .range(base: "a000000", head: "c000000", label: "!7 b000000..c000000 (2 commits)"))
+        XCTAssertEqual(PRsModel.rangeShas(middle.scope, linked: middle), ["b000000", "c000000"])
+        let opening = PRsModel.rangeScope(commits, first: 0, last: 1, parent: nil, pr: pr, whole: whole)
+        XCTAssertEqual(opening.scope, .range(base: "base000", head: "b000000", label: "!7 a000000..b000000 (2 commits)", fallbackBase: "origin/main"))
+        XCTAssertEqual(PRsModel.rangeShas(opening.scope, linked: opening), ["a000000", "b000000"])
         // A link over every commit of the PR marks them all; the whole PR itself, or another range, marks none.
-        let span = PRsModel.rangeScope(commits, first: 0, last: 3, pr: pr, whole: whole)
-        XCTAssertEqual(PRsModel.rangeShas(span, linked: span, in: commits), Set(commits.map(\.sha)))
-        XCTAssertEqual(PRsModel.rangeShas(whole, linked: span, in: commits), [], "the whole PR marks no commit")
-        XCTAssertEqual(PRsModel.rangeShas(whole, linked: nil, in: commits), [])
-        XCTAssertEqual(PRsModel.rangeShas(middle, linked: opening, in: commits), [], "only the range the link set")
-        XCTAssertEqual(PRsModel.rangeShas(.commit(sha: "b000000", title: "b"), linked: span, in: commits), [])
+        let span = PRsModel.rangeScope(commits, first: 0, last: 3, parent: nil, pr: pr, whole: whole)
+        XCTAssertEqual(PRsModel.rangeShas(span.scope, linked: span), Set(commits.map(\.sha)))
+        XCTAssertEqual(PRsModel.rangeShas(whole, linked: span), [], "the whole PR marks no commit")
+        XCTAssertEqual(PRsModel.rangeShas(whole, linked: nil), [])
+        XCTAssertEqual(PRsModel.rangeShas(middle.scope, linked: opening), [], "only the range the link set")
+        XCTAssertEqual(PRsModel.rangeShas(.commit(sha: "b000000", title: "b"), linked: span), [])
+    }
+
+    /// A PR with a side branch merged in: the forge lists its commits oldest first, so the side commit sits between
+    /// two commits of the main line. A range that starts after it diffs from the first commit's parent in git, not
+    /// from the listed commit before it, whose fork point would bring in a commit the range does not hold.
+    func testARangeLinkInABranchedPRDiffsFromItsFirstCommitsParent() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("hub-branched-range-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.resolvingSymlinksInPath().path
+        // No hooks and no signing from the machine's global git config.
+        let git = { (args: [String]) -> String? in
+            WorktreeDiscovery.git(path, ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "core.hooksPath=/dev/null",
+                                         "-c", "commit.gpgsign=false"] + args)?.trimmed
+        }
+        func commitFile(_ name: String) throws -> String {
+            try "\(name)\n".write(toFile: "\(path)/\(name)", atomically: true, encoding: .utf8)
+            XCTAssertNotNil(git(["add", name]))
+            XCTAssertNotNil(git(["commit", "-q", "-m", name]))
+            return try XCTUnwrap(git(["rev-parse", "HEAD"]))
+        }
+        XCTAssertNotNil(git(["init", "-q", "-b", "main"]))
+        let root = try commitFile("base.txt")
+        let first = try commitFile("a1.txt")
+        let second = try commitFile("a2.txt")
+        let third = try commitFile("a3.txt")
+        XCTAssertNotNil(git(["checkout", "-q", "-b", "side", root]))
+        let side = try commitFile("s.txt")
+        XCTAssertNotNil(git(["checkout", "-q", "main"]))
+        XCTAssertNotNil(git(["merge", "-q", "--no-ff", "--no-edit", "side"]))
+        let merge = try XCTUnwrap(git(["rev-parse", "HEAD"]))
+
+        XCTAssertEqual(HubCommitLookup.parent(of: second, in: path), first)
+        XCTAssertEqual(HubCommitLookup.parent(of: root, in: path), HubCommitLookup.emptyTree, "a root commit starts from the empty tree")
+
+        let commit = { (sha: String) in HubPRDetail.Commit(sha: sha, title: sha, author: nil, authorLogin: nil, date: nil, body: nil) }
+        let commits = [first, side, second, third, merge].map(commit)
+        let json = """
+        {"repo":"app","repoRoot":null,"origin":{"kind":"github","host":"github.com","web":"https://github.com/acme/app"},
+         "number":7,"title":"t","state":"OPEN","draft":false,"author":"a","headBranch":"feat/x","baseBranch":"main",
+         "url":"https://github.com/acme/app/pull/7","labels":[],"reviewers":[],"headSha":"\(merge)","crossRepository":false,"headRepo":null}
+        """
+        let pr = try JSONDecoder().decode(HubPR.self, from: Data(json.utf8))
+        let whole = DiffScope.range(base: root, head: merge, label: "whole")
+        let range = PRsModel.rangeScope(commits, first: 2, last: 3, parent: HubCommitLookup.parent(of: second, in: path), pr: pr, whole: whole)
+        XCTAssertEqual(PRsModel.rangeShas(range.scope, linked: range), [second, third])
+        let snapshot = try GitWorkingTreeSource(repo: URL(fileURLWithPath: path)).load(scope: range.scope)
+        XCTAssertEqual(snapshot.files.map(\.path).sorted(), ["a2.txt", "a3.txt"], "the side commit's fork point would add a1.txt")
     }
 
     func testAForgePathFindsItsCheckoutInAnyCaseAndForm() {
@@ -499,6 +547,31 @@ final class HubLogicTests: XCTestCase {
         model.dismissError(direct)
         model.listFailed(ListDown())
         XCTAssertEqual(model.errors.map(\.text), ["Could not list the PRs/MRs: gh: network down"])
+    }
+
+    /// The next link replaces a failed link's notice, also when a listed row opens it without a direct fetch, and a
+    /// list that lands later does not bring the old notice back.
+    @MainActor
+    func testALinkOpenedFromAListedRowClearsTheFailedLinkBeforeIt() throws {
+        // No checkout (repoRoot null): selecting the row starts no CLI fetch in this logic test.
+        let json = """
+        {"prs":[{"repo":"app","repoRoot":null,"origin":{"kind":"github","host":"github.com","web":"https://github.com/acme/app"},
+         "number":7,"title":"t","state":"OPEN","draft":false,"author":"alice","headBranch":"feature","baseBranch":"develop",
+         "url":"https://github.com/acme/app/pull/7","labels":[],"reviewers":[],"headSha":null,"crossRepository":false,"headRepo":null}],
+         "repos":[]}
+        """
+        let list = try JSONDecoder().decode(HubPRList.self, from: Data(json.utf8))
+        let model = PRsModel()
+        model.apply(list, key: "fixture", flash: false)
+        let failed = PRListNotice("Could not open acme/app#99: no such PR")
+        model.directFailed(failed)
+        XCTAssertEqual(model.errors, [failed])
+
+        model.request(try XCTUnwrap(HubPRRef("acme/app#7")))
+        XCTAssertEqual(model.selected?.number, 7)
+        XCTAssertEqual(model.errors, [], "the link opened its PR, so the previous link's failure no longer shows")
+        model.apply(list, key: "fixture", flash: false)
+        XCTAssertEqual(model.errors, [], "a list that lands after the newer link does not bring the old failure back")
     }
 
     func testALiveLaunchIsNotScripted() {

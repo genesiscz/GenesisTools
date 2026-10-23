@@ -640,6 +640,14 @@ describe("the skeleton command's filters and rendering", () => {
         expect(collectFiles(join(root, "glob/none*.ts"))).toEqual([]);
     });
 
+    it("drops a glob's matches below node_modules or build, as a directory walk does", () => {
+        write("glob-skip/src/a.ts", "export const a = 1;\n");
+        write("glob-skip/node_modules/pkg/b.ts", "export const b = 2;\n");
+        write("glob-skip/build/c.ts", "export const c = 3;\n");
+
+        expect(collectFiles(join(root, "glob-skip/**/*.ts"))).toEqual([join(root, "glob-skip/src/a.ts")]);
+    });
+
     it("applies --ignore to a glob's matches below its literal folders, also outside the cwd", () => {
         write("glob-ignore/keep.ts", "export const a = 1;\n");
         write("glob-ignore/out.ts", "export const b = 2;\n");

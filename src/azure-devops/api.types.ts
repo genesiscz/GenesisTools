@@ -8,6 +8,12 @@
 
 import type { CommentFormat, IdentityRef } from "@app/azure-devops/types";
 
+/** POST `_apis/wit/attachments` answer; `url` is what an `<img src>` stores. */
+export interface AttachmentReferenceApi {
+    id?: string;
+    url?: string;
+}
+
 export interface WiqlWorkItemRef {
     id: number;
     url?: string;

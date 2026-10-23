@@ -92,6 +92,41 @@ describe("a server that answers with an error", () => {
         }
     });
 
+    test("a 500 followed by a gateway status or a stopped server times out not ready, not broken", async () => {
+        let calls = 0;
+        const gateway = Bun.serve({
+            port: 0,
+            fetch: () => new Response("upstream", { status: calls++ === 0 ? 500 : 503 }),
+        });
+        let stoppedCalls = 0;
+        const stopped = Bun.serve({
+            port: 0,
+            fetch: () => {
+                if (stoppedCalls++ === 0) {
+                    setTimeout(() => stopped.stop(true), 0);
+                }
+
+                return new Response("boom", { status: 500 });
+            },
+        });
+        try {
+            const results = await Promise.all(
+                [gateway.port, stopped.port].map((port) =>
+                    waitForUrlReady(`http://127.0.0.1:${port}/`, 1_000, { brokenGraceMs: 10_000 })
+                )
+            );
+            for (const result of results) {
+                expect(result.ready).toBe(false);
+                expect(result.broken).toBeUndefined();
+            }
+            expect(results[0].detail).toContain("last status 503");
+            expect(stoppedCalls).toBe(1);
+        } finally {
+            gateway.stop(true);
+            stopped.stop(true);
+        }
+    });
+
     test("the server's error and the top of its stack come from the log, ANSI stripped", () => {
         const logFile = join(tmpdir(), `readiness-excerpt-${process.pid}-${Date.now()}.log`);
         writeFileSync(

@@ -10,9 +10,9 @@
 // it (~4.7s on GenesisTools' 388k files, ~56% faster than the pre-skip engine).
 
 import { CString, dlopen, FFIType, ptr, suffix } from "bun:ffi";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
@@ -36,6 +36,29 @@ const SHIM_SRC = join(NATIVE_DIR, "l2p_shim.c");
 const SHIM = join(NATIVE_DIR, "libl2pshim.dylib");
 
 /**
+ * Xcode or the Command Line Tools are installed. `xcode-select -p` never prompts, while /usr/bin/clang and
+ * /usr/bin/swiftc exist on every Mac and, without the tools, open the "install the developer tools" dialog instead
+ * of compiling.
+ */
+export function hasDeveloperTools(): boolean {
+    const found = spawnSync("xcode-select", ["-p"], { encoding: "utf8" });
+    return found.status === 0 && existsSync(found.stdout.trim());
+}
+
+/** Throws an actionable error, before clang can open the install dialog, when nothing can compile `src`. */
+export function assertCanCompile(src: string, developerTools: () => boolean = hasDeveloperTools): void {
+    if (developerTools()) {
+        return;
+    }
+
+    throw new Error(
+        `The native engine (${basename(src)}) is not compiled yet, and compiling it needs Xcode or the Command Line Tools.\n` +
+            `  source: ${src}\n` +
+            `  Install them with \`xcode-select --install\`, then run the command again.`
+    );
+}
+
+/**
  * Ensure the non-variadic fcntl shim dylib exists (needed by the Bun engine's
  * FFI path — see scan-worker.ts). Compiled on demand and cached.
  */
@@ -43,6 +66,7 @@ export function ensureShim(): string {
     const needBuild =
         !existsSync(SHIM) || (existsSync(SHIM_SRC) && statSync(SHIM_SRC).mtimeMs > statSync(SHIM).mtimeMs);
     if (needBuild) {
+        assertCanCompile(SHIM_SRC);
         logger.debug({ src: SHIM_SRC, out: SHIM }, "du: compiling l2p_shim.c");
         execFileSync("clang", ["-O2", "-dynamiclib", "-o", SHIM, SHIM_SRC], { stdio: "pipe" });
     }
@@ -58,6 +82,7 @@ export function ensureBinary(): string {
     const needBuild = !existsSync(BIN) || (existsSync(SRC) && statSync(SRC).mtimeMs > statSync(BIN).mtimeMs);
 
     if (needBuild) {
+        assertCanCompile(SRC);
         logger.debug({ src: SRC, bin: BIN }, "du: compiling clonesize.c");
         try {
             execFileSync("clang", ["-O2", "-pthread", "-o", BIN, SRC], { stdio: "pipe" });
@@ -83,6 +108,7 @@ export function ensureDylib(): string {
     const needBuild = !existsSync(DYLIB) || (existsSync(SRC) && statSync(SRC).mtimeMs > statSync(DYLIB).mtimeMs);
 
     if (needBuild) {
+        assertCanCompile(SRC);
         logger.debug({ src: SRC, dylib: DYLIB }, "du: compiling clonesize.c as dylib");
         try {
             execFileSync("clang", ["-O2", "-pthread", "-dynamiclib", "-o", DYLIB, SRC], { stdio: "pipe" });

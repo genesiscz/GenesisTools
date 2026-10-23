@@ -15,6 +15,7 @@ import {
     getPreset,
     listPresets,
     type Preset,
+    type PresetAuto,
     removePreset,
     savePreset,
     selectorFromPreset,
@@ -731,14 +732,23 @@ function createPresetsCommand(): Command {
                 }
 
                 const limits = { maxBytes, maxFiles };
+                const changesLimits = limits.maxBytes !== undefined || limits.maxFiles !== undefined;
                 let next: Preset | null = preset;
                 if (opts.on) {
                     next = updatePresetAuto(id, armedAuto(preset.auto, limits));
                 } else if (opts.off) {
-                    next = preset.auto
-                        ? updatePresetAuto(id, { ...preset.auto, enabled: false, dryRunAt: undefined })
-                        : preset;
-                } else if (preset.auto && (limits.maxBytes !== undefined || limits.maxFiles !== undefined)) {
+                    // Limits passed with --off are saved too, so the next --on runs with them.
+                    if (preset.auto || changesLimits) {
+                        const previous: Partial<PresetAuto> = preset.auto ?? {};
+                        const { maxBytes: _bytes, maxFiles: _files, ...rest } = previous;
+                        next = updatePresetAuto(id, {
+                            ...rest,
+                            enabled: false,
+                            dryRunAt: undefined,
+                            ...mergeLimits(preset.auto, limits),
+                        });
+                    }
+                } else if (preset.auto && changesLimits) {
                     const { maxBytes: _bytes, maxFiles: _files, ...rest } = preset.auto;
                     next = updatePresetAuto(id, { ...rest, ...mergeLimits(preset.auto, limits) });
                 }

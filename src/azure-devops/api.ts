@@ -6,6 +6,7 @@
  */
 
 import type {
+    AttachmentReferenceApi,
     CommentFormat,
     CommentsResponse,
     Dashboard,
@@ -1118,7 +1119,7 @@ export class Api {
             contentType: "application/octet-stream",
             description: `attachment ${fileName}`,
         });
-        const created = SafeJSON.parse(await response.text()) as { url?: string };
+        const created: AttachmentReferenceApi | null = SafeJSON.parse(await response.text());
 
         if (!created?.url) {
             throw new Error(`attachment upload of ${fileName} returned no url`);

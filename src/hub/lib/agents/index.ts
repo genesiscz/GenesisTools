@@ -114,10 +114,13 @@ async function parentsByIds({
     ids,
     rows,
     refresh,
+    retryMisses,
 }: {
     ids: Iterable<string>;
     rows: AgentSessionRow[];
     refresh?: boolean;
+    /** An explicit `--session` lookup has no listing row to fall back on, so it never trusts a cached miss. */
+    retryMisses?: boolean;
 }): Promise<Map<string, ParentRow>> {
     const parents = new Map<string, ParentRow>();
     const missing = new Set<string>();
@@ -134,12 +137,14 @@ async function parentsByIds({
     for (const id of missing) {
         const missedAt = parentMisses.get(id);
 
-        if (missedAt !== undefined && now - missedAt < PARENT_MISS_REUSE_MS) {
+        if (!retryMisses && missedAt !== undefined && now - missedAt < PARENT_MISS_REUSE_MS) {
             missing.delete(id);
         }
     }
 
     const resolved = new Map<string, ParentRow>();
+    // Only "no session file" is a stable absence; a read error may clear on the next poll, so it is never cached.
+    const unstable = new Set<string>();
     for (const provider of ["claude", "codex"] as const) {
         if (missing.size === 0) {
             break;
@@ -148,9 +153,14 @@ async function parentsByIds({
         const transcripts = await resolveTranscripts([...missing], {}, provider);
         for (const [id, transcript] of transcripts) {
             if (transcript instanceof Error) {
+                if (!transcript.message.startsWith("No session file found")) {
+                    unstable.add(id);
+                }
+
                 continue;
             }
 
+            unstable.delete(id);
             resolved.set(id, {
                 provider,
                 sessionId: transcript.sessionId,
@@ -167,8 +177,11 @@ async function parentsByIds({
     }
 
     for (const id of missing) {
-        logger.debug({ id }, "[hub agents] parent session not found");
-        parentMisses.set(id, now);
+        logger.debug({ id, unstable: unstable.has(id) }, "[hub agents] parent session not found");
+
+        if (!unstable.has(id)) {
+            parentMisses.set(id, now);
+        }
     }
 
     if (resolved.size > 0) {
@@ -197,8 +210,9 @@ async function parentById(options: {
     refresh?: boolean;
 }): Promise<ParentRow | null> {
     return (
-        (await parentsByIds({ ids: [options.id], rows: options.rows, refresh: options.refresh })).get(options.id) ??
-        null
+        (
+            await parentsByIds({ ids: [options.id], rows: options.rows, refresh: options.refresh, retryMisses: true })
+        ).get(options.id) ?? null
     );
 }
 

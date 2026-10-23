@@ -23,6 +23,7 @@ import {
     symlinkSync,
     writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -328,7 +329,10 @@ async function main(): Promise<void> {
         process.exit(0);
     }
 
-    mkdirSync(run.vault, { recursive: true });
+    // --dry is read-only for the run: its reply copy and summary preview go to a scratch folder, so a preview never
+    // replaces the vault files of a real round.
+    const outDir = dry ? mkdtempSync(join(tmpdir(), `babysit-integrate-dry-${pr}-r${round}-`)) : run.vault;
+    mkdirSync(outDir, { recursive: true });
     let text = readFileSync(repliesIn, "utf8");
 
     for (const [from, to] of Object.entries(shaMap)) {
@@ -373,10 +377,10 @@ async function main(): Promise<void> {
     // Named from the PR and round, never from the worker's file name: a reply file called `524-r2.json` made the summary
     // overwrite it, the posted marker point at the summary itself, and the round's summary and replies go unposted
     // (2026-10-15, #524 round 2).
-    const replies = join(run.vault, `${pr}-r${round}-replies.json`);
+    const replies = join(outDir, `${pr}-r${round}-replies.json`);
     writeFileSync(replies, `${SafeJSON.stringify(data, null, 2)}\n`);
-    const resolvingReplies = deferred.length ? join(run.vault, `${pr}-r${round}-resolvable.json`) : replies;
-    const deferredReplies = join(run.vault, `${pr}-r${round}-deferred.json`);
+    const resolvingReplies = deferred.length ? join(outDir, `${pr}-r${round}-resolvable.json`) : replies;
+    const deferredReplies = join(outDir, `${pr}-r${round}-deferred.json`);
     if (deferred.length) {
         writeFileSync(
             resolvingReplies,
@@ -384,7 +388,7 @@ async function main(): Promise<void> {
         );
         writeFileSync(deferredReplies, SafeJSON.stringify({ ...data, items: deferred }, null, 2));
     }
-    const summary = join(run.vault, `${pr}-r${round}-summary.md`);
+    const summary = join(outDir, `${pr}-r${round}-summary.md`);
     const range = flag("--range") ?? (oldHead !== newHead ? `${gateFrom}..${newHead}` : undefined);
     must(
         [
@@ -398,11 +402,16 @@ async function main(): Promise<void> {
             summary,
         ],
         "round-summary",
-        run.vault
+        outDir
     );
 
+    if (dry) {
+        console.log(`dry: preview in ${outDir}, vault untouched, nothing posted: ${summary}`);
+        process.exit(0);
+    }
+
     // Check authorization immediately before the first public mutation, after saving the reviewable files.
-    if (has("--no-post") || dry || !(run.post === true || has("--post"))) {
+    if (has("--no-post") || !(run.post === true || has("--post"))) {
         console.log(`held (posting not authorized or disabled): ${summary}`);
         process.exit(0);
     }
@@ -489,7 +498,12 @@ async function main(): Promise<void> {
             `${reply.code === 0 ? "✔" : "⚠"} follow-up on ${item.ref ?? item.threadId} (was ${before}, now fixed)`
         );
     }
-    console.log(posted.code === 0 ? `✔ #${pr} round ${round} posted` : `⚠ #${pr} post-replies exit ${posted.code}`);
+    const exitCode = postingExitCode(posted.code, [...followups, deferredPosted]);
+    console.log(
+        exitCode === 0
+            ? `✔ #${pr} round ${round} posted`
+            : `⚠ #${pr} round ${round} posting incomplete: post-replies exit ${posted.code}, deferred exit ${deferredPosted.code}, ${followups.filter((f) => f.code !== 0).length} follow-up(s) failed`
+    );
     appendEvent(run.dir, {
         kind: "post",
         pr: Number(pr),
@@ -497,7 +511,7 @@ async function main(): Promise<void> {
         text: readFileSync(summary, "utf8"),
         meta: {
             replies,
-            exitCode: postingExitCode(posted.code, [...followups, deferredPosted]),
+            exitCode,
             postRepliesExitCode: posted.code,
             followups,
             postReplies: posted.out
@@ -507,7 +521,7 @@ async function main(): Promise<void> {
         },
     });
 
-    process.exitCode = postingExitCode(posted.code, [...followups, deferredPosted]);
+    process.exitCode = exitCode;
 }
 
 if (import.meta.main) {

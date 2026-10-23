@@ -213,9 +213,14 @@ message cut lines, it draws the call's whole diff (the `hook-diffs/<call>.md` no
 diff element under the call's row, so the 10,000-character message limit no longer hides the rest. A running
 session needs `/reload-plugins`. `tools agents hooks mods` shows whether it is installed;
 `tools agents hooks config set mods.fullDiff false --write` turns it off without an uninstall (the mod reads
-the hooks file). It draws nothing while `diff.fullDiff` is `off`. While the plugin is enabled in the user settings
-and `mods.fullDiff` is on, the diff hook prints no diff for Claude: it writes every diff to its note, and the mod
-draws it, so it is not drawn twice (Codex and Grok keep the hook's message). Each file has a `[-]` / `[+]` button
+the hooks file). It draws nothing while `diff.fullDiff` is `off`. Installing the plugin is not what makes the
+diff hook stand down: on every turn the loaded mod sets `GENESIS_TOOLS_MODS_SESSION` to the id of its session, and
+only a Claude call whose session id equals that value, with `mods.fullDiff` on, gets no diff printed by the hook.
+The hook then writes every diff to its note and the mod draws it, so it is not drawn twice. The mod may be loaded
+from any settings scope or with `--plugin-dir`. A session that has not loaded it (started before the install and not
+reloaded with `/reload-plugins`, or a nested session that inherited another session's id) keeps the hook's own
+diff message, and so does a marked session whose settings now disable the plugin, until it reloads. Codex and Grok
+always keep the hook's message. Each file has a `[-]` / `[+]` button
 that folds its diff to its name and back, and `[ files only ]` above them folds every file; a click on the diff
 itself still opens the group's calls. The diff of a call that runs `git pull`, `merge`, `rebase`, `checkout`,
 `switch`, `reset`, `cherry-pick`, `revert`, `am` or `stash pop|apply` starts hidden behind one

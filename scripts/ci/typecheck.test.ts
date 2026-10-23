@@ -1,8 +1,18 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { type Changes, type Project, programFiles, readState, reasonToRun } from "./typecheck";
+import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    type Changes,
+    changedSince,
+    keepPassedProgram,
+    type Project,
+    passedProgram,
+    programFiles,
+    readState,
+    reasonToRun,
+} from "./typecheck";
 
 const PROJECTS: Project[] = [
     { name: "root", tsconfig: "tsconfig.json" },
@@ -66,6 +76,63 @@ describe("build info and the CI step", () => {
         expect(programFiles(join(dir, "root.tsbuildinfo"))).toBeNull();
     });
 
+    it("selection reads the program of the last pass, not a failing run's rewritten build info", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-typecheck-passed-"));
+        const root = PROJECTS[0];
+        const buildInfo = join(dir, "root.tsbuildinfo");
+        writeFileSync(buildInfo, buildInfoText(["src/page.ts", "src/shared.ts"]));
+        keepPassedProgram(dir, root);
+        // A failing run drops the import of shared.ts and rewrites the build info.
+        writeFileSync(buildInfo, buildInfoText(["src/page.ts"]));
+        const known = new Map([["root", passedProgram(dir, root)]]);
+        expect(
+            reasonToRun({ project: root, changes: { files: [join(dir, "src/shared.ts")], added: [] }, programs: known })
+        ).toBe("in its program");
+        // A pass with no build info to copy forgets the older list instead of pairing it with the new pass.
+        writeFileSync(buildInfo, "{");
+        keepPassedProgram(dir, root);
+        expect(passedProgram(dir, root)).toBeNull();
+    });
+
+    it("changedSince reads paths Git would quote (non-ASCII, tab, quote) as the real file names", () => {
+        const repo = mkdtempSync(join(tmpdir(), "gt-typecheck-quoted-"));
+        const run = (...args: string[]) => {
+            const proc = Bun.spawnSync(["git", "-c", "core.quotePath=true", ...args], {
+                cwd: repo,
+                env: process.env,
+                stderr: "pipe",
+            });
+            expect({ args, code: proc.exitCode, stderr: proc.stderr.toString() }).toMatchObject({ code: 0 });
+        };
+        const names = ["src/app/café.ts", 'src/app/say "hi".ts', "src/app/tab\there.ts"];
+        mkdirSync(join(repo, "src/app"), { recursive: true });
+        for (const name of names) {
+            writeFileSync(join(repo, name), "export const a = 1;\n");
+        }
+        run("init", "-q");
+        run("add", ".");
+        run("-c", "user.name=fixture", "-c", "user.email=fixture@example.com", "commit", "-qm", "fixture");
+        for (const name of names) {
+            writeFileSync(join(repo, name), "export const a = 2;\n");
+        }
+        writeFileSync(join(repo, "src/app/nové.ts"), "export const b = 1;\n");
+
+        const previous = process.env.GIT_CONFIG_PARAMETERS;
+        // Git's default, whatever this machine's own config says: line output would print "src/app/caf\303\251.ts".
+        process.env.GIT_CONFIG_PARAMETERS = "'core.quotepath=true'";
+        try {
+            const changes = changedSince("HEAD", repo);
+            expect([...(changes?.files ?? [])].sort()).toEqual([...names, "src/app/nové.ts"].sort());
+            expect(changes?.added).toEqual(["src/app/nové.ts"]);
+        } finally {
+            if (previous === undefined) {
+                delete process.env.GIT_CONFIG_PARAMETERS;
+            } else {
+                process.env.GIT_CONFIG_PARAMETERS = previous;
+            }
+        }
+    });
+
     it("the CI step passes --base only when the event has a base (a workflow_dispatch run has none)", () => {
         const workflow = readFileSync(resolve(import.meta.dir, "../../.github/workflows/ci.yml"), "utf8");
         const step = workflow.slice(workflow.indexOf("- name: TypeScript check\n"));
@@ -79,3 +146,7 @@ describe("build info and the CI step", () => {
         expect(argv("abc123")).toBe("[--base][abc123]");
     });
 });
+
+function buildInfoText(fileNames: string[]): string {
+    return SafeJSON.stringify({ fileNames });
+}

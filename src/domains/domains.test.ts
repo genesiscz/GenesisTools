@@ -599,6 +599,13 @@ describe("AI suggestor account", () => {
 
     it("names the fix for an unknown --account", async () => {
         writeConfig({});
-        expect(brainstormPlan({ account: "nobody" })).rejects.toThrow("--account auto");
+        await expect(brainstormPlan({ account: "nobody" })).rejects.toThrow("--account auto");
+    });
+
+    it("refuses a full --model ref beside a named --account instead of dropping the model", async () => {
+        writeConfig({});
+        await expect(brainstormPlan({ account: "acc_side", model: "@account/acc_work" })).rejects.toThrow(
+            "is a full ref"
+        );
     });
 });

@@ -1407,3 +1407,21 @@ planning round. It now counts only the dataless folders of interior directories,
 The planning walk also runs with dataless materialization off, and a dataless scan root is never listed. The scan
 then finds nothing, as the C engine's guarded open of that root does. `cloudctl` runs stop after 60 s plus 2 s per
 path, and the call fails with that reason (an `evict` names that some files may already be evicted).
+
+## 2026-10-23 14:34 — Review follow-ups: partner and big-file queries reset the cloud policy
+
+No hot-loop code changed and no total moves, so no benchmark was rerun. The cloud policy lives in globals
+(`g_skip_cloud`, `g_walk_cloud_roots`). `clonesize_run_json` and `clonesize_cloudfiles_json` set it on every call,
+but `clonesize_partners_json` and `clonesize_bigfiles_json` did not. A partner query after an `includeCloud` scan in
+the same process inherited `g_skip_cloud = 0`: the dataless checks were skipped, `cloud_thread_guard` did nothing, and
+cloud-backed files were opened. Both FFI entries now set the stat-only policy first. The CLI keeps its `--include-cloud`
+for `--partners-of` and `--bigfiles`, because `main()` calls the inner functions directly.
+
+Check (`cloud.test.ts`, "partners never inherit --include-cloud"): on the fake File Provider fixture, a partner query
+after an opened scan reported `files_opened: 5` before the fix and 0 after it. The CLI keeps the flag: `--partners-of`
+on the same kind of fixture opens 0 files without `--include-cloud` and 2 with it.
+
+`tools du evict` now takes its top N from the iCloud Drive files only, and counts the other providers' files in one
+line. `--apply` exits 1 when a selected file, or one named by `--path`, was not evicted. The C engine, the shim and the
+binary are not compiled on a Mac without Xcode or the Command Line Tools: an error names `xcode-select --install`, and
+clang never opens the install dialog.

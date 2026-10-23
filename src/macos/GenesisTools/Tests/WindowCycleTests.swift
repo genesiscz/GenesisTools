@@ -88,17 +88,25 @@ final class WindowCycleTests: XCTestCase {
         func request(_ order: [Int], index: Int, modifiers: Int = option) -> [AnyHashable: Any] {
             ["order": order, "index": index, "modifiers": modifiers]
         }
-        XCTAssertEqual(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 1), pid: 2, window: 20),
+        let known: [WindowCycle.Candidate] = [.init(pid: 1, number: 10), .init(pid: 2, number: 20), .init(pid: 3, number: 30)]
+        XCTAssertEqual(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 1), pid: 2, window: 20, known: known),
                        WindowCycle.Session(order: [.init(pid: 1, number: 10), .init(pid: 2, number: 20)], index: 1, modifiers: .option))
-        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: -1), pid: 2, window: 20), "a negative index")
-        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 2), pid: 2, window: 20), "past the end")
-        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 1, modifiers: -1), pid: 2, window: 20))
-        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 1, modifiers: 0), pid: 2, window: 20),
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: -1), pid: 2, window: 20, known: known), "a negative index")
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 2), pid: 2, window: 20, known: known), "past the end")
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 1, modifiers: -1), pid: 2, window: 20, known: known))
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 1, modifiers: 0), pid: 2, window: 20, known: known),
                      "no modifier: no release would end the run")
-        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, Int(Int32.max) + 1, 20], index: 1), pid: 2, window: 20))
-        XCTAssertNil(WindowCycle.requestedSession(request([], index: 0), pid: 2, window: 20))
-        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 0), pid: 2, window: 20),
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, Int(Int32.max) + 1, 20], index: 1), pid: 2, window: 20, known: known))
+        XCTAssertNil(WindowCycle.requestedSession(request([], index: 0), pid: 2, window: 20, known: known))
+        XCTAssertNil(WindowCycle.requestedSession(request([1, 10, 2, 20], index: 0), pid: 2, window: 20, known: known),
                      "the landed window is not the one to raise")
+
+        // A window the sender made up (another app's pid) is dropped, so no press hands the activation to it.
+        XCTAssertEqual(WindowCycle.requestedSession(request([1, 10, 99, 90, 2, 20, 3, 30], index: 2), pid: 2, window: 20, known: known),
+                       WindowCycle.Session(order: [.init(pid: 1, number: 10), .init(pid: 2, number: 20), .init(pid: 3, number: 30)],
+                                           index: 1, modifiers: .option))
+        XCTAssertNil(WindowCycle.requestedSession(request([99, 90, 2, 20], index: 1), pid: 2, window: 20, known: known),
+                     "only unknown windows besides the landed one: a plain raise")
 
         XCTAssertEqual(WindowCycle.focusedWindow(["pid": 2, "window": 20], own: 1), .init(pid: 2, number: 20))
         XCTAssertNil(WindowCycle.focusedWindow(["pid": 1, "window": 20], own: 1), "this face's own broadcast")

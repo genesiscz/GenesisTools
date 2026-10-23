@@ -215,7 +215,7 @@ struct HubPRDetail: Decodable, Equatable {
     let branchMentions: [String]?
 }
 
-private struct HubPRList: Decodable {
+struct HubPRList: Decodable {
     struct Repo: Decodable {
         let repo: String
         let error: String?
@@ -300,6 +300,13 @@ struct PRListNotice: Hashable {
     }
 }
 
+/// The range a link's `commit=<from>..<to>` set (`PRsModel.rangeScope`) and the commits of the PR it names, by
+/// their place in the list: the scope's base is a parent from git, which a branched PR may not list before them.
+struct PRLinkedRange: Equatable {
+    let scope: DiffScope
+    let shas: Set<String>
+}
+
 @MainActor
 final class PRsModel: ObservableObject {
     @Published private(set) var prs: [HubPR] = []
@@ -342,7 +349,9 @@ final class PRsModel: ObservableObject {
     @Published private(set) var commitScroll: PRCommitScroll?
     /// The range a link's `commit=<from>..<to>` set, so the commits list marks its commits even when it spans
     /// the whole PR; any other scope (the whole PR, one commit) is not it.
-    @Published private(set) var linkedRange: DiffScope?
+    @Published private(set) var linkedRange: PRLinkedRange?
+    /// The parent lookup of the last range link (`showLinkedRange`): an older link's answer sets no scope.
+    private var rangeLookup: UUID?
     /// What a link asked of a PR and could not get (its commit is not in the PR), in that PR's header until
     /// dismissed or another PR opens. Not in `errors`: every list load replaces those.
     @Published var notice: PRNotice?
@@ -565,12 +574,21 @@ final class PRsModel: ObservableObject {
         errors.append(notice)
     }
 
+    private func clearDirectFailure() {
+        guard let failure = directFailure else { return }
+        errors.removeAll { $0 == failure }
+        directFailure = nil
+    }
+
     /// Selects the PR `ref` names, now when the list has it, else once it loads. `reveal` opens a file
     /// (and a thread on it) in that PR's review once the review exists: after the list, the head fetch
     /// of a PR without a worktree, and the diff load, so one click is enough. `commit` (a sha or a prefix
     /// of 7 or more hex characters) selects that commit of the PR the same way (`pickPendingCommit`).
     func request(_ ref: HubPRRef, reveal: PRReveal? = nil, commit: String? = nil) {
         notice = nil
+        // A new link replaces the last one's failure, also when a listed row opens it and `openDirect` never runs.
+        clearDirectFailure()
+        rangeLookup = nil
         pendingReveal = reveal
         pendingCommit = nil
         if let commit {
@@ -648,10 +666,7 @@ final class PRsModel: ObservableObject {
     /// its head commit. A cached row (`startWanted`) starts all three at once.
     private func openDirect(_ ref: HubPRRef, arg: String) {
         directOpen = (ref, selectedID)
-        if let failure = directFailure {
-            errors.removeAll { $0 == failure }
-            directFailure = nil
-        }
+        clearDirectFailure()
         Task {
             let span = HubPerf.begin("prs.show.direct", arg, awaits: true)
             let answer = await Task.detached(priority: .userInitiated) { () -> Result<(HubPR, HubPRDetail, Data), Error> in
@@ -754,46 +769,67 @@ final class PRsModel: ObservableObject {
         }
         HubPerf.log("prs.commit \(shown.label) \(commit.sha.prefix(10))\(last.map { "..\($0.sha.prefix(10))" } ?? "") settled=\(settled)")
         if let last {
-            showLinkedRange(commit, last, in: commits, pr: shown, review: review)
+            showLinkedRange(commit, last, in: commits, pr: shown, ref: pending.ref, review: review)
         } else {
             showLinkedCommit(commit, prID: id, review: review)
         }
     }
 
     /// A link's `commit=<from>..<to>`: those commits of the PR, both ends included, in either order.
-    func showLinkedRange(_ one: HubPRDetail.Commit, _ other: HubPRDetail.Commit, in commits: [HubPRDetail.Commit], pr: HubPR, review: ReviewModel) {
+    func showLinkedRange(_ one: HubPRDetail.Commit, _ other: HubPRDetail.Commit, in commits: [HubPRDetail.Commit], pr: HubPR, ref: HubPRRef,
+                         review: ReviewModel) {
         guard let a = commits.firstIndex(of: one), let b = commits.firstIndex(of: other) else { return }
         HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
         HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
         commitScroll = PRCommitScroll(prID: pr.id, sha: commits[max(a, b)].sha)
-        let scope = Self.rangeScope(commits, first: min(a, b), last: max(a, b), pr: pr, whole: Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)))
-        linkedRange = scope
-        if review.scope == scope { return }
-        review.setScope(scope)
+        let (first, last) = (min(a, b), max(a, b))
+        let whole = Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr))
+        func show(from parent: String?) {
+            let range = Self.rangeScope(commits, first: first, last: last, parent: parent, pr: pr, whole: whole)
+            linkedRange = range
+            if review.scope == range.scope { return }
+            review.setScope(range.scope)
+        }
+        guard first > 0 else { return show(from: nil) }
+        // The first parent from git, not the commit listed before: a branched PR's list is no line of ancestry.
+        let sha = commits[first].sha
+        let root = review.repo.path
+        let lookup = UUID()
+        rangeLookup = lookup
+        Task {
+            let parent = await Task.detached(priority: .userInitiated) { HubCommitLookup.parent(of: sha, in: root) }.value
+            guard rangeLookup == lookup, self.review === review else { return }
+            rangeLookup = nil
+            guard let parent else {
+                notice = PRNotice(ref: ref, text: HubCommitLookup.missingParent(sha, in: root))
+                return
+            }
+            show(from: parent)
+        }
     }
 
-    /// Commits `first...last` of a PR (oldest first, as the host lists them): from the commit before
-    /// `first`, or from the PR's own base when `first` is its first commit, to `last`.
-    nonisolated static func rangeScope(_ commits: [HubPRDetail.Commit], first: Int, last: Int, pr: HubPR, whole: DiffScope) -> DiffScope {
+    /// Commits `first...last` of a PR (oldest first, as the host lists them): from `parent`, the first parent of
+    /// `first` read from git (`HubCommitLookup.parent`), or from the PR's own base when `first` is its first commit
+    /// (`parent` nil), to `last`.
+    nonisolated static func rangeScope(_ commits: [HubPRDetail.Commit], first: Int, last: Int, parent: String?, pr: HubPR,
+                                       whole: DiffScope) -> PRLinkedRange {
         let head = commits[last].sha
         let label = "\(pr.label) \(commits[first].sha.prefix(7))..\(head.prefix(7)) (\(Plural.count(last - first + 1, "commit")))"
-        if first > 0 {
-            return .range(base: commits[first - 1].sha, head: head, label: label)
+        let shas = Set(commits[first...last].map(\.sha))
+        if let parent {
+            return PRLinkedRange(scope: .range(base: parent, head: head, label: label), shas: shas)
         }
         if case .range(let base, _, _, let fallback) = whole {
-            return .range(base: base, head: head, label: label, fallbackBase: fallback)
+            return PRLinkedRange(scope: .range(base: base, head: head, label: label, fallbackBase: fallback), shas: shas)
         }
-        return .range(base: "\(commits[first].sha)^", head: head, label: label)
+        return PRLinkedRange(scope: .range(base: "\(commits[first].sha)^", head: head, label: label), shas: shas)
     }
 
-    /// The commits of `commits` the range a link set (`linked`, from `rangeScope`) shows, for the commits list
-    /// to mark, all of them for a range over the whole PR; empty for any scope the link did not set.
-    nonisolated static func rangeShas(_ scope: DiffScope, linked: DiffScope?, in commits: [HubPRDetail.Commit]) -> Set<String> {
-        guard scope == linked, case .range(let base, let head, _, _) = scope,
-              let last = commits.firstIndex(where: { $0.sha == head }) else { return [] }
-        let first = commits.firstIndex(where: { $0.sha == base }).map { $0 + 1 } ?? 0
-        guard first <= last else { return [] }
-        return Set(commits[first...last].map(\.sha))
+    /// The commits the range a link set (`linked`, from `rangeScope`) shows, for the commits list to mark, all of
+    /// them for a range over the whole PR; empty for any scope the link did not set.
+    nonisolated static func rangeShas(_ scope: DiffScope, linked: PRLinkedRange?) -> Set<String> {
+        guard let linked, linked.scope == scope else { return [] }
+        return linked.shas
     }
 
     /// A repeated link reveals the diff and scrolls again even when its commit is already selected.
@@ -1035,7 +1071,7 @@ final class PRsModel: ObservableObject {
 
     /// Shows `list`, animating rows in and out. `flash` marks new and updated rows once, only when
     /// the list on screen is the same list refreshed (not another state or search).
-    private func apply(_ list: HubPRList, key: String, flash: Bool) {
+    func apply(_ list: HubPRList, key: String, flash: Bool) {
         let sameList = appliedKey == key
         appliedKey = key
         var sorted = list.prs.sorted { ($0.updatedAt ?? "") > ($1.updatedAt ?? "") }
@@ -2396,7 +2432,7 @@ struct PRCommitsSection: View {
     var body: some View {
         let shown = shownSha
         // A range link's commits, all marked.
-        let range = PRsModel.rangeShas(review.scope, linked: prs.linkedRange, in: commits)
+        let range = PRsModel.rangeShas(review.scope, linked: prs.linkedRange)
         PRSection(title: "Commits", count: commits.count, folded: $folded, flat: true, trailing: shown == nil && range.isEmpty ? nil : AnyView(
             Button("Whole PR") { prs.showWholePR() }
                 .buttonStyle(.genHoverPlain())

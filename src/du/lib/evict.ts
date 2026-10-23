@@ -10,7 +10,7 @@
 // both lie), and GenesisTools does not read file contents here. Other providers
 // are refused too: their upload state has not been verified.
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -18,6 +18,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { killWithEscalation } from "@genesiscz/utils/process/killWithEscalation";
 import { ICLOUD_PROVIDER, TRESORIT_PROVIDER } from "./cloud";
+import { hasDeveloperTools } from "./engine";
 import type { CloudFileEntry } from "./types";
 
 const NATIVE_DIR = join(import.meta.dir, "..", "native");
@@ -171,6 +172,8 @@ export interface CloudCtlHelperDeps {
     compile(): void;
 }
 
+/** A cold `swiftc -O` of the helper takes a few seconds; past this it is stuck. */
+const CLOUDCTL_COMPILE_MS = 120_000;
 const SWIFT_HELPER: CloudCtlHelper = { kind: "swift", command: [CLOUDCTL_BIN] };
 const OSASCRIPT_HELPER: CloudCtlHelper = { kind: "osascript", command: ["osascript", "-l", "JavaScript", CLOUDCTL_JS] };
 
@@ -201,15 +204,15 @@ const realHelperDeps: CloudCtlHelperDeps = {
     binaryReady: () =>
         existsSync(CLOUDCTL_BIN) &&
         !(existsSync(CLOUDCTL_SRC) && statSync(CLOUDCTL_SRC).mtimeMs > statSync(CLOUDCTL_BIN).mtimeMs),
-    // `xcode-select -p` never prompts. /usr/bin/swiftc exists on every Mac, but without the tools it opens the
-    // "install the command line developer tools" dialog instead of compiling.
-    developerTools: () => {
-        const found = spawnSync("xcode-select", ["-p"], { encoding: "utf8" });
-        return found.status === 0 && existsSync(found.stdout.trim());
-    },
+    developerTools: hasDeveloperTools,
     compile: () => {
         logger.debug({ src: CLOUDCTL_SRC, bin: CLOUDCTL_BIN }, "du: compiling cloudctl.swift");
-        execFileSync("swiftc", ["-O", "-o", CLOUDCTL_BIN, CLOUDCTL_SRC], { stdio: "pipe" });
+        // A stuck compile throws at the deadline like a failed one, and the osascript helper takes over.
+        execFileSync("swiftc", ["-O", "-o", CLOUDCTL_BIN, CLOUDCTL_SRC], {
+            stdio: "pipe",
+            timeout: CLOUDCTL_COMPILE_MS,
+            killSignal: "SIGKILL",
+        });
     },
 };
 

@@ -117,8 +117,9 @@ confirmation.)
    - Rounds 1 and 2 fix every valid finding, Medium and Low included, whatever the PR's size. No deferral, and every
      file a valid fix needs is in scope. A `no-change` or rejection needs a cited file:line that proves the finding
      wrong.
-   - Round 3 and later fix every valid Critical and High. A Medium or Low is fixed only when it is cheap (about 20
-     changed lines) or the same class as an earlier round's fix; every other one gets a reply (valid or not, and why
+   - Round 3 and later fix every valid Critical and High, and CodeRabbit's Major (its level above Minor; there is no
+     High in its scale). A Medium or Low is fixed only when it is cheap (about 20 changed lines) or the same class as
+     an earlier round's fix; every other one gets a reply (valid or not, and why
      it waits) and its thread stays OPEN: resolve only a thread that was acted on. Record such a deferral with the
      reply transport's `"verdict": "belongs-elsewhere"` and explain the policy in the reply; `integrate.ts` keeps it
      in the summary but posts it in a separate `post-replies.ts --no-resolve` batch, never the batch that resolves
@@ -314,10 +315,12 @@ add the correction to the affected items and to `alsoInPush`, set every item's `
 (fable-judge)"`, and render `round-summary.ts --range <old head>..<new head> --cwd <pr worktree>`. Post per review-loop
 step 4 only when `post` is true.
 
-## 7a. A PR short of three rounds: an independent review round
+## 7a. An independent review round (when the user asks for one)
 
-A round counts only when it fixed or answered real findings. When the reviewer bot has nothing left on a PR that
-still needs rounds, or a PR merged with fewer than three, run an independent read-only review: `bun
+A round counts only when it fixed or answered real findings. The round policy (step 3.5) sets no minimum number of
+rounds: after two rounds with no Critical or High, switch to merge prep (review-loop "Round policy"), and land by the
+merge bar. When the user asks for a dedicated review of a PR, before or after its merge, run an independent read-only
+review: `bun
 .claude/skills/babysit/scripts/review-brief.ts --run <dir> --pr <N> --wt <worktree> [--post-merge] [--swift]`, then
 `steer.ts` with the printed file to a worker that did NOT fix this PR (Sol; Astra only for a risky cross-system PR,
 by the model rule in step 1). Judge its findings like a bot's. Before a merge they become the next fix round (`fill-brief --judge <review
@@ -327,14 +330,14 @@ rounds" when GitHub showed two round summaries.
 
 ## 7b. Optional: land a PR in master (only with the user's explicit approval)
 
-Off unless the user approves it in their own words for this run ("drive the PRs into master after 3 rounds"), and
+Off unless the user approves it in their own words for this run ("drive the PRs into master"), and
 only for PRs the run owns: never another session's PR, never the integration branch. Ask once, early, and keep
 running review rounds while the question is open: a missing answer never blocks a round, it only means no merge.
 
-A PR lands when all hold: review-loop step 5a ("Before you call a PR ready") passes; at least 3 review rounds done;
-every finding required by the derived policy is fixed and judged (every valid security finding and all
+A PR lands when all hold: review-loop step 5a ("Before you call a PR ready") passes; the rounds followed the round policy
+(step 3.5), which sets no minimum count; every finding required by the derived policy is fixed and judged (every valid security finding and all
 dedicated-review findings included), so no critical or high finding is open; eve reviewed the head before the last
-fix (the merge bar, step 3.5); a PR over about 50 files has a CodeRabbit review; a reply on every thread; CI green
+fix (the merge bar, step 3.5); a PR over about 50 files has a CodeRabbit review; the thread replies of review-loop step 5a; CI green
 on the landing tree; its base is master or a parent the run merges first (a PR stacked on another session's branch
 waits for that branch). Merge without waiting for eve to review the last judged fix. Policy-deferred Medium/Low
 threads may remain OPEN. In an unattended land-it job a red CI, an open
@@ -373,8 +376,8 @@ the worker who knows the PR, as a merge-prep steer that authorizes the rebase. `
 forked from on its parent (a child stacked on a parent that kept growing forked before the parent's later commits;
 find it with `git merge-base <child> <old parent head>`). Check with `git range-diff`, run the area tests, give a
 child that changes plugin files a version above its new base, then push with `--force-with-lease`. A restack is new
-code: rerun CI and judge it before the merge; eve need not re-review the last judged fix. Keep at least one
-CodeRabbit review and a reply on every thread. When the restack carries a fix round too, push it with
+code: rerun CI and judge it before the merge; eve need not re-review the last judged fix. A PR over about 50
+files keeps its CodeRabbit review, and the thread replies of review-loop step 5a still hold. When the restack carries a fix round too, push it with
 `integrate.ts … --restacked-from <old head>`: the lease is that old head, and the gates check only the PR's own commits.
 
 ## 7c. Disk: watch it, reclaim /tmp yourself

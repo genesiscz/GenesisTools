@@ -114,19 +114,55 @@ function patchFor({
 
 /**
  * The first 256 KB of the file as `base` holds it: a command that removed a key's BEGIN line from a file with no
- * captured copy leaves a current head that no longer looks like a key. "" for a file absent at `base`.
+ * captured copy leaves a current head that no longer looks like a key. "" for a file absent at `base`, null for a
+ * failed read (`blobHead`).
  */
-function baseHead(file: ChangedFile, base: string): string {
-    const path = relative(file.root, resolve(file.root, file.path));
-    return gitOut(file.root, ["show", `${base}:${path}`], { quiet: true }).slice(0, 256 * 1024);
+function baseHead(file: ChangedFile, base: string): string | null {
+    return blobHead(file.root, `${base}:${relative(file.root, resolve(file.root, file.path))}`);
 }
+
+/**
+ * The first `HEAD_BYTES` of a `<rev>:<path>` blob, never the whole blob: past the cap the read stops (`maxBuffer`
+ * ends git with SIGTERM), so a one-line edit to a large tracked file reads 256 KB more, not the file again. "" for
+ * a blob that does not exist, null when git failed otherwise (the patch is then masked as a cookie jar).
+ */
+export function blobHead(root: string, spec: string): string | null {
+    const run = spawnSync("git", ["-C", root, "cat-file", "blob", spec], {
+        maxBuffer: HEAD_BYTES,
+        timeout: GIT_BATCH_TIMEOUT_MS,
+    });
+    const capped = run.error && "code" in run.error && run.error.code === "ENOBUFS";
+
+    if (run.status === 0 || capped) {
+        return run.stdout.toString("utf8", 0, Math.min(run.stdout.length, HEAD_BYTES));
+    }
+
+    if (
+        run.status === 128 &&
+        /does not exist|exists on disk, but not in|invalid object name/i.test(String(run.stderr))
+    ) {
+        return "";
+    }
+
+    hookDiag("Could not read the head of a file at the base commit; its patch is masked as a cookie jar", {
+        root,
+        spec,
+        status: run.status,
+        signal: run.signal,
+        error: run.error,
+    });
+    return null;
+}
+
+/** How much of a file `readHead` and `blobHead` read: enough for a storage state's `"cookies"` or a key's BEGIN. */
+const HEAD_BYTES = 256 * 1024;
 
 /**
  * `git diff <args>` with every secret-shaped value masked. Every patch the hook shows or saves comes from here,
  * so neither the model, the screen nor the full-diff note gets a token or a login cookie (a re-login rewrote a
  * Playwright storageState, and its note kept the session cookies in plain text, 2026-10-20).
  */
-function gitPatch(root: string, args: string[], baseHeads: string[] = []): string {
+function gitPatch(root: string, args: string[], baseHeads: Array<string | null> = []): string {
     const paths = args.slice(args.indexOf("--") + 1).filter((path) => path !== "/dev/null");
     const heads = [...paths.map((path) => readHead(resolve(root, path))), ...baseHeads];
     const patch = gitOut(root, ["diff", ...args]);
@@ -160,7 +196,7 @@ export function readHead(path: string): string | null {
     try {
         const fd = openSync(path, "r");
         try {
-            const buffer = Buffer.alloc(256 * 1024);
+            const buffer = Buffer.alloc(HEAD_BYTES);
             return buffer.toString("utf8", 0, readSync(fd, buffer, 0, buffer.length, 0));
         } finally {
             closeSync(fd);
@@ -629,7 +665,8 @@ const DEFERRED_MIN_ROOM = 200;
  * 80 characters made the change (2026-10-20).
  */
 export function deferredTaskHeading(task: { id: string; command: string }): string {
-    const [line = "", ...rest] = task.command.split("\n");
+    // Masked whole before the cut: a token cut in half no longer matches its pattern.
+    const [line = "", ...rest] = redactSecretsInText(task.command).split("\n");
     const first = line.length > 80 ? `${line.slice(0, 79)}…` : rest.length > 0 ? `${line}…` : line;
 
     return `background task ${task.id} ended (${first}):\n`;
@@ -673,7 +710,8 @@ const COMMAND_CHARS = 80;
  * so without them nothing says which command changed the files.
  */
 export function commandLines(command: string, count: number): string {
-    const lines = command
+    // Masked whole before the cut, as `deferredTaskHeading` does: `TOKEN=ghp_… cmd` must not print its token.
+    const lines = redactSecretsInText(command)
         .trim()
         .split("\n")
         .map((line) => line.replace(/\p{Cc}/gu, " ").trimEnd());

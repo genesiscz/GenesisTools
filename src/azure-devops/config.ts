@@ -18,7 +18,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { formatRelativeTime } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
 
 export function getRelativeTime(date: Date): string {
     return formatRelativeTime(date, { rounding: "round" });
@@ -95,6 +95,8 @@ export function loadConfig(): AzureConfig | null {
         return SafeJSON.parse(readFileSync(found.path, "utf-8"));
     } catch (error) {
         if (found.source === "search") {
+            // A searched file is optional, so it falls through to "no configuration", but the reason must not vanish.
+            logger.warn({ err: error, path: found.path }, "azure-devops: found config cannot be parsed, ignoring it");
             return null;
         }
 

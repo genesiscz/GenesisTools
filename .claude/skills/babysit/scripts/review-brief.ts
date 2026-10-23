@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
- * The brief for an independent read-only review round: when the reviewer bot has nothing left on a PR that still
- * needs rounds, or a PR merged with fewer than three. Its findings become the next fix round (`fill-brief --judge`)
+ * The brief for an independent read-only review round, which runs when the user asks for one (SKILL.md 7a): on an
+ * open PR, or on a PR that already merged. Its findings become the next fix round (`fill-brief --judge`)
  * or, after a merge, a follow-up PR. Writes `<run>/steer-review-<pr>.md` and prints the path for steer.ts.
  *
  *   bun review-brief.ts --run <dir> --pr 517 --wt <worktree> [--base master] [--post-merge] [--swift] [--fresh]
@@ -30,7 +30,7 @@ export interface ReviewBriefInput {
 
 export function reviewBrief({ pr, title, wt, base, scratch, postMerge, swift, fresh }: ReviewBriefInput): string {
     const why = postMerge
-        ? `PR #${pr} ("${title}") merged into master with fewer than three review rounds. This is an independent review of the MERGED code; your findings become a follow-up PR.`
+        ? `PR #${pr} ("${title}") already merged into master, and the user asked for one more review. This is an independent review of the MERGED code; your findings become a follow-up PR.`
         : fresh
           ? `PR #${pr} ("${title}") was just opened, and the reviewer bots read it at the same time as you. The lead wants an independent review next to theirs; your findings join the bots' threads in the first fix round.`
           : `The reviewer bot found nothing more to fix on PR #${pr} ("${title}"), so the lead wants an independent review. Your findings become the next fix round.`;

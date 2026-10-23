@@ -243,15 +243,18 @@ public struct ClonesDuplicatesOptions: Equatable, Sendable {
 }
 
 /// What `tools macos clones optimize` clones: every duplicate file at or above the minimum under `roots`, or under
-/// the trees found in `dirs` (and `worktreesOf`). Unlike reclaim, it needs no install trees.
+/// the trees found when discovery is on. Discovery is on when `dirs`, `worktreesOf` or a non-empty `targets` is set.
+/// Unlike reclaim, it needs no install trees.
 public struct ClonesOptimizeOptions: Equatable, Sendable {
-    /// Positional roots. With `dirs` or `worktreesOf`, the CLI searches them for trees too.
+    /// Positional roots. Without discovery, every ordinary file under them is a candidate. With discovery (`dirs`,
+    /// `worktreesOf` or a non-empty `targets`), the CLI only searches them for trees, like a `--dir`.
     public var roots: [String]
     /// Each one is a `--dir`: search this folder for install trees.
     public var dirs: [String]
     /// `--worktrees-of <repo>`.
     public var worktreesOf: String?
-    /// `--targets`, as for reclaim. Used only with `dirs` or `worktreesOf`.
+    /// `--targets`, as for reclaim. A non-empty list turns on discovery by itself: `roots: ["/media"], targets:
+    /// ["vendor"]` clones only inside the vendor trees found under /media, not every file there.
     public var targets: [String]?
     public var filters: ClonesScanFilters
 
@@ -764,7 +767,8 @@ extension ToolsDiskProvider {
     }
 
     /// `tools macos clones reclaim presets auto <id> --json`: lets the daily scan task run the preset on its own (the
-    /// first run after arming is a dry run), stops it, or changes its per-run limits. Returns the preset after it.
+    /// first run after arming is a dry run), stops it, or changes its per-run limits. Limits passed with
+    /// `enabled: false` are saved too, and the next arming uses them. Returns the preset after it.
     public func clonesPresetAuto(id: String, enabled: Bool?, maxBytes: ClonesAutoLimit<Int64> = .unchanged,
                                  maxFiles: ClonesAutoLimit<Int> = .unchanged) async throws -> ClonesPreset {
         let args = Self.clonesPresetAutoArguments(id: id, enabled: enabled, maxBytes: maxBytes, maxFiles: maxFiles)
@@ -793,9 +797,10 @@ extension ToolsDiskProvider {
             + (apply && !usesCachedPlan ? ["--no-cache"] : [])
     }
 
-    /// `tools macos clones optimize --format json`: plans (a recorded dry run) or applies the cloning of every
-    /// duplicate file under the roots. An apply is audited and reversible with `clonesRollback`, and runs detached
-    /// with `actTimeoutSeconds`.
+    /// `tools macos clones optimize --format json`: plans or applies the cloning of every duplicate file under the
+    /// roots. A dry run returns a transient report and caches the plan for a quick apply; its id is not recorded, so
+    /// `clonesProcessLog` cannot read it. An apply is recorded in the audit log, reversible with `clonesRollback`,
+    /// and runs detached with `actTimeoutSeconds`.
     public func clonesOptimize(_ options: ClonesOptimizeOptions, apply: Bool,
                                usesCachedPlan: Bool = true) async throws -> ClonesApplyResult {
         // `--worktrees-of <repo>` is a selector of its own: the CLI finds that repo's worktrees with no root or --dir.

@@ -2446,7 +2446,9 @@ function renderImage(image: BridgeImage): HTMLElement {
         picture.decoding = "async";
         picture.alt = label;
         picture.addEventListener("error", () => {
-            frame.replaceChildren(element("div", css.dim, "This image cannot be shown"));
+            frame.replaceChildren(
+                element("div", css.dim, "This image cannot be shown: it is gone or too large to preview")
+            );
         });
         picture.src = url;
         frame.appendChild(picture);

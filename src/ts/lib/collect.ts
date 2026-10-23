@@ -1,5 +1,5 @@
 import { type Dirent, existsSync, readdirSync, statSync } from "node:fs";
-import { isAbsolute, join, parse, relative, resolve } from "node:path";
+import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { logger } from "@genesiscz/utils/logger";
 
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];
@@ -56,8 +56,13 @@ export function collectFiles(input: string, options: CollectOptions = {}): strin
             )
         );
         const ignore = options.ignore ?? [];
+        // A match below node_modules or build is dropped here: walk() returns a matched file before it checks folders.
         const matches = [...new Bun.Glob(pattern).scanSync({ cwd, absolute: true, onlyFiles: false })].filter(
-            (match) => !ignore.some((needle) => relative(base, match).includes(needle))
+            (match) =>
+                !ignore.some((needle) => relative(base, match).includes(needle)) &&
+                !relative(base, match)
+                    .split(sep)
+                    .some((segment) => SKIP_DIRECTORIES.has(segment))
         );
         const found = matches.flatMap((match) => walk(match, { base, includeTests: options.tests === true, ignore }));
         return [...new Set(found)].filter((file) => isSource(file, options.tests === true)).sort();

@@ -1,10 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { registerWorkItemUpdateCommand } from "@app/azure-devops/commands/workitem-update";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { registerWorkItemUpdateCommand, resolveImages } from "@app/azure-devops/commands/workitem-update";
 import {
     executeWorkItemUpdate,
     imageReuseMap,
+    localImageSources,
     parseFieldSpec,
     parseReuseFile,
+    replaceImageSources,
     sameStoredText,
     sha256Hex,
     type WorkItemUpdateClient,
@@ -314,6 +319,47 @@ describe("what the read-back may forgive", () => {
             true
         );
         expect(html("<p>a;b</p>", "<p>ab</p>")).toBe(false);
+    });
+
+    test("read-back keeps space beside inline tags and Markdown hard breaks, and never throws on a bad reference", () => {
+        const html = (stored: string, sent: string) => sameStoredText({ stored, sent, format: "html" });
+        const md = (stored: string, sent: string) => sameStoredText({ stored, sent, format: "markdown" });
+
+        expect(html("<p>Hello<b>world</b></p>", "<p>Hello <b>world</b></p>")).toBe(false);
+        expect(md("one\ntwo", "one  \ntwo")).toBe(false);
+        expect(md("one   \ntwo", "one  \ntwo")).toBe(true);
+        expect(html("<p>&#1114112; &#x110000;</p>", "<p>&#1114112; &#x110000;</p>")).toBe(true);
+        expect(html("<p>&#x110000;</p>", "<p>x</p>")).toBe(false);
+    });
+
+    test("a local image outside --image-root is refused before it is read", () => {
+        const dir = mkdtempSync(join(tmpdir(), "wi-images-"));
+        mkdirSync(join(dir, "root"));
+        writeFileSync(join(dir, "root", "in.png"), "in");
+        writeFileSync(join(dir, "secret.txt"), "secret");
+        const root = join(dir, "root");
+
+        expect(resolveImages(['<img src="in.png">'], root).map((image) => image.name)).toEqual(["in.png"]);
+        expect(() => resolveImages(['<img src="../secret.txt">'], root)).toThrow("outside --image-root");
+        expect(() => resolveImages([`<img src="${join(dir, "secret.txt")}">`], root)).toThrow("outside --image-root");
+    });
+
+    test("local image sources are found and replaced in every valid src spelling", () => {
+        const input = `<img src='shots/a.png'><IMG SRC="shots/b.png"><img alt="x" src = shots/c.png><img src="https://h/d.png">`;
+
+        expect(localImageSources(input)).toEqual(["shots/a.png", "shots/b.png", "shots/c.png"]);
+        expect(
+            replaceImageSources(
+                input,
+                new Map([
+                    ["shots/a.png", "https://h/1"],
+                    ["shots/b.png", "https://h/2"],
+                    ["shots/c.png", "https://h/3"],
+                ])
+            )
+        ).toBe(
+            `<img src="https://h/1"><IMG SRC="https://h/2"><img alt="x" src = "https://h/3"><img src="https://h/d.png">`
+        );
     });
 
     test("--markdown without --field still checks that the field became Markdown", async () => {

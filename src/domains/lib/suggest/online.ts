@@ -125,8 +125,13 @@ export async function brainstormPlan(options: {
             );
         }
 
-        const bare = model && !isFullRef(model) ? `:${model}` : "";
-        return fixed(`@account/${entry.id}${bare}`, "domains");
+        if (model && isFullRef(model)) {
+            throw new Error(
+                `--model ${model} is a full ref and names its own account; pass a bare model with --account ${account}, or drop --account`
+            );
+        }
+
+        return fixed(`@account/${entry.id}${model ? `:${model}` : ""}`, "domains");
     }
 
     if (!account && model && isFullRef(model)) {

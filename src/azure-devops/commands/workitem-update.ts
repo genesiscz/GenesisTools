@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { resolve } from "node:path";
 
 import { Api } from "@app/azure-devops/api";
 import { formatJSON } from "@app/azure-devops/cache";
@@ -15,6 +15,7 @@ import {
     type WorkItemUpdateResult,
 } from "@app/azure-devops/lib/work-item-update";
 import { requireConfig } from "@app/azure-devops/utils";
+import { isInsideDir } from "@genesiscz/utils/fs/canonical";
 import { out } from "@genesiscz/utils/logger";
 import type { Command } from "commander";
 
@@ -22,16 +23,20 @@ function collect(value: string, previous: string[]): string[] {
     return [...previous, value];
 }
 
-function resolveImages(values: string[], imageRoot: string): WorkItemUpdateImage[] {
+export function resolveImages(values: string[], imageRoot: string): WorkItemUpdateImage[] {
     const sources = [...new Set(values.flatMap((value) => localImageSources(value)))];
     const images: WorkItemUpdateImage[] = [];
 
     for (const src of sources) {
-        const relative = decodeURI(src);
-        const path = isAbsolute(relative) ? relative : join(imageRoot, relative);
+        const path = resolve(imageRoot, decodeURI(src));
 
         if (!existsSync(path)) {
             throw new Error(`local image not found: ${path}`);
+        }
+
+        // A field value can come from a draft another tool or agent wrote; only files under the image root upload.
+        if (!isInsideDir(imageRoot, path)) {
+            throw new Error(`local image ${path} is outside --image-root ${imageRoot}`);
         }
 
         const bytes = new Uint8Array(readFileSync(path));

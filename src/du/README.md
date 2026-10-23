@@ -225,18 +225,21 @@ plus `cloud` (the `cloud_backed` object) and `skippedCloud`.
 
 | Flag | Description |
 |------|-------------|
-| `--apply` | Really evict. Without it the command is a dry run that changes nothing |
+| `--apply` | Really evict. Without it the command is a dry run that changes nothing. Exits 1 when a selected file (or one named by `--path`) was not evicted |
 | `--all` | Select every eligible file (non-interactive) |
 | `--path <file...>` | Select these files only |
-| `--min-bytes <n>`, `--top <n>` | Which downloaded files to offer (default: the 50 largest) |
+| `--min-bytes <n>`, `--top <n>` | Which downloaded iCloud Drive files to offer (default: the 50 largest; other providers are counted, not offered) |
 
 List, select, evict. It lists like `downloaded`, asks iCloud for each file's state, offers the
 eligible files in a multiselect (or takes `--all` / `--path` without a TTY), and prints what it
 would free. With `--apply` it evicts through `FileManager.evictUbiquitousItem`. The helper is
-`native/cloudctl.swift`, compiled on demand; on a Mac without Xcode or the Command Line Tools (or
-when it does not compile) the same verbs run as `native/cloudctl.js` through `osascript -l
-JavaScript`, which ships with macOS. The output names the helper that answered. Neither needs
-GenesisTools.app. Eviction never deletes: the file stays in iCloud and downloads again when opened.
+`native/cloudctl.swift`, compiled on demand; when `swiftc` is missing or does not compile it, the
+same verbs run as `native/cloudctl.js` through `osascript -l JavaScript`, which ships with macOS.
+The output names the helper that answered. Neither needs GenesisTools.app. The listing step still
+needs the C engine, so on a Mac without Xcode or the Command Line Tools `evict` works only once the
+engine was compiled there before; otherwise it stops with an error that names `xcode-select
+--install` (it never opens the install dialog). Eviction never deletes: the file stays in iCloud
+and downloads again when opened.
 
 A file is evicted only when iCloud reports it uploaded, not uploading, without an upload error,
 with the local copy current. The helper reads that state again right before each eviction.

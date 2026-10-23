@@ -14,8 +14,8 @@ import {
     providerOf,
     TRESORIT_PROVIDER,
 } from "./cloud";
-import { runEvict } from "./cloud-commands";
-import { listCloudFiles, scanWithCFfi } from "./engine";
+import { offerForEviction, runEvict } from "./cloud-commands";
+import { assertCanCompile, listCloudFiles, scanPartners, scanWithCFfi } from "./engine";
 import {
     applyEviction,
     type CloudCtl,
@@ -182,6 +182,18 @@ describeOnDarwin("File Provider domain roots are measured by stat only", () => {
         });
     }
 
+    it("partners never inherit --include-cloud from an earlier scan in the same process", () => {
+        const dir = fx.realClones.dir;
+        const target = join(dir, "clone1.bin");
+        const before = scanPartners({ target, root: dir, threads: 2 });
+        expect(before.files_opened).toBe(0);
+        // The library keeps its cloud policy in globals; an opened scan must not leave the partner walk opening files.
+        scanWithCFfi({ path: dir, threads: 2, includeCloud: true });
+        const after = scanPartners({ target, root: dir, threads: 2 });
+        expect(after.files_opened).toBe(0);
+        expect(after.partner_files_total).toBe(0);
+    });
+
     it("downloaded lists the domain's files with their provider, and nothing outside a domain", () => {
         const listed = listCloudFiles({ root: join(root, "dom"), threads: 2 });
         expect(listed.files.length).toBeGreaterThan(0);
@@ -284,6 +296,65 @@ describe("eviction safety", () => {
         const live = fakeCtl([uploaded(good.path)], [good.path]);
         await runEvict({ root: "/u/Documents", files: [good], cli: { all: true, apply: true }, ctl: live });
         expect(live.evicted).toEqual([good.path]);
+    });
+
+    it("--apply exits 1 when a selected eviction fails or a file named by --path is not evicted", async () => {
+        const saved = process.exitCode;
+        try {
+            const good = file("/u/Documents/good");
+            const stuck = file("/u/Documents/stuck");
+            const ctl: CloudCtl = {
+                status: async (paths) => paths.map(uploaded),
+                evict: async (paths) =>
+                    paths.map((p) =>
+                        p === stuck.path ? { path: p, evicted: false, reason: "busy" } : { path: p, evicted: true }
+                    ),
+            };
+            process.exitCode = 0;
+            await runEvict({ root: "/u/Documents", files: [good], cli: { all: true, apply: true }, ctl });
+            expect(process.exitCode).toBe(0);
+
+            await runEvict({ root: "/u/Documents", files: [good, stuck], cli: { all: true, apply: true }, ctl });
+            expect(process.exitCode).toBe(1);
+
+            process.exitCode = 0;
+            const pending = file("/u/Documents/pending");
+            const refusing: CloudCtl = {
+                ...ctl,
+                status: async (paths) => paths.map((p) => ({ ...uploaded(p), uploaded: false })),
+            };
+            await runEvict({
+                root: "/u/Documents",
+                files: [pending],
+                cli: { path: [pending.path], apply: true },
+                ctl: refusing,
+            });
+            expect(process.exitCode).toBe(1);
+
+            // The same refusal in a dry run is a report, not a failure.
+            process.exitCode = 0;
+            await runEvict({ root: "/u/Documents", files: [pending], cli: { path: [pending.path] }, ctl: refusing });
+            expect(process.exitCode).toBe(0);
+        } finally {
+            process.exitCode = saved;
+        }
+    });
+
+    it("offers the top N evictable files, so other providers' larger files never push iCloud out", () => {
+        const big = Array.from({ length: 3 }, (_, i) => ({ ...file(`/u/Box/b${i}`, "com.example.box"), alloc: 9e9 }));
+        const icloud = file("/u/Documents/small");
+        const offer = offerForEviction([...big, icloud], { top: 2 });
+        expect(offer.files.map((f) => f.path)).toEqual([icloud.path]);
+        expect(offer.otherProviders).toBe(3);
+        // Files named by --path are all offered, so a refused one still prints its reason.
+        expect(offerForEviction([...big, icloud], { paths: [big[0]!.path] }).files.map((f) => f.path)).toEqual([
+            big[0]!.path,
+        ]);
+    });
+
+    it("refuses to start a compile without developer tools, before clang can open the install dialog", () => {
+        expect(() => assertCanCompile("/x/clonesize.c", () => false)).toThrow("xcode-select --install");
+        expect(() => assertCanCompile("/x/clonesize.c", () => true)).not.toThrow();
     });
     it("uses the Swift helper when it is built or can be, and osascript on a Mac without developer tools", () => {
         const calls: string[] = [];

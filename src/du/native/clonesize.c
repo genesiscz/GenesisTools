@@ -1996,8 +1996,8 @@ static void build_target_ranges(int nthreads) {
     free(all);
 }
 
-__attribute__((visibility("default")))
-char *clonesize_partners_json(const char *target, const char *root, int threads, int topn) {
+/** The partner query under the cloud policy already in g_skip_cloud (main() sets it from argv). */
+static char *partners_run_json(const char *target, const char *root, int threads, int topn) {
     g_nthreads = threads;
     g_maxdepth = -1;
     g_freeable_tree = 0;
@@ -2131,6 +2131,17 @@ char *clonesize_partners_json(const char *target, const char *root, int threads,
     free(parts); free(dirs); free(dir_files);
     free(g_tgt_ranges); g_tgt_ranges = NULL; g_ntgt_ranges = 0;
     return out;
+}
+
+/**
+ * The FFI entry: always stat-only for cloud-backed files. The policy lives in globals, so without this reset a
+ * partner query inherited `include_cloud` from an earlier clonesize_run_json in the same process and opened them.
+ */
+__attribute__((visibility("default")))
+char *clonesize_partners_json(const char *target, const char *root, int threads, int topn) {
+    g_skip_cloud = 1;
+    g_walk_cloud_roots = 0;
+    return partners_run_json(target, root, threads, topn);
 }
 
 __attribute__((visibility("default")))
@@ -2435,6 +2446,8 @@ __attribute__((visibility("default")))
 char *clonesize_bigfiles_json(const char *const *roots, int nroots, int threads,
                               unsigned long long min_bytes,
                               const char *const *prune_names, int nprune) {
+    // Same stale-global hazard as the partner query: never inherit an earlier include_cloud scan.
+    g_skip_cloud = 1;
     g_walk_cloud_roots = 0;
     return big_run_json(roots, nroots, threads, min_bytes, prune_names, nprune, 0);
 }
@@ -3373,7 +3386,7 @@ int main(int argc, char **argv) {
     }
 
     if (partners_of) {
-        char *p = clonesize_partners_json(partners_of, target, g_nthreads, topn);
+        char *p = partners_run_json(partners_of, target, g_nthreads, topn);
         if (!p) return 1;
         fputs(p, stdout);
         free(p);

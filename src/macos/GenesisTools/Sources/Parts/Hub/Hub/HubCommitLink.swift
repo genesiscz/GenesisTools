@@ -140,15 +140,28 @@ enum HubCommitLookup {
         guard let (older, newer) = ordered else {
             return .failed("\(sha) and \(to) are not on one line of history in \(place), so they make no range")
         }
-        let parent = WorktreeDiscovery.git(root, ["rev-parse", "--verify", "--quiet", "\(older)^"])?.trimmed
-        let base = parent?.isEmpty == false ? parent : nil
-        // No parent: a root commit starts from the empty tree, but a shallow clone only hides the parent.
-        if base == nil, WorktreeDiscovery.git(root, ["rev-parse", "--is-shallow-repository"])?.trimmed != "false" {
-            return .failed("The parent of \(older.prefix(10)) is not in \(place), a shallow clone (fetch more history first)")
+        guard let base = parent(of: older, in: root) else {
+            return .failed(missingParent(older, in: root))
         }
-        let count = WorktreeDiscovery.git(root, ["rev-list", "--count", base.map { "\($0)..\(newer)" } ?? newer])?.trimmed ?? "?"
+        let count = WorktreeDiscovery.git(root, ["rev-list", "--count", base == emptyTree ? newer : "\(base)..\(newer)"])?.trimmed ?? "?"
         let label = "\(older.prefix(10))..\(newer.prefix(10)) (\(count) commits)"
-        return .found(Found(root: root, sha: newer, title: label, base: base ?? emptyTree))
+        return .found(Found(root: root, sha: newer, title: label, base: base))
+    }
+
+    /// The first parent of `sha` in the checkout at `root`, the base of a range that starts at `sha`: git's empty
+    /// tree for a root commit, nil when a shallow clone only hides the parent (`missingParent`). Runs git, so off
+    /// the main thread.
+    static func parent(of sha: String, in root: String) -> String? {
+        if let parent = WorktreeDiscovery.git(root, ["rev-parse", "--verify", "--quiet", "\(sha)^"])?.trimmed, !parent.isEmpty {
+            return parent
+        }
+        // No parent: a root commit starts from the empty tree, but a shallow clone only hides the parent.
+        return WorktreeDiscovery.git(root, ["rev-parse", "--is-shallow-repository"])?.trimmed == "false" ? emptyTree : nil
+    }
+
+    /// Why `parent(of:in:)` found no parent of `sha`.
+    static func missingParent(_ sha: String, in root: String) -> String {
+        "The parent of \(sha.prefix(10)) is not in \((root as NSString).abbreviatingWithTildeInPath), a shallow clone (fetch more history first)"
     }
 
     /// Whether the checkout at `root` holds every one of `shas` as a commit.

@@ -56,6 +56,7 @@ import {
 } from "./render";
 import {
     blobBatches,
+    blobHead,
     type CapturedEdit,
     captureChunks,
     capturedBefore,
@@ -2012,6 +2013,19 @@ describe("a command that edits AND commits in the same call", () => {
         expect(message).not.toContain("BASESECRETROW");
         expect(message).not.toContain("AAAABASEKEYLINE");
         expect(message).not.toContain("BEGIN OPENSSH");
+    });
+
+    it("reads only the first 256 KB of a base blob, an absent path as empty and a failed read as null", () => {
+        writeFileSync(join(repo2, "big-base.txt"), "z".repeat(300 * 1024));
+        writeFileSync(join(repo2, "small-base.txt"), "small\n");
+        run(["add", "-A"]);
+        run(["commit", "-qm", "seed big"]);
+
+        expect(blobHead(repo2, "HEAD:big-base.txt")).toHaveLength(256 * 1024);
+        expect(blobHead(repo2, "HEAD:small-base.txt")).toBe("small\n");
+        expect(blobHead(repo2, "HEAD:never-committed.txt")).toBe("");
+        // Not proven harmless: the caller masks the patch as a cookie jar.
+        expect(blobHead(join(repo2, "no-such-dir"), "HEAD:small-base.txt")).toBeNull();
     });
 
     it("renders a file ONCE when the command commits it and then edits it again", () => {
@@ -4297,6 +4311,18 @@ describe("tools agents hooks diff log", () => {
         expect(deferredTaskHeading({ id: "bgA", command: "bun /x/a.ts\nbun /x/b.ts" })).toBe(
             "background task bgA ended (bun /x/a.ts…):\n"
         );
+    });
+
+    it("masks a token in both command headings before the cut, so a token cut in half cannot leak its start", () => {
+        const token = `ghp_${"A1b2C3d4".repeat(5)}`;
+        // The token straddles the 80-character cut: cut first, its first half no longer matches the pattern.
+        const command = `cd ${"/x".repeat(29)} && GH_TOKEN=${token} gh pr view`;
+        const heading = deferredTaskHeading({ id: "bgT", command });
+        const lines = stripAnsi(commandLines(command, 3));
+
+        expect(heading).not.toContain("ghp_");
+        expect(lines).not.toContain("ghp_");
+        expect(stripAnsi(commandLines(`TOKEN=${token} git push`, 3))).toBe("$ TOKEN=[redacted] git push");
     });
 
     it("splits a message at background task headings: the call's own part first, then each task's", () => {

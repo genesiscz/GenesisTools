@@ -8,12 +8,12 @@
  *   bun scripts/ci/typecheck.ts --all      # every project (still incremental)
  *
  * A project runs when no build info or state says what it holds, when a file that changes every project changed
- * (`package.json`, `bun.lock`, a `tsconfig`), when a changed file is in its last program (the build info's
- * `fileNames`), or when a TypeScript or JavaScript file was added that its program does not hold yet (only tsc knows
+ * (`package.json`, `bun.lock`, a `tsconfig`), when a changed file is in its last passing program (the build info's
+ * `fileNames`, copied aside after each pass), or when a TypeScript or JavaScript file was added that its program does not hold yet (only tsc knows
  * which include patterns take a new file, so every such project runs). Build info is a cache only:
  * `tsc` compares file hashes, so build info from another commit still gives the right answer, just slower.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
@@ -91,8 +91,8 @@ export function reasonToRun({
     return changes.added.some((file) => TS_FILE.test(file) && !program.has(key(file))) ? "new file" : null;
 }
 
-function git(args: string[]): string | null {
-    const proc = Bun.spawnSync(["git", ...args], { stdout: "pipe", stderr: "pipe" });
+function git(args: string[], cwd?: string): string | null {
+    const proc = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
     return proc.exitCode === 0 ? proc.stdout.toString() : null;
 }
 
@@ -100,26 +100,34 @@ function lines(text: string | null): string[] {
     return (text ?? "").split("\n").filter(Boolean);
 }
 
-/** What changed between `base` and the working tree (in CI the same as HEAD), untracked files included. */
-export function changedSince(base: string): Changes | null {
-    const diff = git(["diff", "--name-status", "--no-renames", base]);
+/** Fields of `-z` output: git prints each path as it is, where line output quotes `café.ts` as `"caf\303\251.ts"`. */
+function nulFields(text: string | null): string[] {
+    return (text ?? "").split("\0").filter(Boolean);
+}
+
+/**
+ * What changed between `base` and the working tree (in CI the same as HEAD), untracked files included. `cwd` must be
+ * the repo top: `ls-files` prints paths from it.
+ */
+export function changedSince(base: string, cwd?: string): Changes | null {
+    const diff = git(["diff", "--name-status", "--no-renames", "-z", base], cwd);
     if (diff === null) {
         return null;
     }
 
     const files: string[] = [];
     const added: string[] = [];
-    for (const line of lines(diff)) {
-        const [status, path] = line.split("\t");
-        if (path) {
-            files.push(path);
-            if (status === "A") {
-                added.push(path);
-            }
+    // `-z --name-status` gives a status field, then its path field.
+    const fields = nulFields(diff);
+    for (let index = 0; index + 1 < fields.length; index += 2) {
+        const [status, path] = [fields[index], fields[index + 1]];
+        files.push(path);
+        if (status === "A") {
+            added.push(path);
         }
     }
 
-    const untracked = lines(git(["ls-files", "--others", "--exclude-standard"]));
+    const untracked = nulFields(git(["ls-files", "--others", "--exclude-standard", "-z"], cwd));
     return { files: [...new Set([...files, ...untracked])], added: [...new Set([...added, ...untracked])] };
 }
 
@@ -183,7 +191,36 @@ function buildInfoPath(dir: string, project: Project): string {
     return join(dir, `${project.name}.tsbuildinfo`);
 }
 
-/** The files of the project's last program, from its build info; null when there is none to read, or it is cut. */
+function passedProgramPath(dir: string, project: Project): string {
+    return join(dir, `${project.name}.passed-program.json`);
+}
+
+/** The files of the project's last PASSING program, which selection reads; null when none was kept. */
+export function passedProgram(dir: string, project: Project): Set<string> | null {
+    return programFiles(passedProgramPath(dir, project));
+}
+
+/**
+ * After a pass, keep its program apart from the build info. tsc (and the pre-commit hook) rewrite the build info on a
+ * failing run too, and a failing run's file list can lack a file the passing program held, which would skip the
+ * project when that file changes next. Selection pairs this list with the diff since the same pass.
+ */
+export function keepPassedProgram(dir: string, project: Project): void {
+    const files = programFiles(buildInfoPath(dir, project));
+    const target = passedProgramPath(dir, project);
+    if (files === null) {
+        // No list for this pass: an older one would pair a stale program with the new pass, so nothing is known.
+        rmSync(target, { force: true });
+        return;
+    }
+
+    writeFileSync(target, `${SafeJSON.stringify({ fileNames: [...files] })}\n`);
+}
+
+/**
+ * The files of a project's program from a build info or a kept passing program (`fileNames`, relative to the file or
+ * absolute); null when there is none to read, or it is cut.
+ */
 export function programFiles(buildInfo: string): Set<string> | null {
     if (!existsSync(buildInfo)) {
         return null;
@@ -266,7 +303,7 @@ async function main(): Promise<void> {
         return diffs.get(sha) ?? null;
     };
 
-    const programs = new Map(PROJECTS.map((project) => [project.name, programFiles(buildInfoPath(dir, project))]));
+    const programs = new Map(PROJECTS.map((project) => [project.name, passedProgram(dir, project)]));
     const selections = PROJECTS.map((project): Selection => {
         if (all) {
             return { project, reason: "--all" };
@@ -295,6 +332,7 @@ async function main(): Promise<void> {
     for (const outcome of outcomes) {
         if (outcome.ok) {
             state.passed[outcome.project.name] = { sha: head, dirty: dirtyNow };
+            keepPassedProgram(dir, outcome.project);
         }
     }
 

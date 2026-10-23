@@ -1509,7 +1509,7 @@ test("generated worker briefs follow the round and dedicated-review policy", () 
         );
         expect(result.exitCode).toBe(0);
         const brief = fs.readFileSync(target, "utf8");
-        expect(brief).toContain(all ? "fix EVERY valid finding" : "fix Critical and High");
+        expect(brief).toContain(all ? "fix EVERY valid finding" : "fix Critical, Major and High");
         expect(brief).toContain("A valid security finding is always fixed");
         expect(brief).toContain("Change every file the fix needs in this PR");
         if (!all) {
@@ -4563,6 +4563,62 @@ describe("round 26 posting and answering-turn fences", () => {
                 expect(result.stdout.toString()).toContain("held");
             }
         }
+    });
+
+    test("a dry integration previews outside the vault and never writes or posts there", () => {
+        const dir = fs.mkdtempSync(join(tmpdir(), "babysit-integrate-dry-"));
+        fs.writeFileSync(
+            join(dir, "run.json"),
+            SafeJSON.stringify({ repo: "fixture/repo", main: dir, post: true, reviewLoopScripts: join(dir, "scripts") })
+        );
+        fs.writeFileSync(
+            join(dir, "replies.json"),
+            SafeJSON.stringify({ pr: 1, round: 1, model: "fixture", intro: "fixture", items: [] })
+        );
+        const preload = join(dir, "preload.ts"),
+            callsFile = join(dir, "calls.json");
+        fs.writeFileSync(
+            preload,
+            [
+                "import * as fs from 'node:fs';const calls=[];process.on('exit',()=>fs.writeFileSync(" +
+                    SafeJSON.stringify(callsFile) +
+                    ",JSON.stringify(calls)));const ok=(out='')=>({exitCode:0,stdout:Buffer.from(out),stderr:Buffer.alloc(0)});",
+                "Bun.spawnSync=(args,opts)=>{if(args[0] === 'git'){if(args.includes('push'))throw new Error('no pushes');return ok(args.includes('rev-parse')?'fixture-head':'');}if(args[0] === 'gh'){if(args[1] === 'pr' && args[2] === 'view')return ok(JSON.stringify({headRefName:'fixture',baseRefName:'main'}));calls.push(args);return ok();}if(args.some(a=>a.endsWith('round-summary.ts'))){calls.push([...args,'cwd='+opts.cwd]);fs.writeFileSync(args[args.indexOf('--out')+1],'fixture summary');return ok();}if(args.some(a=>a.endsWith('post-replies.ts'))){calls.push(args);return ok();}throw new Error('unexpected command');};",
+            ].join("\n")
+        );
+        const result = Bun.spawnSync(
+            [
+                process.execPath,
+                "--preload",
+                preload,
+                join(import.meta.dir, "integrate.ts"),
+                "--run",
+                dir,
+                "--wt",
+                dir,
+                "--pr",
+                "1",
+                "--round",
+                "1",
+                "--replies",
+                join(dir, "replies.json"),
+                "--post",
+                "--dry",
+            ],
+            { stdout: "pipe", stderr: "pipe", env: env.getProcessEnv(), timeout: 5000 }
+        );
+        const output = result.stdout.toString() + result.stderr.toString();
+        expect(result.exitCode, output).toBe(0);
+        expect(fs.existsSync(join(dir, "vault"))).toBe(false);
+        expect(output).toContain("vault untouched");
+        const calls = SafeJSON.parse(fs.readFileSync(callsFile, "utf8"), { strict: true }) as string[][];
+        expect(calls.length).toBe(1);
+        const summary = calls[0];
+        expect(summary.some((arg) => arg.endsWith("round-summary.ts"))).toBe(true);
+        const preview = summary[summary.indexOf("--out") + 1];
+        expect(preview.startsWith(join(dir, "vault"))).toBe(false);
+        expect(fs.readFileSync(preview, "utf8")).toBe("fixture summary");
+        expect(fs.existsSync(join(dirname(preview), "1-r1-replies.json"))).toBe(true);
     });
 
     test("a steer fence excludes the previous finished turn and accepts a reply finished before waiting", () => {

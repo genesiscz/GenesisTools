@@ -72,6 +72,9 @@ public struct GenRenderSwap<Value, ID: Hashable, Content: View>: View {
     /// The previous content, fading out on top.
     @State private var leaving: Value?
     @State private var fading = false
+    /// Counts switches. A delayed promotion (the timeout, a ready's next turn) carries the count of its switch and does
+    /// nothing once another switch started: after A, B, C, B the first B's timeout must not promote the second B.
+    @State private var generation = 0
     @GenReduceMotion private var reduceMotion
 
     static var fadeDuration: TimeInterval { 0.14 }
@@ -150,16 +153,19 @@ public struct GenRenderSwap<Value, ID: Hashable, Content: View>: View {
         }
         guard id != key(pending) else { return }
         pending = new
+        generation += 1
+        let switchGeneration = generation
         DispatchQueue.main.asyncAfter(deadline: .now() + timeout) {
-            if key(pending) == id { promote() }
+            if key(pending) == id, generation == switchGeneration { promote() }
         }
     }
 
     private func arrived(_ id: ID) {
         guard id == key(building) else { return }
+        let switchGeneration = generation
         // One turn for the page to paint what it just built.
         DispatchQueue.main.async {
-            if key(pending) == id { promote() }
+            if key(pending) == id, generation == switchGeneration { promote() }
         }
     }
 

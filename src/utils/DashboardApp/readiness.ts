@@ -139,8 +139,13 @@ export async function waitForUrlReady(
             } else if (isHttpServingStatus(res.status)) {
                 // 4xx still means the app is serving; 502/503/504 means proxy-without-upstream.
                 return { ready: true, detail: `http ${res.status}` };
+            } else {
+                // A gateway status: nothing behind the proxy answers now, so an earlier 500 no longer means serving.
+                broken = undefined;
             }
         } catch (err) {
+            // The server stopped answering: an earlier 500 must not be reported as a listener at the deadline.
+            broken = undefined;
             lastError = err;
             logger.debug({ err, url }, "http readiness probe failed");
         }
