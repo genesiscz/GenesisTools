@@ -209,7 +209,7 @@ func secondaryClickFrontGuard(before: pid_t?, target: pid_t) -> [String: Any] {
         return ["frontmostRestored": false, "menuHoldsKeyboard": frontmostPid() == target]
     }
 
-    let restored = bringFrontmost(before)
+    let restored = bringFrontmost(before, restoring: true)
     let name = NSRunningApplication(processIdentifier: before)?.localizedName ?? "pid \(before)"
     return ["frontmostRestored": restored,
             "focusNote": restored

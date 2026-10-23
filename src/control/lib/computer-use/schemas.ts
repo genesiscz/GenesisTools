@@ -20,10 +20,23 @@ const common = {
     timeout_ms: z.number().int().min(1).max(120000).optional(),
     note: noteSchema,
 };
+/**
+ * The window a call means, as get_app_state takes it. Refused unless the app's latest observation is of that
+ * window, so a call never acts on another window's references or pixels.
+ */
+const windowIdSchema = z.number().int().positive().optional();
+/**
+ * While the user works (a key, click, move or scroll in the last few seconds), an agent's call refuses to bring
+ * the app to the front or move the pointer. true takes focus anyway: only for a visible demonstration the user
+ * asked for.
+ */
+const allowForegroundSchema = z.boolean().default(false);
 const target = {
     ...common,
     element_index: z.number().int().nonnegative().optional(),
     element_ref: z.string().min(1).max(100).optional(),
+    window_id: windowIdSchema,
+    allow_foreground: allowForegroundSchema,
 };
 const preparedTarget = { ...target, prepare: z.boolean().default(false) };
 const point = {
@@ -151,7 +164,9 @@ export const computerSchemas = {
         .object({
             bundle_id: appSchema.optional(),
             path: z.string().min(1).max(4096).optional(),
+            /** false: launch or find the app without bringing it to the front. */
             activate: z.boolean().default(true),
+            allow_foreground: allowForegroundSchema,
             timeout_ms: z.number().int().min(1).max(120000).optional(),
         })
         .strict()
@@ -192,6 +207,8 @@ export const computerSchemas = {
             coordinate_space: z.enum(["image", "screen"]).default("image"),
             duration: z.number().min(0.1).max(5).default(0.3),
             background: z.boolean().default(true),
+            window_id: windowIdSchema,
+            allow_foreground: allowForegroundSchema,
             /** The destination may lie outside the observed window, and the window may move with the drag. */
             allow_outside: z.boolean().default(false),
         })
@@ -261,6 +278,7 @@ export const computerSchemas = {
             query: z.string().min(1).max(300),
             role: z.string().max(100).optional(),
             limit: z.number().int().min(1).max(100).default(30),
+            window_id: windowIdSchema,
         })
         .strict(),
     resolve_visual_target: z

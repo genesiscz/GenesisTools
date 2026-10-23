@@ -72,6 +72,10 @@ private func workflowFailure(_ message: String, category: SnapshotRefusal = .ref
 }
 
 private func workflowFailure(_ error: Error, extras: [String: Any] = [:]) -> Never {
+    if let active = error as? UserActiveError {
+        workflowDispatchState = inputGate.posted > 0 ? "uncertain" : "not_started"
+        workflowFailure(active.localizedDescription, category: active.category, extras: extras)
+    }
     if let takeover = error as? UserTakeoverError {
         workflowDispatchState = takeover.dispatched ? "uncertain" : "not_started"
         workflowFailure(takeover.localizedDescription, category: takeover.category, extras: extras)
@@ -1657,7 +1661,8 @@ func cmdAct(appName _: String) {
                     tree.rows.compactMap { $0["AXDescription"] as? String })
                 ActionCursor.emit("move", point: point, background: false, target: rawCoords == nil ? "ax" : "pixel")
                 // Checked before the warp: once it runs, the pointer is ours and no longer says
-                // where the user put it.
+                // where the user put it. A hover takes the user's pointer, so it waits for them too.
+                try checkForegroundAllowed()
                 try inputGate.post { _ = CGWarpMouseCursorPosition(point) }
                 if let moved = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
                                        mouseCursorPosition: point, mouseButton: .left) {
@@ -2076,6 +2081,14 @@ func cmdAct(appName _: String) {
         // Report it, so a caller reading the result knows the frontmost guard did not apply and
         // why, rather than wondering whether it was silently skipped.
         payload["nonActivatingPanel"] = true
+    }
+    // A window-addressed left click into an app that is not in front lands in a window that is not key.
+    // A SwiftUI control there takes it as the activation click and does nothing, while the click itself
+    // was delivered (a sheet's "Cancel" stayed open, 2026-10-23). Say so, so the caller checks the effect.
+    if action == "click", workflowFlag("--background"), !secondaryClick, !nonActivatingPanel, startingFrontmost != pid {
+        payload["inactiveWindowClick"] = true
+        payload["effectNote"] = "delivered to a window that is not key: a SwiftUI control may take it as the activation "
+            + "click and do nothing. Check the postcondition; AXPress (a click without physical) acts without focus"
     }
 
     payload.merge(actionExtras) { _, new in new }

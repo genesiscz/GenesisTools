@@ -14,6 +14,7 @@ import {
     axCommandLine,
     DEFAULT_AX_RUN_BOUNDARY,
     ensureBinary,
+    foregroundGuardEnvironment,
     getBinaryPath,
     nativeEnvironment,
     REAL_AX_TOOL_IN_TESTS,
@@ -755,4 +756,13 @@ test("every ax-tool spawn carries the overlay note: one call's note over the com
             }
         }
     );
+});
+
+test("foregroundGuardEnvironment turns the guard on under an agent only, and an explicit setting wins", () => {
+    expect(foregroundGuardEnvironment({ CLAUDECODE: "1" })).toEqual({ GENESIS_CONTROL_FOREGROUND_GUARD: "1" });
+    expect(foregroundGuardEnvironment({ CODEX_THREAD_ID: "thread" })).toEqual({
+        GENESIS_CONTROL_FOREGROUND_GUARD: "1",
+    });
+    expect(foregroundGuardEnvironment({})).toEqual({});
+    expect(foregroundGuardEnvironment({ CLAUDECODE: "1", GENESIS_CONTROL_FOREGROUND_GUARD: "0" })).toEqual({});
 });

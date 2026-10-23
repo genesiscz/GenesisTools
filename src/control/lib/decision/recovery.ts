@@ -20,6 +20,8 @@ export const refusalSchema = z.enum([
     "refused",
     /** The user put the pointer in the takeover corner; ax-tool stopped and released every held input. */
     "user_takeover",
+    /** The user is at the keyboard or mouse, so an agent's call refused to take focus or the pointer. */
+    "user_active",
 ]);
 export type Refusal = z.infer<typeof refusalSchema>;
 export function actionRefusal(result: AxResult): Refusal {
@@ -27,6 +29,10 @@ export function actionRefusal(result: AxResult): Refusal {
     // to do is stop for the user, not inspect a transport.
     if (result.refusal === "user_takeover") {
         return "user_takeover";
+    }
+
+    if (result.refusal === "user_active") {
+        return "user_active";
     }
 
     if (result.dispatchState !== "not_started") {
@@ -152,6 +158,12 @@ export class RecoveryController {
         this.attempts.push(attempt);
         if (category === "user_takeover") {
             attempt.reason = "The user took over the pointer; no automatic recovery until they hand control back.";
+            return null;
+        }
+
+        if (category === "user_active") {
+            attempt.reason =
+                "The user is working, so taking focus was refused; act in the background instead of retrying in front.";
             return null;
         }
 

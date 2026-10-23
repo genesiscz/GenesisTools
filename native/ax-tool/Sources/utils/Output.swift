@@ -40,7 +40,18 @@ func frontmostPid() -> pid_t? {
 /// call + fixed sleep races when another activation is still in flight —
 /// re-request each poll (up to ~3s), pumping the runloop so NSWorkspace
 /// state can update too.
-func bringFrontmost(_ pid: pid_t) -> Bool {
+///
+/// `restoring`: putting the user's own app back in front, which the foreground guard never refuses.
+func bringFrontmost(_ pid: pid_t, restoring: Bool = false) -> Bool {
+    if !restoring && frontmostPid() != pid {
+        do {
+            try checkForegroundAllowed()
+        } catch let refusal as UserActiveError {
+            userActiveExit(refusal)
+        } catch {
+            fputs("foreground check failed: \(error.localizedDescription)\n", stderr)
+        }
+    }
     let runningApp = NSWorkspace.shared.runningApplications.first { $0.processIdentifier == pid }
     return activateFrontmost(
         isFrontmost: { frontmostPid() == pid },

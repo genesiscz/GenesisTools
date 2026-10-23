@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { agentSessionIds } from "@genesiscz/utils/agent/host";
+import { agentSessionIds, resolveAgentHost } from "@genesiscz/utils/agent/host";
 import { untilAborted } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -717,11 +717,25 @@ export function nativeEnvironment(note?: string): NodeJS.ProcessEnv {
 
     return {
         ...environment,
+        ...foregroundGuardEnvironment(environment),
         ...cursorEnvironment({
             note: note ?? cursorNote ?? environment[CURSOR_NOTE_ENV],
             session: environment[CURSOR_SESSION_ENV] ?? sessionLabel ?? undefined,
         }),
     };
+}
+
+/**
+ * Under an agent, ax-tool refuses to take focus or the pointer while the user works (2026-10-23: a test run took
+ * the user's focus again and again). A person running a command just pressed Return, so outside an agent the guard
+ * stays off. An explicit GENESIS_CONTROL_FOREGROUND_GUARD in the environment wins either way.
+ */
+export function foregroundGuardEnvironment(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    if (environment.GENESIS_CONTROL_FOREGROUND_GUARD !== undefined || !resolveAgentHost(environment).isInAgent) {
+        return {};
+    }
+
+    return { GENESIS_CONTROL_FOREGROUND_GUARD: "1" };
 }
 function nativeArguments(args: string[]): string[] {
     const mutating = [

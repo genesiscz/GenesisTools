@@ -60,15 +60,20 @@ public final class SyntheticInputGate {
 
     private let tookOver: () -> Bool
     private let sleeper: (TimeInterval) -> Void
+    /// Runs after every event this gate sends, so the foreground guard can tell the agent's input
+    /// from the user's.
+    private let onPost: () -> Void
     private var held: [(id: Int, release: () -> Void)] = []
     private var nextID = 0
     /// Events posted through this gate, releases included.
     public private(set) var posted = 0
 
     public init(tookOver: @escaping () -> Bool,
-                sleeper: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }) {
+                sleeper: @escaping (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+                onPost: @escaping () -> Void = {}) {
         self.tookOver = tookOver
         self.sleeper = sleeper
+        self.onPost = onPost
     }
 
     /// Stop here when the user took over, after releasing anything still held (latest first).
@@ -80,6 +85,7 @@ public final class SyntheticInputGate {
         while let entry = held.popLast() {
             entry.release()
             posted += 1
+            onPost()
         }
         throw UserTakeoverError(dispatched: posted > 0)
     }
@@ -89,6 +95,7 @@ public final class SyntheticInputGate {
         try check()
         send()
         posted += 1
+        onPost()
     }
 
     /// A down event. Its release runs through `release(_:)`, or through `check()` if the user takes
@@ -98,6 +105,7 @@ public final class SyntheticInputGate {
         try check()
         send()
         posted += 1
+        onPost()
         let id = nextID
         nextID += 1
         held.append((id, release))
@@ -113,6 +121,7 @@ public final class SyntheticInputGate {
         let entry = held.remove(at: index)
         entry.release()
         posted += 1
+        onPost()
     }
 
     /// An event whose check already ran in the caller's own verify step, such as a drag's moves and
@@ -120,6 +129,7 @@ public final class SyntheticInputGate {
     public func deliver(_ send: () -> Void) {
         send()
         posted += 1
+        onPost()
     }
 
     /// Sleep in slices of at most 0.1 s and check between them, so a long hold or dwell still stops

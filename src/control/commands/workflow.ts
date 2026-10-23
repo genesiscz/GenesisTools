@@ -65,6 +65,7 @@ interface WorkflowOptions {
     frame?: string;
     background?: boolean;
     allowOutside?: boolean;
+    allowForeground?: boolean;
     prepare?: boolean;
     replace?: boolean;
     targetKey?: string;
@@ -517,6 +518,10 @@ export function registerWorkflowCommands(program: Command): void {
             "--allow-outside",
             "drag: the path and --to may leave the snapshot window, and the window may move with the drag (a panel dragged by its body). Only the start is checked against the snapshot; each later step checks that the window is still on screen and that you have not taken the pointer. The result reports windowBoundsAfter."
         )
+        .option(
+            "--allow-foreground",
+            "under an agent, take focus or the pointer even while the user is working (a visible demonstration the user asked for); without it such a call is refused while the user typed, clicked or moved the pointer in the last 5 s (GENESIS_CONTROL_FOREGROUND_IDLE)"
+        )
         .option("--duration <seconds>", "drag: duration from 0.1 to 5 seconds")
         .option("--pages <n>", "scroll: 1–20 receiving AX scroll-area viewport pages; if unavailable use --pixels")
         .option("--pixels <n>", "scroll: exact synthetic wheel pixels from 1 to 10000; mutually exclusive with --pages")
@@ -686,6 +691,10 @@ export function registerWorkflowCommands(program: Command): void {
 
             if (opts.allowOutside) {
                 args.push("--allow-outside");
+            }
+
+            if (opts.allowForeground) {
+                args.push("--allow-foreground");
             }
 
             if (opts.refresh) {

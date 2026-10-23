@@ -1920,3 +1920,53 @@ test("menu-bar-only observations explicitly select the native bar surface", asyn
     await session.observe({ app: "Fixture", top_menu: "File", limit: 40 });
     expect(calls[2]).toEqual(["menu-see", "--app", "Fixture", "--menu", "File"]);
 });
+
+test("a call that names a window acts only on that window's observation, and allow_foreground reaches ax-tool", async () => {
+    const f = fixture();
+    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+    const ref = state.elements[1].ref;
+    const sent = f.calls.length;
+    await expect(f.computer.click({ app: "Fixture", element_ref: ref, window_id: 11 })).rejects.toThrow(
+        "get_app_state({app, window_id: 11})"
+    );
+    expect(() => f.computer.find({ app: "Fixture", query: "Fixture", window_id: 11 })).toThrow("not 11");
+    expect(f.calls).toHaveLength(sent);
+    const result = await f.computer.click({
+        app: "Fixture",
+        element_ref: ref,
+        window_id: 10,
+        prepare: true,
+        allow_foreground: true,
+    });
+    expect(result.ok).toBe(true);
+    expect(f.calls.at(-1)).toContain("--allow-foreground");
+    const plain = await f.computer.get_app_state({ app: "Fixture", image: false });
+    await f.computer.click({ app: "Fixture", element_ref: plain.elements[1].ref, prepare: true });
+    expect(f.calls.at(-1)).not.toContain("--allow-foreground");
+});
+
+test("launch_app passes allow_foreground to ax-tool only when asked", async () => {
+    const f = fixture();
+    f.native.run = async (call) => {
+        f.calls.push(call.args);
+        return { ok: true, requestAccepted: true };
+    };
+    await f.computer.launch_app({ bundle_id: "example.fixture" });
+    await f.computer.launch_app({ bundle_id: "example.fixture", allow_foreground: true });
+    expect(f.calls).toEqual([
+        ["launch-app", "--bundle-id", "example.fixture"],
+        ["launch-app", "--bundle-id", "example.fixture", "--allow-foreground"],
+    ]);
+});
+
+test("a background click into a window that is not key carries the native effect note to the caller", async () => {
+    const f = fixture();
+    const state = await f.computer.get_app_state({ app: "Fixture", image: false });
+    const run = f.native.run;
+    f.native.run = async (call) => {
+        const result = await run(call);
+        return call.args[0] === "act" ? { ...result, inactiveWindowClick: true, effectNote: "not key" } : result;
+    };
+    const result = await f.computer.click({ app: "Fixture", element_ref: state.elements[1].ref });
+    expect(result.effectNote).toBe("not key");
+});

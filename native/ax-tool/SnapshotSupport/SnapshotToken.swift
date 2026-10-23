@@ -95,6 +95,8 @@ public enum SnapshotRefusal: String, Codable {
     case refused
     /// The user put the pointer in the takeover corner. Terminal: never retried, never recovered.
     case userTakeover = "user_takeover"
+    /// The user is at the keyboard or mouse, so an agent's call refused to take focus or the pointer.
+    case userActive = "user_active"
 }
 
 public enum SnapshotError: Error, LocalizedError {

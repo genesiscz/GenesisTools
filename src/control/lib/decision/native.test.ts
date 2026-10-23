@@ -216,6 +216,12 @@ describe("OCR reuse", () => {
     });
 });
 
+describe("user active", () => {
+    test("is its own refusal, so recovery never retries the call in front", () => {
+        expect(actionRefusal({ ok: false, dispatchState: "not_started", refusal: "user_active" })).toBe("user_active");
+    });
+});
+
 describe("user takeover", () => {
     test("is its own refusal whatever the dispatch state, and recovery stops before any read or model call", async () => {
         expect(actionRefusal({ ok: false, dispatchState: "uncertain", refusal: "user_takeover" })).toBe(

@@ -37,7 +37,7 @@ public struct WorkflowArguments {
                 "--revalidate-scope", "--frame", "--by-identifier", "--window-index", "--depth", "--modifiers",
                 "--budget-ms", "--target-ordinal", "--expect-value-sha256",
             ]
-            flagOptions = ["--background", "--allow-outside", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate"]
+            flagOptions = ["--background", "--allow-outside", "--double", "--refresh", "--no-cursor", "--no-image", "--prepare", "--replace", "--hold", "--no-activate", "--allow-foreground"]
         default:
             throw WorkflowArgumentError.invalid("unknown workflow command \(command)")
         }

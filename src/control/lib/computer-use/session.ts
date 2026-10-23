@@ -134,6 +134,18 @@ export interface ComputerState {
     } | null;
     observedAt: string;
 }
+/** A call that names a window must act on that window's observation, never on another window's refs or pixels. */
+function assertObservedWindow({ record, app, windowId }: { record: AppRecord; app: string; windowId?: number }) {
+    if (windowId === undefined || record.snapshot.window.id === windowId) {
+        return;
+    }
+
+    throw new ComputerUseError(
+        "WRONG_WINDOW",
+        `The latest observation of ${app} is window ${record.snapshot.window.id}, not ${windowId}. Observe it first: get_app_state({app, window_id: ${windowId}}).`
+    );
+}
+
 export class ComputerUseError extends Error {
     constructor(
         readonly code: string,
@@ -937,6 +949,7 @@ export class ComputerUse {
                     "launch-app",
                     ...(options.bundle_id ? ["--bundle-id", options.bundle_id] : ["--path", options.path!]),
                     ...(!options.activate ? ["--background"] : []),
+                    ...(options.allow_foreground ? ["--allow-foreground"] : []),
                 ],
                 timeoutMs: options.timeout_ms ?? 12000,
                 signal,
@@ -1064,6 +1077,8 @@ export class ComputerUse {
             revision?: string;
             timeout_ms?: number;
             note?: string;
+            window_id?: number;
+            allow_foreground?: boolean;
         };
         build: (record: AppRecord) => string[];
         signal?: AbortSignal;
@@ -1073,6 +1088,7 @@ export class ComputerUse {
                 app: input.app,
                 revision: input.revision,
             });
+            assertObservedWindow({ record, app: input.app, windowId: input.window_id });
             const argv = build(record);
             this.menus.close(input.app);
             const args = [
@@ -1082,6 +1098,7 @@ export class ComputerUse {
                 "--snapshot",
                 record.snapshot.snapshot,
                 ...argv,
+                ...(input.allow_foreground ? ["--allow-foreground"] : []),
                 "--refresh",
                 ...(!record.image ? ["--no-image"] : []),
             ];
@@ -1167,6 +1184,9 @@ export class ComputerUse {
                 clipboardRestore: result.clipboardRestore,
                 recovery: result.recovery,
                 note: typeof result.note === "string" ? result.note : undefined,
+                // A window-addressed click into a window that is not key: delivered, but a SwiftUI control may
+                // have taken it as the activation click. The caller checks the postcondition.
+                effectNote: typeof result.effectNote === "string" ? result.effectNote : undefined,
                 windowBoundsAfter: windowBoundsSchema.safeParse(result.windowBoundsAfter).data,
             };
         });
@@ -1423,6 +1443,8 @@ export class ComputerUse {
             revision?: string;
             timeout_ms?: number;
             prepare?: boolean;
+            window_id?: number;
+            allow_foreground?: boolean;
         };
         action: string;
         flags: string[];
@@ -1612,6 +1634,7 @@ export class ComputerUse {
         const record = this.record({
             app: options.app,
         });
+        assertObservedWindow({ record, app: options.app, windowId: options.window_id });
         const query = options.query.toLocaleLowerCase();
         const elements: ComputerElement[] = [];
         let total = 0;

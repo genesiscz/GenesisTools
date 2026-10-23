@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SnapshotSupport
 
 func cmdInstalledApps() {
     let roots = ["/Applications", "/System/Applications", "/System/Library/CoreServices",
@@ -59,6 +60,15 @@ func cmdLaunchApp() {
         jsonOutput(["ok":true,"id":bundleId,"path":canonical.path,"pid":app.processIdentifier,
                     "processLaunch":launch,"frontmost":app.isActive,"alreadyRunning":existing,
                     "dispatchState":"dispatched"])
+    }
+    if !args.contains("--background") && !(matches.first?.isActive ?? false) {
+        do {
+            try checkForegroundAllowed()
+        } catch let refusal as UserActiveError {
+            userActiveExit(refusal)
+        } catch {
+            fputs("foreground check failed: \(error.localizedDescription)\n", stderr)
+        }
     }
     if let existing = matches.first {
         if !args.contains("--background") && !existing.activate(options: [.activateIgnoringOtherApps]) {
