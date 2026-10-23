@@ -51,6 +51,8 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// The viewer's tunables (preview and wrapped tabs, hover previews, contrast, toolbar labels). The
     /// process-wide one; a test hands in its own. The window forwards its changes to this model.
     var configuration = GenesisKitMarkdownConfiguration.shared
+    /// The last grouping of the tabs and what it was computed from (`MarkdownDocumentsModel+TabGroups`).
+    let tabGroupMemo = MarkdownTabGroupMemo()
     /// Reading view, source, or both (⌘E / ⌘\), per window, not per file.
     /// Remembered between launches like the rest of the chrome.
     @Published var modeRaw: String = MarkdownViewMode.preview.rawValue {
@@ -717,11 +719,26 @@ final class MarkdownDocumentsModel: ObservableObject {
         persistTabs()
     }
 
-    /// Next Tab / Previous Tab (`MarkdownKeymap`, ⇧⌘ with the two keys right of P): wrapping at the ends.
+    /// Next Tab / Previous Tab (`MarkdownKeymap`, ⇧⌘ with the two keys right of P): wrapping at the ends, in the
+    /// order the tab bar shows them (groups in their order, a collapsed group's tabs skipped).
     func selectTab(offset: Int) {
-        guard docs.count > 1, let current = docs.firstIndex(where: { $0.id == selected?.id }) else { return }
-        let next = ((current + offset) % docs.count + docs.count) % docs.count
-        select(docs[next].id)
+        let order = visibleTabOrder
+        guard order.count > 1, let current = order.firstIndex(where: { $0 == selected?.id }) else { return }
+        let next = ((current + offset) % order.count + order.count) % order.count
+        select(order[next])
+    }
+
+    /// Moves a tab before another one, or to the end with nil (a drag in the tab bar). The order is saved like any
+    /// other tab change.
+    func moveTab(_ id: String, before target: String?) {
+        guard id != target, let from = docs.firstIndex(where: { $0.id == id }) else { return }
+        var reordered = docs
+        let doc = reordered.remove(at: from)
+        let slot = target.flatMap { target in reordered.firstIndex { $0.id == target } } ?? reordered.endIndex
+        reordered.insert(doc, at: slot)
+        guard reordered.map(\.id) != docs.map(\.id) else { return }
+        docs = reordered
+        persistTabs()
     }
 
     /// ⌃⇧C, the toolbar, and a file row's Copy Path: the open note's path.

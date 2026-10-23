@@ -182,7 +182,9 @@ struct MarkdownDocumentsView: View {
 }
 
 /// The tab row: one scrolling strip, or every tab on as many rows as it takes (`wrapTabs`). Either way the
-/// selected tab is on screen. A right-click on its empty part offers Wrap Tabs.
+/// selected tab is on screen. With enough tabs open they fall into groups (`MarkdownTabGrouping`): a chip per group
+/// that folds it, drags that move tabs and groups, and menus that rename, regroup and close. A right-click on its
+/// empty part offers Wrap Tabs and the grouping rule.
 private struct MarkdownTabBar: View {
     @ObservedObject var model: MarkdownDocumentsModel
     @ObservedObject var configuration: GenesisKitMarkdownConfiguration
@@ -191,22 +193,36 @@ private struct MarkdownTabBar: View {
         let _ = RenderProbe.hit("md.tabBar")
         // Read once per pass: `selected` searches the tabs, and asking it per tab made a pass N² (2026-10-15).
         let selectedID = model.selected?.id
+        let groups = model.tabGroups
         Group {
-            if configuration.wrapTabs {
-                MarkdownTabFlow(spacing: 2, rowSpacing: 2) {
-                    ForEach(model.docs) { doc in
-                        tab(doc, selectedID: selectedID)
+            if groups.isEmpty {
+                if configuration.wrapTabs {
+                    capped(selectedID: selectedID) {
+                        MarkdownTabFlow(spacing: 2, rowSpacing: 2) {
+                            ForEach(model.docs) { doc in
+                                tab(doc, selectedID: selectedID).id(doc.id)
+                            }
+                        }
+                    }
+                } else {
+                    strip(selectedID: selectedID)
+                }
+            } else if configuration.wrapTabs {
+                capped(selectedID: selectedID) {
+                    if configuration.tabGroupRows {
+                        wrapped(groups, selectedID: selectedID)
+                    } else {
+                        flowing(groups, selectedID: selectedID)
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                strip(selectedID: selectedID)
+                groupedStrip(groups, selectedID: selectedID)
             }
         }
         .contentShape(Rectangle())
         .contextMenu {
+            MarkdownTabGroupingMenu(configuration: configuration)
+            Divider()
             MarkdownWrapTabsToggle(configuration: configuration)
         }
         .accessibilityIdentifier("markdown-tab-bar")
@@ -242,6 +258,287 @@ private struct MarkdownTabBar: View {
             .onChange(of: selectedID, initial: true) { _, id in
                 guard let id else { return }
                 proxy.scrollTo(id, anchor: nil)
+            }
+        }
+    }
+
+    // MARK: Groups
+
+    private var collapsed: Set<String> { configuration.tabGroupState.collapsed }
+
+    /// The tabs a group shows: all of them, or only the selected one while it is folded, so the tab you read never
+    /// disappears into a folded group.
+    private func shown(_ group: MarkdownTabGroup, selectedID: String?) -> [MarkdownDocument] {
+        let ids = collapsed.contains(group.id) ? group.tabIDs.filter { $0 == selectedID } : group.tabIDs
+        let byID = Dictionary(model.docs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return ids.compactMap { byID[$0] }
+    }
+
+    private func chip(_ group: MarkdownTabGroup) -> some View {
+        MarkdownTabGroupChip(group: group, collapsed: collapsed.contains(group.id), model: model)
+    }
+
+    /// The wrapped bar: at most `wrapTabsMaxRows` rows (about 32 pt each), scrolling past them with a fade at the cut
+    /// edge, and following the selected tab. Shorter content keeps its own height (`FittedScroll`).
+    private func capped<Content: View>(selectedID: String?, @ViewBuilder content: @escaping () -> Content) -> some View {
+        let rows = configuration.wrapTabsMaxRows
+        return ScrollViewReader { proxy in
+            FittedScroll(maxHeight: rows > 0 ? CGFloat(rows) * 32 + 12 : 10_000) {
+                content()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onChange(of: selectedID, initial: true) { _, id in
+                guard let id else { return }
+                proxy.scrollTo(id, anchor: nil)
+            }
+        }
+    }
+
+    /// Wrapped, the default: every group's chip and its tabs flow on, one group after another.
+    private func flowing(_ groups: [MarkdownTabGroup], selectedID: String?) -> some View {
+        MarkdownTabFlow(spacing: 2, rowSpacing: 2) {
+            ForEach(groups) { group in
+                chip(group).padding(.leading, group.id == groups.first?.id ? 0 : 6)
+                ForEach(shown(group, selectedID: selectedID)) { doc in
+                    tab(doc, selectedID: selectedID).id(doc.id)
+                }
+            }
+        }
+    }
+
+    /// Wrapped with "Each Group on Its Own Rows": an open group starts its own rows with its chip; folded groups next
+    /// to each other share a row.
+    private func wrapped(_ groups: [MarkdownTabGroup], selectedID: String?) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(MarkdownTabGroupRows.rows(groups, collapsed: collapsed)) { row in
+                MarkdownTabFlow(spacing: 2, rowSpacing: 2) {
+                    ForEach(row.groups) { group in
+                        chip(group)
+                        ForEach(shown(group, selectedID: selectedID)) { doc in
+                            tab(doc, selectedID: selectedID).id(doc.id)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func groupedStrip(_ groups: [MarkdownTabGroup], selectedID: String?) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 2) {
+                    ForEach(groups) { group in
+                        chip(group).padding(.leading, group.id == groups.first?.id ? 0 : 8)
+                        ForEach(shown(group, selectedID: selectedID)) { doc in
+                            tab(doc, selectedID: selectedID).id(doc.id)
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+            }
+            .onChange(of: selectedID, initial: true) { _, id in
+                guard let id else { return }
+                proxy.scrollTo(id, anchor: nil)
+            }
+        }
+    }
+}
+
+/// Which groups share a row in the wrapped bar: every open group is a row of its own, and a run of folded groups
+/// is one row of chips.
+enum MarkdownTabGroupRows {
+    struct Row: Identifiable, Equatable {
+        var groups: [MarkdownTabGroup]
+        var id: String { groups.map(\.id).joined(separator: "|") }
+    }
+
+    static func rows(_ groups: [MarkdownTabGroup], collapsed: Set<String>) -> [Row] {
+        var rows: [Row] = []
+        for group in groups {
+            if collapsed.contains(group.id), let last = rows.last, last.groups.allSatisfy({ collapsed.contains($0.id) }) {
+                rows[rows.count - 1].groups.append(group)
+            } else {
+                rows.append(Row(groups: [group]))
+            }
+        }
+        return rows
+    }
+}
+
+/// A group's chip: its colour, a chevron, its name and its count. A click folds or opens it, ⌥-click shows only
+/// this group, a double-click renames it. Drop a tab on it to move the tab in; drag it onto another chip to reorder.
+private struct MarkdownTabGroupChip: View {
+    let group: MarkdownTabGroup
+    let collapsed: Bool
+    let model: MarkdownDocumentsModel
+    @State private var renaming = false
+    @State private var name = ""
+    @State private var targeted = false
+
+    private var color: Color { MarkdownTabGroupChip.color(for: group.id) }
+
+    var body: some View {
+        Button(action: click) {
+            HStack(spacing: 5) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
+                Text(group.title).font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
+                Text(verbatim: "\(group.tabIDs.count)")
+                    .font(.system(size: 10.5, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(color.opacity(targeted ? 0.32 : 0.16)))
+            .overlay(Capsule().strokeBorder(color.opacity(targeted ? 0.9 : 0.4), lineWidth: 1))
+            .foregroundStyle(color)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.genHoverPlain())
+        .padding(.vertical, 2)
+        .instantTooltip(tooltip)
+        .accessibilityLabel("\(group.title) group, \(group.tabIDs.count) tabs, \(collapsed ? "folded" : "open")")
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityIdentifier("markdown-tab-group-" + group.id)
+        .draggable(MarkdownTabDrag.group(group.id))
+        .dropDestination(for: String.self) { items, _ in
+            for item in items {
+                switch MarkdownTabDrag.parse(item) {
+                case .tab(let id): model.dropTab(id, onGroup: group.id)
+                case .group(let id): model.moveGroup(id, before: group.id)
+                case nil: return false
+                }
+            }
+            return true
+        } isTargeted: { targeted = $0 }
+        .contextMenu { menu }
+        .popover(isPresented: $renaming, arrowEdge: .bottom) {
+            TextField("Group name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 220)
+                .padding(12)
+                .onSubmit {
+                    model.renameGroup(group.id, to: name)
+                    renaming = false
+                }
+        }
+    }
+
+    private var tooltip: TooltipContent {
+        TooltipContent(title: group.title + (group.detail.map { " · " + $0 } ?? ""), bullets: [
+            "Click folds or opens the group, ⌥-click shows only this group",
+            "Double-click renames it",
+            "Drag a tab onto it to move the tab in; drag the group to reorder",
+        ])
+    }
+
+    private func click() {
+        if (NSApp.currentEvent?.clickCount ?? 1) >= 2 {
+            // The first click of the double-click already folded or opened it: put that back, then rename.
+            model.toggleGroup(group.id)
+            startRename()
+        } else if NSEvent.modifierFlags.contains(.option) {
+            model.focusGroup(group.id)
+        } else {
+            model.toggleGroup(group.id)
+        }
+    }
+
+    private func startRename() {
+        name = group.title
+        renaming = true
+    }
+
+    @ViewBuilder private var menu: some View {
+        Button("Rename Group…", action: startRename)
+        Button(collapsed ? "Open Group" : "Fold Group") { model.toggleGroup(group.id) }
+        Button("Show Only This Group") { model.focusGroup(group.id) }
+        Button("Open All Groups") { model.setAllGroups(collapsed: false) }
+        Button("Fold All Groups") { model.setAllGroups(collapsed: true) }
+        Divider()
+        Button("Move Group Left") { model.shiftGroup(group.id, by: -1) }
+        Button("Move Group Right") { model.shiftGroup(group.id, by: 1) }
+        if group.manual || model.configuration.tabGroupState.names[group.id] != nil {
+            Button(group.manual ? "Ungroup" : "Undo Changes to This Group") { model.ungroup(group.id) }
+        }
+        Divider()
+        Button("Close \(group.tabIDs.count == 1 ? "Tab" : "\(group.tabIDs.count) Tabs") in Group") {
+            model.closeGroup(group.id)
+        }
+        Divider()
+        MarkdownTabGroupingMenu(configuration: model.configuration)
+    }
+
+    /// A stable colour per group id, so a group keeps its colour across launches and reorders.
+    static func color(for id: String) -> Color {
+        let palette: [Color] = [.blue, .purple, .pink, .orange, .teal, .green, .indigo, .mint, .cyan, .yellow, .red, .brown]
+        let hash = id.unicodeScalars.reduce(UInt32(5381)) { ($0 &* 33) &+ $1.value }
+        return palette[Int(hash % UInt32(palette.count))]
+    }
+}
+
+/// What a drag in the tab bar carries: a tab or a group, as text with a prefix, so a drop knows which it got.
+enum MarkdownTabDrag: Equatable {
+    case tab(String)
+    case group(String)
+
+    static func tab(_ id: String) -> String { "genesis-tab:" + id }
+    static func group(_ id: String) -> String { "genesis-tab-group:" + id }
+
+    static func parse(_ text: String) -> MarkdownTabDrag? {
+        if text.hasPrefix("genesis-tab-group:") { return .group(String(text.dropFirst("genesis-tab-group:".count))) }
+        if text.hasPrefix("genesis-tab:") { return .tab(String(text.dropFirst("genesis-tab:".count))) }
+        return nil
+    }
+}
+
+/// "Group Tabs By" and "Group From", in the tab bar's menu, every chip's and every tab's.
+struct MarkdownTabGroupingMenu: View {
+    @ObservedObject var configuration: GenesisKitMarkdownConfiguration
+
+    var body: some View {
+        Picker("Group Tabs By", selection: $configuration.tabGrouping) {
+            ForEach(MarkdownTabGroupRule.allCases, id: \.self) { Text($0.title).tag($0) }
+        }
+        Picker("Group From", selection: $configuration.tabGroupFrom) {
+            Text("Always").tag(0)
+            Text("6 Open Tabs").tag(6)
+            Text("10 Open Tabs").tag(10)
+            Text("20 Open Tabs").tag(20)
+        }
+        Toggle("Each Group on Its Own Rows", isOn: $configuration.tabGroupRows)
+        Picker("Wrapped Tabs Show", selection: $configuration.wrapTabsMaxRows) {
+            Text("2 Rows").tag(2)
+            Text("4 Rows").tag(4)
+            Text("6 Rows").tag(6)
+            Text("Every Row").tag(0)
+        }
+        if configuration.tabGroupState != MarkdownTabGroupState() {
+            Button("Reset Group Names, Order and Moves") { configuration.tabGroupState = MarkdownTabGroupState() }
+        }
+    }
+}
+
+/// "Move to Group" in a tab's menu: the groups there are, a new group, or back to the rule.
+private struct MarkdownTabMoveMenu: View {
+    let doc: MarkdownDocument
+    let model: MarkdownDocumentsModel
+
+    var body: some View {
+        let groups = model.tabGroups
+        let current = model.group(of: doc.id)?.id
+        Menu("Move to Group") {
+            ForEach(groups.filter { $0.id != current }) { group in
+                Button(group.title) { model.dropTab(doc.id, onGroup: group.id) }
+            }
+            if groups.count > 1 { Divider() }
+            Button("New Group with This Tab") { model.newGroup(with: doc.id) }
+            if model.configuration.tabGroupState.assigned[doc.id] != nil {
+                Button("Back to Its Own Group") { model.assign(doc.id, to: nil) }
             }
         }
     }
@@ -332,7 +629,19 @@ private struct MarkdownDocumentTab: View, Equatable {
             }
             MarkdownTabMenu(doc: doc, model: model)
             Divider()
+            if model.groupsTabs {
+                MarkdownTabMoveMenu(doc: doc, model: model)
+            }
+            MarkdownTabGroupingMenu(configuration: model.configuration)
             MarkdownWrapTabsToggle(configuration: model.configuration)
+        }
+        .draggable(MarkdownTabDrag.tab(doc.id)) {
+            Text(doc.title).font(.system(size: 12, weight: .medium)).padding(.horizontal, 12).padding(.vertical, 7)
+        }
+        .dropDestination(for: String.self) { items, _ in
+            guard case .tab(let dragged) = items.first.flatMap(MarkdownTabDrag.parse) else { return false }
+            model.dropTab(dragged, before: doc.id)
+            return true
         }
         .instantTooltip(previews ? "" : doc.url.path)
         .markdownHoverPreview(active ? nil : doc.url, model: model)

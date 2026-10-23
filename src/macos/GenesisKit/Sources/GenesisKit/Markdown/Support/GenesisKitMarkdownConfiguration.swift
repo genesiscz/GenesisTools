@@ -49,6 +49,22 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
     /// A single click in the file tree opens a preview tab (italic title) that the next single click
     /// replaces. An edit, a double-click or a double-click on the tab keeps it.
     @Published public var previewTabs: Bool { didSet { store(previewTabs, "previewTabs") } }
+    /// How tabs fall into groups by themselves (`MarkdownTabGrouping`). `.off` keeps one flat row.
+    @Published public var tabGrouping: MarkdownTabGroupRule { didSet { store(tabGrouping.rawValue, "tabGrouping") } }
+    /// Groups appear once this many tabs are open; fewer stay one plain row. 0 groups always.
+    @Published public var tabGroupFrom: Int { didSet { store(tabGroupFrom, "tabGroupFrom") } }
+    /// An automatic group smaller than this joins "Other".
+    @Published public var tabGroupMinimum: Int { didSet { store(tabGroupMinimum, "tabGroupMinimum") } }
+    /// A Project group with more tabs than this splits by its next folder.
+    @Published public var tabGroupSplitAbove: Int { didSet { store(tabGroupSplitAbove, "tabGroupSplitAbove") } }
+    /// Wrapped tabs: groups flow one after another (the default), or each open group starts its own rows.
+    @Published public var tabGroupRows: Bool { didSet { store(tabGroupRows, "tabGroupRows") } }
+    /// Wrapped tabs take at most this many rows and scroll past them, with a fade at the cut edge. 0 is no limit.
+    @Published public var wrapTabsMaxRows: Int { didSet { store(wrapTabsMaxRows, "wrapTabsMaxRows") } }
+    /// The reader's in-place edits: group order, collapsed groups, names, tabs moved by hand.
+    @Published public var tabGroupState: MarkdownTabGroupState {
+        didSet { if let data = try? JSONEncoder().encode(tabGroupState) { store(data, "tabGroupState") } }
+    }
 
     // MARK: Chrome
 
@@ -109,6 +125,15 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
         hoverPreviewDelay = double("hoverPreviewDelay", 1.0)
         wrapTabs = bool("wrapTabs", false)
         previewTabs = bool("previewTabs", true)
+        tabGrouping = string("tabGrouping").flatMap(MarkdownTabGroupRule.init(rawValue:)) ?? .smart
+        func int(_ key: String, _ fallback: Int) -> Int { defaults.object(forKey: Self.prefix + key) as? Int ?? fallback }
+        tabGroupFrom = int("tabGroupFrom", 10)
+        tabGroupMinimum = int("tabGroupMinimum", 2)
+        tabGroupSplitAbove = int("tabGroupSplitAbove", 12)
+        tabGroupRows = bool("tabGroupRows", false)
+        wrapTabsMaxRows = int("wrapTabsMaxRows", 4)
+        tabGroupState = defaults.data(forKey: Self.prefix + "tabGroupState")
+            .flatMap { try? JSONDecoder().decode(MarkdownTabGroupState.self, from: $0) } ?? MarkdownTabGroupState()
         contrast = string("contrast").flatMap(MarkdownContrast.init(rawValue:)) ?? .high
         toolbarLabels = string("toolbarLabels").flatMap(MarkdownToolbarLabels.init(rawValue:)) ?? .whenRoom
         treeFontScalesWithWidth = bool("treeFontScalesWithWidth", true)
