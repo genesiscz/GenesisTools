@@ -3,11 +3,12 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, s
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { env } from "@genesiscz/utils/env";
+import { type ProbeFacts, probeGenesisTools } from "@genesiscz/utils/genesis-tools/probe";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { type LinkGate, linkGate, linkGatePath } from "./link-gate";
 import { linkFor, mintLink, planMintedLink, presetEnabled } from "./links";
 import { presets } from "./presets";
-import { defaultRouterConfig } from "./route";
+import { defaultRouterConfig, type RouterConfig, route } from "./route";
 import { routerLink, schemeLink } from "./router-link";
 import { type RouterStatus, routerStatus } from "./status";
 import { mintToken, takeToken, tokenFile, withTokenLock } from "./tokens";
@@ -461,5 +462,57 @@ describe("routerLink and the link gate", () => {
             process.stderr.write = write;
             rmSync(home, { recursive: true, force: true });
         }
+    });
+});
+
+describe("probeGenesisTools", () => {
+    const linkHost = "links.example.test";
+    const base = defaultRouterConfig();
+    const routesOf = (ids: string[]) =>
+        presets({ config: { ...base, linkHost, routes: [] }, check: () => true })
+            .filter((preset) => ids.includes(preset.id))
+            .flatMap((preset) => preset.routes);
+    const config: RouterConfig = { ...base, linkHost, routes: routesOf(["genesis-md", "finder", "claude-find"]) };
+    const facts = (overrides: Partial<ProbeFacts> = {}): ProbeFacts => ({
+        platform: "darwin",
+        toolsPath: "/opt/example/tools",
+        appInstalled: true,
+        httpsHandler: "com.genesiscz.genesistools",
+        config,
+        markdownPath: "/Applications/Example Markdown.app",
+        cmuxPath: "/opt/example/cmux",
+        ...overrides,
+    });
+
+    test("a kind opens only with a route on this Mac and the program its route names", () => {
+        const links = probeGenesisTools({ facts: facts(), now: 1 }).links;
+
+        expect(links.md).toMatchObject({ opens: true, action: "open genesis-md://open?path=/probe.md" });
+        expect(links.finder).toMatchObject({ opens: true, action: "run /usr/bin/open -R /" });
+        expect(links["claude-find"].opens).toBe(true);
+        // No hub route: the click goes to the browser.
+        expect(links.hub).toMatchObject({ opens: false, problem: "no-route" });
+
+        const bare = probeGenesisTools({ facts: facts({ markdownPath: null, toolsPath: null }) }).links;
+        expect(bare.md.problem).toBe("target-missing");
+        expect(bare["claude-find"].problem).toBe("target-missing");
+        expect(bare.finder.opens).toBe(true);
+    });
+
+    test("every link is dead without the app, the https handler, a link host or macOS", () => {
+        expect(probeGenesisTools({ facts: facts({ appInstalled: false }) }).links.finder.problem).toBe("app-missing");
+        expect(probeGenesisTools({ facts: facts({ httpsHandler: "com.example.browser" }) }).links.md.problem).toBe(
+            "not-https-handler"
+        );
+        expect(
+            probeGenesisTools({ facts: facts({ config: { ...config, linkHost: undefined } }) }).links.md.problem
+        ).toBe("no-link-host");
+        expect(probeGenesisTools({ facts: facts({ platform: "linux" }) }).links.md.problem).toBe("not-darwin");
+    });
+
+    test("the finder preset reveals the target it is given", () => {
+        const decision = route(`https://${linkHost}/finder/reveal?target=/tmp/My%20Notes`, config);
+
+        expect(decision).toMatchObject({ kind: "run", argv: ["/usr/bin/open", "-R", "/tmp/My Notes"] });
     });
 });

@@ -14,6 +14,7 @@ The detailed rules live in area files. Claude Code loads an area file by itself 
 - AI, accounts, secrets, cost, agent history (`src/utils/ai/`, `src/utils/security/`, `src/utils/agent-sessions/`, `src/ai-proxy/`, `src/ask/`, `src/claude/`, `src/codex/`): `.claude/rules/ai.md`.
 - Models and pricing (the catalog, the proxy ledger, Claude request rules, Codex and Grok model lists, the handoff-to rankings): `.claude/rules/models.md`. Where each model fact lives, and the checklist for a new model.
 - Web UI (`*.tsx`, `src/*/ui/`, `src/dashboard/`, `src/dev-dashboard/`): `.claude/rules/web-ui.md`.
+- A link to genesis.tools, Genesis Markdown or the hub, and plugin code that runs `tools` (`src/**`, `plugins/**`): `.claude/rules/genesis-links.md`. Such a link opens nothing on a Mac without the app, the router and its route; check with `tools genesis-tools probe` (or `routerLink()` / the mods plugin's `genesis.ts`) and write the fallback.
 - Any UI, native or web, the widget schema and notifications: `.claude/rules/opinionated-settings.md`. A behavior a reasonable user could want another way (a sound, a popup, a flash, a placement, a hover tooltip, a timing) ships as a setting with your pick as its default.
 - macOS app, notifications, privacy grants (`src/macos/`, `src/utils/macos/`, `src/notify/`): `.claude/rules/macos.md`. Window rules for the Swift app (`src/macos/GenesisTools/`): `.claude/rules/macos-app.md`.
 - The personal-data probe and the git hooks: `.claude/rules/placeholder-check.md`.

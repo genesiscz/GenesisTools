@@ -6,6 +6,7 @@ import { detectGenesisTools } from "@genesiscz/utils/cli/genesis-tools";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { GENESIS_APP_BUNDLE_ID, genesisAppBundlePath } from "@genesiscz/utils/macos/genesis-app";
+import { appPathForBundleId } from "@genesiscz/utils/macos/launch-services";
 
 /** What a preset needs on this Mac before its routes are written and its links are offered. */
 export type Capability =
@@ -74,25 +75,15 @@ function evaluate(capability: Capability): boolean {
     }
 }
 
-/** Whether Spotlight knows an app with this bundle id, wherever it is installed. */
+/** Whether Launch Services knows an app with this bundle id, wherever it is installed (what `open -b` asks). */
 function appInstalled(bundleId: string): boolean {
-    if (process.platform !== "darwin") {
-        return false;
+    const path = appPathForBundleId(bundleId);
+
+    if (!path) {
+        logger.debug({ bundleId }, "browser-router: Launch Services knows no app with this bundle id");
     }
 
-    const run = Bun.spawnSync(["mdfind", `kMDItemCFBundleIdentifier == '${bundleId}'`], {
-        stdout: "pipe",
-        stderr: "pipe",
-        // A busy or broken Spotlight index must not hang `presets` or a route sync.
-        timeout: 5000,
-    });
-
-    if (run.exitCode !== 0) {
-        logger.debug({ bundleId, stderr: run.stderr.toString() }, "browser-router: mdfind could not look up an app");
-        return false;
-    }
-
-    return run.stdout.toString().trim() !== "";
+    return path !== null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

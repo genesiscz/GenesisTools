@@ -118,6 +118,25 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             ]),
         },
         {
+            id: "finder",
+            title: "Show in Finder",
+            kind: "installable",
+            description:
+                "https://<link host>/finder/reveal?target=<path> shows that file or folder in Finder (open -R).",
+            enabledIf: ["platform:darwin"],
+            needsLinkHost: true,
+            probe: linkHost ? `https://${linkHost}/finder/reveal?target=/` : undefined,
+            routes: withHost((host) => [
+                {
+                    preset: "finder",
+                    name: "Show in Finder",
+                    pattern: on(host, "finder/reveal"),
+                    // Reveals and nothing else, so it runs at once; a missing path makes Finder say so.
+                    action: { type: "run", argv: ["/usr/bin/open", "-R", "{target}"], approval: "allow" },
+                },
+            ]),
+        },
+        {
             id: "genesis-hub",
             title: "GenesisTools hub",
             kind: "installable",

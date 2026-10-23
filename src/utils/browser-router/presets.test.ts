@@ -83,6 +83,7 @@ describe("preset kinds", () => {
             "core",
             "local-services",
             "genesis-md",
+            "finder",
             "genesis-hub",
             "mail",
             "decide",

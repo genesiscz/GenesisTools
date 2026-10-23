@@ -34,6 +34,10 @@ export interface LinkTargets {
         /** The GenesisTools hub on a PR, a commit in it, a repository or a session. */
         open: HubLinkQuery;
     };
+    finder: {
+        /** Show a file or a folder in Finder. Only the router serves it: no app scheme opens Finder. */
+        reveal: { target: string };
+    };
     "claude-find": {
         /** Scroll to DECISION `decision`; oldest by default, or the requested position. */
         decision: { session: string; decision: number; at?: "oldest" | "newest" };
@@ -82,6 +86,11 @@ export const APP_LINKS: AppLinkTable = {
                     HUB_LINK_KEYS.map((key) => [key, data[key]] as const),
                     { keepSlash: false }
                 )}`,
+        },
+    },
+    finder: {
+        reveal: {
+            path: (data) => `finder/reveal${linkQuery([["target", data.target]], { keepSlash: true })}`,
         },
     },
     "claude-find": {

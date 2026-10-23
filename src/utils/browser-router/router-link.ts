@@ -68,6 +68,7 @@ const ROUTING: RoutingTable = {
             transports: ["router", "scheme"],
         },
     },
+    finder: { reveal: {} },
     "claude-find": { decision: {}, text: {} },
 };
 

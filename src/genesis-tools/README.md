@@ -40,6 +40,15 @@ tools genesis-tools logs crashes            # crash records and macOS crash repo
 tools genesis-tools logs day --level warn --tool ai --since 2h   # the pino day log, through rg
 tools genesis-tools logs profile --min-ms 5000 --scope cli       # slow timers (tools config profiling)
 tools genesis-tools logs paths
+tools genesis-tools probe                   # what of GenesisTools this Mac has, and which links a click opens
+tools genesis-tools probe md finder         # exit 1, with the fix command, when one of them is missing
+tools genesis-tools probe --url <url>       # whether a click on this one link opens what it names
+tools genesis-tools probe --json            # the same for code (the mods plugin reads it)
 ```
+
+`probe` (`src/utils/genesis-tools/probe.ts`) checks the parts (`tools`, `app`, `router`, `markdown`, `cmux`) and
+each link kind (`md`, `finder`, `hub`, `claude-find`). A kind opens when GenesisTools.app is installed, it is the
+https handler, the router config routes that path (by `route()`, so a hand-made route counts), and the app or
+command the route names is there. It reads only. `.claude/rules/genesis-links.md` says where links are built.
 
 Every listing takes `--json`. `--since` reads `30m`, `24h`, `7d`, `HH:MM` or `YYYY-MM-DD`.
