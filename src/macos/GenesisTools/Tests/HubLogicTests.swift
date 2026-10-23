@@ -147,6 +147,55 @@ final class HubLogicTests: XCTestCase {
     }
 
     /// `commit=<from>..<to>`: a run of a PR's commits, both ends included, in either order.
+    /// A link may name commits an agent made but did not push yet (2026-10-23): the forge does not list
+    /// them, the PR's checkout has them, so the range comes from the checkout instead of the whole MR.
+    func testALinkRangeOfUnpushedCommitsResolvesFromTheCheckout() throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("hub-local-range-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: repo, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: repo) }
+        func git(_ args: String...) throws -> String {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com"] + args
+            let out = Pipe()
+            process.standardOutput = out
+            try process.run()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, "git \(args.joined(separator: " "))")
+            return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        _ = try git("init", "-q", "-b", "main")
+        var shas: [String] = []
+        for index in 0 ..< 5 {
+            _ = try git("commit", "-q", "--allow-empty", "-m", "commit \(index)")
+            shas.append(try git("rev-parse", "HEAD"))
+        }
+        let pushedHead = shas[2]
+        let pushed = Set(shas[1 ... 2])
+        let range = try XCTUnwrap(try? HubLocalCommits.resolve(
+            ends: [String(shas[2].prefix(10)), String(shas[4].prefix(10))], repo: repo, head: pushedHead, pushed: pushed).get())
+        XCTAssertEqual(range, HubLocalCommits(first: shas[2], last: shas[4], count: 3, unpushed: 2, title: "commit 4"))
+        let reversed = try? HubLocalCommits.resolve(ends: [shas[4], shas[2]], repo: repo, head: pushedHead, pushed: pushed).get()
+        XCTAssertEqual(reversed?.first, shas[2], "either order")
+        XCTAssertEqual(try? HubLocalCommits.resolve(ends: [shas[3]], repo: repo, head: pushedHead).get().unpushed, 1)
+        guard case .failure(.offBranch) = HubLocalCommits.resolve(ends: [shas[0], shas[4]], repo: repo, head: pushedHead, pushed: pushed) else {
+            return XCTFail("a first commit from before the PR would show the base's changes")
+        }
+        guard case .failure(.unknown("0123456789")) = HubLocalCommits.resolve(ends: ["0123456789"], repo: repo, head: pushedHead) else {
+            return XCTFail("an end the checkout lacks is named")
+        }
+        _ = try git("checkout", "-q", "-b", "side", shas[0])
+        _ = try git("commit", "-q", "--allow-empty", "-m", "side")
+        let side = try git("rev-parse", "HEAD")
+        guard case .failure(.unrelated) = HubLocalCommits.resolve(ends: [side, shas[4]], repo: repo, head: pushedHead) else {
+            return XCTFail("ends on two lines are refused")
+        }
+        guard case .failure(.offBranch) = HubLocalCommits.resolve(ends: [side], repo: repo, head: pushedHead) else {
+            return XCTFail("a commit off the PR's line is refused")
+        }
+    }
+
     func testACommitRangeLinkShowsItsCommitsFromTheParentOfTheFirst() throws {
         XCTAssertEqual(HubCommitSpan("abcdef0"), HubCommitSpan(from: "abcdef0"))
         XCTAssertEqual(HubCommitSpan("67AD51671E..3cac936e2f"), HubCommitSpan(from: "67ad51671e", to: "3cac936e2f"))

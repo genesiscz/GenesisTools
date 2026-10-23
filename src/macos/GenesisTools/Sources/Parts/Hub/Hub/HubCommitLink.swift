@@ -68,6 +68,80 @@ struct PRCommitPick: Equatable {
 struct PRNotice: Equatable {
     let ref: HubPRRef
     let text: String
+    /// False for a note that the link worked another way (its commits are local only).
+    var isError = true
+}
+
+/// A link's commits that the forge does not list yet: an agent links its own commits before it pushes them, so
+/// they exist only in the PR's checkout (2026-10-23: a range ending in four local commits
+/// opened the whole MR). Read from that checkout's git, off the main thread.
+struct HubLocalCommits: Equatable {
+    /// Full shas, oldest first; `last` is nil for one commit.
+    let first: String
+    let last: String?
+    /// The commits the range holds, both ends included, and how many of them the PR's pushed head lacks.
+    let count: Int
+    let unpushed: Int
+    let title: String
+
+    enum Miss: Error, Equatable {
+        /// The checkout does not have this end either.
+        case unknown(String)
+        /// Both ends exist, but neither descends from the other.
+        case unrelated
+        /// The commits do not continue the PR: the last one does not descend from its pushed head, or the first one is
+        /// neither one of its commits nor after that head (a commit from before the PR would show the base's changes).
+        case offBranch
+    }
+
+    /// `ends` are the link's normalized shas, `head` the PR's pushed head and `pushed` the shas the forge lists for it.
+    /// Runs git, so never on the main thread.
+    nonisolated static func resolve(ends: [String], repo: String, head: String, pushed: Set<String> = []) -> Result<HubLocalCommits, Miss> {
+        var full: [String] = []
+        for end in ends {
+            guard let sha = git(repo, ["rev-parse", "--verify", "--quiet", end + "^{commit}"])?
+                .trimmingCharacters(in: .whitespacesAndNewlines), !sha.isEmpty else { return .failure(.unknown(end)) }
+            full.append(sha)
+        }
+        var first = full[0]
+        var last = full.count > 1 ? full[1] : full[0]
+        if first != last, !isAncestor(first, of: last, repo: repo) {
+            guard isAncestor(last, of: first, repo: repo) else { return .failure(.unrelated) }
+            swap(&first, &last)
+        }
+        guard isAncestor(head, of: last, repo: repo),
+              pushed.contains(first) || isAncestor(head, of: first, repo: repo) else {
+            return .failure(.offBranch)
+        }
+        let span = Int(git(repo, ["rev-list", "--count", "--ancestry-path", first + ".." + last])?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0
+        let unpushed = Int(git(repo, ["rev-list", "--count", head + ".." + last])?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0
+        let title = git(repo, ["log", "-1", "--format=%s", last])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return .success(HubLocalCommits(first: first, last: full.count > 1 ? last : nil, count: span + 1,
+                                        unpushed: unpushed, title: title))
+    }
+
+    nonisolated private static func isAncestor(_ older: String, of newer: String, repo: String) -> Bool {
+        git(repo, ["merge-base", "--is-ancestor", older, newer]) != nil
+    }
+
+    nonisolated private static func git(_ repo: String, _ args: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["-C", repo, "--no-optional-locks"] + args
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
+    }
 }
 
 /// The commit row a PR overview scrolls to once (`PRsModel.commitScroll`).

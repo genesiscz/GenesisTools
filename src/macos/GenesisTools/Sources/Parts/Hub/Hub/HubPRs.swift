@@ -750,7 +750,7 @@ final class PRsModel: ObservableObject {
         let settled = (detailFetched[id].map { $0 >= pending.asked } ?? false) && reviewHeadSha == shown.headSha
         guard let commit = HubCommitSha.find(pending.sha, in: commits) else {
             if settled {
-                showMissingCommit(pending, missing: pending.sha, in: shown, review: review)
+                pickLocalCommits(pending, in: shown, commits: commits, review: review)
             }
             return
         }
@@ -758,7 +758,7 @@ final class PRsModel: ObservableObject {
         if let to = pending.to {
             guard let found = HubCommitSha.find(to, in: commits) else {
                 if settled {
-                    showMissingCommit(pending, missing: to, in: shown, review: review)
+                    pickLocalCommits(pending, in: shown, commits: commits, review: review)
                 }
                 return
             }
@@ -772,6 +772,61 @@ final class PRsModel: ObservableObject {
             showLinkedRange(commit, last, in: commits, pr: shown, ref: pending.ref, review: review)
         } else {
             showLinkedCommit(commit, prID: id, review: review)
+        }
+    }
+
+    /// A link's commit that the forge does not list may be one the PR's checkout has not pushed yet: look there before
+    /// saying the PR does not hold it. The diff then comes from the checkout, which the review reads anyway.
+    private func pickLocalCommits(_ pending: PRCommitPick, in shown: HubPR, commits: [HubPRDetail.Commit], review: ReviewModel) {
+        pendingCommit = nil
+        let repo = review.repo.path
+        let ends = [pending.sha] + (pending.to.map { [$0] } ?? [])
+        // The newest commit the forge lists stands in for an unknown pushed head; with neither, nothing can be checked.
+        guard let head = shown.headSha ?? commits.last?.sha else {
+            showMissingCommit(pending, missing: pending.to ?? pending.sha, in: shown, review: review)
+            return
+        }
+        let pushed = Set(commits.map(\.sha))
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let found = HubLocalCommits.resolve(ends: ends, repo: repo, head: head, pushed: pushed)
+            await MainActor.run {
+                guard let self, self.reviewPRID == shown.id, self.review === review else { return }
+                switch found {
+                case .success(let local):
+                    self.showLocalCommits(local, pending: pending, in: commits, pr: shown, review: review)
+                case .failure(.unknown(let sha)):
+                    self.showMissingCommit(pending, missing: sha, in: shown, review: review)
+                case .failure(.unrelated), .failure(.offBranch):
+                    self.showMissingCommit(pending, missing: pending.to ?? pending.sha, in: shown, review: review)
+                }
+            }
+        }
+    }
+
+    /// The link's commits from the checkout: the range from the commit before its first one (the PR's own base
+    /// when that first commit is the PR's first), and a note that some of them are not pushed.
+    func showLocalCommits(_ local: HubLocalCommits, pending: PRCommitPick, in commits: [HubPRDetail.Commit], pr: HubPR, review: ReviewModel) {
+        HubDefaults.store.set(true, forKey: "hub.prs.showDiff")
+        HubDefaults.store.set(false, forKey: "hub.prs.fold.commits")
+        HubPerf.log("prs.commit \(pr.label) \(local.first.prefix(10))\(local.last.map { "..\($0.prefix(10))" } ?? "") local unpushed=\(local.unpushed)")
+        let scope: DiffScope
+        if let last = local.last {
+            let label = "\(pr.label) \(local.first.prefix(7))..\(last.prefix(7)) (\(Plural.count(local.count, "commit")))"
+            let index = commits.firstIndex(where: { $0.sha == local.first })
+            // The PR's first commit starts at the PR's own base; any other at its first parent from git (`rangeScope`).
+            if index == 0, case .range(let base, _, _, let fallback) = Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)) {
+                scope = .range(base: base, head: last, label: label, fallbackBase: fallback)
+            } else {
+                scope = .range(base: local.first + "^", head: last, label: label)
+            }
+            // The listed commits it covers: the pushed ones from its first on; none when it starts after the pushed head.
+            linkedRange = PRLinkedRange(scope: scope, shas: index.map { Set(commits[$0...].map(\.sha)) } ?? [])
+        } else {
+            scope = .commit(sha: local.first, title: local.title)
+        }
+        if review.scope != scope { review.setScope(scope) }
+        if local.unpushed > 0 {
+            notice = PRNotice(ref: pending.ref, text: "\(Plural.count(local.unpushed, "commit")) of this link \(local.unpushed == 1 ? "is" : "are") not pushed yet; the diff comes from \((review.repo.path as NSString).abbreviatingWithTildeInPath)", isError: false)
         }
     }
 
@@ -2087,7 +2142,7 @@ struct PRDetailView: View {
             .foregroundColor(ReviewPalette.dim)
             // A row of its own: in the title row beside the title it had no width and wrapped a word per line.
             if let notice = prs.notice, notice.ref.matches(pr) {
-                NoticePill(text: notice.text, isError: true) { prs.notice = nil }
+                NoticePill(text: notice.text, isError: notice.isError) { prs.notice = nil }
                     .padding(.top, 6)
             }
         }
