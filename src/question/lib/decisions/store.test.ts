@@ -53,9 +53,13 @@ const git = answerGitWithoutSpawning();
 
 test("a decision post asks git only through the stub and starts no process", async () => {
     const dir = mkdtempSync(join(tmpdir(), "decisions-no-spawn-"));
-    const spawn = spyOn(Bun, "spawn");
+    // Both start paths throw before a process exists, so a regression fails here instead of hanging on a lost exit.
+    const spawn = spyOn(Bun, "spawn").mockImplementation(() => {
+        throw new Error("unexpected Bun.spawn in a decision post");
+    });
     const answered = git.answered;
     const started = git.started.length;
+    git.refuseOthers = true;
 
     try {
         await postDecisions(join(dir, "decisions.jsonl"), join(dir, "events.jsonl"), {
@@ -67,6 +71,7 @@ test("a decision post asks git only through the stub and starts no process", asy
         expect(git.started.slice(started)).toEqual([]);
         expect(spawn).not.toHaveBeenCalled();
     } finally {
+        git.refuseOthers = false;
         spawn.mockRestore();
     }
 });

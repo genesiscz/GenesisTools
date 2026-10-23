@@ -18,6 +18,8 @@ export interface GitWithoutSpawns {
     readonly answered: number;
     /** Every other command, which was started for real. */
     readonly started: readonly string[][];
+    /** While true, every other command throws before it starts: a guard test fails at once instead of hanging. */
+    refuseOthers: boolean;
 }
 
 const NOT_A_REPOSITORY = {
@@ -47,7 +49,7 @@ function isGit(argv: string[]): boolean {
 }
 
 export function answerGitWithoutSpawning(): GitWithoutSpawns {
-    const state = { answered: 0, started: [] as string[][] };
+    const state = { answered: 0, started: [] as string[][], refuseOthers: false };
     let restore: (() => void) | undefined;
 
     beforeAll(() => {
@@ -61,6 +63,11 @@ export function answerGitWithoutSpawning(): GitWithoutSpawns {
             }
 
             state.started.push(argv);
+
+            if (state.refuseOthers) {
+                throw new Error(`unexpected process start: ${argv.join(" ")}`);
+            }
+
             return Reflect.apply(real, Bun, options === undefined ? [first] : [first, options]);
         }) as typeof Bun.spawnSync);
         restore = () => spy.mockRestore();
