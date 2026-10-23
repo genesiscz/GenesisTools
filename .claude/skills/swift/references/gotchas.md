@@ -481,6 +481,10 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   while the output device was slow, every typing pause, and a tap that waits delays every key in every app. Start it
   on its own queue and play the first click when it runs; keep the synchronous start only for offline rendering in
   tests (`isInManualRenderingMode`).
+- **Moving a start off the main thread is not enough when the main thread then asks the same object.**
+  `AVAudioEngine.isRunning` takes the engine lock that `start()` holds on the other queue, so the first fix still
+  blocked the key tap for the whole start (21:14). Keep the state yourself (`running`, `starting`). The same holds
+  for `NSSound.play()`: it waits for the output device, 0.8 s in the widget's alert; play it from a queue.
 
 ## A button that works once, and pictures that come out white — 2026-10-23 22:44
 
