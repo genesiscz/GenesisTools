@@ -5,6 +5,7 @@ import { withTimeout } from "@genesiscz/utils/async";
 import { moduleDir, requireSibling } from "@genesiscz/utils/fs/module-dir";
 import { logger } from "@genesiscz/utils/logger";
 import { escapeJxa } from "@genesiscz/utils/macos/jxa";
+import { recordNotification } from "@genesiscz/utils/notifications/ledger";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { Storage } from "@genesiscz/utils/storage/storage";
 
@@ -442,6 +443,22 @@ export interface PostedNotification {
  * Prefer {@link sendNotification} unless you need the id back to retract it later.
  */
 export async function postNotification(opts: NotificationOptions): Promise<PostedNotification> {
+    const posted = await postThroughChain(opts);
+    recordNotification({
+        source: opts.group ?? "tools",
+        channel: "macos",
+        outcome: "posted",
+        title: opts.title,
+        subtitle: opts.subtitle,
+        body: opts.message,
+        backend: posted.backend,
+        confirmed: posted.confirmed,
+        id: posted.id ?? opts.id ?? null,
+    });
+    return posted;
+}
+
+async function postThroughChain(opts: NotificationOptions): Promise<PostedNotification> {
     const chain = backendChain(opts.preferred);
 
     for (const backend of chain) {

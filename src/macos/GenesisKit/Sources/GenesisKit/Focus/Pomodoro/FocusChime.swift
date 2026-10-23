@@ -93,5 +93,6 @@ public enum FocusChime {
                 FlowFocusLog.focus.debug("focus phase notification failed: \(error.localizedDescription)")
             }
         }
+        NotificationLedger.record(source: "focus", channel: "macos", title: content.title, body: content.body)
     }
 }

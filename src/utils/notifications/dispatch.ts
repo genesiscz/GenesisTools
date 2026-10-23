@@ -3,6 +3,7 @@ import { dispatchSystem } from "./channels/system";
 import { dispatchTelegram } from "./channels/telegram";
 import { dispatchWebhook } from "./channels/webhook";
 import { notificationsConfig } from "./config";
+import { recordNotification } from "./ledger";
 import type { ChannelName, NotificationEvent, SayChannelConfig } from "./types";
 
 /** True when `tools say` spoke the message (or there was nothing to say). Never throws. */
@@ -49,6 +50,17 @@ export async function dispatchNotification(event: NotificationEvent): Promise<bo
         const only = event.only;
         const allows = (name: ChannelName): boolean => only === undefined || only.includes(name);
 
+        if (allows("system") && !channels.system.enabled) {
+            recordNotification({
+                source: event.app,
+                channel: "macos",
+                outcome: "suppressed",
+                reason: "system channel off in notifications config",
+                title: event.title,
+                body: event.message,
+            });
+        }
+
         const channelNames = ["system", "telegram", "webhook", "say"] as const;
         const results = await Promise.allSettled([
             allows("system") ? dispatchSystem(event, channels.system) : Promise.resolve(true),
@@ -60,6 +72,16 @@ export async function dispatchNotification(event: NotificationEvent): Promise<bo
 
         for (let i = 0; i < results.length; i++) {
             const r = results[i];
+            // The system channel records itself in postNotification, with the backend it used.
+            if (channelNames[i] !== "system" && allows(channelNames[i]) && channels[channelNames[i]].enabled) {
+                recordNotification({
+                    source: event.app,
+                    channel: channelNames[i],
+                    outcome: r.status === "fulfilled" && r.value ? "posted" : "failed",
+                    title: event.title,
+                    body: event.message,
+                });
+            }
 
             if (r.status === "rejected") {
                 logger.warn({ err: r.reason, app: event.app, channel: channelNames[i] }, "Channel dispatch failed");

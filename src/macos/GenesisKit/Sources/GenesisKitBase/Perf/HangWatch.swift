@@ -207,6 +207,8 @@ public enum HangWatch {
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: "genesis.hang.\(UUID().uuidString)", content: content, trigger: nil)
         )
+        NotificationLedger.record(source: "hang", channel: "macos", title: content.title, body: content.body,
+                                  fields: ["stallSeconds": Int(stallSoFar)])
     }
 
     /// Test seam: the reporter without a 20 s real stall in front of it.

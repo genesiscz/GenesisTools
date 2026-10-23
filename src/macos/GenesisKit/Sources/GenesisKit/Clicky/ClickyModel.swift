@@ -623,5 +623,6 @@ public final class ClickyModel: ObservableObject {
                 }
             }
         }
+        NotificationLedger.record(source: "clicky", channel: "macos", title: title, body: body)
     }
 }
