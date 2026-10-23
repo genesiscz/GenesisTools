@@ -143,7 +143,8 @@ enum MarkdownWindowMinimum {
     }
 }
 
-/// The draggable boundary between the editor and the preview.
+/// The draggable boundary between the editor and the preview, the sidebars and their neighbours, and (`.horizontal`)
+/// the wrapped tab bar and the page under it.
 ///
 /// AppKit rather than SwiftUI on purpose. A SwiftUI `onHover` + `NSCursor.push`
 /// misses the cursor change often, and an overlay strip over a hairline loses
@@ -151,17 +152,22 @@ enum MarkdownWindowMinimum {
 /// wins hit testing. A view with its own tracking area, `cursorUpdate` and
 /// mouse handling behaves the way a split divider is supposed to.
 struct MarkdownSplitDivider: NSViewRepresentable {
+    /// `.vertical`: an upright line dragged sideways (the sidebars, the split). `.horizontal`: a line along the bottom
+    /// edge dragged up and down, so the strip reads as part of the bar above it (the tab bar).
+    enum Orientation { case vertical, horizontal }
+
+    var orientation: Orientation = .vertical
     var line: NSColor
     var accent: NSColor
     /// Mouse went down: remember where the divider was.
     var onBegin: () -> Void
     /// Points moved since that mouse-down, in window coordinates (stable while
-    /// the divider itself moves under the pointer).
+    /// the divider itself moves under the pointer). Right and down are positive.
     var onDrag: (Double) -> Void
     var onEnd: () -> Void
     /// Double click: back to an even split.
     var onReset: () -> Void
-    /// Arrow keys and VoiceOver increment/decrement: -1 left, +1 right.
+    /// Arrow keys and VoiceOver increment/decrement: -1 left or up, +1 right or down.
     var onStep: (Int) -> Void = { _ in }
     /// The editor's share, spoken as the divider's value.
     var ratio: Double = MarkdownSplit.defaultRatio
@@ -181,6 +187,7 @@ struct MarkdownSplitDivider: NSViewRepresentable {
     }
 
     private func apply(_ view: DividerView) {
+        view.orientation = orientation
         view.line = line
         view.accent = accent
         view.onBegin = onBegin
@@ -194,6 +201,7 @@ struct MarkdownSplitDivider: NSViewRepresentable {
     }
 
     final class DividerView: NSView {
+        var orientation: Orientation = .vertical
         var line: NSColor = .separatorColor
         var accent: NSColor = .controlAccentColor
         var onBegin: (() -> Void)?
@@ -206,11 +214,11 @@ struct MarkdownSplitDivider: NSViewRepresentable {
         var valueText: String?
 
         private var hot = false { didSet { if hot != oldValue { needsDisplay = true } } }
-        private var startX: CGFloat = 0
+        private var start: CGFloat = 0
         private var area: NSTrackingArea?
         /// The drag log (`logDrag`): where the divider was drawn when the drag began, the last pointer offset, the
         /// number of moves and the largest gap between the drawn divider and the pointer.
-        private var drawnStartX: CGFloat = 0
+        private var drawnStart: CGFloat = 0
         private var lastPointerDX: CGFloat = 0
         private var moves = 0
         private var largestGap: CGFloat = 0
@@ -218,6 +226,10 @@ struct MarkdownSplitDivider: NSViewRepresentable {
         /// A window that is `isMovableByWindowBackground` (the viewer's was until 2026-10-14) drags itself from a
         /// view that does not claim its own mouse-down, instead of resizing.
         override var mouseDownCanMoveWindow: Bool { false }
+
+        /// A press on the divider of a window in the background drags at once, as NSSplitView's dividers do; without
+        /// this the first press only brought the window forward.
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
@@ -233,12 +245,14 @@ struct MarkdownSplitDivider: NSViewRepresentable {
 
         // Both routes to the same cursor: the tracking area answers while the
         // pointer moves, the cursor rect answers after a scroll or a resize.
-        override func cursorUpdate(with event: NSEvent) { NSCursor.resizeLeftRight.set() }
-        override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
+        override func cursorUpdate(with event: NSEvent) { cursor.set() }
+        override func resetCursorRects() { addCursorRect(bounds, cursor: cursor) }
+
+        private var cursor: NSCursor { orientation == .vertical ? .resizeLeftRight : .resizeUpDown }
 
         override func mouseEntered(with event: NSEvent) {
             hot = true
-            NSCursor.resizeLeftRight.set()
+            cursor.set()
         }
 
         override func mouseExited(with event: NSEvent) {
@@ -258,9 +272,12 @@ struct MarkdownSplitDivider: NSViewRepresentable {
 
         override func draw(_ dirtyRect: NSRect) {
             let lit = hot || focused
-            let width: CGFloat = lit ? 3 : 1
+            let thickness: CGFloat = lit ? 3 : 1
             (lit ? accent : line).setFill()
-            NSRect(x: (bounds.width - width) / 2, y: 0, width: width, height: bounds.height).fill()
+            switch orientation {
+            case .vertical: NSRect(x: (bounds.width - thickness) / 2, y: 0, width: thickness, height: bounds.height).fill()
+            case .horizontal: NSRect(x: 0, y: isFlipped ? bounds.height - thickness : 0, width: bounds.width, height: thickness).fill()
+            }
         }
 
         override func mouseDown(with event: NSEvent) {
@@ -268,8 +285,8 @@ struct MarkdownSplitDivider: NSViewRepresentable {
                 onReset?()
                 return
             }
-            startX = event.locationInWindow.x
-            drawnStartX = drawnX
+            start = position(event)
+            drawnStart = drawn
             lastPointerDX = 0
             moves = 0
             largestGap = 0
@@ -278,22 +295,30 @@ struct MarkdownSplitDivider: NSViewRepresentable {
         }
 
         override func mouseDragged(with event: NSEvent) {
-            NSCursor.resizeLeftRight.set()
+            cursor.set()
             // How far the divider drawn now is from where the previous move asked it to be.
-            largestGap = max(largestGap, abs((drawnX - drawnStartX) - lastPointerDX))
+            largestGap = max(largestGap, abs((drawn - drawnStart) - lastPointerDX))
             moves += 1
-            lastPointerDX = event.locationInWindow.x - startX
+            lastPointerDX = position(event) - start
             onDrag?(Double(lastPointerDX))
         }
 
         override func mouseUp(with event: NSEvent) {
             hot = bounds.contains(convert(event.locationInWindow, from: nil))
             onEnd?()
-            logDrag(pointerDX: event.locationInWindow.x - startX)
+            logDrag(pointerDX: position(event) - start)
         }
 
-        /// The divider's middle in window coordinates.
-        private var drawnX: CGFloat { convert(NSPoint(x: bounds.midX, y: 0), to: nil).x }
+        /// The pointer along the drag axis, growing to the right or downwards (window y grows upwards).
+        private func position(_ event: NSEvent) -> CGFloat {
+            orientation == .vertical ? event.locationInWindow.x : -event.locationInWindow.y
+        }
+
+        /// The divider's middle in window coordinates, on the same axis as `position`.
+        private var drawn: CGFloat {
+            let middle = convert(NSPoint(x: bounds.midX, y: bounds.midY), to: nil)
+            return orientation == .vertical ? middle.x : -middle.y
+        }
 
         /// One line per drag in the host's log, so a resize that felt "not 1:1" can be read afterwards (Martin,
         /// 2026-10-15: "pls just keep the logger for the resize so you can debug it later if i catch that again").
@@ -302,7 +327,7 @@ struct MarkdownSplitDivider: NSViewRepresentable {
         private func logDrag(pointerDX: CGFloat) {
             guard moves > 0 else { return }
             window?.contentView?.layoutSubtreeIfNeeded()
-            let dividerDX = drawnX - drawnStartX
+            let dividerDX = drawn - drawnStart
             let overlays = (window?.contentView as? MarkdownWindowContentView)?.overlayDrift() ?? 0
             let line = String(format: "markdown: divider drag \"%@\": %d moves, pointer %+.0f pt, divider %+.0f pt, largest gap %.0f pt, overlay drift %.0f pt",
                               label, moves, Double(pointerDX), Double(dividerDX), Double(largestGap), Double(overlays))
@@ -341,8 +366,10 @@ struct MarkdownSplitDivider: NSViewRepresentable {
 
         override func keyDown(with event: NSEvent) {
             switch event.keyCode {
-            case 123: onStep?(-1)                 // left arrow
-            case 124: onStep?(1)                  // right arrow
+            case 123 where orientation == .vertical: onStep?(-1)     // left arrow
+            case 124 where orientation == .vertical: onStep?(1)      // right arrow
+            case 126 where orientation == .horizontal: onStep?(-1)   // up arrow
+            case 125 where orientation == .horizontal: onStep?(1)    // down arrow
             case 36, 76: onReset?()               // return, enter
             default: super.keyDown(with: event)
             }
@@ -353,7 +380,9 @@ struct MarkdownSplitDivider: NSViewRepresentable {
         override func accessibilityLabel() -> String? { label }
         override func accessibilityValue() -> Any? { valueText ?? "Editor \(Int((ratio * 100).rounded())) percent" }
         override func accessibilityHelp() -> String? {
-            "Left and right arrows move the divider, Return resets it to an even split."
+            orientation == .vertical
+                ? "Left and right arrows move the divider, Return resets it to an even split."
+                : "Up and down arrows move the divider, Return resets it."
         }
         override func accessibilityPerformIncrement() -> Bool {
             onStep?(1)

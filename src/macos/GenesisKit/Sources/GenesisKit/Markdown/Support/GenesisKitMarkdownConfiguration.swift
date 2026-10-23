@@ -60,7 +60,15 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
     /// Wrapped tabs: groups flow one after another (the default), or each open group starts its own rows.
     @Published public var tabGroupRows: Bool { didSet { store(tabGroupRows, "tabGroupRows") } }
     /// Wrapped tabs take at most this many rows and scroll past them, with a fade at the cut edge. 0 is no limit.
-    @Published public var wrapTabsMaxRows: Int { didSet { store(wrapTabsMaxRows, "wrapTabsMaxRows") } }
+    /// Picking a row count drops a dragged height.
+    @Published public var wrapTabsMaxRows: Int {
+        didSet {
+            store(wrapTabsMaxRows, "wrapTabsMaxRows")
+            tabBarHeight = 0
+        }
+    }
+    /// The wrapped bar's tallest height in points, dragged on its bottom edge. 0 follows `wrapTabsMaxRows`.
+    @Published public var tabBarHeight: Double { didSet { store(tabBarHeight, "tabBarHeight") } }
     /// The reader's in-place edits: group order, collapsed groups, names, tabs moved by hand.
     @Published public var tabGroupState: MarkdownTabGroupState {
         didSet { if let data = try? JSONEncoder().encode(tabGroupState) { store(data, "tabGroupState") } }
@@ -132,6 +140,7 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
         tabGroupSplitAbove = int("tabGroupSplitAbove", 12)
         tabGroupRows = bool("tabGroupRows", false)
         wrapTabsMaxRows = int("wrapTabsMaxRows", 4)
+        tabBarHeight = double("tabBarHeight", 0)
         tabGroupState = defaults.data(forKey: Self.prefix + "tabGroupState")
             .flatMap { try? JSONDecoder().decode(MarkdownTabGroupState.self, from: $0) } ?? MarkdownTabGroupState()
         contrast = string("contrast").flatMap(MarkdownContrast.init(rawValue:)) ?? .high

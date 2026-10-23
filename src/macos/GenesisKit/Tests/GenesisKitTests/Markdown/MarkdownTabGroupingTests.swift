@@ -209,6 +209,63 @@ final class MarkdownTabGroupingTests: XCTestCase {
         print("tab clicks:", results.joined(separator: " | "))
     }
 
+    /// The wrapped bar's bottom line is the sidebars' divider laid flat (Martin, 2026-10-23: "have the tab resizeable
+    /// using the same component we do for resizing the sidebars"). A drag down shows more rows and is saved; a
+    /// double-click goes back to the row count.
+    func testDraggingTheTabBarEdgeSetsItsHeight() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("md-tab-drag-\(UUID().uuidString)")
+        let paths = (0 ..< 40).map { folder.appendingPathComponent("note\($0).md") }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        for url in paths {
+            try "# \(url.lastPathComponent)".write(to: url, atomically: true, encoding: .utf8)
+        }
+        FrameProbe.enabled = true
+        defer { FrameProbe.enabled = false }
+        let model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-tab-drag-\(UUID().uuidString)")!)
+        model.configuration = GenesisKitMarkdownConfiguration(
+            defaults: UserDefaults(suiteName: "md-tab-drag-config-\(UUID().uuidString)")!)
+        model.configuration.wrapTabs = true
+        model.configuration.tabGroupFrom = 1000
+        model.configuration.wrapTabsMaxRows = 2
+        model.open(paths)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 700),
+                              styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = MarkdownDocumentWindowController.contentView(model: model)
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.order(.below, relativeTo: 0)
+        defer {
+            window.orderOut(nil)
+            window.close()
+        }
+        pump(1.5)
+        let before = try XCTUnwrap(FrameProbe.frames["md.tabBarDivider"], "the tab bar has its divider")
+        let point = NSPoint(x: before.midX, y: window.frame.height - before.midY)
+        func event(_ type: NSEvent.EventType, _ location: NSPoint, clicks: Int = 1) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                               timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                               context: nil, eventNumber: 0, clickCount: clicks, pressure: 1)!
+        }
+        NSApp.postEvent(event(.leftMouseDown, point), atStart: false)
+        for step in 1 ... 10 {
+            NSApp.postEvent(event(.leftMouseDragged, NSPoint(x: point.x, y: point.y - CGFloat(step * 10))), atStart: false)
+            pump(0.03)
+        }
+        NSApp.postEvent(event(.leftMouseUp, NSPoint(x: point.x, y: point.y - 100)), atStart: false)
+        pump(0.5)
+        let after = try XCTUnwrap(FrameProbe.frames["md.tabBarDivider"])
+        print("tab bar drag: divider \(Int(before.midY)) -> \(Int(after.midY)), height \(model.configuration.tabBarHeight)")
+        XCTAssertEqual(model.configuration.tabBarHeight, Double(2 * 32 + 8) + 100, accuracy: 1, "the drag sets the height")
+        XCTAssertEqual(after.midY - before.midY, 100, accuracy: 2, "the bar grows with the pointer")
+
+        NSApp.postEvent(event(.leftMouseDown, NSPoint(x: point.x, y: point.y - 100), clicks: 2), atStart: false)
+        NSApp.postEvent(event(.leftMouseUp, NSPoint(x: point.x, y: point.y - 100), clicks: 2), atStart: false)
+        pump(0.5)
+        XCTAssertEqual(model.configuration.tabBarHeight, 0, "a double-click goes back to the row count")
+        XCTAssertEqual(try XCTUnwrap(FrameProbe.frames["md.tabBarDivider"]).midY, before.midY, accuracy: 1)
+    }
+
     private func pump(_ seconds: TimeInterval) {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {

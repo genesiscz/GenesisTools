@@ -93,7 +93,10 @@ struct MarkdownDocumentsView: View {
                             WindowTitlebar.performDoubleClick(on: window)
                         }
                     }
-                Rectangle().fill(model.theme.border).frame(height: 1)
+                // The wrapped bar draws its own bottom line: the divider that sets its height.
+                if !model.configuration.wrapTabs {
+                    Rectangle().fill(model.theme.border).frame(height: 1)
+                }
             }
             if let doc = model.selected {
                 HStack(spacing: 0) {
@@ -181,6 +184,24 @@ struct MarkdownDocumentsView: View {
     }
 }
 
+/// How tall the wrapped tab bar may be.
+enum MarkdownTabBarHeight {
+    /// One row of tabs with the bar's padding.
+    static let minimum: Double = 40
+    static let maximum: Double = 640
+    /// One arrow-key or VoiceOver step: half a row.
+    static let keyboardStep: Double = 16
+
+    static func clamped(_ height: Double) -> Double { min(max(height, minimum), maximum) }
+
+    /// The tallest the bar shows: the dragged height, else the row count (0 rows is no limit).
+    @MainActor static func limit(_ configuration: GenesisKitMarkdownConfiguration) -> CGFloat {
+        if configuration.tabBarHeight > 0 { return CGFloat(clamped(configuration.tabBarHeight)) }
+        let rows = configuration.wrapTabsMaxRows
+        return rows > 0 ? CGFloat(rows) * 32 + 8 : 10_000
+    }
+}
+
 /// The tab row: one scrolling strip, or every tab on as many rows as it takes (`wrapTabs`). Either way the
 /// selected tab is on screen. With enough tabs open they fall into groups (`MarkdownTabGrouping`): a chip per group
 /// that folds it, drags that move tabs and groups, and menus that rename, regroup and close. A right-click on its
@@ -188,6 +209,9 @@ struct MarkdownDocumentsView: View {
 private struct MarkdownTabBar: View {
     @ObservedObject var model: MarkdownDocumentsModel
     @ObservedObject var configuration: GenesisKitMarkdownConfiguration
+    /// The wrapped content's own height, and the bar's shown height when a drag of its bottom edge began.
+    @State private var contentHeight: CGFloat = 0
+    @State private var dragStart: Double?
 
     var body: some View {
         let _ = RenderProbe.hit("md.tabBar")
@@ -278,22 +302,49 @@ private struct MarkdownTabBar: View {
         MarkdownTabGroupChip(group: group, collapsed: collapsed.contains(group.id), model: model)
     }
 
-    /// The wrapped bar: at most `wrapTabsMaxRows` rows (about 32 pt each), scrolling past them with a fade at the cut
-    /// edge, and following the selected tab. Shorter content keeps its own height (`FittedScroll`).
+    /// The wrapped bar: at most `wrapTabsMaxRows` rows (about 32 pt each) or the height dragged on its bottom edge,
+    /// scrolling past that with a fade at the cut edge, and following the selected tab. Shorter content keeps its own
+    /// height (`FittedScroll`).
     private func capped<Content: View>(selectedID: String?, @ViewBuilder content: @escaping () -> Content) -> some View {
-        let rows = configuration.wrapTabsMaxRows
-        return ScrollViewReader { proxy in
-            FittedScroll(maxHeight: rows > 0 ? CGFloat(rows) * 32 + 12 : 10_000) {
-                content()
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                FittedScroll(maxHeight: MarkdownTabBarHeight.limit(configuration), measured: { contentHeight = $0 }) {
+                    content()
+                        .padding(.horizontal, 8)
+                        .padding(.top, 6)
+                        .padding(.bottom, 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .onChange(of: selectedID, initial: true) { _, id in
+                    guard let id else { return }
+                    proxy.scrollTo(id, anchor: nil)
+                }
             }
-            .onChange(of: selectedID, initial: true) { _, id in
-                guard let id else { return }
-                proxy.scrollTo(id, anchor: nil)
-            }
+            heightDivider
         }
+    }
+
+    /// The bar's bottom line: the sidebars' divider laid flat. A drag sets the bar's tallest height, a double-click
+    /// goes back to the row count, the arrows step half a row.
+    private var heightDivider: some View {
+        let shown = min(MarkdownTabBarHeight.limit(configuration), contentHeight)
+        return MarkdownSplitDivider(
+            orientation: .horizontal,
+            line: NSColor(model.theme.border),
+            accent: NSColor(model.theme.accent),
+            onBegin: { dragStart = shown },
+            onDrag: { dy in configuration.tabBarHeight = MarkdownTabBarHeight.clamped((dragStart ?? shown) + dy) },
+            onEnd: { dragStart = nil },
+            onReset: { configuration.tabBarHeight = 0 },
+            onStep: { direction in
+                configuration.tabBarHeight = MarkdownTabBarHeight.clamped(shown + Double(direction) * MarkdownTabBarHeight.keyboardStep)
+            },
+            label: "Tab bar height",
+            valueText: "\(Int(shown)) points tall"
+        )
+        .frame(height: 5)
+        .frameProbe("md.tabBarDivider")
+        .accessibilityIdentifier("markdown-tab-bar-divider")
     }
 
     /// Wrapped, the default: every group's chip and its tabs flow on, one group after another.
@@ -516,6 +567,9 @@ struct MarkdownTabGroupingMenu: View {
             Text("4 Rows").tag(4)
             Text("6 Rows").tag(6)
             Text("Every Row").tag(0)
+        }
+        if configuration.tabBarHeight > 0 {
+            Button("Forget the Dragged Tab Bar Height") { configuration.tabBarHeight = 0 }
         }
         if configuration.tabGroupState != MarkdownTabGroupState() {
             Button("Reset Group Names, Order and Moves") { configuration.tabGroupState = MarkdownTabGroupState() }
