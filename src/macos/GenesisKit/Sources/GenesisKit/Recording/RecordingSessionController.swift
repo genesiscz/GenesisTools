@@ -28,6 +28,9 @@ public final class RecordingSessionController: ObservableObject {
     @Published public private(set) var segments = 0
     /// The last problem the session reported that did not end it; cleared by the next state change.
     @Published public var notice: String?
+    /// Why `starting` takes long (the recorder compiles after an update, or no first frame came yet); cleared once
+    /// the session leaves `starting`.
+    @Published public private(set) var preparing: String?
 
     public var onDone: ((URL, Double) -> Void)?
     public var onDiscarded: (() -> Void)?
@@ -134,6 +137,9 @@ public final class RecordingSessionController: ObservableObject {
             if let segments = event.segments { self.segments = segments }
             pauseReason = phase == .paused ? event.reason : nil
             if phase != .paused { notice = nil }
+            if phase != .starting { preparing = nil }
+        case "preparing":
+            preparing = event.message
         case "elapsed":
             if let elapsed = event.elapsedMs { elapsedMs = elapsed }
         case "segment":

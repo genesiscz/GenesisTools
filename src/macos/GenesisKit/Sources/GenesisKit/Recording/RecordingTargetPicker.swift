@@ -104,6 +104,8 @@ public struct RecordingTargetPicker: View {
     @State private var tab: RecordingPickerTab
     @State private var query = ""
     @State private var highlighted: String?
+    /// The list took over 4 s: the hint names the known slow cause.
+    @State private var slowLoad = false
     @FocusState private var filterFocused: Bool
 
     public init(load: Load, title: String = "Choose what to record", initial: RecordingTarget?,
@@ -190,11 +192,23 @@ public struct RecordingTargetPicker: View {
     @ViewBuilder private var content: some View {
         switch load {
         case .loading:
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
-                Text("Looking for windows and displays…").font(.system(size: 12)).foregroundStyle(.secondary)
+            VStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Looking for windows and displays…").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+                if slowLoad {
+                    Text("The first time after an update, the recorder is built first. This can take up to a minute.")
+                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                        .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: 300)
+                }
             }
             .frame(maxWidth: .infinity, minHeight: 120)
+            .task {
+                try? await Task.sleep(for: .seconds(4))
+                slowLoad = true
+            }
         case let .failed(message):
             VStack(spacing: 8) {
                 Text(message).font(.system(size: 12)).foregroundStyle(.secondary)

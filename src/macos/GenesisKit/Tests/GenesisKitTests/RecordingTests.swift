@@ -85,6 +85,19 @@ final class RecordingSessionControllerTests: XCTestCase {
         XCTAssertEqual(controller.notice, "The recording reached its 10 min limit.")
     }
 
+    func testPreparingSaysWhyTheStartIsSlowUntilTheFirstFrame() throws {
+        let (controller, channel, _, _, receive) = controller()
+        try controller.start(target: .display(index: 0, name: nil), excludeWindowIDs: [], frameRate: 15, showsBorder: true)
+        receive([#"{"event":"state","state":"starting","reason":"user","target":{"kind":"display","screenIndex":0},"elapsedMs":0,"segments":0,"limitMs":600000}"#,
+                 #"{"event":"preparing","message":"Building the recorder after an update."}"#])
+        XCTAssertEqual(controller.phase, .starting)
+        XCTAssertEqual(controller.preparing, "Building the recorder after an update.")
+        controller.discard()
+        XCTAssertEqual(channel.sent, [#"{"cmd":"discard"}"#], "discard goes out while the recorder prepares")
+        receive([#"{"event":"state","state":"recording","reason":"user","target":{"kind":"display","screenIndex":0},"elapsedMs":0,"segments":0,"limitMs":600000}"#])
+        XCTAssertNil(controller.preparing)
+    }
+
     func testDoneHandsTheMovieOverOnceAndLaterCommandsAreDropped() throws {
         let (controller, channel, _, exit, receive) = controller()
         var done: [URL] = []
@@ -409,6 +422,9 @@ final class RecordingRenderTests: XCTestCase {
         let target = RecordingTarget.window(ids: [501], app: "Editor", title: "notes.txt — Project plan", pid: nil)
         let states: [(String, RecordingControlsState)] = [
             ("starting", .init(phase: .starting, target: target, useTitle: "Stop and paste")),
+            ("preparing", .init(phase: .starting, target: target,
+                                preparing: "Building the recorder after an update. This happens once.",
+                                useTitle: "Stop and paste")),
             ("recording", .init(phase: .recording, elapsedMs: 83_000, target: target, useTitle: "Stop and paste")),
             ("paused", .init(phase: .paused, elapsedMs: 83_000, target: .display(index: 0, name: "Built-in Display"),
                              pauseReason: "user", useTitle: "Stop and save")),
@@ -421,8 +437,12 @@ final class RecordingRenderTests: XCTestCase {
             let host = try render(
                 RecordingControlsView(state: state, actions: RecordingControlsActions(
                     pause: {}, resume: {}, switchTarget: {}, restart: {}, use: {}, discard: {})).padding(16),
-                size: CGSize(width: 700, height: name == "limit" ? 110 : 80), name: "recording-controls-\(name)")
+                size: CGSize(width: 700, height: name == "limit" || name == "preparing" ? 110 : 80),
+                name: "recording-controls-\(name)")
             let text = TreeDrawnText.lines(of: host).joined(separator: " ")
+            if let preparing = state.preparing {
+                XCTAssertTrue(text.contains("Starting") && text.contains(preparing), "\(name): \(text)")
+            }
             XCTAssertTrue(text.contains(state.phase == .finishing ? "Saving" : state.useTitle.components(separatedBy: " ").last ?? ""),
                           "\(name): \(text)")
         }
@@ -511,6 +531,26 @@ final class RecordingHostTests: XCTestCase {
 /// The picker panel takes its content's size every time it opens (Martin, 2026-10-23: a second recording from the
 /// widget opened a picker of 0x0, so the recorder waited for a choice nobody could see and the video button stuck on
 /// Stop).
+@MainActor
+final class RecordingTargetOutlineTests: XCTestCase {
+    func testEachDisplayDrawsItsOwnRectsAndHidesWithoutAny() {
+        let outline = RecordingTargetOutline(screens: [CGRect(x: 0, y: 0, width: 1000, height: 800),
+                                                       CGRect(x: 1000, y: 0, width: 1000, height: 800)])
+        defer { outline.close() }
+        XCTAssertEqual(outline.windowIDs.count, 2, "one panel per display, whatever the window list holds")
+        XCTAssertTrue(outline.windowIDs.allSatisfy { $0 > 0 }, "the ids exist before the recorder is told to leave them out")
+        let panels = outline.windowIDs.compactMap { id in NSApp.windows.first { $0.windowNumber == id } }
+        outline.show([CGRect(x: 100, y: 100, width: 400, height: 300)])
+        XCTAssertEqual(outline.drawn, [[CGRect(x: 97, y: 97, width: 406, height: 306)], []])
+        XCTAssertEqual(panels.map(\.isVisible), [true, false])
+        XCTAssertTrue(panels.allSatisfy { $0.ignoresMouseEvents && $0.sharingType == .none })
+        outline.show([CGRect(x: 1100, y: 50, width: 200, height: 100)])
+        XCTAssertEqual(outline.drawn, [[], [CGRect(x: 97, y: 47, width: 206, height: 106)]])
+        outline.hide()
+        XCTAssertTrue(panels.allSatisfy { !$0.isVisible })
+    }
+}
+
 @MainActor
 final class RecordingPickerPanelTests: XCTestCase {
     func testThePickerHasItsContentSizeEachTimeItOpens() async throws {

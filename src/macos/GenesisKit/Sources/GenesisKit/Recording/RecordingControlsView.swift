@@ -10,6 +10,8 @@ public struct RecordingControlsState: Equatable {
     /// `user`, `limit` or `recorder` while paused.
     public var pauseReason: String?
     public var notice: String?
+    /// Why the start takes long: the recorder compiles after an update, or no first frame came yet.
+    public var preparing: String?
     /// The host's name for stopping and keeping the movie: "Stop and paste", "Stop and save".
     public var useTitle: String
     public var useSymbol: String
@@ -17,14 +19,15 @@ public struct RecordingControlsState: Equatable {
     public var confirmsDiscard: Bool
 
     public init(phase: RecordingPhase, elapsedMs: Double = 0, limitMs: Double = 600_000, target: RecordingTarget? = nil,
-                pauseReason: String? = nil, notice: String? = nil, useTitle: String, useSymbol: String = "stop.fill",
-                confirmsDiscard: Bool = true) {
+                pauseReason: String? = nil, notice: String? = nil, preparing: String? = nil, useTitle: String,
+                useSymbol: String = "stop.fill", confirmsDiscard: Bool = true) {
         self.phase = phase
         self.elapsedMs = elapsedMs
         self.limitMs = limitMs
         self.target = target
         self.pauseReason = pauseReason
         self.notice = notice
+        self.preparing = preparing
         self.useTitle = useTitle
         self.useSymbol = useSymbol
         self.confirmsDiscard = confirmsDiscard
@@ -142,6 +145,9 @@ public struct RecordingControlsView: View {
                         .transition(.opacity)
                 }
             }
+            if state.phase == .starting, let preparing = state.preparing {
+                preparingRow(preparing)
+            }
             if let notice = state.notice {
                 noticeRow(notice)
             }
@@ -223,7 +229,7 @@ public struct RecordingControlsView: View {
     private var accessibilityStatus: String {
         let time = RecordingClock.format(state.elapsedMs)
         switch state.phase {
-        case .starting: return "Starting the recording"
+        case .starting: return state.preparing.map { "Starting the recording. \($0)" } ?? "Starting the recording"
         case .recording: return "Recording, \(time)"
         case .paused: return "Paused at \(time)"
         case .finishing: return "Saving the recording"
@@ -359,6 +365,19 @@ public struct RecordingControlsView: View {
             .accessibilityIdentifier("recording.keep")
             .frameProbe("recording.keep")
         }
+    }
+
+    private func preparingRow(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "hourglass").font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+                .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 420, alignment: .leading)
+            Spacer(minLength: 0)
+        }
+        .padding(.leading, 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("recording.preparing")
     }
 
     private func noticeRow(_ notice: String) -> some View {

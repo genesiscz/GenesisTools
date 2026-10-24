@@ -189,6 +189,99 @@ final class RecordingControlsPanel {
     }
 }
 
+/// A steady dashed border around what is about to be recorded, shown while the recorder starts. The recorder draws its
+/// own pulsing border once it runs; this one covers the gap (a compile after an update can take a minute), so the
+/// person sees at once what they chose. One clear panel per display draws every rect on it: a panel per window made
+/// 50 windows for a long window list and stalled the main thread 1.6 s. Out of every movie by window id, like the
+/// controls, and on screen only while a segment starts.
+@MainActor
+final class RecordingTargetOutline {
+    private struct Overlay {
+        let screen: CGRect
+        let panel: NSPanel
+        let view: RecordingOutlineView
+    }
+
+    private var overlays: [Overlay]
+
+    var windowIDs: [Int] { overlays.map(\.panel.windowNumber) }
+    /// The rects each display's panel draws, in that panel's own points (tests).
+    var drawn: [[CGRect]] { overlays.map(\.view.rects) }
+
+    /// Makes the panels up front, so their window ids exist before the recorder is told what to leave out.
+    init(screens: [CGRect] = NSScreen.screens.map(\.frame)) {
+        overlays = screens.map { frame in
+            let view = RecordingOutlineView(frame: CGRect(origin: .zero, size: frame.size))
+            return Overlay(screen: frame, panel: Self.makePanel(frame: frame, view: view), view: view)
+        }
+    }
+
+    /// `rects` in Cocoa screen points; a display with none of them hides its panel.
+    func show(_ rects: [CGRect]) {
+        for overlay in overlays {
+            let local = rects.map { $0.insetBy(dx: -3, dy: -3) }
+                .filter { $0.intersects(overlay.screen) }
+                .map { $0.offsetBy(dx: -overlay.screen.minX, dy: -overlay.screen.minY) }
+            overlay.view.rects = local
+            if local.isEmpty {
+                overlay.panel.orderOut(nil)
+            } else {
+                overlay.panel.orderFrontRegardless()
+            }
+        }
+    }
+
+    func hide() { overlays.forEach { $0.panel.orderOut(nil) } }
+
+    func close() {
+        overlays.forEach { $0.panel.orderOut(nil); $0.panel.close() }
+        overlays = []
+    }
+
+    private static func makePanel(frame: CGRect, view: NSView) -> NSPanel {
+        let panel = NSPanel(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered,
+                            defer: false)
+        panel.title = "Recording target"
+        panel.level = .screenSaver
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.ignoresMouseEvents = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.sharingType = .none
+        panel.contentView = view
+        panel.setFrame(frame, display: false)
+        return panel
+    }
+}
+
+/// Draws its rects as dashed red rounded borders, once per change, no animation.
+final class RecordingOutlineView: NSView {
+    var rects: [CGRect] = [] {
+        didSet { if rects != oldValue { needsDisplay = true } }
+    }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        setAccessibilityElement(false)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.systemRed.withAlphaComponent(0.9).setStroke()
+        for rect in rects {
+            let path = NSBezierPath(roundedRect: rect.insetBy(dx: 1.5, dy: 1.5), xRadius: 9, yRadius: 9)
+            path.lineWidth = 3
+            path.setLineDash([9, 6], count: 2, phase: 0)
+            path.stroke()
+        }
+    }
+}
+
 /// What both recording windows share: floating over every app, Space and full-screen app, above the widget's panels,
 /// clear behind their own rounded content, out of legacy window captures.
 @MainActor
@@ -265,6 +358,7 @@ final class RecordingPickerPanel: NSObject, NSWindowDelegate {
 
     func windowDidResignKey(_ notification: Notification) {
         guard window.isVisible, let onDismiss else { return }
+        PerfLog.mark("recording.picker cancelled: lost the keyboard to \(NSApp.keyWindow?.title ?? "another app")")
         self.onDismiss = nil
         window.orderOut(nil)
         onDismiss()

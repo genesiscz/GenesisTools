@@ -104,7 +104,7 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
 
     /// `expand <edge> [group]`, `module <id> <edge> [group]`, `hover <edge> [group]`, `unhover <edge> [group]`,
     /// `collapse`, `select <session key>`, `settings [page]`, `passive on|off` (expanded panels leave the keyboard with
-    /// the app in front, for motion checks on the user's screen). Staging only (NativeStaging); logged for the recording.
+    /// the app in front, for motion checks on the user's screen), `video` and `recorder …` (the screen recording). Staging only (NativeStaging); logged for the recording.
     private func runTestCommand(_ command: String) {
         guard let coordinator else { return }
         let model = coordinator.model
@@ -137,6 +137,24 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
             if parts.count > 2, let x = Double(parts[1]), let y = Double(parts[2]) {
                 PerfLog.mark("widget.hittest \(x),\(y): " + coordinator.hitTestDescription(cgPoint: CGPoint(x: x, y: y)))
             }
+        // What the video button does: open the recording picker, or stop and paste a running recording.
+        case "video": model.toggleVideoCapture()
+        // `recorder window <id>`, `recorder display <index>`, `recorder stop|discard|state`: the picker and controls
+        // without a click, so a check never takes the user's focus. `state` logs one line to app-perf.log.
+        case "recorder":
+            let recorder = model.screenRecorder
+            switch parts.dropFirst().first {
+            case "window":
+                let id = parts.count > 2 ? UInt32(parts[2]) : nil
+                recorder.choose { targets in targets.windows.first { $0.id == id }?.target }
+            case "display":
+                let index = parts.count > 2 ? Int(parts[2]) : nil
+                recorder.choose { targets in targets.displays.first { $0.index == index }?.target }
+            case "stop": recorder.stopAndUse()
+            case "discard": recorder.discard()
+            default: break
+            }
+            PerfLog.mark("widget.recorder \(command): \(recorder.stateDescription)")
         default: NSLog("widget.test: unknown command %@", command)
         }
     }

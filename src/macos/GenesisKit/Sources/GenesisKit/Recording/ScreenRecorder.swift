@@ -50,6 +50,9 @@ public final class ScreenRecorder: ObservableObject {
     private var settingsWatch: AnyCancellable?
     private var controls: RecordingControlsPanel?
     private var controlsModel: RecordingControlsModel?
+    private var outline: RecordingTargetOutline?
+    /// The target the outline is drawn around now; nil while it is hidden.
+    private var outlinedTarget: RecordingTarget?
     private let picker = RecordingPickerPanel()
     private var targets: RecordingTargets?
     private var pickerLoad: RecordingTargetPicker.Load = .loading
@@ -67,8 +70,10 @@ public final class ScreenRecorder: ObservableObject {
         self.settings = settings ?? .shared
         self.permissionGate = permissionGate ?? { await PermissionCenter.shared.ensure($0) }
         loadTargets = {
+            // Long enough for the one compile after an update (about 30 s, more on a busy Mac); the compile goes on
+            // without this call if it is cut, and the recording then reuses its binary.
             let result = try await bridge.run(subcommand: "control", args: ["capture", "targets", "--json"],
-                                              timeoutSeconds: 20)
+                                              timeoutSeconds: 120)
             guard result.exitCode == 0 else {
                 throw ToolsBridgeError.refused(String(result.stderr.suffix(600)))
             }
@@ -102,6 +107,23 @@ public final class ScreenRecorder: ObservableObject {
 
     /// Brings the controls of a running recording forward.
     public func showControls() { controls?.show() }
+
+    /// Chooses in the open picker as a click on its row does (the widget's driver and tests). False when no picker is
+    /// open or `pick` finds nothing in the listed targets.
+    @discardableResult
+    public func choose(_ pick: (RecordingTargets) -> RecordingTarget?) -> Bool {
+        guard picker.isVisible, let targets, let target = pick(targets) else { return false }
+        picker.dismiss()
+        pickerChoose?(target)
+        return true
+    }
+
+    /// One line for logs and the driver: the phase, why a start is slow, and whether the target outline shows.
+    public var stateDescription: String {
+        guard let controller else { return "idle picker=\(picker.isVisible)" }
+        return "phase=\(controller.phase.rawValue) preparing=\(controller.preparing ?? "-") "
+            + "outline=\(outlinedTarget?.title ?? "-") elapsedMs=\(Int(controller.elapsedMs))"
+    }
 
     // MARK: Picker
 
@@ -187,13 +209,15 @@ public final class ScreenRecorder: ObservableObject {
         settingsWatch = settings.objectWillChange.sink { [weak self] _ in
             DispatchQueue.main.async { self?.renderControls() }
         }
+        let outline = RecordingTargetOutline()
+        self.outline = outline
         renderControls()
         place(target)
         // The controls are on screen before the recorder lists windows, so it can leave them out by id.
         controls.show()
         do {
-            try controller.start(target: target, excludeWindowIDs: [controls.windowID], frameRate: settings.frameRate,
-                                 showsBorder: settings.showsBorder)
+            try controller.start(target: target, excludeWindowIDs: [controls.windowID] + outline.windowIDs,
+                                 frameRate: settings.frameRate, showsBorder: settings.showsBorder)
             host.onStart()
         } catch {
             failed("Could not start the recorder: \(error.localizedDescription)", code: nil)
@@ -204,10 +228,12 @@ public final class ScreenRecorder: ObservableObject {
     /// discard question) survives the clock.
     private func renderControls() {
         guard let controller, let controls, let host else { return }
+        renderOutline(phase: controller.phase, target: controller.target)
         let state = RecordingControlsState(
             phase: controller.phase, elapsedMs: controller.elapsedMs, limitMs: controller.limitMs,
             target: controller.target, pauseReason: controller.pauseReason, notice: controller.notice,
-            useTitle: host.useTitle, useSymbol: host.useSymbol, confirmsDiscard: settings.confirmsDiscard)
+            preparing: controller.preparing, useTitle: host.useTitle, useSymbol: host.useSymbol,
+            confirmsDiscard: settings.confirmsDiscard)
         if let controlsModel {
             if controlsModel.state != state { controlsModel.state = state }
             return
@@ -241,24 +267,47 @@ public final class ScreenRecorder: ObservableObject {
                    })
     }
 
+    /// The dashed outline stands in for the recorder's own border until the first frame: it shows what was chosen
+    /// at once, also through a slow start. It follows the border setting.
+    private func renderOutline(phase: RecordingPhase, target: RecordingTarget?) {
+        guard let outline else { return }
+        let wanted = phase == .starting && settings.showsBorder ? target : nil
+        guard wanted != outlinedTarget else { return }
+        outlinedTarget = wanted
+        guard let wanted else { return outline.hide() }
+        outline.show(outlineRects(wanted))
+    }
+
+    private func outlineRects(_ target: RecordingTarget) -> [CGRect] {
+        guard let windows = listedWindows(target) else {
+            guard case let .display(index, _) = target, NSScreen.screens.indices.contains(index) else { return [] }
+            return [NSScreen.screens[index].frame]
+        }
+        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
+        return windows.map { RecordingPanelLayout.cocoa(rect($0), primaryHeight: primaryHeight) }
+    }
+
     private func place(_ target: RecordingTarget) {
         guard let controls else { return }
-        var bounds: CGRect?
         var display: Int?
-        switch target {
-        case let .window(ids, _, _, _):
-            bounds = union(targets?.windows.filter { ids.contains($0.id) } ?? [])
-        case let .app(app, _):
-            bounds = union(targets?.windows.filter { String($0.pid) == app } ?? [])
-        case let .display(index, _):
-            display = index
+        if case let .display(index, _) = target { display = index }
+        let bounds = listedWindows(target).flatMap { windows in
+            windows.map(rect).reduce(nil) { partial, rect in partial.map { $0.union(rect) } ?? rect }
         }
         controls.place(settings.placement, targetCG: bounds, displayIndex: display)
     }
 
-    private func union(_ windows: [RecordingWindow]) -> CGRect? {
-        windows.map { CGRect(x: $0.bounds.x, y: $0.bounds.y, width: $0.bounds.width, height: $0.bounds.height) }
-            .reduce(nil) { partial, rect in partial.map { $0.union(rect) } ?? rect }
+    /// The listed windows a target records (CG points); nil for a display.
+    private func listedWindows(_ target: RecordingTarget) -> [RecordingWindow]? {
+        switch target {
+        case let .window(ids, _, _, _): return targets?.windows.filter { ids.contains($0.id) } ?? []
+        case let .app(app, _): return targets?.windows.filter { String($0.pid) == app } ?? []
+        case .display: return nil
+        }
+    }
+
+    private func rect(_ window: RecordingWindow) -> CGRect {
+        CGRect(x: window.bounds.x, y: window.bounds.y, width: window.bounds.width, height: window.bounds.height)
     }
 
     private func use(_ url: URL) {
@@ -290,6 +339,9 @@ public final class ScreenRecorder: ObservableObject {
         picker.dismiss()
         controls?.close()
         controls = nil
+        outline?.close()
+        outline = nil
+        outlinedTarget = nil
         controlsModel = nil
         controllerWatch = nil
         settingsWatch = nil

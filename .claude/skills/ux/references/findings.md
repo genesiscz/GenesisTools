@@ -212,3 +212,40 @@ checklist.md or motion.md as well.
   monitor shows it as `spin`). Strongest lead, fixed in the same commit: every preview open lost a resize and leaked
   a display link that fired every frame for good (sampled live in the collapsed widget); not proven to be that spin,
   because three hidden-window replays with the real inbox stayed idle.
+- 2026-10-23 — **A hint line that appears under the focused row moves everything below it.** The Claude Code mods Git
+  sidebar drew a button's description under its own row while the focus ring was on it, so every Tab shifted the
+  rest of the pane. Fix (170c6ee191): one status bar with two fixed rows, pinned to the pane's foot; the body is built
+  from one-row lines, so the plugin counts them and pins the bar only when they fit. Check: read the pane's text
+  after each Tab and compare every line above the bar with the first read; nothing may differ but a live time.
+- 2026-10-23 — **A slow call started from a render died when the next render came.** The engine aborts a replaced
+  render hook's in-flight process, and the plugin remembered the aborted `tools genesis-tools probe` as "no link
+  opens here" for 30 minutes, in every session: no hub button, no links. Fix (170c6ee191): start such work from the
+  session start or a timer, let renders only read it, never keep an aborted result; a test with the real abort text.
+- 2026-10-23 — **A full row squeezed one of its chips to nothing.** The cache band's flex row shrank the own chip to
+  zero width when other sessions' chips filled it. Fix: every chip keeps its width and the row clips at its edge.
+- 2026-10-23 21:13 — **Save draft chimed, flashed the session and showed nothing.** The widget treats a newer inbox item time
+  as a new arrival, and the server stamped decisions with their last update, so the user's own draft looked like a
+  new decision. Five saves in two minutes, each with a chime (decision log events 17:58 to 18:00). Fix: a decision's
+  item time is when it was asked (`askedTimeOf`); Save draft stages the note and the card says "Draft saved".
+- 2026-10-23 21:13 — **An answer click reordered and collapsed the list under the pointer.** Every new outgoing message
+  scrolled the list to the bottom three times, also an answer sent from a card in the middle of the list. Only a
+  composer message follows now (`followsOutgoing`). Rule: a list moves only when the user's own new content lands
+  where the list scrolls to.
+- 2026-10-23 21:13 — **A click that sends at once loses the user's chance to batch and correct.** Decision options now stage
+  (the decision log's `drafted` state), the inbox says how many are staged, a review shows "3 decisions will be sent
+  to 2 sessions", and closing with staged decisions asks Send now / Keep staged / Discard. Settings: `decisionClick`,
+  `stagedOnLeave`.
+- 2026-10-23 23:11 — **The second recording of a session opened an invisible picker.** Every test and render made a
+  fresh picker panel, so all passed, while the live widget reused one: after its first dismissal the panel came back at
+  0x0, the recorder waited for a choice nobody could see, and the video button stuck on Stop. Found only by running the
+  flow twice in the live app. Fix: a fresh hosting view per opening (`RecordingPickerPanelTests` opens it three times).
+  Rule: a reusable panel gets a test that opens, dismisses and opens it again.
+- 2026-10-24 15:12 — **A recording stuck at "Starting" with no border, and Stop did nothing.** The first recording after a
+  change to the native recorder's sources compiled it for 20 to 60 s. The controls showed only a spinner, no border
+  was drawn (the recorder draws it once it runs), and the session CLI built synchronously, so its stdin reader was
+  blocked and Stop was read only after the compile. Worse, opening the picker had started that compile through the
+  target list, and the app's 20 s timeout killed it midway, so the recording compiled again from the start. Fix: an
+  async build in its own process group (a cancelled or killed caller leaves it running, the next one reuses it), a
+  `preparing` event that the controls show as "Preparing" with the reason, a dashed outline around the target from the
+  first moment, Discard answered in under a second. Rule: a start that can be slow says why, stays cancellable, and
+  shows what was chosen at once; never test a native flow only on a warm build (plant a one-line source change).
