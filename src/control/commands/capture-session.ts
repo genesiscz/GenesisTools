@@ -78,6 +78,8 @@ function humanLine(event: RecordingSessionEvent): string {
             return `saved ${event.path} (${Math.round(event.durationMs / 1000)} s, ${event.segments} segments)`;
         case "discarded":
             return "discarded";
+        case "preparing":
+            return event.message;
         case "error":
             return `error: ${event.message}`;
     }

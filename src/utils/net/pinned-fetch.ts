@@ -1,7 +1,10 @@
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { Readable } from "node:stream";
+import { untilAborted } from "../async";
 import { resolvePublicOutboundTarget } from "./outbound-policy";
+
+export { untilAborted };
 
 export interface PinnedRequestInput {
     url: URL;
@@ -79,39 +82,6 @@ export function pinnedRequest({ url, address, signal, headers, method, body }: P
         );
         outgoing.once("error", reject);
         outgoing.end(body);
-    });
-}
-
-/**
- * Settle with `promise`, or reject as soon as `signal` aborts. DNS lookups take no signal, so
- * without this a stalled resolver outlives the caller's deadline. The lookup itself keeps running
- * in the background; only the wait on it ends.
- */
-export function untilAborted<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
-    if (!signal) {
-        return promise;
-    }
-
-    if (signal.aborted) {
-        // The caller already gets the abort; the lookup's own outcome is no longer wanted, but its
-        // rejection must still be observed, or it surfaces later as an unhandled rejection.
-        promise.catch(() => undefined);
-        return Promise.reject(signal.reason);
-    }
-
-    return new Promise<T>((resolve, reject) => {
-        const onAbort = () => reject(signal.reason);
-        signal.addEventListener("abort", onAbort, { once: true });
-        promise.then(
-            (value) => {
-                signal.removeEventListener("abort", onAbort);
-                resolve(value);
-            },
-            (error: unknown) => {
-                signal.removeEventListener("abort", onAbort);
-                reject(error);
-            }
-        );
     });
 }
 

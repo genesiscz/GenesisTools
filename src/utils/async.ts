@@ -192,6 +192,39 @@ export function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> 
     });
 }
 
+/**
+ * Settle with `promise`, or reject as soon as `signal` aborts. For work that takes no signal (a DNS
+ * lookup, a build another caller shares): the work keeps running in the background; only the wait
+ * on it ends.
+ */
+export function untilAborted<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) {
+        return promise;
+    }
+
+    if (signal.aborted) {
+        // The caller already gets the abort; the lookup's own outcome is no longer wanted, but its
+        // rejection must still be observed, or it surfaces later as an unhandled rejection.
+        promise.catch(() => undefined);
+        return Promise.reject(signal.reason);
+    }
+
+    return new Promise<T>((resolve, reject) => {
+        const onAbort = () => reject(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+        promise.then(
+            (value) => {
+                signal.removeEventListener("abort", onAbort);
+                resolve(value);
+            },
+            (error: unknown) => {
+                signal.removeEventListener("abort", onAbort);
+                reject(error);
+            }
+        );
+    });
+}
+
 export {
     startWakefulInterval,
     WAKEFUL_JUMP_THRESHOLD_MS,

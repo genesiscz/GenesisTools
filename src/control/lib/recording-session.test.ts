@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
     type FinishedSegment,
     joinSegmentsArgv,
+    PREPARING_MESSAGE,
     parseRecordingCommand,
     RecordingSession,
     type RecordingSessionEvent,
@@ -39,10 +40,14 @@ interface FakeRun {
  * A recorder that writes a small file per run and finishes it when the session aborts the run. A run aborted before
  * it armed writes no movie, as the real recorder cancelled while arming does.
  */
-function fakeRecorder(options: { failFirst?: boolean; armLater?: boolean } = {}) {
+function fakeRecorder(options: { failFirst?: boolean; armLater?: boolean; prepares?: boolean } = {}) {
     const runs: FakeRun[] = [];
     const recorder: SegmentRecorder = {
-        record({ target, output, maxSeconds, signal, onRecording }) {
+        record({ target, output, maxSeconds, signal, onRecording, onPreparing }) {
+            if (options.prepares) {
+                onPreparing?.();
+            }
+
             return new Promise<SegmentResult>((resolve) => {
                 const index = runs.length;
                 let armed = false;
@@ -290,6 +295,18 @@ describe("RecordingSession", () => {
         await recording.command({ cmd: "stop" });
         expect(await recording.finished).toBe("done");
         expect(await readFile(join(root, "out.mp4"), "utf8")).toBe("movie 0 app");
+    });
+    it("says why a start is slow, and a discard while the recorder prepares ends the session at once", async () => {
+        const { recorder } = fakeRecorder({ prepares: true, armLater: true });
+        const recording = session(recorder);
+        await recording.start();
+        expect(events.filter((event) => event.event === "preparing")).toEqual([
+            { event: "preparing", message: PREPARING_MESSAGE },
+        ]);
+
+        await recording.command({ cmd: "discard" });
+        expect(await recording.finished).toBe("discarded");
+        expect(existsSync(join(root, "out.mp4"))).toBe(false);
     });
 });
 

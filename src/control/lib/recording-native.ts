@@ -88,11 +88,16 @@ export function refusalCode(message: string): string | undefined {
 /** One `tools control capture record` run per segment, on the ScreenCaptureKit recorder. */
 export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): SegmentRecorder {
     return {
-        async record({ target, output, maxSeconds, signal, onRecording }): Promise<SegmentResult> {
+        async record({ target, output, maxSeconds, signal, onRecording, onPreparing }): Promise<SegmentResult> {
             const capture = segmentCaptureSpec({ target, output, maxSeconds, options });
             let sessionDir: string | undefined;
             try {
-                const result = await runCapturePlanWithSignal({ plan: { capture, actions: [] }, signal, onRecording });
+                const result = await runCapturePlanWithSignal({
+                    plan: { capture, actions: [] },
+                    signal,
+                    onRecording,
+                    onPreparing,
+                });
                 sessionDir = result.sessionDir;
                 const envelope = result.capture as {
                     error?: unknown;

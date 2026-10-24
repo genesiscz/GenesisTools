@@ -1,7 +1,8 @@
-import { spawnSync } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { agentSessionIds } from "@genesiscz/utils/agent/host";
+import { untilAborted } from "@genesiscz/utils/async";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -309,6 +310,118 @@ export function ensureBinary(): string {
             `Build it with: bun run build:native  (or: cd ${SWIFT_SOURCE} && swift build -c release)\n` +
             `Requires: macOS with Swift toolchain (Xcode or swift.org toolchain)`
     );
+}
+
+interface PendingBuild {
+    binary: Promise<string>;
+    /** Stops this process from waiting on the compile, so it can exit while the compile finishes. */
+    release: () => void;
+}
+
+let pendingBuild: PendingBuild | null = null;
+
+/**
+ * `ensureBinary` for a caller that must stay responsive while the native CLI compiles (20 to 60 s
+ * after a source change): a recording session that still has to read Stop and Discard, a listing
+ * a host cancels. `onBuild` runs once when a compile is needed, before the wait, so the caller can
+ * say why it is slow. The worker leads its own process group: a caller that gives up (`signal`) or
+ * is killed while it waits leaves the compile running, and the next caller reuses that binary
+ * instead of compiling again from the start.
+ */
+export async function ensureBinaryAsync({
+    signal,
+    onBuild,
+}: {
+    signal?: AbortSignal;
+    onBuild?: () => void;
+} = {}): Promise<string> {
+    refuseRealMachineInTest("ax-tool (ensureBinaryAsync hands out, and may build, the real binary)");
+    if (verifiedBinary !== null) {
+        return verifiedBinary;
+    }
+
+    if (!nativeNeedsBuild({ binary: BINARY_PATH, sourceDir: SWIFT_SOURCE })) {
+        verifiedBinary = BINARY_PATH;
+        return verifiedBinary;
+    }
+
+    if (!existsSync(join(SWIFT_SOURCE, "Package.swift"))) {
+        return ensureBinary();
+    }
+
+    onBuild?.();
+    if (!pendingBuild) {
+        const build = buildInOwnGroup();
+        pendingBuild = build;
+        void build.binary.then(
+            () => {
+                pendingBuild = null;
+            },
+            () => {
+                pendingBuild = null;
+            }
+        );
+    }
+
+    const build = pendingBuild;
+    signal?.addEventListener("abort", () => build.release(), { once: true });
+    return untilAborted(build.binary, signal);
+}
+
+function buildInOwnGroup(): PendingBuild {
+    logger.info({ source: SWIFT_SOURCE }, "ax-tool binary missing or stale; compiling native CLI in its own group");
+    // stderr is ignored: once a cancelled caller is gone, a write to its pipe would end the compile
+    // with SIGPIPE. The worker's stdout result carries a failure's compiler output.
+    const child = spawn(process.execPath, [BUILD_WORKER, BINARY_PATH, SWIFT_SOURCE, BUILD_LOCK], {
+        detached: true,
+        stdio: ["ignore", "pipe", "ignore"],
+    });
+    let stdout = "";
+    child.stdout?.setEncoding("utf-8");
+    child.stdout?.on("data", (chunk: string) => {
+        stdout += chunk;
+    });
+    const deadline = setTimeout(() => child.kill("SIGTERM"), NATIVE_BUILD_WORKER_TIMEOUT_MS);
+    const release = () => {
+        child.unref();
+        deadline.unref();
+        // The pipe keeps the event loop alive on its own (measured on Bun 1.3: 4 s with the child unref'd alone).
+        const pipe = child.stdout;
+        if (pipe && "unref" in pipe && typeof pipe.unref === "function") {
+            pipe.unref();
+        }
+    };
+    return { binary: waitForBuild({ child, deadline, stdout: () => stdout }), release };
+}
+
+async function waitForBuild({
+    child,
+    deadline,
+    stdout,
+}: {
+    child: ChildProcess;
+    deadline: ReturnType<typeof setTimeout>;
+    stdout: () => string;
+}): Promise<string> {
+    const status = await new Promise<number | null>((resolve, reject) => {
+        child.once("error", (error) => {
+            clearTimeout(deadline);
+            reject(error);
+        });
+        child.once("close", (code) => {
+            clearTimeout(deadline);
+            resolve(code);
+        });
+    });
+    const outcome = parseBuildOutcome(stdout());
+    if (status === 0 && outcome?.ok && existsSync(BINARY_PATH)) {
+        logger.info(outcome.built ? "ax-tool built successfully" : "ax-tool was built by another process; reusing it");
+        verifiedBinary = BINARY_PATH;
+        return verifiedBinary;
+    }
+
+    const details = (outcome?.error ?? stdout().trim()).slice(-4000);
+    throw new Error(`ax-tool build failed (${status ?? "killed"}):\n${details}`);
 }
 
 export interface AxSpawnRequest {
@@ -638,7 +751,6 @@ export async function runAxAsync(options: {
     /** Shown on the cursor overlay's label for this one call. */
     note?: string;
 }): Promise<AxResult> {
-    const clock = new Stopwatch();
     const timeoutMs = Math.floor(options.timeoutMs ?? 10000);
     if (options.signal?.aborted || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647) {
         return {
@@ -650,15 +762,22 @@ export async function runAxAsync(options: {
     const args = nativeArguments(options.args);
     let binary: string;
     try {
-        binary = ensureBinary();
+        binary = await ensureBinaryAsync({ signal: options.signal });
     } catch (error) {
         if (error instanceof RealMachineInTestError) {
             throw error;
         }
 
+        if (options.signal?.aborted) {
+            return { ok: false, dispatchState: "not_started", error: "Native command cancelled before dispatch." };
+        }
+
         logger.error({ error }, "Native build unavailable");
         return { ok: false, dispatchState: "not_started", error: "Native build unavailable; no action dispatched." };
     }
+    // The budget starts once the binary is ready: the one compile after a source change (20 to 60 s) is not the
+    // command's time, and counting it made a 5 s window listing fail right after the compile it waited for.
+    const clock = new Stopwatch();
     const remainingMs = Math.floor(timeoutMs - clock.elapsedMs);
     if (remainingMs < 1 || options.signal?.aborted) {
         return { ok: false, dispatchState: "not_started", error: "Native command deadline reached before dispatch." };

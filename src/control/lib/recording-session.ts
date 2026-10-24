@@ -18,6 +18,9 @@ export const RECORDING_SESSION_MAX_SECONDS = 600;
 /** The recorder stops a run after 180 s (`validateCaptureOptions`), so a longer recording is a chain of runs. */
 export const RECORDING_SEGMENT_MAX_SECONDS = 180;
 
+export const PREPARING_MESSAGE =
+    "Building the recorder after an update. This happens once and can take up to a minute. Discard cancels it.";
+
 export const recordingCommandSchema = z.discriminatedUnion("cmd", [
     z.object({ cmd: z.literal("pause") }),
     z.object({ cmd: z.literal("resume") }),
@@ -63,6 +66,8 @@ export type RecordingSessionEvent =
     | { event: "segment"; index: number; path: string; durationMs: number; target: RecordingTarget }
     | { event: "done"; path: string; durationMs: number; segments: number }
     | { event: "discarded" }
+    /** The recorder is not running yet for a known slow reason (it compiles after an update); `starting` stays. */
+    | { event: "preparing"; message: string }
     | { event: "error"; message: string; code?: string; fatal: boolean };
 
 /** How one recorder run ended: asked to stop, reached its own deadline, or failed. */
@@ -91,6 +96,8 @@ export interface SegmentRecorder {
         maxSeconds: number;
         signal: AbortSignal;
         onRecording: () => void;
+        /** The recorder needs a slow step before it can start (a compile after an update). */
+        onPreparing?: () => void;
     }): Promise<SegmentResult>;
 }
 
@@ -313,6 +320,7 @@ export class RecordingSession {
                 maxSeconds,
                 signal: controller.signal,
                 onRecording: () => this.markRecording(run),
+                onPreparing: () => this.options.emit({ event: "preparing", message: PREPARING_MESSAGE }),
             })
             .catch((error: unknown) => ({ ok: false, endedBy: "failure" as const, error: messageOf(error) }));
         void run.result.then((result) => {

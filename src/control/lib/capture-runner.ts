@@ -58,7 +58,7 @@ import {
     type WindowBounds,
     windowShotArgv,
 } from "./peekaboo";
-import { ensureBinary } from "./runner";
+import { ensureBinaryAsync } from "./runner";
 import { publishVitrinka } from "./vitrinka-publish";
 
 /** Operational failure of a capture-family command; exitCode preserves the legacy script's codes. */
@@ -274,11 +274,14 @@ export async function runCapturePlanWithSignal({
     signal,
     stopGraceMs = RECORDER_STOP_GRACE_MS,
     onRecording,
+    onPreparing,
 }: {
     plan: Plan;
     signal: AbortSignal;
     stopGraceMs?: number;
     onRecording?: () => void;
+    /** The native recorder has to compile first (after a source change), which takes up to a minute. */
+    onPreparing?: () => void;
 }): Promise<RunResult> {
     const throwIfCancelled = (stage: string) => {
         if (signal.aborted) {
@@ -316,7 +319,12 @@ export async function runCapturePlanWithSignal({
     let axTool = AX_TOOL_PATH;
     if (backend === "native") {
         validateNativeCapturePlan(plan);
-        axTool = ensureBinary();
+        try {
+            axTool = await ensureBinaryAsync({ signal, onBuild: onPreparing });
+        } catch (error) {
+            throwIfCancelled("while the recorder was being built");
+            throw error;
+        }
     }
     using nativeControls = backend === "native" ? new NativeCaptureControls(cap) : undefined;
 
