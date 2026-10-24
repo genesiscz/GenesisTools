@@ -138,10 +138,15 @@ public final class ToolsLineStream: @unchecked Sendable {
             }
             self.lock.unlock()
         }
+        let ended = SpawnMeter.started(executable: process.executableURL, arguments: process.arguments ?? [])
         process.terminationHandler = { [weak self] _ in
+            ended()
             self?.finish(exited: true)
         }
-        try process.run()
+        do { try process.run() } catch {
+            ended()
+            throw error
+        }
         priority.applyNice(to: process.processIdentifier)
     }
 

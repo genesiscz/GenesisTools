@@ -27,7 +27,8 @@ export interface DevEvent {
         | "error"
         | "relay"
         | "crash"
-        | "slow";
+        | "slow"
+        | "storm";
     /** The time the source line carries ("01:46:40.479"), or the file's time for a crash or a hang file. */
     time: string;
     text: string;
@@ -138,24 +139,45 @@ export function shortCommand(command: string): string {
 
 const timePattern = /^\[(\d\d:\d\d:\d\d(?:\.\d+)?)\]\s*/;
 
-/** An app-perf.log line as an event, or null for the routine ones (spans, marks, quick stalls). */
-export function classifyPerfLine(line: string, options: ClassifyOptions = DEFAULT_CLASSIFY): DevEvent | null {
+/**
+ * A perf log line as an event, or null for the routine ones (spans, marks, quick stalls). GenesisTools writes
+ * app-perf.log; Genesis Markdown writes `~/.genesis/logs/perf.log`, its lines tagged after the time (`[md] mark …`),
+ * and its hang samples go to `hangsDir`.
+ */
+export function classifyPerfLine(
+    line: string,
+    options: ClassifyOptions = DEFAULT_CLASSIFY,
+    hangsDir = genesisToolsDir("logs", "hangs")
+): DevEvent | null {
     const time = line.match(timePattern)?.[1] ?? "";
-    const body = line.replace(timePattern, "").replace(/^mark\s+/, "");
+    const body = line
+        .replace(timePattern, "")
+        .replace(/^\[[a-z-]+\]\s+/, "")
+        .replace(/^mark\s+/, "");
     const short = (text: string) => text.replace(/ recent=\[.*$/, "").slice(0, 300);
 
     if (/WEDGED|main-stall ongoing/.test(body)) {
         return { kind: "wedge", time, text: short(body) };
     }
 
+    // A burst of child processes (GenesisKit `SpawnMeter`): one blame per open note was 9,300 launches an hour.
+    if (/^spawn\.storm /.test(body)) {
+        return {
+            kind: "storm",
+            time,
+            text: short(body),
+            key: /^spawn\.storm (ongoing|over)/.test(body) ? "storm" : undefined,
+        };
+    }
+
     const sampled = body.match(/main-(?:stall|spin) .*sampling to (\S+)/);
     if (sampled) {
-        return { kind: "hang", time, text: short(body), file: genesisToolsDir("logs", "hangs", sampled[1]) };
+        return { kind: "hang", time, text: short(body), file: join(hangsDir, sampled[1]) };
     }
 
     const stacks = body.match(/main-stall stacks .*→ (\S+)/);
     if (stacks) {
-        return { kind: "hang", time, text: short(body), file: genesisToolsDir("logs", "hangs", stacks[1]) };
+        return { kind: "hang", time, text: short(body), file: join(hangsDir, stacks[1]) };
     }
 
     // A main thread that never idles (an update loop) never delays a ping, so HangWatch reports it by CPU time.
@@ -411,6 +433,9 @@ export function collapse(events: DevEvent[]): DevEvent[] {
 export function devMonitorSources() {
     return {
         perfLog: genesisToolsDir("logs", "app-perf.log"),
+        /** Genesis and Genesis Markdown, which share GenesisKit's hang watcher and spawn meter. */
+        genesisPerfLog: join(homedir(), ".genesis", "logs", "perf.log"),
+        genesisHangs: join(homedir(), ".genesis", "logs", "hangs"),
         profileLog: () => genesisToolsDir("logs", `${formatLocalDate(new Date())}-profiling.log`),
         relayLog: genesisToolsDir("app", "link-relay.log"),
         hangs: genesisToolsDir("logs", "hangs"),
@@ -422,6 +447,7 @@ export function devMonitorSources() {
 export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
     const sources = devMonitorSources();
     const perf = new TextTail(sources.perfLog, options.fromStart);
+    const genesisPerf = new TextTail(sources.genesisPerfLog, options.fromStart);
     const relay = new TextTail(sources.relayLog, options.fromStart);
     const profile = new TextTail(sources.profileLog, options.fromStart);
     const crashes = new FolderWatch(sources.crashes, (name) => /^Genesis/.test(name) && /\.(ips|crash)$/.test(name));
@@ -429,18 +455,27 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
     // process could not log any more, which is the case worth a separate event.
     // `.txt` only: the daily pass stores captures older than yesterday as `hang-….txt.zst`, which is not a new hang.
     const hangs = new FolderWatch(sources.hangs, (name) => name.startsWith("hang-") && name.endsWith(".txt"));
+    const genesisHangs = new FolderWatch(
+        sources.genesisHangs,
+        (name) => name.startsWith("hang-") && name.endsWith(".txt")
+    );
     const announced = new Set<string>();
     const batcher = new EventBatcher(options.minDelayMs, options.emit);
 
     while (!options.signal.aborted) {
-        for (const line of perf.read()) {
-            const event = classifyPerfLine(line, options);
-            if (event) {
-                if (event.file) {
-                    announced.add(basename(event.file));
-                }
+        for (const [tail, hangsDir, app] of [
+            [perf, sources.hangs, ""],
+            [genesisPerf, sources.genesisHangs, "Genesis: "],
+        ] as const) {
+            for (const line of tail.read()) {
+                const event = classifyPerfLine(line, options, hangsDir);
+                if (event) {
+                    if (event.file) {
+                        announced.add(basename(event.file));
+                    }
 
-                batcher.add(event);
+                    batcher.add({ ...event, text: app + event.text });
+                }
             }
         }
 
@@ -455,7 +490,7 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
             }
         }
 
-        for (const path of hangs.fresh()) {
+        for (const path of [...hangs.fresh(), ...genesisHangs.fresh()]) {
             if (!announced.has(basename(path))) {
                 batcher.add({
                     kind: "hang",

@@ -48,6 +48,8 @@ extension Process {
         let exited = DispatchSemaphore(value: 0)
         terminationHandler = { _ in exited.signal() }
         try run()
+        let ended = SpawnMeter.started(executable: executableURL, arguments: arguments ?? [])
+        defer { ended() }
         let outReader = PipeReader(out, stream: "stdout")
         let errReader = err.map { PipeReader($0, stream: "stderr") }
         afterStart?()

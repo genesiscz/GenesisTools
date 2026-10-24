@@ -53,6 +53,32 @@ describe("classifyPerfLine", () => {
         ).toBe("hang");
     });
 
+    test("a burst of child processes is an event; its ongoing and over lines collapse into one", () => {
+        expect(
+            classifyPerfLine(
+                "[19:26:02.100] mark spawn.storm 51 child processes started in 10 s, 49 running; GenesisTools agents blame ×51"
+            )
+        ).toMatchObject({ kind: "storm", time: "19:26:02.100", key: undefined });
+        expect(classifyPerfLine("[19:26:32.100] mark spawn.storm ongoing 30 s: 400 child processes started")?.key).toBe(
+            "storm"
+        );
+    });
+
+    test("a Genesis Markdown line carries its tag, and its hang sample lives in its own folder", () => {
+        const event = classifyPerfLine(
+            "[17:12:43.850] [md] mark main-stall 1.0s so far — sampling to hang-2026-10-23-171243.txt recent=[x]",
+            DEFAULT_CLASSIFY,
+            "/home/fixture/.genesis/logs/hangs"
+        );
+        expect(event).toMatchObject({
+            kind: "hang",
+            file: "/home/fixture/.genesis/logs/hangs/hang-2026-10-23-171243.txt",
+        });
+        expect(classifyPerfLine("[17:11:59.681] [md] mark main-stall recovered after 1806ms load=159")?.kind).toBe(
+            "stall"
+        );
+    });
+
     test("a main thread spinning at full CPU is an event, and its sample names the file", () => {
         expect(classifyPerfLine("[17:10:32.100] mark main-spin 5s at 99% cpu: the main thread never idles")?.kind).toBe(
             "spin"

@@ -305,10 +305,15 @@ public struct ToolsBridge: Sendable {
         let stdout = try ToolsPipeCollector(outPipe)
         let stderr = try ToolsPipeCollector(errPipe)
         let exit = ToolsProcessExit()
-        process.terminationHandler = { _ in exit.finish() }
+        let ended = SpawnMeter.started(executable: process.executableURL, arguments: process.arguments ?? [])
+        process.terminationHandler = { _ in
+            ended()
+            exit.finish()
+        }
         do {
             try process.run()
         } catch {
+            ended()
             stdout.stop(error)
             stderr.stop(error)
             throw error

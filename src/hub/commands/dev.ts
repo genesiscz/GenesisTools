@@ -64,7 +64,7 @@ export function registerDevCommands(program: Command): void {
         )
         .action(async (flags: MonitorFlags) => {
             const sources = devMonitorSources();
-            const start = `[${new Date().toTimeString().slice(0, 8)}] monitor watching ${sources.perfLog}, ${sources.profileLog()}, ${sources.relayLog}, ${sources.hangs}, ${sources.crashes}`;
+            const start = `[${new Date().toTimeString().slice(0, 8)}] monitor watching ${sources.perfLog}, ${sources.genesisPerfLog}, ${sources.profileLog()}, ${sources.relayLog}, ${sources.hangs}, ${sources.crashes}`;
             out.print(`${flags.json ? SafeJSON.stringify({ kind: "start", text: start }) : start}\n`);
             await withInterrupt((signal) =>
                 runDevMonitor({

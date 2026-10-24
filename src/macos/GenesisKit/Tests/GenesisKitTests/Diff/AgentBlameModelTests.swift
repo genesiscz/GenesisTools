@@ -96,3 +96,44 @@ final class AgentBlameModelTests: XCTestCase {
         XCTAssertNil(model.source(forLines: 0 ... 2))
     }
 }
+
+/// The spawn meter's burst rule and labels (`SpawnMeter`), which put a burst of child processes into the perf log.
+final class SpawnStormTests: XCTestCase {
+    func testABurstIsReportedWhenItStartsWhileItLastsAndWhenItEnds() {
+        var storm = SpawnStorm()
+        var lines: [String] = []
+        for index in 0..<(SpawnStorm.burstStarts - 1) {
+            XCTAssertNil(storm.start("GenesisTools agents blame", at: Double(index) * 0.1), "under the burst size: quiet")
+            _ = storm.finish(at: Double(index) * 0.1 + 0.05)
+        }
+        if let line = storm.start("git status", at: 2.4) { lines.append(line) }
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertTrue(lines[0].hasPrefix("spawn.storm 24 child processes started in 10 s"), lines[0])
+        XCTAssertTrue(lines[0].contains("GenesisTools agents blame ×23, git status ×1"), lines[0])
+
+        XCTAssertNil(storm.start("git status", at: 3), "no second line within 30 s")
+        XCTAssertTrue(storm.start("git status", at: 33)?.hasPrefix("spawn.storm ongoing 30 s") == true)
+        // The first finish once the window holds few starts and few children run ends it.
+        let over = storm.finish(at: 40)
+        XCTAssertTrue(over?.hasPrefix("spawn.storm over after 37 s: 26 child processes started") == true, over ?? "nil")
+        XCTAssertNil(storm.finish(at: 41))
+        XCTAssertNil(storm.start("git status", at: 61), "a quiet start after the burst ended")
+    }
+
+    func testManyChildrenRunningAtOnceAreABurstToo() {
+        var storm = SpawnStorm()
+        var line: String?
+        for index in 0..<SpawnStorm.burstRunning { line = storm.start("rg", at: Double(index)) ?? line }
+        XCTAssertTrue(line?.contains("12 running") == true, line ?? "nil")
+    }
+
+    func testLabelsNameTheCommandNotItsPaths() {
+        XCTAssertEqual(SpawnMeter.label(executable: URL(fileURLWithPath: "/usr/bin/git"),
+                                        arguments: ["-C", "/Users/x/vault", "--no-optional-locks", "status", "-z"]),
+                       "git status")
+        XCTAssertEqual(SpawnMeter.label(executable: URL(fileURLWithPath: "/Applications/GenesisTools.app/Contents/MacOS/GenesisTools"),
+                                        arguments: ["/Users/x/.genesis-tools/bin/gt-agents", "/repo/src/agents/index.ts", "blame",
+                                                    "--repo", "/vault", "--files", "a/b.md", "--json"]),
+                       "GenesisTools agents blame")
+    }
+}
