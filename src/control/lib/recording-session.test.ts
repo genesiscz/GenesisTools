@@ -5,6 +5,7 @@ import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+    FIRST_FRAME_MESSAGE,
     type FinishedSegment,
     joinSegmentsArgv,
     PREPARING_MESSAGE,
@@ -107,7 +108,10 @@ describe("RecordingSession", () => {
         await rm(root, { recursive: true, force: true });
     });
 
-    function session(recorder: SegmentRecorder, extra: { maxSeconds?: number; segmentSeconds?: number } = {}) {
+    function session(
+        recorder: SegmentRecorder,
+        extra: { maxSeconds?: number; segmentSeconds?: number; slowStartMs?: number } = {}
+    ) {
         return new RecordingSession({
             target: finder,
             directory: join(root, "segments"),
@@ -121,6 +125,7 @@ describe("RecordingSession", () => {
             emit: (event) => events.push(event),
             now: () => clock,
             tickMs: 0,
+            slowStartMs: 0,
             ...extra,
         });
     }
@@ -296,6 +301,47 @@ describe("RecordingSession", () => {
         expect(await recording.finished).toBe("done");
         expect(await readFile(join(root, "out.mp4"), "utf8")).toBe("movie 0 app");
     });
+    it("a stop before the first frame keeps no movie, even when the recorder left an empty file", async () => {
+        const recorder: SegmentRecorder = {
+            record: ({ output, signal }) =>
+                new Promise<SegmentResult>((resolve) => {
+                    signal.addEventListener(
+                        "abort",
+                        () => void writeFile(output, "").then(() => resolve({ ok: true, endedBy: "stop" })),
+                        { once: true }
+                    );
+                }),
+        };
+        const recording = session(recorder);
+        await recording.start();
+        await recording.command({ cmd: "stop" });
+        expect(await recording.finished).toBe("failed");
+        expect(events.some((event) => event.event === "done")).toBe(false);
+        expect(events.at(-1)).toMatchObject({ event: "error", fatal: true });
+        expect(existsSync(join(root, "out.mp4"))).toBe(false);
+    });
+
+    it("says it still waits for the first frame when no compile explains a slow start", async () => {
+        const { recorder } = fakeRecorder({ armLater: true });
+        const recording = session(recorder, { slowStartMs: 20 });
+        await recording.start();
+        await Bun.sleep(60);
+        expect(events.filter((event) => event.event === "preparing")).toEqual([
+            { event: "preparing", message: FIRST_FRAME_MESSAGE },
+        ]);
+        await recording.command({ cmd: "discard" });
+
+        const prepared = fakeRecorder({ armLater: true, prepares: true });
+        events = [];
+        const compiling = session(prepared.recorder, { slowStartMs: 20 });
+        await compiling.start();
+        await Bun.sleep(60);
+        expect(events.filter((event) => event.event === "preparing").map((event) => event.message)).toEqual([
+            PREPARING_MESSAGE,
+        ]);
+        await compiling.command({ cmd: "discard" });
+    });
+
     it("says why a start is slow, and a discard while the recorder prepares ends the session at once", async () => {
         const { recorder } = fakeRecorder({ prepares: true, armLater: true });
         const recording = session(recorder);

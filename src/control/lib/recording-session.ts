@@ -21,6 +21,12 @@ export const RECORDING_SEGMENT_MAX_SECONDS = 180;
 export const PREPARING_MESSAGE =
     "Building the recorder after an update. This happens once and can take up to a minute. Discard cancels it.";
 
+/** Said when a segment has no first frame after `slowStartMs` and no compile explains it. */
+export const FIRST_FRAME_MESSAGE =
+    "Still waiting for the first frame. macOS sends none while the screen is locked or the window is hidden or minimized. Discard cancels it.";
+
+const SLOW_START_MS = 8000;
+
 export const recordingCommandSchema = z.discriminatedUnion("cmd", [
     z.object({ cmd: z.literal("pause") }),
     z.object({ cmd: z.literal("resume") }),
@@ -125,6 +131,10 @@ interface ActiveSegment {
     controller: AbortController;
     /** Set before this session aborts the run, so its end is not mistaken for a rollover or a failure. */
     stopping: boolean;
+    /** The recorder said why its start is slow (a compile): the first-frame hint stays quiet. */
+    preparing?: boolean;
+    /** Fires the first-frame hint; cleared by the first frame or the run's end. */
+    slowStart?: ReturnType<typeof setTimeout>;
     result: Promise<SegmentResult>;
 }
 
@@ -170,6 +180,8 @@ export class RecordingSession {
             now?: () => number;
             /** Milliseconds between `elapsed` events while recording; 0 sends none. */
             tickMs?: number;
+            /** A segment with no first frame after this long says so (`FIRST_FRAME_MESSAGE`); 0 never does. */
+            slowStartMs?: number;
         }
     ) {
         this.target = options.target;
@@ -320,10 +332,23 @@ export class RecordingSession {
                 maxSeconds,
                 signal: controller.signal,
                 onRecording: () => this.markRecording(run),
-                onPreparing: () => this.options.emit({ event: "preparing", message: PREPARING_MESSAGE }),
+                onPreparing: () => {
+                    run.preparing = true;
+                    this.options.emit({ event: "preparing", message: PREPARING_MESSAGE });
+                },
             })
             .catch((error: unknown) => ({ ok: false, endedBy: "failure" as const, error: messageOf(error) }));
+        const slowStartMs = this.options.slowStartMs ?? SLOW_START_MS;
+        if (slowStartMs > 0) {
+            run.slowStart = setTimeout(() => {
+                if (this.current === run && run.startedAt === undefined && !run.stopping && !run.preparing) {
+                    this.options.emit({ event: "preparing", message: FIRST_FRAME_MESSAGE });
+                }
+            }, slowStartMs);
+        }
+
         void run.result.then((result) => {
+            clearTimeout(run.slowStart);
             if (!run.stopping) {
                 void this.enqueue(() => this.endedByItself(run, result));
             }
@@ -337,6 +362,7 @@ export class RecordingSession {
         }
 
         run.startedAt = this.now();
+        clearTimeout(run.slowStart);
         log.info({ index: run.index }, "recording segment started");
         this.setState("recording", run.reason);
     }
@@ -357,9 +383,17 @@ export class RecordingSession {
     /** Keeps a finished run's movie, or says why there is none. */
     private record(run: ActiveSegment, result: SegmentResult): void {
         const wallMs = this.liveMs(run);
-        if (!existsSync(run.path)) {
-            if (result.endedBy === "failure" || !result.ok) {
+        if (run.startedAt === undefined || !existsSync(run.path)) {
+            if (result.endedBy === "failure" || !result.ok || run.startedAt === undefined) {
                 log.warn({ index: run.index, error: result.error }, "recording segment produced no movie");
+            }
+
+            // A run whose first frame never came can still leave an empty file (a stop while it waited, a locked
+            // screen); joined, it made a 0-byte movie reported as done.
+            if (existsSync(run.path)) {
+                void unlink(run.path).catch((error: unknown) => {
+                    log.debug({ error, path: run.path }, "could not remove a frameless segment");
+                });
             }
 
             return;
