@@ -282,7 +282,7 @@ struct WidgetSessionFacts: View {
         .font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
     }
 
-    /// "Claude · col-tools · opus-5-5": the agent, the project, and the model without its vendor prefix.
+    /// "Claude · my-project · opus-5-5": the agent, the project, and the model without its vendor prefix.
     static func origin(_ session: WidgetSession) -> String {
         let model = session.model.map { $0.replacingOccurrences(of: "claude-", with: "") }
         return [AIProviders.meta(for: session.target.provider).displayName, session.project, model]
