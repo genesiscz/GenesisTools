@@ -1182,8 +1182,41 @@ describe("delivery routes", () => {
             await resolveDeliveryTarget(request, { nativeWorkers: () => [], claudePeers: () => [peer, peer] })
         ).toMatchObject({
             kind: "none",
-            reason: "Several native Claude receivers claim this session; none was picked.",
+            reason: expect.stringMatching(/^2 Claude terminals run this session \(pid 42, pid 42\).*none was picked/),
         });
+    });
+
+    test("a session resumed in two terminals goes to the one active last, unless both moved recently", async () => {
+        const base = {
+            sessionId: "original-session",
+            name: null,
+            cwd: null,
+            status: "idle",
+            kind: null,
+        };
+        const stale = { ...base, pid: 41, socketPath: "/fixture/41.sock", file: "/fixture/home/sessions/41.json" };
+        const active = { ...base, pid: 42, socketPath: "/fixture/42.sock", file: "/fixture/home/sessions/42.json" };
+        const request = { session: "original-session", provider: "claude", sourceHome: "/fixture/home" };
+        const now = 1_800_000_000_000;
+        const picked = await resolveDeliveryTarget(request, {
+            nativeWorkers: () => [],
+            claudePeers: () => [
+                { ...stale, updatedAt: now - 17 * 3600_000 },
+                { ...active, updatedAt: now - 2 * 60_000 },
+            ],
+        });
+        expect(picked).toMatchObject({ kind: "claude-peer", peer: { pid: 42 } });
+        expect(picked.kind === "claude-peer" ? picked.label : "").toContain("1 older copy idle");
+
+        expect(
+            await resolveDeliveryTarget(request, {
+                nativeWorkers: () => [],
+                claudePeers: () => [
+                    { ...stale, updatedAt: now - 3 * 60_000 },
+                    { ...active, updatedAt: now - 60_000 },
+                ],
+            })
+        ).toMatchObject({ kind: "none", reason: expect.stringContaining("pid 42, pid 41") });
     });
 
     test("automatic replies never type into a lone cwd or screen-text match", async () => {

@@ -77,6 +77,33 @@ function liveClaudePeers(session: string, sourceHome?: string): ClaudeLiveSessio
     });
 }
 
+/** A receiver this much more recent than every other copy of the session is the copy in use. */
+export const ACTIVE_RECEIVER_LEAD_MS = 10 * 60_000;
+
+/**
+ * One Claude session resumed in two terminals has two live receivers. The one whose registry entry moved last, by
+ * at least `ACTIVE_RECEIVER_LEAD_MS`, is the copy the user works in (the other sat idle for hours on 2026-10-24, and
+ * every send was queued). Closer than that, nothing tells them apart: the reason names both processes.
+ */
+export function pickClaudePeer(
+    peers: readonly ClaudeLiveSession[]
+): { peer: ClaudeLiveSession; others: number } | { reason: string } {
+    const ranked = [...peers].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    const [first, second] = ranked;
+    if (!first) {
+        return { reason: "No native Claude receiver claims this session." };
+    }
+
+    if (!second || (first.updatedAt ?? 0) - (second.updatedAt ?? 0) >= ACTIVE_RECEIVER_LEAD_MS) {
+        return { peer: first, others: ranked.length - 1 };
+    }
+
+    const pids = ranked.map((peer) => `pid ${peer.pid}`).join(", ");
+    return {
+        reason: `${ranked.length} Claude terminals run this session (${pids}), active within 10 minutes of each other; none was picked. Close the extra one, then send again.`,
+    };
+}
+
 /** Where a send would go, resolved before anything is typed. */
 export type DeliveryTarget =
     | {
@@ -312,15 +339,21 @@ export async function resolveDeliveryTarget(
               ? []
               : liveClaudePeers(session, sourceHome);
         const matching = peers.filter((peer) => peer.sessionId === session);
-        if (matching.length > 1) {
-            return { kind: "none", reason: "Several native Claude receivers claim this session; none was picked." };
-        }
-        const peer = matching[0];
-        if (peer) {
+        if (matching.length > 0) {
+            const picked = pickClaudePeer(matching);
+            if ("reason" in picked) {
+                return { kind: "none", reason: picked.reason };
+            }
+
+            const { peer, others } = picked;
             if (sourceHome && workerSourceHome(dirname(dirname(peer.file))) !== workerSourceHome(sourceHome)) {
                 return { kind: "none", reason: "The native Claude receiver belongs to another source home." };
             }
-            return { kind: "claude-peer", label: "original Claude session", peer };
+            const label =
+                others > 0
+                    ? `the Claude terminal active last (pid ${peer.pid}; ${others} older copy idle)`
+                    : "original Claude session";
+            return { kind: "claude-peer", label, peer };
         }
     }
 
@@ -458,11 +491,12 @@ export async function deliverToSession(
         const current = deps.claudePeers
             ? deps.claudePeers(sourceHome).filter((peer) => peer.sessionId === session)
             : liveClaudePeers(session, sourceHome);
+        const again = pickClaudePeer(current);
         if (
-            current.length !== 1 ||
-            current[0].pid !== target.peer.pid ||
-            current[0].socketPath !== target.peer.socketPath ||
-            current[0].file !== target.peer.file
+            "reason" in again ||
+            again.peer.pid !== target.peer.pid ||
+            again.peer.socketPath !== target.peer.socketPath ||
+            again.peer.file !== target.peer.file
         ) {
             return undelivered("The native Claude receiver changed before delivery; no message was written.");
         }

@@ -35,6 +35,8 @@ export interface ClaudeLiveSession {
     socketPath: string;
     /** The registry file this entry came from (for error messages; never the key file). */
     file: string;
+    /** When the process last wrote its registry entry (epoch ms): its last turn or status change. */
+    updatedAt?: number;
 }
 
 function claudeDir(): string {
@@ -117,6 +119,7 @@ export function parseRegistryEntry(raw: string, file: string): ClaudeLiveSession
         kind: text(entry.kind),
         socketPath,
         file,
+        ...(typeof entry.updatedAt === "number" ? { updatedAt: entry.updatedAt } : {}),
     };
 }
 
