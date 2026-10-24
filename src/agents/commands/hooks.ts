@@ -779,7 +779,12 @@ function registerMods(hooks: Command): void {
                     `after ${mods.idleCompact.minutes} min · floor ${mods.idleCompact.minTokens} tokens`,
                 ],
                 ["mods.agentModel", mods.agentModel.enabled, `format ${mods.agentModel.format}`],
-                ["mods.decisions", mods.decisions.enabled, ""],
+                [
+                    "mods.decisions",
+                    mods.decisions.enabled,
+                    `chip ${mods.decisions.chip} · open ${mods.decisions.expand}`,
+                ],
+                ["mods.inbox", mods.inbox.enabled, `chip ${mods.inbox.chip} · open ${mods.inbox.expand}`],
                 ["mods.links", mods.links.enabled, ""],
                 [
                     "mods.git",

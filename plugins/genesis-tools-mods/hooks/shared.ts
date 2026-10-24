@@ -19,6 +19,7 @@ import type {
     ToolCallInput,
     TurnCompleteInput,
     UiCopyResult,
+    UiScrollResult,
 } from "claude-code";
 import { type ModsSettings, modsSettings } from "./settings";
 import type { Sidebar } from "./sidebar";
@@ -52,6 +53,11 @@ export interface Host {
     togglePane: (id: string, title: string, from?: "command" | "band") => Promise<unknown>;
     closePane: (id: string) => Promise<unknown>;
     copy: (text: string) => Promise<UiCopyResult>;
+    /**
+     * Scrolls a transcript row into view, its top at the window's top: a message by its transcript `uuid`, a tool
+     * call by its id. The engine moves a transcript row only while the call answers the person's own press.
+     */
+    scroll: (requestId: string) => Promise<UiScrollResult>;
     /** Opens a URL with macOS `open`: a browser page, or a genesis.tools route. */
     openUrl: (url: string) => Promise<unknown>;
     /** A short notice that fades by itself. */

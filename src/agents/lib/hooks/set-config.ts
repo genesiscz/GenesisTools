@@ -74,7 +74,9 @@ export const SETTABLE_KEYS = [
     "mods.diff.<fullDiff|collapseGitSync>",
     "mods.idleCompact.<enabled|minutes|minTokens>",
     "mods.agentModel.<enabled|format>",
-    "mods.<decisions|links|git|askRow|spinner>.enabled",
+    "mods.<decisions|inbox|links|git|askRow|spinner>.enabled",
+    "mods.decisions.<chip|expand>",
+    "mods.inbox.<chip|expand>",
     "mods.git.<labels|checkouts|cwd|expand|name|earlier>",
     "mods.cacheBand.<enabled|warnMinutes|cautionMinutes|others>",
     "mods.tmpUsage.<enabled|minutes>",
@@ -103,6 +105,28 @@ const MOD_NUMBER_LIMITS: Record<string, { max: number; min?: number; why: string
     "agentsBand.warnMinutes": { max: 24 * 60, why: "a day" },
     "stall.minutes": { max: 120, why: "a reply left two hours is no longer a stall to resume" },
 };
+
+/** The values each text mods field takes, as `--help` and an error list them. */
+const MOD_CHOICES: Record<string, readonly string[]> = {
+    "agentModel.format": ["label", "short"],
+    "decisions.chip": ["any", "waiting", "off"],
+    "decisions.expand": ["waiting", "all", "none"],
+    "inbox.chip": ["any", "unread", "off"],
+    "inbox.expand": ["unread", "all", "none"],
+    "git.labels": ["full", "minimal"],
+    "git.cwd": ["touched", "always"],
+    "git.expand": ["first", "all", "none"],
+    "git.name": ["repo-folder", "repo", "folder"],
+    "git.earlier": ["show", "hide"],
+    "sidebar.feedback": ["line", "toast", "both"],
+    "sidebar.focus": ["command", "always", "never"],
+    "stall.action": ["button", "auto"],
+};
+
+/** `a or b`, `a, b or c`. */
+function listed(choices: readonly string[]): string {
+    return choices.length < 2 ? (choices[0] ?? "") : `${choices.slice(0, -1).join(", ")} or ${choices.at(-1)}`;
+}
 
 function isFields(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -133,60 +157,16 @@ function withMods(mods: ModsConfig, key: string, value: string): ModsConfig {
         }
 
         part[field] = count;
-    } else if (feature === "git" && field === "labels") {
-        if (value !== "full" && value !== "minimal") {
-            throw new Error(`${key} takes full or minimal, not ${SafeJSON.stringify(value)}`);
+    } else {
+        const choices = MOD_CHOICES[`${feature}.${field}`];
+
+        if (choices && !choices.includes(value)) {
+            throw new Error(`${key} takes ${listed(choices)}, not ${SafeJSON.stringify(value)}`);
         }
 
-        part[field] = value;
-    } else if (feature === "git" && field === "cwd") {
-        if (value !== "touched" && value !== "always") {
-            throw new Error(`${key} takes touched or always, not ${SafeJSON.stringify(value)}`);
+        if (choices) {
+            part[field] = value;
         }
-
-        part[field] = value;
-    } else if (feature === "git" && field === "expand") {
-        if (value !== "first" && value !== "all" && value !== "none") {
-            throw new Error(`${key} takes first, all or none, not ${SafeJSON.stringify(value)}`);
-        }
-
-        part[field] = value;
-    } else if (feature === "git" && field === "name") {
-        if (value !== "repo-folder" && value !== "repo" && value !== "folder") {
-            throw new Error(`${key} takes repo-folder, repo or folder, not ${SafeJSON.stringify(value)}`);
-        }
-
-        part[field] = value;
-    } else if (feature === "git" && field === "earlier") {
-        if (value !== "show" && value !== "hide") {
-            throw new Error(`${key} takes show or hide, not ${SafeJSON.stringify(value)}`);
-        }
-
-        part[field] = value;
-    } else if (feature === "sidebar" && field === "feedback") {
-        if (value !== "line" && value !== "toast" && value !== "both") {
-            throw new Error(`${key} takes line, toast or both, not ${SafeJSON.stringify(value)}`);
-        }
-
-        part[field] = value;
-    } else if (feature === "sidebar" && field === "focus") {
-        if (value !== "command" && value !== "always" && value !== "never") {
-            throw new Error(`${key} takes command, always or never, not ${SafeJSON.stringify(value)}`);
-        }
-
-        part[field] = value;
-    } else if (feature === "stall" && field === "action") {
-        if (value !== "button" && value !== "auto") {
-            throw new Error(`${key} takes button or auto, not ${SafeJSON.stringify(value)}`);
-        }
-
-        part[field] = value;
-    } else if (feature === "agentModel" && field === "format") {
-        if (value !== "label" && value !== "short") {
-            throw new Error(`${key} takes label or short, not ${SafeJSON.stringify(value)}`);
-        }
-
-        part[field] = value;
     }
 
     return mergeMods({ ...mods, [feature]: part });

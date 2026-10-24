@@ -14,7 +14,8 @@ export interface ModsSettings {
     diff: { fullDiff: boolean; collapseGitSync: boolean };
     idleCompact: { enabled: boolean; minutes: number; minTokens: number };
     agentModel: { enabled: boolean; format: "label" | "short" };
-    decisions: { enabled: boolean };
+    decisions: { enabled: boolean; chip: "any" | "waiting" | "off"; expand: "waiting" | "all" | "none" };
+    inbox: { enabled: boolean; chip: "any" | "unread" | "off"; expand: "unread" | "all" | "none" };
     links: { enabled: boolean };
     git: {
         enabled: boolean;
@@ -40,7 +41,8 @@ export const MODS_DEFAULTS: ModsSettings = {
     diff: { fullDiff: true, collapseGitSync: true },
     idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
     agentModel: { enabled: false, format: "label" },
-    decisions: { enabled: false },
+    decisions: { enabled: false, chip: "any", expand: "waiting" },
+    inbox: { enabled: false, chip: "any", expand: "none" },
     links: { enabled: false },
     git: {
         enabled: false,
@@ -136,6 +138,8 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
     const stall = part("stall");
     const enabled = (key: string, fallback: boolean) => bool(part(key).enabled, fallback);
     const git = part("git");
+    const decisions = part("decisions");
+    const inbox = part("inbox");
 
     return {
         diff: {
@@ -156,7 +160,25 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
             enabled: bool(model.enabled, d.agentModel.enabled),
             format: model.format === "short" || model.format === "label" ? model.format : d.agentModel.format,
         },
-        decisions: { enabled: enabled("decisions", d.decisions.enabled) },
+        decisions: {
+            enabled: enabled("decisions", d.decisions.enabled),
+            chip:
+                decisions.chip === "any" || decisions.chip === "waiting" || decisions.chip === "off"
+                    ? decisions.chip
+                    : d.decisions.chip,
+            expand:
+                decisions.expand === "waiting" || decisions.expand === "all" || decisions.expand === "none"
+                    ? decisions.expand
+                    : d.decisions.expand,
+        },
+        inbox: {
+            enabled: enabled("inbox", d.inbox.enabled),
+            chip: inbox.chip === "any" || inbox.chip === "unread" || inbox.chip === "off" ? inbox.chip : d.inbox.chip,
+            expand:
+                inbox.expand === "unread" || inbox.expand === "all" || inbox.expand === "none"
+                    ? inbox.expand
+                    : d.inbox.expand,
+        },
         links: { enabled: enabled("links", d.links.enabled) },
         git: {
             enabled: enabled("git", d.git.enabled),

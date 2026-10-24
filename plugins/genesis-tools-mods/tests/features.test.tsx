@@ -1,6 +1,7 @@
 import type { On, TurnStepChunk } from "claude-code";
 import { expect, mock, test } from "claude-code/testing";
 import { bareDescription, lastSaidOf } from "../hooks/agents-band";
+import { answersFrom, callFor, firstAsks, questionCalls } from "../hooks/answers";
 import { quoteOf } from "../hooks/ask-row";
 import { cacheRowsOf, cacheTone } from "../hooks/cache-band";
 import {
@@ -19,7 +20,7 @@ import {
     sessionCheckouts,
     writtenFiles,
 } from "../hooks/checkouts";
-import { openDecisions, stagedMessage } from "../hooks/decisions";
+import { chatDecisions, openDecisions, shownDecisions, stagedMessage } from "../hooks/decisions";
 import { forgetGenesisProbe, type GenesisProbe, genesisProbe, probeOf } from "../hooks/genesis";
 import {
     checkCounts,
@@ -77,6 +78,143 @@ test("open decisions: asked, minus answered and replaced, with their options", a
         { letter: "b", text: "later" },
     ]);
     expect(stagedMessage({ "6": "a)", "4": "my own words" })).toBe("D4: my own words\nD6: a)");
+});
+
+test("decisions sidebar: the log's states, chat asks the log lacks, and a chat answer the log has not recorded", async () => {
+    const logged = answersFrom(
+        JSON.stringify({
+            sessionId: "s-alpha",
+            decisions: [
+                {
+                    number: 2,
+                    title: "Keep the cache?",
+                    prompt: "The cache is warm.",
+                    status: "waiting",
+                    choices: [
+                        { id: "a", label: "a) keep it", recommended: true },
+                        { id: "b", label: "drop it", recommended: false },
+                    ],
+                    recommended: "a",
+                    option: null,
+                    answer: null,
+                    at: "2026-03-01T10:00:00.000Z",
+                },
+                { number: 1, title: "Old", prompt: "", status: "implemented", choices: [], option: "b", at: "x" },
+                { number: 3, title: "Odd", prompt: "", status: "no-such-state", choices: [] },
+            ],
+            todos: [{ number: 1, title: "Rename the flag", state: "open", at: "2026-03-01T09:00:00.000Z" }],
+            entries: [
+                { id: "e1", ts: 1000, tag: "message", question: "Done", answerMd: "All green", readAt: 5 },
+                {
+                    id: "e2",
+                    ts: 2000,
+                    tag: "directive",
+                    question: "Why?",
+                    answerMd: "Because",
+                    readAt: null,
+                    attachments: [{ type: "image", path: "/tmp/shot.png" }],
+                },
+            ],
+            forms: [{ id: "ask_1", at: "2026-03-01T09:30:00.000Z", questions: [{ prompt: "Ship it?" }] }],
+        }),
+        42
+    );
+
+    expect(answersFrom("not json")).toBeUndefined();
+    expect(answersFrom(JSON.stringify({ sessionId: "s" }))).toBeUndefined();
+    expect(logged?.decisions.map((d) => [d.n, d.status, d.options.map((o) => o.text)])).toEqual([
+        [2, "waiting", ["keep it", "drop it"]],
+        [1, "implemented", []],
+        [3, "waiting", []],
+    ]);
+    expect(logged?.decisions[1]?.at).toBe(0);
+    // Newest entry first; an entry nobody read is new; image attachments keep their paths.
+    expect(logged?.entries.map((e) => [e.id, e.isUnread, e.images])).toEqual([
+        ["e2", true, ["/tmp/shot.png"]],
+        ["e1", false, []],
+    ]);
+    expect(logged?.forms).toEqual([{ id: "ask_1", at: Date.parse("2026-03-01T09:30:00.000Z"), prompts: ["Ship it?"] }]);
+
+    const chat = chatDecisions([
+        { role: "assistant", text: "❓ DECISION 5 name it?\na) one\nb) two" },
+        { role: "user", text: "D2: a)" },
+    ]);
+    const shown = shownDecisions(logged?.decisions ?? [], chat);
+
+    expect(shown.map((d) => [d.n, d.status])).toEqual([
+        [1, "implemented"],
+        [2, "chat-answered"],
+        [3, "waiting"],
+        [5, "waiting"],
+    ]);
+    expect(shown[3]?.options.map((o) => o.letter)).toEqual(["a", "b"]);
+});
+
+test("jump to: a decision's first ask is its first unlinked ask in the transcript; an entry's row is the call before it", async () => {
+    const line = (entry: Record<string, unknown>) => JSON.stringify(entry);
+    const lines = [
+        line({ type: "user", uuid: "u1", message: { content: [{ type: "text", text: "❓ DECISION 1 in a prompt" }] } }),
+        line({
+            type: "assistant",
+            uuid: "a1",
+            message: { content: [{ type: "text", text: "Repeat [❓ DECISION 7](x)" }] },
+        }),
+        line({
+            type: "assistant",
+            uuid: "a2",
+            message: { content: [{ type: "text", text: "❓ **DECISION 7** pick\n❓ DECISION 8" }] },
+        }),
+        line({
+            type: "assistant",
+            uuid: "a3",
+            message: { content: [{ type: "text", text: "❓ DECISION 7 asked again" }] },
+        }),
+        line({
+            type: "assistant",
+            uuid: "a4",
+            timestamp: "2026-03-01T10:00:00.000Z",
+            message: {
+                content: [{ type: "tool_use", id: "toolu_send", name: "mcp__genesis-tools__inbox_send", input: {} }],
+            },
+        }),
+        line({
+            type: "assistant",
+            uuid: "a5",
+            timestamp: "2026-03-01T10:05:00.000Z",
+            message: {
+                content: [
+                    {
+                        type: "tool_use",
+                        id: "toolu_bash",
+                        name: "Bash",
+                        input: { command: "tools question message hi" },
+                    },
+                ],
+            },
+        }),
+        line({
+            type: "assistant",
+            uuid: "a6",
+            timestamp: "2026-03-01T10:06:00.000Z",
+            message: { content: [{ type: "tool_use", id: "toolu_ls", name: "Bash", input: { command: "ls" } }] },
+        }),
+        "{torn line",
+    ];
+
+    expect([...firstAsks(lines)]).toEqual([
+        [7, "a2"],
+        [8, "a2"],
+    ]);
+
+    const calls = questionCalls(lines);
+    const at = Date.parse("2026-03-01T10:00:00.000Z");
+
+    expect(calls.map((call) => call.id)).toEqual(["toolu_send", "toolu_bash"]);
+    expect(callFor(at + 2_000, calls)).toBe("toolu_send");
+    expect(callFor(at + 5 * 60_000 + 1_000, calls)).toBe("toolu_bash");
+    // Recorded before any call, or long after the last one: no row.
+    expect(callFor(at - 60_000, calls)).toBeUndefined();
+    expect(callFor(at + 60 * 60_000, calls)).toBeUndefined();
 });
 
 test("git band: status line and CI counts", async () => {
@@ -344,6 +482,9 @@ function checkoutHost(): Host {
             return { isCopied: true };
         },
         async openUrl() {},
+        async scroll() {
+            return {};
+        },
         toast() {},
         redraw() {},
     };
@@ -879,4 +1020,16 @@ test("mods settings: a value equal to the file's shipped copy follows today's de
     expect(modsSettings(file(true, true)).tmpUsage).toEqual({ enabled: true, minutes: 7 });
     // A hand-written file has no shipped copy: every value is the user's.
     expect(modsSettings(JSON.stringify({ mods: { git: { enabled: true } } })).git.enabled).toBe(true);
+    // The decisions and inbox sidebars: a known choice is kept, anything else keeps the default.
+    const sidebars = modsSettings(
+        JSON.stringify({
+            mods: {
+                decisions: { enabled: true, chip: "waiting", expand: "sometimes" },
+                inbox: { enabled: true, chip: "unread", expand: "all" },
+            },
+        })
+    );
+    expect(sidebars.decisions).toEqual({ enabled: true, chip: "waiting", expand: "waiting" });
+    expect(sidebars.inbox).toEqual({ enabled: true, chip: "unread", expand: "all" });
+    expect(modsSettings(undefined).inbox).toEqual({ enabled: false, chip: "any", expand: "none" });
 });

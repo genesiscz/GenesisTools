@@ -291,8 +291,19 @@ export interface ModsConfig {
     idleCompact: { enabled: boolean; minutes: number; minTokens: number };
     /** A subagent's model in front of its description: `sonnet · Pair one` (`label`) or `(S) Pair one` (`short`). */
     agentModel: { enabled: boolean; format: "label" | "short" };
-    /** `/decisions`: the open decisions of the session in a pane, an answer staged per decision, sent in one message. */
-    decisions: { enabled: boolean };
+    /**
+     * The Decisions sidebar (`/decisions`, the band's `decisions` chip): every decision of the session from the
+     * decision log and its messages, by state, an answer staged per decision and sent in one message, and `jump to`
+     * the first ask. `chip`: shown while the session has any decision, only while one waits, or never. `expand`:
+     * which rows start open: the waiting ones, all, or none.
+     */
+    decisions: { enabled: boolean; chip: "any" | "waiting" | "off"; expand: "waiting" | "all" | "none" };
+    /**
+     * The Inbox sidebar (`/mod-inbox`, the band's `inbox` chip): the forms, messages, answers and todos the session
+     * put in the GenesisTools inbox. `chip`: shown while it has any, only while one is unread, or never. `expand`:
+     * which entries start open: the unread ones, all, or none.
+     */
+    inbox: { enabled: boolean; chip: "any" | "unread" | "off"; expand: "unread" | "all" | "none" };
     /** Bare paths, folders, commits and repeated decisions in the main loop's reply become links as it streams. */
     links: { enabled: boolean };
     /**
@@ -496,7 +507,8 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         diff: { fullDiff: true, collapseGitSync: true },
         idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
         agentModel: { enabled: false, format: "label" },
-        decisions: { enabled: false },
+        decisions: { enabled: false, chip: "any", expand: "waiting" },
+        inbox: { enabled: false, chip: "any", expand: "none" },
         links: { enabled: false },
         git: {
             enabled: false,
@@ -1095,6 +1107,11 @@ function partOf(value: unknown): Record<string, unknown> {
     return isPlainObject(value) ? value : {};
 }
 
+/** `value` when it is one of `choices`, else `fallback`. */
+function oneOf<T extends string>(value: unknown, choices: readonly T[], fallback: T): T {
+    return choices.find((choice) => choice === value) ?? fallback;
+}
+
 /**
  * Field by field, like `diff`: a stored value of the wrong type falls back to the default. The flat keys of before
  * 2026-10-23 (`mods.fullDiff`, `mods.collapseGitSync`, `mods.idleCompact` as a boolean, `mods.idleCompactMinutes`,
@@ -1115,6 +1132,8 @@ export function mergeMods(stored: unknown): ModsConfig {
     const stall = partOf(held.stall);
     const enabled = (key: string, fallback: boolean) => boolOr(partOf(held[key]).enabled, fallback);
     const git = partOf(held.git);
+    const decisions = partOf(held.decisions);
+    const inbox = partOf(held.inbox);
     const minutes = countOr({
         field: "mods.idleCompact.minutes",
         value: idle.minutes ?? held.idleCompactMinutes,
@@ -1141,7 +1160,16 @@ export function mergeMods(stored: unknown): ModsConfig {
             enabled: boolOr(model.enabled, base.agentModel.enabled),
             format: model.format === "short" || model.format === "label" ? model.format : base.agentModel.format,
         },
-        decisions: { enabled: enabled("decisions", base.decisions.enabled) },
+        decisions: {
+            enabled: enabled("decisions", base.decisions.enabled),
+            chip: oneOf(decisions.chip, ["any", "waiting", "off"], base.decisions.chip),
+            expand: oneOf(decisions.expand, ["waiting", "all", "none"], base.decisions.expand),
+        },
+        inbox: {
+            enabled: enabled("inbox", base.inbox.enabled),
+            chip: oneOf(inbox.chip, ["any", "unread", "off"], base.inbox.chip),
+            expand: oneOf(inbox.expand, ["unread", "all", "none"], base.inbox.expand),
+        },
         links: { enabled: enabled("links", base.links.enabled) },
         git: {
             enabled: enabled("git", base.git.enabled),

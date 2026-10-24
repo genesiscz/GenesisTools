@@ -14,7 +14,7 @@ import {
     type InboxAnswerResult,
 } from "../lib/inbox/answer";
 import { dismissDecision, draftDecision, sendDrafts } from "../lib/inbox/drafts";
-import { loadInbox, loadSessionDecisions, waitingBlock } from "../lib/inbox/load";
+import { loadInbox, loadSessionDecisions, loadSessionInbox, waitingBlock } from "../lib/inbox/load";
 import type { AskDeps } from "../lib/pending/ask";
 import { attachImageFiles } from "../lib/pending/form";
 import type { AskAnswer } from "../lib/pending/types";
@@ -158,8 +158,17 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .option("--hours <n>", "Sessions active in the last N hours", "72")
         .option("--session <id>", "Every decision of this one session, in every state: { sessionId, decisions }")
         .option("--json", "Print { sessions, scanned, elapsedMs }")
-        .action(async (options: { hours?: string; session?: string; json?: boolean }) => {
+        .option(
+            "--all-items",
+            "With --session --json: also its todos, its newest Q→A entries and its pending forms: { sessionId, decisions, todos, entries, forms }"
+        )
+        .action(async (options: { hours?: string; session?: string; json?: boolean; allItems?: boolean }) => {
             if (options.session) {
+                if (options.json && options.allItems) {
+                    out.result(await loadSessionInbox(options.session));
+                    return;
+                }
+
                 const decisions = await loadSessionDecisions(options.session);
 
                 if (options.json) {

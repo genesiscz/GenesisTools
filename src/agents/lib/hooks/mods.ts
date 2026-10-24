@@ -21,6 +21,7 @@ export const MOD_SWITCHES: Record<string, string[]> = {
     idleCompact: ["mods.idleCompact.enabled"],
     agentModel: ["mods.agentModel.enabled"],
     decisions: ["mods.decisions.enabled"],
+    inbox: ["mods.inbox.enabled"],
     links: ["mods.links.enabled"],
     git: ["mods.git.enabled"],
     askRow: ["mods.askRow.enabled"],

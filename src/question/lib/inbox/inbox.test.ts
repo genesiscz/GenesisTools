@@ -17,7 +17,15 @@ import type { AskForm } from "../pending/types";
 import { answerInboxDecision, answerInboxDecisions, answerInboxForm } from "./answer";
 import { buildInbox, type InboxSessionInfo, inboxDelivery, scanTurns, sessionDecisions } from "./build";
 import { locateRef } from "./excerpts";
-import { type InboxDeps, loadInbox, loadSessionDecisions, lookupListing, lookupSessionCwd, waitingBlock } from "./load";
+import {
+    type InboxDeps,
+    loadInbox,
+    loadSessionDecisions,
+    loadSessionInbox,
+    lookupListing,
+    lookupSessionCwd,
+    waitingBlock,
+} from "./load";
 
 // A decision post reads its checkout with eight `git` starts; see no-git.ts for the CI hang they caused.
 answerGitWithoutSpawning();
@@ -407,6 +415,58 @@ describe("sessionDecisions", () => {
             [4, "waiting", "transcript"],
         ]);
         expect(sessionDecisions({ sessionId: "s-gamma", rows, scan: null })).toEqual([]);
+    });
+});
+
+describe("loadSessionInbox", () => {
+    test("one session's decisions, todos by number, its entries and the forms it posted, from one read of the log", async () => {
+        const row = (overrides: Partial<DecisionRecord>): DecisionRecord => ({
+            id: "d_1_s-alpha",
+            sessionId: "s-alpha",
+            number: 1,
+            prompt: "Keep it?",
+            options: [],
+            state: "open",
+            updatedTs: "2026-03-01T08:00:00.000Z",
+            ...overrides,
+        });
+        const rows = [
+            row({}),
+            row({ id: "t_2_s-alpha", type: "todo", number: 2, prompt: "Write the README\nwith the new keys" }),
+            row({ id: "t_1_s-alpha", type: "todo", number: 1, title: "Rename the flag", state: "implemented" }),
+            row({ id: "t_1_s-beta", sessionId: "s-beta", type: "todo", number: 1, prompt: "Other session" }),
+        ];
+        let reads = 0;
+        const seen: { session: string; stored: number }[] = [];
+        const entriesOf: string[] = [];
+        const inbox = await loadSessionInbox("s-alpha", {
+            rows: () => {
+                reads++;
+                return rows;
+            },
+            forms: () => [
+                form({ id: "ask_mine", sessionHint: "s-alpha" }),
+                form({ id: "ask_answered", sessionHint: "s-alpha", status: "answered" }),
+                form({ id: "ask_other", sessionHint: "s-beta" }),
+            ],
+            entries: (session) => {
+                entriesOf.push(session);
+                return [];
+            },
+            decisions: async (session, stored) => {
+                seen.push({ session, stored: stored.length });
+                return [];
+            },
+        });
+
+        expect(reads).toBe(1);
+        expect(seen).toEqual([{ session: "s-alpha", stored: 4 }]);
+        expect(inbox.todos.map((todo) => [todo.number, todo.title, todo.state])).toEqual([
+            [1, "Rename the flag", "implemented"],
+            [2, "Write the README", "open"],
+        ]);
+        expect(inbox.forms.map((item) => item.id)).toEqual(["ask_mine"]);
+        expect(entriesOf).toEqual(["s-alpha"]);
     });
 });
 

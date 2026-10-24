@@ -435,7 +435,8 @@ function merged(row: DecisionRecord, block: HarvestedDecision): InboxDecision {
     };
 }
 
-function fromForm(form: AskForm): InboxForm {
+/** A pending ask form as an inbox item. */
+export function inboxForm(form: AskForm): InboxForm {
     return {
         kind: "form",
         id: form.id,
@@ -560,7 +561,7 @@ export function buildInbox({ sessions, scans, rows, forms, now = Date.now() }: B
 
         const sessionId = form.sessionHint ?? null;
         const target = group(sessionId ?? `form:${form.projectPath}`, sessionId);
-        target.items.push(fromForm(form));
+        target.items.push(inboxForm(form));
         target.info.cwd ??= form.cwd || form.projectPath;
         target.info.project ??= form.projectPath.split("/").filter(Boolean).pop() ?? null;
     }

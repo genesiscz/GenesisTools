@@ -44,6 +44,8 @@ export interface Pressable {
     onPress: () => void;
     isDim?: boolean;
     isPrimary?: boolean;
+    /** A list row drawn bold in this color: the one picked of several. */
+    color?: string;
     /** The status bar's line while the focus ring is on this Button: what a press does, as a sentence. */
     hint?: string;
 }
@@ -234,18 +236,33 @@ export function headerRow(kit: Kit, left: RenderElement, controls: readonly Pres
     );
 }
 
-/** One list row: a plain Button as wide as its label, a spacer, then the tail at the right edge. */
+/**
+ * One list row: a plain Button as wide as its label, a spacer, then the tail at the right edge. The tail keeps its
+ * width; a label too long for the rest wraps beside it.
+ */
 export function listRow(kit: Kit, row: Pressable, tail: RenderElement | null = null): RenderElement {
-    const { Box, Button } = kit.ui;
+    const { Box, Button, Text } = kit.ui;
     kit.pressables?.push(row);
 
     return (
         <Box key={`${row.key}:row`} flexDirection="row">
-            <Button key={row.key} plain dimColor={row.isDim} onPress={row.onPress}>
-                {row.label}
-            </Button>
+            <Box flexShrink={1} minWidth={0}>
+                <Button key={row.key} plain dimColor={row.isDim} onPress={row.onPress}>
+                    {row.color ? (
+                        <Text color={row.color} bold>
+                            {row.label}
+                        </Text>
+                    ) : (
+                        row.label
+                    )}
+                </Button>
+            </Box>
             <Box flexGrow={1} />
-            {tail}
+            {tail ? (
+                <Box flexShrink={0} marginLeft={1}>
+                    {tail}
+                </Box>
+            ) : null}
         </Box>
     );
 }

@@ -15,11 +15,12 @@ import { agentsBand, agentsRow, noteTranscript, recordSpawn } from "./agents-ban
 import { askOnRow } from "./ask-row";
 import { bandTree } from "./band";
 import { cacheBand, cacheRow, markEnded } from "./cache-band";
-import { decisions } from "./decisions";
+import { decisions, decisionsChip } from "./decisions";
 import { primeGenesisProbe } from "./genesis";
 import { gitBand, gitRows } from "./git-band";
 import { hookLedger, hooksChip, hooksChipWidth, ledgerClassic } from "./hook-ledger";
 import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice, setIdleDueAt } from "./idle";
+import { inbox, inboxChip } from "./inbox";
 import { linksStep, rememberToolPaths } from "./links";
 import { startLiveClock } from "./live";
 import {
@@ -414,6 +415,7 @@ function hostOf($: EngineInterface): Host {
         },
         closePane: (id) => $.ui.close({ id }),
         copy: (text) => $.ui.copy({ text }),
+        scroll: (requestId) => $.ui.scroll({ to: { requestId }, block: "start" }),
         openUrl: (url) => $.process.run(["open", url], { timeoutMs: 10_000 }),
         toast: (text) => $.ui.toast(text),
         redraw: () => $.ui.invalidate("ui.render"),
@@ -450,7 +452,17 @@ async function openSidebar($: EngineInterface, id: string, title: string, from: 
 
 // The features that share events. The engine takes one unmatched hook per event from a plugin, so each event
 // below has one hook that calls every feature's part in this order.
-const FEATURES: Feature[] = [decisions, gitBand, spinner, cacheBand, tmpUsage, agentsBand, hookLedger, stallCatcher];
+const FEATURES: Feature[] = [
+    decisions,
+    inbox,
+    gitBand,
+    spinner,
+    cacheBand,
+    tmpUsage,
+    agentsBand,
+    hookLedger,
+    stallCatcher,
+];
 
 export const register: Register = (on) => {
     on("session.start", async ($, e, next) => {
@@ -610,19 +622,37 @@ export const register: Register = (on) => {
         const host = hostOf($);
         const ui = $.ui.resolve(e);
         const columns = e.props.bodyColumns;
-        const [hooks, ...rest] = await Promise.all([
+        const [hooks, decisionsAt, inboxAt, ...rest] = await Promise.all([
             hooksChip(host, ui),
+            decisionsChip(host, ui),
+            inboxChip(host, ui),
             stallRow(host, ui),
             cacheRow(host, ui),
             agentsRow(host, ui, columns),
             tmpRow(host, ui),
         ]);
-        // The first row gives the hooks chip its text and its left margin. `bodyColumns` already leaves out the
+        const chips = [decisionsAt, inboxAt, hooks ? { element: hooks, width: hooksChipWidth() } : null].filter(
+            (chip) => chip !== null
+        );
+        // The first row gives the chips their text and a column before each. `bodyColumns` already leaves out the
         // engine's five columns at the right end, which hold its `[-]`.
-        const git = await gitRows(host, ui, { columns, firstReserve: hooks ? hooksChipWidth() + 1 : 0 });
+        const reserve = chips.reduce((sum, chip) => sum + chip.width + 1, 0);
+        const git = await gitRows(host, ui, { columns, firstReserve: reserve });
 
-        // The hooks chip shares the first git row; every other checkout's row has the whole width.
-        return bandTree(ui, [topRow(ui, git[0] ?? null, hooks), ...git.slice(1), ...rest], await next(e));
+        // The chips share the first git row; every other checkout's row has the whole width.
+        return bandTree(
+            ui,
+            [
+                topRow(
+                    ui,
+                    git[0] ?? null,
+                    chips.map((chip) => chip.element)
+                ),
+                ...git.slice(1),
+                ...rest,
+            ],
+            await next(e)
+        );
     });
 
     // Every feature's sidebar (`Feature.sidebars`), by the pane's id; another plugin's panes pass on.
@@ -697,9 +727,9 @@ export const register: Register = (on) => {
         return askOnRow(hostOf($), ui, drawn, { id: tool_use_id, isRunning, calls: [{ tool, input, output }] });
     });
 };
-/** The band's first row: the git row at the left, the hooks chip at the right edge; either may be missing. */
-function topRow(ui: ElementTable, git: RenderElement | null, hooks: RenderElement | null): RenderElement | null {
-    if (!hooks) {
+/** The band's first row: the git row at the left, the chips (decisions, inbox, hooks) at the right edge. */
+function topRow(ui: ElementTable, git: RenderElement | null, chips: readonly RenderElement[]): RenderElement | null {
+    if (chips.length === 0) {
         return git;
     }
 
@@ -711,8 +741,8 @@ function topRow(ui: ElementTable, git: RenderElement | null, hooks: RenderElemen
                 {git}
             </Box>
             <Box flexGrow={1} />
-            <Box flexShrink={0} marginLeft={1}>
-                {hooks}
+            <Box flexShrink={0} flexDirection="row" columnGap={1} marginLeft={1}>
+                {chips}
             </Box>
         </Box>
     );

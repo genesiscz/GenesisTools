@@ -696,6 +696,15 @@ describe("applySetting", () => {
         expect(() => set("mods.git.earlier", "off")).toThrow("show or hide");
         expect(() => set("mods.git.expand", "some")).toThrow("first, all or none");
         expect(() => set("mods.git.labels", "short")).toThrow("full or minimal");
+        expect(set("mods.decisions.chip", "waiting").decisions).toEqual({
+            enabled: false,
+            chip: "waiting",
+            expand: "waiting",
+        });
+        expect(() => set("mods.decisions.expand", "unread")).toThrow("waiting, all or none");
+        expect(set("mods.inbox", "true").inbox).toEqual({ enabled: true, chip: "any", expand: "none" });
+        expect(set("mods.inbox.expand", "unread").inbox.expand).toBe("unread");
+        expect(() => set("mods.inbox.chip", "waiting")).toThrow("any, unread or off");
         expect(set("mods.git.checkouts", "2").git.checkouts).toBe(2);
         expect(() => set("mods.git.checkouts", "9")).toThrow("1 to 6");
         expect(set("mods.git.cwd", "always").git.cwd).toBe("always");

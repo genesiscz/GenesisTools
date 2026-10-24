@@ -12,14 +12,24 @@ import type { TranscriptTurn } from "@genesiscz/utils/ai/transcripts/types";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
+import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { decisionFiles } from "../decisions/read";
-import { type DecisionRecord, type HarvestedDecision, readDecisions } from "../decisions/store";
+import {
+    type DecisionRecord,
+    type DecisionState,
+    type HarvestedDecision,
+    kindOf,
+    readDecisions,
+} from "../decisions/store";
 import { listPendingForms } from "../pending/ask";
 import type { AskForm } from "../pending/types";
+import { type QaRow, queryEntriesSnapshot } from "../read-model";
 import {
     buildInbox,
     type InboxDecision,
+    type InboxForm,
     type InboxSession,
+    inboxForm,
     scanTurns,
     sessionDecisions,
     type TranscriptScan,
@@ -191,6 +201,74 @@ export async function loadSessionDecisions(
     const storedCwd = stored.find((row) => row.sessionId === session && row.cwd)?.cwd;
     const cwd = storedCwd || (needsFolder ? await sessionCwd(session) : null) || undefined;
     return withExcerpts(decisions, cwd);
+}
+
+/** How many of a session's newest Q→A entries `loadSessionInbox` returns. */
+const SESSION_ENTRIES = 40;
+
+/** A todo of one session, as the mods Inbox sidebar lists it. */
+export interface SessionTodo {
+    id: string;
+    number: number;
+    title: string;
+    state: DecisionState;
+    at: string;
+}
+
+/** Everything the answer log holds for one session: `inbox --session <id> --all-items`, the mods sidebars' read. */
+export interface SessionInbox {
+    sessionId: string;
+    decisions: InboxDecision[];
+    todos: SessionTodo[];
+    /** Its newest Q→A entries (messages and recorded answers), oldest first, with `readAt`. */
+    entries: QaRow[];
+    forms: InboxForm[];
+}
+
+/**
+ * One session's decisions in every state, its todos, its newest Q→A entries and its pending forms, from one read of
+ * the decision log. A form belongs to the session that posted it (`sessionHint`, else its poster).
+ */
+export async function loadSessionInbox(
+    session: string,
+    {
+        rows = realInboxDeps.rows,
+        forms = realInboxDeps.forms,
+        entries = (id: string) =>
+            queryEntriesSnapshot({
+                dbPath: toolDataDir("question", "qa.db"),
+                opts: { sessionId: id, limit: SESSION_ENTRIES },
+            }),
+        decisions = (id: string, stored: DecisionRecord[]) => loadSessionDecisions(id, { rows: () => stored }),
+    }: {
+        rows?: () => DecisionRecord[];
+        forms?: () => AskForm[];
+        entries?: (session: string) => QaRow[];
+        decisions?: (session: string, stored: DecisionRecord[]) => Promise<InboxDecision[]>;
+    } = {}
+): Promise<SessionInbox> {
+    const stored = rows();
+    const todos = stored
+        .filter((row) => row.sessionId === session && kindOf(row) === "todo")
+        .map((row) => ({
+            id: row.id,
+            number: row.number,
+            title: row.title ?? row.prompt.split("\n")[0] ?? "",
+            state: row.state,
+            at: row.updatedTs,
+        }))
+        .sort((a, b) => a.number - b.number);
+    const waiting = forms()
+        .filter((form) => form.status === "pending" && (form.sessionHint ?? form.poster?.sessionId) === session)
+        .map(inboxForm);
+
+    return {
+        sessionId: session,
+        decisions: await decisions(session, stored),
+        todos,
+        entries: entries(session),
+        forms: waiting,
+    };
 }
 
 /** Reads each decision's `file:line` references from disk (bounded), off the hub's hot path. */

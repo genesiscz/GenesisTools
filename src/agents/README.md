@@ -251,8 +251,19 @@ Each feature appends what it did to `~/.genesis-tools/agents/mods-log/<feature>.
 checked against real use.
 
 - `mods.agentModel` (`format` `label` or `short`): `sonnet · Pair one` or `(S) Pair one` on a subagent's rows.
-- `mods.decisions`: `/decisions` opens the open `❓ DECISION N` questions in a pane. A press stages an option, a
-  field stages your own words, and `send` submits `D16: a)` per decision in one message.
+- `mods.decisions` (`chip` `any`, `expand` `waiting`): the Decisions sidebar, opened by `/decisions` or the band's
+  `decisions 1 waiting` chip. It lists every `❓ DECISION N` of the session from the decision log (`tools question
+  inbox --session <id> --json --all-items`) and from its messages, grouped as waiting, answered, done and closed. A
+  waiting one opens to its options: a press stages an option, a field stages your own words, and `send` submits
+  `D16: a)` per decision in one message. `jump to` scrolls the transcript to where it was first asked; a row from
+  before a compaction is not drawn, so it opens the transcript search there instead (`tools claude cmux find
+  --decision`). `chip` `waiting` shows the chip only while a decision waits, `off` never; `expand` `all` or `none`
+  opens every row or none.
+- `mods.inbox` (`chip` `any`, `expand` `none`): the Inbox sidebar, opened by `/mod-inbox` or the band's `inbox 2 new`
+  chip. It lists what the session put in the GenesisTools inbox: the forms it waits on, the messages it sent, the
+  questions and answers it recorded, and its todos. An entry opens to its text, `jump to` (the tool call that sent
+  it) and its images. `new` is an entry nobody read in the widget yet. `chip` `unread` shows the chip only while
+  one is new; `expand` `unread` or `all` opens those rows at the start.
 - `mods.links`: the main loop's reply is linked as it streams, one line at a time. A path that exists (absolute,
   `~/`, relative to the working folder or the repository, or a bare file name a tool of the session named), with
   an optional `:line` or `:line-line`, a commit SHA that `git cat-file` knows, and a repeated `❓ DECISION N` become
