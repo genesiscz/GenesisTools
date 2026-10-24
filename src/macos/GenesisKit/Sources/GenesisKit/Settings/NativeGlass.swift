@@ -53,7 +53,11 @@ public struct NativeGlassShapeSurface<SurfaceShape: Shape>: ViewModifier {
                 content.background(NativeThemePalette.graphiteCard, in: shape)
                     .overlay(shape.stroke(.white.opacity(0.08), lineWidth: 1))
             } else if #available(macOS 26, *) {
+                // SwiftUI does not hit-test Liquid Glass itself, so a gap between two rows on a glass panel was not
+                // part of it: hover there read as "the pointer left", and the widget's hover list closed under a
+                // scrolling pointer each time a gap passed (Martin, 2026-10-24). The solid form's fill always counted.
                 content.foregroundStyle(Color.white).glassEffect(.regular.tint(NativeThemePalette.glassCardTint), in: shape)
+                    .contentShape(shape)
             } else {
                 content.background {
                     ZStack {
@@ -130,12 +134,15 @@ public struct NativeGlassControl: ViewModifier {
         } else if opaqueControl {
             content.modifier(NativeGlassSurface(radius: radius, opaque: true))
         } else if #available(macOS 26, *) {
+            // The whole control answers the pointer, as its opaque form does (glass itself is not hit-tested).
             if systemStill || requestedStill {
                 content.foregroundStyle(.white).glassEffect(
                     .regular.tint(tint), in: RoundedRectangle(cornerRadius: radius))
+                    .contentShape(RoundedRectangle(cornerRadius: radius))
             } else {
                 content.foregroundStyle(.white).glassEffect(
                     .regular.tint(tint).interactive(), in: RoundedRectangle(cornerRadius: radius))
+                    .contentShape(RoundedRectangle(cornerRadius: radius))
             }
         } else {
             content.modifier(NativeGlassSurface(radius: radius))

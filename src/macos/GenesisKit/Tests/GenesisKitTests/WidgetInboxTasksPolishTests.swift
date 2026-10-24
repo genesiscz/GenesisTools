@@ -1201,6 +1201,50 @@ final class WidgetBubbleHitTests: XCTestCase {
         XCTAssertEqual(taps.count, 1, "a click on a bubble with no ring opens its session")
     }
 
+    /// Two rows on a glass panel with a gap between them, as the widget's hover list draws them.
+    struct GlassRows: View {
+        @ObservedObject var taps: Taps
+        var body: some View {
+            VStack(spacing: 24) {
+                RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.025)).frame(height: 40)
+                RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.025)).frame(height: 40)
+            }
+            .padding(16)
+            .frame(width: 200, height: 160, alignment: .top)
+            .nativeGlassSurface(in: RoundedRectangle(cornerRadius: 16), opaqueColor: Color(white: 0.09))
+            .environment(\.nativeSettingsTheme, .glass)
+            .onTapGesture { taps.count += 1 }
+        }
+    }
+
+    /// SwiftUI does not hit-test Liquid Glass itself, so a gap between rows on a glass panel was outside it: hover there
+    /// read as "the pointer left", and the widget's hover list closed under a scrolling pointer (Martin, 2026-10-24:
+    /// "it looks like the space between the session items is transparent for the focus"). The solid theme never had it.
+    func testTheGapBetweenRowsOnAGlassPanelIsPartOfThePanel() {
+        _ = NSApplication.shared
+        let taps = Taps()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 160), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.contentView = FirstClickHost(rootView: AnyView(GlassRows(taps: taps)))
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.order(.below, relativeTo: 0)
+        defer { window.orderOut(nil); window.close() }
+        pump(0.6)
+        // The gap: rows at 16...56 and 80...120 from the top, so 68 from the top is between them.
+        let point = NSPoint(x: 100, y: 160 - 68)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            NSApp.postEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1, pressure: 1)!, atStart: false)
+        }
+        pump(0.5)
+        XCTAssertEqual(taps.count, 1, "a click between two rows of a glass panel lands on the panel")
+    }
+
     private func pump(_ seconds: TimeInterval) {
         let deadline = Date().addingTimeInterval(seconds)
         while Date() < deadline {

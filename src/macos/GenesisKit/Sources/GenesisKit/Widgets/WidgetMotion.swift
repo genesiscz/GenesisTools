@@ -44,7 +44,8 @@ struct WidgetGlassControl: ViewModifier {
         if systemOpaque || requestedOpaque {
             content.background(Color(white: 0.16), in: Capsule())
         } else if #available(macOS 26.0, *) {
-            content.glassEffect(.regular.tint(.black.opacity(0.4)).interactive(), in: Capsule())
+            // Glass is not hit-tested; the capsule is, as the opaque form's fill is.
+            content.glassEffect(.regular.tint(.black.opacity(0.4)).interactive(), in: Capsule()).contentShape(Capsule())
         } else {
             content.background(.ultraThinMaterial, in: Capsule())
         }
