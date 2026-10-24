@@ -1,9 +1,11 @@
 // The Decisions sidebar (`/decisions`, or the `decisions` chip in the band): every `❓ DECISION N` of this session,
 // as the answer MCP's decision log has it (`answers.ts`), grouped by what it waits for. A waiting one opens to its
-// prompt, its options as Buttons and a field for an answer in the person's own words: a press stages an answer (a
-// second press unstages), and [send] submits every staged answer as one message (`D16: a)` per line); [put in
-// prompt] leaves it in the prompt to edit first. [jump to] scrolls the transcript to where the decision was first
-// asked.
+// prompt, its options as Buttons and a field for an answer in the person's own words. A press stages the answer in
+// the decision store (`tools question inbox draft`; a second press unstages), so the widget shows the same pick, and a
+// pick made in the widget shows here. [send] sends the session's staged answers through its own prompt, the store
+// recording them as sent; [put in prompt] leaves them in the prompt to edit first. [jump to] scrolls the transcript to
+// where the decision was first asked. A decision the store cannot take (asked in the chat before the last reply) is
+// answered by putting `D16: a)` in the prompt.
 //
 // The session's own messages count too, so the sidebar works without the `tools` CLI and before the log has a new
 // decision: a first ask is a `❓ DECISION N` that is not a link (a repeat is `[❓ DECISION N](…)`), its options are
@@ -18,6 +20,8 @@ import {
     findAskRows,
     jumpTo,
     refreshAnswers,
+    sendStaged,
+    stageAnswer,
     startAnswers,
 } from "./answers";
 import { liveAgo } from "./live";
@@ -30,19 +34,19 @@ import {
     listRow,
     type Pressable,
     plural,
+    pressed,
     sectionTitle,
     sidebarFrame,
     wrapWords,
 } from "./sidebar";
 
 export const DECISIONS_PANE = "genesis-decisions";
-let staged: StagedDecisions = {};
 /** What the session's messages say: the decisions still open there, and the numbers a user message answered. */
 let chat: { open: OpenDecisions; answered: Set<number> } = { open: [], answered: new Set() };
 /** Rows opened or closed against `mods.decisions.expand`. */
 const flipped = new Set<number>();
-/** What each decision's own-answer field holds, so a redraw or a press elsewhere keeps the typed text. */
-const drafts = new Map<number, string>();
+/** What each answer field holds before Enter stages it, so a redraw or a press elsewhere keeps the typed text. */
+const typed = new Map<number, string>();
 
 const ASK = /(^|[^[])❓\s*\**\s*DECISION\s+(\d+)\**\s*[:.]?\s*(.*)$/;
 const OPTION = /^\s*(?:[-*]\s+)?\**\(?([a-z])\)\**\s*(.+)$/;
@@ -173,7 +177,17 @@ export interface ShownDecision {
     recommended?: string;
     option?: string;
     answer?: string;
+    /** The staged answer the store holds (state `drafted`): picked letters and a note. */
+    draftOption?: string;
+    draft?: string;
     at?: number;
+}
+
+/** A staged answer in words: `b)`, `my words`, `b) my words`. */
+export function stagedText(decision: Pick<ShownDecision, "draftOption" | "draft">): string {
+    const letters = [...(decision.draftOption ?? "")].map((letter) => `${letter})`).join(" ");
+
+    return [letters, decision.draft?.trim() ?? ""].filter(Boolean).join(" ");
 }
 
 /**
@@ -215,12 +229,6 @@ function currentDecisions(): ShownDecision[] {
 
 async function readChat(host: Host): Promise<void> {
     chat = chatDecisions(await host.messages());
-    const numbers = new Set(
-        currentDecisions()
-            .filter(isWaiting)
-            .map((decision) => String(decision.n))
-    );
-    staged = Object.fromEntries(Object.entries(staged).filter(([n]) => numbers.has(n)));
     host.redraw();
     await findAskRows(
         host,
@@ -324,7 +332,7 @@ function tailOf(decision: ShownDecision): { text: string; color?: string } {
         case "waiting":
             return { text: `waiting${ago}`, color: "yellow" };
         case "drafted":
-            return { text: `${picked}drafted${ago}`, color: "yellow" };
+            return { text: `staged ${stagedText(decision)}`, color: "cyan" };
         case "chat-answered":
             return { text: "answered in chat", color: "green" };
         case "answered":
@@ -350,44 +358,72 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
     const list = currentDecisions();
     const read = answersOf();
     const waiting = list.filter(isWaiting).length;
-    const message = stagedMessage(staged);
+    const staged = list.filter((decision) => decision.status === "drafted");
+    const message = stagedMessage(
+        Object.fromEntries(staged.map((decision) => [String(decision.n), stagedText(decision)]))
+    );
     const width = Math.max(10, kit.columns - 4);
     const isOpen = (decision: ShownDecision) => {
         const byDefault = settings.expand === "all" || (settings.expand === "waiting" && isWaiting(decision));
 
         return flipped.has(decision.n) ? !byDefault : byDefault;
     };
-    /** An option toggles; the own-answer field stages its text, or unstages when Enter finds it empty. */
-    const stage = (n: number, answer: string, how: "option" | "own") => {
-        const key = String(n);
-        const next = { ...staged };
+    /**
+     * Stages in the decision store: an option toggles, the answer field stores its text (Enter on an empty field
+     * clears it). A decision the store cannot take gets its answer put in the prompt instead.
+     */
+    const stage = async (decision: ShownDecision, answer: { option?: string; text?: string }, key: string) => {
+        await pressed(host, key, "Staging in the decision log…", "busy");
+        const done = await stageAnswer(host, decision.n, answer);
+        const words = answer.option ? `${answer.option})` : (answer.text ?? "");
 
-        if (!answer || (how === "option" && next[key] === answer)) {
-            delete next[key];
-        } else {
-            next[key] = answer;
+        if (!done.error) {
+            await pressed(host, key, words ? `Staged ${words}; the widget shows it too.` : "Unstaged.");
+            return;
         }
 
-        staged = next;
-        host.redraw();
-        void logMod(host, "decisions", { event: "stage", n, answer, how });
+        if (/not waiting/.test(done.error) && words) {
+            await host.fill({ text: `D${decision.n}: ${words}\n`, mode: "append" });
+            await pressed(
+                host,
+                key,
+                `The decision log does not have DECISION ${decision.n}; "D${decision.n}: ${words}" is in the prompt instead.`
+            );
+            return;
+        }
+
+        await pressed(host, key, `Not staged: ${done.error}`, "error");
     };
     const send = async (how: "send" | "fill") => {
         if (!message) {
             return;
         }
 
-        await logMod(host, "decisions", { event: how, message });
-
-        if (how === "send") {
-            await host.submit(message);
-        } else {
+        if (how === "fill") {
             await host.fill({ text: message, mode: "replace" });
+            await pressed(
+                host,
+                "decisions-fill",
+                "In the prompt; the answers stay staged until the agent records them."
+            );
+            return;
         }
 
-        staged = {};
-        drafts.clear();
-        host.redraw();
+        await pressed(host, "decisions-send", "Sending…", "busy");
+        const sent = await sendStaged(host);
+
+        if (sent.error || !sent.text) {
+            await pressed(host, "decisions-send", `Not sent: ${sent.error ?? "nothing staged"}`, "error");
+            return;
+        }
+
+        await host.submit(sent.text);
+        typed.clear();
+        await pressed(
+            host,
+            "decisions-send",
+            `Sent ${plural(sent.numbers?.length ?? 0, "answer")}; the decision log marks them sent.`
+        );
     };
 
     /**
@@ -399,9 +435,9 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
             return null;
         }
 
-        const draft = drafts.get(decision.n) ?? "";
-        const stagedHere = staged[String(decision.n)];
-        const isOwnStaged = stagedHere !== undefined && stagedHere !== "" && stagedHere === draft;
+        const stored = decision.draft ?? "";
+        const draft = typed.get(decision.n) ?? stored;
+        const isOwnStaged = stored !== "" && stored === draft;
         // Only for the status bar's line while the field has focus; Enter is the field's own.
         kit.pressables?.push({
             key: `d${decision.n}-own`,
@@ -424,11 +460,11 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                     placeholder="your own answer, Enter stages it"
                     submitLabel={isOwnStaged ? "staged" : "stage"}
                     onInput={(value: string) => {
-                        drafts.set(decision.n, value);
+                        typed.set(decision.n, value);
                     }}
                     onSubmit={(value: string) => {
-                        drafts.set(decision.n, value.trim());
-                        stage(decision.n, value.trim(), "own");
+                        typed.set(decision.n, value.trim());
+                        void stage(decision, { text: value.trim() }, `d${decision.n}-own`);
                     }}
                 />
             </Box>
@@ -446,13 +482,15 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
 
         return (
             <Box key={`${key}-body`} flexDirection="column" marginLeft={2} marginBottom={1}>
-                {wrapWords(decision.prompt, width, 4).map((text, index) => (
-                    <Text key={`${key}-p${index}`} dimColor wrap="truncate-end">
-                        {text}
-                    </Text>
-                ))}
+                {wrapWords(decision.prompt.trim() === decision.title.trim() ? "" : decision.prompt, width, 4).map(
+                    (text, index) => (
+                        <Text key={`${key}-p${index}`} dimColor wrap="truncate-end">
+                            {text}
+                        </Text>
+                    )
+                )}
                 {decision.options.map((option) => {
-                    const isStaged = staged[String(decision.n)] === `${option.letter})`;
+                    const isStaged = (decision.draftOption ?? "").includes(option.letter);
                     const isPicked = decision.option === option.letter;
                     const mark = isStaged ? "● " : isPicked ? "✓ " : "  ";
                     const star = decision.recommended === option.letter ? " (recommended)" : "";
@@ -473,7 +511,12 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                         hint: isStaged
                             ? `Unstages ${option.letter}) for DECISION ${decision.n}.`
                             : `Stages ${option.letter}) as the answer to DECISION ${decision.n}; [send] sends every staged answer.`,
-                        onPress: () => stage(decision.n, `${option.letter})`, "option"),
+                        onPress: () =>
+                            void stage(
+                                decision,
+                                { option: isStaged ? "" : option.letter },
+                                `d${decision.n}-${option.letter}`
+                            ),
                     });
                 })}
                 {decision.answer ? <Text wrap="truncate-end">{`Answer: ${decision.answer}`}</Text> : null}
@@ -521,10 +564,7 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                         {sectionTitle(kit, group.title, `(${rows.length})`)}
                         {rows.map((decision) => {
                             const open = isOpen(decision);
-                            const pick = staged[String(decision.n)];
-                            const tail = pick
-                                ? { text: /^[a-z]\)$/.test(pick) ? `staged ${pick}` : `staged: ${pick}`, color: "cyan" }
-                                : tailOf(decision);
+                            const tail = tailOf(decision);
 
                             return (
                                 <Box key={`row-d${decision.n}`} flexDirection="column">
@@ -567,24 +607,25 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                             key: "decisions-send",
                             label: "send",
                             isPrimary: true,
-                            hint: "Sends every staged answer as one message, one line per decision.",
+                            hint: "Sends every staged answer as one message through this session's prompt; the decision log marks them sent.",
                             onPress: () => void send("send"),
                         },
                         {
                             key: "decisions-fill",
                             label: "put in prompt",
-                            hint: "Puts the staged answers in the prompt to edit before you send them.",
+                            hint: "Puts the staged answers in the prompt to edit; they stay staged until the agent records them.",
                             onPress: () => void send("fill"),
                         },
                         {
                             key: "decisions-clear",
                             label: "clear",
                             isDim: true,
-                            hint: "Unstages every answer and empties the answer fields.",
+                            hint: "Unstages every answer in the decision store and empties the answer fields.",
                             onPress: () => {
-                                staged = {};
-                                drafts.clear();
-                                host.redraw();
+                                typed.clear();
+                                void Promise.all(
+                                    staged.map((decision) => stageAnswer(host, decision.n, { option: "", text: "" }))
+                                ).then(() => pressed(host, "decisions-clear", "Unstaged every answer."));
                             },
                         },
                     ])}

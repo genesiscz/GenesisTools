@@ -333,8 +333,13 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .option("--resume-target <label>", "The resume dialog reopened the session here: wait for its pane, then type")
         .option("--wait-live <seconds>", "Wait up to this long for the session's pane to be live before typing")
         .option("--dry-run", "Print the message and the route; change nothing")
+        .option(
+            "--in-session",
+            "The session sends it itself: record the answers as sent through its prompt, type nothing, print the message to submit"
+        )
         .action(async (_flags: unknown, command: Command) => {
-            const flags: AnswerFlags & { resumeTarget?: string; waitLive?: string } = command.optsWithGlobals();
+            const flags: AnswerFlags & { resumeTarget?: string; waitLive?: string; inSession?: boolean } =
+                command.optsWithGlobals();
 
             try {
                 if (!flags.session) {
@@ -352,6 +357,7 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                                 ? { waitLiveMs: Math.round(waitSeconds * 1000) }
                                 : {}),
                             dryRun: flags.dryRun === true,
+                            ...(flags.inSession ? { inSession: true } : {}),
                         },
                         storeDeps()
                     )

@@ -34,6 +34,9 @@ export interface LoggedDecision {
     /** The letter picked, and the answer in words. */
     option?: string;
     answer?: string;
+    /** A staged answer not sent yet (state `drafted`): the picked letters and a note. The store owns staging. */
+    draftOption?: string;
+    draft?: string;
     at: number;
 }
 
@@ -87,7 +90,8 @@ const STATUSES: ReadonlySet<string> = new Set<DecisionStatus>([
     "superseded",
 ]);
 const TAGS: ReadonlySet<string> = new Set<LoggedEntry["tag"]>(["question", "action", "directive", "message"]);
-const TICK_MS = 30_000;
+/** How often the files behind the items are checked; the CLI runs only when one changed. */
+const TICK_MS = 10_000;
 /** A tool call more than this before its entry did not record it. */
 const ENTRY_WINDOW_MS = 10 * 60_000;
 const FIRST_ASK = /(^|[^[])❓\s*\**\s*DECISION\s+(\d+)/gm;
@@ -178,6 +182,8 @@ export function answersFrom(stdout: string, at = Date.now()): SessionAnswers | u
                 ...(text(item.recommended) ? { recommended: text(item.recommended) } : {}),
                 ...(text(item.option) ? { option: text(item.option) } : {}),
                 ...(text(item.answer) ? { answer: text(item.answer) } : {}),
+                ...(text(item.draftOption) ? { draftOption: text(item.draftOption) } : {}),
+                ...(text(item.draft) ? { draft: text(item.draft) } : {}),
                 at: timeOf(item.at),
             };
         }),
@@ -491,4 +497,100 @@ export async function jumpTo(host: Host, key: string, target: { decision: number
     await pressed(host, key, `Not drawn here (${reason}); searching the transcript…`, "busy");
     await host.openUrl(link);
     await pressed(host, key, `Opened the transcript search at ${what}. q or Esc leaves it.`);
+}
+
+/** What a store command answered: its JSON, or the error it printed. */
+async function questionCommand(host: Host, args: readonly string[]): Promise<Record<string, unknown>> {
+    if (!(await genesisProbe(host)).tools) {
+        return { error: "the tools CLI is not installed" };
+    }
+
+    const session = await host.sessionId();
+    const done = await host
+        .run(["tools", "question", "inbox", "--session", session, ...args], { timeoutMs: 20_000 })
+        .catch((error: unknown) => ({ exitCode: -1, stdout: "", stderr: String(error) }));
+    let parsed: unknown;
+
+    try {
+        parsed = JSON.parse(done.stdout);
+    } catch {
+        parsed = undefined;
+    }
+
+    if (!isRecord(parsed)) {
+        return { error: done.stderr.trim().split("\n").at(-1) || `tools question exited ${done.exitCode}` };
+    }
+
+    return parsed;
+}
+
+/**
+ * Stages an answer in the decision store, where the widget sees it too: `option` the picked letter ("" clears it),
+ * `text` a note in words ("" clears it). The sidebar shows the store's answer at once, then reads everything again.
+ * A decision the store does not know and cannot take from the last reply answers `{ error }`.
+ */
+export async function stageAnswer(
+    host: Host,
+    n: number,
+    answer: { option?: string; text?: string }
+): Promise<{ error?: string }> {
+    const args = ["draft", "--decision", String(n)];
+
+    if (answer.option !== undefined) {
+        args.push("--option", answer.option);
+    }
+
+    if (answer.text !== undefined) {
+        args.push("--text", answer.text);
+    }
+
+    const row = await questionCommand(host, args);
+    await logMod(host, "decisions", { event: "stage", n, ...answer, error: row.error });
+
+    if (typeof row.error === "string") {
+        return { error: row.error };
+    }
+
+    if (held) {
+        const draftOption = text(row.draftOption);
+        const draft = text(row.draft);
+        const state = text(row.state);
+        held = {
+            ...held,
+            decisions: held.decisions.map((decision) =>
+                decision.n === n
+                    ? {
+                          ...decision,
+                          status: isStatus(state) ? state : decision.status,
+                          draftOption: draftOption || undefined,
+                          draft: draft || undefined,
+                      }
+                    : decision
+            ),
+        };
+        host.redraw();
+    }
+
+    void refreshAnswers(host, "stage", true);
+
+    return {};
+}
+
+/**
+ * Sends the session's staged answers through its own prompt: the store marks them sent (route `prompt`) and gives
+ * the message, which the caller submits. Nothing is typed into the terminal, so a sidebar holding the keys is safe.
+ */
+export async function sendStaged(host: Host): Promise<{ text?: string; numbers?: number[]; error?: string }> {
+    const sent = await questionCommand(host, ["send", "--in-session"]);
+    await logMod(host, "decisions", { event: "send", promoted: sent.promoted, error: sent.error });
+    void refreshAnswers(host, "send", true);
+
+    if (typeof sent.error === "string") {
+        return { error: sent.error };
+    }
+
+    return {
+        text: text(sent.text),
+        numbers: Array.isArray(sent.numbers) ? sent.numbers.filter((n): n is number => typeof n === "number") : [],
+    };
 }

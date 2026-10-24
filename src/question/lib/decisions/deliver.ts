@@ -43,7 +43,8 @@ const { log } = logger.scoped("question-deliver");
  * How the answers reach the agent: typed into its cmux pane, steered into its Codex worker, sent
  * as the first prompt of a resumed session, or left for its next prompt.
  */
-export type DeliveryChannel = "cmux" | "codex" | "claude-peer" | "resume" | "queued";
+/** `prompt`: the session sent the answers itself, through its own prompt (the mods Decisions sidebar). */
+export type DeliveryChannel = "cmux" | "codex" | "claude-peer" | "resume" | "queued" | "prompt";
 
 export interface DeliveryResult {
     channel: DeliveryChannel;

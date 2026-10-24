@@ -161,6 +161,8 @@ export interface SendDraftsInput {
     recordResumeTarget?: string;
     /** How long to wait for a live pane before typing (a just-resumed session boots for a few seconds). */
     waitLiveMs?: number;
+    /** The session submits the message itself; see `sendAnsweredDecisions` `inSession`. */
+    inSession?: boolean;
 }
 
 /** Polled once a second while waiting for a resumed session's pane; the deadline is a count, not a clock. */
@@ -256,6 +258,7 @@ export async function sendDrafts(
     const result = await sendAnsweredDecisions({
         session: input.session,
         ...(input.provider ? { provider: input.provider } : {}),
+        ...(input.inSession ? { inSession: true } : {}),
         files: deps,
         ...(deps.deliver ? { deps: deps.deliver } : {}),
     });

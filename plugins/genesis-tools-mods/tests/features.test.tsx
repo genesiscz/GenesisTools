@@ -20,7 +20,7 @@ import {
     sessionCheckouts,
     writtenFiles,
 } from "../hooks/checkouts";
-import { chatDecisions, openDecisions, shownDecisions, stagedMessage } from "../hooks/decisions";
+import { chatDecisions, openDecisions, shownDecisions, stagedMessage, stagedText } from "../hooks/decisions";
 import { forgetGenesisProbe, type GenesisProbe, genesisProbe, probeOf } from "../hooks/genesis";
 import {
     checkCounts,
@@ -100,6 +100,15 @@ test("decisions sidebar: the log's states, chat asks the log lacks, and a chat a
                     at: "2026-03-01T10:00:00.000Z",
                 },
                 { number: 1, title: "Old", prompt: "", status: "implemented", choices: [], option: "b", at: "x" },
+                {
+                    number: 4,
+                    title: "Staged",
+                    prompt: "",
+                    status: "drafted",
+                    choices: [],
+                    draftOption: "b",
+                    draft: "and why",
+                },
                 { number: 3, title: "Odd", prompt: "", status: "no-such-state", choices: [] },
             ],
             todos: [{ number: 1, title: "Rename the flag", state: "open", at: "2026-03-01T09:00:00.000Z" }],
@@ -125,9 +134,14 @@ test("decisions sidebar: the log's states, chat asks the log lacks, and a chat a
     expect(logged?.decisions.map((d) => [d.n, d.status, d.options.map((o) => o.text)])).toEqual([
         [2, "waiting", ["keep it", "drop it"]],
         [1, "implemented", []],
+        [4, "drafted", []],
         [3, "waiting", []],
     ]);
     expect(logged?.decisions[1]?.at).toBe(0);
+    // The store owns staging: a drafted decision carries its pick and note, and reads as one answer.
+    expect(stagedText(logged?.decisions[2] ?? {})).toBe("b) and why");
+    expect(stagedText({ draft: "own words" })).toBe("own words");
+    expect(stagedText({})).toBe("");
     // Newest entry first; an entry nobody read is new; image attachments keep their paths.
     expect(logged?.entries.map((e) => [e.id, e.isUnread, e.images])).toEqual([
         ["e2", true, ["/tmp/shot.png"]],
@@ -145,9 +159,10 @@ test("decisions sidebar: the log's states, chat asks the log lacks, and a chat a
         [1, "implemented"],
         [2, "chat-answered"],
         [3, "waiting"],
+        [4, "drafted"],
         [5, "waiting"],
     ]);
-    expect(shown[3]?.options.map((o) => o.letter)).toEqual(["a", "b"]);
+    expect(shown[4]?.options.map((o) => o.letter)).toEqual(["a", "b"]);
 });
 
 test("jump to: a decision's first ask is its first unlinked ask in the transcript; an entry's row is the call before it", async () => {

@@ -44,6 +44,7 @@ export async function sendAnsweredDecisions({
     deliveryKey,
     ids,
     dryRun = false,
+    inSession = false,
     files = decisionFiles(),
     deps = {},
 }: {
@@ -53,6 +54,11 @@ export async function sendAnsweredDecisions({
     deliveryKey?: string;
     ids?: readonly string[];
     dryRun?: boolean;
+    /**
+     * The session delivers the message itself, through its own prompt (the mods Decisions sidebar): nothing is
+     * typed, the answers are recorded as sent through `prompt`, and the caller submits the returned `text`.
+     */
+    inSession?: boolean;
     files?: { file: string; events: string };
     deps?: DeliverDeps;
 }): Promise<SendResult> {
@@ -87,6 +93,12 @@ export async function sendAnsweredDecisions({
             emit: async (text, numbers) => {
                 delivery.text = text;
                 delivery.numbers = numbers;
+
+                if (inSession) {
+                    delivery.route = { channel: "prompt", delivered: true, target: "the session's own prompt" };
+                    return;
+                }
+
                 const route = await deliverToSession(
                     { session, provider: provider ?? undefined, sourceHome, text, deliveryKey },
                     deps

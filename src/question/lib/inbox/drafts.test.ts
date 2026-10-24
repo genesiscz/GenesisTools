@@ -101,6 +101,41 @@ describe("dismissDecision", () => {
 });
 
 describe("sendDrafts", () => {
+    test("in session: the drafts become sent through the prompt, nothing is typed, and the message comes back", async () => {
+        const { file, events } = scratch();
+        await postDecisions(file, events, {
+            sessionId: "s",
+            decisions: [
+                { prompt: "One?", options: ["a1", "b1"] },
+                { prompt: "Two?", options: ["a2", "b2"] },
+            ],
+        });
+        const deps = { file, events, block: async () => null };
+        await draftDecision({ session: "s", number: 1, option: "a" }, deps);
+        await draftDecision({ session: "s", number: 2, text: "my own words" }, deps);
+
+        const result = await sendDrafts(
+            { session: "s", provider: "claude", inSession: true },
+            {
+                ...deps,
+                deliver: {
+                    runTool: async () => {
+                        throw new Error("an in-session send must type nothing");
+                    },
+                },
+            }
+        );
+
+        expect(result.promoted).toEqual([1, 2]);
+        expect(result.channel).toBe("prompt");
+        expect(result.text).toBe("DECISION 1: a) a1\nDECISION 2: my own words");
+        const rows = readDecisions(file);
+        expect(rows.map((row) => [row.state, row.delivery?.route])).toEqual([
+            ["sent", "prompt"],
+            ["sent", "prompt"],
+        ]);
+    });
+
     test("promotes every drafted answer and delivers them as one message", async () => {
         const { file, events } = scratch();
         await postDecisions(file, events, {
