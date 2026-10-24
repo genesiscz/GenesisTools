@@ -249,3 +249,9 @@ checklist.md or motion.md as well.
   `preparing` event that the controls show as "Preparing" with the reason, a dashed outline around the target from the
   first moment, Discard answered in under a second. Rule: a start that can be slow says why, stays cancellable, and
   shows what was chosen at once; never test a native flow only on a warm build (plant a one-line source change).
+- 2026-10-24 15:51 — **"2 decisions were sent to 1 session" when nothing arrived.** The session ran in two Claude
+  processes (one resumed twice in cmux); delivery refused to pick a receiver and queued the answers, and the widget
+  counted every non-failure as sent. Fix: the receiver whose registry entry moved last, by 10 minutes or more, gets
+  the answers; a send no receiver took says "Not delivered to <session>: <reason>" with a Send again button, for
+  every kind of agent (`resend-answers`). Rule: a send reports what the receiver confirmed, never what was attempted,
+  and every not-delivered result offers the retry in place.

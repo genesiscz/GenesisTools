@@ -1018,6 +1018,41 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertEqual(WidgetModel.stagedSummary(model.stagedItems), "1 decision will be sent to 1 session")
     }
 
+    func testASendNoSessionTookSaysWhyAndSendAgainDeliversIt() async throws {
+        let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
+        let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
+            defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
+                notificationNamespace: "staging." + UUID().uuidString, observeExternalChanges: false))
+        defer { model.stop() }
+        var actions: [WidgetJSON] = []
+        let reason = "2 Claude terminals run this session (pid 41, pid 42), active within 10 minutes of each other; none was picked."
+        model.actionRunner = { value in
+            actions.append(value)
+            guard case .object(let fields) = value, fields["action"] == .string("send-staged") else {
+                return ["sent": 1, "queued": 0, "failed": 0, "sessions": [["session": "fixture-staged",
+                    "numbers": [7], "result": ["delivered": true, "detail": "codex worker w1"]]]]
+            }
+            return ["sent": 0, "queued": 1, "failed": 0, "sessions": [["session": "fixture-staged", "numbers": [7],
+                "result": ["delivered": false, "detail": .string(reason)]]]]
+        }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+
+        model.sendStaged(["d1"])
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.notice, "Not delivered to Staged fixture: \(reason) The answers wait for its next prompt.")
+        let again = try XCTUnwrap(model.noticeAction, "a send nobody took offers Send again")
+        XCTAssertEqual(again.title, "Send again")
+
+        again.run()
+        try await Task.sleep(for: .milliseconds(200))
+        guard case .object(let resend) = try XCTUnwrap(actions.last) else { return XCTFail("not an object") }
+        XCTAssertEqual(resend["action"], .string("resend-answers"))
+        XCTAssertEqual(resend["ids"], .array(["d1"]))
+        XCTAssertEqual(model.notice, "1 decision delivered.")
+        XCTAssertNil(model.noticeAction, "a delivered send leaves no button")
+    }
+
     func testKeepingStagedDecisionsDoesNotAskAgainForTheSameOnes() throws {
         let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
         let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,

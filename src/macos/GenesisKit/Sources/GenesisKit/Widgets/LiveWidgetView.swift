@@ -120,9 +120,16 @@ public struct LiveWidgetView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             if let notice = model.notice {
-                HStack {
+                HStack(alignment: .top) {
                     Text(notice).font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                     Spacer()
+                    if let action = model.noticeAction {
+                        Button(action.title) { action.run() }
+                            .buttonStyle(.genHover())
+                            .controlSize(.small)
+                            .accessibilityIdentifier("widget.notice.action")
+                    }
                     IconButton(systemName: "xmark", tooltip: "Dismiss this note") { model.notice = nil }
                 }
             }

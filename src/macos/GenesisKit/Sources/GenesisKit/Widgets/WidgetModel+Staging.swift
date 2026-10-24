@@ -85,7 +85,7 @@ extension WidgetModel {
     }
 
     /// "3 decisions will be sent to 2 sessions".
-    public static func stagedSummary(_ items: [WidgetInboxItem], future: Bool = true) -> String {
+    nonisolated public static func stagedSummary(_ items: [WidgetInboxItem], future: Bool = true) -> String {
         let sessions = Set(items.map(\.key)).count
         let verb = future ? "will be sent" : (items.count == 1 ? "was sent" : "were sent")
         return Plural.count(items.count, "decision") + " \(verb) to " + Plural.count(sessions, "session")
@@ -95,27 +95,44 @@ extension WidgetModel {
     public func sendStaged(_ ids: [String]) {
         let chosen = stagedItems.filter { ids.contains($0.sourceId) }
         guard !chosen.isEmpty else { return }
+        deliverDecisions(chosen, action: "send-staged")
+    }
+
+    /// Sends again answered decisions that no session took (the notice's Send again), for every kind of agent.
+    public func resendAnswers(_ items: [WidgetInboxItem]) {
+        guard !items.isEmpty else { return }
+        notice = "Sending again…"
+        deliverDecisions(items, action: "resend-answers")
+    }
+
+    /// One message per session through the hub, then a notice that says what really happened: delivered, waiting
+    /// for the session's next prompt (with why, and Send again), or not sent at all.
+    private func deliverDecisions(_ items: [WidgetInboxItem], action: String) {
         var targets: [String: WidgetJSON] = [:]
-        for item in chosen {
-            guard let target = session(forKey: item.key)?.target else { continue }
+        var titles: [String: String] = [:]
+        for item in items {
+            guard let session = session(forKey: item.key) else { continue }
+            let target = session.target
             var fields: [String: WidgetJSON] = ["provider": .string(target.provider)]
             if !target.sourceHome.isEmpty { fields["sourceHome"] = .string(target.sourceHome) }
             if !target.cwd.isEmpty { fields["cwd"] = .string(target.cwd) }
             targets[target.sessionId] = .object(fields)
+            titles[target.sessionId] = session.title
         }
-        let summary = Self.stagedSummary(chosen, future: false)
         Task {
             do {
                 let result = try await call([
-                    "action": "send-staged", "ids": .array(chosen.map { .string($0.sourceId) }), "targets": .object(targets),
+                    "action": .string(action), "ids": .array(items.map { .string($0.sourceId) }),
+                    "targets": .object(targets),
                 ])
-                guard case .object(let fields) = result, case .number(let failed) = fields["failed"] else {
-                    notice = summary + "."
-                    return
+                let outcome = WidgetDecisionSendOutcome(result, titles: titles)
+                notice = outcome.notice(items: items, staged: action == "send-staged")
+                let waiting = items.filter { item in
+                    session(forKey: item.key).map { outcome.queuedSessions.contains($0.target.sessionId) } ?? false
                 }
-                notice = failed > 0
-                    ? "\(Int(failed)) staged \(failed == 1 ? "decision" : "decisions") could not be sent and stay staged."
-                    : summary + "."
+                if !waiting.isEmpty {
+                    noticeAction = WidgetNoticeAction(title: "Send again") { [weak self] in self?.resendAnswers(waiting) }
+                }
             } catch { report(error) }
         }
     }
@@ -163,5 +180,58 @@ extension WidgetModel {
         }
         stagedView = nil
         collapse()
+    }
+}
+
+/// A button beside the widget's notice line.
+public struct WidgetNoticeAction {
+    public let title: String
+    public let run: @MainActor () -> Void
+
+    public init(title: String, run: @escaping @MainActor () -> Void) {
+        self.title = title
+        self.run = run
+    }
+}
+
+/// What a decision send did, read from the hub's answer: how many went out, waited or failed, and why a session
+/// took nothing.
+struct WidgetDecisionSendOutcome {
+    var sent = 0
+    var queued = 0
+    var failed = 0
+    /// Session ids whose answers no receiver took, with the hub's one-line reason and the session's title.
+    var waiting: [(session: String, title: String, reason: String)] = []
+
+    var queuedSessions: Set<String> { Set(waiting.map(\.session)) }
+
+    init(_ result: WidgetJSON, titles: [String: String]) {
+        guard case .object(let fields) = result else { return }
+        if case .number(let value) = fields["sent"] { sent = Int(value) }
+        if case .number(let value) = fields["queued"] { queued = Int(value) }
+        if case .number(let value) = fields["failed"] { failed = Int(value) }
+        guard case .array(let sessions) = fields["sessions"] else { return }
+        for case .object(let entry) in sessions {
+            guard case .string(let session) = entry["session"], case .object(let answer) = entry["result"],
+                  answer["delivered"] != .bool(true) else { continue }
+            var reason = "No live receiver took them."
+            if case .string(let detail) = answer["detail"], !detail.isEmpty { reason = detail }
+            waiting.append((session, titles[session] ?? "the session", reason))
+        }
+    }
+
+    /// The notice line: a plain summary when everything went out, else what did not and why.
+    func notice(items: [WidgetInboxItem], staged: Bool) -> String {
+        var parts: [String] = []
+        if sent > 0 { parts.append(Plural.count(sent, "decision") + " delivered.") }
+        if let first = waiting.first {
+            let reason = first.reason.hasSuffix(".") ? first.reason : first.reason + "."
+            let place = waiting.count == 1 ? first.title : Plural.count(waiting.count, "session")
+            parts.append("Not delivered to \(place): \(reason) The answers wait for its next prompt.")
+        }
+        if failed > 0 {
+            parts.append("\(Plural.count(failed, "decision")) could not be sent" + (staged ? " and stay staged." : "."))
+        }
+        return parts.isEmpty ? WidgetModel.stagedSummary(items, future: false) + "." : parts.joined(separator: " ")
     }
 }

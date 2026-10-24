@@ -163,7 +163,12 @@ public final class WidgetModel: ObservableObject {
     public var openDestination: ((WidgetSession, String, String?) -> Void)?
     /// Called with each preference patch once the hub has stored it.
     public var preferencesSaved: (([String: WidgetJSON]) -> Void)?
-    @Published public var notice: String?
+    /// One line under the header; a new line drops the button the old one had.
+    @Published public var notice: String? {
+        didSet { if notice != oldValue { noticeAction = nil } }
+    }
+    /// A button beside `notice`: "Send again" after a send no session took.
+    @Published public var noticeAction: WidgetNoticeAction?
     public private(set) var openedAt: TimeInterval = 0
     public let bridge: ToolsBridge
     public let appearance: NativeSettingsAppearance
