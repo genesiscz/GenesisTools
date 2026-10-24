@@ -419,7 +419,7 @@ describe("sessionDecisions", () => {
 });
 
 describe("loadSessionInbox", () => {
-    test("one session's decisions, todos by number, its entries and the forms it posted, from one read of the log", async () => {
+    test("one session's decisions, todos by number, its entries and its pending forms, from one read of the log", async () => {
         const row = (overrides: Partial<DecisionRecord>): DecisionRecord => ({
             id: "d_1_s-alpha",
             sessionId: "s-alpha",
@@ -444,11 +444,7 @@ describe("loadSessionInbox", () => {
                 reads++;
                 return rows;
             },
-            forms: () => [
-                form({ id: "ask_mine", sessionHint: "s-alpha" }),
-                form({ id: "ask_answered", sessionHint: "s-alpha", status: "answered" }),
-                form({ id: "ask_other", sessionHint: "s-beta" }),
-            ],
+            forms: (session) => (session === "s-alpha" ? [form({ id: "ask_mine", sessionHint: "s-alpha" })] : []),
             entries: (session) => {
                 entriesOf.push(session);
                 return [];

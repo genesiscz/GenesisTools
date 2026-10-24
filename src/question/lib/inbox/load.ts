@@ -22,6 +22,7 @@ import {
     readDecisions,
 } from "../decisions/store";
 import { listPendingForms } from "../pending/ask";
+import { listFormsSnapshot } from "../pending/store";
 import type { AskForm } from "../pending/types";
 import { type QaRow, queryEntriesSnapshot } from "../read-model";
 import {
@@ -227,13 +228,13 @@ export interface SessionInbox {
 
 /**
  * One session's decisions in every state, its todos, its newest Q→A entries and its pending forms, from one read of
- * the decision log. A form belongs to the session that posted it (`sessionHint`, else its poster).
+ * the decision log. Reads only: the forms come from a read snapshot filtered in SQL, so no form is expired here.
  */
 export async function loadSessionInbox(
     session: string,
     {
         rows = realInboxDeps.rows,
-        forms = realInboxDeps.forms,
+        forms = (id: string) => listFormsSnapshot({ opts: { sessionHint: id, status: "pending" } }),
         entries = (id: string) =>
             queryEntriesSnapshot({
                 dbPath: toolDataDir("question", "qa.db"),
@@ -242,7 +243,7 @@ export async function loadSessionInbox(
         decisions = (id: string, stored: DecisionRecord[]) => loadSessionDecisions(id, { rows: () => stored }),
     }: {
         rows?: () => DecisionRecord[];
-        forms?: () => AskForm[];
+        forms?: (session: string) => AskForm[];
         entries?: (session: string) => QaRow[];
         decisions?: (session: string, stored: DecisionRecord[]) => Promise<InboxDecision[]>;
     } = {}
@@ -258,9 +259,7 @@ export async function loadSessionInbox(
             at: row.updatedTs,
         }))
         .sort((a, b) => a.number - b.number);
-    const waiting = forms()
-        .filter((form) => form.status === "pending" && (form.sessionHint ?? form.poster?.sessionId) === session)
-        .map(inboxForm);
+    const waiting = forms(session).map(inboxForm);
 
     return {
         sessionId: session,
