@@ -135,6 +135,8 @@ public final class WidgetModel: ObservableObject {
     public var presentationChanged: (() -> Void)?
     /// The pointer entered or left an edge panel, before any hover delay.
     public var pointerChanged: ((WidgetSurfaceID, Bool) -> Void)?
+    /// SwiftUI's own hover of a panel, for the log only (the coordinator names what is under the pointer).
+    public var swiftUIHoverChanged: ((WidgetSurfaceID, Bool) -> Void)?
     public var showSettings: (() -> Void)?
     /// Opens Settings at a page, or at a card on it (`widgets.sessions#inbox-preview`), which then pulses.
     public var showSettingsPage: ((String) -> Void)?

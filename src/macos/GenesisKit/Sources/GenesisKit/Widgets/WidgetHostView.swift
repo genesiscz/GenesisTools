@@ -94,7 +94,8 @@ struct WidgetHostView: View {
         )
         .nativeSettingsAppearance(model.appearance)
         .widgetAccessibility(reduceMotion: model.reduceMotion, reduceTransparency: model.reduceTransparency)
-        .onHover { model.hover(surface, inside: $0) }
+        // The panel's window tracks the pointer (EdgePanelController.pointerChanged); this only logs a disagreement.
+        .onHover { model.swiftUIHoverChanged?(surface, $0) }
         .onChange(of: motion.pointerInside) { _, inside in
             if inside { warm = true }
         }

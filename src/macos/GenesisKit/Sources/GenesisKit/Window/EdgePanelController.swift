@@ -45,9 +45,16 @@ public extension EnvironmentValues {
 /// outline. The window itself changes size once per transition, so no frame of the motion re-lays out SwiftUI.
 private final class EdgePanelRootView: NSView {
     let maskLayer = CAShapeLayer()
+    /// The pointer entered or left the window, by geometry. SwiftUI's hover is a hit test, and it said "left" with the
+    /// pointer still on the panel when a scroll moved a part it does not count (the overlay scroller, an AppKit view)
+    /// under it, so the hover list closed under a scrolling pointer (Martin, 2026-10-24).
+    var pointerChanged: ((Bool) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        // Follows the bounds by itself (`inVisibleRect`); `activeAlways`, because the panel never activates the app.
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                       owner: self, userInfo: nil))
         wantsLayer = true
         maskLayer.fillColor = NSColor.black.cgColor
         // A standalone layer animates every property change by default; only the explicit path animation may move it.
@@ -58,6 +65,9 @@ private final class EdgePanelRootView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
 
     override var isFlipped: Bool { false }
+
+    override func mouseEntered(with event: NSEvent) { pointerChanged?(true) }
+    override func mouseExited(with event: NSEvent) { pointerChanged?(false) }
 
     var clipping = false {
         didSet {
@@ -202,6 +212,12 @@ public final class EdgePanelController<Content: View> {
 
     public func updateContent(@ViewBuilder _ content: () -> Content) {
         hosting.rootView = content()
+    }
+
+    /// The pointer entered (true) or left (false) the panel's window. The host's "pointer on the panel" signal.
+    public var pointerChanged: ((Bool) -> Void)? {
+        get { root.pointerChanged }
+        set { root.pointerChanged = newValue }
     }
 
     public func setCompactSize(_ size: CGSize) { compactSize = size }

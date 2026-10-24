@@ -175,6 +175,16 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             guard let motion = self?.panels[surface]?.motion, motion.pointerInside != inside else { return }
             motion.pointerInside = inside
         }
+        // SwiftUI's hover no longer moves the panel (the window's tracking area does); a disagreement is logged with
+        // what lies under the pointer, which is how a hover list that closed under a scroll gets explained.
+        model.swiftUIHoverChanged = { [weak self] surface, inside in
+            guard !inside, let self, let panel = self.panels[surface]?.panel, panel.isVisible else { return }
+            let point = NSEvent.mouseLocation
+            guard panel.frame.contains(point), let primary = NSScreen.screens.first?.frame else { return }
+            let cg = CGPoint(x: point.x, y: primary.maxY - point.y)
+            PerfLog.mark("widget.hover swiftui-left \(surface.key) pointer still on the panel; under it: "
+                + self.hitTestDescription(cgPoint: cg))
+        }
         model.showSettings = { [weak self] in self?.showSettings() }
         model.showSettingsPage = { [weak self] in self?.showSettings(pageID: $0) }
         model.showMedia = { [weak self] selection in self?.showMedia(selection) }
@@ -454,6 +464,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 controller.updateContent(content)
                 nextPanels[surface] = controller
             } else {
+                defer {
+                    nextPanels[surface]?.pointerChanged = { [weak self] inside in
+                        self?.model.hover(surface, inside: inside)
+                    }
+                }
                 nextPanels[surface] = EdgePanelController(
                     placement: surface.edge, screen: screen, compactSize: compact,
                     expandedSize: CGSize(width: top ? 432 : 476, height: 600),
