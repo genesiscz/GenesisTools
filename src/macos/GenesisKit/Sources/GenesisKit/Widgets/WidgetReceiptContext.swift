@@ -81,6 +81,7 @@ struct WidgetReceiptContextView: View {
             hasPrewarmed = true
             let requestID = UUID()
             loadingID = requestID
+            if context == nil { context = model.cachedReceiptContext(for: card) }
             loading = context == nil
             failure = nil
             defer {

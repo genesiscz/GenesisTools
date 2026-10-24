@@ -310,8 +310,41 @@ function rowToQaRow(r: Record<string, unknown>): QaRow {
     };
 }
 
+/**
+ * The newest `limit` entries of each session, from one read snapshot and one catch-up: the widget asks this for the
+ * sessions it keeps warm, where a snapshot per session cost about 5 ms each (16 sessions, 90 of 183 ms, 2026-10-24).
+ */
+export function queryEntriesOfSessionsSnapshot({
+    dbPath,
+    sessionIds,
+    limit,
+}: {
+    dbPath: string;
+    sessionIds: string[];
+    limit: number;
+}): QaRow[] {
+    if (sessionIds.length === 0) {
+        return [];
+    }
+
+    return withDatabaseReadSnapshot({
+        path: dbPath,
+        initialize: initializeReadModel,
+        read: (db) => {
+            catchUp(db);
+            return sessionIds.flatMap((sessionId) =>
+                selectEntries(db, { sessionId, limit, includeNewestUnread: true })
+            );
+        },
+    });
+}
+
 export function queryEntries(db: Database, opts: QueryOpts = {}): QaRow[] {
     catchUp(db, opts.logBase);
+    return selectEntries(db, opts);
+}
+
+function selectEntries(db: Database, opts: QueryOpts): QaRow[] {
     const where: string[] = ["superseded_by IS NULL"];
     const params: (string | number)[] = [];
     if (opts.project) {

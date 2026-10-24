@@ -103,7 +103,7 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
     private func openSession(_ key: String) { coordinator?.openSession(key) }
 
     /// `expand <edge> [group]`, `module <id> <edge> [group]`, `hover <edge> [group]`, `unhover <edge> [group]`,
-    /// `collapse`, `select <session key>`, `settings [page]`, `passive on|off` (expanded panels leave the keyboard with
+    /// `collapse`, `select <session key>`, `state`, `settings [page]`, `passive on|off` (expanded panels leave the keyboard with
     /// the app in front, for motion checks on the user's screen), `video` and `recorder …` (the screen recording). Staging only (NativeStaging); logged for the recording.
     private func runTestCommand(_ command: String) {
         guard let coordinator else { return }
@@ -130,6 +130,8 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
         case "session": if parts.count > 1, let target = surface(2) { model.toggleSession(parts[1], on: target) }
         case "collapse": model.collapse()
         case "select": if parts.count > 1 { model.select(parts[1]) }
+        // `state`: one app-perf.log line with the selection, whether it loads, its cards, the cache and the warm keys.
+        case "state": PerfLog.mark("widget.state " + model.selectionDescription)
         case "settings": coordinator.showSettings(pageID: parts.count > 1 ? parts[1] : "widgets.general")
         case "passive": coordinator.passivePanels = parts.count < 2 || parts[1] != "off"
         // `hittest <x> <y>` in CoreGraphics screen points: which view AppKit hands a click there to.

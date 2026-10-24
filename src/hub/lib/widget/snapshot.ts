@@ -7,7 +7,12 @@ import { INBOX_STALE_MS } from "@app/question/lib/inbox/build";
 import { renderFormAnswer } from "@app/question/lib/pending/render";
 import { listFormsSnapshot, PENDING_MIGRATIONS } from "@app/question/lib/pending/store";
 import type { AskForm, AskItem } from "@app/question/lib/pending/types";
-import { type QaRow, queryEntriesSnapshot, readQuestionSnapshot } from "@app/question/lib/read-model";
+import {
+    type QaRow,
+    queryEntriesOfSessionsSnapshot,
+    queryEntriesSnapshot,
+    readQuestionSnapshot,
+} from "@app/question/lib/read-model";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import {
     type ResolvedTranscript,
@@ -161,6 +166,8 @@ export interface WidgetSources {
     decisions(): DecisionRecord[];
     forms(session?: string): AskForm[];
     answers(session?: string): QaRow[];
+    /** The newest `limit` answers of each session in one read (the warm sessions); else `answers` per session. */
+    answersOf?(sessions: string[], limit: number): QaRow[];
     agents(refresh?: boolean): Promise<AgentsTree>;
     events?(ids: string[]): WidgetActivityEvent[];
     inboxData?(window: WidgetInboxWindow): WidgetInboxData;
@@ -548,6 +555,8 @@ export const realWidgetSources: WidgetSources = {
             // The notified answer can sit behind 80 newer read ones; opening it must still find its card.
             opts: sessionId ? { sessionId, limit: 80, includeNewestUnread: true } : { limit: 100 },
         }),
+    answersOf: (sessionIds, limit) =>
+        queryEntriesOfSessionsSnapshot({ dbPath: toolDataDir("question", "qa.db"), sessionIds, limit }),
     agents: (refresh) => widgetAgents({ refresh }),
     inboxData: readInboxData,
     events: (ids) => readWidgetDecisionEvents({ ids }),
@@ -740,6 +749,7 @@ export async function widgetSnapshot({
     sources = realWidgetSources,
     now = Date.now(),
     onImagesDeferred,
+    warm = 0,
 }: {
     root?: string;
     selectedKey?: string;
@@ -747,6 +757,11 @@ export async function widgetSnapshot({
     sources?: WidgetSources;
     /** The clock the inbox ages items against; tests pass a fixed one. */
     now?: number;
+    /**
+     * Up to this many other inbox sessions (waiting for an answer first, then unread, newest first) get their newest
+     * cards in the snapshot too, named in `warmKeys`, so the widget opens one of them with its cards at once.
+     */
+    warm?: number;
     /** This snapshot left card images unread (its read budget was spent); the watch loop takes another one. */
     onImagesDeferred?: () => void;
 }) {
@@ -1189,9 +1204,30 @@ export async function widgetSnapshot({
     const selected = selectedKey ? sessions.get(selectedKey) : undefined;
     const persistedTarget = selectedKey ? parseWidgetSessionKey(selectedKey) : undefined;
     const selectedId = selected?.target.sessionId ?? persistedTarget?.sessionId;
-    const [answers, forms] = await Promise.all([
+    // A switch to a session used to show "Loading this session's inbox…" until a snapshot named it, every time
+    // (Martin, 2026-10-24: "can't it just be cached and be prepared at all times"). The sessions that need you come
+    // along, so the hover list and the rail open them with their cards.
+    const warmKeys =
+        selectedKey && warm > 0 ? warmInboxKeys({ notifications, sessions, selectedKey, limit: warm }) : [];
+    const cardKeys = selectedKey ? new Set([selectedKey, ...warmKeys]) : undefined;
+    const warmIds = [...new Set(warmKeys.flatMap((key) => sessions.get(key)?.target.sessionId ?? []))].filter(
+        (id) => id !== selectedId
+    );
+    // The warm sessions read images from their own small budget, so the selected session's never wait for theirs.
+    const warmImageBudget = new ImageLiftBudget({ files: 2, paths: 32 });
+    const budgetFor = (key: string) => (key === selectedKey ? imageBudget : warmImageBudget);
+    const [answers, forms, warmAnswers, warmForms] = await Promise.all([
         selectedId ? read("answers", () => sources.answers(selectedId), []) : Promise.resolve(answerRoster),
         selectedId ? read("question timeline", () => sources.forms(selectedId), []) : Promise.resolve(waitingForms),
+        read(
+            "warm answers",
+            () =>
+                sources.answersOf
+                    ? sources.answersOf(warmIds, WARM_CARD_WINDOW)
+                    : warmIds.flatMap((id) => sources.answers(id)),
+            []
+        ),
+        read("warm questions", () => warmIds.flatMap((id) => sources.forms(id)), []),
     ]);
     for (const form of forms) {
         const id = form.sessionHint || form.id;
@@ -1212,13 +1248,21 @@ export async function widgetSnapshot({
         }
     }
     const cards: WidgetCard[] = [];
-    const formEntries = new Set(forms.flatMap((form) => (form.entryId ? [form.entryId] : [])));
-    for (const row of answers) {
+    const selectedAnswers = new Set(answers.map((row) => row.id));
+    const selectedForms = new Set(forms.map((form) => form.id));
+    const cardForms = [...forms, ...warmForms.filter((form) => !selectedForms.has(form.id))];
+    const formEntries = new Set(cardForms.flatMap((form) => (form.entryId ? [form.entryId] : [])));
+    for (const row of [...answers, ...warmAnswers.filter((entry) => !selectedAnswers.has(entry.id))]) {
         if (formEntries.has(row.id)) {
             continue;
         }
+        const known = findSession(row.sessionId, row.agent === "unknown" ? undefined : row.agent);
+        // A warm session's answer joins a session already listed; only the selected session's may add one.
+        if (!known && !selectedAnswers.has(row.id)) {
+            continue;
+        }
         const session =
-            findSession(row.sessionId, row.agent === "unknown" ? undefined : row.agent) ??
+            known ??
             addSession(
                 targetOf({ sessionId: row.sessionId, provider: row.agent, cwd: row.cwd }, row.id),
                 row.sessionTitle ?? row.sessionId,
@@ -1227,7 +1271,7 @@ export async function widgetSnapshot({
             );
         const answerImages = await liftCardImages([row.question, cleanVisibleContext(row.answerMd)], {
             existing: row.attachments ?? [],
-            budget: imageBudget,
+            budget: budgetFor(session.key),
         });
         const answerTitle = liftedTitle(answerImages.texts[0], answerImages.attachments);
         const answerBody = answerImages.texts[1];
@@ -1283,7 +1327,7 @@ export async function widgetSnapshot({
     };
     for (const row of decisions) {
         const session = findSession(row.sessionId, row.provider);
-        if (!session || (selectedKey && session.key !== selectedKey)) {
+        if (!session || (cardKeys && !cardKeys.has(session.key))) {
             continue;
         }
         // The prompt is lifted too: an item's attachments are embedded there. With a title (a task's short name) the
@@ -1297,7 +1341,7 @@ export async function widgetSnapshot({
                 ),
                 ...(row.title ? [cleanVisibleContext(row.prompt)] : []),
             ],
-            { budget: imageBudget }
+            { budget: budgetFor(session.key) }
         );
         const decisionTitle = liftedTitle(decisionImages.texts[0], decisionImages.attachments);
         const decisionBody = [decisionImages.texts[2], decisionImages.texts[1]]
@@ -1343,11 +1387,11 @@ export async function widgetSnapshot({
             ...supersededBy(row),
         });
     }
-    for (const form of forms) {
+    for (const form of cardForms) {
         const session =
             (form.sessionHint ? findSession(form.sessionHint, formProvider(form)) : undefined) ??
             [...sessions.values()].find((entry) => entry.target.sessionId === form.id);
-        if (!session || (selectedKey && session.key !== selectedKey)) {
+        if (!session || (cardKeys && !cardKeys.has(session.key))) {
             continue;
         }
         // Each item's prompt is drawn by the form view, so the lifted images leave the prompts the widget receives.
@@ -1356,7 +1400,7 @@ export async function widgetSnapshot({
                 form.status === "answered" ? cleanVisibleContext(renderFormAnswer(form, form.answers ?? {})) : "",
                 ...form.items.map((item) => item.promptMarkdown),
             ],
-            { budget: imageBudget }
+            { budget: budgetFor(session.key) }
         );
         const [formAnswer, ...formPrompts] = formImages.texts;
         const formItems = form.items.map((item, index) => ({ ...item, promptMarkdown: formPrompts[index] ?? "" }));
@@ -1395,16 +1439,16 @@ export async function widgetSnapshot({
         ...flattenAgents(agents.orphans),
     ]) {
         const session = findResultSession(node);
-        if (!session || !hasResult(node) || (selectedKey && session.key !== selectedKey)) {
+        if (!session || !hasResult(node) || (cardKeys && !cardKeys.has(session.key))) {
             continue;
         }
-        const result = selectedKey ? await read("agent result", () => widgetResult(node), "") : "";
+        const result = cardKeys ? await read("agent result", () => widgetResult(node), "") : "";
         const resultImages = await liftCardImages(
             [
                 result ||
                     `Task context: ${node.spawnPromptPreview ?? node.description ?? "Open the conversation to read the agent's result."}`,
             ],
-            { budget: imageBudget }
+            { budget: budgetFor(session.key) }
         );
         cards.push({
             id: `result:${node.harness}:${node.id}`,
@@ -1453,15 +1497,24 @@ export async function widgetSnapshot({
                   files: [],
               })
             : null;
-    // The window keeps the newest cards plus each card a notification names, so opening it can acknowledge it.
+    // The window keeps the newest cards plus each card a notification names, so opening it can acknowledge it. A warm
+    // session keeps fewer, and every card that waits for an answer; opening it brings the rest a moment later.
     const selectedCards = cards
-        .filter((card) => !selectedKey || card.sessionKey === selectedKey)
+        .filter((card) => !cardKeys || cardKeys.has(card.sessionKey))
         .sort((a, b) => a.at - b.at);
     const notified = new Set(
         notifications.sessions.flatMap((session) => [session.unreadItem?.id, session.pendingItem?.id])
     );
-    const windowStart = Math.max(0, selectedCards.length - 100);
-    const visibleCards = selectedCards.filter((card, index) => index >= windowStart || notified.has(card.id));
+    const left = new Map<string, number>();
+    const visibleCards = selectedCards
+        .reverse()
+        .filter((card) => {
+            const bucket = cardKeys ? card.sessionKey : "";
+            const remaining = left.get(bucket) ?? (bucket === "" || bucket === selectedKey ? 100 : WARM_CARD_WINDOW);
+            left.set(bucket, remaining - 1);
+            return remaining > 0 || notified.has(card.id) || cardWaits(card);
+        })
+        .reverse();
     const activity =
         selectedId && sources.events
             ? await read(
@@ -1490,5 +1543,38 @@ export async function widgetSnapshot({
         changes,
         errors,
         selectedKey: selectedKey ?? null,
+        ...(warmKeys.length > 0 ? { warmKeys } : {}),
     };
+}
+
+/** The newest cards a warm session brings; those that wait for an answer come on top of these. */
+export const WARM_CARD_WINDOW = 12;
+
+/** A card that waits for the user: an open or drafted decision, a pending form (GenesisKit `WidgetCard.needsAnswer`). */
+function cardWaits(card: WidgetCard): boolean {
+    return (
+        (card.kind === "decision" && (card.status === "open" || card.status === "drafted")) ||
+        (card.kind === "form" && card.status === "pending")
+    );
+}
+
+/** The inbox sessions to keep warm: those waiting for an answer, then those with unread items, each newest first. */
+export function warmInboxKeys({
+    notifications,
+    sessions,
+    selectedKey,
+    limit,
+}: {
+    notifications: WidgetInboxSummary;
+    sessions: Map<string, WidgetSession>;
+    selectedKey: string;
+    limit: number;
+}): string[] {
+    return notifications.sessions
+        .filter((entry) => entry.key !== selectedKey && entry.needsAnswer + entry.unread > 0 && sessions.has(entry.key))
+        .sort(
+            (a, b) => Number(b.needsAnswer > 0) - Number(a.needsAnswer > 0) || (b.latest?.at ?? 0) - (a.latest?.at ?? 0)
+        )
+        .slice(0, limit)
+        .map((entry) => entry.key);
 }

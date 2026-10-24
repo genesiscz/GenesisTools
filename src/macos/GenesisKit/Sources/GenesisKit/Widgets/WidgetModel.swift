@@ -26,6 +26,11 @@ public final class WidgetModel: ObservableObject {
     /// The height the agents pane needs to show everything without scrolling (LiveWidgetView measures it), or nil
     /// before it was laid out. The expanded panel fits it, up to its maximum (W3).
     public private(set) var agentFitHeight: CGFloat?
+    /// Each session's cards as last seen, so a switch never waits for the next snapshot (`WidgetSessionCache`).
+    private(set) var sessionCache = WidgetSessionCache()
+    /// The session whose first load keeps the pane at its height: the loading row is short, and the pane shrank to it
+    /// and grew back a moment later (app-perf.log, 2026-10-24: 1004x900, 1004x321, 1004x900 on each switch).
+    private var loadingFitHold: String?
     public var railSessions: [WidgetSession] { sessionRoster.rail }
     /// Rail sessions that are working or hold unread items. Stored, because every layout pass of every edge panel reads
     /// it: filtering ~1000 sessions there cost a quarter of the main thread while panels animated.
@@ -335,6 +340,10 @@ public final class WidgetModel: ObservableObject {
 
     /// Whole points, and only a change of 2 pt or more, so a measurement cannot chase its own resize.
     func reportAgentFit(_ height: CGFloat?) {
+        if loadingFitHold != nil, loadingFitHold != selectedKey || !inboxLoading {
+            loadingFitHold = nil
+            agentFitFloor = nil
+        }
         var rounded = height.map { ceil($0) }
         if let floor = agentFitFloor {
             if floor.view == fitView, let value = rounded { rounded = max(value, floor.height) } else { agentFitFloor = nil }
@@ -344,9 +353,28 @@ public final class WidgetModel: ObservableObject {
         agentFitHeight = rounded
         presentationChanged?()
     }
-    public var cards: [WidgetCard] { snapshot?.cards.filter { $0.sessionKey == selectedKey } ?? [] }
+    /// The selected session's cards: from the snapshot that names it, else as last seen (`sessionCache`).
+    public var cards: [WidgetCard] {
+        guard let snapshot else { return [] }
+        if snapshot.selectedKey != selectedKey, let cached = sessionCache[selectedKey] { return cached.cards }
+        return snapshot.cards.filter { $0.sessionKey == selectedKey }
+    }
+    /// Nothing is known about the selected session yet: no snapshot named it, and none carried its cards.
     public var inboxLoading: Bool {
-        !selectedKey.isEmpty && snapshot?.selectedKey != selectedKey && cards.isEmpty && error == nil
+        !selectedKey.isEmpty && snapshot?.selectedKey != selectedKey && sessionCache[selectedKey] == nil
+            && cards.isEmpty && error == nil
+    }
+    /// For the test driver's `state` command and logs.
+    public var selectionDescription: String {
+        "selected=\(selectedKey) snapshot=\(snapshot?.selectedKey ?? "-") loading=\(inboxLoading) cards=\(cards.count) "
+            + "cached=\(sessionCache.count) warm=\(snapshot?.warmKeys?.count ?? 0)"
+    }
+    /// The selected session's decision activity and changes, under the same rule as `cards`.
+    public var sessionActivity: [WidgetActivityEvent] {
+        snapshot?.selectedKey == selectedKey ? snapshot?.activity ?? [] : sessionCache[selectedKey]?.activity ?? []
+    }
+    public var sessionChanges: WidgetSnapshot.Changes? {
+        snapshot?.selectedKey == selectedKey ? snapshot?.changes : sessionCache[selectedKey]?.changes
     }
     public var card: WidgetCard? {
         cards.first { $0.id == selectedCardID } ?? cards.last(where: \.needsAnswer) ?? cards.last
@@ -566,6 +594,7 @@ public final class WidgetModel: ObservableObject {
             savedPreferences.removeAll { entry in entry.fence.map { decoded.state.revision >= $0 } ?? false }
             var next = decoded
             next.state.preferences = try overlaid(next.state.preferences)
+            sessionCache.remember(next)
             snapshot = next
             if !draggingSide, let position = draggedSidePosition,
                 abs((next.state.preferences.sidePosition ?? 0.5) - position) < 0.0001
@@ -597,6 +626,7 @@ public final class WidgetModel: ObservableObject {
                     persisted: next.state.selectedKey, visibleKeys: next.sessions.filter(\.visible).map(\.key))
                 selectedCardID = nil
                 if !selectedKey.isEmpty && !settingsOnly {
+                    pickOnWatch(selectedKey)
                     action(["action": "selection", "key": .string(selectedKey)])
                     resumeTranscript()
                 }
@@ -1161,10 +1191,26 @@ public final class WidgetModel: ObservableObject {
         lastSelected = snapshot?.sessions.first { $0.key == key }
         if expanded != nil { refreshContext() }
         selectedCardID = nil
+        if inboxLoading {
+            holdAgentFit()
+            loadingFitHold = key
+        }
+        // How often a switch still has to wait: `loading=true` means no snapshot carried this session yet.
+        PerfLog.mark("widget.select loading=\(inboxLoading) cards=\(cards.count) cached=\(sessionCache.count)")
+        pickOnWatch(key)
         action(["action": "selection", "key": .string(key)])
         if let edge { open(edge) }
         if expanded != nil || hoveredSurface != nil { prewarmTranscript(on: expanded == nil ? hoveredSurface : nil) }
         resumeTranscript()
+    }
+
+    /// Tells the running watch at once, so its next snapshot names this session (about 0.1 s) instead of after the
+    /// `selection` action reaches its state file (a process and a 180 ms debounce, about 0.5 s). The action still runs:
+    /// it keeps the choice for the next launch.
+    private func pickOnWatch(_ key: String) {
+        guard let watcher, let data = try? JSONEncoder().encode(["select": key]),
+              let line = String(data: data, encoding: .utf8) else { return }
+        do { try watcher.sendInput(line + "\n") } catch { PerfLog.mark("widget.pick not sent: \(error.localizedDescription)") }
     }
 
     public func unpinSelected() {
@@ -2012,8 +2058,18 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// The nearby messages last read for a card, however old: its section shows them at once while a fresh read runs,
+    /// instead of "Loading nearby messages…" each time a session opens again.
+    public func cachedReceiptContext(for card: WidgetCard) -> WidgetReceiptContext? {
+        receiptContextCache[Self.receiptContextKey(card)]?.value
+    }
+
+    private static func receiptContextKey(_ card: WidgetCard) -> String {
+        card.sessionKey + "|" + card.id + "|" + String(card.at)
+    }
+
     public func receiptContext(for card: WidgetCard) async throws -> WidgetReceiptContext {
-        let key = card.sessionKey + "|" + card.id + "|" + String(card.at)
+        let key = Self.receiptContextKey(card)
         if let cached = receiptContextCache[key], Date().timeIntervalSince(cached.at) < 15 {
             return cached.value
         }
@@ -2024,7 +2080,7 @@ public final class WidgetModel: ObservableObject {
         try Task.checkCancellation()
         guard result.exitCode == 0 else { throw ToolsBridgeError.refused(String(result.stderr.suffix(1000))) }
         let value = try JSONDecoder().decode(WidgetReceiptContext.self, from: Data(result.stdout.utf8))
-        if receiptContextCache.count >= 12, let oldest = receiptContextCache.min(by: { $0.value.at < $1.value.at }) {
+        if receiptContextCache.count >= 48, let oldest = receiptContextCache.min(by: { $0.value.at < $1.value.at }) {
             receiptContextCache.removeValue(forKey: oldest.key)
         }
         receiptContextCache[key] = (Date(), value)

@@ -905,7 +905,7 @@ public struct LiveWidgetView: View {
                 id: "out:" + $0.id, date: Date(timeIntervalSince1970: $0.createdAt / 1000),
                 event: .outgoing($0))
         }
-        let activity = (model.snapshot?.activity ?? []).map {
+        let activity = model.sessionActivity.map {
             TimelineItem(id: "event:" + $0.id, date: Date(timeIntervalSince1970: $0.at / 1000), event: .activity($0))
         }
         return (turns + cards + outgoing + activity).sorted {
@@ -914,7 +914,7 @@ public struct LiveWidgetView: View {
     }
 
     @ViewBuilder private var changes: some View {
-        if let changes = model.snapshot?.changes, changes.available {
+        if let changes = model.sessionChanges, changes.available {
             ForEach(changes.files) { file in
                 Button {
                     openReference(file.path)

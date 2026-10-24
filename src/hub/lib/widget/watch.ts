@@ -34,18 +34,26 @@ const SAFETY_MS = 30_000;
 const DEGRADED_SAFETY_MS = 5000;
 /** Every this many safety ticks the whole catalog is refreshed, for changes outside the watched session roots. */
 const FULL_REFRESH_TICKS = 4;
+/** Inbox sessions whose cards every snapshot carries beside the selected one's (`widgetSnapshot({ warm })`). */
+export const WARM_SESSIONS = 16;
 
 export async function watchWidget({
     root,
     selectedKey,
     signal,
     emit,
+    selections,
     dependencies = {},
 }: {
     root?: string;
     selectedKey?: string;
     signal: AbortSignal;
     emit: (snapshot: Awaited<ReturnType<typeof widgetSnapshot>>) => void;
+    /**
+     * The widget's picks as they happen (`{"select": key}` lines on stdin): the next snapshot names that session at
+     * once, without waiting for the `selection` action to reach `state.json` (a process and a debounce, about 0.5 s).
+     */
+    selections?: (listener: (key: string) => void) => () => void;
     dependencies?: {
         prepare?: typeof prepareWidgetAsset;
         snapshot?: typeof widgetSnapshot;
@@ -93,8 +101,13 @@ export async function watchWidget({
             const startedAt = Date.now();
             let emitted = false;
             const profiledInbox = new Map<string, { at: number; id: string }>();
+            /** The widget's latest pick, until `state.json` names it too. */
+            let picked: string | undefined;
             const refresh = async () => {
                 const state = await readWidgetState(directory);
+                if (picked && state.selectedKey === picked) {
+                    picked = undefined;
+                }
                 const referenced = new Set([
                     ...Object.values(state.drafts).flatMap((draft) => draft.assetIds),
                     ...state.outgoing
@@ -150,8 +163,9 @@ export async function watchWidget({
                 const snapshot = await prof.measureAsync("watch snapshot", () =>
                     readSnapshot({
                         root: directory,
-                        selectedKey,
+                        selectedKey: selectedKey ?? picked,
                         refresh: false,
+                        warm: WARM_SESSIONS,
                         onImagesDeferred: () => void requestRefresh(),
                     })
                 );
@@ -253,6 +267,10 @@ export async function watchWidget({
                 roster.refresh();
             }
             const subscription = watchPath(join(directory, "state.json"), requestRefresh, { debounceMs: 180 });
+            const stopSelections = selections?.((key) => {
+                picked = key;
+                void requestRefresh();
+            });
             let queueSubscription: WatcherSubscription | undefined;
             const inboxSubscriptions: WatcherSubscription[] = [];
             const sessionSubscriptions: WatcherSubscription[] = [];
@@ -359,6 +377,7 @@ export async function watchWidget({
                     }
                 });
             } finally {
+                stopSelections?.();
                 cancelSafety?.();
                 roster?.stop();
                 await subscription.unsubscribe();
@@ -451,4 +470,42 @@ async function watchSessionRoots({
     }
     logger.debug({ roots: all.length, complete }, "Watching Widget session roots");
     return complete;
+}
+
+/** Splits stdin chunks into lines; a partial line waits for the rest, and a runaway one is dropped. */
+export class StdinLines {
+    private rest = "";
+
+    constructor(private readonly onLine: (line: string) => void) {}
+
+    readonly push = (chunk: Buffer | string): void => {
+        const lines = (this.rest + chunk.toString()).split("\n");
+        const rest = lines.pop() ?? "";
+        this.rest = rest.length > 4096 ? "" : rest;
+        for (const line of lines) {
+            if (line.trim()) {
+                this.onLine(line);
+            }
+        }
+    };
+}
+
+/** The session key of a `{"select": "<key>"}` control line from the widget, else undefined. */
+export function widgetSelectionLine(line: string): string | undefined {
+    try {
+        const value: unknown = SafeJSON.parse(line, { strict: true });
+        if (
+            value &&
+            typeof value === "object" &&
+            "select" in value &&
+            typeof value.select === "string" &&
+            value.select
+        ) {
+            return value.select;
+        }
+    } catch (error) {
+        logger.debug({ error }, "Widget control line ignored");
+    }
+
+    return undefined;
 }

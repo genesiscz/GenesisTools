@@ -1276,3 +1276,92 @@ final class WidgetOwnWindowClickTests: XCTestCase {
         XCTAssertFalse(WidgetCoordinator.ownWindowOwnsPoint(point), "another app's window, or none, once ours is gone")
     }
 }
+
+/// Switching sessions shows cards at once (Martin, 2026-10-24: "why is it loading every time? can't it just be cached
+/// and be prepared at all times"). A snapshot carries the sessions that need you beside the selected one (`warmKeys`),
+/// and every session seen once stays cached until a snapshot names it again.
+@MainActor
+final class WidgetSessionSwitchTests: XCTestCase {
+    private func card(_ session: String, _ number: Int) -> WidgetCard {
+        WidgetCard(id: "decision:d_\(number)_\(session)", kind: "decision", sessionKey: key(session),
+                   sourceId: "d_\(number)_\(session)", at: Double(number), title: "Decision \(number) in \(session)",
+                   body: "", status: "open", revision: 1, number: number, choices: [], attachments: [], refs: [],
+                   read: false)
+    }
+
+    private func key(_ session: String) -> String { "local:codex:\(session):" }
+
+    private func snapshot(selected: String, warm: [String], cards: [WidgetCard],
+                          activity: [WidgetActivityEvent] = []) throws -> String {
+        let sessions: [[String: Any]] = ["alpha", "beta", "gamma"].map { name in
+            ["key": key(name), "target": ["hostId": "local", "provider": "codex", "sessionId": name, "sourceHome": "",
+                                          "cwd": "/fixture"],
+             "title": name, "project": "Fixture", "activityAt": 0, "status": "waiting", "pinned": true,
+             "visible": true, "hiddenByFilter": false]
+        }
+        let data = try JSONSerialization.data(withJSONObject: [
+            "version": 1,
+            "state": ["version": 1, "revision": 0, "selectedKey": key(selected),
+                      "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
+                                      "placement": "both", "side": "right", "quietSeconds": 15,
+                                      "voiceProvider": "openai", "voiceLanguage": "en"],
+                      "assets": [:], "drafts": [:], "outgoing": []],
+            "sessions": sessions,
+            "cards": try JSONSerialization.jsonObject(with: JSONEncoder().encode(cards)),
+            "activity": try JSONSerialization.jsonObject(with: JSONEncoder().encode(activity)),
+            "manifests": [:], "errors": [], "selectedKey": key(selected), "warmKeys": warm.map(key),
+            "notifications": ["unread": 0, "needsAnswer": 2, "complete": true, "truncated": false, "sessions": []]])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private func model() throws -> (WidgetModel, URL) {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("widget-switch-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("native-submissions"),
+                                                withIntermediateDirectories: true)
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget.switch." + UUID().uuidString))
+        let model = WidgetModel(binaryPath: "/fixture/no-process", stateRoot: root.path, defaults: defaults,
+                                appearance: NativeSettingsAppearance(defaults: defaults,
+                                    notificationNamespace: "switch." + UUID().uuidString, observeExternalChanges: false))
+        return (model, root)
+    }
+
+    func testAWarmOrSeenSessionOpensWithItsCardsAndAnUnseenOneLoads() throws {
+        let (model, root) = try model()
+        defer { model.stop(); try? FileManager.default.removeItem(at: root) }
+        let asked = WidgetActivityEvent(id: "e1", sourceId: "d_1_alpha", at: 1, title: "Asked", body: "")
+        model.receive([try snapshot(selected: "alpha", warm: ["beta"],
+                                    cards: [card("alpha", 1), card("beta", 2)], activity: [asked])])
+        if model.selectedKey != key("alpha") { model.select(key("alpha")) }
+        XCTAssertEqual(model.cards.map(\.id), ["decision:d_1_alpha"])
+
+        model.select(key("beta"))
+        XCTAssertFalse(model.inboxLoading, "the warm session's cards came with the last snapshot")
+        XCTAssertEqual(model.cards.map(\.id), ["decision:d_2_beta"])
+        XCTAssertEqual(model.sessionActivity, [], "the previous session's activity is not shown as this one's")
+
+        model.select(key("gamma"))
+        XCTAssertTrue(model.inboxLoading, "a session no snapshot carried yet still says it loads")
+        XCTAssertEqual(model.cards, [])
+
+        // The snapshot that names beta brings a new decision: it just appears.
+        model.receive([try snapshot(selected: "beta", warm: [], cards: [card("beta", 2), card("beta", 3)])])
+        model.select(key("alpha"))
+        XCTAssertFalse(model.inboxLoading, "a session seen once opens from the cache")
+        XCTAssertEqual(model.cards.map(\.id), ["decision:d_1_alpha"])
+        XCTAssertEqual(model.sessionActivity, [asked], "with the activity last seen for it")
+        model.select(key("beta"))
+        XCTAssertEqual(model.cards.map(\.id), ["decision:d_2_beta", "decision:d_3_beta"])
+    }
+
+    func testTheCacheKeepsTheSessionsRefreshedLast() throws {
+        var cache = WidgetSessionCache()
+        for index in 0..<(WidgetSessionCache.limit + 2) {
+            let name = "s\(index)"
+            let json = try snapshot(selected: name, warm: [], cards: [card(name, index)])
+            cache.remember(try JSONDecoder().decode(WidgetSnapshot.self, from: Data(json.utf8)))
+        }
+        XCTAssertEqual(cache.count, WidgetSessionCache.limit)
+        XCTAssertNil(cache[key("s0")], "the session refreshed longest ago goes first")
+        XCTAssertEqual(cache[key("s\(WidgetSessionCache.limit + 1)")]?.cards.count, 1)
+    }
+}

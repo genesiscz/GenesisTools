@@ -1565,10 +1565,11 @@ final class WidgetRosterTests: XCTestCase {
     }
 
     func testSessionSwitchWaitsForItsMatchingInboxBeforeClaimingItIsEmpty() async throws {
-        try await withFixture(sessionCount: 2) { model, _, original in
+        try await withFixture(sessionCount: 3) { model, _, original in
             var snapshot = original
             let first = snapshot.sessions[0].key
             let second = snapshot.sessions[1].key
+            let third = snapshot.sessions[2].key
             model.selectedKey = first
             snapshot.selectedKey = first
             model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
@@ -1582,8 +1583,12 @@ final class WidgetRosterTests: XCTestCase {
             snapshot.selectedKey = second
             model.receive([String(decoding: try JSONEncoder().encode(snapshot), as: UTF8.self)])
             XCTAssertFalse(model.inboxLoading, "The matching response ends the loading state even when empty")
+            // A session seen once opens with what was last seen, at once: here its empty inbox (2026-10-24, the
+            // session cache; this asserted "loading" before).
             model.select(first)
-            XCTAssertTrue(model.inboxLoading)
+            XCTAssertFalse(model.inboxLoading, "A session seen once opens from the cache")
+            model.select(third)
+            XCTAssertTrue(model.inboxLoading, "A session no snapshot carried yet loads")
             model.error = "Fixture source failure"
             XCTAssertFalse(model.inboxLoading, "A failed request must leave an actionable error rather than an endless spinner")
         }

@@ -21,7 +21,7 @@ import {
     stageShelfMedia,
 } from "./lib/widget/shelf";
 import { discoverWidgetCatalog, widgetSnapshot } from "./lib/widget/snapshot";
-import { watchWidget } from "./lib/widget/watch";
+import { StdinLines, watchWidget, widgetSelectionLine } from "./lib/widget/watch";
 import { registerWidgetTasks } from "./widget-tasks-cli";
 import { registerWidgetVoiceNotes } from "./widget-voice-notes-cli";
 
@@ -133,8 +133,20 @@ widget
                 const owner = new AbortController();
                 const abort = () => owner.abort();
                 signal.addEventListener("abort", abort, { once: true });
+                const selections = new Set<(key: string) => void>();
+                const lines = new StdinLines((line) => {
+                    const key = widgetSelectionLine(line);
+                    if (!key) {
+                        return;
+                    }
+
+                    for (const listener of selections) {
+                        listener(key);
+                    }
+                });
                 if (options.stopOnStdin) {
                     process.stdin.on("end", abort);
+                    process.stdin.on("data", lines.push);
                     process.stdin.resume();
                     if (process.stdin.readableEnded) {
                         owner.abort();
@@ -146,10 +158,15 @@ widget
                         selectedKey: options.selected,
                         signal: owner.signal,
                         emit: (snapshot) => out.print(`${SafeJSON.stringify(snapshot)}\n`),
+                        selections: (listener) => {
+                            selections.add(listener);
+                            return () => selections.delete(listener);
+                        },
                     });
                 } finally {
                     signal.removeEventListener("abort", abort);
                     process.stdin.removeListener("end", abort);
+                    process.stdin.removeListener("data", lines.push);
                     if (options.stopOnStdin) {
                         process.stdin.pause();
                     }

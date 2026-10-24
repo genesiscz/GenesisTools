@@ -111,7 +111,7 @@ import {
     recordVoiceNote,
     transcribeVoiceNote,
 } from "../widget/voice-notes";
-import { watchWidget } from "../widget/watch";
+import { StdinLines, WARM_SESSIONS, watchWidget, widgetSelectionLine } from "../widget/watch";
 import { importWidgetAsset, reviseVideoAsset } from "./assets";
 import { widgetDeliveryReceipt, widgetDispatcher } from "./dispatch";
 import { processWidgetOutbox } from "./engine";
@@ -4238,6 +4238,128 @@ test("incoming answer, Decision and pending-form writes wake the Widget without 
         }
         expect(subscriptions.every((subscription) => subscription.closed)).toBe(true);
     });
+});
+
+test("a snapshot carries the cards of the sessions that need you beside the selected one's", async () => {
+    const directory = await root();
+    const file = join(directory, "decisions.jsonl");
+    const events = join(directory, "events.jsonl");
+    for (const sessionId of ["picked", "waiting-too"]) {
+        await postDecisions(
+            file,
+            events,
+            { sessionId, provider: "codex", decisions: [{ prompt: `Proceed in ${sessionId}?`, options: ["yes"] }] },
+            { env: {} }
+        );
+    }
+    await postDecisions(
+        file,
+        events,
+        { sessionId: "quiet", provider: "codex", decisions: [{ type: "todo", prompt: "Later", options: [] }] },
+        { env: {} }
+    );
+    const sources: WidgetSources = { ...emptySources, decisions: () => readDecisions(file) };
+    const roster = await widgetSnapshot({ root: directory, sources });
+    const keyOf = (sessionId: string): string => {
+        const key = roster.sessions.find((entry) => entry.target.sessionId === sessionId)?.key;
+        if (!key) {
+            throw new Error(`the roster has no session ${sessionId}`);
+        }
+
+        return key;
+    };
+    await mutateWidgetState(directory, (state) => {
+        state.selectedKey = keyOf("picked");
+        state.preferences.showChanges = false;
+    });
+
+    const plain = await widgetSnapshot({ root: directory, sources });
+    expect(plain.cards.map((card) => card.sessionKey)).toEqual([keyOf("picked")]);
+    expect(plain.warmKeys).toBeUndefined();
+
+    const warm = await widgetSnapshot({ root: directory, sources, warm: 4 });
+    expect(warm.warmKeys).toEqual([keyOf("waiting-too")]);
+    expect(new Set(warm.cards.map((card) => card.sessionKey))).toEqual(
+        new Set([keyOf("picked"), keyOf("waiting-too")])
+    );
+    expect(warm.cards.some((card) => card.sessionKey === keyOf("quiet"))).toBe(false);
+    expect(warm.selectedKey).toBe(keyOf("picked"));
+});
+
+test("a session picked on the watch's stdin is the next snapshot's selection, with the warm sessions asked for", async () => {
+    const directory = await root();
+    await env.testing.withOverrides({ GENESIS_TOOLS_HOME: directory }, async () => {
+        const controller = new AbortController();
+        const asked: { selectedKey?: string; warm?: number }[] = [];
+        let pick: ((key: string) => void) | undefined;
+        let ready!: () => void;
+        const started = new Promise<void>((resolve) => {
+            ready = resolve;
+        });
+        let picked!: () => void;
+        const pickedSnapshot = new Promise<void>((resolve) => {
+            picked = resolve;
+        });
+        const worker = watchWidget({
+            root: directory,
+            signal: controller.signal,
+            emit: () => ready(),
+            selections: (listener) => {
+                pick = listener;
+                return () => {
+                    pick = undefined;
+                };
+            },
+            dependencies: {
+                inboxPaths: {
+                    answerLog: join(directory, "question", "log"),
+                    database: join(directory, "question", "qa.db"),
+                    decisions: join(directory, "question", "decisions", "decisions.jsonl"),
+                },
+                watchInbox: async () => ({ active: true, errorCount: 0, unsubscribe: async () => {} }),
+                snapshot: async (options) => {
+                    asked.push({ selectedKey: options?.selectedKey, warm: options?.warm });
+                    if (options?.selectedKey === "local:codex:picked:") {
+                        picked();
+                    }
+                    return {
+                        version: 1,
+                        state: await readWidgetState(directory),
+                        activity: [],
+                        sessions: [],
+                        cards: [],
+                        manifests: {},
+                        changes: null,
+                        errors: [],
+                        selectedKey: options?.selectedKey ?? null,
+                    };
+                },
+                dispatcher: {
+                    validate: async () => {},
+                    dispatch: async () => ({ delivered: true, channel: "fixture" }),
+                },
+            },
+        });
+        try {
+            await withTimeout(started, 3000);
+            expect(asked[0]).toEqual({ selectedKey: undefined, warm: WARM_SESSIONS });
+            pick?.("local:codex:picked:");
+            await withTimeout(pickedSnapshot, 3000);
+        } finally {
+            controller.abort();
+            await withTimeout(worker, 3000);
+        }
+        expect(pick).toBeUndefined();
+    });
+});
+
+test("the watch's stdin control lines: whole lines only, and only a select with a key", () => {
+    const keys: (string | undefined)[] = [];
+    const lines = new StdinLines((line) => keys.push(widgetSelectionLine(line)));
+    lines.push('{"select":"local:claude:a:"}\n{"sel');
+    lines.push('ect":"local:claude:b:"}\n\n');
+    lines.push('{"select":""}\nnot json\n{"other":1}\n');
+    expect(keys).toEqual(["local:claude:a:", "local:claude:b:", undefined, undefined, undefined]);
 });
 
 test("a session queue directory that cannot be watched leaves the Widget running on its safety refresh", async () => {
