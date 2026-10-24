@@ -6,24 +6,7 @@
  *
  * Usage: bun .claude/skills/ux/scripts/ux-scan.ts <file or folder>... [--max <hits per check, default 60>]
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
-
-interface Check {
-    pass: string;
-    name: string;
-    pattern: RegExp;
-    hint: string;
-    /** Drop a hit when this matches within `near` lines of it (the defect is already handled there). */
-    unless?: RegExp;
-    near?: number;
-}
-
-interface Hit {
-    file: string;
-    line: number;
-    text: string;
-}
+import { type Check, type CountFact, runCli, type ScanSet } from "./scan-engine.ts";
 
 const CHECKS: Check[] = [
     // Pointer and targets
@@ -308,7 +291,7 @@ const CHECKS: Check[] = [
 ];
 
 /** Facts over the whole scanned set, printed after the passes. */
-const FACTS: Array<{ name: string; pattern: RegExp; zeroMeans: string }> = [
+const FACTS: CountFact[] = [
     {
         name: "VoiceOver announcements",
         pattern: /announcementRequested|AccessibilityNotification|NSAccessibility\.post/,
@@ -336,110 +319,29 @@ const FACTS: Array<{ name: string; pattern: RegExp; zeroMeans: string }> = [
     },
 ];
 
-function swiftFiles(target: string, out: string[]): void {
-    const info = statSync(target);
-    if (info.isFile()) {
-        if (target.endsWith(".swift")) {
-            out.push(target);
-        }
-        return;
-    }
+const UX_SET: ScanSet = {
+    title: "UX scan",
+    checks: CHECKS,
+    counts: FACTS,
+    fileFacts: [
+        {
+            name: "files that animate and never read Reduce Motion",
+            test: (text) =>
+                /withAnimation\(|\.animation\(|repeatForever|NSAnimationContext|CABasicAnimation/.test(text) &&
+                !/reduceMotion|ReduceMotion|GenMotion|ShouldReduceMotion/.test(text)
+                    ? ""
+                    : undefined,
+        },
+        {
+            name: "files with more than one reload button",
+            test: (_text, lines) => {
+                const reloads = lines.filter((l) => l.includes('"arrow.clockwise"')).length;
+                return reloads > 1 ? String(reloads) : undefined;
+            },
+        },
+    ],
+};
 
-    for (const entry of readdirSync(target)) {
-        if (entry === ".build" || entry === "Tests" || entry.startsWith(".")) {
-            continue;
-        }
-
-        swiftFiles(join(target, entry), out);
-    }
+if (import.meta.main) {
+    runCli(UX_SET, process.argv.slice(2), "usage: bun ux-scan.ts <file or folder>... [--max <n>]");
 }
-
-function scan(files: string[], max: number): string {
-    const hits = new Map<Check, Hit[]>();
-    const factCounts = new Map<string, number>();
-    const animatesWithoutCheck: string[] = [];
-    const duplicateReloads: string[] = [];
-    const cwd = process.cwd();
-
-    for (const file of files) {
-        const text = readFileSync(file, "utf8");
-        const lines = text.split("\n");
-        const shown = relative(cwd, file);
-
-        for (const check of CHECKS) {
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-                if (line.trimStart().startsWith("//") || !check.pattern.test(line)) {
-                    continue;
-                }
-
-                if (check.unless) {
-                    const near = check.near ?? 0;
-                    const window = lines.slice(Math.max(0, i - near), i + near + 1).join("\n");
-                    if (check.unless.test(window)) {
-                        continue;
-                    }
-                }
-
-                const list = hits.get(check) ?? [];
-                list.push({ file: shown, line: i + 1, text: line.trim().slice(0, 140) });
-                hits.set(check, list);
-            }
-        }
-
-        for (const fact of FACTS) {
-            const count = lines.filter((l) => fact.pattern.test(l)).length;
-            factCounts.set(fact.name, (factCounts.get(fact.name) ?? 0) + count);
-        }
-
-        if (/withAnimation\(|\.animation\(|repeatForever|NSAnimationContext|CABasicAnimation/.test(text)) {
-            if (!/reduceMotion|ReduceMotion|GenMotion|ShouldReduceMotion/.test(text)) {
-                animatesWithoutCheck.push(shown);
-            }
-        }
-
-        const reloads = lines.filter((l) => l.includes('"arrow.clockwise"')).length;
-        if (reloads > 1) {
-            duplicateReloads.push(`${shown} (${reloads})`);
-        }
-    }
-
-    const out: string[] = [`# UX scan of ${files.length} Swift files (candidates, not findings)`, ""];
-    let pass = "";
-    for (const check of CHECKS) {
-        const list = hits.get(check) ?? [];
-        if (check.pass !== pass) {
-            pass = check.pass;
-            out.push(`## ${pass}`);
-        }
-        out.push(`- ${check.name} [${list.length}]: ${check.hint}`);
-        for (const hit of list.slice(0, max)) {
-            out.push(`  ${hit.file}:${hit.line}  ${hit.text}`);
-        }
-        if (list.length > max) {
-            out.push(`  … ${list.length - max} more (raise --max)`);
-        }
-    }
-    out.push("", "## Facts over these files");
-    for (const fact of FACTS) {
-        const count = factCounts.get(fact.name) ?? 0;
-        out.push(`- ${fact.name}: ${count}${count === 0 ? ` (0 means: ${fact.zeroMeans})` : ""}`);
-    }
-    out.push(`- files that animate and never read Reduce Motion: ${animatesWithoutCheck.join(", ") || "none"}`);
-    out.push(`- files with more than one reload button: ${duplicateReloads.join(", ") || "none"}`);
-    return out.join("\n");
-}
-
-const args = process.argv.slice(2);
-const maxIndex = args.indexOf("--max");
-const max = maxIndex >= 0 ? Number(args[maxIndex + 1]) : 60;
-const targets = maxIndex >= 0 ? args.filter((_, i) => i !== maxIndex && i !== maxIndex + 1) : args;
-if (targets.length === 0) {
-    console.error("usage: bun ux-scan.ts <file or folder>... [--max <n>]");
-    process.exit(1);
-}
-const files: string[] = [];
-for (const target of targets) {
-    swiftFiles(target, files);
-}
-console.log(scan(files, Number.isFinite(max) && max > 0 ? max : 60));

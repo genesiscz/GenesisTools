@@ -28,7 +28,12 @@ only the file in front of you: `rg -n '<what>' src/macos --type swift`. Put the 
 
 ## 1. Map the surface
 
-Start with the scanner. It runs every search recipe of the passes below in one go and prints the candidate lines
+Size it first. A UX audit reads every control, so keep one surface to about 5,000 lines and split a larger one by
+window or pane. Measured on 2026-10-24 (Sonnet, one run each): surfaces of 2,000 to 4,500 lines found 73 to 78% of the
+known defects, and the 10,800-line hub-settings surface found 52%. The same test on the swift skill was sharper: whole
+areas of 39,000 and 112,000 lines found under 40%, and the same code in surfaces of 6,000 to 21,000 lines found 90%.
+
+Then run the scanner. It runs every search recipe of the passes below in one go and prints the candidate lines
 per pass, plus facts over the whole set (announcements, undo, re-read on activation, arrow keys, files that animate
 and never read Reduce Motion, duplicate reload buttons):
 
