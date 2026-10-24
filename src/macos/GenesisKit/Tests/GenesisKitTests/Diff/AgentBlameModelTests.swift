@@ -101,33 +101,41 @@ final class AgentBlameModelTests: XCTestCase {
 final class SpawnStormTests: XCTestCase {
     func testABurstIsReportedWhenItStartsWhileItLastsAndWhenItEnds() {
         var storm = SpawnStorm()
-        var lines: [String] = []
-        for index in 0..<(SpawnStorm.burstStarts - 1) {
-            XCTAssertNil(storm.start("GenesisTools agents blame", at: Double(index) * 0.1), "under the burst size: quiet")
-            _ = storm.finish(at: Double(index) * 0.1 + 0.05)
-        }
-        let last = Double(SpawnStorm.burstStarts - 1) * 0.1
-        if let line = storm.start("git status", at: last) { lines.append(line) }
-        XCTAssertEqual(lines.count, 1)
         let burst = SpawnStorm.burstStarts
-        XCTAssertTrue(lines[0].hasPrefix("spawn.storm \(burst) child processes started in 10 s"), lines[0])
-        XCTAssertTrue(lines[0].contains("GenesisTools agents blame ×\(burst - 1), git status ×1"), lines[0])
+        for index in 0..<(burst - 1) {
+            XCTAssertEqual(storm.start("GenesisTools agents blame", at: Double(index) * 0.1), [], "under the burst size: quiet")
+            XCTAssertEqual(storm.finish(at: Double(index) * 0.1 + 0.05), [])
+        }
+        let first = storm.start("git status", at: Double(burst - 1) * 0.1)
+        XCTAssertEqual(first.count, 1)
+        XCTAssertTrue(first.first?.hasPrefix("spawn.storm \(burst) child processes started in 10 s") == true, first.first ?? "none")
+        XCTAssertTrue(first.first?.contains("GenesisTools agents blame ×\(burst - 1), git status ×1") == true, first.first ?? "none")
+        _ = storm.finish(at: Double(burst - 1) * 0.1 + 0.05)
 
-        XCTAssertNil(storm.start("git status", at: 4.5), "no second line within 30 s")
-        XCTAssertTrue(storm.start("git status", at: 34)?.hasPrefix("spawn.storm ongoing 30 s") == true)
-        // The first finish once the window holds few starts and few children run ends it.
-        let over = storm.finish(at: 40)
-        XCTAssertTrue(over?.hasPrefix("spawn.storm over after \(Int(40 - last)) s: \(SpawnStorm.burstStarts + 2) child processes started") == true,
-                      over ?? "nil")
-        XCTAssertNil(storm.finish(at: 41))
-        XCTAssertNil(storm.start("git status", at: 61), "a quiet start after the burst ended")
+        // It goes on at 4 starts a second: one "ongoing" line after 30 s, none before.
+        var ongoing: [String] = []
+        var now = 4.0
+        while now < 35 {
+            ongoing += storm.start("git status", at: now)
+            ongoing += storm.finish(at: now + 0.01)
+            now += 0.25
+        }
+        XCTAssertEqual(ongoing.count, 1, ongoing.joined(separator: "\n"))
+        XCTAssertTrue(ongoing.first?.hasPrefix("spawn.storm ongoing 30 s") == true, ongoing.first ?? "none")
+
+        // Minutes of quiet, then one child: it ends the burst, timed to the burst's last start (20:31 to 20:35 read
+        // "over after 209 s" for a 10 s burst before).
+        let over = storm.start("git status", at: 300)
+        XCTAssertEqual(over.count, 1)
+        XCTAssertTrue(over.first?.hasPrefix("spawn.storm over after 30 s") == true, over.first ?? "none")
+        XCTAssertEqual(storm.finish(at: 300.1), [], "the quiet child after it starts no new burst")
     }
 
     func testManyChildrenRunningAtOnceAreABurstToo() {
         var storm = SpawnStorm()
-        var line: String?
-        for index in 0..<SpawnStorm.burstRunning { line = storm.start("rg", at: Double(index)) ?? line }
-        XCTAssertTrue(line?.contains("\(SpawnStorm.burstRunning) running") == true, line ?? "nil")
+        var lines: [String] = []
+        for index in 0..<SpawnStorm.burstRunning { lines += storm.start("rg", at: Double(index)) }
+        XCTAssertTrue(lines.last?.contains("\(SpawnStorm.burstRunning) running") == true, lines.last ?? "nil")
     }
 
     func testLabelsNameTheCommandNotItsPaths() {

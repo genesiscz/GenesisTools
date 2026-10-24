@@ -11,11 +11,11 @@ public enum SpawnMeter {
     /// Records that a child started; call the returned closure once when it has ended.
     public static func started(executable: URL?, arguments: [String]) -> @Sendable () -> Void {
         let label = label(executable: executable, arguments: arguments)
-        let line = lock.withLock { storm.start(label, at: CFAbsoluteTimeGetCurrent()) }
-        if let line { PerfLog.mark(line) }
+        let lines = lock.withLock { storm.start(label, at: CFAbsoluteTimeGetCurrent()) }
+        lines.forEach { PerfLog.mark($0) }
         return {
-            let line = lock.withLock { storm.finish(at: CFAbsoluteTimeGetCurrent()) }
-            if let line { PerfLog.mark(line) }
+            let lines = lock.withLock { storm.finish(at: CFAbsoluteTimeGetCurrent()) }
+            lines.forEach { PerfLog.mark($0) }
         }
     }
 
@@ -51,7 +51,8 @@ public enum SpawnMeter {
 }
 
 /// The burst rule, apart from the clock and the log: `burstStarts` starts within `window` seconds, or `burstRunning`
-/// children at once. A burst is reported when it starts, every `reportEvery` seconds while it lasts, and when it ends.
+/// children at once. A burst is reported when it starts, every `reportEvery` seconds while it lasts, and when it ends:
+/// at the first start or finish that finds it quiet, timed to its last start, so quiet minutes are not counted.
 /// The hub opening a pull request starts about 24 in 10 s with 5 running (2026-10-24 19:45), which is normal; the blame
 /// waves had 51 to 66 running.
 public struct SpawnStorm {
@@ -63,38 +64,48 @@ public struct SpawnStorm {
     private var starts: [(at: Double, label: String)] = []
     private var running = 0
     private var since: Double?
+    private var lastStart = 0.0
     private var lastReport = -Double.infinity
     private var counts: [String: Int] = [:]
     private var total = 0
 
     public init() {}
 
-    public mutating func start(_ label: String, at now: Double) -> String? {
+    public mutating func start(_ label: String, at now: Double) -> [String] {
+        prune(now)
+        var lines = endIfQuiet().map { [$0] } ?? []
         running += 1
         starts.append((now, label))
-        prune(now)
         if let since {
             total += 1
             counts[label, default: 0] += 1
-            guard now - lastReport >= Self.reportEvery else { return nil }
+            lastStart = now
+            guard now - lastReport >= Self.reportEvery else { return lines }
             lastReport = now
-            return "spawn.storm ongoing \(Int(now - since)) s: \(total) child processes started, \(running) running; \(top)"
+            lines.append("spawn.storm ongoing \(Int(now - since)) s: \(total) child processes started, \(running) running; \(top)")
+            return lines
         }
-        guard starts.count >= Self.burstStarts || running >= Self.burstRunning else { return nil }
+        guard starts.count >= Self.burstStarts || running >= Self.burstRunning else { return lines }
         since = now
+        lastStart = now
         lastReport = now
         total = starts.count
         counts = starts.reduce(into: [:]) { $0[$1.label, default: 0] += 1 }
-        return "spawn.storm \(starts.count) child processes started in \(Int(Self.window)) s, \(running) running; \(top)"
+        lines.append("spawn.storm \(starts.count) child processes started in \(Int(Self.window)) s, \(running) running; \(top)")
+        return lines
     }
 
-    public mutating func finish(at now: Double) -> String? {
+    public mutating func finish(at now: Double) -> [String] {
         running = max(0, running - 1)
         prune(now)
+        return endIfQuiet().map { [$0] } ?? []
+    }
+
+    private mutating func endIfQuiet() -> String? {
         guard let since, running < Self.burstRunning / 2, starts.count < Self.burstStarts / 2 else { return nil }
         self.since = nil
         defer { counts = [:]; total = 0 }
-        return "spawn.storm over after \(Int(now - since)) s: \(total) child processes started; \(top)"
+        return "spawn.storm over after \(Int(lastStart - since)) s: \(total) child processes started; \(top)"
     }
 
     private mutating func prune(_ now: Double) {
