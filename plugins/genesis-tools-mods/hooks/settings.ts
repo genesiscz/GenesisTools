@@ -22,6 +22,8 @@ export interface ModsSettings {
         checkouts: number;
         cwd: "touched" | "always";
         expand: "first" | "all" | "none";
+        name: "repo-folder" | "repo" | "folder";
+        earlier: "show" | "hide";
     };
     askRow: { enabled: boolean };
     spinner: { enabled: boolean };
@@ -40,7 +42,15 @@ export const MODS_DEFAULTS: ModsSettings = {
     agentModel: { enabled: false, format: "label" },
     decisions: { enabled: false },
     links: { enabled: false },
-    git: { enabled: false, labels: "full", checkouts: 3, cwd: "touched", expand: "first" },
+    git: {
+        enabled: false,
+        labels: "full",
+        checkouts: 3,
+        cwd: "touched",
+        expand: "first",
+        name: "repo-folder",
+        earlier: "show",
+    },
     askRow: { enabled: false },
     spinner: { enabled: false },
     cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
@@ -154,6 +164,8 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
             checkouts: whole(git.checkouts, 1, 6, d.git.checkouts),
             cwd: git.cwd === "touched" || git.cwd === "always" ? git.cwd : d.git.cwd,
             expand: git.expand === "first" || git.expand === "all" || git.expand === "none" ? git.expand : d.git.expand,
+            name: git.name === "repo-folder" || git.name === "repo" || git.name === "folder" ? git.name : d.git.name,
+            earlier: git.earlier === "show" || git.earlier === "hide" ? git.earlier : d.git.earlier,
         },
         askRow: { enabled: enabled("askRow", d.askRow.enabled) },
         spinner: { enabled: enabled("spinner", d.spinner.enabled) },

@@ -1,7 +1,12 @@
 // The checkouts a session works in, for the git band: the git root of each file the session writes, and of each
 // folder where it changes git state (`git -C <dir> commit`, `cd <dir> && git rebase`). A file git ignores does not
 // count, so a plan a worktree session writes into the main checkout's `.claude/plans/` leaves the main checkout out.
-// Reads and read-only git (status, log, diff) count nothing.
+// Reads and read-only git (status, log, diff) count nothing. A folder in a shell variable the same command set
+// (`W=/tmp/x` then `git -C "$W" commit`) counts, and `git worktree add <path>` counts the new worktree.
+//
+// Each checkout keeps the branches the session worked on there: the one checked out at each write, and each one a
+// command made or pushed (`switch -c`, `checkout -b`, `worktree add -b`, `push origin <branch>`), with the main
+// checkout it belongs to. So a worktree the session removed, or a branch it switched away from, still has its PR.
 //
 // Each session's list lives in the plugin store, so it outlives a hot reload and a resume; the 40 sessions touched
 // last are kept. A session with no list yet starts from the GenesisTools file journal
@@ -16,6 +21,16 @@ import type { Host } from "./shared";
 export interface Touch {
     root: string;
     at: number;
+    /** The main checkout: the root itself, or for a linked worktree the folder that holds its `.git`. */
+    repo?: string;
+    /** The branches the session worked on here, the last first, at most `KEEP_BRANCHES`. */
+    branches?: string[];
+}
+
+/** One folder a command changes git state in, with the branches it names as made or pushed. */
+export interface GitWrite {
+    dir: string;
+    branches: string[];
 }
 
 const STORE_KEY = "git-band-checkouts";
@@ -23,6 +38,7 @@ const ADDED_KEY = "git-band-added";
 const ZOXIDE_TTL_MS = 60_000;
 const KEEP_SESSIONS = 40;
 const KEEP_ROOTS = 12;
+const KEEP_BRANCHES = 6;
 /** The journal's newest files the first list is built from. */
 const SEED_FILES = 200;
 const WRITE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
@@ -83,29 +99,143 @@ export function writtenFiles(input: unknown): string[] {
     );
 }
 
-/** A shell word without its quotes. */
-function unquote(word: string): string {
-    return /^(["']).*\1$/s.test(word) ? word.slice(1, -1) : word;
+/**
+ * A shell word without its quotes. Outside single quotes `$NAME` and `${NAME}` take the value the command set
+ * before; a name it did not set stays as written, so the word is no folder.
+ */
+function shellWord(word: string, vars: ReadonlyMap<string, string>): string {
+    if (/^'.*'$/s.test(word)) {
+        return word.slice(1, -1);
+    }
+
+    const bare = /^".*"$/s.test(word) ? word.slice(1, -1) : word;
+
+    return bare.replace(
+        /\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g,
+        (all: string, braced?: string, plain?: string) => vars.get(braced ?? plain ?? "") ?? all
+    );
+}
+
+/** A folder from a command's word: absolute, `~/`, or relative to the folder the command is in; `..` resolved. */
+function resolveIn(value: string, dir: string | undefined, home: string | undefined): string | undefined {
+    const path = absolute(value, home) ?? (dir && value && !value.startsWith("$") ? `${dir}/${value}` : undefined);
+
+    if (!path) {
+        return undefined;
+    }
+
+    const parts: string[] = [];
+
+    for (const part of path.split("/")) {
+        if (part === "..") {
+            parts.pop();
+        } else if (part && part !== ".") {
+            parts.push(part);
+        }
+    }
+
+    return `/${parts.join("/")}`;
+}
+
+/** The branch name of a ref a push or a switch names: `refs/heads/x` and `+x` as `x`; `HEAD` and tags as none. */
+function branchOf(ref: string): string | undefined {
+    const name = ref.replace(/^\+/, "").replace(/^refs\/heads\//, "");
+
+    return !name || name === "HEAD" || name.startsWith("refs/") || name.startsWith("-") ? undefined : name;
+}
+
+/** The branches a git command makes or pushes: `switch -c x`, `checkout -b x`, `push origin x` or `HEAD:x`. */
+function namedBranches(verb: string, args: readonly string[]): string[] {
+    if (verb === "switch" || verb === "checkout") {
+        const at = args.findIndex((arg) => ["-c", "-C", "-b", "-B", "--create", "--force-create"].includes(arg));
+        const made = at >= 0 ? branchOf(args[at + 1] ?? "") : undefined;
+
+        return made ? [made] : [];
+    }
+
+    if (verb !== "push" || args.some((arg) => arg === "-d" || arg === "--delete" || arg === "--tags")) {
+        return [];
+    }
+
+    const valued = new Set(["-o", "--push-option", "--repo", "--receive-pack", "--exec"]);
+    const positional: string[] = [];
+
+    for (let at = 0; at < args.length; at += 1) {
+        const arg = args[at] ?? "";
+
+        if (valued.has(arg)) {
+            at += 1;
+        } else if (!arg.startsWith("-")) {
+            positional.push(arg);
+        }
+    }
+
+    // The first word is the remote; each later one a refspec, `src:dst` pushing into `dst`, `:dst` deleting it.
+    return positional
+        .slice(1)
+        .filter((spec) => !spec.startsWith(":"))
+        .map((spec) => branchOf(spec.includes(":") ? spec.slice(spec.indexOf(":") + 1) : spec))
+        .filter((name): name is string => name !== undefined);
+}
+
+/** `git worktree add [-b <branch>] <path> [<commit>]`: the new worktree's path as written, and the branch it makes. */
+function worktreeAdd(args: readonly string[]): { path?: string; branch?: string } {
+    const valued = new Set(["-b", "-B", "--reason"]);
+    let branch: string | undefined;
+
+    for (let at = 0; at < args.length; at += 1) {
+        const arg = args[at] ?? "";
+
+        if (valued.has(arg)) {
+            branch = arg === "--reason" ? branch : branchOf(args[at + 1] ?? "");
+            at += 1;
+        } else if (!arg.startsWith("-")) {
+            return { path: arg, branch };
+        }
+    }
+
+    return { branch };
 }
 
 /**
  * The folders a Bash command changes git state in: `git -C <dir> <verb>`, or `git <verb>` after `cd <dir>` in the
- * same command, for a verb that writes (commit, rebase, stash, push…). Only absolute and `~/` folders count, since
- * the shell's own folder is not known here.
+ * same command, for a verb that writes (commit, rebase, stash, push…), and the path of `git worktree add`. A folder
+ * counts when it is absolute, `~/`, or in a variable the command set before it (`W=/tmp/x` then `git -C "$W"`);
+ * the shell's own folder is not known here. Each folder comes with the branches the command made or pushed there.
  */
-export function gitWriteDirs(command: string, home: string | undefined): string[] {
-    const dirs: string[] = [];
+export function gitWrites(command: string, home: string | undefined): GitWrite[] {
+    const writes = new Map<string, Set<string>>();
+    const vars = new Map<string, string>(home ? [["HOME", home]] : []);
     let here: string | undefined;
+    const note = (dir: string, branches: readonly string[]) => {
+        writes.set(dir, new Set([...(writes.get(dir) ?? []), ...branches]));
+    };
 
     for (const part of command.split(/&&|\|\||[;|\n]/)) {
-        const words = (part.match(/"[^"]*"|'[^']*'|\S+/g) ?? []).map(unquote);
+        const raw = part.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+        let start = raw[0] === "export" ? 1 : 0;
+        const sets: [string, string][] = [];
 
-        while (words[0] && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[0])) {
-            words.shift();
+        while (raw[start] && /^[A-Za-z_][A-Za-z0-9_]*=/.test(raw[start] ?? "")) {
+            const word = raw[start] ?? "";
+            const eq = word.indexOf("=");
+            sets.push([word.slice(0, eq), shellWord(word.slice(eq + 1), vars)]);
+            start += 1;
+        }
+
+        const words = raw.slice(start).map((word) => shellWord(word, vars));
+
+        // `W=/x` alone sets W for the rest of the command; `W=/x git …` sets it for that one command only.
+        if (words.length === 0) {
+            for (const [name, value] of sets) {
+                vars.set(name, value);
+            }
+
+            continue;
         }
 
         if (words[0] === "cd") {
-            here = words[1] ? absolute(words[1], home) : undefined;
+            here = words[1] ? resolveIn(words[1], here, home) : undefined;
             continue;
         }
 
@@ -120,10 +250,8 @@ export function gitWriteDirs(command: string, home: string | undefined): string[
             const flag = words[at];
 
             if (flag === "-C" || flag === "-c") {
-                const value = words[at + 1] ?? "";
-
                 if (flag === "-C") {
-                    dir = absolute(value, home) ?? (dir && !value.startsWith("/") ? `${dir}/${value}` : undefined);
+                    dir = resolveIn(words[at + 1] ?? "", dir, home);
                 }
 
                 at += 2;
@@ -132,12 +260,27 @@ export function gitWriteDirs(command: string, home: string | undefined): string[
             }
         }
 
-        if (dir && GIT_WRITES.has(words[at] ?? "")) {
-            dirs.push(dir);
+        const verb = words[at] ?? "";
+        const args = words.slice(at + 1);
+
+        if (verb === "worktree" && args[0] === "add") {
+            const added = worktreeAdd(args.slice(1));
+            const path = added.path ? resolveIn(added.path, dir, home) : undefined;
+
+            if (path) {
+                note(path, added.branch ? [added.branch] : []);
+            }
+        } else if (dir && GIT_WRITES.has(verb)) {
+            note(dir, namedBranches(verb, args));
         }
     }
 
-    return [...new Set(dirs)];
+    return [...writes].map(([dir, branches]) => ({ dir, branches: [...branches] }));
+}
+
+/** The folders of `gitWrites`, without their branches. */
+export function gitWriteDirs(command: string, home: string | undefined): string[] {
+    return gitWrites(command, home).map((write) => write.dir);
 }
 
 /** The git root above a file or folder: the nearest folder holding `.git` (a folder, or a worktree's file). */
@@ -316,33 +459,86 @@ export async function sessionCheckouts(host: Host): Promise<Touch[]> {
 }
 
 /**
- * Records the checkouts a finished tool call worked in. True when one of them was not already the newest, so the
- * band's rows may have moved.
+ * A checkout's main checkout and the branch it has checked out, from its `.git` files without running git: a linked
+ * worktree's `.git` file points into `<main>/.git/worktrees/<name>`, whose `HEAD` names the branch.
+ */
+export async function headOf(host: Host, root: string): Promise<{ repo: string; branch?: string }> {
+    const dotGit = `${root}/.git`;
+    let gitDir = dotGit;
+    let repo = root;
+
+    if ((await host.stat(dotGit).catch(() => undefined))?.kind === "file") {
+        const pointed = /^gitdir:\s*(.+)$/m.exec(await host.read(dotGit).catch(() => ""))?.[1]?.trim();
+
+        if (pointed) {
+            gitDir = resolveIn(pointed, root, undefined) ?? pointed;
+            const at = gitDir.indexOf("/.git/worktrees/");
+            repo = at > 0 ? gitDir.slice(0, at) : repo;
+        }
+    }
+
+    const head = await host.read(`${gitDir}/HEAD`).catch(() => "");
+
+    return { repo, branch: /^ref: refs\/heads\/(.+)$/m.exec(head)?.[1]?.trim() };
+}
+
+/** The branches first, then the ones before them, each once, at most `KEEP_BRANCHES`. */
+function withBranches(first: readonly (string | undefined)[], before: readonly string[] = []): string[] {
+    const names = first.filter((name): name is string => name !== undefined);
+
+    return [...new Set([...names, ...before])].slice(0, KEEP_BRANCHES);
+}
+
+/**
+ * Records the checkouts a finished tool call worked in, each with its branch and the branches the command made or
+ * pushed there. True when one of them was not already the newest, so the band's rows may have moved.
  */
 export async function noteToolCall(host: Host, input: unknown): Promise<boolean> {
     const home = await host.env("HOME");
     const files = writtenFiles(input);
     const command = isRecord(input) && input.tool === "Bash" && typeof input.command === "string" ? input.command : "";
-    const dirs = command ? gitWriteDirs(command, home) : [];
+    const writes = command ? gitWrites(command, home) : [];
 
-    if (files.length === 0 && dirs.length === 0) {
+    if (files.length === 0 && writes.length === 0) {
         return false;
     }
 
     const now = Date.now();
-    const fromFiles = (await datedRoots(host, files)).map((touch) => touch.root);
-    const fromDirs = await Promise.all(dirs.map((dir) => rootAbove(host, dir)));
-    const roots = [...new Set([...fromFiles, ...fromDirs.filter((root): root is string => root !== null)])];
+    const named = new Map<string, string[]>();
+
+    for (const touch of await datedRoots(host, files)) {
+        named.set(touch.root, []);
+    }
+
+    for (const write of writes) {
+        const root = await rootAbove(host, write.dir);
+
+        if (root !== null) {
+            named.set(root, [...(named.get(root) ?? []), ...write.branches]);
+        }
+    }
+
+    const roots = [...named.keys()];
 
     if (roots.length === 0) {
         return false;
     }
 
     const before = await sessionCheckouts(host);
-    const touches = [
-        ...roots.map((root) => ({ root, at: now })),
-        ...before.filter((touch) => !roots.includes(touch.root)),
-    ].slice(0, KEEP_ROOTS);
+    const fresh = await Promise.all(
+        roots.map(async (root): Promise<Touch> => {
+            const head = await headOf(host, root);
+            const held = before.find((touch) => touch.root === root);
+
+            return {
+                root,
+                at: now,
+                repo: head.repo,
+                branches: withBranches([head.branch, ...(named.get(root) ?? [])], held?.branches),
+            };
+        })
+    );
+    const touches = [...fresh, ...before.filter((touch) => !roots.includes(touch.root))].slice(0, KEEP_ROOTS);
     const session = await host.sessionId();
 
     held = { session, touches };

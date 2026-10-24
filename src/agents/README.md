@@ -265,9 +265,18 @@ checked against real use.
   or `↑14 ↓2 ●4 +120 −30` with `minimal`), and the PRs (the branch's own and the ones `/mod-git pr add 123` tracks)
   with CI counts. A press on the branch or a PR, or a bare `/mod-git`, opens the Git sidebar: each PR's title, failing and pending checks, and `open`, `hub`, `copy link`
   and `track` buttons. `/mod-git on|off|toggle|refresh`. The band has one line per checkout the session works in,
-  named by its folder, the last first, up to `checkouts` (default 3, at most 6): a checkout counts once the session
+  the last first, up to `checkouts` (default 3, at most 6): a checkout counts once the session
   writes a file in it that git does not ignore, or runs a git command that changes it (`git -C <dir> commit`,
-  `cd <dir> && git rebase`); reads and `git status` count nothing. So a session started in the main checkout that
+  `cd <dir> && git rebase`, `git worktree add <path>`, a folder in a variable the same command set:
+  `W=/tmp/x` then `git -C "$W" commit`); reads and `git status` count nothing. `name` (`repo-folder` by default)
+  names a linked worktree `Kalendora/enhancements` and a main checkout `Kalendora`; `repo` gives the main
+  checkout's name alone, `folder` the checkout's own folder. The sidebar says where a linked worktree is.
+  `earlier` (`show` by default) keeps the session's earlier work in view: each checkout remembers the branches the
+  session worked on there (checked out at a write, or made or pushed by a command: `switch -c`, `checkout -b`,
+  `worktree add -b`, `push origin <branch>`), so the PR of a branch it switched away from stays in the row, and a
+  worktree it removed keeps its row (`worktree removed`) with its last branch and that branch's PRs, read in the
+  main checkout. Such a row goes once the branch and its PRs are gone too. `hide` shows only what the checkouts
+  have now. So a session started in the main checkout that
   works in two worktrees shows the two worktrees. `cwd` `touched` (the default) shows the session's own folder only
   when the session worked there, or when it has worked nowhere yet; `always` shows it first. A session that has no
   record yet starts from its GenesisTools file journal. `/mod-git pr add` acts on the first line's checkout.

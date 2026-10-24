@@ -11,6 +11,11 @@
 // checkout in this session's band; `remove` takes it out, the sidebar's `hide` drops a worked-in one until the
 // session works there again. A PR's `track` keeps it in its checkout's row after a branch switch; the branch's own
 // PR shows anyway, so its `hide` is what takes it out of the band.
+//
+// With `mods.git.earlier: show` (the default) the work stays visible after it left the checkout: a branch the session
+// made, pushed or worked on there and then switched away from keeps its PR in the row, and a worktree the session
+// removed keeps its row (`worktree removed`), with its branch and PRs read in the main checkout. A row is named by
+// `mods.git.name`: `Kalendora/enhancements` for a linked worktree (`repo-folder`), `Kalendora`, or `enhancements`.
 import type { ElementTable, RenderElement } from "claude-code";
 import type { BandCheck, BandPr, GitBand, GitBandRows, GitBandSwitch } from "../types";
 import {
@@ -18,11 +23,13 @@ import {
     addedCheckouts,
     type FolderSuggestion,
     folderSuggestions,
+    headOf,
     hideCheckout,
     noteToolCall,
     pickRoots,
     removeAdded,
     sessionCheckouts,
+    type Touch,
 } from "./checkouts";
 import { type GenesisProbe, genesisProbe, hubLink } from "./genesis";
 import { liveAgo } from "./live";
@@ -52,6 +59,8 @@ let turnedOn: GitBandSwitch = null;
 
 const GH_TTL_MS = 2 * 60_000;
 const EVERY_MS = 3 * 60_000;
+/** The earlier branches of a checkout whose PRs a row looks up, the last first. */
+const EARLIER_PRS = 3;
 const ghCache = new Map<string, { at: number; pr: BandPr | null }>();
 let refreshing: Promise<void> | undefined;
 
@@ -70,10 +79,14 @@ async function cwdRoot(host: Host): Promise<string | undefined> {
 /** The checkouts the band shows now, with why: the added ones, then the ones the session worked in, the last first. */
 async function bandRoots(host: Host): Promise<{ root: string; why: GitBand["why"] }[]> {
     ownRoot = await cwdRoot(host);
-    const touches = await sessionCheckouts(host);
+    const settings = (await settingsOf(host)).git;
+    const all = await sessionCheckouts(host);
+    // With `earlier: hide` a removed worktree takes no row, so it leaves its place to one that is there.
+    const there = await Promise.all(all.map((touch) => host.exists(touch.root).catch(() => true)));
+    const touches = settings.earlier === "show" ? all : all.filter((_, index) => there[index]);
     const added = await addedCheckouts(host);
 
-    return pickRoots(touches, ownRoot, (await settingsOf(host)).git, added).map((root) => ({
+    return pickRoots(touches, ownRoot, settings, added).map((root) => ({
         root,
         why: added.includes(root) ? "added" : touches.some((touch) => touch.root === root) ? "worked" : "folder",
     }));
@@ -92,6 +105,21 @@ function tilde(path: string, home: string | undefined): string {
 /** A checkout's folder name: `col-fe-marketplace-2.0-poc`. */
 export function checkoutName(root: string): string {
     return root.slice(root.lastIndexOf("/") + 1) || root;
+}
+
+/**
+ * A row's name by `mods.git.name`: `repo-folder` gives a linked worktree as `Kalendora/enhancements` and a main
+ * checkout as `Kalendora`; `repo` gives the main checkout's name alone; `folder` the checkout's own folder.
+ */
+export function labelOf(band: Pick<GitBand, "root" | "repo">, name: "repo-folder" | "repo" | "folder"): string {
+    const folder = checkoutName(band.root);
+    const repo = band.repo ? checkoutName(band.repo) : folder;
+
+    if (name === "folder") {
+        return folder;
+    }
+
+    return name === "repo" || repo === folder ? repo : `${repo}/${folder}`;
 }
 
 const storeKey = (root: string) => `git-band-prs:${root}`;
@@ -173,8 +201,16 @@ export function checkCounts(rollup: unknown): { passed: number; failed: number; 
     return countChecks(checksOf(rollup));
 }
 
-async function prOf(host: Host, root: string, which: string, tracked: boolean): Promise<BandPr | null> {
-    const key = `${root}|${which}`;
+/**
+ * A PR from `gh pr view` in `root`: `which` is a number or a branch, or "" for the checked-out branch, whose answer is
+ * kept under `branch` so a switch does not show the last branch's PR for the next 2 minutes.
+ */
+async function prOf(
+    host: Host,
+    ask: { root: string; which: string; tracked: boolean; branch?: string }
+): Promise<BandPr | null> {
+    const { root, which, tracked } = ask;
+    const key = `${root}|${which || `@${ask.branch ?? ""}`}`;
     const held = ghCache.get(key);
 
     if (held && Date.now() - held.at < GH_TTL_MS) {
@@ -267,36 +303,114 @@ async function isOn(host: Host): Promise<boolean> {
     return held ?? (await settingsOf(host)).git.enabled;
 }
 
-/** One checkout's row; undefined when git cannot read it. */
-async function readRow(host: Host, root: string, why: GitBand["why"]): Promise<GitBand | undefined> {
-    const status = await run(host, ["git", "status", "--porcelain", "--branch"], root);
-
-    if (status === undefined) {
-        return undefined;
-    }
-
-    const numstat = parseNumstat((await run(host, ["git", "diff", "--numstat", "HEAD"], root)) ?? "");
-    const tracked = await trackedPrs(host, root);
-    const hidden = await hiddenPrs(host, root);
-    const own = await prOf(host, root, "", false);
+/**
+ * The PRs a row shows: the branch's own (`which` names it, or "" for the checked-out branch), the tracked ones, then
+ * the ones of the branches the session worked on in the checkout before (`touch.branches`), each marked `from`.
+ */
+async function rowPrs(
+    host: Host,
+    at: { cwd: string; root: string; which: string; branch: string; touch?: Touch }
+): Promise<BandPr[]> {
+    const tracked = await trackedPrs(host, at.root);
+    const hidden = await hiddenPrs(host, at.root);
+    const own = await prOf(host, { root: at.cwd, which: at.which, tracked: false, branch: at.branch });
     const others = await Promise.all(
-        tracked.filter((n) => n !== own?.number).map((n) => prOf(host, root, String(n), true))
+        tracked
+            .filter((n) => n !== own?.number)
+            .map((n) => prOf(host, { root: at.cwd, which: String(n), tracked: true }))
     );
     const mine = own
         ? { ...own, own: true, tracked: tracked.includes(own.number), hidden: hidden.includes(own.number) }
         : null;
     const prs = [mine, ...others].filter((pr): pr is BandPr => pr !== null);
+    const names = (at.touch?.branches ?? []).filter((name) => name !== at.branch).slice(0, EARLIER_PRS);
+    const earlier = await Promise.all(names.map((name) => prOf(host, { root: at.cwd, which: name, tracked: false })));
 
-    return { root, why, at: Date.now(), ...parseStatus(status), ...numstat, prs };
+    earlier.forEach((pr, index) => {
+        if (pr && !prs.some((held) => held.number === pr.number)) {
+            prs.push({ ...pr, from: names[index], hidden: hidden.includes(pr.number) });
+        }
+    });
+
+    return prs;
+}
+
+/**
+ * The row of a worktree the session removed: the branch it had last, that branch's PRs and the earlier ones, read in
+ * the main checkout; null when the branch has no local ref and no PR left to show.
+ */
+async function goneRow(host: Host, root: string, touch: Touch): Promise<GitBand | null> {
+    const branch = touch.branches?.[0];
+    const repo = touch.repo;
+
+    if (!branch || !repo || repo === root) {
+        return null;
+    }
+
+    const ref = await run(
+        host,
+        ["git", "for-each-ref", "--format=%(refname:short)%09%(upstream:track)", `refs/heads/${branch}`],
+        repo
+    );
+    const sync = ref?.split("\t")[1] ?? "";
+    const prs = await rowPrs(host, { cwd: repo, root, which: branch, branch, touch });
+
+    if (!ref?.trim() && prs.length === 0) {
+        return null;
+    }
+
+    return {
+        root,
+        why: "worked",
+        at: Date.now(),
+        branch,
+        ahead: Number(/ahead (\d+)/.exec(sync)?.[1] ?? 0),
+        behind: Number(/behind (\d+)/.exec(sync)?.[1] ?? 0),
+        dirty: 0,
+        added: 0,
+        removed: 0,
+        prs,
+        repo,
+        gone: true,
+    };
+}
+
+/**
+ * One checkout's row: undefined when git cannot read it this time (the last row stays), null when its folder is gone
+ * and there is nothing left to show.
+ */
+async function readRow(host: Host, root: string, why: GitBand["why"]): Promise<GitBand | null | undefined> {
+    const status = await run(host, ["git", "status", "--porcelain", "--branch"], root);
+    const earlier = (await settingsOf(host)).git.earlier === "show";
+    const touch = earlier ? (await sessionCheckouts(host)).find((held) => held.root === root) : undefined;
+
+    if (status === undefined) {
+        if (await host.exists(root).catch(() => true)) {
+            return undefined;
+        }
+
+        return touch ? goneRow(host, root, touch) : null;
+    }
+
+    const numstat = parseNumstat((await run(host, ["git", "diff", "--numstat", "HEAD"], root)) ?? "");
+    const state = parseStatus(status);
+    const prs = await rowPrs(host, { cwd: root, root, which: "", branch: state.branch, touch });
+    const { repo } = await headOf(host, root);
+
+    return { root, why, at: Date.now(), ...state, ...numstat, prs, repo };
 }
 
 async function refreshNow(host: Host, why: string): Promise<void> {
     const started = Date.now();
     const roots = await bandRoots(host);
     const read = await Promise.all(roots.map(({ root, why }) => readRow(host, root, why)));
-    // A checkout git could not read this time keeps its last row.
+    // A checkout git could not read this time keeps its last row; one whose folder is gone with nothing to show goes.
     const next = roots
-        .map(({ root }, index) => read[index] ?? rows.find((row) => row.root === root))
+        .map(({ root }, index) => {
+            const row = read[index];
+
+            return row === null ? undefined : (row ?? rows.find((held) => held.root === root));
+        })
         .filter((row): row is GitBand => row !== undefined);
 
     rows = next;
@@ -312,7 +426,14 @@ async function refreshNow(host: Host, why: string): Promise<void> {
             dirty: band.dirty,
             added: band.added,
             removed: band.removed,
-            prs: band.prs.map((pr) => ({ n: pr.number, passed: pr.passed, failed: pr.failed, pending: pr.pending })),
+            gone: band.gone,
+            prs: band.prs.map((pr) => ({
+                n: pr.number,
+                from: pr.from,
+                passed: pr.passed,
+                failed: pr.failed,
+                pending: pr.pending,
+            })),
         })),
         ms: Date.now() - started,
     });
@@ -422,7 +543,8 @@ async function command(host: Host, args: string): Promise<string> {
     if (verb === "status") {
         const band = rows[0];
         const on = await isOn(host);
-        const shown = rows.length ? `; checkouts ${rows.map((row) => checkoutName(row.root)).join(", ")}` : "";
+        const name = (await settingsOf(host)).git.name;
+        const shown = rows.length ? `; checkouts ${rows.map((row) => labelOf(row, name)).join(", ")}` : "";
 
         return `Git band ${on ? "on" : "off"}; last refresh ${band ? new Date(band.at).toLocaleTimeString() : "never"}${shown}.`;
     }
@@ -580,7 +702,15 @@ function countsOf(band: GitBand, wording: Wording): { sync: string; dirty: strin
         ]
             .filter(Boolean)
             .join(words ? " · " : " "),
-        dirty: band.dirty ? (words ? `${plural(band.dirty, "file")} changed` : `●${band.dirty}`) : "clean",
+        dirty: band.gone
+            ? words
+                ? "worktree removed"
+                : "removed"
+            : band.dirty
+              ? words
+                  ? `${plural(band.dirty, "file")} changed`
+                  : `●${band.dirty}`
+              : "clean",
         lines: band.dirty && (band.added || band.removed) ? `+${band.added} −${band.removed}` : "",
         prs: shownPrs(band).map((pr) => `#${pr.number}${wording === "bare" ? "" : prNote(pr)}`),
     };
@@ -623,7 +753,8 @@ export async function gitRows(
     }
 
     const { Box, Button, Text } = ui;
-    const labelled = (await settingsOf(host)).git.labels === "full";
+    const git = (await settingsOf(host)).git;
+    const labelled = git.labels === "full";
     const named = namesCheckouts(shown, ownRoot);
     const open = () => void host.togglePane(GIT_PANE, "Git");
 
@@ -639,7 +770,7 @@ export async function gitRows(
         const width = widthAt(index);
         const counts = countsOf(band, wording);
         const labels = fitLabels(
-            named ? checkoutName(band.root) : undefined,
+            named ? labelOf(band, git.name) : undefined,
             band.branch,
             width - countsWidth(counts, named)
         );
@@ -755,6 +886,10 @@ function stateParts(band: GitBand): { text: string; color?: string }[] {
         }
     }
 
+    if (band.gone) {
+        parts.push({ text: "worktree removed" });
+    }
+
     return parts.length ? parts : [{ text: "clean" }];
 }
 
@@ -772,9 +907,8 @@ async function toggle(
     await pressed(host, key, work.done);
 }
 
-/** The Git sidebar's actions for one checkout: Finder, and remove or hide where the band can drop it. */
-function checkoutActions(host: Host, band: GitBand, at: string): Pressable[] {
-    const name = checkoutName(band.root);
+/** The Git sidebar's actions for one checkout: Finder while its folder is there, and remove or hide. */
+function checkoutActions(host: Host, band: GitBand, at: string, name: string): Pressable[] {
     const finder: Pressable = {
         key: `${at}-finder`,
         label: "Finder",
@@ -806,7 +940,7 @@ function checkoutActions(host: Host, band: GitBand, at: string): Pressable[] {
 
     if (band.why === "worked") {
         return [
-            finder,
+            ...(band.gone ? [] : [finder]),
             {
                 key: `${at}-hide`,
                 label: "hide",
@@ -838,15 +972,9 @@ function flipPr(root: string, n: number, flag: "tracked" | "hidden"): void {
 }
 
 /** The Git sidebar's actions for one PR: open, hub, copy link, track or untrack, and hide or show for the branch's own. */
-function prActions(
-    host: Host,
-    band: GitBand,
-    pr: BandPr,
-    at: string,
-    lists: { probe: GenesisProbe; tracked: number[]; hidden: number[] }
-): Pressable[] {
+function prActions(host: Host, band: GitBand, pr: BandPr, at: string, lists: Lists): Pressable[] {
     const n = pr.number;
-    const name = checkoutName(band.root);
+    const name = lists.label;
     const link = `[#${n} (${pr.title})](${pr.url})`;
     const hub = hubUrlOf(lists.probe, pr);
     const store = (key: string, list: number[], on: boolean) => async () => {
@@ -898,7 +1026,11 @@ function prActions(
                         )
                     ),
         },
-        {
+    ];
+
+    // An earlier branch's PR shows as long as the session remembers the branch; `hide` is what takes it out.
+    if (!pr.from) {
+        actions.push({
             key: `${at}-track`,
             label: pr.tracked ? "untrack" : "track",
             isDim: true,
@@ -914,10 +1046,10 @@ function prActions(
                             : `#${n} is out of ${name}'s row.`
                         : `#${n} stays in ${name}'s row after a branch switch.`,
                 }),
-        },
-    ];
+        });
+    }
 
-    if (pr.own) {
+    if (pr.own || pr.from) {
         actions.push({
             key: `${at}-hide`,
             label: pr.hidden ? "show" : "hide",
@@ -954,7 +1086,8 @@ function isOpen(root: string, index: number, expand: "first" | "all" | "none"): 
     return expand === "all" || (expand === "first" && index === 0);
 }
 
-type Lists = { probe: GenesisProbe; tracked: number[]; hidden: number[] };
+/** What one checkout's sidebar lines read: the link probe, its PR lists, its name and the home for `~`. */
+type Lists = { probe: GenesisProbe; tracked: number[]; hidden: number[]; label: string; home?: string };
 
 /** A checkout's state in signs for its folded line: `↑24 ●16`, `clean`. */
 function stateSigns(band: GitBand): { text: string; color?: string }[] {
@@ -972,7 +1105,9 @@ function stateSigns(band: GitBand): { text: string; color?: string }[] {
         parts.push({ text: `●${band.dirty}`, color: "magenta" });
     }
 
-    if (parts.length === 0) {
+    if (band.gone) {
+        parts.push({ text: "removed" });
+    } else if (parts.length === 0) {
         parts.push({ text: "clean" });
     }
 
@@ -987,9 +1122,15 @@ function stateSigns(band: GitBand): { text: string; color?: string }[] {
  * A checkout's first line, one Button the width of the pane: the fold mark, its name and branch at the left, and at
  * the right why it is here (open) or its state in signs (folded). The branch gives way first when the line is full.
  */
-function checkoutLine(host: Host, kit: Kit, band: GitBand, at: string, isOpenNow: boolean): RenderElement {
+function checkoutLine(
+    host: Host,
+    kit: Kit,
+    band: GitBand,
+    at: string,
+    isOpenNow: boolean,
+    name: string
+): RenderElement {
     const { Button, Text } = kit.ui;
-    const name = checkoutName(band.root);
     const right = isOpenNow ? [{ text: whyText(band) }] : stateSigns(band);
     const rightText = right.map((part) => part.text).join(" ");
     const room = kit.columns - widthOf(rightText) - 1;
@@ -1090,7 +1231,7 @@ function prLines(host: Host, kit: Kit, band: GitBand, pr: BandPr, at: string, li
     const failing = pr.checks.filter((check) => check.verdict === "fail");
     const pending = pr.checks.filter((check) => check.verdict === "pending");
     const why = [
-        pr.own ? "this branch's PR" : "tracked",
+        pr.own ? "this branch's PR" : pr.from ? "earlier branch" : "tracked",
         pr.own && pr.tracked ? "kept after a switch" : "",
         pr.hidden ? "hidden from the band" : "",
     ]
@@ -1128,6 +1269,12 @@ function prLines(host: Host, kit: Kit, band: GitBand, pr: BandPr, at: string, li
             <Text dimColor>{`  ${pr.state.toLowerCase()}${pr.draft ? " draft" : ""} · ${ciText(pr)} · ${why}`}</Text>
         )
     );
+
+    // Its own line, since a sidebar is too narrow to keep a branch name at the end of the state line.
+    if (pr.from) {
+        const from = middleCut(pr.from, Math.max(LABEL_MIN, kit.columns - 9));
+        out.push(line(kit, `${at}-from`, <Text dimColor>{`  branch ${from}`}</Text>));
+    }
     failing.forEach((check, index) => {
         out.push(checkLine(host, kit, check, `${at}-fail-${index}`));
     });
@@ -1147,7 +1294,7 @@ function prLines(host: Host, kit: Kit, band: GitBand, pr: BandPr, at: string, li
 /** An open checkout's lines under its first one: its state with its actions at the right, then its PRs. */
 function openLines(host: Host, kit: Kit, band: GitBand, at: string, lists: Lists): RenderElement[] {
     const { Box, Text } = kit.ui;
-    const actions = checkoutActions(host, band, at);
+    const actions = checkoutActions(host, band, at, lists.label);
     const state = stateParts(band);
     const stateWidth = widthOf(state.map((part) => part.text).join(" ")) + 2;
     const fits = stateWidth + 1 + buttonsWidth(actions) <= kit.columns;
@@ -1179,6 +1326,13 @@ function openLines(host: Host, kit: Kit, band: GitBand, at: string, lists: Lists
           ]
         : [line(kit, `${at}-state`, stateText), ...buttonLines(kit, actions, `${at}-actions`, 2)];
 
+    // A linked worktree says where it is, since its name alone does not (`/tmp/cc/<project>/<session>/worktrees/x`).
+    if (band.repo && band.repo !== band.root) {
+        const where = band.gone ? "was at" : "worktree at";
+        const path = middleCut(tilde(band.root, lists.home), Math.max(LABEL_MIN, kit.columns - where.length - 3));
+        out.push(line(kit, `${at}-where`, <Text dimColor>{`  ${where} ${path}`}</Text>));
+    }
+
     if (band.prs.length === 0) {
         out.push(line(kit, `${at}-nopr`, <Text dimColor>{"  No pull request for this branch."}</Text>));
     }
@@ -1202,7 +1356,7 @@ async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
     const Input = "Input" in kit.ui ? kit.ui.Input : undefined;
     const shown = rows;
     const home = await host.env("HOME");
-    const expand = (await settingsOf(host)).git.expand;
+    const git = (await settingsOf(host)).git;
     const readAt = Math.max(0, ...shown.map((band) => band.at));
     const reload: Pressable = {
         key: "git-refresh",
@@ -1293,9 +1447,10 @@ async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
 
     for (const [index, band] of shown.entries()) {
         const at = `git-${index}`;
-        const isOpenNow = isOpen(band.root, index, expand);
+        const isOpenNow = isOpen(band.root, index, git.expand);
+        const label = labelOf(band, git.name);
 
-        lines.push(line(kit, `${at}-rule`, divider(kit)), checkoutLine(host, kit, band, at, isOpenNow));
+        lines.push(line(kit, `${at}-rule`, divider(kit)), checkoutLine(host, kit, band, at, isOpenNow, label));
 
         if (isOpenNow) {
             lines.push(
@@ -1303,6 +1458,8 @@ async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
                     probe,
                     tracked: await trackedPrs(host, band.root),
                     hidden: await hiddenPrs(host, band.root),
+                    label,
+                    home,
                 })
             );
         }

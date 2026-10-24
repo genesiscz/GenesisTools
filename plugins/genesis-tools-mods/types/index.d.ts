@@ -50,6 +50,8 @@ export interface BandPr {
     own: boolean;
     /** Taken out of the band by the sidebar's `hide`; the sidebar still lists it. */
     hidden: boolean;
+    /** The branch of an earlier PR: one this session made or worked on in the checkout, now not checked out there. */
+    from?: string;
 }
 
 /** One checkout's row of the git band, as the last refresh found it. */
@@ -67,6 +69,10 @@ export interface GitBand {
     added: number;
     removed: number;
     prs: BandPr[];
+    /** The main checkout it belongs to: the root itself, or for a linked worktree the folder that holds its `.git`. */
+    repo?: string;
+    /** The worktree folder is gone; the branch and its PRs are read from the main checkout (`mods.git.earlier`). */
+    gone?: boolean;
 }
 
 /** The git band of this session, one row per checkout it shows; empty until the first refresh. */

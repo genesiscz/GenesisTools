@@ -686,8 +686,14 @@ describe("applySetting", () => {
             checkouts: 3,
             cwd: "touched",
             expand: "first",
+            name: "repo-folder",
+            earlier: "show",
         });
         expect(set("mods.git.expand", "all").git.expand).toBe("all");
+        expect(set("mods.git.name", "folder").git.name).toBe("folder");
+        expect(() => set("mods.git.name", "path")).toThrow("repo-folder, repo or folder");
+        expect(set("mods.git.earlier", "hide").git.earlier).toBe("hide");
+        expect(() => set("mods.git.earlier", "off")).toThrow("show or hide");
         expect(() => set("mods.git.expand", "some")).toThrow("first, all or none");
         expect(() => set("mods.git.labels", "short")).toThrow("full or minimal");
         expect(set("mods.git.checkouts", "2").git.checkouts).toBe(2);

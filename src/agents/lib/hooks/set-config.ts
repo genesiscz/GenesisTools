@@ -75,7 +75,7 @@ export const SETTABLE_KEYS = [
     "mods.idleCompact.<enabled|minutes|minTokens>",
     "mods.agentModel.<enabled|format>",
     "mods.<decisions|links|git|askRow|spinner>.enabled",
-    "mods.git.<labels|checkouts|cwd|expand>",
+    "mods.git.<labels|checkouts|cwd|expand|name|earlier>",
     "mods.cacheBand.<enabled|warnMinutes|cautionMinutes|others>",
     "mods.tmpUsage.<enabled|minutes>",
     "mods.agentsBand.<enabled|warnMinutes>",
@@ -148,6 +148,18 @@ function withMods(mods: ModsConfig, key: string, value: string): ModsConfig {
     } else if (feature === "git" && field === "expand") {
         if (value !== "first" && value !== "all" && value !== "none") {
             throw new Error(`${key} takes first, all or none, not ${SafeJSON.stringify(value)}`);
+        }
+
+        part[field] = value;
+    } else if (feature === "git" && field === "name") {
+        if (value !== "repo-folder" && value !== "repo" && value !== "folder") {
+            throw new Error(`${key} takes repo-folder, repo or folder, not ${SafeJSON.stringify(value)}`);
+        }
+
+        part[field] = value;
+    } else if (feature === "git" && field === "earlier") {
+        if (value !== "show" && value !== "hide") {
+            throw new Error(`${key} takes show or hide, not ${SafeJSON.stringify(value)}`);
         }
 
         part[field] = value;

@@ -9,6 +9,8 @@ import {
     folderSuggestions,
     forgetCheckouts,
     gitWriteDirs,
+    gitWrites,
+    headOf,
     hideCheckout,
     noteToolCall,
     pickRoots,
@@ -25,6 +27,7 @@ import {
     fitLabels,
     gitBand,
     hubUrlOf,
+    labelOf,
     middleCut,
     namesCheckouts,
     parseNumstat,
@@ -147,6 +150,34 @@ test("git band: the checkouts a command or an edit works in", async () => {
     // Read-only git, and git with no folder this hook can know, count nothing.
     expect(gitWriteDirs("git -C /work/wt-a status && git -C /work/wt-a log -3", "/home/test")).toEqual([]);
     expect(gitWriteDirs("git commit -m x", "/home/test")).toEqual([]);
+    // A folder in a variable the command set before counts; one it did not set, or set only for one command, does not.
+    expect(
+        gitWriteDirs('S=/tmp/cc/p/s\nW=$S/worktrees/audit\ngit -C "$W" switch -c fix/x origin/main', "/home/test")
+    ).toEqual(["/tmp/cc/p/s/worktrees/audit"]);
+    expect(gitWriteDirs('export W=~/wt-c; cd "${W}" && git commit -m x', "/home/test")).toEqual(["/home/test/wt-c"]);
+    expect(gitWriteDirs('git -C "$NOPE" commit -m x', "/home/test")).toEqual([]);
+    expect(gitWriteDirs('W=/work/x git -C "$W" commit -m x', "/home/test")).toEqual([]);
+    expect(gitWriteDirs("W=/work/x; git -C '$W' commit -m x", "/home/test")).toEqual([]);
+    // `git worktree add` counts the new worktree, relative paths resolved against the folder the command is in.
+    expect(gitWrites("git -C /work/main worktree add --no-track -b feat/y ../wt-y origin/main", "/home/test")).toEqual([
+        { dir: "/work/wt-y", branches: ["feat/y"] },
+    ]);
+    expect(gitWrites("git -C /work/main worktree add --detach /work/base origin/main", "/home/test")).toEqual([
+        { dir: "/work/base", branches: [] },
+    ]);
+    // The branches a command makes or pushes; HEAD, tags and a delete name none.
+    expect(
+        gitWrites(
+            "cd /work/main && git switch -c fix/a && git push -u origin fix/a HEAD:fix/b +refs/heads/fix/c",
+            "/home/test"
+        )
+    ).toEqual([{ dir: "/work/main", branches: ["fix/a", "fix/b", "fix/c"] }]);
+    expect(gitWrites("git -C /work/main push origin --delete fix/a", "/home/test")).toEqual([
+        { dir: "/work/main", branches: [] },
+    ]);
+    expect(gitWrites("git -C /work/main push origin HEAD v1.0:refs/tags/v1.0", "/home/test")).toEqual([
+        { dir: "/work/main", branches: [] },
+    ]);
     expect(writtenFiles({ tool: "Edit", file_path: "/work/wt-a/x.ts" })).toEqual(["/work/wt-a/x.ts"]);
     expect(writtenFiles({ tool: "Read", file_path: "/work/wt-a/x.ts" })).toEqual([]);
 
@@ -163,6 +194,13 @@ test("git band: the checkouts a command or an edit works in", async () => {
     ]);
     expect(pickRoots([], "/work/main", { checkouts: 3, cwd: "touched" })).toEqual(["/work/main"]);
     expect(fitLabels("col-tools", "main", 40)).toEqual({ name: "col-tools", branch: "main" });
+    // A linked worktree is named with its main checkout; a main checkout or a separate clone by its folder.
+    const worktree = { root: "/tmp/cc/shop/s1/worktrees/enhancements", repo: "/work/shop" };
+    expect(labelOf(worktree, "repo-folder")).toBe("shop/enhancements");
+    expect(labelOf(worktree, "repo")).toBe("shop");
+    expect(labelOf(worktree, "folder")).toBe("enhancements");
+    expect(labelOf({ root: "/work/shop", repo: "/work/shop" }, "repo-folder")).toBe("shop");
+    expect(labelOf({ root: "/work/shop-poc" }, "repo-folder")).toBe("shop-poc");
     // 30 columns: the name keeps 40% (12), the branch the other 18, each its start and end.
     expect(fitLabels("acme-marketplace-2.0-foundation", "feat/2026-10-13-enhancements-unified", 30)).toEqual({
         name: "acme-m…ation",
@@ -329,6 +367,45 @@ test("git band: a session in the main checkout that works in two worktrees shows
     // hide drops a worked-in checkout until the session works there again.
     await hideCheckout(host, "/work/wt-b");
     expect(await roots()).toEqual(["/work/wt-a"]);
+});
+
+test("git band: a worktree's main checkout and the branches the session worked on there", async () => {
+    forgetCheckouts();
+    const base = checkoutHost();
+    // /work/wt-b is a linked worktree of /work/main: its `.git` is a file pointing into the main checkout's `.git`.
+    const files: Record<string, string> = {
+        "/work/wt-b/.git": "gitdir: /work/main/.git/worktrees/wt-b\n",
+        "/work/main/.git/worktrees/wt-b/HEAD": "ref: refs/heads/fix/x\n",
+    };
+    const host: Host = {
+        ...base,
+        async stat(path) {
+            return path in files ? { kind: "file", size: 1, mtimeMs: 0, isLink: false } : base.stat(path);
+        },
+        async read(path) {
+            return files[path] ?? base.read(path);
+        },
+    };
+
+    expect(await headOf(host, "/work/wt-b")).toEqual({ repo: "/work/main", branch: "fix/x" });
+    expect(await headOf(host, "/work/wt-a")).toEqual({ repo: "/work/wt-a", branch: undefined });
+    // wt-b is the newest checkout already (the journal), so the band's rows do not move.
+    expect(await noteToolCall(host, { tool: "Bash", command: 'W=/work/wt-b\ngit -C "$W" commit -m x' })).toBe(false);
+    expect((await sessionCheckouts(host))[0]).toMatchObject({
+        root: "/work/wt-b",
+        repo: "/work/main",
+        branches: ["fix/x"],
+    });
+
+    // A push of another branch adds it; a later switch puts the checked-out branch first, and none is lost.
+    await noteToolCall(host, { tool: "Bash", command: "cd /work/wt-b && git push origin HEAD:fix/y" });
+    files["/work/main/.git/worktrees/wt-b/HEAD"] = "ref: refs/heads/fix/z\n";
+    await noteToolCall(host, { tool: "Edit", file_path: "/work/wt-b/y.ts" });
+    expect((await sessionCheckouts(host))[0]?.branches).toEqual(["fix/z", "fix/x", "fix/y"]);
+
+    // A reload keeps them.
+    forgetCheckouts();
+    expect((await sessionCheckouts(host))[0]?.branches).toEqual(["fix/z", "fix/x", "fix/y"]);
 });
 
 test("git band: folders added by hand, and the folders proposed for them", async () => {

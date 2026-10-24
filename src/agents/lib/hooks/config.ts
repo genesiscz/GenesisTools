@@ -300,6 +300,10 @@ export interface ModsConfig {
      * row per checkout the session wrote files or changed git state in, the last first, up to `checkouts`; the
      * session's own folder shows only when it worked there (`cwd: touched`) or first in every session (`always`).
      * The Git sidebar folds each checkout to one line; `expand` says which start open: the first, all, or none.
+     * `name` names a row: `repo-folder` gives a linked worktree as `Kalendora/enhancements`, `repo` the main
+     * checkout's name alone, `folder` the worktree's folder. `earlier: show` keeps the session's earlier work: the PR
+     * of a branch it worked on and switched away from, and the row of a worktree it removed; `hide` shows only what
+     * the checkouts have now.
      */
     git: {
         enabled: boolean;
@@ -307,6 +311,8 @@ export interface ModsConfig {
         checkouts: number;
         cwd: "touched" | "always";
         expand: "first" | "all" | "none";
+        name: "repo-folder" | "repo" | "folder";
+        earlier: "show" | "hide";
     };
     /** `[ask]` beside a finished tool row: quotes the row into the prompt. */
     askRow: { enabled: boolean };
@@ -492,7 +498,15 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         agentModel: { enabled: false, format: "label" },
         decisions: { enabled: false },
         links: { enabled: false },
-        git: { enabled: false, labels: "full", checkouts: 3, cwd: "touched", expand: "first" },
+        git: {
+            enabled: false,
+            labels: "full",
+            checkouts: 3,
+            cwd: "touched",
+            expand: "first",
+            name: "repo-folder",
+            earlier: "show",
+        },
         askRow: { enabled: false },
         spinner: { enabled: false },
         cacheBand: { enabled: false, warnMinutes: 10, cautionMinutes: 20, others: true },
@@ -1136,6 +1150,8 @@ export function mergeMods(stored: unknown): ModsConfig {
             cwd: git.cwd === "touched" || git.cwd === "always" ? git.cwd : base.git.cwd,
             expand:
                 git.expand === "first" || git.expand === "all" || git.expand === "none" ? git.expand : base.git.expand,
+            name: git.name === "repo-folder" || git.name === "repo" || git.name === "folder" ? git.name : base.git.name,
+            earlier: git.earlier === "show" || git.earlier === "hide" ? git.earlier : base.git.earlier,
         },
         askRow: { enabled: enabled("askRow", base.askRow.enabled) },
         spinner: { enabled: enabled("spinner", base.spinner.enabled) },

@@ -784,7 +784,7 @@ function registerMods(hooks: Command): void {
                 [
                     "mods.git",
                     mods.git.enabled,
-                    `labels ${mods.git.labels} · up to ${mods.git.checkouts} checkouts · own folder ${mods.git.cwd} · open ${mods.git.expand}`,
+                    `labels ${mods.git.labels} · up to ${mods.git.checkouts} checkouts · own folder ${mods.git.cwd} · open ${mods.git.expand} · names ${mods.git.name} · earlier work ${mods.git.earlier}`,
                 ],
                 ["mods.askRow", mods.askRow.enabled, ""],
                 ["mods.spinner", mods.spinner.enabled, ""],
