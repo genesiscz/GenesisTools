@@ -258,6 +258,10 @@ public final class EdgePanelController<Content: View> {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
+        // A clear window that never set this passes its alpha-0 pixels to the window below. While the hover list grows
+        // and lays out, the point under a resting pointer is blank for a moment, so SwiftUI's hover and the root's
+        // tracking area both saw "left" and the list shrank and grew about once a second (2026-10-24 20:26).
+        panel.ignoresMouseEvents = false
         let hosting = NSHostingView(rootView: content())
         // The controller owns the frame. Intrinsic sizing otherwise snaps an opening panel to the
         // content's full width between animation callbacks, moving its anchored edge off screen.
