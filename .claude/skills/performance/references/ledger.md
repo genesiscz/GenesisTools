@@ -19,8 +19,9 @@ afternoon.
 - **Commit subjects** carry the headline number: `perf(fs): ... so cold Codex discovery spends 82 ms instead of
   143 ms of CPU`. Scopes follow the repository's commit-msg hook vocabulary.
 - **Baselines** in `scripts/benchmarks/baselines/<name>.json`, committed with the script.
-- **Long write-ups** (research, proposals, explanations) go into the Obsidian vault, never `/tmp`:
-  `<notes vault>/Dev/Bun/` for Bun runtime research, `<notes vault>/Dev/Typescript/` for repository proposals.
+- **Long write-ups** (research, proposals, explanations) go into the Obsidian vault, never `/tmp`: a report the user
+  will read about this repository goes to `<notes vault>/GenesisTools/YYYY-MM-DD-<Topic>.md` (a dated subfolder for a
+  set of notes); general Bun runtime research stays under `<notes vault>/Dev/Bun/`.
 - **Area docs**: `docs/benchmarks-cpu.md` (CPU harness and idle work), `docs/benchmarks-du.md` (`tools du`, with its
   own rules: append a section per feature), `src/utils/bun/compiler/README.md` (FFI and compiler measurements).
 - **JSDoc** of a function that exists for speed states the measured reason in one or two sentences, so nobody

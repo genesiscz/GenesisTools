@@ -20,6 +20,10 @@ Measured 2026-10-13 on this Mac (Apple Silicon, load average 10 to 48 during the
 - **`FileSink.write` in a loop does not apply backpressure.** Feeding rg's stdin that way held 519 MB RSS for a
   week of logs. Pass a pull `ReadableStream` as `stdin` instead (the next frame decompresses when rg asks): 133 MB.
   Frames decompressing ahead: 1 ahead 83 MB, 3 ahead 171 MB on a 1 GB file, no wall gain once rg is the consumer.
+- **The frame walker beats Bun's native zstd stream on 1.4.x**: 2.1 to 3.0 times faster for a whole read and 7 to 27
+  times for a tail, with byte-identical output (2ff160f251). Measure again on a new Bun before you drop it.
+- **Binary and database presets use level 3**: 2.4 and 2.7 points less saving than before, at 2.7 and 2.6 times the
+  speed (2d1745ce68).
 - **APFS clones make `du` lie.** Three `cp -c` backup runs showed 2.76 GB in `du` and 1.08 GB unique
   (`tools du clonesize`); removing one run freed about 1 MB, because a newer run shared its blocks. Pack clone
   families together, and measure with `clonesize`, not `du`.

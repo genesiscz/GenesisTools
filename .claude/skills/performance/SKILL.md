@@ -1,6 +1,6 @@
 ---
 name: performance
-description: Measuring and improving CPU, I/O and latency in the GenesisTools Bun/TypeScript code — CLI tools, the usage daemon, the hub server, session discovery and listing, file walking and reading, JSON parsing, bun:ffi and native code. Use it whenever a tool, command, daemon tick or server door is slow or burns CPU, before and after any change meant to make something faster, when you profile, benchmark, A/B or compare two ways of doing something, when you consider bun:ffi, TinyCC, a C helper or a cache, when code spawns ps, lsof or pgrep, when a test starts an executable, when a CI run is red, slow or hangs, and when you write a performance number into a commit, note or ledger — even when the user only says "this is slow", "why does it take 1 s", "can we make it faster", "is FFI faster", "measure it", or asks whether a cache would show stale data. For SwiftUI/AppKit app performance use the swift skill; this one covers the Bun side it calls.
+description: Measuring and improving CPU, I/O and latency in the GenesisTools Bun/TypeScript code — CLI tools, the usage daemon, the hub server, session discovery and listing, file walking and reading, JSON parsing, bun:ffi and native code. Use it whenever a tool, command, daemon tick or server door is slow or burns CPU, before and after any change meant to make something faster, when you profile, benchmark, A/B or compare two ways of doing something, when you consider bun:ffi, TinyCC, a C helper or a cache, when code spawns ps, lsof or pgrep, when a test starts an executable, when a CI run is red, slow or hangs, and when you write a performance number into a commit, note or ledger — even when the user only says "this is slow", "why does it take 1 s", "can we make it faster", "is FFI faster", "measure it", or asks whether a cache would show stale data. Also use it for a daemon or scheduler tick that freezes or blocks the event loop, memory or RSS that grows, an append-only log, journal or database that grows and slows every read, a git hook (pre-push, post-checkout) that is slow or hangs, process priority or QoS, a child process that keeps a command from exiting, and the CPU cost of git status. For SwiftUI/AppKit app performance use the swift skill; this one covers the Bun side it calls.
 ---
 
 # Performance work in GenesisTools (Bun / TypeScript)
@@ -43,12 +43,15 @@ measured. So the rule of this skill is simple: no change, and no claim, without 
   wall time a lot and CPU time little. Note `uptime` before and after a run.
 - **Measure the real input.** Use the real session trees and transcripts (read-only), not a synthetic folder of
   ten files. Write the sizes into the result (files, lines, MB).
-- **Bun 1.3.13 is still supported.** A Bun 1.4-only API (for example `Bun.JSONL`) may appear in a benchmark arm,
-  never in shipped code.
+- **Bun 1.3.13 is still supported, and this Mac and CI run 1.4.2.** A Bun 1.4-only API (for example `Bun.JSONL`)
+  may appear in a benchmark arm, never in shipped code. Name the Bun version in every result: the two versions
+  disagree often enough to flip a verdict (the zstd frame walker wins only on 1.4.x, 2ff160f251; 1.4.2 loses a
+  `spawnSync` child's exit under `bun test --parallel`, c3ed8e3803).
 - **Diagnostics never mutate** (repository rule). A benchmark reads live data; it never rewrites it.
 - **No new `ps`, `lsof` or `pgrep` spawn.** Ask `@genesiscz/utils/process`; the lint rule `no-process-tool-spawn`
   fails a new spawn, and the platform fallback is the layer's decision, never the caller's. Skip a row you cannot
-  read, and never treat a failed read as "gone". `references/ffi-and-native.md` sections 3b and 3c.
+  read, and never treat a failed read as "gone". `references/ffi-and-native.md` sections 3b and 3c. An exception is
+  a named entry in the rule with its reason (tmp-reclaim's whole-machine `lsof`, 1ff8647046), never a silent spawn.
 - **A test never makes an executable per run.** Executing a file that a test just made, then renaming or deleting
   it, crashed syspolicyd and froze the Mac on 2026-10-14. Use `persistentFixture`. `references/tests-and-ci.md`.
 
@@ -71,8 +74,19 @@ measured. So the rule of this skill is simple: no change, and no claim, without 
 - "Did CI really pass, and why is it red?" → `references/tests-and-ci.md` (a green job can carry failing tests).
 - "Why does type-checking need gigabytes, and which code makes the checker work?" → `tools ts program cost|files|own|closure|trace`,
   `references/typecheck.md` (the shapes that cost 175k instantiations per file, and the traps of a smaller program).
+- "Is this process alive?" → the registry or pid file plus `process.kill(pid, 0)`, never a `ps` (`references/patterns.md`).
+- "A file, journal or database grows and every read gets slower", "a tick or the scheduler freezes", "a hook hangs",
+  "a command waits for a child it abandoned" → `references/patterns.md`. A growing file always has two fixes, and an
+  answer names both: the reader reads from the end and stops early (after proving the file is time ordered), and the
+  writer writes less. Never compact or delete the history to get speed.
+- "Which benchmark already covers this area?" → `scripts/benchmarks/README.md` and its folders: `startup/` (CLI
+  start and import cost), `agent-sessions/`, `hooks/` (hook latency, attribution), `polls/` (event-loop stalls,
+  wakeups), `macos-resources/` (spawn counts), `process/`, `fs/`, `json/`, `compress/`, `widget/`, `swift/`,
+  `dashboards/`, `statusline/`, `clones/`, `du/`.
+- "The native app hangs or a SwiftUI view is slow" → the swift skill; `references/profiling.md` sections 7, 8 and
+  "The native app" hold the instrument recipes this skill shares with it.
 
-## Measured facts to start from (2026-10-12, this Mac)
+## Measured facts to start from (2026-10-12 to 2026-10-14, this Mac)
 
 - Bun process start plus imports dominate a small CLI call: about 86 ms of wall time for any tool, and 149 ms of
   CPU of imports for `ai usage sessions`.
@@ -91,6 +105,9 @@ Every number above has its method and commit in `references/` and in the ledger.
 
 ## References
 
+- `references/patterns.md`: the shapes that paid off since 2026-10-12, one commit each: reading a growing file from
+  its end, one snapshot for many keys, signal-0 liveness, overlapping legs, ticks that read only what is due, no
+  cleanup on the scheduler's path, priority as a setting, unref'ing an abandoned child, cheap and bounded hooks.
 - `references/profiling.md`: `tools ts profile`, `bun --cpu-prof`, `sample`, the repository profiler, and the
   traps in each (wall-sampled JS thread, await gaps, `bun test` ignoring `--cpu-prof`).
 - `references/measuring.md`: the benchmark harness, fresh-process cold/warm samples, interleaving, blocks, the

@@ -91,3 +91,14 @@ docker wait gt-linux-check; cat <scratch>/out/summary.txt
   `TEST_WORKER_LOG=1` (set 2026-10-14 19:34) makes every CI run write the worker log and put its report
   (`bun scripts/test-worker-log.ts`) into the job summary: the report names the file that left the process.
 - `gh run rerun <id> --failed` gets a second sample without a push, so it costs no paid review.
+
+## 5. Make a check cheaper without making it weaker
+
+- **Typecheck only what a change can reach, incrementally.** CI checks the projects a change reaches against the PR
+  base (or the commit before a push) with that commit's build info; locally against each project's last pass
+  (c16b113da6).
+- **Shorten a timing test by its phases, keep its margin.** The idle-then-busy CPU test waits one second per phase
+  instead of three, with the same ratio margin: 6.70 to 2.69 s (fcdfb11031).
+- **Freeze the clock in a test that prints times**, so a slow second cannot turn "30s" into "31s" (a20257abac).
+- **Git hooks stay cheap and bounded.** A hook never starts a whole `tools` run and never uses Bun's `$` shell, and
+  each pre-push guard has a deadline (ad23abfe41, 5e121bd229). `references/patterns.md` has the details.

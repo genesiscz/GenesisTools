@@ -18,6 +18,24 @@
             "prompt": "The hub's agent list re-reads the first line of every Codex rollout on each refresh. Design a cache for that so it's cheap, but it must never show an older header than what's on disk. Just the design, with the exact invalidation rule.",
             "expected_output": "Uses file identity (inode, size, mtime, ctime) taken before the read, caches only the parsed header, never caches failures, persists with a version, rejects TTLs and folder-mtime checks, and points at FileIdentityCache.",
             "files": []
+        },
+        {
+            "id": 4,
+            "prompt": "The widget shows cards for the selected session, and we want the newest cards of up to 16 other inbox sessions ready too so a switch is instant. Adding a per-session answers query for each took the snapshot from 80 ms to 183 ms of CPU. Find the cost and fix it without showing older data. Describe how you would measure it. Do not edit files.",
+            "expected_output": "Finds that each per-session query opens its own read snapshot and re-runs the answer-log catch-up (a fixed cost per item), and proposes one snapshot that reads all warm sessions with one catch-up and a per-session limit (patterns.md, 8c431c540f: 183.2 to 95.7 ms). Measures CPU time on real data with interleaved arms and a median, writes the load average, checks that the cards are identical, and adds no TTL or stale cache. A weak answer guesses at JSON encoding or adds a timer cache without profiling.",
+            "files": []
+        },
+        {
+            "id": 5,
+            "prompt": "The cmux surface journal is 6.9 MB, 19,344 lines, and every `tools codex who` parses all of it. I propose compacting the file to the last 24 h. Is that right? What would you do instead, and how do you prove it returns the same answer? Do not edit files.",
+            "expected_output": "Keeps the journal whole (the compaction was undone at the user's request on 2026-10-15) and either finds that both fixes already shipped (the reader reads from the end and stops after the readers' 7 days, 4d0f2cc3c4; the writer writes a line only when the tab changed or 30 minutes passed, 77a0e0077c) or designs them: read from the end and stop early only after proving the file is time ordered, and cut the writer. Proves any reader change on a frozen copy at a fixed clock, with interleaved fresh processes, medians and an identical result digest; a 24 h cut changes the answer. Rejects filtering lines to live surfaces before the parse, because the newest line on a closed tab must hide an older line on a live one. A weak answer compacts or deletes history, or stops early without proving time order.",
+            "files": []
+        },
+        {
+            "id": 6,
+            "prompt": "I moved ten call sites from spawning ps onto the process layer. My benchmark says total cold CPU went from 4,693 ms to 3,446 ms, and a teammate says the before arm cheats. Who is right, and how do I make the comparison fair? Do not edit files.",
+            "expected_output": "Explains the stand-in arm trap (measuring.md): the old arm ran the spawn alone while the new arm also imported the real module, so the comparison charged the migration for a module load (or the reverse). Fix: both arms start with the site module loaded, and the baseline is recorded again at the old commit the same way. Uses the real benchmark (scripts/benchmarks/process/call-sites-bench.ts --runs 3 --compare) with cold and warm CPU including spawned children, and reports CPU time, not wall time. A weak answer trusts either number without checking what each arm loads.",
+            "files": []
         }
     ]
 }
