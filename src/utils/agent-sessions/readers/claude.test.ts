@@ -305,6 +305,44 @@ test("large metadata reads preserve head and tail fields with a bounded search c
     expect(result.metadata?.summary).toBe("Latest tail summary");
 });
 
+test("Claude Code's own session name (ai-title) is the title until a /rename, which still wins", async () => {
+    const { path, source } = fixture();
+    const prompt = {
+        type: "user",
+        sessionId: MAIN_ID,
+        timestamp: "2026-09-01T11:00:00.000Z",
+        message: { content: "pls research whether we are affected" },
+    };
+    writeFileSync(
+        path,
+        jsonl(
+            prompt,
+            { type: "ai-title", aiTitle: "Early guess", sessionId: MAIN_ID },
+            { type: "ai-title", aiTitle: "Hotfix research", sessionId: MAIN_ID }
+        )
+    );
+
+    const named = await readClaudeMetadata(source);
+
+    expect(named.metadata?.summary).toBe("Hotfix research");
+    expect(named.metadata?.customTitle).toBeNull();
+    expect(named.metadata?.firstPrompt).toBe("pls research whether we are affected");
+
+    writeFileSync(
+        path,
+        jsonl(
+            prompt,
+            { type: "ai-title", aiTitle: "Hotfix research", sessionId: MAIN_ID },
+            { type: "custom-title", customTitle: "My own name", sessionId: MAIN_ID }
+        )
+    );
+
+    const renamed = await readClaudeMetadata(source);
+
+    expect(renamed.metadata?.customTitle).toBe("My own name");
+    expect(renamed.metadata?.summary).toBe("Hotfix research");
+});
+
 test("compact operations factory binds metadata, scan, and selected-record reads", async () => {
     const { path, source } = fixture();
     writeFileSync(

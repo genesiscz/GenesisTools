@@ -218,6 +218,16 @@ function contentEntries(options: {
     return entries;
 }
 
+/**
+ * The name Claude Code gave the session itself: an `ai-title` line (the name its /resume list and the terminal tab
+ * show), or the `summary` line older versions wrote. Both are stored as the summary, the newest line winning; a
+ * `/rename` (`custom-title`) still comes first. Without `ai-title` the widget listed "Kalendora hotfix research" under
+ * its first prompt, and Martin could not find it (2026-10-24).
+ */
+function autoTitleOf(row: JsonRecord): string {
+    return row.type === "ai-title" ? asText(row.aiTitle) : row.type === "summary" ? asText(row.summary) : "";
+}
+
 function claudeRecordContext(row: JsonRecord): Pick<HistorySourceRecord, "timestamp" | "role" | "metadataChanges"> {
     const timestamp = asText(row.timestamp) || undefined;
     const role =
@@ -228,7 +238,7 @@ function claudeRecordContext(row: JsonRecord): Pick<HistorySourceRecord, "timest
               : undefined;
     const sessionId = asText(row.sessionId);
     const customTitle = row.type === "custom-title" ? asText(row.customTitle) : "";
-    const summary = row.type === "summary" ? asText(row.summary) : "";
+    const summary = autoTitleOf(row);
     const gitBranch = asText(row.gitBranch);
     const cwd = asText(row.cwd);
     const metadataChanges = {
@@ -454,8 +464,8 @@ async function readClaudeMetadataUncounted(
 
     function apply(row: JsonRecord): void {
         validRecords++;
-        if (row.type === "summary" && asText(row.summary)) {
-            summary = asText(row.summary);
+        if (autoTitleOf(row)) {
+            summary = autoTitleOf(row);
         }
         if (row.type === "custom-title" && asText(row.customTitle)) {
             customTitle = asText(row.customTitle);
@@ -602,7 +612,7 @@ export type ClaudeHistoryOperations = Pick<NativeSessionReader<"claude">, "parse
 
 export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
     return {
-        parserVersion: "5",
+        parserVersion: "6",
         readMetadata: readClaudeMetadata,
         scan: scanClaudeRecords,
         readRecords: readClaudeRecords,
