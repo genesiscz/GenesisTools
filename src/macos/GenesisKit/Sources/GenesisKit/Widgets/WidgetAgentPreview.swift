@@ -63,6 +63,8 @@ struct WidgetSessionActivity: View {
 struct AgentWidgetPreview: View {
     @ObservedObject var model: WidgetModel
     let surface: WidgetSurfaceID
+    /// The session whose cmux panel was opened from the row's accessibility action (the button itself exists only on the hovered row).
+    @State private var cmuxPanelKey: String?
 
     var body: some View {
         let _ = RenderProbe.hit("widget.preview")
@@ -91,7 +93,7 @@ struct AgentWidgetPreview: View {
                     }.buttonStyle(.genHoverPlain()).instantTooltip("Every unread inbox entry, from all sessions")
                 }
                 if model.inboxCount == 0 {
-                    Text(model.inbox.complete ? "All caught up" : "Inbox status unavailable")
+                    Text(model.snapshot == nil ? "Loading inbox" : model.inbox.complete ? "All caught up" : "Inbox status unavailable")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 } else {
                     IconButton(systemName: "checkmark.circle", tooltip: "Mark all read. Nothing is deleted.",
@@ -117,7 +119,13 @@ struct AgentWidgetPreview: View {
                 }.accessibilityLabel("Inbox preview settings")
             }.padding(.horizontal, 5).padding(.bottom, 3)
 
-            if model.previewList.isEmpty {
+            if model.previewList.isEmpty && model.snapshot == nil {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Loading sessions").font(.system(size: 11)).foregroundStyle(.secondary)
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 5).padding(.vertical, 6)
+                    .accessibilityElement(children: .combine)
+            } else if model.previewList.isEmpty {
                 HStack(spacing: 12) {
                     GenesisWidgetMark()
                     VStack(alignment: .leading, spacing: 4) {
@@ -144,10 +152,10 @@ struct AgentWidgetPreview: View {
                     Image(systemName: "rectangle.stack").font(.system(size: 10))
                     Text("Projects & sessions").font(.system(size: 10, weight: .medium))
                     Spacer()
-                    Text(Plural.count(model.previewList.count, "session")).font(.system(size: 9.5)).monospacedDigit()
+                    Text(Plural.count(model.previewList.count, "session")).font(.system(size: 11)).monospacedDigit()
                     Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
                 }
-                .foregroundStyle(.white.opacity(0.5)).padding(.horizontal, 5).padding(.vertical, 5)
+                .foregroundStyle(.white.opacity(0.6)).padding(.horizontal, 5).padding(.vertical, 5)
                 .contentShape(Rectangle())
             }.buttonStyle(.genHoverPlain())
                 .instantTooltip("Browse every project and session")
@@ -159,6 +167,8 @@ struct AgentWidgetPreview: View {
         .fixedSize(horizontal: false, vertical: true)
         .onGeometryChange(for: CGFloat.self, of: \.size.height) { model.reportPreviewFit($0) }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // Like the row button's own popover: while it is open the edge panel must not collapse.
+        .onChange(of: cmuxPanelKey) { _, key in model.cmuxPopoverOpen = key != nil }
     }
 
     private var sortTooltip: String {
@@ -181,7 +191,7 @@ struct AgentWidgetPreview: View {
                                 .lineLimit(1)
                             Text("·")
                             Text(session.visualStatus.label).lineLimit(1)
-                        }.font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.45))
+                        }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
                         WidgetSessionTimes(session: session, inbox: model.inboxFor(session.key))
                     }
                     Spacer(minLength: 2)
@@ -203,6 +213,11 @@ struct AgentWidgetPreview: View {
             WidgetCmuxButton(model: model, session: session, live: hovering)
         } }
         .padding(.trailing, 4)
+        .accessibilityAction(named: "Open cmux for " + session.title) { cmuxPanelKey = session.key }
+        .popover(isPresented: Binding(get: { cmuxPanelKey == session.key }, set: { if !$0 { cmuxPanelKey = nil } }),
+                 arrowEdge: .trailing) {
+            WidgetCmuxPanel(model: model, session: session).padding(14).frame(width: 380)
+        }
         .background(
             model.inboxFor(session.key).map { $0.needsAnswer > 0 } == true || session.status == "waiting"
                 ? Color.orange.opacity(0.065) : .white.opacity(0.025),
@@ -233,10 +248,10 @@ struct WidgetSessionTimes: View {
             if let entry = Self.latest(inbox) {
                 Text("·")
                 LiveAgo(date: Date(timeIntervalSince1970: entry.at / 1000), style: .brief) { entry.verb + " " + $0 }
-                    .foregroundStyle(entry.waiting ? Color.orange.opacity(0.8) : .white.opacity(0.45))
+                    .foregroundStyle(entry.waiting ? Color.orange.opacity(0.8) : .white.opacity(0.6))
             }
         }
-        .font(.system(size: 9.5)).foregroundStyle(.white.opacity(0.45)).lineLimit(1)
+        .font(.system(size: 11)).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
     }
 
     /// The newest entry: a question still waiting wins, since that is what the row is about.

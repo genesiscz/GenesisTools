@@ -2,7 +2,8 @@ import AppKit
 import Foundation
 
 /// The Allow / Deny card for a route that runs a command. Same look as RouteToast: dark card,
-/// gold hairline, the Genesis Tools mark. Return allows, Esc denies.
+/// gold hairline, the GenesisTools mark. Only a click allows: the card takes the keyboard while
+/// the user may still be typing elsewhere, so Return does nothing here. Esc denies.
 enum RouteApproval {
     /// The "Running" toast is already up (statusBar level, same spot) and would hide this card,
     /// so it steps aside while the question is open and only comes back when the run is allowed.
@@ -30,7 +31,8 @@ private enum Palette {
     static let gold = NSColor(srgbRed: 1, green: 0.62, blue: 0.12, alpha: 1)
     static let brand = NSColor(srgbRed: 0.96, green: 0.78, blue: 0.45, alpha: 0.9)
     static let text = NSColor(white: 0.96, alpha: 1)
-    static let dim = NSColor(white: 0.55, alpha: 1)
+    /// 62% white: text the user must read keeps 4.5:1 on the card.
+    static let dim = NSColor(white: 0.62, alpha: 1)
     static let flag = NSColor(srgbRed: 0.96, green: 0.78, blue: 0.45, alpha: 0.85)
     static let well = NSColor(white: 1, alpha: 0.05)
     static let wellBorder = NSColor(white: 1, alpha: 0.08)
@@ -45,6 +47,7 @@ final class RouteApprovalCard: NSPanel {
     init(argv: [String], open: String?) {
         let body = ApprovalBody(argv: argv, open: open)
         let size = body.fittingSize
+        let headline = ApprovalBody.headline(argv)
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: size.width, height: size.height),
             styleMask: [.borderless],
@@ -59,6 +62,10 @@ final class RouteApprovalCard: NSPanel {
         hasShadow = true
         hidesOnDeactivate = false
         contentView = body
+        // VoiceOver reads a dialog named by what it asks, not an unnamed borderless window.
+        title = "Approval needed: \(headline)"
+        setAccessibilitySubrole(.dialog)
+        setAccessibilityLabel("Approval needed: \(headline)")
         body.onAnswer = { [weak self] answer in
             self?.finish(answer)
         }
@@ -67,12 +74,14 @@ final class RouteApprovalCard: NSPanel {
 
     func runModal() -> Bool {
         let resting = frame.origin
+        // Under Reduce Motion the card fades in where it rests; otherwise it rises the last 14 pt.
+        let rise: CGFloat = GenMotion.systemReduceMotion ? 0 : 14
         alphaValue = 0
-        setFrameOrigin(NSPoint(x: resting.x, y: resting.y - 14))
+        setFrameOrigin(NSPoint(x: resting.x, y: resting.y - rise))
         NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
         orderFrontRegardless()
-        fadeIn(to: resting)
+        fadeIn(to: resting, rise: rise)
         NSApp.runModal(for: self)
         orderOut(nil)
         return allowed
@@ -80,10 +89,11 @@ final class RouteApprovalCard: NSPanel {
 
     /// Stepped by a timer in `.common` modes, not `animator()`: the card is modal, and an animation
     /// that does not tick in the modal run loop would leave an invisible card waiting for a click.
-    /// The timer stops itself after `duration`.
-    private func fadeIn(to resting: NSPoint) {
+    /// The timer stops itself after `duration`. Nothing waits on it: the buttons answer from the
+    /// first frame.
+    private func fadeIn(to resting: NSPoint, rise: CGFloat) {
         let start = Date()
-        let duration = 0.28
+        let duration = rise == 0 ? 0.15 : GenMotion.expandDuration
         let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
             guard let self else {
                 timer.invalidate()
@@ -93,7 +103,7 @@ final class RouteApprovalCard: NSPanel {
             let progress = min(1, Date().timeIntervalSince(start) / duration)
             let eased = CGFloat(1 - pow(1 - progress, 3))
             alphaValue = eased
-            setFrameOrigin(NSPoint(x: resting.x, y: resting.y - 14 * (1 - eased)))
+            setFrameOrigin(NSPoint(x: resting.x, y: resting.y - rise * (1 - eased)))
             if progress >= 1 {
                 timer.invalidate()
             }
@@ -145,19 +155,20 @@ private final class ApprovalBody: NSView {
         header.orientation = .horizontal
         header.alignment = .top
 
-        let kicker = label("APPROVAL NEEDED", size: 12, weight: .semibold, color: Palette.gold)
+        let kicker = label("Approval needed", size: 12, weight: .semibold, color: Palette.gold)
         let headline = label(Self.headline(argv), size: 24, weight: .semibold, color: Palette.text)
 
         var rows: [NSView] = [header, kicker, headline, commandWell(argv)]
         if let program = argv.first, program.contains("/") {
-            rows.append(caption("PROGRAM", Self.shorten(program)))
+            rows.append(caption("Program", Self.shorten(program)))
         }
 
         if let open, !open.isEmpty {
-            rows.append(caption("THEN OPENS", open))
+            rows.append(caption("Then opens", open))
         }
 
-        rows.append(label("Runs once, without a shell. Nothing happens if you deny.", size: 11, weight: .regular, color: Palette.dim))
+        rows.append(label("Runs once, without a shell. Nothing happens if you deny. Only a click allows it.",
+                          size: 11, weight: .regular, color: Palette.dim))
         rows.append(buttonRow())
 
         let stack = NSStackView(views: rows)
@@ -201,7 +212,7 @@ private final class ApprovalBody: NSView {
             dot.heightAnchor.constraint(equalToConstant: 8),
         ])
 
-        let brand = label("GENESIS TOOLS", size: 11, weight: .semibold, color: Palette.brand)
+        let brand = label("GenesisTools", size: 11, weight: .semibold, color: Palette.brand)
         let row = NSStackView(views: [dot, brand])
         row.orientation = .horizontal
         row.alignment = .centerY
@@ -238,7 +249,7 @@ private final class ApprovalBody: NSView {
     }
 
     private func caption(_ title: String, _ value: String) -> NSView {
-        let name = label(title, size: 10, weight: .semibold, color: Palette.dim)
+        let name = label(title, size: 11, weight: .semibold, color: Palette.dim)
         name.translatesAutoresizingMaskIntoConstraints = false
         name.widthAnchor.constraint(equalToConstant: 78).isActive = true
 
@@ -262,11 +273,16 @@ private final class ApprovalBody: NSView {
         deny.keyEquivalent = "\u{1b}"
         deny.target = self
         deny.action = #selector(denyClicked)
+        deny.toolTip = "Nothing runs (Esc)"
+        deny.setAccessibilityHelp("Esc denies too.")
 
-        let allow = ApprovalButton(title: "Allow", hint: "↩", primary: true)
-        allow.keyEquivalent = "\r"
+        // No key equivalent on purpose: the card takes the keyboard when it appears, and a Return meant
+        // for another app must not run a command. Full Keyboard Access still reaches it with Tab and Space.
+        let allow = ApprovalButton(title: "Allow", hint: nil, primary: true)
         allow.target = self
         allow.action = #selector(allowClicked)
+        allow.toolTip = "Runs the command once. Only a click allows it, so a key pressed while you type cannot."
+        allow.setAccessibilityHelp("Runs the command once.")
 
         let row = NSStackView(views: [NSView(), deny, allow])
         row.orientation = .horizontal
@@ -299,7 +315,7 @@ private final class ApprovalBody: NSView {
 
     /// `Run tools say` for `[.../tools, say, ...]`; the program alone when the next word is a flag.
     /// A script behind a runner (`bun .../rohlik.ts add`) is named by the script, not the runner.
-    private static func headline(_ argv: [String]) -> String {
+    static func headline(_ argv: [String]) -> String {
         guard let program = argv.first else { return "Run a command" }
         var name = (program as NSString).lastPathComponent
         var rest = Array(argv.dropFirst())
@@ -367,7 +383,9 @@ private final class ApprovalBody: NSView {
 }
 
 private final class ApprovalButton: NSButton {
-    init(title: String, hint: String, primary: Bool) {
+    /// `hint` is the key drawn after the title; it is left out of the accessibility label, so VoiceOver
+    /// reads "Deny", not "Deny esc".
+    init(title: String, hint: String?, primary: Bool) {
         super.init(frame: .zero)
         isBordered = false
         wantsLayer = true
@@ -382,11 +400,14 @@ private final class ApprovalButton: NSButton {
             .font: NSFont.systemFont(ofSize: 13, weight: .semibold),
             .foregroundColor: ink,
         ])
-        text.append(NSAttributedString(string: "   \(hint)", attributes: [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: hintInk,
-        ]))
+        if let hint {
+            text.append(NSAttributedString(string: "   \(hint)", attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium),
+                .foregroundColor: hintInk,
+            ]))
+        }
         attributedTitle = text
+        setAccessibilityLabel(title)
 
         translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([

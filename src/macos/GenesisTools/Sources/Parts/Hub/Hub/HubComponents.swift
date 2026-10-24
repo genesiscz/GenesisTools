@@ -753,6 +753,9 @@ struct GroupHeader: View {
             if let path {
                 Button("Copy absolute path") { PathOpener.copy(path, what: "path") }
             }
+            if let remove {
+                Button("Hide project") { remove() }
+            }
         }
     }
 }

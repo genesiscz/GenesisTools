@@ -66,9 +66,13 @@ public final class NativeSettingsHighlightCenter: ObservableObject {
     @Published public private(set) var token = 0
     /// The last request a card pulsed for, so going back to the page does not replay an old one.
     private var deliveredToken = 0
+    /// When the last request came: a card that appears later (a page that opens on it) flashes only what is left of
+    /// the flash, and a page visited again later does not flash or scroll again.
+    @Published public private(set) var requestedAt: Date?
 
     public func request(_ anchor: String) {
         self.anchor = anchor
+        requestedAt = Date()
         token += 1
     }
 

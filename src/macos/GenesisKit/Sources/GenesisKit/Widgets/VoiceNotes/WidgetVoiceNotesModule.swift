@@ -79,8 +79,8 @@ private struct WidgetVoiceNotesView: View {
                         Label("Voice Notes", systemImage: "recordingtape").font(.system(size: 15, weight: .semibold))
                         Spacer()
                         Text("\(store.notes.count) local").font(.caption2).foregroundStyle(.secondary)
-                        Button { store.refresh(force: true) } label: { Image(systemName: "arrow.clockwise") }
-                            .buttonStyle(.plain).accessibilityLabel("Refresh voice notes").disabled(store.isBusy)
+                        IconButton(systemName: "arrow.clockwise", tooltip: "Refresh voice notes") { store.refresh(force: true) }
+                            .disabled(store.isBusy)
                     }
                     if presentation == .expanded {
                         expanded
@@ -119,7 +119,7 @@ private struct WidgetVoiceNotesView: View {
             Text("Up to 30 seconds").font(.caption2).foregroundStyle(.secondary)
             Spacer()
             if store.isBusy {
-                Button("Cancel", action: store.cancel).buttonStyle(.borderless)
+                Button("Cancel", action: store.cancel).buttonStyle(.genHover())
             }
         }
         if let phase = store.phase {
@@ -150,6 +150,16 @@ private struct WidgetVoiceNotesView: View {
                 dismissedError = error
             }
             .accessibilityIdentifier("voice-notes-error")
+        } else if store.discarded != nil {
+            // No ⌘Z here: the transcript editor below owns ⌘Z for its own text.
+            HStack(spacing: 8) {
+                Label("Recording discarded.", systemImage: "trash").font(.system(size: 11)).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Button("Undo", action: store.undoDiscard)
+                    .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
+                    .instantTooltip("Brings the recording back. It is deleted for good after a few seconds.")
+                    .accessibilityIdentifier("voice-notes-undo-discard")
+            }
         } else if let receipt = store.receipt {
             Label(receipt, systemImage: "checkmark.circle").font(.system(size: 11)).foregroundStyle(.secondary)
         }
@@ -185,9 +195,10 @@ private struct WidgetVoiceNotesView: View {
                     .frame(minHeight: 100).disabled(store.isBusy)
                     .accessibilityLabel("Voice note transcript")
                 HStack {
-                    Button("Save text", action: store.saveText).buttonStyle(.borderless)
+                    Button("Save text", action: store.saveText).buttonStyle(.genHover())
                     Spacer()
-                    Button("Discard", role: .destructive, action: store.discard).buttonStyle(.borderless)
+                    Button("Discard", role: .destructive, action: store.discard).buttonStyle(.genHover(accent: .red))
+                        .instantTooltip("Removes this recording. Undo brings it back for a few seconds.")
                 }.font(.caption).disabled(store.isBusy)
                 WidgetRecipientPicker(sessions: store.sessions, selection: $store.recipientKey,
                     presentationChanged: store.recipientPickerVisibilityChanged)

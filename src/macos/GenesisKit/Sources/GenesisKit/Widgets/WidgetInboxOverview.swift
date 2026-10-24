@@ -7,6 +7,8 @@ struct WidgetInboxOverview: View {
     /// The filter picked here; until then the one the `overviewFilter` setting opens with.
     @State private var filterPick: String?
     @State private var openID: String?
+    /// The row Up and Down chose (`WidgetModel.listKey`); Return opens or folds it. The pointer never moves it.
+    @State private var focusID: String?
     @GenReduceMotion private var reduceMotion
 
     private var filter: String { filterPick ?? model.snapshot?.state.preferences.overviewFilter ?? "all" }
@@ -23,9 +25,42 @@ struct WidgetInboxOverview: View {
     /// Entries under their session ("session", the default) or one list (Widgets → Inbox, and the header button).
     private var grouped: Bool { (model.snapshot?.state.preferences.inboxGrouping ?? "session") == "session" }
 
+    /// The rows in the order they are drawn: grouped under their sessions, or the one list.
+    private func drawnOrder(_ items: [WidgetInboxItem]) -> [WidgetInboxItem] {
+        grouped ? Self.groups(items).flatMap(\.items) : items
+    }
+
     var body: some View {
         let items = items
         let _ = RenderProbe.hit("widget.overview")
+        // Inside the pane's scroll view: the proxy scrolls the row the keys chose into view.
+        ScrollViewReader { proxy in
+            list(items)
+                .onChange(of: model.listKey) { _, key in
+                    guard let key else { return }
+                    handle(key.kind, rows: drawnOrder(items), proxy: proxy)
+                }
+        }
+    }
+
+    /// Up and Down move the highlight, Return opens or folds the highlighted row. No motion: keys repeat.
+    private func handle(_ kind: WidgetListKey.Kind, rows: [WidgetInboxItem], proxy: ScrollViewProxy) {
+        let current = focusID.flatMap { id in rows.firstIndex { $0.id == id } }
+        switch kind {
+        case .open:
+            guard let current else { return }
+            let id = rows[current].id
+            model.releaseAgentFit()
+            openID = openID == id ? nil : id
+        case .up, .down:
+            guard let target = WidgetModel.listTarget(current: current, step: kind == .up ? -1 : 1, count: rows.count)
+            else { return }
+            focusID = rows[target].id
+            proxy.scrollTo(rows[target].id)
+        }
+    }
+
+    private func list(_ items: [WidgetInboxItem]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 GenSegmentedTabs(
@@ -128,6 +163,7 @@ struct WidgetInboxOverview: View {
 
     private func row(_ item: WidgetInboxItem) -> some View {
         let open = openID == item.id
+        let focused = focusID == item.id
         let session = model.session(forKey: item.key)
         return VStack(alignment: .leading, spacing: 0) {
             Button { toggle(item) } label: {
@@ -170,6 +206,7 @@ struct WidgetInboxOverview: View {
             .buttonStyle(RowButtonStyle(cornerRadius: 11))
             .accessibilityLabel(Self.kindLabel(item) + ": " + Self.title(item))
             .accessibilityValue(open ? "Expanded" : "Collapsed")
+            .accessibilityAddTraits(focused ? .isSelected : [])
             .accessibilityIdentifier("widget.overview.row." + item.id)
             if open {
                 detail(item, session: session).padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 12)
@@ -180,6 +217,10 @@ struct WidgetInboxOverview: View {
         .background(Color.white.opacity(open ? 0.055 : 0.03), in: RoundedRectangle(cornerRadius: 11))
         .overlay(RoundedRectangle(cornerRadius: 11)
             .strokeBorder(item.needsAnswer ? Color.orange.opacity(0.28) : .clear, lineWidth: 1))
+        // The keyboard's row: a focus ring, the look of the system's own.
+        .overlay(RoundedRectangle(cornerRadius: 11)
+            .strokeBorder(focused ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear, lineWidth: 2))
+        .id(item.id)
     }
 
     private func stagedLine(_ item: WidgetInboxItem) -> String? {

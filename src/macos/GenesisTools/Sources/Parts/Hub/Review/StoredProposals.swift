@@ -122,10 +122,13 @@ struct StoredProposalsList: View {
                         .foregroundColor(ReviewPalette.dim)
                 case .found(let identity, let choices):
                     if choices.isEmpty {
-                        Text("No agent review stored for \(identity.label). An agent adds one with tools hub proposal push; Reload looks again.")
+                        Text("No agent review is stored for \(identity.label) yet.")
                             .font(.system(size: 11))
                             .foregroundColor(ReviewPalette.dim)
                             .fixedSize(horizontal: false, vertical: true)
+                        GhostButton("Look again", symbol: "arrow.clockwise", tooltip: "Look for a stored review of this PR again") {
+                            model.lookupStoredProposals()
+                        }
                     } else {
                         ForEach(choices) { choice in
                             StoredProposalRow(choice: choice)

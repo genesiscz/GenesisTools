@@ -1165,12 +1165,13 @@ struct AgentsListView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
                             if let error = agents.error {
-                                Text(error)
-                                    .font(.system(size: 11))
-                                    .foregroundColor(ReviewPalette.removed)
-                                    .lineLimit(3)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 4)
+                                VStack(alignment: .leading, spacing: 8) {
+                                    NoticePill(text: "Could not load the agents.", more: error, tone: .error)
+                                    GhostButton("Try again", symbol: "arrow.clockwise", tooltip: "Load the agents again",
+                                                action: agents.reload)
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 4)
                             }
                             ForEach(sections, id: \.title) { section in
                                 Section {

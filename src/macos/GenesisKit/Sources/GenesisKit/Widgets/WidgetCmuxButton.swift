@@ -11,6 +11,9 @@ struct WidgetCmuxButton: View {
     /// hover sensor, because an accessibility client walks every control of every row per update (swift skill,
     /// "Dense lists and accessibility clients"). The popover stays attached, so an open one survives the pointer leaving.
     var live = true
+    /// The list this button sits in ("sessions"), so a row's accessibility action (`WidgetModel.requestCmux`) opens the
+    /// popover of this row's button and not of another button for the same session elsewhere on screen.
+    var requestScope: String?
     @State private var open = false
 
     var body: some View {
@@ -32,6 +35,13 @@ struct WidgetCmuxButton: View {
         // flag, as the session chooser has one: closing it must never release a window the host opened.
         .onChange(of: open) { _, value in model.cmuxPopoverOpen = value }
         .onDisappear { if open { model.cmuxPopoverOpen = false } }
+        // A keyboard or VoiceOver user cannot reach the button of a row that is not hovered; the row's accessibility
+        // action asks for it through the model, and the popover opens on this row (ux catalogue R5).
+        .onChange(of: model.cmuxRequest) { _, request in
+            guard let request, request.key == session.key, request.scope == requestScope else { return }
+            model.cmuxRequest = nil
+            open = true
+        }
     }
 }
 

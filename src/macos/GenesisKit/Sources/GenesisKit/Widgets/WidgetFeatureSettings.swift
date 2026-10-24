@@ -281,7 +281,7 @@ private struct WidgetGeneralSettings: View {
             }
             NativeSettingsCard("Alerts", subtitle: "When an agent asks or answers while the widget is closed.") {
                 NativeSettingsToggle(
-                    "Decisions and questions", detail: "A new ❓ DECISION or question that waits for your answer.",
+                    "Decisions and questions", detail: "A new question that waits for your answer.",
                     identifier: "widget.alertDecisions", isOn: boolean("alertDecisions", prefs?.alertDecisions ?? true))
                 Divider()
                 NativeSettingsToggle(
@@ -300,6 +300,21 @@ private struct WidgetGeneralSettings: View {
                     "Open the widget", detail: "The widget opens a short preview of the new item; a click on it answers.",
                     identifier: "widget.alertPopup", isOn: boolean("alertPopup", prefs?.alertPopup ?? true))
                 Divider()
+                NativeSettingsRow("Preview stays", detail: "How long the preview stays while the pointer is not on it. × or Esc closes it sooner.") {
+                    Picker(
+                        "Preview stays",
+                        selection: Binding(
+                            get: { Int(WidgetAlerts.popupSeconds(prefs)) },
+                            set: { patch(["alertPopupSeconds": .number(Double($0))]) })
+                    ) {
+                        ForEach(Self.popupSecondsChoices(current: Int(WidgetAlerts.popupSeconds(prefs))), id: \.self) {
+                            Text("\($0) seconds").tag($0)
+                        }
+                    }.labelsHidden().frame(width: 150, alignment: .trailing)
+                        .accessibilityIdentifier("widget.alertPopupSeconds")
+                }
+                .disabled(!(prefs?.alertPopup ?? true))
+                Divider()
                 NativeSettingsRow("Flash the session", detail: "Its rail bubble and its row flash, so you see which session asked.") {
                     Picker(
                         "Flash the session",
@@ -314,11 +329,59 @@ private struct WidgetGeneralSettings: View {
                         Text("20 seconds").tag(20)
                     }.labelsHidden().frame(width: 150, alignment: .trailing)
                 }
+                Divider()
+                NativeSettingsRow("Notes stay", detail: "How long a note under the widget's header stays, such as \"Inbox marked read\". A note with a button stays at least 10 seconds; errors stay until you close them.") {
+                    Picker(
+                        "Notes stay",
+                        selection: Binding(
+                            get: { Int(prefs?.noteSeconds ?? 6) },
+                            set: { patch(["noteSeconds": .number(Double($0))]) })
+                    ) {
+                        ForEach(Self.noteSecondsChoices(current: Int(prefs?.noteSeconds ?? 6)), id: \.self) { seconds in
+                            Text(seconds == 0 ? "Until closed" : "\(seconds) seconds").tag(seconds)
+                        }
+                    }.labelsHidden().frame(width: 150, alignment: .trailing)
+                        .accessibilityIdentifier("widget.noteSeconds")
+                }
             }
             .nativeSettingsAnchor("alerts")
+            NativeSettingsCard("Shortcut", subtitle: "A global shortcut that opens the widget from any app.") {
+                NativeSettingsToggle(
+                    "Open with a shortcut",
+                    detail: "Opens the agent inbox with the keyboard in it; press it again to close the widget.",
+                    identifier: "widget.openShortcutEnabled",
+                    isOn: boolean("openShortcutEnabled", prefs?.openShortcutEnabled ?? true))
+                Divider()
+                NativeSettingsRow("Shortcut", detail: "Works in every app while the widget is on.") {
+                    HotkeyRecorder(
+                        chord: Binding(
+                            get: { (prefs?.openShortcut ?? .defaultOpen).hotkey },
+                            set: { chord in
+                                patch(["openShortcut": .object([
+                                    "keyCode": .number(Double(chord.keyCode)),
+                                    "modifiers": .number(Double(chord.modifiers)),
+                                ])])
+                            }),
+                        defaultChord: WidgetShortcutChord.defaultOpen.hotkey,
+                        identifier: "widget.openShortcut")
+                }
+                .disabled(!(prefs?.openShortcutEnabled ?? true))
+            }
+            .nativeSettingsAnchor("shortcut")
             WidgetAgentHooksCard(bridge: model.bridge)
             }
         }.task { model.refreshSettings() }
+    }
+
+    /// The popup durations offered, plus a stored value that is none of them, so the picker never shows a blank.
+    static func popupSecondsChoices(current: Int) -> [Int] {
+        Array(Set([4, 7, 10, 15, 30, current])).sorted()
+    }
+
+    /// The note durations offered (0 is "Until closed"), plus a stored value that is none of them.
+    static func noteSecondsChoices(current: Int) -> [Int] {
+        let timed = Array(Set([3, 6, 10, 20, current]).subtracting([0])).sorted()
+        return timed + [0]
     }
 
     /// A system sound picker with a play button. `same` adds "Same as decisions", stored as "same".
@@ -663,6 +726,7 @@ private struct WidgetDictationSettings: View {
     @State private var languageSaved = false
     @State private var savedReset: Task<Void, Never>?
     @FocusState private var languageFocused: Bool
+    @GenReduceMotion private var reduceMotion
     private var prefs: WidgetPreferences? { model.snapshot?.state.preferences }
     private var provider: VoiceConfiguration.Provider? {
         configuration?.providers.first { $0.id == prefs?.voiceProvider }
@@ -775,11 +839,12 @@ private struct WidgetDictationSettings: View {
 
     /// One timer: a second save restarts the two seconds instead of letting the first save's timer hide it early.
     private func confirmLanguageSaved() {
-        withAnimation(.easeOut(duration: 0.15)) { languageSaved = true }
+        // A fade is allowed under Reduce Motion, but the page keeps every setting change still (ux checklist, Motion).
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.15)) { languageSaved = true }
         savedReset?.cancel()
         savedReset = Task { @MainActor in
             do { try await Task.sleep(for: .seconds(2)) } catch { return }
-            withAnimation(.easeOut(duration: 0.3)) { languageSaved = false }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.3)) { languageSaved = false }
         }
     }
 

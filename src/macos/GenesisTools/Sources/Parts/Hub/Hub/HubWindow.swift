@@ -415,6 +415,25 @@ private final class HubAppDelegate: NSObject, NSApplicationDelegate {
 
 /// What the left column lists: agent sessions, the worktrees (branches) they worked in, PRs, the
 /// sessions waiting for an answer (Hub/HubInbox.swift), or today's activity (Hub/HubTimeline.swift).
+/// A note in a hub pane's header and its tone, stored together by the code that knows whether it failed: the headers
+/// used to guess a failure from words ("failed", "cmux:"), and a note without such a word showed a failure in green.
+struct HubNotice: Equatable {
+    let text: String
+    let tone: NoticePill.Tone
+
+    init(_ text: String, _ tone: NoticePill.Tone) {
+        self.text = text
+        self.tone = tone
+    }
+
+    /// A note set as plain text (`model.notice = "…"`) by a pane not moved to `post(_:_:)` yet: the words the
+    /// headers read before, in one place. Goes away with the last `String` setter.
+    init(guessing text: String) {
+        let failed = text.hasPrefix("cmux:") || text.hasPrefix("Could not") || text.contains("failed") || text.contains("not in")
+        self.init(text, failed ? .error : .success)
+    }
+}
+
 enum HubMode: String, CaseIterable {
     case sessions, worktrees, prs, inbox, timeline, agents
 
@@ -604,7 +623,17 @@ final class HubModel: ObservableObject {
     private var worktreeSessions: [String: [HubSession]]?
     @Published var loadingWorktrees = false
     @Published var selectedWorktree: String?
-    @Published var notice: String?
+    /// The note in the panes' headers, with the tone the code that posted it knows (`post(_:_:)`).
+    @Published var headerNotice: HubNotice?
+    /// The note as plain text, for panes that still set a `String`: it gets the tone the headers used to guess.
+    var notice: String? {
+        get { headerNotice?.text }
+        set { headerNotice = newValue.map(HubNotice.init(guessing:)) }
+    }
+
+    func post(_ text: String, _ tone: NoticePill.Tone) {
+        headerNotice = HubNotice(text, tone)
+    }
     /// Only the latest commit lookup may navigate, and any later selection invalidates it.
     var commitLinkRequest = UUID()
     /// ⌘⇧F / palette "grep": the find-in-files panel is open with this query ("" = empty field).
@@ -775,9 +804,9 @@ final class HubModel: ObservableObject {
                     prs.select(pr)
                 } else {
                     prs.showUnavailable(id)
-                    notice = prs.state == "all"
+                    post(prs.state == "all"
                         ? "That PR is not in the PR list any more."
-                        : "That PR is not in the \(prs.state) list any more; pick All to find it."
+                        : "That PR is not in the \(prs.state) list any more; pick All to find it.", .warning)
                 }
             case .inbox:
                 inbox.selectedID = id == Self.wholeList ? nil : id
@@ -982,7 +1011,7 @@ final class HubModel: ObservableObject {
     func showChange(path: String, line: Int?) {
         tab = .changes
         guard let review else {
-            notice = "This session's folder is not on this Mac."
+            post("This session's folder is not on this Mac.", .warning)
             return
         }
         // An absolute path finds its file in whichever ticked root holds it.
@@ -1151,7 +1180,7 @@ final class HubModel: ObservableObject {
                 return
             }
 
-            notice = "No session \(wanted.prefix(8)) in the last \(Self.olderSessionHours / 24) days"
+            post("No session \(wanted.prefix(8)) in the last \(Self.olderSessionHours / 24) days", .warning)
             if settle {
                 if let first = sessions.first {
                     select(first.id)
@@ -1390,13 +1419,17 @@ final class HubModel: ObservableObject {
             // openInTerminal blocks on the terminal host's CLI (up to its timeout): never on the main actor.
             let name = (path as NSString).lastPathComponent
             let starting = "Starting a new Claude session in \(name)…"
-            notice = starting
+            post(starting, .success)
             Task.detached(priority: .userInitiated) {
                 let failure = AgentLauncher.openInTerminal(name: name, cwd: path, command: ["tools", "claude", "run"])
                 // Only over its own "Starting…" line: a newer notice (a copied id, say) stays on screen.
                 await MainActor.run {
-                    if self.notice == starting {
-                        self.notice = failure ?? "Started a new Claude session in \(name)."
+                    if self.headerNotice?.text == starting {
+                        if let failure {
+                            self.post(failure, .error)
+                        } else {
+                            self.post("Started a new Claude session in \(name).", .success)
+                        }
                     }
                 }
             }
@@ -1416,13 +1449,13 @@ final class HubModel: ObservableObject {
             if let pr = prs.selected {
                 if (pr.localWorktree ?? pr.repoRoot) == nil {
                     // No checkout to review in, so the detail shows no "Review with agent" to open.
-                    notice = "\(pr.label) has no local checkout to review in."
+                    post("\(pr.label) has no local checkout to review in.", .warning)
                 } else {
                     setMode(.prs)
                     prs.reviewRequested = true
                 }
             } else {
-                notice = "Select a PR first, then run review again."
+                post("Select a PR first, then run review again.", .warning)
             }
         case .toggleGlass:
             toggleGlass()
@@ -1471,7 +1504,7 @@ final class HubModel: ObservableObject {
                         // A fresh launch applies its flags before the first list loads.
                         HubHandoffRequests.shared.pending = HubHandoffRequests.firstSelection
                     } else {
-                        notice = "No session to hand off: select one, or pass --session."
+                        post("No session to hand off: select one, or pass --session.", .warning)
                     }
                 }
             }
@@ -2102,8 +2135,33 @@ private struct SessionListView: View {
     @ObservedObject private var stuck = HubStuckStore.shared
     /// Whether the agent of an open, followed transcript works or waits (Hub/HubSessionDetail.swift); the same.
     @ObservedObject private var live = HubLiveActivityStore.shared
+    /// The keyboard focus of the list on screen: a click on a row or Tab gives it, then Up and Down move the
+    /// selection (`SidebarArrowKeys`). One state for every mode, since one list shows at a time.
+    @FocusState private var listFocused: Bool
+    /// The Inbox's order, the one its list shows (Hub/HubInbox.swift `InboxListView`), for the arrow keys.
+    @AppStorage("hub.inbox.sort") private var inboxSort = InboxSort.recent.rawValue
+
+    /// The Activity filters' "All projects" row in the arrow keys' order; no project has this name.
+    private static let allProjects = "\u{0}all"
 
     private var mode: SessionGrouping { SessionGrouping(rawValue: grouping) ?? .time }
+
+    /// The sessions the arrow keys step through, as the list shows them: the agent processes entry, then every
+    /// row of an open group.
+    private static func sessionKeyOrder(_ sections: [(title: String, rows: [HubSession], managed: Bool)], collapsed: Set<String>) -> [String] {
+        [AgentProcs.selectionID] + sections
+            .filter { !($0.managed && collapsed.contains($0.title)) }
+            .flatMap { $0.rows.map(\.id) }
+    }
+
+    /// The Inbox rows the arrow keys step through, in InboxListView's order: the waiting sessions, then the quiet
+    /// ones while one of them is selected (their fold is open then).
+    private static func inboxKeyOrder(_ inbox: HubInboxModel, sort: String, filter: String) -> [String] {
+        let rows = inbox.sorted(InboxSort(rawValue: sort) ?? .recent, filter: filter)
+        let fresh = rows.filter { !$0.isStale }.map(\.id)
+        let quiet = rows.filter(\.isStale).map(\.id)
+        return quiet.contains(inbox.selectedID ?? "") ? fresh + quiet : fresh
+    }
 
     private var filterPlaceholder: String {
         switch model.mode {
@@ -2202,9 +2260,27 @@ private struct SessionListView: View {
             } else if model.mode == .prs {
                 PRListView(model: model, prs: model.prs)
             } else if model.mode == .inbox {
-                InboxListView(model: model, inbox: model.inbox)
+                // The rows are Hub/HubInbox.swift's; the keys step through the same order. Read at the press: this
+                // view does not observe the Inbox.
+                let sort = inboxSort
+                ScrollViewReader { proxy in
+                    InboxListView(model: model, inbox: model.inbox)
+                        .modifier(SidebarArrowKeys(
+                            ids: { Self.inboxKeyOrder(model.inbox, sort: sort, filter: model.filter) },
+                            selection: { model.inbox.selectedID },
+                            select: { model.inbox.selectedID = $0 },
+                            proxy: proxy, focused: $listFocused, focusOnClick: true))
+                }
             } else if model.mode == .timeline {
-                TimelineListView(model: model, timeline: model.timeline)
+                // Up and Down pick the project above or below in the Projects filter (All, then each project).
+                ScrollViewReader { proxy in
+                    TimelineListView(model: model, timeline: model.timeline)
+                        .modifier(SidebarArrowKeys(
+                            ids: { [Self.allProjects] + model.timeline.projects.map(\.name) },
+                            selection: { model.timeline.project ?? Self.allProjects },
+                            select: { model.timeline.project = $0 == Self.allProjects ? nil : $0 },
+                            proxy: proxy, focused: $listFocused, focusOnClick: true))
+                }
             } else if model.mode == .agents {
                 // Staging: the widget and Clicky entries exist only in the Preview app (main.swift).
                 if NativeStaging.facesEnabled {
@@ -2230,43 +2306,69 @@ private struct SessionListView: View {
                 }
                 AgentsListView(model: model, agents: model.agents)
             } else {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
-                        // Hub/HubAgentProcs.swift: every agent session's process tree, orphans first.
-                        AgentProcsEntry(model: model)
-                        if model.sessions.isEmpty, model.loadingSessions {
-                            SkeletonRows(count: 10, leading: .avatar)
-                                .skeletonShimmer()
-                                .accessibilityElement(children: .ignore)
-                                .accessibilityLabel("Loading sessions")
-                        }
-                        ForEach(sections, id: \.title) { section in
-                            Section {
-                                if !(section.managed && prefs.collapsed.contains(section.title)) {
-                                    ForEach(section.rows) { session in
-                                        SessionRowView(session: session, selected: session.id == model.selectedID, stuck: stuck.verdicts[session.sessionId], work: live.work[session.sessionId])
-                                            .rowButton { model.select(session.id) }
-                                            .swrFlash(model.changedSessions.contains(session.id), cornerRadius: 6)
-                                            .transition(SWR.rowTransition)
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2, pinnedViews: [.sectionHeaders]) {
+                            // Hub/HubAgentProcs.swift: every agent session's process tree, orphans first.
+                            AgentProcsEntry(model: model)
+                                .id(AgentProcs.selectionID)
+                            if model.sessions.isEmpty, model.loadingSessions {
+                                SkeletonRows(count: 10, leading: .avatar)
+                                    .skeletonShimmer()
+                                    .accessibilityElement(children: .ignore)
+                                    .accessibilityLabel("Loading sessions")
+                            }
+                            ForEach(sections, id: \.title) { section in
+                                Section {
+                                    if !(section.managed && prefs.collapsed.contains(section.title)) {
+                                        ForEach(section.rows) { session in
+                                            let activity = SessionRowActivity(work: live.work[session.sessionId], isLive: session.isLive)
+                                            let selected = session.id == model.selectedID
+                                            SessionRowView(session: session, selected: selected, stuck: stuck.verdicts[session.sessionId], activity: activity)
+                                                .rowButton {
+                                                    listFocused = true
+                                                    model.select(session.id)
+                                                }
+                                                // The dot's state in words for VoiceOver; the label is the row's text.
+                                                .accessibilityValue(Text(activity?.word ?? ""))
+                                                .accessibilityAddTraits(selected ? .isSelected : [])
+                                                .id(session.id)
+                                                .swrFlash(model.changedSessions.contains(session.id), cornerRadius: 6)
+                                                .transition(SWR.rowTransition)
+                                        }
+                                    }
+                                } header: {
+                                    if section.managed {
+                                        GroupHeader(
+                                            title: section.title,
+                                            count: section.rows.count,
+                                            prefs: prefs,
+                                            allNames: sections.map(\.title),
+                                            path: mode == .harness ? nil : section.rows.first.map { projectRoot(of: $0.cwd) }.flatMap { $0.isEmpty ? nil : $0 }
+                                        )
+                                    } else {
+                                        PlainGroupHeader(title: section.title, count: section.rows.count)
                                     }
                                 }
-                            } header: {
-                                if section.managed {
-                                    GroupHeader(
-                                        title: section.title,
-                                        count: section.rows.count,
-                                        prefs: prefs,
-                                        allNames: sections.map(\.title),
-                                        path: mode == .harness ? nil : section.rows.first.map { projectRoot(of: $0.cwd) }.flatMap { $0.isEmpty ? nil : $0 }
-                                    )
-                                } else {
-                                    PlainGroupHeader(title: section.title, count: section.rows.count)
-                                }
                             }
+                            // The filter hid every session: say so, with the way back. Older matches may still show below.
+                            if sections.isEmpty, !model.sessions.isEmpty, !model.filter.trimmed.isEmpty {
+                                EmptyState(
+                                    symbol: "line.3.horizontal.decrease.circle",
+                                    text: "No session matches “\(model.filter.trimmed)”",
+                                    actionTitle: "Clear filter"
+                                ) { model.filter = "" }
+                                .padding(.top, 8)
+                            }
+                            HubHistorySection(model: model, history: history, shown: Set(sections.flatMap(\.rows).map(\.sessionId)))
                         }
-                        HubHistorySection(model: model, history: history, shown: Set(sections.flatMap(\.rows).map(\.sessionId)))
+                        .padding(.bottom, 12)
                     }
-                    .padding(.bottom, 12)
+                    .modifier(SidebarArrowKeys(
+                        ids: { [collapsed = prefs.collapsed] in Self.sessionKeyOrder(sections, collapsed: collapsed) },
+                        selection: { model.selectedID },
+                        select: { model.select($0) },
+                        proxy: proxy, focused: $listFocused))
                 }
                 // Polls `tools hub stuck` (every 2 min) for the live sessions while this list shows; a new live set restarts it.
                 .task(id: HubStuck.watched(model.sessions)) { await stuck.watch(HubStuck.watched(model.sessions)) }
@@ -2285,29 +2387,96 @@ private struct SessionListView: View {
     }
 }
 
+/// Up and Down move a sidebar list's selection while the list has the keyboard focus; a click on a row or Tab
+/// gives it. A text field with the focus keeps its own arrows, since the keys reach this view only through its
+/// focus. One step per press, no key repeat: each selection loads its pane, and a held key would start a load per
+/// repeat. The rows stay where they are unless the new one is out of sight (no anchor, no animation).
+struct SidebarArrowKeys: ViewModifier {
+    /// The selectable rows in the order the list shows them, folded groups left out. Read at the press.
+    let ids: () -> [String]
+    /// Read at the press too: a list built in another file changes its selection without this view knowing.
+    let selection: () -> String?
+    let select: (String) -> Void
+    var proxy: ScrollViewProxy?
+    let focused: FocusState<Bool>.Binding
+    /// A click anywhere in the list gives it the focus as well, for a list whose rows are built in another file and
+    /// cannot set it themselves. The rows' own clicks still run.
+    var focusOnClick = false
+
+    func body(content: Content) -> some View {
+        content
+            .focusable()
+            // The selected row is the focused look, as in the Agents list.
+            .focusEffectDisabled()
+            .focused(focused)
+            .simultaneousGesture(TapGesture().onEnded { focused.wrappedValue = true }, including: focusOnClick ? .all : .subviews)
+            .onKeyPress(.upArrow, phases: .down) { _ in move(-1) }
+            .onKeyPress(.downArrow, phases: .down) { _ in move(1) }
+    }
+
+    private func move(_ step: Int) -> KeyPress.Result {
+        let ids = ids()
+        guard let first = ids.first, let last = ids.last else { return .ignored }
+        let next: String
+        if let current = selection(), let index = ids.firstIndex(of: current) {
+            guard ids.indices.contains(index + step) else { return .handled }
+            next = ids[index + step]
+        } else {
+            next = step > 0 ? first : last
+        }
+        select(next)
+        proxy?.scrollTo(next)
+        return .handled
+    }
+}
+
+/// What a session row's dot means, in a word too: the dot alone said it in colour only (working and live are both
+/// green, waiting is orange).
+enum SessionRowActivity: Equatable {
+    case working, waiting, live
+
+    /// The open transcript's live follow outranks the list's own live rule (a warm cache, a recent write).
+    init?(work: HubLiveActivityStore.Work?, isLive: Bool) {
+        switch work {
+        case .working: self = .working
+        case .waiting: self = .waiting
+        case nil:
+            guard isLive else { return nil }
+            self = .live
+        }
+    }
+
+    var word: String {
+        switch self {
+        case .working: return "working"
+        case .waiting: return "waiting"
+        case .live: return "live"
+        }
+    }
+
+    /// The same colours the open transcript's last row and header use.
+    var color: Color {
+        self == .waiting ? ReviewPalette.modified : ReviewPalette.added
+    }
+
+    /// Working and waiting print their word on the row: only the open, followed session has them, so few rows carry
+    /// it. Live is every warm session; its dot stays the sign and VoiceOver reads the word.
+    var showsWord: Bool { self != .live }
+}
+
 /// The provider's letter on its colour (session rows, the Inbox).
 private struct SessionRowView: View {
     let session: HubSession
     let selected: Bool
     var stuck: StuckVerdict?
-    /// What the open transcript's live follow says, for the session it follows; nil for every other row.
-    var work: HubLiveActivityStore.Work?
-
-    /// Green while the agent works or the session is live (a warm cache, a recent write), orange while it waits
-    /// for the user: the same activity the open transcript's last row and header show.
-    private var dotColor: Color? {
-        switch work {
-        case .working: return ReviewPalette.added
-        case .waiting: return ReviewPalette.modified
-        case nil: return session.isLive ? ReviewPalette.added : nil
-        }
-    }
+    /// The dot: working or waiting from the open transcript's follow, else live from the list; nil for a quiet row.
+    var activity: SessionRowActivity?
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             ZStack(alignment: .bottomTrailing) {
                 ProviderBadge(provider: session.provider)
-                if let dotColor {
+                if let dotColor = activity?.color {
                     Circle()
                         .fill(dotColor)
                         .frame(width: 7, height: 7)
@@ -2339,6 +2508,13 @@ private struct SessionRowView: View {
                             .layoutPriority(-1)
                     }
                     Spacer(minLength: 0)
+                    if let activity, activity.showsWord {
+                        // Whole, like the age; VoiceOver reads it from the row's value instead.
+                        Text(activity.word)
+                            .foregroundColor(activity.color)
+                            .fixedSize()
+                            .accessibilityHidden(true)
+                    }
                     // Whole: the project and account truncate first, the age read "21 sec. a…" before.
                     LiveAgo(date: session.lastActivity, style: .brief).fixedSize()
                 }
@@ -2372,6 +2548,12 @@ struct SessionDetailView: View {
     @State private var fitting: Int?
     /// A pane that did not fit, shown as a drawer over the others from its rail.
     @State private var drawer: HubTab?
+    @GenReduceMotion private var reduceMotion
+
+    /// Opens or closes the drawer on the edge panels' curve; at once under Reduce Motion.
+    private func setDrawer(_ tab: HubTab?) {
+        GenMotion.perform(expanding: tab != nil, reduceMotion: reduceMotion) { drawer = tab }
+    }
 
     /// The open panes, in order, that fit into `width` at their minimums; the rest become rails.
     /// The first pane always shows, however narrow the window.
@@ -2418,7 +2600,7 @@ struct SessionDetailView: View {
                 ForEach(railed, id: \.self) { tab in
                     Rectangle().fill(ReviewPalette.hairline).frame(width: 1)
                     PaneRail(tab: tab, open: drawer == tab) {
-                        withAnimation(.snappy(duration: 0.25)) { drawer = drawer == tab ? nil : tab }
+                        setDrawer(drawer == tab ? nil : tab)
                     }
                 }
             }
@@ -2431,8 +2613,9 @@ struct SessionDetailView: View {
                         .overlay(alignment: .leading) { Rectangle().fill(ReviewPalette.hairline).frame(width: 1) }
                         .shadow(color: .black.opacity(0.45), radius: 18, x: -6)
                         .padding(.trailing, CGFloat(railed.count) * (PaneRail.width + 1))
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                        .onExitCommand { withAnimation(.snappy(duration: 0.2)) { drawer = nil } }
+                        // Slides in from its rail; under Reduce Motion it appears in place.
+                        .transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
+                        .onExitCommand { setDrawer(nil) }
                 }
             }
         }
@@ -2530,8 +2713,8 @@ struct SessionDetailView: View {
             HStack(spacing: 8) {
                 AgentChildTitle(agents: agent.agents, parent: agent.parent, node: node)
                 Spacer()
-                if let notice = model.notice {
-                    NoticePill(text: notice, isError: notice.hasPrefix("cmux:") || notice.contains("failed") || notice.contains("not in")) { model.notice = nil }
+                if let notice = model.headerNotice {
+                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
                 }
                 paneToggles
                 AgentCopyIdButton(model: model, node: node)
@@ -2575,12 +2758,13 @@ struct SessionDetailView: View {
                     HubForecastChip(account: session.account)
                         .layoutPriority(-1)
                 }
-                if let notice = model.notice {
-                    NoticePill(text: notice, isError: notice.hasPrefix("cmux:") || notice.contains("failed")) { model.notice = nil }
+                if let notice = model.headerNotice {
+                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
                 }
                 paneToggles
                 IconButton(systemName: "doc.richtext", tooltip: "Copy as Markdown (json2md): session, changes, decisions, recent turns") {
-                    Task { @MainActor in model.notice = await model.exportSession(session) }
+                    // The export answers in words only (HubMarkdownExport, Hub/HubWorktrees.swift): its tone is guessed.
+                    Task { @MainActor in model.headerNotice = HubNotice(guessing: await model.exportSession(session)) }
                 }
             }
         }
@@ -2611,7 +2795,7 @@ struct SessionDetailView: View {
             }
             Button {
                 PathOpener.copy(session.sessionId)
-                model.notice = "Session id copied"
+                model.post("Session id copied", .success)
             } label: {
                 chip("number", String(session.sessionId.prefix(8)))
             }
@@ -2654,6 +2838,7 @@ private struct PaneToggle: View {
     @ObservedObject var model: HubModel
     let badge: PaneBadge
     @State private var targeted = false
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         dragAndDrop(button)
@@ -2703,8 +2888,9 @@ private struct PaneToggle: View {
                     .strokeBorder(ReviewPalette.renamed, lineWidth: 1.5)
                     .opacity(targeted ? 1 : 0)
             )
-            .scaleEffect(targeted ? 1.06 : 1)
-            .animation(.snappy(duration: 0.18), value: targeted)
+            // Under Reduce Motion the drop target keeps its size and its outline appears at once.
+            .scaleEffect(targeted && !reduceMotion ? 1.06 : 1)
+            .animation(reduceMotion ? nil : .snappy(duration: 0.18), value: targeted)
         }
         .buttonStyle(.genHoverPlain())
         .instantTooltip(open
@@ -2723,8 +2909,15 @@ private struct PaneToggle: View {
         }
         .dropDestination(for: String.self) { items, _ in
             guard let dragged = items.first, let from = HubTab(rawValue: dragged) else { return false }
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
-                model.swapTabs(from, tab)
+            // A drop release may settle with a spring; under Reduce Motion the two swap at once.
+            if reduceMotion {
+                var instant = Transaction()
+                instant.disablesAnimations = true
+                withTransaction(instant) { model.swapTabs(from, tab) }
+            } else {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                    model.swapTabs(from, tab)
+                }
             }
             return true
         } isTargeted: { inside in

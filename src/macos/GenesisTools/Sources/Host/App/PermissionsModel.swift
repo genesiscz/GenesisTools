@@ -19,6 +19,11 @@ enum GrantAction: Equatable {
     case openPane(String)
     /// touch the resource once so macOS asks (folders, Automation)
     case probe
+
+    var opensSettings: Bool {
+        if case .openPane = self { return true }
+        return false
+    }
 }
 
 struct PermissionRow: Identifiable, Equatable {
@@ -45,11 +50,15 @@ struct PermissionRow: Identifiable, Equatable {
 /// command needs each grant and remembers probe answers, which macOS has no status for.
 final class PermissionsModel: ObservableObject {
     @Published private(set) var rows: [PermissionRow] = []
+    /// The id of the row whose request waits for macOS.
     @Published private(set) var busy: String?
     @Published private(set) var lastMessage: String?
 
     private let access: PermissionAccess
     private var probeResults: [PermissionKind: PermissionStatus] = [:]
+    /// The grant `lastMessage` is about: once a refresh finds it no longer refused, the message goes.
+    private var messageKind: PermissionKind?
+    private var rechecking = false
 
     private static let usedBy: [(PermissionKind, String)] = [
         (.calendars, "tools macos calendar, tools todo sync"),
@@ -72,9 +81,38 @@ final class PermissionsModel: ObservableObject {
         self.access = access
     }
 
+    /// The title of the row whose request waits for macOS.
+    var busyTitle: String? {
+        busy.map { id in rows.first { $0.id == id }?.title ?? id }
+    }
+
+    /// Reads every grant again, and runs each answered probe again: a probe grant has no silent read, so without it a
+    /// grant changed in System Settings kept its old answer. macOS answered those probes before, so none prompts.
     func refresh() {
+        rebuildRows()
+        recheckProbes()
+    }
+
+    private func rebuildRows() {
         rows = Self.usedBy.map { kind, usedBy in
             PermissionRow(kind: kind, usedBy: usedBy, state: probeResults[kind] ?? access.status(kind))
+        }
+        if let kind = messageKind, rows.first(where: { $0.kind == kind })?.state != .denied {
+            lastMessage = nil
+            messageKind = nil
+        }
+    }
+
+    private func recheckProbes() {
+        let kinds = PermissionKind.allCases.filter { probeResults[$0] != nil }
+        guard !kinds.isEmpty, !rechecking, busy == nil else { return }
+        rechecking = true
+        Task { @MainActor in
+            for kind in kinds {
+                probeResults[kind] = await access.recheck(kind)
+            }
+            rechecking = false
+            rebuildRows()
         }
     }
 
@@ -83,16 +121,20 @@ final class PermissionsModel: ObservableObject {
     func request(_ row: PermissionRow) {
         busy = row.id
         lastMessage = nil
+        messageKind = nil
         let kind = row.kind
         Task { @MainActor in
             let result = await access.request(kind)
             if kind.requestStyle == .probe {
                 probeResults[kind] = result
-                if result == .denied { lastMessage = "\(row.title): macOS refused. Allow it in System Settings." }
+                if result == .denied {
+                    lastMessage = "\(row.title): macOS refused. Allow it in System Settings."
+                    messageKind = kind
+                }
             }
 
             busy = nil
-            refresh()
+            rebuildRows()
         }
     }
 

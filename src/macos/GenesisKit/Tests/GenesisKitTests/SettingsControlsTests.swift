@@ -483,4 +483,46 @@ final class SettingsControlsTests: XCTestCase {
         XCTAssertEqual(FocusForgetRange.lastHour.start(now: now), now.addingTimeInterval(-3_600))
         XCTAssertEqual(FocusForgetRange.everything.start(now: now), Date(timeIntervalSince1970: 0))
     }
+
+    // MARK: - Settings search (H4)
+
+    /// The search finds a page by its words, a card or row by its title, detail or card, ranks a title that starts
+    /// with the query first, and points each result at its page and card or row.
+    func testTheSettingsSearchFindsCardsAndRowsAcrossPagesAndRanksTitlesFirst() {
+        let pages = [
+            NativeSettingsSearchPage(id: "general", title: "General", subtitle: "Theme and motion", section: "App"),
+            NativeSettingsSearchPage(id: "notifications.prActivity", title: "PR activity", subtitle: "Banners", section: "Notifications"),
+        ]
+        let entries: [String: [NativeSettingsSearchEntry]] = [
+            "general": [
+                NativeSettingsSearchEntry(kind: .card, title: "Accessibility"),
+                NativeSettingsSearchEntry(kind: .row, title: "Reduce motion", detail: "Stops the slides.", card: "Accessibility"),
+            ],
+            "notifications.prActivity": [
+                NativeSettingsSearchEntry(kind: .card, title: "Defaults", detail: "A project follows these."),
+                NativeSettingsSearchEntry(kind: .row, title: "Cadence", detail: "How often a project is polled.", card: "Defaults"),
+                NativeSettingsSearchEntry(kind: .row, title: "Only my PRs", detail: "Changes on PRs someone else opened stay silent.", card: "Defaults"),
+            ],
+        ]
+        let cadence = NativeSettingsSearch.results("cadence", pages: pages, entries: entries)
+        XCTAssertEqual(cadence.map(\.title), ["Cadence"])
+        XCTAssertEqual(cadence.first?.context, "PR activity · Defaults")
+        let target = cadence.first?.target ?? ""
+        XCTAssertEqual(NativeSettingsHighlightCenter.split(target).page, "notifications.prActivity")
+        XCTAssertEqual(
+            NativeSettingsHighlightCenter.split(target).anchor,
+            NativeSettingsSearch.anchor(page: "notifications.prActivity", key: "row:Cadence"))
+
+        // A detail match and a case- and accent-blind match; every word must be found somewhere.
+        XCTAssertEqual(NativeSettingsSearch.results("SILENT", pages: pages, entries: entries).map(\.title), ["Only my PRs"])
+        XCTAssertEqual(NativeSettingsSearch.results("reduce slides", pages: pages, entries: entries).map(\.title), ["Reduce motion"])
+        XCTAssertTrue(NativeSettingsSearch.results("reduce cadence", pages: pages, entries: entries).isEmpty)
+
+        // A page result opens the page itself; a title that starts with the query comes before one that only holds it.
+        let motion = NativeSettingsSearch.results("motion", pages: pages, entries: entries)
+        XCTAssertEqual(motion.map(\.title), ["Reduce motion", "General"])
+        XCTAssertEqual(motion.last?.target, "general")
+        XCTAssertEqual(NativeSettingsSearch.results("Pr", pages: pages, entries: entries).first?.title, "PR activity")
+        XCTAssertTrue(NativeSettingsSearch.results("   ", pages: pages, entries: entries).isEmpty)
+    }
 }

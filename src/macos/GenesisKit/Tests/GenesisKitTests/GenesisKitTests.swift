@@ -315,7 +315,7 @@ final class WidgetShelfStoreTests: XCTestCase {
         store.importFiles([URL(string: "https://example.com/etc/hosts")!])
         XCTAssertEqual(calls, 0)
         XCTAssertFalse(store.isBusy)
-        XCTAssertEqual(store.error, "Only local files can be staged.")
+        XCTAssertEqual(store.error, "Only local files can be added.")
     }
 
     func testFailedImportContinuesOtherFilesAndReleasesOwnerForRetry() async {
@@ -438,6 +438,41 @@ final class WidgetShelfStoreTests: XCTestCase {
         XCTAssertEqual(calls.first, ["attach", item.id, "--session-key", "chosen-recipient"])
         XCTAssertEqual(attached, ["chosen-recipient"])
         XCTAssertTrue(store.notice?.contains("Nothing has been sent") == true)
+    }
+
+    /// Remove from shelf takes the row off at once and removes the item only after the Undo time; Undo brings it
+    /// back, and the status line is spoken (ux catalogue P5, P9).
+    func testRemoveWaitsBehindUndoAndUndoBringsTheItemBack() async throws {
+        let itemJSON = String(decoding: try JSONEncoder().encode(item), as: UTF8.self)
+        let listed = Data(#"{"revision":1,"items":[\#(itemJSON)],"statePath":"/fixture/widget-shelf/state.json"}"#.utf8)
+        var calls: [[String]] = []
+        var spoken: [String] = []
+        let store = WidgetShelfStore(request: { args, _ in
+            calls.append(args)
+            return listed
+        }, announce: { text, _ in spoken.append(text) }, removalUndoDelay: .milliseconds(100))
+        defer { store.stop() }
+        store.refresh()
+        guard try await pollUntil("the list is read", { store.items.count == 1 }) else { return }
+
+        store.remove(item)
+        XCTAssertTrue(store.items.isEmpty, "the row leaves at once")
+        XCTAssertEqual(store.removed, item)
+        store.undoRemove()
+        XCTAssertEqual(store.items, [item])
+        XCTAssertNil(store.removed)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(calls.contains { $0.first == "remove" }, "Undo in time removes nothing")
+
+        store.remove(item)
+        store.refresh()
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertTrue(store.items.isEmpty, "a list read during the Undo time does not bring the row back")
+        guard try await pollUntil("the removal runs", { calls.contains { $0.first == "remove" } }) else { return }
+        await store.waitForRemoval()
+        XCTAssertEqual(calls.last { $0.first == "remove" }, ["remove", item.id])
+        XCTAssertTrue(spoken.contains("Removed from the shelf. The original file and existing drafts are kept."))
+        XCTAssertTrue(spoken.contains("notes.pdf is back on the shelf."))
     }
 }
 

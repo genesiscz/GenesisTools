@@ -19,7 +19,9 @@ public enum VoiceMicrophonePermission: Equatable, Sendable {
         switch self {
         case .authorized: return nil
         case .notDetermined: return "Microphone access is needed. Press Record to review the macOS permission prompt."
-        case .denied: return "Microphone access is off. Enable this app in System Settings → Privacy & Security → Microphone."
+        case .denied:
+            let app = PermissionKind.appName
+            return "Microphone access is off. In System Settings, open Privacy & Security, then Microphone and turn on \(app)."
         case .restricted: return "Microphone access is restricted by this Mac's settings or administrator."
         case .unknown: return "Microphone permission could not be checked. Review Microphone settings before recording."
         }

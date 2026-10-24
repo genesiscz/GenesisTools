@@ -55,7 +55,7 @@ public final class RecordingSettings: ObservableObject {
         didSet { defaults.set(showsBorder, forKey: Key.showsBorder) }
     }
 
-    /// "Stop and discard" and "Restart" ask once inside the controls before they drop what was recorded. Default on.
+    /// "Discard" and "Restart" ask once inside the controls before they lose what was recorded. Default on.
     @Published public var confirmsDiscard: Bool {
         didSet { defaults.set(confirmsDiscard, forKey: Key.confirmsDiscard) }
     }
@@ -93,7 +93,7 @@ public struct RecordingSettingsView: View {
                 }
                 Divider()
                 NativeSettingsToggle(
-                    "Ask before discarding", detail: "Stop and discard, and Restart, ask once inside the controls.",
+                    "Ask before discarding", detail: "Discard and Restart ask once inside the controls.",
                     identifier: "recording.confirmsDiscard", isOn: $settings.confirmsDiscard)
             }
             NativeSettingsCard("Recording") {

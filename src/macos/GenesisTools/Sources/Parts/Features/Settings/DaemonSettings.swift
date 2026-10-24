@@ -401,7 +401,11 @@ private struct DaemonTaskCard: View {
                         .buttonStyle(.bordered)
                         .nativeSettingsPointer()
                         .disabled(store.runningNow.contains(task.name))
-                        .instantTooltip("Run it once now with its timeout and priority (tools daemon run \(task.name))")
+                        .instantTooltip("Run this task once now, with its timeout and priority")
+                        // The command for a terminal stays one right-click away.
+                        .contextMenu {
+                            Button("Copy Command") { Clipboard.copy("tools daemon run \(task.name)", what: "command") }
+                        }
                         .accessibilityIdentifier("daemon.\(task.name).run")
                     Toggle("Enabled", isOn: Binding(
                         get: { task.enabled },
@@ -533,13 +537,22 @@ private struct DaemonTaskEditor: View {
     @ObservedObject var store: DaemonSettingsStore
     @State private var every = ""
     @State private var retryTimes = ""
+    /// The text field being edited: leaving one saves it, as Return does.
+    @FocusState private var editing: Field?
+    /// The last value sent to the daemon from each field, until the task comes back with it.
+    @State private var sentEvery: String?
+    @State private var sentRetryTimes: String?
+
+    private enum Field { case every, retryTimes }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            NativeSettingsRow("Schedule", detail: "\"every 5 minutes\", \"every 2 hours\" or \"every day at 03:00\". Return saves.") {
+            NativeSettingsRow("Schedule", detail: "\"every 5 minutes\", \"every 2 hours\" or \"every day at 03:00\". Return or leaving the field saves; Esc puts it back.") {
                 TextField("every 5 minutes", text: $every)
                     .textFieldStyle(.roundedBorder).frame(width: 200)
+                    .focused($editing, equals: .every)
                     .onSubmit { commitEvery() }
+                    .onExitCommand { every = task.every }
                     .accessibilityIdentifier("daemon.\(task.name).every")
             }
             NativeSettingsRow("Timeout", detail: "A run still going after this long is stopped and counts as timed out.") {
@@ -613,10 +626,12 @@ private struct DaemonTaskEditor: View {
                     .accessibilityIdentifier("daemon.\(task.name).missedRun")
                 }
                 if task.missedRun.mode == "retry-at" {
-                    NativeSettingsRow("Times", detail: "Comma-separated, 24-hour HH:MM. Return saves.") {
+                    NativeSettingsRow("Times", detail: "Comma-separated, 24-hour HH:MM. Return or leaving the field saves; Esc puts it back.") {
                         TextField("10:00, 12:00", text: $retryTimes)
                             .textFieldStyle(.roundedBorder).frame(width: 200)
-                            .onSubmit { store.set(task, ["--retry-at", retryTimes]) }
+                            .focused($editing, equals: .retryTimes)
+                            .onSubmit { commitRetryTimes() }
+                            .onExitCommand { retryTimes = Self.times(task) }
                             .accessibilityIdentifier("daemon.\(task.name).retryAt")
                     }
                 }
@@ -624,7 +639,18 @@ private struct DaemonTaskEditor: View {
             NativeSettingsRow("Command", detail: task.command) { EmptyView() }
         }
         .onAppear(perform: syncFields)
-        .onChange(of: task) { _, _ in syncFields() }
+        // Another setting's save brings a new task; a field the user is still typing in keeps their text.
+        .onChange(of: task) { old, _ in
+            sentEvery = nil
+            sentRetryTimes = nil
+            syncFields(from: old)
+        }
+        // A click on another field or Tab saves what was typed, as Return does.
+        .onChange(of: editing) { old, _ in
+            if let old { commit(old) }
+        }
+        // Closing the disclosure, another page or the window saves an edit that is still open.
+        .onDisappear { commit(nil) }
     }
 
     private var priorityDetail: String {
@@ -635,15 +661,44 @@ private struct DaemonTaskEditor: View {
         }
     }
 
-    private func syncFields() {
-        every = task.every
-        retryTimes = (task.missedRun.times ?? []).joined(separator: ", ")
+    private static func times(_ task: DaemonTaskConfig) -> String {
+        (task.missedRun.times ?? []).joined(separator: ", ")
     }
 
+    private func syncFields() {
+        every = task.every
+        retryTimes = Self.times(task)
+    }
+
+    /// Takes the new task's values, except in a field that has the focus and holds an edit not saved yet.
+    private func syncFields(from old: DaemonTaskConfig) {
+        if editing != .every || every == old.every { every = task.every }
+        if editing != .retryTimes || retryTimes == Self.times(old) { retryTimes = Self.times(task) }
+    }
+
+    private func commit(_ field: Field?) {
+        switch field {
+        case .every: commitEvery()
+        case .retryTimes: commitRetryTimes()
+        case nil:
+            commitEvery()
+            commitRetryTimes()
+        }
+    }
+
+    /// Saves a changed schedule once: Return and the focus leaving the field right after it do not save it twice.
     private func commitEvery() {
         let value = every.trimmingCharacters(in: .whitespaces)
-        guard !value.isEmpty, value != task.every else { return }
+        guard !value.isEmpty, value != task.every, value != sentEvery else { return }
+        sentEvery = value
         store.set(task, ["--every", value])
+    }
+
+    private func commitRetryTimes() {
+        let value = retryTimes.trimmingCharacters(in: .whitespaces)
+        guard task.missedRun.mode == "retry-at", !value.isEmpty, value != Self.times(task), value != sentRetryTimes else { return }
+        sentRetryTimes = value
+        store.set(task, ["--retry-at", value])
     }
 }
 

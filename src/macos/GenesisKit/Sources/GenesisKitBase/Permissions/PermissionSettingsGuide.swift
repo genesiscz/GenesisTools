@@ -124,6 +124,9 @@ public final class PermissionSettingsGuide {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        // The helper shows only while System Settings is the active app, so without this its close button's
+        // tooltip never appeared at all.
+        panel.allowsToolTipsWhenApplicationIsInactive = true
         panel.contentView = host
         panel.setAccessibilityIdentifier("permission-settings-guide")
         return panel
@@ -184,18 +187,23 @@ struct PermissionGuideView: View {
         .padding(.bottom, 12)
         .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(alignment: .topTrailing) {
+            // The 18 pt circle is drawn inside a 24 pt target: the padding sits inside the button, so a click
+            // just beside the circle still closes the helper.
             Button(action: onClose) {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.white.opacity(hovering ? 0.95 : 0.6))
                     .frame(width: 18, height: 18)
                     .background(.white.opacity(hovering ? 0.22 : 0.1), in: Circle())
+                    .padding(3)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .pointerCursor()
             .onHover { hovering = $0 }
             .help("Close this helper")
-            .accessibilityLabel("Close")
-            .padding(6)
+            .accessibilityLabel("Close the helper")
+            .padding(3)
         }
         .padding(4)
         .environment(\.colorScheme, .dark)

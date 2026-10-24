@@ -159,11 +159,26 @@ public struct RecordingControlsView: View {
         .modifier(NativeGlassShapeSurface(shape: RoundedRectangle(cornerRadius: 14, style: .continuous)))
         .environment(\.colorScheme, .dark)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: confirming)
-        .onChange(of: state.phase) { _, phase in
+        .onChange(of: state.phase) { old, phase in
             if !phase.isActive || phase == .finishing { confirming = nil }
+            announce(from: old, to: phase)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Recording controls")
+    }
+
+    /// Phases change by themselves (the recorder starts late, the limit pauses), so VoiceOver is told.
+    private func announce(from old: RecordingPhase, to phase: RecordingPhase) {
+        switch phase {
+        case .recording:
+            GenAnnounce.post(old == .paused ? "Recording resumed" : "Recording started")
+        case .paused:
+            GenAnnounce.post(state.pauseReason == "limit" ? "Recording paused, the length limit is reached" : "Recording paused")
+        case .finishing:
+            GenAnnounce.post("Recording stopped, saving")
+        default:
+            break
+        }
     }
 
     // MARK: Status (the drag area)
@@ -177,7 +192,7 @@ public struct RecordingControlsView: View {
                     .font(.system(size: 13, weight: .semibold).monospacedDigit())
                     .foregroundStyle(paused ? .secondary : .primary)
                 if let caption = statusCaption {
-                    Text(caption).font(.system(size: 9.5, weight: .medium))
+                    Text(caption).font(.system(size: 11, weight: .medium))
                         .foregroundStyle(captionColor)
                         .lineLimit(1)
                 }
@@ -223,7 +238,7 @@ public struct RecordingControlsView: View {
     }
 
     private var captionColor: Color {
-        state.phase == .paused || remainingMs != nil ? .orange : .secondary
+        state.phase == .paused || remainingMs != nil ? .orange : RecordingInk.readable
     }
 
     private var accessibilityStatus: String {
@@ -285,7 +300,7 @@ public struct RecordingControlsView: View {
                         .frameProbe("recording.pause")
                 }
             }
-            IconButton(systemName: "arrow.counterclockwise", tooltip: "Restart: drop what was recorded and start again",
+            IconButton(systemName: "arrow.counterclockwise", tooltip: "Restart: discard what was recorded and start again",
                        size: 13) {
                 ask(.restart, then: actions.restart)
             }
@@ -310,7 +325,7 @@ public struct RecordingControlsView: View {
             .accessibilityLabel(state.useTitle)
             .accessibilityIdentifier("recording.use")
             .frameProbe("recording.use")
-            IconButton(systemName: "trash", tooltip: "Stop and discard", size: 13) {
+            IconButton(systemName: "trash", tooltip: "Discard the recording", size: 13) {
                 ask(.discard, then: actions.discard)
             }
             .disabled(busy)
@@ -334,7 +349,7 @@ public struct RecordingControlsView: View {
         HStack(spacing: 8) {
             Text(kind == .discard
                  ? "Discard \(RecordingClock.format(state.elapsedMs)) of recording?"
-                 : "Restart and drop \(RecordingClock.format(state.elapsedMs))?")
+                 : "Restart and discard \(RecordingClock.format(state.elapsedMs))?")
                 .font(.system(size: 12, weight: .medium))
                 .lineLimit(1)
                 .fixedSize()
@@ -370,7 +385,7 @@ public struct RecordingControlsView: View {
     private func preparingRow(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "hourglass").font(.system(size: 10)).foregroundStyle(.secondary)
-            Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(text).font(.system(size: 11)).foregroundStyle(RecordingInk.readable)
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 420, alignment: .leading)
             Spacer(minLength: 0)
@@ -383,7 +398,7 @@ public struct RecordingControlsView: View {
     private func noticeRow(_ notice: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(.orange)
-            Text(notice).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(notice).font(.system(size: 11)).foregroundStyle(RecordingInk.readable)
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .frame(maxWidth: 420, alignment: .leading)

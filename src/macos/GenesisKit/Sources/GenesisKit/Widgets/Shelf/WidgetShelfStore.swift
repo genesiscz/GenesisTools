@@ -55,10 +55,21 @@ struct WidgetShelfSnapshot: Decodable, Sendable {
 public final class WidgetShelfStore: ObservableObject {
     @Published public private(set) var items: [WidgetShelfItem] = []
     @Published public private(set) var isBusy = false
-    @Published public private(set) var isCapturing = false
+    /// The area selection is up; VoiceOver hears it, since the screen changes without a click in the shelf.
+    @Published public private(set) var isCapturing = false {
+        didSet { if isCapturing, !oldValue { announce("Select an area to capture. Press Escape to cancel.", .medium) } }
+    }
     @Published public private(set) var captureAccessGranted: Bool?
-    @Published public private(set) var error: String?
-    @Published public private(set) var notice: String?
+    /// The status line's failure; it arrives after the action that caused it, so VoiceOver hears it.
+    @Published public private(set) var error: String? {
+        didSet { if let error, error != oldValue { announce(Self.spoken(error), .high) } }
+    }
+    @Published public private(set) var notice: String? {
+        didSet { if let notice, notice != oldValue { announce(notice, .medium) } }
+    }
+    /// The item the user just removed: gone from the list, still on the shelf until `removalUndoDelay` runs out, so
+    /// the status line's Undo can bring it back (ux checklist "Undo and destructive actions").
+    @Published public private(set) var removed: WidgetShelfItem?
     /// True once the first inventory read finished, so a view can tell a first load from an item arriving.
     @Published public private(set) var loaded = false
     /// A screen recording started from the Capture shelf runs (from its picker until it ends).
@@ -88,6 +99,13 @@ public final class WidgetShelfStore: ObservableObject {
     private var isChoosingFiles = false
     private var filePicker: NSOpenPanel?
     private var stopped = false
+    private let announce: @MainActor (String, GenAnnounce.Priority) -> Void
+    private let removalUndoDelay: Duration
+    /// Where the removed item stood, so Undo puts it back in place.
+    private var removedIndex = 0
+    private var removalTimer: Task<Void, Never>?
+    /// The CLI removal once the Undo ran out; teardown waits for it.
+    private var removal: Task<Void, Never>?
 
     public init(
         binaryPath: String, stateRoot: String? = nil,
@@ -100,6 +118,8 @@ public final class WidgetShelfStore: ObservableObject {
     ) {
         screenCaptureAccess = { PermissionAccess.live.isGranted(.screenRecording) }
         permissionGate = { await PermissionCenter.shared.ensure($0) }
+        announce = { GenAnnounce.post($0, priority: $1) }
+        removalUndoDelay = .seconds(10)
         let bridge = ToolsBridge(binaryPath: binaryPath)
         self.request = { arguments, timeout in
             var prefix = ["widget"]
@@ -131,9 +151,13 @@ public final class WidgetShelfStore: ObservableObject {
         onCaptureWillBegin: @escaping () -> Void = {},
         onCaptureStaged: @escaping () -> Void = {},
         onDialogVisibilityChanged: @escaping (Bool) -> Void = { _ in },
-        attachToDraft: ((WidgetShelfItem, WidgetSession) async throws -> Void)? = nil
+        attachToDraft: ((WidgetShelfItem, WidgetSession) async throws -> Void)? = nil,
+        announce: @escaping @MainActor (String, GenAnnounce.Priority) -> Void = { _, _ in },
+        removalUndoDelay: Duration = .seconds(10)
     ) {
         self.request = request
+        self.announce = announce
+        self.removalUndoDelay = removalUndoDelay
         self.screenRecorder = screenRecorder
         self.screenCaptureAccess = screenCaptureAccess
         self.permissionGate = permissionGate
@@ -148,6 +172,8 @@ public final class WidgetShelfStore: ObservableObject {
     /// Coordinator teardown is terminal for this store; hiding a module leaves active staging alone.
     public func stop() {
         guard !stopped else { return }
+        // The user removed it; teardown must not put it back on the shelf.
+        commitRemoval()
         stopped = true
         visibleModules.removeAll()
         watcher?.stop()
@@ -196,9 +222,11 @@ public final class WidgetShelfStore: ObservableObject {
                     let data = try await self.request(["list", "--json"], 15)
                     guard !self.stopped, !Task.isCancelled else { return }
                     let snapshot = try JSONDecoder().decode(WidgetShelfSnapshot.self, from: data)
-                    if self.items != snapshot.items {
-                        self.captureItems = snapshot.items.filter { $0.kind == .capture }
-                        self.items = snapshot.items
+                    // A removed item stays on disk during its Undo; it stays off the list.
+                    let shown = snapshot.items.filter { $0.id != self.removed?.id }
+                    if self.items != shown {
+                        self.captureItems = shown.filter { $0.kind == .capture }
+                        self.items = shown
                     }
                     self.statePath = snapshot.statePath
                     if !self.loaded { self.loaded = true }
@@ -256,7 +284,7 @@ public final class WidgetShelfStore: ObservableObject {
     private var screenRecordingNeed: PermissionNeed {
         PermissionNeed(
             .screenRecording,
-            reason: "Capture takes a screenshot of the area you select and stages it in the widget.",
+            reason: "Capture takes a screenshot of the area you select and keeps it in the widget until you choose an inbox.",
             grantWorksInNewProcess: true,
             onGranted: { [weak self] in self?.capture() })
     }
@@ -267,7 +295,7 @@ public final class WidgetShelfStore: ObservableObject {
         guard !stopped, !isBusy else { return }
         isCapturing = true
         onCaptureWillBegin()
-        start(success: "Screenshot staged. Choose an inbox when you are ready.") {
+        start(success: "Screenshot added. Choose an inbox when you are ready.") {
             do {
                 let data = try await self.request(["capture"], 125)
                 if try JSONDecoder().decode(WidgetShelfCaptureResponse.self, from: data).cancelled == true {
@@ -337,12 +365,12 @@ public final class WidgetShelfStore: ObservableObject {
         let stamp = Date().formatted(.dateTime.hour().minute().second())
         let data = try await request(["video", movie.path, "--name", "Screen recording \(stamp).mp4"], 300)
         let item = try JSONDecoder().decode(WidgetShelfItem.self, from: data)
-        guard item.kind == .capture else { throw ToolsBridgeError.refused("The recording was not staged as a capture.") }
+        guard item.kind == .capture else { throw ToolsBridgeError.refused("The recording could not be added as a capture.") }
         do { try FileManager.default.removeItem(at: movie) } catch {
             GenesisKit.log("widget shelf: recording cleanup \(error.localizedDescription)")
         }
         guard !stopped else { return }
-        notice = "Recording staged. Choose an inbox when you are ready."
+        notice = "Recording added. Choose an inbox when you are ready."
         refresh()
         onCaptureStaged()
     }
@@ -350,10 +378,10 @@ public final class WidgetShelfStore: ObservableObject {
     public func importFiles(_ urls: [URL], asImages: Bool = false) {
         guard !stopped, !isBusy, !urls.isEmpty else { return }
         guard urls.allSatisfy(\.isFileURL) else {
-            error = "Only local files can be staged."
+            error = "Only local files can be added."
             return
         }
-        start(success: urls.count == 1 ? "Item staged." : "\(urls.count) items staged.") {
+        start(success: urls.count == 1 ? "Item added." : "\(urls.count) items added.") {
             var failures: [String] = []
             for url in urls {
                 try Task.checkCancellation()
@@ -379,7 +407,7 @@ public final class WidgetShelfStore: ObservableObject {
         filePicker = panel
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
-        panel.prompt = asImages ? "Stage images" : "Add to shelf"
+        panel.prompt = asImages ? "Add images" : "Add to shelf"
         if asImages { panel.allowedContentTypes = [.image] }
         panel.begin { [weak self] response in
             Task { @MainActor in
@@ -411,7 +439,7 @@ public final class WidgetShelfStore: ObservableObject {
             error = "Copy a file or image first."
             return
         }
-        start(success: "Clipboard image staged.") {
+        start(success: "Clipboard image added.") {
             let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-paste-\(UUID().uuidString)", isDirectory: true)
             let temporary = directory.appendingPathComponent("Clipboard image.png")
             try await Task.detached(priority: .userInitiated) {
@@ -430,11 +458,62 @@ public final class WidgetShelfStore: ObservableObject {
         }
     }
 
+    /// Takes `item` off the list at once and removes it from the shelf after `removalUndoDelay`, unless Undo brings
+    /// it back first. Removing another item removes the first one now.
     public func remove(_ item: WidgetShelfItem) {
-        start(success: "Removed from the shelf. Files and existing drafts are preserved.") {
-            _ = try await self.request(["remove", item.id], 15)
+        guard !stopped, !isBusy, let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        commitRemoval()
+        removed = item
+        removedIndex = index
+        items.remove(at: index)
+        captureItems.removeAll { $0.id == item.id }
+        error = nil
+        // A capture has no original elsewhere; a file does.
+        notice = item.kind == .capture ? "Removed from Capture. Drafts that already use it keep it."
+            : "Removed from the shelf. The original file and existing drafts are kept."
+        let delay = removalUndoDelay
+        removalTimer = Task { [weak self] in
+            do { try await Task.sleep(for: delay) } catch { return }
+            self?.commitRemoval()
         }
     }
+
+    /// Undo of Remove from shelf: the item comes back in its place.
+    public func undoRemove() {
+        guard let item = removed else { return }
+        removalTimer?.cancel()
+        removalTimer = nil
+        removed = nil
+        if !items.contains(where: { $0.id == item.id }) {
+            items.insert(item, at: min(removedIndex, items.count))
+            captureItems = items.filter { $0.kind == .capture }
+        }
+        notice = "\(item.name) is back" + (item.kind == .capture ? "." : " on the shelf.")
+        refresh()
+    }
+
+    /// Removes the item for good: its Undo ran out, another item was removed, or the store stops.
+    private func commitRemoval() {
+        guard let item = removed else { return }
+        removalTimer?.cancel()
+        removalTimer = nil
+        removed = nil
+        let previous = removal
+        // The request is held, not the store: a removal that runs at teardown still reaches the CLI.
+        let request = request
+        removal = Task { [weak self] in
+            await previous?.value
+            do {
+                _ = try await request(["remove", item.id], 15)
+            } catch {
+                // Still on the shelf: say why; the list read below shows it again.
+                if let self, !self.stopped { self.report(error) }
+            }
+            if let self, !self.stopped { self.refresh() }
+        }
+    }
+
+    func waitForRemoval() async { await removal?.value }
 
     public func attach(_ item: WidgetShelfItem, to recipient: WidgetSession) {
         start(success: "Added to inbox draft. Nothing has been sent.") {
@@ -488,6 +567,12 @@ public final class WidgetShelfStore: ObservableObject {
     private func report(_ error: Error) {
         self.error = error.localizedDescription
         GenesisKit.log("widget shelf: \(error.localizedDescription)")
+    }
+
+    /// The first line of an error, short enough for VoiceOver to read out.
+    nonisolated static func spoken(_ error: String) -> String {
+        let line = error.split(whereSeparator: \.isNewline).first.map(String.init) ?? error
+        return line.count > 160 ? String(line.prefix(157)) + "…" : line
     }
 
     deinit {

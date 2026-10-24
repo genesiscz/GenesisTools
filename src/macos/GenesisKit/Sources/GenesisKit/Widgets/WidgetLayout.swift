@@ -121,6 +121,11 @@ struct WidgetSideStripMetrics {
     static let sessionWidth: CGFloat = 38
     static let sessionHeight: CGFloat = 34
     static let sessionSpacing: CGFloat = 6
+    /// A rail session bubble's target beyond its drawn 38 by 34 pt: half the gap to each neighbour and the rail's
+    /// spare width beside it, so a click between two bubbles reaches one of them (ux checklist, Hit targets).
+    static let sessionHitPadding = EdgeInsets(
+        top: sessionSpacing / 2, leading: (width - sessionWidth) / 2,
+        bottom: sessionSpacing / 2, trailing: (width - sessionWidth) / 2)
     static let minimumSpacer: CGFloat = 2
     static let sessionLimit = 4
 

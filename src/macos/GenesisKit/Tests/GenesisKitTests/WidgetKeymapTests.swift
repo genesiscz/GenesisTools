@@ -55,6 +55,32 @@ final class WidgetKeymapTests: XCTestCase {
         XCTAssertEqual(press(0x14, "š", answering: answering), .choose("ask"))
     }
 
+    /// Up, Down and Return move in the list on screen (ux catalogue R7), never while typing and never without a list.
+    func testArrowsAndReturnMoveInTheListOnScreen() {
+        func press(_ keyCode: UInt16, list: Bool, editingText: Bool = false) -> WidgetCoordinator.PanelKey {
+            WidgetCoordinator.panelKey(keyCode: keyCode, characters: "", context: .init(
+                previewOpen: false, agents: true, editingText: editingText, answering: nil, list: list), keymap: keys())
+        }
+        XCTAssertEqual(press(126, list: true), .list(.up))
+        XCTAssertEqual(press(125, list: true), .list(.down))
+        XCTAssertEqual(press(36, list: true), .list(.open))
+        XCTAssertEqual(press(125, list: false), .pass, "no list on screen: the scroll view keeps the arrow")
+        XCTAssertEqual(press(126, list: true, editingText: true), .pass, "the caret keeps the arrows in a field")
+        XCTAssertEqual(press(36, list: true, editingText: true), .pass, "Return in the composer is the composer's")
+    }
+
+    /// ⌘H hides an app on every Mac; Open Hub moved to ⌘O, and J and K say what they move (R8, R9).
+    func testOpenHubLeavesCommandHToHideAndJAndKNameTheSession() throws {
+        let keys = Keymap(library: WidgetKeymap.library, store: nil, layout: TableKeyLayout.us)
+        let commandH = KeyStroke(keyCode: 4, character: "h", modifiers: .command)
+        XCTAssertEqual(keys.commands(for: commandH, in: [.window]).map(\.id), [])
+        let commandO = KeyStroke(keyCode: 31, character: "o", modifiers: .command)
+        XCTAssertEqual(keys.commands(for: commandO, in: [.window]).map(\.id), [WidgetKeymap.hub])
+        let titles = Dictionary(uniqueKeysWithValues: WidgetKeymap.library.commands.map { ($0.id, $0.title) })
+        XCTAssertEqual(titles[WidgetKeymap.previous], "Previous Session")
+        XCTAssertEqual(titles[WidgetKeymap.next], "Next Session")
+    }
+
     func testJAndKDoNothingWhileTyping() {
         XCTAssertEqual(press(38, "j", editingText: true), .pass)
         XCTAssertEqual(press(40, "k", editingText: true), .pass)

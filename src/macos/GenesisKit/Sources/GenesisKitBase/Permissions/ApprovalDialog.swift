@@ -254,11 +254,14 @@ public struct ApprovalDialogView: View {
 
 /// One floating panel for one request. It never runs a modal session (a modal loop on the main queue stops every
 /// timer queued there, so a deadline never fired), never activates its app, and takes the keyboard only after the
-/// user clicks into it: a request that pops up while someone types must not catch a stray Return.
+/// user clicks into it: a request that pops up while someone types must not catch a stray Return. So that it is not
+/// missed, it plays a sound and speaks to VoiceOver when it appears, and a notification follows while it waits
+/// (`ApprovalAttention`, both settings).
 @MainActor
 public final class ApprovalPanelPresenter: NSObject, NSWindowDelegate {
     private var panel: NSPanel?
     private var model: ApprovalDialogModel?
+    private var reminder: ApprovalReminder?
 
     public override init() {}
 
@@ -292,12 +295,25 @@ public final class ApprovalPanelPresenter: NSObject, NSWindowDelegate {
         self.panel = panel
         self.model = model
         panel.orderFrontRegardless()
+        let reminder = ApprovalReminder(model: model) { [weak self] in self?.bringForward() }
+        self.reminder = reminder
+        reminder.start()
     }
 
     public func close() {
+        reminder?.stop()
+        reminder = nil
         panel?.delegate = nil
         panel?.orderOut(nil)
         panel = nil
+    }
+
+    /// A click on the reminder: the panel moves to the screen under the pointer and comes to the front, still without
+    /// taking the keyboard.
+    private func bringForward() {
+        guard let panel, model?.answered == false else { return }
+        panel.setFrameOrigin(Self.origin(for: panel.frame.size))
+        panel.orderFrontRegardless()
     }
 
     /// ⌘W answers the way Deny does.

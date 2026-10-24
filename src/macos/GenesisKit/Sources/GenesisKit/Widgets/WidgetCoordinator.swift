@@ -46,6 +46,14 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     public var passivePanels = false {
         didSet { panels.values.forEach { $0.becomesKeyOnExpand = !passivePanels } }
     }
+    /// Whether this coordinator owns the global "open the widget" shortcut (`openShortcut` preference). Only the
+    /// widget face sets it: the preview studio and tests must not take a key from every app on the Mac.
+    public var registersOpenShortcut = false
+    private var openHotKey: CompanionHotKey?
+    /// The chord `openHotKey` holds, or nil while none is registered.
+    private var openHotKeyChord: WidgetShortcutChord?
+    /// "GNWD": Genesis widget. Its own Carbon identity, so it never shadows dictation's (`CompanionHotKey.flowSignature`).
+    static let openHotKeySignature: OSType = 0x474E_5744
     /// Orders one edge panel front. Tests replace it to prove a hidden widget never shows a panel.
     var orderFront: (EdgePanelController<WidgetHostView>) -> Void = { $0.show() }
     var panelCount: Int { panels.count }
@@ -212,13 +220,17 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         guard let item = WidgetAlerts.popupItem(wanted) else { return }
         PerfLog.mark("widget.alert items=\(wanted.count) id=\(item.id) kind=\(item.kind)")
         playChime(WidgetAlerts.sound(for: wanted, preferences: preferences))
+        // The chime and the flash say nothing to VoiceOver; one announcement per burst, like the chime.
+        GenAnnounce.post(WidgetAlerts.announcement(item, session: model.session(forKey: item.key)?.title),
+                         priority: item.needsAnswer ? .high : .medium)
         // The session that asked flashes on its rail bubble and in the lists, popup or not: it says why the widget
         // chimed or opened (Martin, 2026-10-23).
         model.flashAttention(item.key, seconds: WidgetAlerts.flashSeconds(preferences))
         // Checked before the module switch: a popup the user's interaction refuses must not swap the pane they use.
         guard preferences?.alertPopup ?? true, let surface = peekSurface(), model.canPeek(on: surface) else { return }
         // The peek shows the agents module and gives the user's own module back when it ends.
-        model.showPeek(item, on: surface, module: moduleIDs(for: surface).contains("agents") ? "agents" : nil)
+        model.showPeek(item, on: surface, module: moduleIDs(for: surface).contains("agents") ? "agents" : nil,
+                       seconds: WidgetAlerts.popupSeconds(preferences))
     }
 
     /// The visible edge whose selected module is the agents inbox, else the first visible edge that has it.
@@ -326,10 +338,52 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.stop()
         modules.removeAllSurfaces()
         removePanelMonitors()
+        openHotKey?.stop()
+        openHotKey = nil
+        openHotKeyChord = nil
         if let screenObserver { NotificationCenter.default.removeObserver(screenObserver) }
         panels.values.forEach { $0.hide() }
         settings?.close()
         mediaWindow?.close()
+    }
+
+    /// Registers, moves or drops the global shortcut that opens the widget, as the preferences say (ux catalogue O1).
+    /// Only while the widget is on: with it off there is nothing to open.
+    private func applyOpenShortcut() {
+        let wanted = registersOpenShortcut && !stopped && panelsEnabled
+            ? model.snapshot?.state.preferences.openShortcutChord : nil
+        guard wanted != openHotKeyChord else { return }
+        openHotKey?.stop()
+        openHotKey = nil
+        openHotKeyChord = wanted
+        guard let wanted else { return }
+        let key = CompanionHotKey(keyCode: wanted.keyCode, modifiers: wanted.modifiers,
+                                  signature: Self.openHotKeySignature, hotKeyId: 1)
+        key.onKeyDown = { [weak self] _ in
+            Task { @MainActor in self?.toggleFromShortcut() }
+        }
+        let label = wanted.hotkey.label
+        if key.start() {
+            openHotKey = key
+            PerfLog.mark("widget.shortcut registered \(label)")
+        } else {
+            PerfLog.mark("widget.shortcut refused \(label)")
+            model.postNote("The shortcut \(label) to open the widget is taken. Choose another in Widget settings.")
+        }
+    }
+
+    /// The shortcut: opens the agents pane with the keyboard in it, or closes the open panel (staged decisions still
+    /// ask first).
+    func toggleFromShortcut() {
+        guard panelsEnabled else { return }
+        if model.expanded != nil {
+            model.requestCollapse()
+            return
+        }
+        let surface = peekSurface() ?? panels.keys.sorted { $0.key < $1.key }.first
+        guard let surface else { return }
+        PerfLog.mark("widget.shortcut open \(surface.key)")
+        model.openModule("agents", on: surface)
     }
 
     public func registerModule(_ module: WidgetModuleDescriptor) throws {
@@ -340,7 +394,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private func compactHeight(_ ids: [String]) -> CGFloat {
         WidgetSideStripMetrics(
             classic: model.snapshot?.state.preferences.sideStyle == "classic",
-            moduleIDs: ids, visibleSessionCount: model.railActivitySessions.count, hasInboxBadge: model.inboxCount > 0
+            moduleIDs: ids, visibleSessionCount: model.railActivitySessions.count, hasInboxBadge: model.waitingCount > 0
         ).minimumHeight
     }
 
@@ -498,6 +552,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
 
     private func sync() {
         resolvePendingLaunch()
+        applyOpenShortcut()
         if lastShown != panelsEnabled {
             rebuildPanels()
             return
@@ -751,6 +806,13 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     }
 
     private func handleKey(_ event: NSEvent) -> NSEvent? {
+        // The alert popup never takes the keyboard, but when the widget has it (a panel of another edge is key), Esc
+        // closes the popup before anything else.
+        if model.expanded == nil, model.peekItem != nil, let stroke = KeyStroke(event),
+           WidgetKeymap.commandIDs(for: stroke, in: [.window], keymap: WidgetKeymap.shared).contains(WidgetKeymap.collapse) {
+            model.dismissPeek()
+            return nil
+        }
         guard let expanded = model.expanded,
             let panel = panels[WidgetSurfaceID(edge: expanded, group: expanded == .top ? 0 : model.activeSideGroup)]?
                 .panel,
@@ -775,9 +837,12 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         switch Self.panelKey(
             stroke: stroke,
             context: .init(previewOpen: MediaPreviewKeyboard.isOpen, agents: isAgent, editingText: editingText,
-                           answering: model.answerCard))
+                           answering: model.answerCard, list: model.keyboardList))
         {
         case .pass: return event
+        case .list(let key):
+            // Only a list that took the key swallows it; otherwise the scroll view under it still scrolls.
+            return model.moveInList(key) ? nil : event
         case .collapse:
             // The leave question first (Esc keeps the staged decisions), then the staged view, then the list.
             if model.stagedLeavePrompt {
@@ -794,7 +859,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         return nil
     }
 
-    enum PanelKey: Equatable { case pass, collapse, previous, next, choose(String) }
+    enum PanelKey: Equatable { case pass, collapse, previous, next, choose(String), list(WidgetListKey.Kind) }
 
     struct PanelKeyContext {
         let previewOpen: Bool
@@ -802,6 +867,9 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let editingText: Bool
         /// `WidgetModel.answerCard`: an open, unanswered decision, never a folded one.
         let answering: WidgetCard?
+        /// `WidgetModel.keyboardList`: a list (the inbox of every session, a session's inbox, the sessions) is on
+        /// screen, so Up, Down and Return move in it.
+        var list: Bool = false
     }
 
     /// What a key the media preview did not take does on the panel. While the preview is open, nothing:
@@ -829,6 +897,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         guard context.agents, !context.editingText else { return .pass }
         if ids.contains(WidgetKeymap.previous) { return .previous }
         if ids.contains(WidgetKeymap.next) { return .next }
+        if context.list {
+            if ids.contains(WidgetKeymap.listUp) { return .list(.up) }
+            if ids.contains(WidgetKeymap.listDown) { return .list(.down) }
+            if ids.contains(WidgetKeymap.listOpen) { return .list(.open) }
+        }
         if let number = WidgetKeymap.choiceNumber(in: ids),
            let card = context.answering, number <= card.choices.count
         {

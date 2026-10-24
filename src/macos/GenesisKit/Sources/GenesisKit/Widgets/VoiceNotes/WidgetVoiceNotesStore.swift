@@ -23,6 +23,9 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     @Published public var selectedID: String?
     @Published public var recipientKey = ""
     @Published private var drafts: [String: String] = [:]
+    /// The note the user just discarded: gone from the list, still on disk until `discardUndoDelay` runs out, so
+    /// Undo can bring it back (ux checklist "Undo and destructive actions").
+    @Published public private(set) var discarded: WidgetVoiceNote?
     public let meter = WidgetVoiceRecordingMeter()
     public var recipientPickerVisibilityChanged: (Bool) -> Void = { _ in }
     private let request: ([String]) async throws -> Data
@@ -41,6 +44,12 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     private let presentMicrophonePermission: @MainActor (PermissionNeed) -> Void
     private var operation: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
+    private let discardUndoDelay: Duration
+    /// Where the discarded note stood in the list, so Undo puts it back in place.
+    private var discardedIndex = 0
+    private var discardTimer: Task<Void, Never>?
+    /// The CLI delete of a discarded note once its Undo ran out; teardown waits for it.
+    private var discardDelete: Task<Void, Never>?
     private var watcher: DirectoryWatcher?
     private var watchedPath: String?
     private var cached = false
@@ -77,8 +86,10 @@ public final class WidgetVoiceNotesStore: ObservableObject {
          readMicrophonePermission: @escaping () -> VoiceMicrophonePermission = { .current },
          requestMicrophonePermission: @escaping () async throws -> VoiceMicrophonePermission = { try await VoiceMicrophonePermission.request() },
          activateForMicrophone: @escaping () -> Void = { NSApp?.activate(ignoringOtherApps: true) },
-         presentMicrophonePermission: @escaping @MainActor (PermissionNeed) -> Void = { PermissionCenter.shared.require($0) }) {
+         presentMicrophonePermission: @escaping @MainActor (PermissionNeed) -> Void = { PermissionCenter.shared.require($0) },
+         discardUndoDelay: Duration = .seconds(10)) {
         self.micLauncher = micLauncher
+        self.discardUndoDelay = discardUndoDelay
         self.readMicrophonePermission = readMicrophonePermission
         self.requestMicrophonePermission = requestMicrophonePermission
         self.activateForMicrophone = activateForMicrophone
@@ -122,8 +133,9 @@ public final class WidgetVoiceNotesStore: ObservableObject {
                 try Task.checkCancellation()
                 guard !stopped, generation == requestedGeneration else { return }
                 let snapshot = try JSONDecoder().decode(WidgetVoiceNoteSnapshot.self, from: data)
-                notes = snapshot.notes
-                drafts = drafts.filter { id, _ in self.notes.contains { $0.id == id } }
+                // A discarded note is still on disk during its Undo; it stays out of the list.
+                notes = snapshot.notes.filter { $0.id != discarded?.id }
+                drafts = drafts.filter { id, _ in self.notes.contains { $0.id == id } || id == self.discarded?.id }
                 if selected == nil { selectedID = notes.first?.id }
                 cached = true
                 watch(snapshot.statePath)
@@ -297,15 +309,58 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         }
     }
 
+    /// Takes the selected note off the list at once and deletes it after `discardUndoDelay`, unless Undo brings it
+    /// back first. A second discard deletes the first one now.
     public func discard() {
-        guard let note = selected else { return }
-        begin("Discarding") { [self] in
-            _ = try await request(["discard", note.id, "--revision", String(note.revision)])
-            generation += 1
-            notes.removeAll { $0.id == note.id }
-            drafts[note.id] = nil
-            selectedID = notes.first?.id
-            receipt = "Local recording discarded."
+        guard !stopped, !isBusy, let note = selected, let index = notes.firstIndex(where: { $0.id == note.id }) else { return }
+        deleteDiscarded()
+        generation += 1
+        discarded = note
+        discardedIndex = index
+        notes.remove(at: index)
+        selectedID = notes.first?.id
+        error = nil
+        receipt = "Recording discarded."
+        let delay = discardUndoDelay
+        discardTimer = Task { [weak self] in
+            do { try await Task.sleep(for: delay) } catch { return }
+            self?.deleteDiscarded()
+        }
+    }
+
+    /// Undo of Discard: the note returns to its place and is selected again.
+    public func undoDiscard() {
+        guard let note = discarded else { return }
+        discardTimer?.cancel()
+        discardTimer = nil
+        discarded = nil
+        generation += 1
+        if !notes.contains(where: { $0.id == note.id }) { notes.insert(note, at: min(discardedIndex, notes.count)) }
+        selectedID = note.id
+        receipt = "Recording restored."
+    }
+
+    /// Deletes the discarded note for good: its Undo ran out, another note was discarded, or the store stops.
+    private func deleteDiscarded() {
+        guard let note = discarded else { return }
+        discardTimer?.cancel()
+        discardTimer = nil
+        discarded = nil
+        drafts[note.id] = nil
+        let previous = discardDelete
+        // The request is held, not the store: a delete that runs at teardown still reaches the CLI.
+        let request = request
+        discardDelete = Task { [weak self] in
+            await previous?.value
+            do {
+                _ = try await request(["discard", note.id, "--revision", String(note.revision)])
+            } catch {
+                // The recording is still on disk: show why and read the list again, so it comes back.
+                guard let self, !self.stopped else { return }
+                self.report(error)
+                self.cached = false
+                self.refresh(force: true)
+            }
         }
     }
 
@@ -362,14 +417,18 @@ public final class WidgetVoiceNotesStore: ObservableObject {
 
     func waitForOperation() async { await operation?.value }
     func waitForRefresh() async { await refreshTask?.value }
+    func waitForDiscard() async { await discardDelete?.value }
     public func cancel() { operation?.cancel(); cancelCommand() }
     public func shutdown() async {
         stop()
         await operation?.value
         await refreshTask?.value
+        await discardDelete?.value
     }
 
     public func stop() {
+        // The user discarded it; teardown must not bring it back on the next launch.
+        deleteDiscarded()
         stopped = true
         cancel()
         refreshTask?.cancel()

@@ -22,6 +22,31 @@ public enum RecordingPickerTab: String, CaseIterable, Hashable, Sendable {
     }
 }
 
+/// Text the person must read on the dark panels: 11 pt or more at about 62% white (above 4.5:1), never tertiary grey.
+enum RecordingInk {
+    static let readable = Color.white.opacity(0.62)
+}
+
+extension RecordingPickerTab {
+    /// The chord that switches to this tab, shown in the tab's tooltip.
+    var chord: String {
+        switch self {
+        case .windows: return "⌘1"
+        case .apps: return "⌘2"
+        case .displays: return "⌘3"
+        }
+    }
+
+    static func forKey(_ character: Character) -> RecordingPickerTab? {
+        switch character {
+        case "1": return .windows
+        case "2": return .apps
+        case "3": return .displays
+        default: return nil
+        }
+    }
+}
+
 /// One line of the picker: an app header over its windows, or a target that a click records.
 struct RecordingPickerRow: Identifiable, Equatable {
     enum Kind: Equatable {
@@ -108,6 +133,9 @@ public struct RecordingTargetPicker: View {
     /// The list took over 4 s: the hint names the known slow cause.
     @State private var slowLoad = false
     @FocusState private var filterFocused: Bool
+    /// Where the pointer rested when the arrows last moved the highlight; a hover there is the list scrolling under
+    /// the pointer, not the person moving it, so the keyboard highlight stays.
+    @State private var keyboardMouse: CGPoint?
 
     public init(load: Load, title: String = "Choose what to record", initial: RecordingTarget?,
                 onChoose: @escaping (RecordingTarget) -> Void, onCancel: @escaping () -> Void,
@@ -136,6 +164,7 @@ public struct RecordingTargetPicker: View {
             header
             GenSegmentedTabs("What to record", items: RecordingPickerTab.allCases.map { .init($0, $0.title) },
                              selection: $tab, minSegmentWidth: 114, identifier: "recording.picker.tabs")
+                .instantTooltip(RecordingPickerTab.allCases.map { "\($0.title) \($0.chord)" }.joined(separator: ", "))
             filterField
             content
             footer
@@ -151,6 +180,32 @@ public struct RecordingTargetPicker: View {
         .onChange(of: load) { _, _ in highlight(initial: true) }
         .onChange(of: tab) { _, _ in onFilterChange(tab, query); highlight(initial: false) }
         .onChange(of: query) { _, _ in onFilterChange(tab, query); highlight(initial: false) }
+        // The keys live on the root, so they work wherever focus is (the filter, a row, nothing).
+        .focusable()
+        .focusEffectDisabled()
+        .onExitCommand(perform: onCancel)
+        .onKeyPress(.escape) {
+            onCancel()
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            move(1)
+            return .handled
+        }
+        .onKeyPress(.upArrow) {
+            move(-1)
+            return .handled
+        }
+        .onKeyPress(.return) {
+            chooseHighlighted()
+            return .handled
+        }
+        .onKeyPress(phases: .down) { press in
+            guard press.modifiers == .command, let character = press.characters.first,
+                  let next = RecordingPickerTab.forKey(character) else { return .ignored }
+            tab = next
+            return .handled
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title)
     }
@@ -167,25 +222,12 @@ public struct RecordingTargetPicker: View {
 
     private var filterField: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.secondary)
+            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(RecordingInk.readable)
             TextField("Filter \(tab.title.lowercased())", text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .focused($filterFocused)
                 .onSubmit(chooseHighlighted)
-                .onExitCommand(perform: onCancel)
-                .onKeyPress(.escape) {
-                    onCancel()
-                    return .handled
-                }
-                .onKeyPress(.downArrow) {
-                    move(1)
-                    return .handled
-                }
-                .onKeyPress(.upArrow) {
-                    move(-1)
-                    return .handled
-                }
                 .accessibilityIdentifier("recording.picker.filter")
         }
         .padding(.horizontal, 8)
@@ -199,11 +241,11 @@ public struct RecordingTargetPicker: View {
             VStack(spacing: 6) {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Looking for windows and displays…").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text("Looking for windows and displays…").font(.system(size: 12)).foregroundStyle(RecordingInk.readable)
                 }
                 if slowLoad {
                     Text("The first time after an update, the recorder is built first. This can take up to a minute.")
-                        .font(.system(size: 11)).foregroundStyle(.tertiary)
+                        .font(.system(size: 11)).foregroundStyle(RecordingInk.readable)
                         .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: 300)
                 }
@@ -215,16 +257,26 @@ public struct RecordingTargetPicker: View {
             }
         case let .failed(message):
             VStack(spacing: 8) {
-                Text(message).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(message).font(.system(size: 12)).foregroundStyle(RecordingInk.readable)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 Button("Try again", action: onRetry).buttonStyle(.genHover())
             }
             .frame(maxWidth: .infinity, minHeight: 120)
         case .loaded:
             if rows.isEmpty {
-                Text(query.isEmpty ? "Nothing to record here." : "Nothing matches “\(query)”.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 80)
+                if query.isEmpty {
+                    EmptyState(
+                        symbol: "rectangle.dashed.badge.record",
+                        text: "Nothing to record here.",
+                        detail: "If you expected windows, Screen Recording may be off for this app.",
+                        actionTitle: "Open Screen Recording settings",
+                        action: { NSWorkspace.shared.open(PermissionKind.screenRecording.settingsURL) })
+                        .frame(maxWidth: .infinity, minHeight: 120)
+                } else {
+                    Text("Nothing matches “\(query)”.")
+                        .font(.system(size: 12)).foregroundStyle(RecordingInk.readable)
+                        .frame(maxWidth: .infinity, minHeight: 80)
+                }
             } else {
                 ScrollViewReader { proxy in
                     FittedScroll(maxHeight: 330) {
@@ -254,12 +306,12 @@ public struct RecordingTargetPicker: View {
                     Text(row.title).font(.system(size: 12, weight: isHighlighted ? .semibold : .regular))
                         .lineLimit(1).truncationMode(.middle)
                     if let badge = row.badge {
-                        Text(badge).font(.system(size: 9, weight: .semibold))
+                        Text(badge).font(.system(size: 11, weight: .semibold))
                             .padding(.horizontal, 5).padding(.vertical, 1)
                             .background(.white.opacity(0.12), in: Capsule())
                     }
                     Spacer(minLength: 8)
-                    Text(verbatim: row.detail).font(.system(size: 10.5).monospacedDigit()).foregroundStyle(.secondary)
+                    Text(verbatim: row.detail).font(.system(size: 11).monospacedDigit()).foregroundStyle(RecordingInk.readable)
                 }
                 .padding(.leading, row.symbol == "macwindow" ? 22 : 6)
                 .padding(.trailing, 8)
@@ -270,16 +322,23 @@ public struct RecordingTargetPicker: View {
             }
             .buttonStyle(.genHoverPlain())
             .onHover { inside in
-                if inside { highlighted = row.id }
+                guard inside else { return }
+                if let rested = keyboardMouse {
+                    let now = NSEvent.mouseLocation
+                    // The list scrolled under a resting pointer: keep the keyboard's row until the pointer moves.
+                    if hypot(now.x - rested.x, now.y - rested.y) < 3 { return }
+                    keyboardMouse = nil
+                }
+                highlighted = row.id
             }
-            .accessibilityLabel("Record \(row.title)")
+            .accessibilityLabel(accessibilityLabel(row))
             .accessibilityIdentifier("recording.picker.\(row.id)")
             .frameProbe("recording.picker.\(row.id)")
         } else {
             HStack(spacing: 6) {
                 icon(row).frame(width: 14, height: 14)
-                Text(row.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                Text(verbatim: row.detail).font(.system(size: 10)).foregroundStyle(.tertiary)
+                Text(row.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(RecordingInk.readable)
+                Text(verbatim: row.detail).font(.system(size: 11)).foregroundStyle(RecordingInk.readable)
             }
             .padding(.horizontal, 6)
             .padding(.top, 6)
@@ -292,17 +351,26 @@ public struct RecordingTargetPicker: View {
         if let image = RecordingAppIcon.image(pid: row.pid) {
             Image(nsImage: image).resizable().interpolation(.high)
         } else {
-            Image(systemName: row.symbol).font(.system(size: 12)).foregroundStyle(.secondary)
+            Image(systemName: row.symbol).font(.system(size: 12)).foregroundStyle(RecordingInk.readable)
         }
     }
 
     private var footer: some View {
         HStack(spacing: 4) {
-            Text("↑ ↓ to choose · Return records · Esc cancels")
+            Text("↑ ↓ to choose · Return records · Esc cancels · ⌘1 ⌘2 ⌘3 switch tabs")
+                .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .font(.system(size: 10))
-        .foregroundStyle(.tertiary)
+        .font(.system(size: 11))
+        .foregroundStyle(RecordingInk.readable)
+    }
+
+    /// What VoiceOver reads for a row: the action, then the badge and the details the row shows.
+    private func accessibilityLabel(_ row: RecordingPickerRow) -> String {
+        var parts = ["Record \(row.title)"]
+        if let badge = row.badge { parts.append(badge) }
+        parts.append(row.detail.replacingOccurrences(of: " × ", with: " by "))
+        return parts.joined(separator: ", ")
     }
 
     private func highlight(initial useInitial: Bool) {
@@ -319,6 +387,7 @@ public struct RecordingTargetPicker: View {
     private func move(_ step: Int) {
         let candidates = targetRows
         guard !candidates.isEmpty else { return }
+        keyboardMouse = NSEvent.mouseLocation
         let index = candidates.firstIndex { $0.id == highlighted } ?? -1
         highlighted = candidates[min(max(index + step, 0), candidates.count - 1)].id
     }

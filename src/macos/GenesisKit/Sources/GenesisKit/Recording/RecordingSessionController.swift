@@ -184,7 +184,9 @@ public final class RecordingSessionController: ObservableObject {
         guard !ended else { return }
         ended = true
         phase = .failed
+        // One sentence on screen; the recorder's own words go to the log.
         let tail = stderr.trimmingCharacters(in: .whitespacesAndNewlines).suffix(600)
-        onFailed?(tail.isEmpty ? "The recorder stopped unexpectedly (exit \(status))." : String(tail), nil)
+        KitHost.log("recording.session stderr (exit \(status)) \(tail.isEmpty ? "(empty)" : String(tail))")
+        onFailed?("The recorder stopped unexpectedly. The details are in the log.", nil)
     }
 }

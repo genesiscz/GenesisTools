@@ -93,6 +93,19 @@ export const widgetPreferencesSchema = z.object({
     overviewFilter: z.enum(["all", "needs", "unread"]).default("all"),
     /** The composer's microphone: records a voice note and puts its transcript in the field ("note"), or live dictation. */
     composerVoice: z.enum(["ask", "note", "live"]).default("ask"),
+    /** Seconds the alert popup stays while the pointer is not on it. */
+    alertPopupSeconds: z.number().int().min(3).max(60).default(7),
+    /** Seconds a widget note stays before it fades; 0 keeps it until it is closed. A note with a button stays 10 s or more. */
+    noteSeconds: z.number().int().min(0).max(60).default(6),
+    /** A global shortcut opens and closes the widget from any app. */
+    openShortcutEnabled: z.boolean().default(true),
+    /** That shortcut: a Carbon virtual key code and modifier mask (GenesisKit `HotkeyChord`); ⌃⌥⌘W by default. */
+    openShortcut: z
+        .object({
+            keyCode: z.number().int().min(0).max(255),
+            modifiers: z.number().int().min(0).max(0xffff),
+        })
+        .default({ keyCode: 0x0d, modifiers: 0x1900 }),
 });
 
 // Zod defaults also run inside partial objects; a patch must retain only supplied keys.

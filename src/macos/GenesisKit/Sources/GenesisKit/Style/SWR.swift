@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Stale-while-revalidate on screen: a view paints the last answer (`DiskCache`), marks it as
@@ -9,7 +10,11 @@ import SwiftUI
 ///     SWR.fade(moved, current: { changed }, clear: { changed = [] })
 ///     row.swrFlash(changed.contains(row.id)).transition(SWR.rowTransition)
 public enum SWR {
-    public static let animation: Animation = .spring(response: 0.35, dampingFraction: 0.85)
+    /// The refresh spring, or nil (an instant change) while the system's Reduce Motion is on. Read at each refresh,
+    /// so the setting takes effect without a restart.
+    public static var animation: Animation? {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85)
+    }
 
     /// New rows slide in from the top; gone rows fade.
     public static let rowTransition: AnyTransition = .asymmetric(
@@ -43,7 +48,7 @@ public enum SWR {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_600_000_000)
             guard current() == flashed else { return }
-            withAnimation(.easeOut(duration: 0.6)) { clear() }
+            withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .easeOut(duration: 0.6)) { clear() }
         }
     }
 }

@@ -68,11 +68,49 @@ final class HubNotifyTests: XCTestCase {
         let notDue = """
         {"at":"2026-09-24T21:43:00.326Z","skipped":"not due: the last poll ran at 2026-09-24T21:42:59.184Z, every 3 min","dryRun":false,"repos":[],"items":[],"posted":0,"requests":0,"elapsedMs":2}
         """
-        XCTAssertEqual(HubNotifyStore.pollSummary(Data(polled.utf8)), "Polled: 0 events, 0 posted, 1 requests")
-        XCTAssertEqual(
-            HubNotifyStore.pollSummary(Data(notDue.utf8)),
-            "Poll skipped: not due: the last poll ran at 2026-09-24T21:42:59.184Z, every 3 min"
-        )
+        let done = HubNotifyStore.pollSummary(Data(polled.utf8))
+        XCTAssertEqual(done.text, "Polled: 0 events, 0 posted, 1 request")
+        XCTAssertEqual(done.tone, .success)
+        XCTAssertNil(done.more)
+        // A skip is one sentence with its tone; the CLI's own reason waits behind Details (H5, H6).
+        let skipped = HubNotifyStore.pollSummary(Data(notDue.utf8))
+        XCTAssertEqual(skipped.text, "The check did not run.")
+        XCTAssertEqual(skipped.tone, .warning)
+        XCTAssertEqual(skipped.more, "not due: the last poll ran at 2026-09-24T21:42:59.184Z, every 3 min")
+        let unreadable = HubNotifyStore.pollSummary(Data("not json".utf8))
+        XCTAssertEqual(unreadable.tone, .warning)
+        XCTAssertEqual(unreadable.more, "not json")
+    }
+
+    /// The bell and the PR activity page name the daemon task's state and its fix in the same words (H8, H17).
+    func testTheDaemonTaskStateAndItsFixReadTheSameEverywhere() throws {
+        let missing = try HubNotifyStatus.decode(Data(firstRunJSON.utf8))
+        XCTAssertEqual(missing.daemonTitle, "Nothing polls yet: the daemon task is missing")
+        XCTAssertEqual(missing.daemonFixTitle, "Add the daemon task")
+        let ticking = try HubNotifyStatus.decode(Data(polledJSON.utf8))
+        XCTAssertEqual(ticking.daemonTitle, "The daemon checks every minute")
+        XCTAssertNil(ticking.daemonFixTitle)
+        let stale = try HubNotifyStatus.decode(Data(firstRunJSON
+            .replacingOccurrences(of: "\"daemonTask\":false", with: "\"daemonTask\":true")
+            .replacingOccurrences(of: "\"daemonTaskEvery\":null", with: "\"daemonTaskEvery\":\"every 5 minutes\"").utf8))
+        XCTAssertEqual(stale.daemonTitle, "The daemon task still runs every 5 minutes")
+        XCTAssertEqual(stale.daemonFixTitle, "Tick every minute")
+    }
+
+    /// One cadence list for the bell and the page; a stored value outside it stays pickable.
+    func testTheCadenceChoicesKeepAStoredValueOutsideTheList() {
+        XCTAssertEqual(HubNotifyWords.cadenceOptions(including: 3), HubNotifyWords.cadenceChoices)
+        XCTAssertEqual(HubNotifyWords.cadenceOptions(including: 7), [1, 2, 3, 5, 7, 10, 15, 20, 30, 45, 60])
+        XCTAssertEqual(HubNotifyWords.cadenceTitle(1), "Every minute")
+        XCTAssertEqual(HubNotifyWords.cadenceTitle(15), "Every 15 minutes")
+    }
+
+    /// A failing project reads as one sentence; the host's error is not in it.
+    func testAFailingProjectIsOneSentenceWithoutTheRawError() throws {
+        let status = try HubNotifyStatus.decode(Data(polledJSON.utf8))
+        let failing = try XCTUnwrap(status.repos.values.first { $0.path == "/tmp/gt/shop" })
+        XCTAssertTrue(failing.problemText.hasPrefix("2 polls failed. The next try is at "), failing.problemText)
+        XCTAssertFalse(failing.problemText.contains("no such host"))
     }
 
     /// The argv a banner click hands the hub (`openHubCommand` in notify-poll.ts, pinned by notify.test.ts).

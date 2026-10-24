@@ -150,6 +150,17 @@ enum TimelineRange: String, CaseIterable {
         }
     }
 
+    /// The next range that covers more, for an empty feed's "Show …" button (H16); nil when none does: Last 30
+    /// days is the longest, and a custom range was picked on purpose.
+    var wider: TimelineRange? {
+        switch self {
+        case .lastHour: return .last24h
+        case .last24h, .today, .yesterday, .sinceLastVisit: return .last7
+        case .last7: return .last30
+        case .last30, .custom: return nil
+        }
+    }
+
     /// The range in local time; a missing last visit falls back to the last 24 hours.
     func interval(now: Date = Date(), lastVisit: Date?, customFrom: Date, customTo: Date, calendar: Calendar = .current) -> DateInterval {
         let today = calendar.startOfDay(for: now)
@@ -210,8 +221,8 @@ final class HubTimelineModel: ObservableObject {
     @Published private(set) var loadedAt: Date?
     @Published private(set) var error: String?
     @Published private(set) var hasMore = false
-    /// Why the last "Load older" failed; the footer shows it beside the button (the page is not empty,
-    /// so the empty-list error line never renders then).
+    /// Why the last "Load older" failed, as the CLI said it; the footer shows one sentence beside the button and this
+    /// behind Details (the page is not empty, so the list's own failure note never renders then).
     @Published private(set) var olderError: String?
     private var nextBefore: String?
     /// The page on screen is the last run's for this range and filters, from disk; the fresh one is loading.
@@ -310,6 +321,20 @@ final class HubTimelineModel: ObservableObject {
 
     var interval: DateInterval {
         range.interval(lastVisit: lastVisit, customFrom: customFrom, customTo: customTo)
+    }
+
+    /// A filter of the feed is on: a hidden kind, one project, an author, or "only what needs me". The sidebar's text
+    /// filter is the hub's own (`HubModel.filter`).
+    var hasFilters: Bool {
+        !hidden.isEmpty || project != nil || author != .all || needsMe
+    }
+
+    /// Shows every kind, project and author again (an empty feed's "Clear filters").
+    func clearFilters() {
+        hidden = []
+        project = nil
+        author = .all
+        needsMe = false
     }
 
     /// The rows the list shows: hidden kinds, the project and the sidebar filter text.
@@ -493,7 +518,7 @@ final class HubTimelineModel: ObservableObject {
                         self.hasMore = envelope.hasMore ?? false
                         self.nextBefore = envelope.nextBefore
                     case .failure(let failure):
-                        self.olderError = "Could not read older activity: \(failure)"
+                        self.olderError = "\(failure)"
                     }
                 }
             }
@@ -673,7 +698,45 @@ enum TimelinePrompts {
     }
 }
 
+/// The tone of each note the Activity pane posts, kept with its text by the code that knows what happened (H5): the
+/// colour never comes from words like "failed" in the text. `HubModel.notice` is one string every pane shares, so the
+/// tone cannot travel inside it yet; Activity records it here, keyed by the text.
+@MainActor
+enum TimelineNotice {
+    private static var tones: [String: NoticePill.Tone] = [:]
+
+    static func tone(of text: String) -> NoticePill.Tone? { tones[text] }
+
+    static func record(_ text: String, _ tone: NoticePill.Tone) {
+        if tones.count > 100 { tones.removeAll() }
+        tones[text] = tone
+    }
+
+    /// A note another pane posted (the command palette's "Starting a new Claude session…", say): the old reading of its
+    /// words, until `HubModel.notice` carries its own tone.
+    static func otherPaneTone(_ text: String) -> NoticePill.Tone {
+        text.contains("failed") || text.hasPrefix("No ") ? .error : .success
+    }
+}
+
 extension HubModel {
+    /// Shows an Activity note with its tone.
+    @MainActor
+    func postTimelineNotice(_ text: String, _ tone: NoticePill.Tone) {
+        TimelineNotice.record(text, tone)
+        notice = text
+    }
+
+    /// A launch from an Activity row (resume, a new agent) as a note: started or refused.
+    @MainActor
+    func postTimelineNotice(_ outcome: LaunchOutcome) {
+        switch outcome {
+        case .cancelled: return
+        case .launched(let text): postTimelineNotice(text, .success)
+        case .failed(let text): postTimelineNotice(text, .error)
+        }
+    }
+
     /// A timeline row's click: the session, the commit in its repository's diff, the PR, or the decision's session.
     @MainActor
     func openTimelineEvent(_ event: TimelineEvent) {
@@ -695,7 +758,7 @@ extension HubModel {
     @MainActor
     func showTimelineCommit(_ event: TimelineEvent, sha: String?, title: String) {
         guard let repo = event.repo, let sha, FileManager.default.fileExists(atPath: repo) else {
-            notice = "This repository is not on this Mac."
+            postTimelineNotice("This repository is not on this Mac.", .warning)
             return
         }
         showCommit(repo: repo, sha: sha, title: title)
@@ -725,7 +788,7 @@ extension HubModel {
     @MainActor
     func openTimelineSession(_ event: TimelineEvent, transcriptQuery query: String? = nil) {
         guard let session = timelineSession(event) else {
-            notice = "This row names no session."
+            postTimelineNotice("This row names no session.", .warning)
             return
         }
         if !sessions.contains(where: { $0.id == session.id }) {
@@ -764,7 +827,7 @@ extension HubModel {
     @MainActor
     func openTimelinePR(_ event: TimelineEvent, reveal path: String? = nil) {
         guard let ref = event.pr.flatMap({ pr in HubPRRef(pr.ref)?.withPage(pr.url) }) else {
-            notice = "This row names no PR."
+            postTimelineNotice("This row names no PR.", .warning)
             return
         }
         setMode(.prs)
@@ -779,7 +842,13 @@ extension HubModel {
         DispatchQueue.global(qos: .userInitiated).async {
             let failure = TerminalHosts.current.focus(sessionId: id, provider: provider)
             DispatchQueue.main.async { [weak self] in
-                self?.notice = failure.map { "No cmux pane found for this session: \($0.suffix(120))" } ?? "Focused the session's cmux pane"
+                MainActor.assumeIsolated {
+                    if let failure {
+                        self?.postTimelineNotice("No cmux pane found for this session: \(failure.suffix(120))", .error)
+                    } else {
+                        self?.postTimelineNotice("Focused the session's cmux pane", .success)
+                    }
+                }
             }
         }
     }
@@ -832,7 +901,7 @@ extension HubModel {
                 if let url = self.timelineHostURL(event) {
                     ExternalOpener.open(url)
                 } else {
-                    self.notice = "The repository's origin is not known yet; try again in a moment."
+                    self.postTimelineNotice("The repository's origin is not known yet; try again in a moment.", .warning)
                 }
             }
             add("copy", "number", "Copy the sha") { PathOpener.copy(event.sha ?? "") }
@@ -840,14 +909,14 @@ extension HubModel {
                 guard let self, let timeline else { return }
                 if case .commit(let detail)? = timeline.details[event.id] {
                     guard let first = detail.prs.first, let ref = HubPRRef(first.ref)?.withPage(first.url) else {
-                        self.notice = "No PR of this repository contains \(event.shortSha ?? "this commit")."
+                        self.postTimelineNotice("No PR of this repository contains \(event.shortSha ?? "this commit").", .warning)
                         return
                     }
                     self.setMode(.prs)
                     self.prs.request(ref)
                 } else {
                     if timeline.isExpanded(event) { timeline.loadDetail(event) } else { timeline.toggle(event) }
-                    self.notice = "Reading the commit's PRs; open the row to pick one."
+                    self.postTimelineNotice("Reading the commit's PRs; open the row to pick one.", .success)
                 }
             }
             if let repo = event.repo, let sha = event.sha {
@@ -859,7 +928,7 @@ extension HubModel {
                 if let url = self.timelineHostURL(event, compare: true) {
                     ExternalOpener.open(url)
                 } else {
-                    self.notice = "No compare page: a new branch, or the origin is not known yet."
+                    self.postTimelineNotice("No compare page: a new branch, or the origin is not known yet.", .warning)
                 }
             }
             add("pr", "arrow.triangle.pull", "Open the PR in the hub", disabled: event.pr == nil) { [weak self] in self?.openTimelinePR(event) }
@@ -882,7 +951,7 @@ extension HubModel {
             add("resolve", resolved ? "checkmark.circle.fill" : "checkmark.circle", resolved ? "Reopen this thread" : "Resolve this thread") { [weak self, weak timeline] in
                 guard let timeline, let url = event.pr?.url, let thread = event.threadId else { return }
                 timeline.threadStore(for: url).resolve(thread: thread, resolved: !resolved)
-                self?.notice = resolved ? "Reopening the thread…" : "Resolving the thread…"
+                self?.postTimelineNotice(resolved ? "Reopening the thread…" : "Resolving the thread…", .success)
             }
             add("host", "arrow.up.right.square", "Open the comment on the host") { [weak self] in
                 if let url = self?.timelineHostURL(event) { ExternalOpener.open(url) }
@@ -1144,18 +1213,18 @@ struct TimelineMain: View {
             PanelFindBar(find: find)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    // A failed read says so in one sentence with Retry, above whatever page is still on screen (H7).
+                    if let failure = timeline.error {
+                        loadFailure(failure)
+                    }
                     if events.isEmpty, timeline.loading {
                         SkeletonRows(count: 12, leading: .dot)
                             .skeletonShimmer()
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel("Reading the activity")
                             .padding(.top, 8)
-                    } else if events.isEmpty {
-                        Text(timeline.error ?? (timeline.events.isEmpty ? "Nothing happened in this range." : "Nothing matches these filters."))
-                            .font(.system(size: 13))
-                            .foregroundColor(ReviewPalette.dim)
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 40)
+                    } else if events.isEmpty, timeline.error == nil {
+                        emptyFeed
                     }
                     ForEach(days) { day in
                         Section {
@@ -1188,6 +1257,13 @@ struct TimelineMain: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // A failed read lands after the click or refresh that asked for it, so VoiceOver hears it.
+        .onChange(of: timeline.error) { _, failure in
+            if failure != nil { GenAnnounce.post(timeline.events.isEmpty ? Self.loadFailedText : Self.refreshFailedText) }
+        }
+        .onChange(of: timeline.olderError) { _, failure in
+            if failure != nil { GenAnnounce.post(Self.olderFailedText) }
+        }
         // Only the flag is state: a resize step on the same side of the threshold changes nothing.
         .onGeometryChange(for: Bool.self, of: { $0.size.width < Self.compactWidth }) { compact = $0 }
         // The find re-runs when the shown rows change, a row folds open or closed, or a detail lands.
@@ -1199,6 +1275,57 @@ struct TimelineMain: View {
     private func findRevision(_ events: [TimelineEvent]) -> String {
         let open = events.filter(timeline.isExpanded).map { "\($0.id)\(timeline.details[$0.id] == nil ? "" : "+")" }
         return events.map(\.rowID).joined(separator: "\n") + "\u{1}" + open.joined(separator: "\n") + (compact ? "\u{2}" : "")
+    }
+
+    static let loadFailedText = "The activity could not be read."
+    static let refreshFailedText = "The activity could not be refreshed. The list shows the last page read."
+    static let olderFailedText = "Older activity could not be read."
+
+    private func loadFailure(_ failure: String) -> some View {
+        NoticePill(
+            text: timeline.events.isEmpty ? Self.loadFailedText : Self.refreshFailedText,
+            more: failure, tone: .error,
+            fixes: [.button("Retry", symbol: "arrow.clockwise") { timeline.load(fresh: true) }]
+        )
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+    }
+
+    /// Nothing to show: why, and the way out (H16). Filters that hid every row offer Clear filters; a range that
+    /// could be longer offers the next longer one.
+    private var emptyFeed: some View {
+        let filtered = !timeline.events.isEmpty || timeline.hasFilters || !model.filter.trimmed.isEmpty
+        let wider = timeline.range.wider
+        return VStack(spacing: 0) {
+            EmptyState(
+                symbol: "clock.arrow.circlepath",
+                text: filtered ? "Nothing matches these filters." : "Nothing happened in this range."
+            )
+            HStack(spacing: 10) {
+                if filtered {
+                    GhostButton(
+                        "Clear filters", symbol: "line.3.horizontal.decrease.circle",
+                        tooltip: "Show every kind, project and author, and empty the filter field",
+                        identifier: "timeline.empty.clearFilters"
+                    ) {
+                        timeline.clearFilters()
+                        model.filter = ""
+                    }
+                }
+                if let wider {
+                    GhostButton(
+                        "Show \(wider.title.lowercased())", symbol: "calendar",
+                        tooltip: "Read a longer range: \(wider.title.lowercased())",
+                        identifier: "timeline.empty.widenRange"
+                    ) {
+                        timeline.range = wider
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 24)
     }
 
     private func dayHeader(_ day: TimelineDay) -> some View {
@@ -1249,12 +1376,8 @@ struct TimelineMain: View {
                 if timeline.loadingOlder {
                     ProgressView().controlSize(.small)
                 } else if let failure = timeline.olderError {
-                    Label(failure, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(ReviewPalette.removed)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                        .textSelection(.enabled)
+                    // "Load older" beside it is the retry; the CLI's own words wait behind Details, never cut.
+                    NoticePill(text: Self.olderFailedText, more: failure, tone: .error)
                 }
                 if !timeline.truncated.isEmpty {
                     Text("A page ends where its busiest source stopped reading: \(timeline.truncated.joined(separator: ", ")).")
@@ -1293,7 +1416,7 @@ struct TimelineMain: View {
                 .titlebarLabel()
                 Spacer()
                 if let notice = model.notice {
-                    NoticePill(text: notice, isError: notice.contains("failed") || notice.hasPrefix("No ")) { model.notice = nil }
+                    NoticePill(text: notice, tone: TimelineNotice.tone(of: notice) ?? TimelineNotice.otherPaneTone(notice)) { model.notice = nil }
                 }
                 if !timeline.warnings.isEmpty {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -1545,7 +1668,7 @@ struct TimelineRowView: View {
                 if let url = model.timelineHostURL(event) {
                     ExternalOpener.open(url)
                 } else {
-                    model.notice = "The repository's origin is not known yet; try again in a moment."
+                    model.postTimelineNotice("The repository's origin is not known yet; try again in a moment.", .warning)
                 }
             } label: {
                 text
@@ -1596,17 +1719,17 @@ struct TimelineRowView: View {
         case .resume(let session):
             LaunchPicker(mode: .resume(session)) { outcome in
                 popover = nil
-                if let notice = outcome.notice { model.notice = notice }
+                model.postTimelineNotice(outcome)
             }
         case .newAgent(let cwd, let name, let prompt):
             LaunchPicker(mode: .new(cwd: cwd, name: name, prompt: prompt)) { outcome in
                 popover = nil
-                if let notice = outcome.notice { model.notice = notice }
+                model.postTimelineNotice(outcome)
             }
         case .reply(let event):
             TimelineReplyForm(event: event, timeline: timeline) { notice in
                 popover = nil
-                if let notice { model.notice = notice }
+                if let notice { model.postTimelineNotice(notice.text, notice.tone) }
             }
         }
     }
@@ -1647,7 +1770,8 @@ private extension View {
 struct TimelineReplyForm: View {
     let event: TimelineEvent
     @ObservedObject var timeline: HubTimelineModel
-    let done: (String?) -> Void
+    /// The note the reply leaves, with its tone; nil for Cancel.
+    let done: ((text: String, tone: NoticePill.Tone)?) -> Void
     @State private var text = ""
 
     var body: some View {
@@ -1670,11 +1794,11 @@ struct TimelineReplyForm: View {
                 Button("Cancel") { done(nil) }.keyboardShortcut(.cancelAction)
                 Button("Reply") {
                     guard let url = event.pr?.url, let thread = event.threadId else {
-                        done("This comment names no thread to reply in.")
+                        done((text: "This comment names no thread to reply in.", tone: .warning))
                         return
                     }
                     timeline.threadStore(for: url).reply(thread: thread, body: text, draft: false)
-                    done("Replying on \(event.pr?.ref ?? "the PR")…")
+                    done((text: "Replying on \(event.pr?.ref ?? "the PR")…", tone: .success))
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(text.trimmed.isEmpty)

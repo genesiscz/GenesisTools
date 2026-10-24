@@ -50,6 +50,7 @@ struct WidgetStagedList: View {
     @GenReduceMotion private var reduceMotion
     /// Unchecked decision ids; everything else is checked, so a newly staged one goes by default.
     @State private var skipped: Set<String> = []
+    @GenReduceMotion private var reduceMotion
 
     private var scopeAll: Bool { model.stagedView == "all" || model.sessionStaged.isEmpty }
     private var items: [WidgetInboxItem] { scopeAll ? model.stagedItems : model.sessionStaged }
@@ -95,6 +96,7 @@ struct WidgetStagedList: View {
                     }
                     .buttonStyle(.borderedProminent).disabled(chosen.isEmpty)
                     .keyboardShortcut(.return, modifiers: [.command])
+                    .instantTooltip("Sends the checked decisions now, one message per session (⌘↩)")
                     Button("Discard checked") { model.discardStaged(chosen.map(\.sourceId)) }
                         .buttonStyle(.genHover()).disabled(chosen.isEmpty)
                         .instantTooltip("Clears the picks and notes; the decisions still wait for an answer.")
@@ -155,11 +157,15 @@ struct WidgetStagedLeavePrompt: View {
                     .font(.system(size: 13, weight: .semibold)).fixedSize(horizontal: false, vertical: true)
                 Text(WidgetModel.stagedSummary(items) + (items.count == 1 ? " if you send it now." : " if you send them now."))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
+                // Return and Esc keep the answers (the safe choice); sending cannot be undone, so it needs ⌘↩ or a click.
                 HStack(spacing: 8) {
-                    Button("Send now") { model.resolveStagedLeave("send") }
-                        .buttonStyle(.borderedProminent).keyboardShortcut(.return, modifiers: [])
                     Button("Keep staged (send later)") { model.resolveStagedLeave("keep") }
-                        .buttonStyle(.genHover())
+                        .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                        .instantTooltip("Closes the panel; the decisions stay staged for later (↩)")
+                    Button("Send now") { model.resolveStagedLeave("send") }
+                        .buttonStyle(.genHover(accent: SessionPalette.blue))
+                        .keyboardShortcut(.return, modifiers: [.command])
+                        .instantTooltip("Sends them now, one message per session (⌘↩)")
                     Button("Discard") { model.resolveStagedLeave("discard") }
                         .buttonStyle(.genHover(accent: .red))
                         .instantTooltip("Clears the picks and notes; the decisions still wait for an answer.")

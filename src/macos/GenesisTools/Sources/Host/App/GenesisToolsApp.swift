@@ -230,6 +230,10 @@ struct RootView: View {
             services.refresh()
             settings.refresh()
         }
+        // A grant changed in System Settings shows as soon as the user comes back, without Refresh.
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            permissions.refresh()
+        }
     }
 
     private var tabs: some View {

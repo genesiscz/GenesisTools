@@ -381,7 +381,7 @@ private struct WidgetTaskRow: View {
             if task.isLocal {
                 Text("Written in the widget").font(.caption2).foregroundStyle(.secondary)
             } else {
-                Text([task.provider.capitalized, task.sessionTitle ?? task.sessionId, task.sourceContext.aiAgent]
+                Text([task.provider.capitalized, task.sessionTitle ?? "Untitled session", task.sourceContext.aiAgent]
                     .compactMap { $0 }.joined(separator: " · "))
                     .font(.caption2).foregroundStyle(.secondary).textSelection(.enabled)
                 if let cwd = task.sourceContext.cwd {
@@ -400,7 +400,7 @@ private struct WidgetTaskRow: View {
 
     private func menuItems() -> [MenuButtonItem] {
         var items: [MenuButtonItem] = task.actions.map { action in
-            .action(action == .acknowledge ? "Start (acknowledge)" : action.title) { store.perform(action, on: task) }
+            .action(action == .acknowledge ? "Start" : action.title) { store.perform(action, on: task) }
         }
         if task.editable {
             items += [.divider, .action("Edit…") { edit.begin(task) }]

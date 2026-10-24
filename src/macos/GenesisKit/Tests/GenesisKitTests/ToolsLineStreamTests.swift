@@ -428,12 +428,46 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
                       acquire: @escaping () async throws -> any VoiceRecordingLease = { FixtureVoiceLease() },
                       presentPermission: @escaping @MainActor (PermissionNeed) -> Void = { _ in },
                       recipients: [WidgetSession]? = nil, finish: @escaping () -> Void = {},
-                      launcher: String = "/fixture/Preview.app/Contents/MacOS/launcher") -> WidgetVoiceNotesStore {
+                      launcher: String = "/fixture/Preview.app/Contents/MacOS/launcher",
+                      discardDelay: Duration = .seconds(10)) -> WidgetVoiceNotesStore {
         WidgetVoiceNotesStore(micLauncher: launcher, request: request,
             execute: execute, finishCapture: finish, cancelCommand: {}, acquireAudio: acquire,
             settings: { WidgetVoiceNoteSettings(provider: "fixture", model: "test-model", language: "en") },
             sessions: { recipients ?? [self.recipient] }, attachDraft: attach, readMicrophonePermission: permission,
-            requestMicrophonePermission: prompt, activateForMicrophone: activate, presentMicrophonePermission: presentPermission)
+            requestMicrophonePermission: prompt, activateForMicrophone: activate, presentMicrophonePermission: presentPermission,
+            discardUndoDelay: discardDelay)
+    }
+
+    /// Discard takes the note off the list at once and deletes it only after the Undo time; Undo brings it back
+    /// (ux catalogue P4).
+    func testDiscardWaitsBehindUndoAndUndoBringsTheNoteBack() async throws {
+        var calls: [[String]] = []
+        let store = make(request: { args in
+            calls.append(args)
+            return try self.data(["revision": 0, "notes": [self.note()], "statePath": "/fixture/widget/voice-notes/notes.json"])
+        }, discardDelay: .milliseconds(100))
+        defer { store.stop() }
+        store.refresh()
+        await store.waitForRefresh()
+        XCTAssertEqual(store.selectedID, noteID)
+
+        store.discard()
+        XCTAssertTrue(store.notes.isEmpty, "the note leaves the list at once")
+        XCTAssertEqual(store.discarded?.id, noteID)
+        store.undoDiscard()
+        XCTAssertEqual(store.notes.map(\.id), [noteID])
+        XCTAssertEqual(store.selectedID, noteID)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(calls.contains { $0.first == "discard" }, "Undo in time deletes nothing")
+
+        store.discard()
+        store.refresh(force: true)
+        await store.waitForRefresh()
+        XCTAssertTrue(store.notes.isEmpty, "a list read during the Undo time does not bring it back")
+        try await Task.sleep(for: .milliseconds(200))
+        await store.waitForDiscard()
+        XCTAssertEqual(calls.last { $0.first == "discard" }, ["discard", noteID, "--revision", "1"])
+        XCTAssertNil(store.discarded)
     }
 
     /// The reply box's live dictation names its clip and files the note through one-shot commands. They answer

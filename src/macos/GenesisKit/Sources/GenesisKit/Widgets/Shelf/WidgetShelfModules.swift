@@ -4,7 +4,7 @@ public extension WidgetShelfStore {
     func captureModule() -> WidgetModuleDescriptor {
         WidgetModuleDescriptor(
             id: "capture", title: "Capture", symbol: "viewfinder", tint: .orange,
-            summary: { self.isCapturing ? "Select an area…" : "\(self.captures.count) captures" },
+            summary: { self.isCapturing ? "Select an area…" : Plural.count(self.captures.count, "capture") },
             visibilityChanged: { self.visibilityChanged(module: "capture", presentation: $0) }
         ) { WidgetShelfModuleView(store: self, captureOnly: true, presentation: $0) }
     }
@@ -12,7 +12,7 @@ public extension WidgetShelfStore {
     func shelfModule() -> WidgetModuleDescriptor {
         WidgetModuleDescriptor(
             id: "shelf", title: "File Shelf", symbol: "tray.full", tint: .cyan,
-            summary: { "\(self.items.count) items" },
+            summary: { Plural.count(self.items.count, "item") },
             visibilityChanged: { self.visibilityChanged(module: "shelf", presentation: $0) }
         ) { WidgetShelfModuleView(store: self, captureOnly: false, presentation: $0) }
     }
@@ -41,7 +41,7 @@ struct WidgetShelfModuleView: View {
             if presentation == .compact {
                 HStack(spacing: 7) {
                     Image(systemName: symbol).foregroundStyle(tint)
-                    Text(store.isCapturing ? "Select an area…" : "\(displayedItems.count) \(captureOnly ? "captures" : "items")")
+                    Text(store.isCapturing ? "Select an area…" : Plural.count(displayedItems.count, captureOnly ? "capture" : "item"))
                         .font(.system(size: 11, weight: .medium))
                 }
             } else {
@@ -76,7 +76,9 @@ struct WidgetShelfModuleView: View {
             Image(systemName: symbol).foregroundStyle(tint)
             Text(title).font(.system(size: 15, weight: .semibold))
             Spacer()
-            Text("\(displayedItems.count) staged").font(.system(size: 10)).foregroundStyle(.secondary)
+            // "Staged" is the inbox's word for a decision answer kept to send later; the shelf keeps items.
+            Text(Plural.count(displayedItems.count, captureOnly ? "capture" : "item"))
+                .font(.system(size: 11)).foregroundStyle(.secondary)
         }
     }
 
@@ -119,6 +121,19 @@ struct WidgetShelfModuleView: View {
         if let error = store.error {
             Text(error).font(.system(size: 11)).foregroundStyle(KitPalette.removed)
                 .fixedSize(horizontal: false, vertical: true)
+        } else if let removed = store.removed, !captureOnly || removed.kind == .capture {
+            HStack(spacing: 8) {
+                Text(removed.kind == .capture ? "\(removed.name) was removed."
+                     : "\(removed.name) was removed from the shelf. The original file is kept.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .lineLimit(2).truncationMode(.middle)
+                Spacer(minLength: 4)
+                Button("Undo", action: store.undoRemove)
+                    .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
+                    .keyboardShortcut("z", modifiers: .command)
+                    .instantTooltip("Puts it back (⌘Z)")
+                    .accessibilityIdentifier("shelf-undo-remove")
+            }
         } else if let notice = store.notice {
             Text(notice).font(.system(size: 11)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

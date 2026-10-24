@@ -41,6 +41,14 @@ public enum PermissionKind: String, CaseIterable, Identifiable, Sendable, Codabl
         }
     }
 
+    /// The name this app has in System Settings' lists: the bundle's display name, else its name, else the process.
+    /// Every sentence that tells the user which switch to turn on names the app with it, never "this app".
+    public static var appName: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? ProcessInfo.processInfo.processName
+    }
+
     /// The name System Settings shows for the grant.
     public var title: String {
         switch self {

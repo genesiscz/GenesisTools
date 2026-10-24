@@ -715,7 +715,7 @@ final class WidgetCaptureFeedbackTests: XCTestCase {
         }, onCaptureStaged: { reopened += 1 })
         await complete(store) { store.capture() }
         XCTAssertEqual(reopened, 1)
-        XCTAssertEqual(store.notice, "Screenshot staged. Choose an inbox when you are ready.")
+        XCTAssertEqual(store.notice, "Screenshot added. Choose an inbox when you are ready.")
 
         response = Data(#"{"cancelled":true,"reason":"user"}"#.utf8)
         await complete(store) { store.capture() }

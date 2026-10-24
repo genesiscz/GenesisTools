@@ -55,6 +55,24 @@ final class HubTimelineTests: XCTestCase {
         XCTAssertEqual(TimelineRange.allCases.prefix(3), [.lastHour, .last24h, .today])
     }
 
+    /// An empty feed's "Show …" button reads the next range that covers more; the longest and a custom one have none.
+    func testAWiderRangeCoversMoreAndTheLongestHasNone() {
+        let now = date("2026-03-02T14:00:00Z")
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .gmt
+        for range in TimelineRange.allCases {
+            guard let wider = range.wider else { continue }
+            let narrow = range.interval(now: now, lastVisit: nil, customFrom: now, customTo: now, calendar: calendar)
+            let wide = wider.interval(now: now, lastVisit: nil, customFrom: now, customTo: now, calendar: calendar)
+            XCTAssertLessThanOrEqual(wide.start, narrow.start, "\(range) widens to \(wider)")
+            XCTAssertGreaterThan(wide.duration, narrow.duration, "\(range) widens to \(wider)")
+        }
+        XCTAssertEqual(TimelineRange.lastHour.wider, .last24h)
+        XCTAssertEqual(TimelineRange.last7.wider, .last30)
+        XCTAssertNil(TimelineRange.last30.wider)
+        XCTAssertNil(TimelineRange.custom.wider)
+    }
+
     func testSinceLastVisitFallsBackToTheLast24HoursWithoutAnEarlierVisit() {
         let now = date("2026-03-02T14:00:00Z")
         let visited = date("2026-02-27T09:30:00Z")

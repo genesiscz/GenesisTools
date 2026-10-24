@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -25,8 +26,6 @@ public struct LiveWidgetView: View {
     }
 
     @State private var retry: WidgetOutgoing?
-    /// The session inbox's filter picked here; until then the one the `inboxFilter` setting opens with.
-    @State private var inboxFilterPick: String?
     @State private var choosingSession = false
     @State private var sourcesExpanded = false
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -38,6 +37,10 @@ public struct LiveWidgetView: View {
     /// The composer field's height, so its stand-in takes exactly its place while the panel moves.
     @State private var composerFieldHeight: CGFloat = 0
     @Environment(\.edgePanelMoving) private var panelMoving
+    /// Dismiss and Mark complete wait out their Undo note before they reach the decision log.
+    @ObservedObject private var ledgerUndo = WidgetLedgerUndo.shared
+    /// The Conversation tab's merged list, rebuilt only when its inputs change.
+    @State private var timelineCache = TimelineCache()
 
     public init(
         model: WidgetModel, edge: EdgePanelPlacement, cutout: CGFloat = 0, compactHeight: CGFloat = 36,
@@ -132,14 +135,14 @@ public struct LiveWidgetView: View {
                     }
                     IconButton(systemName: "xmark", tooltip: "Dismiss this note") { model.notice = nil }
                 }
+                // A note under the pointer waits to fade. A note closed under the pointer gets no exit event.
+                .onHover { model.noticeHovered($0) }
+                .onDisappear { model.noticeHovered(false) }
             }
             if let error = model.error {
-                HStack(alignment: .top) {
-                    Text(error).font(.system(size: 11)).foregroundStyle(.orange).textSelection(.enabled)
-                        .lineLimit(4)
-                    Spacer(minLength: 4)
-                    IconButton(systemName: "xmark", tooltip: "Dismiss this error") { model.error = nil }
-                }
+                // One sentence; the raw text (a process's stderr) only behind Details.
+                NoticePill(text: error, more: model.errorDetail, tone: .error) { model.error = nil }
+                    .accessibilityIdentifier("widget.error")
             }
             if model.connectionLost && model.snapshot != nil {
                 HStack {
@@ -224,12 +227,21 @@ public struct LiveWidgetView: View {
                     }
                         .modifier(LatestScrollAnchor(enabled: section == "Conversation", identity: model.selectedKey))
                         // A new view (section or session) starts at its own top: the Sessions list's deep offset,
-                        // kept for the much shorter inbox, drew its rows over the header (Martin, 2026-10-23).
-                        .id(section + "|" + model.selectedKey)
+                        // kept for the much shorter inbox, drew its rows over the header (Martin, 2026-10-23). The
+                        // session list keeps its place when Up and Down pick another session in it.
+                        .id(section == "Sessions" ? section : section + "|" + model.selectedKey)
                         .onChange(of: WidgetOutgoingPosition(session: model.selectedKey, messageID: model.outgoing.last?.id)) { previous, next in
                             guard section == "Inbox", previous.session == next.session, let id = next.messageID,
                                   Self.followsOutgoing(model.outgoing.last) else { return }
                             ScrollViewPositioning.scroll(reader, to: "outgoing-" + id, anchor: .bottom)
+                        }
+                        // Up and Down move the selection; the list brings the chosen row into view.
+                        .onChange(of: model.listKey) { _, _ in
+                            if section == "Inbox", let id = model.card?.id {
+                                reader.scrollTo("card-" + id)
+                            } else if section == "Sessions" {
+                                reader.scrollTo(model.selectedKey)
+                            }
                         }
                         .modifier(DocumentHeight(onScrollView: true) { fit.document = $0; reportFit() })
                         .onGeometryChange(for: CGFloat.self, of: \.size.height) { fit.viewport = $0; reportFit() }
@@ -257,7 +269,7 @@ public struct LiveWidgetView: View {
                         if let url {
                             model.importFile(url)
                         } else if let error {
-                            model.error = error.localizedDescription
+                            model.fail("This file could not be attached.", detail: error.localizedDescription)
                         }
                     }
                 }
@@ -326,7 +338,7 @@ public struct LiveWidgetView: View {
                     }.accessibilityLabel("Back to the session")
                 }
             } else {
-                IconButton(systemName: "tray.full", tooltip: "Inbox entries from every session") {
+                IconButton(systemName: "tray.full", tooltip: "Inbox items from every session") {
                     model.inboxOverview = true
                 }.accessibilityLabel("Inbox from every session")
                 if let selected = model.selected {
@@ -426,18 +438,17 @@ public struct LiveWidgetView: View {
 
     /// Every item of the session as a row; the open row carries the whole card in place. Several answers from one
     /// session read as a list, not as one card behind a drop-down.
-    /// The session inbox's filter: every entry, the inbox entries (answers, results, questions) or the decisions.
-    private var inboxFilter: String { inboxFilterPick ?? model.snapshot?.state.preferences.inboxFilter ?? "all" }
-
     private var inboxFilterBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 GenSegmentedTabs(
                     "Inbox filter",
-                    items: [.init("all", "All"), .init("inbox", "Inbox entries"), .init("decisions", "Decisions")],
-                    selection: Binding(get: { inboxFilter }, set: { value in
+                    items: [.init("all", "All"), .init("inbox", "Messages"), .init("decisions", "Decisions")],
+                    // The model holds the filter, so Up and Down walk the rows on screen.
+                    selection: Binding(get: { model.inboxFilter }, set: { value in
                         model.holdAgentFit()
-                        inboxFilterPick = value
+                        model.inboxFilterPicked = true
+                        model.inboxFilter = value
                     }), minSegmentWidth: 64, identifier: "widget.inbox.filter")
                 Spacer()
                 markAllReadButton
@@ -446,11 +457,16 @@ public struct LiveWidgetView: View {
         }
     }
 
+    /// The session's cards, each Dismiss or Mark complete that waits for its Undo note already applied.
+    private var shownCards: [WidgetCard] {
+        ledgerUndo.moves.isEmpty ? model.cards : model.cards.map { ledgerUndo.applied($0) }
+    }
+
     @ViewBuilder private var inbox: some View {
         if !model.cards.isEmpty {
-            let shown = Self.filtered(model.cards, by: inboxFilter)
+            let shown = Self.filtered(shownCards, by: model.inboxFilter)
             if shown.isEmpty {
-                Text(inboxFilter == "decisions" ? "No decisions in this session." : "No inbox entries in this session.")
+                Text(model.inboxFilter == "decisions" ? "No decisions in this session." : "No messages in this session.")
                     .font(.callout).foregroundStyle(.secondary).padding(.vertical, 6)
             }
             ForEach(shown.reversed()) { card in
@@ -467,7 +483,7 @@ public struct LiveWidgetView: View {
     }
 
     private var inboxHeadline: String {
-        let cards = model.cards
+        let cards = shownCards
         let waiting = cards.filter(\.needsAnswer).count
         let unread = cards.filter { !$0.read && !$0.needsAnswer }.count
         return [cards.count == 1 ? "1 item" : "\(cards.count) items",
@@ -553,6 +569,19 @@ public struct LiveWidgetView: View {
             && (model.stagedOption(card.sourceId, stored: card.draftOption) != nil || card.draft != nil)
     }
 
+    /// The key that picks the option at `index` (the open decision's number keys, as the keymap has them), or nil.
+    static func choiceKey(_ index: Int) -> String? {
+        guard index < 9 else { return nil }
+        let label = WidgetKeymap.label(WidgetKeymap.choiceID(index + 1))
+        return label.isEmpty ? nil : label
+    }
+
+    /// Dismiss or Mark complete: the card shows its new state at once, and the decision log hears of it only when
+    /// the note with Undo goes away.
+    private func holdMove(_ card: WidgetCard, to state: String) {
+        ledgerUndo.hold(card, to: state, model: model, reduceMotion: reduceMotion)
+    }
+
     static func choiceTooltip(_ choice: WidgetChoice, index: Int, stages: Bool, picked: Bool) -> String {
         let key = index < 9 ? " · key \(index + 1)" : ""
         if !stages { return "Answer \(choice.id)" + (choice.recommended ? " (recommended)" : "") + key }
@@ -566,7 +595,8 @@ public struct LiveWidgetView: View {
                card.kind == "decision", card.needsAnswer {
                 HStack(spacing: 4) {
                     Image(systemName: "checkmark.circle.fill").foregroundStyle(SessionPalette.blue)
-                    Text(card.draft.map { "Draft saved: " + $0 } ?? "Draft saved").lineLimit(2)
+                    // "Staged", as the option badge and the hub say: a note that waits to be sent with the others.
+                    Text(card.draft.map { "Note staged: " + $0 } ?? "Note staged").lineLimit(2)
                     if model.draftSavedAt[card.id] != nil {
                         Text("·")
                         LiveAgo(date: saved, style: .brief)
@@ -597,16 +627,25 @@ public struct LiveWidgetView: View {
                     let staged = model.stagedOption(card.sourceId, stored: card.draftOption)
                     ForEach(Array(card.choices.enumerated()), id: \.element.id) { index, choice in
                         let picked = staged == choice.id
+                        let key = Self.choiceKey(index)
                         Button {
                             model.choose(card, option: choice.id)
                         } label: {
                             HStack(alignment: .top, spacing: 8) {
-                                Text(verbatim: choice.id).font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                                    .frame(width: 20, height: 20).background(
+                                // The badge is the key that picks the option; the letter, which the agent and the
+                                // hub name it by, leads its text.
+                                Text(verbatim: key ?? choice.id).font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                                    .padding(.horizontal, 4)
+                                    .frame(minWidth: 20, minHeight: 20).background(
                                         .white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
-                                Text(Self.choiceText(choice)).font(.system(size: 12)).fixedSize(
-                                    horizontal: false, vertical: true)
-                                    .padding(.top, 2)
+                                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                                    if key != nil {
+                                        Text(verbatim: choice.id + ")").foregroundStyle(SessionPalette.secondary)
+                                    }
+                                    Text(Self.choiceText(choice)).fixedSize(horizontal: false, vertical: true)
+                                }
+                                .font(.system(size: 12))
+                                .padding(.top, 2)
                                 Spacer(minLength: 0)
                                 if picked {
                                     Text("Staged").font(.system(size: 10, weight: .semibold))
@@ -637,17 +676,17 @@ public struct LiveWidgetView: View {
                     if card.status == "open" {
                         Button("Acknowledge") { model.ledger(card, state: "acknowledged") }
                     }
-                    Button("Mark complete") { model.ledger(card, state: "implemented") }
-                    Button("Dismiss") { model.ledger(card, state: "dismissed") }
+                    Button("Mark complete") { holdMove(card, to: "implemented") }
+                    Button("Dismiss") { holdMove(card, to: "dismissed") }
                 } else if card.kind == "decision" && card.needsAnswer {
-                    Button("Save draft") { model.saveDraft(card) }
-                        .instantTooltip("Keeps your text as this decision's note, staged with your other decisions.")
+                    Button("Stage note") { model.saveDraft(card) }
+                        .instantTooltip("Stages your text as this decision's note, sent later with your other staged decisions.")
                     if staged(card) {
                         Button("Send now") { model.sendStaged([card.sourceId]) }
                             .instantTooltip("Sends this staged decision alone, without the others.")
                         Button("Unstage") { model.discardStaged([card.sourceId]) }
                     }
-                    Button("Dismiss") { model.ledger(card, state: "dismissed") }
+                    Button("Dismiss") { holdMove(card, to: "dismissed") }
                 }
                 if card.kind == "result" || card.kind == "answer" {
                     Button("Create handoff") { model.destination("handoff") }
@@ -740,11 +779,37 @@ public struct LiveWidgetView: View {
         case "decision":
             if let replacement = card.supersededBy { return "Decision · Superseded by DECISION \(replacement.number)" }
             if let option = card.option, !option.isEmpty, ["acknowledged", "implemented", "sent", "answered"].contains(card.status) {
-                return "Decision · Answered \(option) · " + card.status.capitalized
+                return "Decision · Answered \(option) · " + statusPhrase(card.status, kind: card.kind)
             }
-            return "Decision · " + card.status.capitalized
-        default: return card.kind.capitalized + " · " + card.status.capitalized
+            return "Decision · " + statusPhrase(card.status, kind: card.kind)
+        case "form": return "Question · " + statusPhrase(card.status, kind: card.kind)
+        default: return sentenceCase(card.kind) + " · " + statusPhrase(card.status, kind: card.kind)
         }
+    }
+
+    /// One phrase for each state of the decision log and the question forms, the same in every tab and row.
+    static func statusPhrase(_ status: String, kind: String) -> String {
+        if kind == "todo" { return WidgetTask.label(for: status) }
+        switch status {
+        case "open", "pending": return "Waiting for your answer"
+        case "drafted": return "Staged"
+        // A decision's answer is chosen and waits for its delivery; a form's answer is the end.
+        case "answered": return kind == "decision" ? "Waiting to send" : "Answered"
+        case "sent": return "Sent"
+        case "acknowledged": return "Acknowledged"
+        case "implemented": return "Implemented"
+        case "dismissed": return "Dismissed"
+        case "superseded": return "Superseded"
+        case "timeout": return "No answer in time"
+        case "cancelled": return "Withdrawn"
+        default: return sentenceCase(status)
+        }
+    }
+
+    /// "waiting-route" reads "Waiting route", never "Waiting-Route".
+    static func sentenceCase(_ value: String) -> String {
+        let words = value.replacingOccurrences(of: "-", with: " ").replacingOccurrences(of: "_", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
     }
 
     /// A collapsed row's one line: the body's first line of prose, without Markdown marks.
@@ -758,7 +823,7 @@ public struct LiveWidgetView: View {
         return nil
     }
 
-    /// The option text without a letter the agent already wrote ("a) Record…"); the badge shows the letter.
+    /// The option text without a letter the agent already wrote ("a) Record…"); the row draws the letter itself.
     static func choiceText(_ choice: WidgetChoice) -> String {
         let title = choice.title.trimmingCharacters(in: .whitespaces)
         for prefix in [choice.id + ")", "(" + choice.id + ")", choice.id + ".", choice.id + ":"] {
@@ -800,6 +865,10 @@ public struct LiveWidgetView: View {
                         .white.opacity(selected ? 0.12 : 0.045), in: RoundedRectangle(cornerRadius: 8))
                         .contentShape(RoundedRectangle(cornerRadius: 8))
                 }.buttonStyle(RowButtonStyle(cornerRadius: 8))
+                // The circle shows the pick; VoiceOver hears it as the selected trait and a value.
+                .accessibilityLabel(choice.label)
+                .accessibilityValue(selected ? "Selected" : "Not selected")
+                .accessibilityAddTraits(selected ? .isSelected : [])
             }
             if item.allowFreeText != false {
                 TextField(
@@ -821,6 +890,9 @@ public struct LiveWidgetView: View {
     }
 
     @ViewBuilder private var conversation: some View {
+        let timeline = timelineCache.items(for: TimelineCache.Inputs(
+            transcript: model.transcript, cards: shownCards, outgoing: model.outgoing,
+            activity: model.sessionActivity, provider: model.selected?.target.provider ?? ""))
         if let error = model.transcriptError {
             Text(error).font(.caption).foregroundStyle(.orange).textSelection(.enabled)
         }
@@ -842,8 +914,7 @@ public struct LiveWidgetView: View {
                     }
                 case .card(let card):
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(card.kind.capitalized + " · " + card.status).font(.caption2).foregroundStyle(
-                            .secondary)
+                        Text(Self.kindLabel(card)).font(.caption2).foregroundStyle(.secondary)
                         Text(card.numberedTitle).font(.system(size: 12, weight: .semibold)).textSelection(.enabled)
                         if !card.body.isEmpty {
                             WidgetMarkdown(text: card.body)
@@ -861,14 +932,18 @@ public struct LiveWidgetView: View {
                     }.padding(10).background(.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 11))
                 case .outgoing(let message):
                     outgoing(message)
-                case .activity(let event):
+                case .activity(let line):
                     HStack(alignment: .top, spacing: 8) {
                         Image(systemName: "clock.arrow.circlepath").foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(event.title).font(.caption)
-                            Text(event.sourceId + " · " + event.body).font(.caption2).foregroundStyle(.secondary)
+                            Text(line.title).font(.caption)
+                            if !line.detail.isEmpty {
+                                Text(line.detail).font(.caption2).foregroundStyle(.secondary)
+                            }
                         }
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
         }
@@ -879,40 +954,113 @@ public struct LiveWidgetView: View {
         }
     }
 
-    private struct TimelineItem: Identifiable {
+    fileprivate struct TimelineItem: Identifiable {
         enum Event {
             case turn(TranscriptTurn)
             case card(WidgetCard)
             case outgoing(WidgetOutgoing)
-            case activity(WidgetActivityEvent)
+            case activity(ActivityLine)
         }
         let id: String
         let date: Date
         let event: Event
     }
-    private var timeline: [TimelineItem] {
-        let iso = ISO8601DateFormatter()
-        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let plain = ISO8601DateFormatter()
-        let turns = model.transcript.filter { !$0.text.isEmpty }.map { turn in
-            TimelineItem(
-                id: "turn:" + turn.id,
-                date: turn.at.flatMap { iso.date(from: $0) ?? plain.date(from: $0) } ?? .distantPast,
-                event: .turn(turn))
+
+    /// A decision event in words, for the Conversation tab.
+    struct ActivityLine: Equatable {
+        let title: String
+        let detail: String
+    }
+
+    /// The Conversation tab's list: turns, cards, outgoing messages and decision events in time order. The body runs
+    /// on every publish of the model (a voice level, a hover), so the merge, the date parsing and the sort run only
+    /// when an input changed. A plain reference in `@State`, so a rebuild never re-renders.
+    @MainActor
+    private final class TimelineCache {
+        struct Inputs: Equatable {
+            var transcript: [TranscriptTurn]
+            var cards: [WidgetCard]
+            var outgoing: [WidgetOutgoing]
+            var activity: [WidgetActivityEvent]
+            var provider: String
         }
-        let cards = model.cards.map {
-            TimelineItem(id: $0.id, date: Date(timeIntervalSince1970: $0.at / 1000), event: .card($0))
+        private var inputs: Inputs?
+        private var items: [TimelineItem] = []
+
+        func items(for next: Inputs) -> [TimelineItem] {
+            if next != inputs {
+                items = Self.merged(next)
+                inputs = next
+            }
+            return items
         }
-        let outgoing = model.outgoing.map {
-            TimelineItem(
-                id: "out:" + $0.id, date: Date(timeIntervalSince1970: $0.createdAt / 1000),
-                event: .outgoing($0))
+
+        private static func merged(_ inputs: Inputs) -> [TimelineItem] {
+            let turns = inputs.transcript.filter { !$0.text.isEmpty }.map { turn in
+                TimelineItem(id: "turn:" + turn.id, date: SessionFormat.parseISO(turn.at) ?? .distantPast,
+                             event: .turn(turn))
+            }
+            let cards = inputs.cards.map {
+                TimelineItem(id: $0.id, date: Date(timeIntervalSince1970: $0.at / 1000), event: .card($0))
+            }
+            let outgoing = inputs.outgoing.map {
+                TimelineItem(
+                    id: "out:" + $0.id, date: Date(timeIntervalSince1970: $0.createdAt / 1000),
+                    event: .outgoing($0))
+            }
+            let numbers = Dictionary(inputs.cards.compactMap { card in card.number.map { (card.sourceId, $0) } },
+                                     uniquingKeysWith: { first, _ in first })
+            let activity = inputs.activity.map { event in
+                TimelineItem(
+                    id: "event:" + event.id, date: Date(timeIntervalSince1970: event.at / 1000),
+                    event: .activity(LiveWidgetView.activityLine(
+                        event, number: numbers[event.sourceId], provider: inputs.provider)))
+            }
+            return (turns + cards + outgoing + activity).sorted {
+                $0.date == $1.date ? $0.id < $1.id : $0.date < $1.date
+            }
         }
-        let activity = model.sessionActivity.map {
-            TimelineItem(id: "event:" + $0.id, date: Date(timeIntervalSince1970: $0.at / 1000), event: .activity($0))
+    }
+
+    /// A decision event from the log: what happened, then which decision (its number when the session's card is
+    /// known, else the session's provider) and the state and route it reached. The wire carries the log's raw names
+    /// ("Decision send_failed", "answered · cmux") and the row id, which mean nothing to the reader.
+    static func activityLine(_ event: WidgetActivityEvent, number: Int?, provider: String) -> ActivityLine {
+        let prefix = "Decision "
+        let name = event.title.hasPrefix(prefix) ? String(event.title.dropFirst(prefix.count)) : ""
+        let title: String
+        switch name {
+        case "created": title = "Decision posted"
+        case "updated": title = "Decision updated"
+        case "superseded": title = "Decision superseded"
+        case "harvested": title = "Decision found in the conversation"
+        case "delivery": title = "Answer delivered"
+        case "stale": title = "Reminder sent: the decision still waits"
+        case "send_failed": title = "Answer not delivered"
+        default: title = sentenceCase(event.title)
         }
-        return (turns + cards + outgoing + activity).sorted {
-            $0.date == $1.date ? $0.id < $1.id : $0.date < $1.date
+        let decision = number.map { "DECISION \($0)" } ?? AIProviders.meta(for: provider).displayName
+        let facts = event.body.components(separatedBy: " · ").compactMap { part -> String? in
+            routePhrase(part) ?? (decisionStates.contains(part) ? statusPhrase(part, kind: "decision") : nil)
+        }
+        return ActivityLine(title: title, detail: ([decision] + facts).filter { !$0.isEmpty }.joined(separator: " · "))
+    }
+
+    /// The states of the decision log (`src/question/lib/decisions/store.ts`).
+    private static let decisionStates: Set<String> = [
+        "open", "drafted", "answered", "sent", "acknowledged", "implemented", "dismissed", "superseded",
+    ]
+
+    /// How an answer reached its agent (the log's `delivery.route`).
+    static func routePhrase(_ route: String) -> String? {
+        switch route {
+        case "cmux": return "through cmux"
+        case "codex": return "through Codex"
+        case "claude-peer": return "as a Claude message"
+        case "prompt": return "as a new prompt"
+        case "queued": return "queued for the session"
+        case "resume": return "by resuming the session"
+        default: return nil
         }
     }
 
@@ -962,7 +1110,9 @@ public struct LiveWidgetView: View {
                 Spacer(minLength: 0)
             }.foregroundStyle(message.state == "sent" ? .green : .secondary)
             if let error = message.error, !(message.state == "waiting-route" && message.receipt?.channel == "session-queue") {
-                Text(error).font(.caption2).foregroundStyle(.orange).textSelection(.enabled)
+                // What happened in one sentence; the transport's own text only behind Details.
+                NoticePill(text: Self.outgoingProblem(message), more: error,
+                           tone: message.state == "failed" ? .error : .warning)
             }
             if message.isWithdrawable || message.needsRecovery {
                 HStack {
@@ -1051,27 +1201,25 @@ public struct LiveWidgetView: View {
                     .instantTooltip(ownAnswer == nil ? "Send (Return)" : "Send as your answer (Return)")
                     .accessibilityLabel(ownAnswer == nil ? "Send reply" : "Send your answer")
             }
-            HStack(spacing: 15) {
-                Button(action: model.chooseFiles) { Image(systemName: "paperclip") }.instantTooltip(
-                    "Attach images or videos"
-                ).accessibilityLabel("Attach media")
-                Button {
+            // Each icon is the kit's 22 pt target (IconButton), with 4 pt between neighbours instead of a 15 pt strip
+            // where a click did nothing.
+            HStack(spacing: 4) {
+                IconButton(systemName: "paperclip", tooltip: "Attach images or videos", action: model.chooseFiles)
+                    .accessibilityLabel("Attach media")
+                IconButton(systemName: "clipboard", tooltip: WidgetKeymap.hint("Paste image or video", WidgetKeymap.paste)) {
                     _ = model.pasteMedia()
-                } label: {
-                    Image(systemName: "clipboard")
-                }.instantTooltip(WidgetKeymap.hint("Paste image or video", WidgetKeymap.paste)).accessibilityLabel("Paste media")
-                Button(action: model.capture) { Image(systemName: "camera") }.instantTooltip("Capture a screenshot")
-                    .accessibilityLabel("Capture screenshot")
-                Button(action: model.toggleVideoCapture) {
-                    Image(systemName: model.recordingVideo ? "stop.circle.fill" : "video")
                 }
-                .foregroundStyle(model.recordingVideo ? .red : .secondary)
-                .instantTooltip(model.recordingVideo ? "Stop the recording and paste it into the draft"
-                                : "Record a window, an app or a display (up to 10 min)")
-                .accessibilityLabel(model.recordingVideo ? "Stop and paste the recording" : "Record the screen")
+                .accessibilityLabel("Paste media")
+                IconButton(systemName: "camera", tooltip: "Capture a screenshot", action: model.capture)
+                    .accessibilityLabel("Capture screenshot")
+                IconButton(systemName: model.recordingVideo ? "stop.circle.fill" : "video",
+                           tooltip: model.recordingVideo ? "Stop the recording and paste it into the draft"
+                               : "Record a window, an app or a display (up to 10 min)",
+                           tint: model.recordingVideo ? Color.red : nil, action: model.toggleVideoCapture)
+                    .accessibilityLabel(model.recordingVideo ? "Stop and paste the recording" : "Record the screen")
                 voiceButton
-                Spacer()
-                Text(WidgetKeymap.mediaFooter).font(.system(size: 9)).foregroundStyle(.tertiary)
+                Spacer(minLength: 8)
+                composerKeys
             }.font(.system(size: 12)).foregroundStyle(.secondary).buttonStyle(.genHoverIcon())
         }
         .padding(11).background(.white.opacity(0.065), in: RoundedRectangle(cornerRadius: 13))
@@ -1082,8 +1230,27 @@ public struct LiveWidgetView: View {
         .frameProbe("widget.composer")
     }
 
+    /// The composer's keys, in a hint beside the field: Return sends, Option-Return adds a line (SwiftUI's own key
+    /// for a vertical field with `onSubmit`), and the paste and close keys in force. A narrow card (an own answer)
+    /// drops the last ones first. Text the user reads: 11 pt at 70% white.
+    private var composerKeys: some View {
+        let paste = WidgetKeymap.label(WidgetKeymap.paste)
+        let close = WidgetKeymap.label(WidgetKeymap.collapse)
+        let base = "↩ send · ⌥↩ new line"
+        let media = paste.isEmpty ? base : base + " · \(paste) media"
+        return ViewThatFits(in: .horizontal) {
+            Text(close.isEmpty ? media : media + " · \(close) close")
+            Text(media)
+            Text(base)
+        }
+        .font(.system(size: 11)).foregroundStyle(SessionPalette.secondary).lineLimit(1)
+        .layoutPriority(1)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Return sends. Option Return adds a new line.")
+    }
+
     /// The microphone: Stop while a dictation runs; otherwise a menu of the two modes when the setting asks, else the
-    /// set mode at once.
+    /// set mode at once. Both are drawn buttons with the kit's hover and hand cursor (a SwiftUI `Menu` has neither).
     @ViewBuilder private var voiceButton: some View {
         let icon = Image(systemName: model.voiceActive ? "stop.circle.fill" : "mic")
             .padding(.horizontal, 8).padding(.vertical, 4)
@@ -1093,14 +1260,12 @@ public struct LiveWidgetView: View {
                 .foregroundStyle(model.voiceActive ? .red : .secondary)
                 .instantTooltip(model.voiceActionLabel).accessibilityLabel(model.voiceActionLabel)
         } else {
-            Menu {
-                Button("Dictate into the reply box", systemImage: "text.cursor") { model.startVoice(.dictate) }
-                Button("Voice note into the reply box (keeps the recording)", systemImage: "waveform") {
-                    model.startVoice(.note)
-                }
-                .disabled(model.voiceNoteClip == nil)
-            } label: { icon }
-                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            MenuButton(style: .genHoverIcon(), items: {
+                [.action("Dictate into the reply box") { model.startVoice(.dictate) },
+                 .action("Voice note into the reply box (keeps the recording)", enabled: model.voiceNoteClip != nil) {
+                     model.startVoice(.note)
+                 }]
+            }) { icon }
                 .modifier(WidgetGlassControl())
                 .foregroundStyle(.secondary)
                 .instantTooltip(model.voiceActionLabel).accessibilityLabel(model.voiceActionLabel)
@@ -1130,7 +1295,19 @@ public struct LiveWidgetView: View {
         case "waiting-route":
             return message.receipt?.channel == "session-queue" ? "Queued for this session · waiting for the agent" : "Waiting for an available session route"
         case "unknown": return "Delivery unknown · check the conversation"
-        default: return message.state.capitalized
+        case "failed": return "Not delivered"
+        default: return Self.sentenceCase(message.state)
+        }
+    }
+
+    /// The sentence over a message's raw delivery error: what it means for the message and what the buttons under
+    /// it can do.
+    static func outgoingProblem(_ message: WidgetOutgoing) -> String {
+        switch message.state {
+        case "failed": return "The agent did not get this message. Retry it, or choose another destination."
+        case "waiting-route": return "No session can take this message yet. It goes out when one can."
+        case "unknown": return "No receipt came back. Check the conversation before you retry."
+        default: return "The last attempt to send this message did not work."
         }
     }
     private func showMedia(_ selection: WidgetMediaSelection) {
@@ -1171,6 +1348,118 @@ private struct DocumentHeight: ViewModifier {
         } else {
             content.onGeometryChange(for: CGFloat.self, of: \.size.height) { report($0) }
         }
+    }
+}
+
+/// Dismiss and Mark complete in a session's inbox wait for their Undo note before they reach the decision log. The
+/// log has no move back from a dismissed decision, and the widget's `ledger` action cannot reopen a task, so the
+/// change is held here instead of undone there: the card shows its new state at once, Undo drops the change, and the
+/// change goes to the log when the note goes away (it faded after the note duration setting, was closed, or a newer
+/// note replaced it). Shared by every panel of the widget, and kept while a panel is closed.
+@MainActor
+final class WidgetLedgerUndo: ObservableObject {
+    static let shared = WidgetLedgerUndo()
+    /// The longest a change waits, even under a note that stays until it is closed: a change still held when the app
+    /// quits is lost, so it is not held for long.
+    static let longestHold: Duration = .seconds(60)
+
+    struct Move: Equatable {
+        let state: String
+        /// The card's revision when the user acted. A snapshot with a newer one shows the card as it is.
+        let revision: Int
+    }
+
+    private struct Hold {
+        let move: Move
+        let request: WidgetJSON
+        let note: String
+        var watch: AnyCancellable?
+        var deadline: Task<Void, Never>?
+    }
+
+    /// Card id to the move the card shows.
+    @Published private(set) var moves: [String: Move] = [:]
+    private var holds: [String: Hold] = [:]
+
+    /// `card` with its held or just committed move applied.
+    func applied(_ card: WidgetCard) -> WidgetCard {
+        guard let move = moves[card.id], move.revision == card.revision else { return card }
+        var shown = card
+        shown.status = move.state
+        return shown
+    }
+
+    /// Moves `card` to `state` ("dismissed", "implemented") on screen now, and in the log when its note goes.
+    func hold(_ card: WidgetCard, to state: String, model: WidgetModel, reduceMotion: Bool) {
+        // The session is read now: the user may pick another one before the note goes.
+        guard let session = model.selected?.target.sessionId, let revision = card.revision else { return }
+        let id = card.id
+        let move = Move(state: state, revision: revision)
+        let note = Self.note(card, state: state)
+        var hold = Hold(
+            move: move,
+            request: .object([
+                "action": "ledger", "id": .string(card.sourceId), "sessionId": .string(session),
+                "expectedRevision": .number(Double(revision)), "state": .string(state),
+            ]),
+            note: note)
+        moves[id] = move
+        // Folded, the card is no longer the decision the number keys and the composer answer.
+        GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.insert(id) }
+        model.postNote(note, action: WidgetNoticeAction(title: "Undo") { [weak self, weak model] in
+            guard let self, let model else { return }
+            self.undo(id, model: model, reduceMotion: reduceMotion)
+        })
+        // The current value is this note; any later one (nil, or another note) means it went away.
+        hold.watch = model.$notice.dropFirst().sink { [weak self, weak model] text in
+            guard text != note else { return }
+            Task { @MainActor [weak self, weak model] in
+                guard let self, let model else { return }
+                self.commit(id, model: model)
+            }
+        }
+        hold.deadline = Task { [weak self, weak model] in
+            do { try await Task.sleep(for: Self.longestHold) } catch { return }
+            guard let self, let model else { return }
+            self.commit(id, model: model)
+        }
+        holds[id] = hold
+    }
+
+    /// "DECISION 4 dismissed.", "Task 2 completed.": what changed, in the note that offers Undo.
+    static func note(_ card: WidgetCard, state: String) -> String {
+        let name = card.kind == "todo"
+            ? card.number.map { "Task \($0)" } ?? "Task"
+            : card.number.map { "DECISION \($0)" } ?? "Decision"
+        return name + (state == "implemented" ? " completed." : " dismissed.")
+    }
+
+    private func commit(_ id: String, model: WidgetModel) {
+        guard let hold = holds.removeValue(forKey: id) else { return }
+        hold.watch?.cancel()
+        hold.deadline?.cancel()
+        // Its Undo could not take the change back any more.
+        if model.notice == hold.note { model.notice = nil }
+        model.action(hold.request, failed: { [weak self] in
+            // The log refused it (the item changed elsewhere): the card shows its real state again, and the error
+            // line says why.
+            if self?.moves[id] == hold.move { self?.moves[id] = nil }
+        }, completed: { [weak self] in
+            // The card keeps its new look until a snapshot carries the newer revision; then the entry is inert.
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .seconds(30))
+                if self?.moves[id] == hold.move { self?.moves[id] = nil }
+            }
+        })
+    }
+
+    private func undo(_ id: String, model: WidgetModel, reduceMotion: Bool) {
+        guard let hold = holds.removeValue(forKey: id) else { return }
+        hold.watch?.cancel()
+        hold.deadline?.cancel()
+        moves[id] = nil
+        GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.remove(id) }
+        model.postNote("Undone.")
     }
 }
 

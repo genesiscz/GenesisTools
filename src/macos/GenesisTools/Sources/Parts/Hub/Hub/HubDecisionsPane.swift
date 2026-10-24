@@ -115,7 +115,7 @@ struct DecisionsView: View {
             .frame(width: 210)
             .instantTooltip("Which decisions to show")
             // Short enough for the pane's header; the whole explanation is the tooltip (it was cut mid-sentence, H19).
-            Text("A click marks an option · Send delivers")
+            Text("A click stages an option · Send delivers")
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .lineLimit(1)

@@ -18,6 +18,10 @@ public struct WidgetSessionBrowser: View {
     public var body: some View {
         let _ = RenderProbe.hit("widget.sessions")
         let groups = WidgetAgentTree.groups(model.snapshot?.sessions ?? [], query: query, onlyPinned: onlyPinned)
+        // The rows in the order drawn, for the arrow keys.
+        let order = groups.prefix(limit).flatMap { group in
+            [group.parent.key] + (isOpen(group) ? group.children.map(\.session.key) : [])
+        }
         LazyVStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -74,6 +78,8 @@ public struct WidgetSessionBrowser: View {
         }
         .onChange(of: query) { _, _ in limit = 40 }
         .onChange(of: onlyPinned) { _, _ in limit = 40 }
+        .onChange(of: order, initial: true) { _, keys in model.sessionListOrder = keys }
+        .onDisappear { model.sessionListOrder = [] }
     }
 
     private var projectFilter: some View {
@@ -128,14 +134,14 @@ public struct WidgetSessionBrowser: View {
         let selected = session.key == model.selectedKey
         return WidgetHoverRow { hovering in HStack(alignment: .center, spacing: 2) {
             if group.children.isEmpty {
-                Color.clear.frame(width: 18, height: 18)
+                Color.clear.frame(width: 22, height: 22)
             } else {
                 Button { toggle(group) } label: {
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary).rotationEffect(.degrees(isOpen(group) ? 90 : 0))
-                        .frame(width: 18, height: 26).contentShape(Rectangle())
+                        .frame(width: 16, height: 16).contentShape(Rectangle())
                 }
-                .buttonStyle(.genHoverPlain())
+                .buttonStyle(.genHoverIcon(diameter: 22))
                 .instantTooltip(isOpen(group) ? "Hide its sub-agents" : "Show its \(Plural.count(group.children.count, "sub-agent"))")
                 .accessibilityLabel((isOpen(group) ? "Hide sub-agents of " : "Show sub-agents of ") + session.title)
                 .accessibilityIdentifier("widget.sessions.group." + group.id)
@@ -160,6 +166,8 @@ public struct WidgetSessionBrowser: View {
             trailing(session, hovering: hovering)
         } }
         .padding(.horizontal, 4)
+        .accessibilityAction(named: "Open cmux for " + session.title) { model.requestCmux(session.key, scope: "sessions") }
+        .id(session.key)
         .background(selected ? Color.blue.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? Color.blue.opacity(0.35) : .clear))
     }
@@ -189,6 +197,8 @@ public struct WidgetSessionBrowser: View {
             trailing(session, hovering: hovering)
         } }
         .padding(.leading, CGFloat(min(depth, 4)) * 14).padding(.trailing, 4)
+        .accessibilityAction(named: "Open cmux for " + session.title) { model.requestCmux(session.key, scope: "sessions") }
+        .id(session.key)
         .background(selected ? Color.blue.opacity(0.13) : .clear, in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(selected ? Color.blue.opacity(0.35) : .clear))
     }
@@ -198,7 +208,7 @@ public struct WidgetSessionBrowser: View {
     private func trailing(_ session: WidgetSession, hovering: Bool) -> some View {
         HStack(spacing: 0) {
             WidgetCmuxButton(model: model, session: session, size: 10.5,
-                             live: hovering || session.key == model.selectedKey)
+                             live: hovering || session.key == model.selectedKey, requestScope: "sessions")
             Button {
                 model.action(["action": "visibility", "key": .string(session.key), "pinned": .bool(!session.pinned)])
             } label: {

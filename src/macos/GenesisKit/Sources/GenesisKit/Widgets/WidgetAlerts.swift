@@ -25,14 +25,27 @@ public enum WidgetAlerts {
         items.filter(\.needsAnswer).max { $0.at < $1.at } ?? items.max { $0.at < $1.at }
     }
 
-    /// The popup's first line.
+    /// The popup's first line: "Decision 4", "New question", "New answer". Sentence case, one word per thing.
     public static func kicker(_ item: WidgetInboxItem) -> String {
         switch item.kind {
-        case "decision": return item.number.map { "New decision · DECISION \($0)" } ?? "New decision"
+        case "decision": return item.number.map { "Decision \($0)" } ?? "New decision"
         case "form": return "New question"
         case "answer": return "New answer"
         default: return "New in the inbox"
         }
+    }
+
+    /// What VoiceOver says when an alert arrives: what it is, its title and the session that sent it.
+    public static func announcement(_ item: WidgetInboxItem, session: String?) -> String {
+        var parts = [kicker(item)]
+        if let title = item.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty { parts.append(title) }
+        if let session, !session.isEmpty { parts.append("from " + session) }
+        return parts.joined(separator: ", ")
+    }
+
+    /// Seconds the alert popup stays while the pointer is not on it (`alertPopupSeconds`, default 7).
+    public static func popupSeconds(_ preferences: WidgetPreferences?) -> Double {
+        max(3, min(60, preferences?.alertPopupSeconds ?? 7))
     }
 
     /// The sound for a burst: `alertSound` when anything in it waits for an answer, else the answers' own sound

@@ -846,7 +846,6 @@ struct InboxListView: View {
                     }
                 }
                 .frame(width: 16, height: 16)
-                IconButton(systemName: "arrow.clockwise", tooltip: "Look for waiting sessions again") { inbox.load() }
             }
             .padding(.horizontal, 14)
             .padding(.bottom, 6)
@@ -857,8 +856,16 @@ struct InboxListView: View {
                             .skeletonShimmer()
                             .accessibilityElement(children: .ignore)
                             .accessibilityLabel("Looking for waiting sessions")
+                    } else if rows.isEmpty, let failure = inbox.error {
+                        InboxLoadFailure(raw: failure) { inbox.load() }
+                            .padding(14)
+                    } else if rows.isEmpty, !inbox.sessions.isEmpty, !model.filter.trimmed.isEmpty {
+                        EmptyState(
+                            text: "No session matches “\(model.filter)”",
+                            actionTitle: "Clear filter"
+                        ) { model.filter = "" }
                     } else if rows.isEmpty {
-                        Text(inbox.error ?? "Nothing is waiting for you.")
+                        Text("Nothing is waiting for you.")
                             .font(.system(size: 12))
                             .foregroundColor(ReviewPalette.dim)
                             .padding(14)
@@ -899,9 +906,28 @@ struct InboxListView: View {
     }
 }
 
+/// A failed load of the Inbox: one sentence and a retry; the raw failure sits behind Details.
+private struct InboxLoadFailure: View {
+    let raw: String
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            NoticePill(text: "Could not load the waiting sessions.", more: raw, tone: .error)
+            GhostButton("Try again", symbol: "arrow.clockwise", tooltip: "Look for waiting sessions again", action: retry)
+        }
+    }
+}
+
 private struct InboxSessionRow: View {
     let session: InboxSession
     let selected: Bool
+
+    private var waitingText: String {
+        session.isStale
+            ? "\(Plural.count(session.waiting, "open item")), quiet for three days: not counted as waiting"
+            : "\(Plural.count(session.waiting, "answer")) waiting"
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
@@ -929,9 +955,9 @@ private struct InboxSessionRow: View {
                     .foregroundColor(session.isStale ? ReviewPalette.dim : .black)
                     .frame(minWidth: 18, minHeight: 18)
                     .background(Capsule().fill(session.isStale ? Color.white.opacity(0.08) : InboxStyle.accent))
-                    .instantTooltip(session.isStale
-                        ? "\(Plural.count(session.waiting, "open item")), quiet for three days: not counted as waiting"
-                        : "\(Plural.count(session.waiting, "answer")) waiting")
+                    .instantTooltip(waitingText)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text(waitingText))
             } else {
                 Badge("queued", color: ReviewPalette.modified, look: .filled)
                     .instantTooltip("Answered; the session's next prompt receives it. Nothing waits for you here.")
@@ -971,12 +997,24 @@ struct InboxMain: View {
                     LazyVStack(alignment: .leading, spacing: 22) {
                         if rows.isEmpty, inbox.loading {
                             PaneSkeleton("Looking for waiting sessions")
-                        } else if rows.isEmpty {
-                            Text("No session is waiting for an answer.")
-                                .font(.system(size: 13))
-                                .foregroundColor(ReviewPalette.dim)
+                        } else if rows.isEmpty, let failure = inbox.error {
+                            InboxLoadFailure(raw: failure) { inbox.load() }
                                 .frame(maxWidth: .infinity)
                                 .padding(.top, 40)
+                        } else if rows.isEmpty, !inbox.sessions.isEmpty, !model.filter.trimmed.isEmpty {
+                            EmptyState(
+                                text: "No session matches “\(model.filter)”",
+                                actionTitle: "Clear filter"
+                            ) { model.filter = "" }
+                            .padding(.top, 40)
+                        } else if rows.isEmpty {
+                            EmptyState(
+                                symbol: "tray",
+                                text: "No session is waiting for an answer.",
+                                actionTitle: "Look again",
+                                action: { inbox.load() }
+                            )
+                            .padding(.top, 40)
                         }
                         ForEach(rows.filter { !$0.isQueuedOnly }) { session in
                             InboxSessionSection(model: model, inbox: inbox, session: session)
@@ -1179,7 +1217,7 @@ private struct InboxSessionSection: View {
 
 /// One session's Send: "Send N answers to <session>", the exact message under it, then where it went
 /// (or why it did not, with Resume elsewhere). Shared by the Inbox section and the Decisions pane, so
-/// both send the same way: every marked answer as one message through `tools question inbox send`.
+/// both send the same way: every staged answer as one message through `tools question inbox send`.
 struct InboxSendBar: View {
     @ObservedObject var model: HubModel
     @ObservedObject var inbox: HubInboxModel
@@ -1188,6 +1226,12 @@ struct InboxSendBar: View {
     private var drafted: [InboxItem] { session.draftedItems }
     private var sending: Bool { session.sessionId.map { inbox.sendingSessions.contains($0) } ?? false }
     private var result: InboxDelivery? { session.sessionId.flatMap { inbox.sessionResults[$0] } }
+    private var ownsShortcut: Bool {
+        guard !drafted.isEmpty else { return false }
+        if inbox.selectedID == session.id { return true }
+        let staging = inbox.sessions.filter { !$0.draftedItems.isEmpty }
+        return staging.count == 1 && staging[0].id == session.id
+    }
 
     /// The message the Send button will type, previewed under it.
     static func preview(_ drafted: [InboxItem]) -> String {
@@ -1210,8 +1254,10 @@ struct InboxSendBar: View {
                     Button {
                         inbox.sendSession(session)
                     } label: {
-                        Label(sending ? "Sending…" : "Send \(drafted.count) answer\(drafted.count == 1 ? "" : "s") to \(session.displayTitle)", systemImage: "paperplane.fill")
+                        Label(sending ? "Sending…" : "Send \(Plural.count(drafted.count, "answer")) to \(session.displayTitle)", systemImage: "paperplane.fill")
                             .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                             .foregroundColor(drafted.isEmpty ? ReviewPalette.dim : .black)
                             .padding(.horizontal, 12)
                             .frame(height: 28)
@@ -1219,7 +1265,10 @@ struct InboxSendBar: View {
                     }
                     .buttonStyle(.genHoverPlain())
                     .disabled(drafted.isEmpty || sending || session.sessionId == nil)
-                    .instantTooltip("Send every marked answer to the agent as one message")
+                    // One session answers the chord: the selected one, or the only one with staged answers.
+                    .keyboardShortcut(ownsShortcut ? KeyboardShortcut(.return, modifiers: .command) : nil)
+                    .instantTooltip("Send every staged answer to the agent as one message (⌘↩)")
+                    .accessibilityHint(Text("Command-Return"))
                     if sending {
                         ProgressView().controlSize(.small)
                     }
@@ -1626,7 +1675,7 @@ struct InboxDecisionCard: View {
         .buttonStyle(.genHoverRow(accent: .white, cornerRadius: 7))
         .disabled(!pickable)
         .instantTooltip(pickable
-            ? (chosen ? "Click to unmark \(choice.id))  ·  ⌘-click to add another" : "Mark \(choice.id))  ·  ⌘-click to add a second")
+            ? (chosen ? "Click to unstage \(choice.id))  ·  ⌘-click to add another" : "Stage \(choice.id))  ·  ⌘-click to stage a second")
             : "Already \(item.status)")
     }
 
@@ -2221,9 +2270,10 @@ private struct InboxFormCard: View {
                                     .foregroundColor(.white)
                                     .background(Circle().fill(Color.black.opacity(0.6)))
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.genHoverPlain())
                             .offset(x: 4, y: -4)
                             .instantTooltip("Remove this image")
+                            .accessibilityLabel(Text("Remove image"))
                         }
                     }
                 }

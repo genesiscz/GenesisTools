@@ -39,7 +39,7 @@ struct WidgetHostView: View {
 
     private var sideMetrics: WidgetSideStripMetrics {
         WidgetSideStripMetrics(classic: classicSide, moduleIDs: moduleIDs,
-            visibleSessionCount: model.railActivitySessions.count, hasInboxBadge: model.inboxCount > 0)
+            visibleSessionCount: model.railActivitySessions.count, hasInboxBadge: model.waitingCount > 0)
     }
 
     private var shape: EdgePanelShape {
@@ -152,26 +152,29 @@ struct WidgetHostView: View {
                         Text(selected?.id == "agents" ? "Agents" : selected?.title ?? "Widgets")
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    if selected?.id == "agents", model.inboxCount > 0 {
-                        WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
+                    if selected?.id == "agents", model.waitingCount > 0 {
+                        WidgetInboxCount(count: model.waitingCount, needsAnswer: true,
                             pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
                     }
                 }.fixedSize()
             }
             .buttonStyle(.genHoverPlain())
             .accessibilityLabel("Open " + (selected?.title ?? "widgets"))
+            .accessibilityValue(selected?.id == "agents" ? Self.waitingValue(model.waitingCount) : "")
             .accessibilityIdentifier("widget.primary." + surface.key)
             .instantTooltip(Self.moduleTooltip(id: selected?.id, title: selected?.title ?? "Widgets", inbox: model.inbox))
             HStack(spacing: 8) {
                 if selected?.id == "agents" {
-                    HStack(spacing: 5) {
+                    // No spacing between the buttons: each bubble takes half the 5 pt gap as its own target (R2).
+                    HStack(spacing: 0) {
                         ForEach(Array(model.railActivitySessions.prefix(3))) { session in
                             Button {
                                 model.toggleSession(session.key, on: surface)
                             } label: {
                                 sessionActivity(session)
                                     .frame(minWidth: 30, minHeight: 30).fixedSize()
-                                    .modifier(bubbleChrome(session))
+                                    .modifier(bubbleChrome(session, hitPadding: EdgeInsets(
+                                        top: 0, leading: Self.topBubbleGap / 2, bottom: 0, trailing: Self.topBubbleGap / 2)))
                             }.buttonStyle(.plain)
                                 .instantTooltip(model.bubbleTooltip(sessionTooltip(session)))
                                 .accessibilityLabel(sessionSummary(session))
@@ -179,6 +182,8 @@ struct WidgetHostView: View {
                                 .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
                         }
                     }
+                    // The outer bubbles' halves of the gap reach past the row; the row keeps its old width.
+                    .padding(.horizontal, -Self.topBubbleGap / 2)
                 }
                 ForEach(Array(moduleIDs.filter { $0 != selected?.id }.prefix(4)), id: \.self) { id in
                     moduleButton(id, size: 25, location: "strip")
@@ -273,18 +278,23 @@ struct WidgetHostView: View {
         ForEach(moduleIDs, id: \.self) { id in
             moduleButton(id, size: sideMetrics.moduleSize, location: "rail")
             if id == "agents", sideMetrics.sessionCount > 0 {
-                VStack(spacing: WidgetSideStripMetrics.sessionSpacing) {
+                // No spacing between the buttons: each bubble takes half the gap above and below it, and the rail's
+                // spare width beside it, as its own target, so no click between two bubbles is lost (R2).
+                VStack(spacing: 0) {
                     ForEach(Array(model.railActivitySessions.prefix(sideMetrics.sessionCount))) { session in
                         Button {
                             model.toggleSession(session.key, on: surface)
                         } label: {
                             sessionActivity(session)
                                 .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
-                                .modifier(bubbleChrome(session))
+                                .modifier(bubbleChrome(session, hitPadding: WidgetSideStripMetrics.sessionHitPadding))
                                 .overlay(alignment: .bottomTrailing) {
                                     // Which agent the count belongs to, at a glance; the tooltip names the session.
+                                    // Inset by the hit padding, so it sits on the bubble's corner as before.
                                     AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 11)
                                         .opacity(0.85).allowsHitTesting(false)
+                                        .padding(.bottom, WidgetSideStripMetrics.sessionHitPadding.bottom)
+                                        .padding(.trailing, WidgetSideStripMetrics.sessionHitPadding.trailing)
                                 }
                         }
                         .buttonStyle(.plain)
@@ -294,6 +304,9 @@ struct WidgetHostView: View {
                         .onHover { model.hoverSession(session.key, on: surface, inside: $0) }
                     }
                 }
+                // The first and last bubbles' halves of the gap reach into the stack's neighbours' spacing, so the
+                // stack keeps the height `WidgetSideStripMetrics.minimumHeight` counts.
+                .padding(.vertical, -WidgetSideStripMetrics.sessionSpacing / 2)
             }
         }
     }
@@ -352,7 +365,15 @@ struct WidgetHostView: View {
 
     private func previewPane(_ selected: WidgetModuleDescriptor) -> some View {
         VStack(spacing: 0) {
-            if selected.id == "agents" {
+            if selected.id == "agents", let item = model.peekItem {
+                // The alert popup (`showPeek`): one item, a click answers it, × or Esc closes it. Measured like the
+                // hover list, so the panel takes the popup's own height.
+                WidgetPeekView(model: model, item: item)
+                    .padding(.horizontal, 6).padding(.vertical, 8)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { model.reportPreviewFit($0) }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            } else if selected.id == "agents" {
                 AgentWidgetPreview(model: model, surface: surface)
             } else {
                 Button(action: expand) {
@@ -380,9 +401,17 @@ struct WidgetHostView: View {
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
-    /// Inbox counts describe only the Agents module; every other module button names its module.
+    /// Inbox counts describe only the Agents module; every other module button names its module. The badge counts
+    /// what waits for your answer (the hub's Inbox count); unread answers are only named here.
     static func moduleTooltip(id: String?, title: String, inbox: WidgetInboxSummary) -> String {
-        id == "agents" ? "Inbox: \(inbox.unread) unread, \(inbox.needsAnswer) need an answer" : title
+        guard id == "agents" else { return title }
+        let waiting = max(0, inbox.needsAnswer), unread = max(0, inbox.unread)
+        return "Inbox: \(waiting) waiting for your answer, \(unread) unread"
+    }
+
+    /// The badge's count for VoiceOver, which the button's own label would otherwise hide.
+    static func waitingValue(_ count: Int) -> String {
+        count > 0 ? "\(count) waiting for your answer" : "Nothing waits for you"
     }
 
     private func moduleButton(_ id: String, size: CGFloat, location: String = "content") -> some View {
@@ -396,13 +425,13 @@ struct WidgetHostView: View {
                     .font(.system(size: 13, weight: .medium))
                     .frame(height: 16)
                     .foregroundStyle(classicSide ? Color.white : registry.module(id)?.tint ?? .secondary)
-                if id == "agents", model.inboxCount > 0 {
-                    WidgetInboxCount(count: model.inboxCount, needsAnswer: model.inbox.needsAnswer > 0,
+                if id == "agents", model.waitingCount > 0 {
+                    WidgetInboxCount(count: model.waitingCount, needsAnswer: true,
                         pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion,
                         complete: model.inbox.complete, compact: true)
                 }
             }
-                .frame(minWidth: size, minHeight: surface.edge != .top && id == "agents" && model.inboxCount > 0
+                .frame(minWidth: size, minHeight: surface.edge != .top && id == "agents" && model.waitingCount > 0
                     ? WidgetSideStripMetrics.badgedModuleHeight : size)
                 .background(
                     selected?.id == id && presentation != .compact ? Color.white.opacity(0.09) : .clear,
@@ -411,15 +440,19 @@ struct WidgetHostView: View {
         .buttonStyle(.genHoverPlain())
         .instantTooltip(Self.moduleTooltip(id: id, title: registry.module(id)?.title ?? id, inbox: model.inbox))
         .accessibilityLabel("Open " + (registry.module(id)?.title ?? id))
+        .accessibilityValue(id == "agents" ? Self.waitingValue(model.waitingCount) : "")
         .accessibilityIdentifier("widget." + location + "." + surface.key + "." + id)
     }
 
+    /// The top strip's gap between two session bubbles, which the bubbles split as hit padding.
+    static let topBubbleGap: CGFloat = 5
+
     /// The bubble's hover ring and the alert flash, in place of the rectangular hover plate of `.genHoverPlain`.
-    private func bubbleChrome(_ session: WidgetSession) -> WidgetBubbleChrome {
+    private func bubbleChrome(_ session: WidgetSession, hitPadding: EdgeInsets = EdgeInsets()) -> WidgetBubbleChrome {
         var style = model.attentionStyle
         style.cornerRadius = 17
         return WidgetBubbleChrome(trigger: model.attentionTrigger(session.key), attention: style,
-            reduceMotion: model.effectiveReduceMotion, since: model.attentionStart(session.key))
+            reduceMotion: model.effectiveReduceMotion, since: model.attentionStart(session.key), hitPadding: hitPadding)
     }
 
     private func sessionActivity(_ session: WidgetSession) -> some View {
@@ -477,10 +510,17 @@ struct WarmPaneVisibility: ViewModifier {
     }
 }
 
-/// The alert popup: what arrived and from which session. A click opens it in the inbox.
+/// The alert popup: what arrived and from which session. A click opens it in the inbox; the close button, Esc while the
+/// widget has the keyboard, and VoiceOver's escape gesture close it without opening anything.
 struct WidgetPeekView: View {
     @ObservedObject var model: WidgetModel
     let item: WidgetInboxItem
+
+    /// The kicker names the decision ("Decision 4"), so the title under it does not repeat the number.
+    private var title: String {
+        let plain = item.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return plain.isEmpty ? "Open the inbox to see it." : plain
+    }
 
     var body: some View {
         Button {
@@ -496,22 +536,34 @@ struct WidgetPeekView: View {
                     Spacer(minLength: 0)
                     LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
                         .font(.system(size: 10)).foregroundStyle(.secondary)
+                    // Room for the close button, which sits over this corner outside the row button.
+                    Color.clear.frame(width: 18, height: 1)
                 }
-                Text(item.numberedTitle ?? "Open the inbox to see it.").font(.system(size: 12.5, weight: .medium))
+                Text(title).font(.system(size: 12.5, weight: .medium))
                     .lineLimit(3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
                 if let session = model.session(forKey: item.key) {
-                    Text(session.title + " · " + session.project).font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    Text([session.title, session.project].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
                 }
-                Text(item.needsAnswer ? "Click to answer" : "Click to read").font(.system(size: 10))
-                    .foregroundStyle(.tertiary)
+                Text(item.needsAnswer ? "Click to answer" : "Click to read").font(.system(size: 11))
+                    .foregroundStyle(.secondary)
             }
+            .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(RowButtonStyle(cornerRadius: 10))
         .attentionPulse(trigger: model.attentionTrigger(item.key), style: popupAttention, since: model.attentionStart(item.key))
-        .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + (item.numberedTitle ?? ""))
+        .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + title)
+        .accessibilityAction(.escape) { model.dismissPeek() }
+        .accessibilityAction(named: "Close") { model.dismissPeek() }
+        .overlay(alignment: .topTrailing) {
+            IconButton(systemName: "xmark", tooltip: "Close without opening it", size: 10) { model.dismissPeek() }
+                .accessibilityLabel("Close the alert")
+                .accessibilityIdentifier("widget.peek.close")
+                .padding(.top, 3).padding(.trailing, 3)
+        }
     }
 
     private var popupAttention: AttentionPulseStyle {

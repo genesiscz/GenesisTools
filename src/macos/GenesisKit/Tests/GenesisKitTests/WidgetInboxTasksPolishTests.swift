@@ -637,6 +637,65 @@ final class WidgetInboxPolishTests: XCTestCase {
         XCTAssertEqual(WidgetAlerts.flashSeconds(try prefs(#"{"alertFlashSeconds":0}"#)), 0)
     }
 
+    /// The popup says "Decision 4", not "New decision · DECISION 4"; VoiceOver hears what arrived and from where; the
+    /// popup's time and a note's time are settings (ux catalogue R4, R6, R10, R3).
+    func testAlertWordsAndTheTimesTheySettle() throws {
+        func prefs(_ json: String) throws -> WidgetPreferences {
+            let base = #"{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"side","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","#
+            return try JSONDecoder().decode(WidgetPreferences.self, from: Data((base + json.dropFirst()).utf8))
+        }
+        let decision = WidgetInboxItem(id: "decision:d_4_s", sourceId: "d_4_s", kind: "decision", key: "k", at: 1,
+            needsAnswer: true, title: "Keep the cache?", number: 4)
+        XCTAssertEqual(WidgetAlerts.kicker(decision), "Decision 4")
+        XCTAssertEqual(WidgetAlerts.announcement(decision, session: "Fixture session"),
+                       "Decision 4, Keep the cache?, from Fixture session")
+        let answer = WidgetInboxItem(id: "answer:a", sourceId: "a", kind: "answer", key: "k", at: 2, needsAnswer: false)
+        XCTAssertEqual(WidgetAlerts.announcement(answer, session: nil), "New answer")
+        XCTAssertEqual(WidgetAlerts.popupSeconds(nil), 7, "the popup stays 7 s by default")
+        XCTAssertEqual(WidgetAlerts.popupSeconds(try prefs(#"{"alertPopupSeconds":15}"#)), 15)
+        XCTAssertEqual(WidgetModel.noteSeconds(nil, hasAction: false), 6, "a note fades after 6 s by default")
+        XCTAssertEqual(WidgetModel.noteSeconds(nil, hasAction: true), 10, "a note with Undo or Send again stays 10 s")
+        XCTAssertEqual(WidgetModel.noteSeconds(try prefs(#"{"noteSeconds":20}"#), hasAction: true), 20)
+        XCTAssertNil(WidgetModel.noteSeconds(try prefs(#"{"noteSeconds":0}"#), hasAction: false), "0 keeps it")
+        XCTAssertEqual(try prefs(#"{}"#).openShortcutChord, .defaultOpen, "the shortcut is on, ⌃⌥⌘W, by default")
+        XCTAssertNil(try prefs(#"{"openShortcutEnabled":false}"#).openShortcutChord)
+        XCTAssertEqual(try prefs(#"{"openShortcut":{"keyCode":2,"modifiers":6400}}"#).openShortcutChord,
+                       WidgetShortcutChord(keyCode: 2, modifiers: 6400))
+    }
+
+    /// The rail badge counts what waits for an answer, the hub's Inbox count; unread answers do not (R1). A lost
+    /// connection says one sentence and keeps the stderr for Details; a cleared or new error drops it (R11).
+    @MainActor
+    func testTheBadgeCountsWaitingItemsAndAnErrorKeepsItsDetailApart() {
+        let defaults = UserDefaults(suiteName: "widget.badge.\(UUID().uuidString)")!
+        let model = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults)
+        model.updateInbox(WidgetInboxSummary(unread: 120, needsAnswer: 3, complete: true, truncated: false, sessions: []))
+        XCTAssertEqual(model.waitingCount, 3)
+        XCTAssertEqual(model.inboxCount, 123, "Mark all read still sees every unread item")
+        model.fail(WidgetModel.connectionLostMessage, detail: "  error: watch exited 1\n")
+        XCTAssertEqual(model.error, WidgetModel.connectionLostMessage)
+        XCTAssertEqual(model.errorDetail, "error: watch exited 1")
+        model.error = "Another failure."
+        XCTAssertNil(model.errorDetail, "a new error does not show the old one's details")
+        model.fail("Third.", detail: "raw")
+        model.error = nil
+        XCTAssertNil(model.errorDetail)
+        model.postNote("Saved.", action: WidgetNoticeAction(title: "Undo") {})
+        XCTAssertEqual(model.notice, "Saved.")
+        XCTAssertEqual(model.noticeAction?.title, "Undo")
+        model.postNote("Next note.")
+        XCTAssertNil(model.noticeAction, "a new note drops the old note's button")
+    }
+
+    func testListKeysStopAtTheEnds() {
+        XCTAssertEqual(WidgetModel.listTarget(current: nil, step: 1, count: 3), 0)
+        XCTAssertEqual(WidgetModel.listTarget(current: nil, step: -1, count: 3), 2)
+        XCTAssertEqual(WidgetModel.listTarget(current: 2, step: 1, count: 3), 2)
+        XCTAssertEqual(WidgetModel.listTarget(current: 0, step: -1, count: 3), 0)
+        XCTAssertEqual(WidgetModel.listTarget(current: 1, step: 1, count: 3), 2)
+        XCTAssertNil(WidgetModel.listTarget(current: nil, step: 1, count: 0))
+    }
+
     @MainActor
     func testFlashingOneSessionLeavesEveryOtherSessionsTriggerAlone() {
         let defaults = UserDefaults(suiteName: "widget.attention.\(UUID().uuidString)")!
@@ -678,6 +737,41 @@ final class WidgetInboxPolishTests: XCTestCase {
         XCTAssertEqual(LiveWidgetView.filtered(cards, by: "inbox").map(\.kind), ["answer", "result", "form"])
         XCTAssertEqual(LiveWidgetView.filtered(cards, by: "decisions").map(\.kind), ["decision", "todo"])
         XCTAssertEqual(LiveWidgetView.filtered(cards, by: "all").count, 5)
+    }
+
+    /// Each ledger state reads as one phrase in every tab (P20), a decision event as words without its row id (P21),
+    /// and the Undo note names what changed (P3).
+    @MainActor
+    func testStatesEventsAndUndoNotesAreWordsNotRawValues() {
+        XCTAssertEqual(LiveWidgetView.statusPhrase("answered", kind: "decision"), "Waiting to send")
+        XCTAssertEqual(LiveWidgetView.statusPhrase("answered", kind: "form"), "Answered")
+        XCTAssertEqual(LiveWidgetView.statusPhrase("implemented", kind: "todo"), "Completed")
+        XCTAssertEqual(LiveWidgetView.statusPhrase("waiting-route", kind: "other"), "Waiting route",
+                       "an unknown state is sentence case, never Waiting-Route")
+        let form = WidgetCard(id: "form:f1", kind: "form", sessionKey: "k", sourceId: "f1", at: 1, title: "Q", body: "",
+                              status: "answered", choices: [], attachments: [], refs: [], read: true)
+        XCTAssertEqual(LiveWidgetView.kindLabel(form), "Question · Answered")
+
+        let delivered = WidgetActivityEvent(id: "e1", sourceId: "d_4_s", at: 1, title: "Decision delivery",
+                                            body: "sent · cmux")
+        XCTAssertEqual(LiveWidgetView.activityLine(delivered, number: 4, provider: "claude"),
+                       .init(title: "Answer delivered", detail: "DECISION 4 · Sent · through cmux"))
+        XCTAssertEqual(LiveWidgetView.activityLine(delivered, number: nil, provider: "claude").detail,
+                       "Claude · Sent · through cmux", "without the card, the provider's name, never d_4_s")
+        let failed = WidgetActivityEvent(id: "e2", sourceId: "d_4_s", at: 1, title: "Decision send_failed",
+                                         body: "answered · something-new")
+        XCTAssertEqual(LiveWidgetView.activityLine(failed, number: 4, provider: "codex"),
+                       .init(title: "Answer not delivered", detail: "DECISION 4 · Waiting to send"),
+                       "a value the widget has no words for is left out")
+
+        let decision = WidgetCard(id: "decision:d_4_s", kind: "decision", sessionKey: "k", sourceId: "d_4_s", at: 1,
+                                  title: "T", body: "", status: "open", revision: 1, number: 4, choices: [],
+                                  attachments: [], refs: [], read: true)
+        XCTAssertEqual(WidgetLedgerUndo.note(decision, state: "dismissed"), "DECISION 4 dismissed.")
+        let task = WidgetCard(id: "decision:t_2_s", kind: "todo", sessionKey: "k", sourceId: "t_2_s", at: 1,
+                              title: "T", body: "", status: "open", revision: 1, number: 2, choices: [],
+                              attachments: [], refs: [], read: true)
+        XCTAssertEqual(WidgetLedgerUndo.note(task, state: "implemented"), "Task 2 completed.")
     }
 
     @MainActor
@@ -849,6 +943,55 @@ final class WidgetAnswerTargetTests: XCTestCase {
         XCTAssertEqual(key("j", keyCode: 0x26, answering: card), .previous)
         XCTAssertEqual(key("", keyCode: 53, answering: card), .collapse)
     }
+
+    /// Dismiss shows at once and offers Undo; Undo sends nothing and keeps the decision open; the change reaches the
+    /// decision log only when its note goes away, with the session and revision of the click (P3).
+    func testDismissWaitsForItsUndoNoteAndUndoKeepsTheDecisionOpen() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("widget-undo-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appendingPathComponent("native-submissions"),
+                                                withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget.undo." + UUID().uuidString))
+        let model = WidgetModel(binaryPath: "/fixture/no-process", stateRoot: root.path, defaults: defaults,
+                                appearance: NativeSettingsAppearance(defaults: defaults,
+                                    notificationNamespace: "undo." + UUID().uuidString, observeExternalChanges: false))
+        defer { model.stop() }
+        final class Sent { var requests: [WidgetJSON] = [] }
+        let sent = Sent()
+        // Only the decision log's moves: opening the card also marks it read.
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == .string("ledger") { sent.requests.append(value) }
+            return .null
+        }
+        let card = decision()
+        model.receive([try snapshot(card)])
+        if model.selectedKey != key { model.select(key) }
+        model.openCard(card)
+        let undo = WidgetLedgerUndo()
+
+        undo.hold(card, to: "dismissed", model: model, reduceMotion: true)
+        XCTAssertEqual(undo.applied(card).status, "dismissed", "the card shows the change at once")
+        XCTAssertFalse(undo.applied(card).needsAnswer)
+        XCTAssertNil(model.answerCard, "folded, the number keys no longer answer it")
+        XCTAssertEqual(model.notice, "DECISION 1 dismissed.")
+        XCTAssertEqual(model.noticeAction?.title, "Undo")
+        model.noticeAction?.run()
+        XCTAssertEqual(undo.applied(card).status, "open")
+        XCTAssertEqual(model.answerCard?.id, card.id, "Undo opens the card again")
+        XCTAssertEqual(model.notice, "Undone.")
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(sent.requests.isEmpty, "an undone change never reaches the log")
+
+        undo.hold(card, to: "dismissed", model: model, reduceMotion: true)
+        XCTAssertTrue(sent.requests.isEmpty, "nothing is sent while the note can still undo it")
+        model.notice = nil
+        let deadline = Date().addingTimeInterval(2)
+        while sent.requests.isEmpty, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(sent.requests, [.object([
+            "action": "ledger", "id": "d_1_fixture", "sessionId": "fixture", "expectedRevision": .number(1),
+            "state": "dismissed",
+        ])])
+    }
 }
 
 /// The camera button when macOS refuses the screenshot.
@@ -1015,8 +1158,9 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertEqual(model.expanded, .right, "and keeps the panel open while it asks")
 
         model.resolveStagedLeave("send")
-        XCTAssertNil(model.expanded)
+        XCTAssertEqual(model.expanded, .right, "the panel stays open until the hub answers")
         try await Task.sleep(for: .milliseconds(200))
+        XCTAssertNil(model.expanded, "and closes once every answer was delivered")
         XCTAssertEqual(names(actions).last, "send-staged")
         XCTAssertEqual(WidgetModel.stagedSummary(model.stagedItems), "1 decision will be sent to 1 session")
     }
@@ -1043,7 +1187,8 @@ final class WidgetStagingTests: XCTestCase {
 
         model.sendStaged(["d1"])
         try await Task.sleep(for: .milliseconds(200))
-        XCTAssertEqual(model.notice, "Not delivered to Staged fixture: \(reason) The answers wait for its next prompt.")
+        XCTAssertEqual(model.notice, "Not delivered to Staged fixture: Several Claude terminals run this session, so none "
+            + "was picked. Close the extra one, then send again. The answers wait for its next prompt.")
         let again = try XCTUnwrap(model.noticeAction, "a send nobody took offers Send again")
         XCTAssertEqual(again.title, "Send again")
 
@@ -1059,6 +1204,83 @@ final class WidgetStagingTests: XCTestCase {
     /// The decision writes and sends among `actions`, without the selection and read marks around them.
     private func decisionActions(_ actions: [WidgetJSON]) -> [String] {
         names(actions).filter { ["ledger", "send-staged"].contains($0) }
+    }
+
+    /// Send now in the leave question: a send no session took keeps the panel open with the reason and Send again
+    /// (ux catalogue P1), and the next close does not ask about the same decisions again.
+    func testSendNowOnTheWayOutStaysOpenWhenNoSessionTookIt() async throws {
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { value in
+            guard case .object(let fields) = value, fields["action"] == .string("send-staged") else { return ["ok": true] }
+            return ["sent": 0, "queued": 1, "failed": 0, "sessions": [["session": "fixture-staged", "numbers": [7],
+                "result": ["delivered": false, "detail": "no cmux pane runs this session"]]]]
+        }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertTrue(model.stagedLeavePrompt)
+
+        model.resolveStagedLeave("send")
+        XCTAssertFalse(model.stagedLeavePrompt)
+        XCTAssertEqual(model.expanded, .right, "the panel waits for the hub's answer")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.expanded, .right, "a send no session took stays where the user can read it")
+        XCTAssertEqual(model.notice, "Not delivered to Staged fixture: No cmux pane runs this session. "
+            + "The answers wait for its next prompt.")
+        XCTAssertEqual(model.noticeAction?.title, "Send again")
+
+        model.requestCollapse()
+        XCTAssertFalse(model.stagedLeavePrompt, "these decisions were already sent; closing does not ask again")
+        XCTAssertNil(model.expanded)
+    }
+
+    /// A send that fails outright keeps the panel open with one sentence and the raw text behind Details, and the
+    /// decisions, still staged, are asked about again at the next close.
+    func testAFailedSendOnTheWayOutStaysOpenAndAsksAgainNextTime() async throws {
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { value in
+            guard case .object(let fields) = value, fields["action"] == .string("send-staged") else { return ["ok": true] }
+            throw ToolsBridgeError.refused("hub call exited 1: fixture stderr")
+        }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        model.expanded = .right
+        model.requestCollapse()
+        model.resolveStagedLeave("send")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.expanded, .right)
+        XCTAssertEqual(model.error, "The decisions could not be sent. They stay staged, so you can send them again.")
+        XCTAssertEqual(model.errorDetail, "hub call exited 1: fixture stderr")
+
+        model.requestCollapse()
+        XCTAssertTrue(model.stagedLeavePrompt, "still staged, so the next close asks again")
+    }
+
+    /// The hub's reasons for a send no session took read as sentences; the raw text stays for Details (P24).
+    func testTheHubsReasonsReadAsSentences() {
+        XCTAssertEqual(WidgetDecisionSendOutcome.sentence(
+            for: "The Claude worker is busy; the answer remains queued for a later turn."),
+            "Its worker is busy with another turn.")
+        XCTAssertEqual(WidgetDecisionSendOutcome.sentence(
+            for: "no cmux pane runs this session Saved for this exact session; awaiting a consumer acknowledgement."),
+            "No cmux pane runs this session.")
+        XCTAssertEqual(WidgetDecisionSendOutcome.sentence(for: "a reason the widget has not seen"),
+                       "No running agent took them.")
+        XCTAssertEqual(WidgetDecisionSendOutcome.sentence(for: nil), "No running agent took them.")
+
+        let outcome = WidgetDecisionSendOutcome(["sent": 0, "queued": 2, "failed": 0, "sessions": [
+            ["session": "s1", "numbers": [3], "result": ["delivered": false, "detail": "cmux is not running"]],
+            ["session": "s2", "numbers": [4], "result": ["delivered": false, "detail": "cmux is not running"]],
+        ]], titles: ["s1": "First", "s2": "Second"])
+        XCTAssertFalse(outcome.delivered)
+        XCTAssertEqual(outcome.details, "First: cmux is not running\nSecond: cmux is not running")
+        XCTAssertEqual(outcome.notice(items: [], staged: true), "Not delivered to 2 sessions: cmux is not running. "
+            + "The answers wait for each session's next prompt.")
     }
 
     func testKeepingStagedDecisionsDoesNotAskAgainForTheSameOnes() throws {
@@ -1315,6 +1537,67 @@ final class WidgetBubbleHitTests: XCTestCase {
         }
         pump(0.5)
         XCTAssertEqual(taps.count, 1, "a click on a bubble with no ring opens its session")
+    }
+
+    /// Two rail bubbles as the side rail stacks them: no spacing, half the gap as each one's hit padding.
+    struct RailPair: View {
+        @ObservedObject var upper: Taps
+        @ObservedObject var lower: Taps
+        var body: some View {
+            VStack(spacing: 0) {
+                bubble(upper)
+                bubble(lower)
+            }
+            .padding(.vertical, -WidgetSideStripMetrics.sessionSpacing / 2)
+            .frameProbe("rail")
+            .frame(width: 120, height: 120)
+        }
+
+        private func bubble(_ taps: Taps) -> some View {
+            Button { taps.count += 1 } label: {
+                Text("4").allowsHitTesting(false)
+                    .frame(width: WidgetSideStripMetrics.sessionWidth, height: WidgetSideStripMetrics.sessionHeight)
+                    .modifier(WidgetBubbleChrome(trigger: 0, attention: .borderFlash(color: .orange, cornerRadius: 17),
+                                                 reduceMotion: true, hitPadding: WidgetSideStripMetrics.sessionHitPadding))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    /// The 6 pt strip between two rail bubbles was dead (ux catalogue R2): its upper half now opens the upper session,
+    /// its lower half the lower one.
+    func testTheGapBetweenTwoRailBubblesBelongsToThem() throws {
+        _ = NSApplication.shared
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false }
+        let upper = Taps(), lower = Taps()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 120, height: 120), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = FirstClickHost(rootView: AnyView(RailPair(upper: upper, lower: lower)))
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.order(.below, relativeTo: 0)
+        defer { window.orderOut(nil); window.close() }
+        pump(0.6)
+        let frame = try XCTUnwrap(FrameProbe.frames["rail"])
+        XCTAssertEqual(frame.height, WidgetSideStripMetrics.sessionHeight * 2 + WidgetSideStripMetrics.sessionSpacing,
+                       accuracy: 0.5, "the stack keeps the height the rail metrics count")
+        // The drawn gap is the middle 6 pt of the stack: 1 pt above its centre is the upper half, 1 pt below the lower.
+        func click(_ topY: CGFloat) {
+            let point = NSPoint(x: frame.midX, y: 120 - topY)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                NSApp.postEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil,
+                    eventNumber: 0, clickCount: 1, pressure: 1)!, atStart: false)
+            }
+            pump(0.4)
+        }
+        click(frame.midY - 1.5)
+        XCTAssertEqual(upper.count, 1, "the gap's upper half opens the upper bubble")
+        click(frame.midY + 1.5)
+        XCTAssertEqual(lower.count, 1, "the gap's lower half opens the lower bubble")
     }
 
     /// Two rows on a glass panel with a gap between them, as the widget's hover list draws them.

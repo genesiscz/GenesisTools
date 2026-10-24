@@ -536,7 +536,7 @@ final class RecordingHostTests: XCTestCase {
         XCTAssertEqual(Array(video.prefix(3)), ["video", file.path, "--name"])
         XCTAssertTrue(video[3].hasPrefix("Screen recording "))
         XCTAssertEqual(staged, 1, "the shelf reopens to show the new capture")
-        XCTAssertEqual(store.notice, "Recording staged. Choose an inbox when you are ready.")
+        XCTAssertEqual(store.notice, "Recording added. Choose an inbox when you are ready.")
         XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
         XCTAssertFalse(store.canRecord, "a store made without a recorder offers no Record screen button")
     }

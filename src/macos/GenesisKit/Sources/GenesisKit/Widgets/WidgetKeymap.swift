@@ -22,8 +22,13 @@ public enum WidgetKeymap {
     public static let quit = "widget.app.quit"
     public static let paste = "widget.media.paste"
     public static let collapse = "widget.panel.collapse"
+    /// J and K: the previous and next session. The ids keep their old names, so saved keys still apply.
     public static let previous = "widget.message.previous"
     public static let next = "widget.message.next"
+    /// Up, Down and Return in the list on screen: the inbox of every session, a session's inbox, the sessions.
+    public static let listUp = "widget.list.up"
+    public static let listDown = "widget.list.down"
+    public static let listOpen = "widget.list.open"
     public static let previewClose = "widget.preview.close"
     public static let previewPrevious = "widget.preview.previous"
     public static let previewNext = "widget.preview.next"
@@ -37,7 +42,9 @@ public enum WidgetKeymap {
 
     public static let library = KeymapLibrary(id: "widget", title: "Agent Widget", commands: [
         KeymapCommand(settings, "Widget Sessions", group: "App", keys: [.character(",", .command)], scope: .app),
-        KeymapCommand(hub, "Open Hub", group: "App", keys: [.character("h", .command)], scope: .app),
+        // ⌘O, not ⌘H: ⌘H hides the app on every Mac, and the hub binds it to Hide.
+        KeymapCommand(hub, "Open Hub", group: "App", detail: "Opens the hub at its Agents view. ⌘H stays Hide.",
+                      keys: [.character("o", .command)], scope: .app),
         KeymapCommand(quit, "Quit", group: "App", keys: [.character("q", .command)], scope: .app, configurable: false),
         KeymapCommand(paste, "Paste Media", group: "Composer", keys: [
             .character("v", .command),
@@ -48,8 +55,21 @@ public enum WidgetKeymap {
         KeymapCommand(collapse, "Collapse", group: "Panel",
                       detail: "Also while a text field has the focus. An open preview takes Esc first.",
                       keys: [.code(53)]),
-        KeymapCommand(previous, "Previous Message", group: "Messages", keys: [.character("j")]),
-        KeymapCommand(next, "Next Message", group: "Messages", keys: [.character("k")]),
+        KeymapCommand(previous, "Previous Session", group: "Sessions",
+                      detail: "Opens the session above the selected one in the widget's session list.",
+                      keys: [.character("j")]),
+        KeymapCommand(next, "Next Session", group: "Sessions",
+                      detail: "Opens the session below the selected one in the widget's session list.",
+                      keys: [.character("k")]),
+        KeymapCommand(listUp, "Previous Row", group: "Lists",
+                      detail: "Moves up in the inbox or session list on screen. Not while a text field has the focus.",
+                      keys: [.code(126)]),
+        KeymapCommand(listDown, "Next Row", group: "Lists",
+                      detail: "Moves down in the inbox or session list on screen. Not while a text field has the focus.",
+                      keys: [.code(125)]),
+        KeymapCommand(listOpen, "Open Row", group: "Lists",
+                      detail: "Opens or folds the row the arrows chose; in the session list, opens that session.",
+                      keys: [.code(36)]),
     ] + numberRow.map { number, code in
         KeymapCommand(choiceID(number), "Answer \(number)", group: "Answers",
                       detail: "The digit, or that place on the number row.",
@@ -98,13 +118,9 @@ public enum WidgetKeymap {
 
     public static func label(_ id: String) -> String { shared.label(for: id) ?? "" }
 
-    /// "1–3 answer · J/K switch · ⎋ close", with the keys in force.
+    /// "1–3 answer · ↑/↓ move · J/K session · ⎋ close", with the keys in force.
     public static var agentFooter: String {
-        "\(label(choiceID(1)))–\(label(choiceID(3))) answer · \(label(previous))/\(label(next)) switch · \(label(collapse)) close"
-    }
-
-    /// "⌘V media · ⎋ close".
-    public static var mediaFooter: String {
-        "\(label(paste)) media · \(label(collapse)) close"
+        "\(label(choiceID(1)))–\(label(choiceID(3))) answer · \(label(listUp))/\(label(listDown)) move · "
+            + "\(label(previous))/\(label(next)) session · \(label(collapse)) close"
     }
 }

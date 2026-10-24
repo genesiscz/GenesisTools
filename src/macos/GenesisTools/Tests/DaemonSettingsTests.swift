@@ -65,7 +65,8 @@ final class DaemonSettingsTests: XCTestCase {
         let plugin = HubSettingsPlugin(notify: store)
         XCTAssertTrue(plugin.settingsReady(page: "general"))
         XCTAssertFalse(plugin.settingsReady(page: PRActivitySettingsPages.pageID), "no notify status yet")
-        store.message = "tools hub notify status exited 1"
+        store.message = HubNotifyNotice(text: "The notification settings could not be read.", tone: .error,
+                                        more: "tools hub notify status exited 1")
         XCTAssertTrue(plugin.settingsReady(page: PRActivitySettingsPages.pageID), "an error the page shows ends the wait")
     }
 

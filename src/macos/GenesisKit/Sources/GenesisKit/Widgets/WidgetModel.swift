@@ -84,7 +84,18 @@ public final class WidgetModel: ObservableObject {
     private var exitedDuringDrag: WidgetSurfaceID?
     private var hoveredSession: (key: String, surface: WidgetSurfaceID)?
     private var transcriptHoverTask: Task<Void, Never>?
-    @Published public var error: String?
+    /// One sentence about what failed. An error never fades: it stays until the user closes it or a new one replaces
+    /// it. A new error is announced to VoiceOver. A new or cleared error drops `errorDetail`, so set the detail after
+    /// the sentence (`fail(_:detail:)` does both).
+    @Published public var error: String? {
+        didSet {
+            guard error != oldValue else { return }
+            errorDetail = nil
+            if let error { GenAnnounce.post(error, priority: .high) }
+        }
+    }
+    /// The raw text behind `error` (a process's stderr), shown only behind a "Details" disclosure.
+    @Published public var errorDetail: String?
     @Published public var drafts: [String: WidgetDraft] = [:]
     /// The watch worker exited on its own. The snapshot is stale and nothing dispatches queued messages until
     /// `start()` runs again, so the view keeps a Reconnect action visible even after the error is dismissed.
@@ -126,6 +137,14 @@ public final class WidgetModel: ObservableObject {
     @Published public var sessionChooserOpen = false
     /// Set by a session's cmux popover alone, for the same reason.
     @Published public var cmuxPopoverOpen = false
+    /// A list row's "Open cmux" accessibility action, for that row's `WidgetCmuxButton` (which exists only under the
+    /// pointer) to open its popover. The button clears it.
+    @Published public var cmuxRequest: WidgetCmuxRequest?
+
+    /// Opens the cmux popover of `key`'s row in the list `scope` (its `WidgetCmuxButton(requestScope:)`).
+    public func requestCmux(_ key: String, scope: String?) {
+        cmuxRequest = WidgetCmuxRequest(key: key, scope: scope)
+    }
     /// Hover previews and the outside-click collapse stay off while a window, picker or the chooser is open.
     public var dialogOpen: Bool {
         get { hostDialogOpen || sessionChooserOpen || cmuxPopoverOpen }
@@ -172,12 +191,70 @@ public final class WidgetModel: ObservableObject {
     public var openDestination: ((WidgetSession, String, String?) -> Void)?
     /// Called with each preference patch once the hub has stored it.
     public var preferencesSaved: (([String: WidgetJSON]) -> Void)?
-    /// One line under the header; a new line drops the button the old one had.
+    /// One line under the header; a new line drops the button the old one had. A note fades by itself
+    /// (`scheduleNoticeFade`) and is announced to VoiceOver; prefer `postNote(_:action:)`, which also restarts the fade
+    /// and the announcement when the same text is posted again.
     @Published public var notice: String? {
-        didSet { if notice != oldValue { noticeAction = nil } }
+        didSet {
+            guard notice != oldValue else { return }
+            noticeAction = nil
+            // A hover that ended with the panel (it closed under the pointer) must not keep the next note forever.
+            noticeHeld = false
+            if let notice { GenAnnounce.post(notice) }
+            scheduleNoticeFade()
+        }
     }
-    /// A button beside `notice`: "Send again" after a send no session took.
-    @Published public var noticeAction: WidgetNoticeAction?
+    /// A button beside `notice`: "Send again" after a send no session took. A note with a button stays longer.
+    @Published public var noticeAction: WidgetNoticeAction? {
+        didSet { scheduleNoticeFade() }
+    }
+    private var noticeFade: Task<Void, Never>?
+    /// The pointer is on the note: its fade waits until the pointer leaves (ux checklist, Attention).
+    private var noticeHeld = false
+
+    /// Shows `text` as the widget's note, with an optional button (Undo, Send again). It is announced, and it fades
+    /// after the note duration setting (`noteSeconds`, 6 s by default); a note with a button stays at least 10 s. A
+    /// newer note replaces it and cancels its fade. Errors go to `error`, which never fades.
+    public func postNote(_ text: String, action: WidgetNoticeAction? = nil) {
+        // The same text again does not change `notice`, so its didSet would neither announce nor restart the fade.
+        if notice == text { GenAnnounce.post(text) }
+        notice = text
+        noticeAction = action
+        scheduleNoticeFade()
+    }
+
+    /// Seconds a note stays: the `noteSeconds` preference (0 keeps it until it is closed), at least 10 with a button.
+    nonisolated static func noteSeconds(_ preferences: WidgetPreferences?, hasAction: Bool) -> Double? {
+        let base = max(0, min(60, preferences?.noteSeconds ?? 6))
+        guard base > 0 else { return nil }
+        return hasAction ? max(base, 10) : base
+    }
+
+    /// The pointer entered or left the note: a note under the pointer does not fade, and leaving it starts the full
+    /// duration again. For the view that draws the note.
+    public func noticeHovered(_ inside: Bool) {
+        noticeHeld = inside
+        scheduleNoticeFade()
+    }
+
+    private func scheduleNoticeFade() {
+        noticeFade?.cancel()
+        noticeFade = nil
+        guard let text = notice, !noticeHeld,
+              let seconds = Self.noteSeconds(snapshot?.state.preferences, hasAction: noticeAction != nil) else { return }
+        noticeFade = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+            guard let self, self.notice == text, !self.noticeHeld else { return }
+            self.notice = nil
+        }
+    }
+
+    /// An error in one sentence, with the raw text behind it for "Details".
+    public func fail(_ message: String, detail: String? = nil) {
+        error = message
+        let trimmed = detail?.trimmingCharacters(in: .whitespacesAndNewlines)
+        errorDetail = trimmed?.isEmpty == false ? trimmed : nil
+    }
     public private(set) var openedAt: TimeInterval = 0
     public let bridge: ToolsBridge
     public let appearance: NativeSettingsAppearance
@@ -507,6 +584,9 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// What the widget says when its watch process ends by itself; the process's stderr is `errorDetail`.
+    public static let connectionLostMessage = "Lost the connection to the hub. Reconnect to try again."
+
     public func start() {
         guard watcher == nil else { return }
         stopping = false
@@ -525,7 +605,9 @@ public final class WidgetModel: ObservableObject {
                     guard let self, !self.stopping, !exit.stopped else { return }
                     self.watcher = nil
                     self.connectionLost = true
-                    self.error = "Widget connection stopped. " + exit.stderr.suffix(600)
+                    // One sentence on screen; the process's own words go behind Details (ux checklist, Errors).
+                    self.fail(Self.connectionLostMessage, detail: String(exit.stderr.suffix(4000)))
+                    PerfLog.mark("widget.connection lost status=\(exit.status) \(exit.stderr.suffix(600))")
                 })
             // Cleared only once a watcher runs: a reconnect that cannot launch keeps Reconnect on screen.
             connectionLost = false
@@ -752,6 +834,19 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
+    /// The popup's close button, Esc and VoiceOver's escape: the popup ends without opening anything.
+    public func dismissPeek() {
+        guard let item = peekItem else { return }
+        PerfLog.mark("widget.peek dismissed id=\(item.id)")
+        hoverTask?.cancel()
+        endPeek()
+        // The pointer is on the panel (it pressed ×): without this the hover list would open in the popup's place.
+        if expanded == nil, let surface = hoveredSurface, presentation(for: surface) == .preview {
+            hoveredSurface = nil
+            presentationChanged?()
+        }
+    }
+
     private func endPeek() {
         peekTask?.cancel()
         peekTask = nil
@@ -909,6 +1004,9 @@ public final class WidgetModel: ObservableObject {
             ? railActive : railActive.sorted(by: Self.previewOrder(inbox: inboxSessions, sort: previewSort))
         inboxOverviewItems = Self.overviewItems(value.sessions)
         reconcileStaged(value.staged ?? value.sessions.flatMap { $0.items ?? [] })
+        if !inboxFilterPicked, let opening = snapshot?.state.preferences.inboxFilter, opening != inboxFilter {
+            inboxFilter = opening
+        }
         previewList = Self.previewRows(
             sessions: snapshot?.sessions ?? [], inbox: inboxSessions,
             filter: previewFilter, sort: previewSort)
@@ -1004,7 +1102,12 @@ public final class WidgetModel: ObservableObject {
         style.fadeOut = 0.3
         return style
     }
+    /// Every unread or waiting inbox item: what "Mark all read" acts on.
     public var inboxCount: Int { max(0, inbox.unread) + max(0, inbox.needsAnswer) }
+    /// The rail badge: only the items that wait for the user's answer (open or drafted decisions and pending
+    /// questions), the kind of item the hub's Inbox counts. Unread answers and results do not count: a badge of weeks
+    /// of read-later items read as 99+ while the hub said 26 (ux catalogue R1).
+    public var waitingCount: Int { max(0, inbox.needsAnswer) }
 
     /// Expands one inbox card in place. An unread answer or result counts as read once the user opens it, the same
     /// way opening it from a notification does.
@@ -1228,6 +1331,95 @@ public final class WidgetModel: ObservableObject {
         let index = sessions.firstIndex { $0.key == selectedKey } ?? 0
         select(sessions[(index + direction + sessions.count) % sessions.count].key)
     }
+
+    // MARK: Up, Down and Return in the lists (ux catalogue R7)
+
+    /// The last list key, for the view that draws the list on screen: the inbox of every session moves its own
+    /// highlight with it, and a session's inbox and the session list scroll to the row it chose.
+    @Published public private(set) var listKey: WidgetListKey?
+    /// The session inbox's filter ("all", "inbox", "decisions"), so the keys walk the rows the user sees. The
+    /// inbox's filter control writes it.
+    @Published public var inboxFilter = "all"
+    /// Set once the reader picks a filter; until then the filter follows the `inboxFilter` setting.
+    public var inboxFilterPicked = false
+    /// The session list's rows in the order it draws them (its search, pins and open groups applied), written by
+    /// the list as it changes. Empty: the list has not said, and the keys leave it alone.
+    public var sessionListOrder: [String] = []
+
+    /// Whether the agents pane shows a list that takes Up, Down and Return: the inbox of every session, a session's
+    /// inbox with entries, or the session list. Not the staged view, the leave question or the conversation.
+    public var keyboardList: Bool {
+        guard expanded != nil, activeModuleID == "agents", stagedView == nil, !stagedLeavePrompt else { return false }
+        if inboxOverview { return !inboxOverviewItems.isEmpty }
+        guard selected != nil else { return false }
+        return (section == "Sessions" && !sessionListOrder.isEmpty) || (section == "Inbox" && !cards.isEmpty)
+    }
+
+    /// Up, Down or Return in the list on screen. True when the list took the key; false lets it through (the scroll
+    /// view then scrolls). The ends of a list stop the move; they do not wrap.
+    @discardableResult
+    public func moveInList(_ kind: WidgetListKey.Kind) -> Bool {
+        guard keyboardList else { return false }
+        listKey = WidgetListKey(kind: kind, serial: (listKey?.serial ?? 0) + 1)
+        // The inbox of every session owns its filter, grouping and highlight (WidgetInboxOverview).
+        if inboxOverview { return true }
+        switch section {
+        case "Inbox": return moveCard(kind)
+        case "Sessions": return moveSession(kind)
+        default: return false
+        }
+    }
+
+    /// The row `step` rows from `current` in `count` rows, stopping at the ends; with no current row, the first row
+    /// going down and the last going up.
+    nonisolated static func listTarget(current: Int?, step: Int, count: Int) -> Int? {
+        guard count > 0 else { return nil }
+        guard let current else { return step < 0 ? count - 1 : 0 }
+        return min(max(current + step, 0), count - 1)
+    }
+
+    /// A session's inbox, as drawn: the filter's rows, newest first. Up and Down open the row above or below (the
+    /// inbox shows one open row); Return folds or opens the current one. No motion: the keys repeat.
+    private func moveCard(_ kind: WidgetListKey.Kind) -> Bool {
+        let shown = Array(LiveWidgetView.filtered(cards, by: inboxFilter).reversed())
+        guard !shown.isEmpty else { return false }
+        let current = card.flatMap { open in shown.firstIndex { $0.id == open.id } }
+        releaseAgentFit()
+        switch kind {
+        case .open:
+            guard let current else { return false }
+            if foldedCardIDs.contains(shown[current].id) {
+                openCard(shown[current])
+            } else {
+                foldedCardIDs.insert(shown[current].id)
+            }
+        case .up, .down:
+            guard let target = Self.listTarget(current: current, step: kind == .up ? -1 : 1, count: shown.count),
+                  target != current || foldedCardIDs.contains(shown[target].id) else { return true }
+            openCard(shown[target])
+        }
+        return true
+    }
+
+    /// The session list: Up and Down select the session above or below (its row shows the selection), Return opens
+    /// its inbox, and Esc comes back to the list.
+    private func moveSession(_ kind: WidgetListKey.Kind) -> Bool {
+        let order = sessionListOrder
+        guard !order.isEmpty else { return false }
+        let current = order.firstIndex(of: selectedKey)
+        switch kind {
+        case .open:
+            guard current != nil else { return false }
+            listOrigin = .sessions
+            section = "Inbox"
+        case .up, .down:
+            guard let target = Self.listTarget(current: current, step: kind == .up ? -1 : 1, count: order.count),
+                  order[target] != selectedKey else { return true }
+            select(order[target])
+        }
+        return true
+    }
+
 
     public func setText(_ text: String) {
         let key = selectedKey
@@ -1973,7 +2165,10 @@ public final class WidgetModel: ObservableObject {
                         guard let self else { return }
                         // Only a clean exit proves the audio writer closed the clip.
                         self.finishVoice(fileClip: exit.status == 0)
-                        if exit.status != 0 && !exit.stopped { self.error = String(exit.stderr.suffix(600)) }
+                        if exit.status != 0 && !exit.stopped {
+                            self.fail("Dictation stopped unexpectedly. Press the microphone to try again.",
+                                      detail: String(exit.stderr.suffix(4000)))
+                        }
                     })
             } catch {
                 self.voiceActive = false
@@ -2308,4 +2503,18 @@ public enum WidgetVoiceMode: String, Sendable {
     case dictate = "live"
     /// Words into the reply box, and the audio kept as a voice note with its session and decision.
     case note
+}
+
+/// A key the user pressed in the widget's list on screen (Up, Down, Return). `serial` makes two presses of the same
+/// key two changes, so a view can react to each.
+public struct WidgetListKey: Equatable, Sendable {
+    public enum Kind: Equatable, Sendable { case up, down, open }
+    public let kind: Kind
+    public let serial: Int
+}
+
+/// Which session's cmux popover a row's accessibility action asked for, and in which list.
+public struct WidgetCmuxRequest: Equatable, Sendable {
+    public let key: String
+    public let scope: String?
 }

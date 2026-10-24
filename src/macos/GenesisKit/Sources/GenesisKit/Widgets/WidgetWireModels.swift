@@ -316,6 +316,15 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var overviewFilter: String?
     /// The composer's microphone: "note" (default, a voice note whose transcript fills the field) or "live".
     public var composerVoice: String?
+    /// Seconds the alert popup stays when the pointer is not on it. Default 7.
+    public var alertPopupSeconds: Double?
+    /// Seconds a widget note stays before it fades; 0 keeps it until it is closed. Default 6. A note with a button
+    /// stays at least 10 s.
+    public var noteSeconds: Double?
+    /// A global shortcut opens and closes the widget (`openShortcut`). Default on, with ⌃⌥⌘W.
+    public var openShortcutEnabled: Bool?
+    /// The shortcut, as a Carbon key code and modifier mask (`HotkeyChord`).
+    public var openShortcut: WidgetShortcutChord?
 
     public var layout: WidgetLayoutConfiguration {
         WidgetLayoutConfiguration(
@@ -330,6 +339,30 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var voiceModel: String?
     public var voiceLanguage: String
 }
+/// A global shortcut as the widget preferences store it: a Carbon virtual key code and a Carbon modifier mask.
+public struct WidgetShortcutChord: Codable, Equatable, Sendable {
+    public var keyCode: UInt32
+    public var modifiers: UInt32
+
+    public init(keyCode: UInt32, modifiers: UInt32) {
+        self.keyCode = keyCode
+        self.modifiers = modifiers
+    }
+
+    /// ⌃⌥⌘W: the dictation shortcut's family (⌃⌥⌘D), and no macOS or common app shortcut.
+    public static let defaultOpen = WidgetShortcutChord(
+        keyCode: 0x0D, modifiers: HotkeyChord.control | HotkeyChord.option | HotkeyChord.command)
+
+    public var hotkey: HotkeyChord { HotkeyChord(keyCode: keyCode, modifiers: modifiers) }
+}
+
+extension WidgetPreferences {
+    /// The shortcut that opens the widget, or nil while it is off.
+    public var openShortcutChord: WidgetShortcutChord? {
+        (openShortcutEnabled ?? true) ? openShortcut ?? .defaultOpen : nil
+    }
+}
+
 public struct WidgetOutgoing: Codable, Identifiable, Equatable, Sendable {
     public struct Receipt: Codable, Equatable, Sendable {
         public var channel: String

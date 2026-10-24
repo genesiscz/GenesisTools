@@ -396,7 +396,7 @@ final class PRsModel: ObservableObject {
     private var freshGeneration = -1
     /// The key of the rows on screen (the cache paints before the fresh answer).
     private var appliedKey: String?
-    private var lastLoad: Date?
+    private(set) var lastLoad: Date?
     private var searchTask: Task<Void, Never>?
     /// PR details being fetched, and when each last arrived fresh.
     private var detailLoading: Set<String> = []
@@ -1521,15 +1521,16 @@ struct PRListView: View {
     @StateObject private var prefs = GroupPrefs(key: "prs.repos")
     @ObservedObject private var readiness = PRReadinessStore.shared
     @GenReduceMotion private var reduceMotion
+    /// The list's keyboard focus: a click on a row gives it, then Up and Down move the selection (`SidebarArrowKeys`).
+    @FocusState private var listFocused: Bool
 
     private var statePicker: some View {
-        Picker("", selection: Binding(get: { prs.state }, set: { prs.state = $0; prs.reload() })) {
-            Text("Open").tag("open")
-            Text("Merged").tag("merged")
-            Text("All").tag("all")
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
+        GenSegmentedTabs(
+            "PR state",
+            items: [.init("open", "Open"), .init("merged", "Merged"), .init("all", "All")],
+            selection: Binding(get: { prs.state }, set: { prs.state = $0; prs.reload() }),
+            minSegmentWidth: 52
+        )
         .instantTooltip("Which PRs/MRs to list")
     }
 
@@ -1599,6 +1600,34 @@ struct PRListView: View {
                                 .skeletonShimmer()
                                 .accessibilityElement(children: .ignore)
                                 .accessibilityLabel("Loading PRs and MRs")
+                        } else if prs.prs.isEmpty, !prs.loading, prs.lastLoad != nil, prs.errors.isEmpty {
+                            EmptyState(
+                                symbol: "arrow.triangle.pull",
+                                text: prs.mineOnly ? "None of your PRs/MRs match." : "No PRs/MRs match.",
+                                detail: prs.mineOnly ? "Turn off Mine to see everyone's." : "Try another state, or reload.",
+                                actionTitle: prs.mineOnly ? "Show everyone's" : "Reload",
+                                action: {
+                                    if prs.mineOnly {
+                                        prs.mineOnly = false
+                                    }
+                                    prs.reload()
+                                }
+                            )
+                            .padding(.top, 24)
+                        } else if groups.isEmpty, !prs.prs.isEmpty, !prs.loading {
+                            if model.filter.trimmed.isEmpty {
+                                EmptyState(
+                                    text: "None of your PRs/MRs match.",
+                                    actionTitle: "Show everyone's"
+                                ) { prs.mineOnly = false; prs.reload() }
+                                .padding(.top, 24)
+                            } else {
+                                EmptyState(
+                                    text: "No PR or MR matches “\(model.filter)”",
+                                    actionTitle: "Clear filter"
+                                ) { model.filter = "" }
+                                .padding(.top, 24)
+                            }
                         }
                         ForEach(groups, id: \.project) { group in
                             Section {
@@ -1649,6 +1678,11 @@ struct PRListView: View {
                     loaded: !prs.prs.isEmpty,
                     prefs: prefs
                 ))
+                .modifier(SidebarArrowKeys(
+                    ids: { [collapsed = prefs.collapsed] in groups.filter { !collapsed.contains($0.project) }.flatMap { $0.rows.map(\.id) } },
+                    selection: { prs.selectedID },
+                    select: { id in if let pr = prs.prs.first(where: { $0.id == id }) { prs.select(pr, opened: true) } },
+                    proxy: proxy, focused: $listFocused))
             }
         }
         // The list's own layout width: a sidebar drag that re-lays it out per step flips this per step.
@@ -1756,7 +1790,7 @@ struct PRListView: View {
         // New and updated rows after a refresh flash once.
         .swrFlash(prs.changed.contains(pr.id))
         .contentShape(Rectangle())
-        .rowButton(cornerRadius: 8) { prs.select(pr, opened: true) }
+        .rowButton(cornerRadius: 8) { listFocused = true; prs.select(pr, opened: true) }
         .padding(.horizontal, 6)
         .instantTooltip("\(pr.label) \(pr.headBranch) → \(pr.baseBranch)\nRight-click for its web pages")
         // The row stays one button (select); its labels' web pages live here, since a link inside
@@ -1887,6 +1921,8 @@ struct PRStateIcon: View {
             .foregroundColor(tone.color)
             .frame(width: 16)
             .instantTooltip(tone.title)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(verbatim: tone.title))
     }
 }
 
@@ -1926,17 +1962,28 @@ struct CIBadge: View {
                 default: return ("clock", ReviewPalette.dim)
                 }
             }()
+            let sentence: String = {
+                switch ci {
+                case "success": return "All checks passed"
+                case "failed": return "Some checks failed"
+                case "running": return "Checks are running"
+                case "pending": return "Checks are waiting to start"
+                default: return "The checks have no clear state"
+                }
+            }()
             let icon = Image(systemName: symbol).font(.system(size: 11)).foregroundColor(color)
             if let url {
                 Button { ExternalOpener.open(url) } label: { icon }
                     .buttonStyle(.genHoverIcon())
-                    .instantTooltip("CI: \(ci). Open the checks\n\(url.absoluteString)")
-                    .accessibilityLabel(Text("CI: \(ci)"))
+                    .instantTooltip("\(sentence). Open the checks\n\(url.absoluteString)")
+                    .accessibilityLabel(Text(verbatim: sentence))
                     .accessibilityRemoveTraits(.isButton)
                     .accessibilityAddTraits(.isLink)
                     .accessibilityValue(Text(url.absoluteString))
             } else {
-                icon.instantTooltip("CI: \(ci)")
+                icon.instantTooltip(sentence)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text(verbatim: sentence))
             }
         }
     }

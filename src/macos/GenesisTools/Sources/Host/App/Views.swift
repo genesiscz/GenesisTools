@@ -31,42 +31,56 @@ struct PermissionsView: View {
                 TableColumn("") { row in
                     HStack {
                         actionButton(row)
-                        Button("Settings…") { model.openPane(row.pane) }
+                        // A row whose action already opens System Settings needs no second button for it.
+                        if !(row.action.opensSettings && row.state != .granted) {
+                            Button("Settings…") { model.openPane(row.pane) }
+                                .help("Opens this permission's list in System Settings.")
+                        }
                     }
                 }
                 .width(min: 220)
             }
 
+            Text("Full Disk Access and Accessibility are turned on in System Settings, not in a prompt: open the list, then drag \(appName) into it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
             HStack {
-                if let busy = model.busy {
+                if let busy = model.busyTitle {
                     ProgressView().controlSize(.small)
-                    Text("Waiting for macOS (\(busy))…").font(.caption)
+                    Text("Asking macOS for \(busy)…").font(.caption)
                 }
                 if let message = model.lastMessage {
                     Text(message).font(.caption).foregroundStyle(.orange)
                 }
                 Spacer()
                 Button("Reveal app in Finder") { model.revealApp() }
-                    .help("Full Disk Access and Accessibility have no prompt: drag the app into the list.")
+                    .help("Shows \(appName) in Finder, ready to drag into a System Settings list.")
             }
         }
     }
+
+    private var appName: String { PermissionKind.appName }
 
     @ViewBuilder
     private func actionButton(_ row: PermissionRow) -> some View {
         switch row.action {
         case .prompt:
-            Button(row.state == .granted ? "Granted" : "Request") { model.request(row) }
+            Button(row.state == .granted ? "Granted" : "Ask macOS") { model.request(row) }
                 .disabled(row.state == .granted || model.busy != nil)
+                .help("Shows the macOS prompt for this permission.")
         case .openPane(let pane):
-            Button(row.state == .granted ? "Granted" : "Open list & reveal") {
+            Button(row.state == .granted ? "Granted" : "Open System Settings") {
                 model.openPane(pane)
                 model.revealApp()
             }
             .disabled(row.state == .granted)
+            .help("Opens this list in System Settings and shows \(appName) in Finder, ready to drag into it.")
         case .probe:
-            Button(row.state == .granted ? "Granted" : "Test (asks)") { model.request(row) }
+            Button(row.state == .granted ? "Granted" : "Ask macOS") { model.request(row) }
                 .disabled(row.state == .granted || model.busy != nil)
+                .help("Uses it once, so macOS shows its prompt.")
         }
     }
 }
@@ -116,6 +130,8 @@ struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @AppStorage(AppMainWindow.key) private var mainWindow = AppMainWindow.permissions
     @AppStorage(PermissionSettingsGuide.enabledKey) private var settingsGuide = true
+    @AppStorage(ApprovalAttention.soundKey) private var approvalSound = ApprovalAttention.defaultSound
+    @AppStorage(ApprovalAttention.notifyAfterKey) private var approvalNotifyAfter = ApprovalAttention.defaultNotifyAfter
 
     var body: some View {
         Form {
@@ -133,6 +149,27 @@ struct SettingsView: View {
             Section("Privacy panes") {
                 Toggle("Show a drag helper over System Settings", isOn: $settingsGuide)
                 Text("When GenesisTools opens a Privacy pane, its icon floats at the bottom of the list. Drag it into Accessibility, Input Monitoring, Screen Recording or Full Disk Access; other lists only need its switch turned on.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Approval requests") {
+                HStack {
+                    Picker("Sound when a request appears", selection: $approvalSound) {
+                        Text("None").tag("none")
+                        ForEach(ApprovalAttention.sounds, id: \.self) { name in
+                            Text(name).tag(name)
+                        }
+                    }
+                    Button("Play") { ApprovalAttention.play(approvalSound) }
+                        .disabled(approvalSound == "none")
+                }
+                Picker("Notification while it waits", selection: $approvalNotifyAfter) {
+                    ForEach(ApprovalAttention.notifyAfterChoices) { choice in
+                        Text(choice.title).tag(choice.seconds)
+                    }
+                }
+                Text("A program that asks for the vault key or an AI account opens a request window. The window never takes the keyboard by itself, so this sound and notification tell you it is waiting.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -288,3 +288,23 @@ final class ApprovalCommandTextTests: XCTestCase {
                        [.program, .program, .flag, .argument], "a flag with = carries its own value")
     }
 }
+
+/// A waiting approval reminds the user once, at the delay the setting picks, and never in its last seconds.
+final class ApprovalAttentionTests: XCTestCase {
+    func testTheReminderFollowsItsSettingAndNeverOutlivesTheRequest() {
+        let now = Date()
+        let deadline = now.addingTimeInterval(170)
+        XCTAssertEqual(ApprovalAttention.reminderDelay(notifyAfter: 15, deadline: deadline, now: now), 15)
+        XCTAssertEqual(ApprovalAttention.reminderDelay(notifyAfter: 0, deadline: deadline, now: now), 0, "at once")
+        XCTAssertNil(ApprovalAttention.reminderDelay(notifyAfter: -1, deadline: deadline, now: now), "never")
+        XCTAssertNil(ApprovalAttention.reminderDelay(notifyAfter: 168, deadline: deadline, now: now),
+                     "a card in the last seconds before the request denies itself could only mislead")
+        XCTAssertEqual(ApprovalAttention.reminderDelay(notifyAfter: 60, deadline: nil, now: now), 60)
+    }
+
+    func testTheDefaultsAreASoftSoundOfItsOwnAndAReminderAfter15Seconds() {
+        XCTAssertEqual(ApprovalAttention.defaultSound, "Purr")
+        XCTAssertTrue(ApprovalAttention.sounds.contains(ApprovalAttention.defaultSound))
+        XCTAssertTrue(ApprovalAttention.notifyAfterChoices.contains { $0.seconds == ApprovalAttention.defaultNotifyAfter })
+    }
+}

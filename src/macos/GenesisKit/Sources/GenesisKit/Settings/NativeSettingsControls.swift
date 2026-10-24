@@ -41,7 +41,7 @@ public struct NativeSettingsDisclosure<Content: View>: View {
                 .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.genHoverRow(cornerRadius: KitTheme.radiusSmall))
             .nativeSettingsPointer()
             .nativeSettingsDisabledLook()
             .accessibilityIdentifier(identifier)

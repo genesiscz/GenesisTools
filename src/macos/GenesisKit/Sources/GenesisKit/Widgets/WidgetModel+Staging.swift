@@ -113,24 +113,32 @@ extension WidgetModel {
         return Plural.count(items.count, "decision") + " \(verb) to " + Plural.count(sessions, "session")
     }
 
-    /// Sends the staged decisions `ids`: one message per session.
-    public func sendStaged(_ ids: [String]) {
+    /// Sends the staged decisions `ids`: one message per session. With `thenClose` (a send on the way out of the
+    /// panel) the panel stays open until the hub answers and closes only when every answer was delivered, so a send
+    /// that failed is read where it happened instead of in a closed panel (ux catalogue P1).
+    public func sendStaged(_ ids: [String], thenClose: Bool = false) {
         let chosen = stagedItems.filter { ids.contains($0.sourceId) }
-        guard !chosen.isEmpty else { return }
-        deliverDecisions(chosen, action: "send-staged")
+        guard !chosen.isEmpty else {
+            if thenClose { collapse() }
+            return
+        }
+        deliverDecisions(chosen, action: "send-staged", thenClose: thenClose)
     }
 
     /// Sends again answered decisions that no session took (the notice's Send again), for every kind of agent.
     public func resendAnswers(_ items: [WidgetInboxItem]) {
         guard !items.isEmpty else { return }
-        notice = "Sending again…"
+        postNote("Sending again…")
         deliverDecisions(items, action: "resend-answers")
     }
 
-    /// One message per session through the hub, then a notice that says what really happened: delivered, waiting
-    /// for the session's next prompt (with why, and Send again), or not sent at all. It waits for the hub writes
-    /// queued before it, so a pick changed a moment ago is the one that goes.
-    private func deliverDecisions(_ items: [WidgetInboxItem], action: String) {
+    /// One message per session through the hub, then a note that says what really happened: delivered, waiting
+    /// for the session's next prompt (with why, and Send again), or not sent at all (an error, with the hub's own
+    /// words behind Details). When the panel was closed meanwhile, the sessions that took nothing flash on the rail.
+    private func deliverDecisions(_ items: [WidgetInboxItem], action: String, thenClose: Bool = false) {
+        let staged = action == "send-staged"
+        let opened = openedAt
+        if thenClose { postNote("Sending " + Plural.count(items.count, "decision") + "…") }
         var targets: [String: WidgetJSON] = [:]
         var titles: [String: String] = [:]
         for item in items {
@@ -150,18 +158,43 @@ extension WidgetModel {
                     "targets": .object(targets),
                 ])
                 let outcome = WidgetDecisionSendOutcome(result, titles: titles)
-                self.notice = outcome.notice(items: items, staged: action == "send-staged")
+                let text = outcome.notice(items: items, staged: staged)
+                if let details = outcome.details { PerfLog.mark("widget.decision-send \(action) not delivered: \(details)") }
                 let waiting = items.filter { item in
                     self.session(forKey: item.key).map { outcome.queuedSessions.contains($0.target.sessionId) } ?? false
                 }
-                if !waiting.isEmpty {
-                    self.noticeAction = WidgetNoticeAction(title: "Send again") { [weak self] in self?.resendAnswers(waiting) }
+                if outcome.delivered {
+                    postNote(text)
+                    // Only the panel this send left from: one the user opened again meanwhile stays open.
+                    if thenClose, expanded != nil, openedAt == opened { collapse() }
+                    return
                 }
+                if outcome.failed > 0 {
+                    fail(text, detail: outcome.details)
+                    if staged { keptStaged.subtract(items.map(\.sourceId)) }
+                } else {
+                    postNote(text, action: waiting.isEmpty ? nil
+                        : WidgetNoticeAction(title: "Send again") { [weak self] in self?.resendAnswers(waiting) })
+                }
+                flashUnsent(waiting.isEmpty ? items : waiting)
             } catch {
                 if action == "resend-answers" { self.notice = nil }
-                self.report(error)
+                PerfLog.mark("widget.decision-send \(action) failed: \(error.localizedDescription)")
+                fail(staged ? "The decisions could not be sent. They stay staged, so you can send them again."
+                         : "The answers could not be sent again. They still wait for the session's next prompt.",
+                     detail: error.localizedDescription)
+                if staged { keptStaged.subtract(items.map(\.sourceId)) }
+                flashUnsent(items)
             }
         }
+    }
+
+    /// A send result that arrives after the panel closed: the sessions it concerns flash on the rail (the alert flash
+    /// setting), so the note waiting in the panel is noticed.
+    private func flashUnsent(_ items: [WidgetInboxItem]) {
+        guard expanded == nil else { return }
+        let seconds = WidgetAlerts.flashSeconds(snapshot?.state.preferences)
+        for key in Set(items.map(\.key)) { flashAttention(key, seconds: seconds) }
     }
 
     /// Discards the picks and notes of the staged decisions `ids`; they still wait for an answer.
@@ -176,8 +209,10 @@ extension WidgetModel {
     /// A close the user asked for (Esc, the close button, a click outside, the idle timer): with staged decisions it
     /// asks first, as `stagedOnLeave` says ("ask" by default; "keep" closes, "send" sends them and closes).
     public func requestCollapse() {
-        let ids = Set(stagedItems.map(\.sourceId))
-        guard expanded != nil, !ids.isEmpty else {
+        // Staged decisions answered at an earlier leave (kept, or already on their way) do not ask again, so a
+        // second Esc while a send runs closes the panel.
+        let fresh = Set(stagedItems.map(\.sourceId)).subtracting(keptStaged)
+        guard expanded != nil, !fresh.isEmpty else {
             collapse()
             return
         }
@@ -185,27 +220,27 @@ extension WidgetModel {
         case "keep":
             collapse()
         case "send":
-            sendStaged(Array(ids))
-            collapse()
+            keptStaged.formUnion(fresh)
+            sendStaged(Array(fresh), thenClose: true)
         default:
-            guard !ids.isSubset(of: keptStaged) else {
-                collapse()
-                return
-            }
             stagedLeavePrompt = true
         }
     }
 
-    /// The answer to the leave question: "send", "keep" or "discard". The panel closes after any of them.
+    /// The answer to the leave question: "send", "keep" or "discard". Keep and Discard close the panel at once;
+    /// Send closes it once the hub says every answer was delivered, and leaves it open with the reason otherwise.
     public func resolveStagedLeave(_ choice: String) {
         let ids = stagedItems.map(\.sourceId)
         stagedLeavePrompt = false
+        stagedView = nil
         switch choice {
-        case "send": sendStaged(ids)
+        case "send":
+            keptStaged.formUnion(ids)
+            sendStaged(ids, thenClose: true)
+            return
         case "discard": discardStaged(ids)
         default: keptStaged = Set(ids)
         }
-        stagedView = nil
         collapse()
     }
 }
@@ -227,10 +262,20 @@ struct WidgetDecisionSendOutcome {
     var sent = 0
     var queued = 0
     var failed = 0
-    /// Session ids whose answers no receiver took, with the hub's one-line reason and the session's title.
-    var waiting: [(session: String, title: String, reason: String)] = []
+    /// Sessions whose answers no receiver took: the session id, its title, the reason as one sentence, and the hub's
+    /// own words (for Details and the log).
+    var waiting: [(session: String, title: String, reason: String, detail: String?)] = []
+    /// The hub's own words for each session whose send threw, as "<title>: <error>".
+    var failures: [String] = []
 
     var queuedSessions: Set<String> { Set(waiting.map(\.session)) }
+    /// Every answer reached a live receiver.
+    var delivered: Bool { waiting.isEmpty && failed == 0 }
+    /// The hub's raw reasons, one line per session, for Details and the log; nil when it gave none.
+    var details: String? {
+        let lines = waiting.compactMap { entry in entry.detail.map { "\(entry.title): \($0)" } } + failures
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
 
     init(_ result: WidgetJSON, titles: [String: String]) {
         guard case .object(let fields) = result else { return }
@@ -239,22 +284,63 @@ struct WidgetDecisionSendOutcome {
         if case .number(let value) = fields["failed"] { failed = Int(value) }
         guard case .array(let sessions) = fields["sessions"] else { return }
         for case .object(let entry) in sessions {
-            guard case .string(let session) = entry["session"], case .object(let answer) = entry["result"],
-                  answer["delivered"] != .bool(true) else { continue }
-            var reason = "No live receiver took them."
-            if case .string(let detail) = answer["detail"], !detail.isEmpty { reason = detail }
-            waiting.append((session, titles[session] ?? "the session", reason))
+            guard case .string(let session) = entry["session"] else { continue }
+            let title = titles[session] ?? "the session"
+            if case .string(let error) = entry["error"], !error.isEmpty {
+                failures.append("\(title): \(error)")
+                continue
+            }
+            guard case .object(let answer) = entry["result"], answer["delivered"] != .bool(true) else { continue }
+            var detail: String?
+            if case .string(let text) = answer["detail"], !text.isEmpty { detail = text }
+            waiting.append((session, title, Self.sentence(for: detail), detail))
         }
     }
 
-    /// The notice line: a plain summary when everything went out, else what did not and why.
+    /// Why no receiver took the answers, in one sentence. The hub words its reasons for logs ("No native Claude
+    /// receiver claims this session.", "no cmux pane runs this session"); the known ones are matched here, and
+    /// anything else reads as the generic sentence with the hub's text behind Details (ux catalogue P24). The hub's
+    /// reasons: `src/question/lib/decisions/deliver.ts` (`resolveDeliveryTarget`, `nativeWorkers`, `undelivered`)
+    /// and `delivery-text.ts` (`deliverySentence`).
+    static func sentence(for detail: String?) -> String {
+        let generic = "No running agent took them."
+        guard let text = detail?.lowercased(), !text.isEmpty else { return generic }
+        let known: [(needle: String, sentence: String)] = [
+            ("worker is busy", "Its worker is busy with another turn."),
+            ("worker session has not started", "Its worker has not started yet."),
+            ("not ready for another turn", "Its worker is not ready for another turn."),
+            ("claude terminals run this session",
+             "Several Claude terminals run this session, so none was picked. Close the extra one, then send again."),
+            ("no native claude receiver", "No open Claude terminal takes messages for this session."),
+            ("receiver belongs to another source home", "Its Claude terminal runs under another account."),
+            ("worker belongs to another source home", "Its worker runs under another account."),
+            ("several owned workers match", "Several workers match this session, so none was picked."),
+            ("worker runs this thread", "No Codex worker runs this conversation."),
+            ("cmux is not running", "cmux is not running."),
+            ("workspace of this session was closed", "Its cmux workspace was closed."),
+            ("no cmux pane runs this session", "No cmux pane runs this session."),
+            ("cmux panes match this session", "Several cmux panes match this session, so none was picked."),
+            ("does not identify the exact recipient", "No cmux pane could be matched to this session for certain."),
+            ("cmux send failed", "cmux could not type the answers."),
+            ("too large to save for later", "The answers are too long to keep for a later delivery."),
+            ("already saved this message", "An earlier send already saved them for this session."),
+        ]
+        return known.first { text.contains($0.needle) }?.sentence ?? generic
+    }
+
+    /// The note: a plain summary when everything went out, else what did not and why.
     func notice(items: [WidgetInboxItem], staged: Bool) -> String {
         var parts: [String] = []
         if sent > 0 { parts.append(Plural.count(sent, "decision") + " delivered.") }
         if let first = waiting.first {
-            let reason = first.reason.hasSuffix(".") ? first.reason : first.reason + "."
-            let place = waiting.count == 1 ? first.title : Plural.count(waiting.count, "session")
-            parts.append("Not delivered to \(place): \(reason) The answers wait for its next prompt.")
+            if waiting.count == 1 {
+                parts.append("Not delivered to \(first.title): \(first.reason) The answers wait for its next prompt.")
+            } else {
+                // One reason for all of them is worth saying; several differ per session and live behind Details.
+                let why = Set(waiting.map(\.reason)).count == 1 ? first.reason + " " : ""
+                parts.append("Not delivered to \(Plural.count(waiting.count, "session")): \(why)"
+                             + "The answers wait for each session's next prompt.")
+            }
         }
         if failed > 0 {
             parts.append("\(Plural.count(failed, "decision")) could not be sent" + (staged ? " and stay staged." : "."))

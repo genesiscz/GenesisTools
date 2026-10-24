@@ -425,9 +425,7 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
         needs = [need]
         self.status = status
         self.center = center
-        appName = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
-            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
-            ?? ProcessInfo.processInfo.processName
+        appName = PermissionKind.appName
         if status == .needsRelaunch, !worksInNewProcess { phase = .relaunch }
     }
 

@@ -51,6 +51,8 @@ private final class AgentWidgetDelegate: NSObject, NSApplicationDelegate {
                 WidgetLaunch.start(args)
             })
         coordinator?.settingsPresenter = { FeatureSettingsLaunch.open(pageID: $0) }
+        // The widget face is the one process that owns the global "open the widget" shortcut.
+        coordinator?.registersOpenShortcut = true
         coordinator?.model.openDestination = { session, mode, file in
             var args = [
                 "--hub", "--mode", "sessions", "--session", session.target.sessionId,
