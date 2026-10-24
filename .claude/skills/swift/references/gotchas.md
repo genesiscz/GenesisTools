@@ -28,12 +28,12 @@
   animated properties; use a layer animation for a measured hot path (see performance.md).
 - **`withAnimation` around a first load** animates every row; skip it when nothing was on screen.
 - **`Process.waitUntilExit()` inside a body** spins the run loop and can double-free StackLayout
-  (crash). Load in a store on a background queue (CLAUDE.md of the app).
+  (crash). Load in a store on a background queue (`.claude/rules/macos-app.md`, "Never block the main thread").
 - **A layer loses its animations when its view leaves the window.** Re-add them in `viewDidMoveToWindow`.
 - **CA coordinate space:** an `NSView` layer has y up. `addArc(clockwise: true)` from angle 0 and a
   rotation to `-2π` look clockwise on screen, matching SwiftUI's `Circle().trim` + positive degrees.
 - **A SwiftUI `List` viewport moved inside a row insert's resize** stops AppKit re-measuring rows (see
-  the app CLAUDE.md, `TranscriptScrollAnchor.remeasureVisibleRows`).
+  `.claude/rules/macos-app.md` and `TranscriptScrollAnchor.remeasureVisibleRows`).
 
 ## Expanding surfaces and input
 
@@ -100,8 +100,8 @@
 
 ## Process and repo
 
-- **Another session's worktree is not yours.** `.claude/worktrees/feat-agents-comms` (widget, Clicky)
-  belongs to a Codex session; edit there only when Martin says so, commit only your paths.
+- **Another session's worktree is not yours.** A worktree another session works in (in 2026-10 a Codex
+  session had the widget and Clicky one) is edited only when Martin says so; commit only your paths.
 - **placeholder-check blocks a push** on internal repo names in fixtures; replace them in a new
   commit (no history rewrite).
 - **Wait for a free Swift slot by process name, never by command line.** `until ! pgrep -f 'swift-(build|test)|xctest'`

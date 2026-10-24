@@ -1,6 +1,6 @@
 ---
 name: swift
-description: Swift, SwiftUI and AppKit work on macOS apps, above all performance — and the data layer behind them. Use it whenever you edit or debug a SwiftUI/AppKit app (here GenesisTools.app, its hub, review window, widget preview and the shared GenesisKit package under src/macos/), chase a hang, stall, "not responding", high CPU, high memory, frame drops, a slow click or a layout loop, add a SwiftUI animation, a WKWebView, a List or a custom Layout, or need to measure, bench, sample or A/B a change — even when the user only says "the hub is slow", "it jumps", "it uses 40% CPU" or "click around the app". Also use it when the slow part is the CLI or server process that feeds the app data.
+description: Swift, SwiftUI and AppKit work on macOS apps, above all performance — and the data layer behind them. Use it whenever you edit or debug a SwiftUI/AppKit app (here GenesisTools.app, its hub, review window, widget preview and the shared GenesisKit package under src/macos/), chase a hang, stall, "not responding", high CPU, high memory, frame drops, a slow click or a layout loop, add a SwiftUI animation, a WKWebView, a List or a custom Layout, or need to measure, bench, sample or A/B a change, or review or audit Swift code for cost, redraws, main-thread work, concurrency mistakes or state that is wrong or late — even when the user only says "the hub is slow", "it jumps", "it uses 40% CPU", "review this view", "is this SwiftUI right" or "click around the app". Also use it when the slow part is the CLI or server process that feeds the app data.
 ---
 
 # Swift app performance
@@ -13,6 +13,19 @@ multiplies every update), or work the data layer repeats because nothing remembe
 
 So the loop is always: **see it in a measurement, find the frame or the call that owns it, change the
 shape of the code, measure again with the same instrument, and prove the output did not change.**
+
+## Reviewing or auditing code
+
+Asked to review or audit Swift code, or to list what you would change: follow
+[references/audit.md](references/audit.md). Audit at most about 10,000 to 15,000 lines per pass and split larger
+areas: whole 39,000- and 112,000-line areas found under 40% of the known defects, and the same code in smaller
+surfaces found 90%. The guide starts with the facts of this codebase that decide which advice
+applies (`ObservableObject`, Swift 5 mode, a process per CLI call), then walks seven passes with search recipes: the
+main thread, work that runs too often, redraws wider than the change, work inside a body, animation and drawing,
+AppKit bridging, and concurrency. Its first step is `bun .claude/skills/swift/scripts/swift-scan.ts <files>`,
+which prints the candidates of every pass at once. It ends with a report shape that separates findings from shapes that need a
+measurement. [references/sources.md](references/sources.md) lists where its rules came from, the popular advice
+that is wrong for this app, and the rules that wait for `@Observable`, Swift 6 or macOS 26.
 
 ## The loop
 

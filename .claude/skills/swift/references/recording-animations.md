@@ -204,8 +204,8 @@ is not the recording'sFPS and is not a compositor-FPS guarantee. Keep recorders 
 Store each deliverable as `<datetime>-<native-commit>-<descriptive-state>.<extension>`. Receipts retain
 process launch/build time, PID, native window ID, logical rectangle, pixel size and hash. Rejected
 captures stay in private scratch with a reason; never present the closest successful-looking image as
-proof of the failed recording. Restore user preferences/drafts, update Requests.md and the single
-Implementation.wrapup.md, and publish the clean evidence through the Answer MCP when requested.
+proof of the failed recording. Restore user preferences and drafts, update the task's vault notes, and post the clean evidence to the
+user's inbox (`tools question message --image`) when requested.
 
 ## Transparent padding, no labels: the verified clean grid
 

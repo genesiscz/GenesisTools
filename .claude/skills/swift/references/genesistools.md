@@ -5,7 +5,9 @@ GenesisTools checkout.
 
 ## Where things live
 
-- App: `src/macos/GenesisTools/Sources/` (Hub/, Review/, App/); tests `swift test` there.
+- App: `src/macos/GenesisTools/Sources/`: `Host/` (the app host: launcher, permissions, approvals, notifications) and
+  `Parts/` (optional parts: `Hub/`, `Widget/`, `Clicky/`, `Markdown/`, `Features/`); `Hub/Stolen/` holds the copies
+  shared with Genesis. Tests: `swift test` there.
 - Shared Swift: `src/macos/GenesisKit/Sources/GenesisKit/` (Sessions/, Controls/, Perf/, Window/); tests
   `swift test` there. A generic component belongs here, never as an app-local copy.
 - Rules for the app: `.claude/rules/macos-app.md` (never block the main thread in a body, measure

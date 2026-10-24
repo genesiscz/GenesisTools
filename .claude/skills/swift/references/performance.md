@@ -234,7 +234,7 @@ Key the cache by file identity (`stat`: inode, size, mtime), bucket pixel sizes 
 ### Sample from inside the bench
 - `sample <pid>` from the shell missed the bench: the test prints its lines only at exit, so a shell loop that waits
   for the first line samples nothing. Start `/usr/bin/sample <getpid()> 8 -file <out>` with `Process` inside the bench
-  (`BENCH_SAMPLE=<path>`), then rank the main thread's own frames. It named the costs at once:
+  (the markdown bench had a `BENCH_SAMPLE=<path>` switch for it, since removed; add the call while you measure), then rank the main thread's own frames. It named the costs at once:
   `MarkdownWebView.makeNSView` 182 of 466 samples (39%, the web view per tab), `GitRepoPanel.body` 55 (the fold and
   sorts in the body), `GitFileStateModel.state.setter` 67 (a publish that re-ran the panel).
 
@@ -288,7 +288,8 @@ Release check app, a 600-row tree, 360 wheel events through the window, CPU per 
 
 - A window behind the desktop or at alpha 0 is not drawn, so its scroll cost reads near zero. Use a visible window on
   a second display (or a quiet moment), interleave the before and after builds, and report each round.
-- Debug builds cost about 25% more than release here. Install with `bun run start` (release) before judging lag.
+- Debug builds cost about 25% more than release here. Install a release build before judging lag (Genesis: `bun run start` in `GenesisPlayground/Genesis/apps/Genesis`;
+  GenesisTools.app: `bun run app`).
 
 ### Divider drags: log, do not guess
 
@@ -415,5 +416,5 @@ select-phase mark file for `sample`).
   10 switches 0.5 s apart, debug, busy ms): SwiftUI fade 2238 / 2208, no fade 938 / 901, Core Animation fade 925 / 925.
 
 ### Check the build configuration first
-- The installed app at 04:01 was a DEBUG build (`start:debug`; same size as the worktree's debug product, no release
+- The installed Genesis app at 04:01 was a DEBUG build (`start:debug` in the Genesis repo; same size as the worktree's debug product, no release
   product there). Before profiling a user's lag, compare the installed binary with the build products.
