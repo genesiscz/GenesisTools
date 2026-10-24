@@ -21,7 +21,7 @@ import type {
     UiCopyResult,
     UiScrollResult,
 } from "claude-code";
-import { type ModsSettings, modsSettings } from "./settings";
+import { MODS_DEFAULTS, type ModsSettings, modsSettings } from "./settings";
 import type { Sidebar } from "./sidebar";
 
 export { isRecord, MODS_DEFAULTS, type ModsSettings, modsSettings } from "./settings";
@@ -91,6 +91,14 @@ export async function settingsOf(host: Host): Promise<ModsSettings> {
     cached = { at: now, value };
 
     return value;
+}
+
+/**
+ * The settings as last read, without waiting: the defaults before the first read. For a press, whose engine calls must
+ * come before any await (`register.tsx`, `showPane`).
+ */
+export function settingsNow(): ModsSettings {
+    return cached?.value ?? MODS_DEFAULTS;
 }
 
 /** Drops the remembered settings: a test sets up another hooks file. */

@@ -7,6 +7,7 @@ import type {
     Timer,
     TurnStepChunk,
     TurnStepResult,
+    UiPane,
 } from "claude-code";
 import { atom, read, update } from "claude-code";
 import type { FlippedFiles, ShownCalls } from "../types";
@@ -33,7 +34,7 @@ import {
     openByDefault,
     sectionsOfCalls,
 } from "./sections";
-import { agentsDir, type Feature, type Host, readHooksFile, settingsOf } from "./shared";
+import { agentsDir, type Feature, type Host, logMod, readHooksFile, settingsNow, settingsOf } from "./shared";
 import { focusOf, forgetFocus, noteFocus } from "./sidebar";
 import { progressSuffix, spinner } from "./spinner";
 import { clearStall, noteStop, stallCatcher, stallRow } from "./stall";
@@ -407,12 +408,8 @@ function hostOf($: EngineInterface): Host {
         status: (text) => $.ui.status(text),
         fill: (args) => $.prompt.fill(args),
         submit: (text) => $.prompt.submit({ text }),
-        openPane: (id, title, from) => openSidebar($, id, title, from),
-        togglePane: async (id, title, from) => {
-            const isShown = (await $.ui.panes()).some((pane) => pane.id === id && pane.isShown);
-
-            return isShown ? $.ui.close({ id }) : openSidebar($, id, title, from);
-        },
+        openPane: (id, title, from) => showPane($, { id, title, from, toggle: false }),
+        togglePane: (id, title, from) => showPane($, { id, title, from, toggle: true }),
         closePane: (id) => $.ui.close({ id }),
         copy: (text) => $.ui.copy({ text }),
         scroll: (requestId) => $.ui.scroll({ to: { requestId }, block: "start" }),
@@ -425,29 +422,64 @@ function hostOf($: EngineInterface): Host {
 /** Whether the terminal docks panes (fullscreen), and its height, as the band's last drawing said. */
 let docksPanes: boolean | undefined;
 let terminalRows = 30;
+/**
+ * The panes as the engine last listed them, read at every draw of the band and of a sidebar. A press decides from
+ * this list, because asking the engine first means an await, and an `$.ui.open` after an await is no longer the
+ * person's: the engine then places it only from 144 columns, and on a narrower terminal it waits undrawn.
+ */
+let knownPanes: readonly UiPane[] = [];
+
+async function notePanes($: EngineInterface): Promise<void> {
+    knownPanes = await $.ui.panes().catch(() => knownPanes);
+}
 
 /**
- * Docked beside the transcript, a sidebar leaves the keyboard on the prompt; as a dialog above the prompt it takes the
- * keyboard and closes on Escape, as the diff mod's dialog does.
+ * Shows a sidebar, or with `toggle` closes it when it is the one shown. Above the prompt it takes the keys, and Esc
+ * closes it. Docked beside the transcript it takes them only as `mods.sidebar.focus` says (`command`: when a slash
+ * command opened it; `always`; `never`), so a click on the band leaves the prompt typing.
+ *
+ * Every engine call is made before the first await, so it answers the press. A sidebar open as a tab behind another
+ * is closed and opened again: an open of an open id only retitles it, and only `focus` raises it.
  */
-/**
- * Opens a sidebar. Above the prompt it takes the keys, and Esc closes it. Docked beside the transcript it takes them
- * only as `mods.sidebar.focus` says (`command`: when a slash command opened it, typed at the keyboard; `always`;
- * `never`), so a click on the band leaves the prompt typing; there Esc gives the keys back and the sidebar stays.
- */
-async function openSidebar($: EngineInterface, id: string, title: string, from: "command" | "band" = "band") {
-    const rows = Math.max(12, Math.floor(terminalRows * 0.6));
-    forgetFocus(id);
+function showPane(
+    $: EngineInterface,
+    pane: { id: string; title: string; from?: "command" | "band"; toggle: boolean }
+): Promise<unknown> {
+    const { id, title, from = "band" } = pane;
+    const held = knownPanes.find((known) => known.id === id);
+    const action = !held ? "open" : held.isShown && held.isPlaced ? (pane.toggle ? "close" : "keep") : "raise";
 
-    if (docksPanes !== true) {
-        return $.ui.open({ id, title, focus: true, closeOnEscape: true, rows });
+    if (action === "close") {
+        knownPanes = knownPanes.filter((known) => known.id !== id);
+        return $.ui.close({ id }).finally(() => void logShow($, { id, from, action }));
     }
 
-    const focus = (await settingsOf(hostOf($))).sidebar.focus;
+    if (action === "raise") {
+        void $.ui.close({ id });
+    }
 
-    return $.ui.open(
-        focus === "always" || (focus === "command" && from === "command") ? { id, title, focus: true } : { id, title }
-    );
+    forgetFocus(id);
+    const rows = Math.max(12, Math.floor(terminalRows * 0.6));
+    const focus = settingsNow().sidebar.focus;
+    const opened =
+        docksPanes !== true
+            ? $.ui.open({ id, title, focus: true, closeOnEscape: true, rows })
+            : $.ui.open(
+                  focus === "always" || (focus === "command" && from === "command")
+                      ? { id, title, focus: true }
+                      : { id, title }
+              );
+
+    return opened.then(async (result) => {
+        await notePanes($);
+        await logShow($, { id, from, action, ...result });
+
+        return result;
+    });
+}
+
+async function logShow($: EngineInterface, record: Record<string, unknown>): Promise<void> {
+    await logMod(hostOf($), "sidebar", { event: "show", ...record });
 }
 
 // The features that share events. The engine takes one unmatched hook per event from a plugin, so each event
@@ -619,6 +651,7 @@ export const register: Register = (on) => {
 
         docksPanes = e.viewport?.isFullscreen ?? docksPanes;
         terminalRows = e.viewport?.rows ?? terminalRows;
+        await notePanes($);
         const host = hostOf($);
         const ui = $.ui.resolve(e);
         const columns = e.props.bodyColumns;
@@ -664,6 +697,7 @@ export const register: Register = (on) => {
         }
 
         const host = hostOf($);
+        await notePanes($);
         const kit = {
             ui: $.ui.resolve(e),
             columns: Math.max(1, e.props.bodyColumns - (e.props.placement === "dock" ? 1 : 0)),
