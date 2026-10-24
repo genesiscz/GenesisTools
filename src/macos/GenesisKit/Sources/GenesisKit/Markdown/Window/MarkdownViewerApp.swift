@@ -205,6 +205,9 @@ public enum MarkdownViewerMenu {
             setDefault.target = MarkdownDefaultAppDialog.shared
             appMenu.addItem(.separator())
         }
+        let settings = appMenu.addItem(withTitle: "Settings…", action: #selector(MarkdownSettingsWindow.show(_:)), keyEquivalent: ",")
+        settings.target = MarkdownSettingsWindow.shared
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Hide \(appName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = appMenu.addItem(
             withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h"

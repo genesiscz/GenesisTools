@@ -16,6 +16,9 @@ final class AgentBlameQueue {
 
     /// Requests that arrive within this long of the first one share its run.
     var delay: Duration = .milliseconds(300)
+    /// The least time from one run of a repository to its next. A vault that agents write to changes every few seconds,
+    /// and each run is a GenesisTools launch that Launch Services checks in.
+    var minInterval: Duration = .seconds(5)
     var provider: () -> GenesisKitGTProvider = { GenesisKitGT.provider }
     /// Runs one blame off the main thread; tests replace it.
     var run: @Sendable (GenesisKitGTProvider, String, [String]) -> AgentBlameResult? = { provider, repo, paths in
@@ -27,6 +30,7 @@ final class AgentBlameQueue {
     private var waiting: [String: [String: [Request]]] = [:]
     private var running: Set<String> = []
     private var scheduled: Set<String> = []
+    private var lastStart: [String: ContinuousClock.Instant] = [:]
     /// A folder's repository root, found once: every note of a folder used to run its own `git rev-parse`.
     private var roots: [String: URL] = [:]
     private var resolving: [String: [Request]] = [:]
@@ -71,9 +75,10 @@ final class AgentBlameQueue {
 
     private func schedule(_ repo: String) {
         guard !running.contains(repo), scheduled.insert(repo).inserted else { return }
-        let delay = delay
-        Task { [weak self] in
-            try? await Task.sleep(for: delay)
+        var wait = delay
+        if let last = lastStart[repo] { wait = max(wait, last + minInterval - .now) }
+        Task { [weak self, wait] in
+            try? await Task.sleep(for: wait)
             self?.start(repo)
         }
     }
@@ -82,6 +87,7 @@ final class AgentBlameQueue {
         scheduled.remove(repo)
         guard let batch = waiting.removeValue(forKey: repo), !batch.isEmpty else { return }
         running.insert(repo)
+        lastStart[repo] = .now
         runs += 1
         let paths = batch.keys.sorted()
         let provider = provider()

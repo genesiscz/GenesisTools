@@ -27,8 +27,9 @@ final class AgentBlameModelTests: XCTestCase {
         final class Counting: GenesisKitGTCLIProvider, @unchecked Sendable {
             let lock = NSLock()
             var runs: [[String]] = []
+            var starts: [Date] = []
             override func agentBlame(repo: String, paths: [String]) throws -> AgentBlameResult {
-                lock.withLock { runs.append(paths) }
+                lock.withLock { runs.append(paths); starts.append(Date()) }
                 Thread.sleep(forTimeInterval: 0.2)
                 return AgentBlameResult(
                     sources: [AgentBlameSource(provider: "claude", session: "aaaaaaaa-1111", turn: "t1",
@@ -44,16 +45,22 @@ final class AgentBlameModelTests: XCTestCase {
         GenesisKitGT.provider = provider
         defer { GenesisKitGT.provider = previous }
         AgentBlameQueue.shared.remember(root: folder, for: folder)
+        let interval = AgentBlameQueue.shared.minInterval
+        AgentBlameQueue.shared.minInterval = .milliseconds(700)
+        defer { AgentBlameQueue.shared.minInterval = interval }
         let models = (0..<3).map { _ in AgentBlameModel() }
         for (index, model) in models.enumerated() { model.follow(folder.appendingPathComponent("note\(index).md")) }
         try await Task.sleep(for: .milliseconds(450))
         // A second wave while the first runs: one more run for all of it, after the first.
         for model in models { model.reload() }
-        try await Task.sleep(for: .milliseconds(1200))
+        try await Task.sleep(for: .milliseconds(1400))
 
-        let runs = provider.lock.withLock { provider.runs }
+        let (runs, starts) = provider.lock.withLock { (provider.runs, provider.starts) }
         XCTAssertEqual(runs, [["note0.md", "note1.md", "note2.md"], ["note0.md", "note1.md", "note2.md"]],
                        "one run per wave for the three notes, never one per note")
+        if starts.count == 2 {
+            XCTAssertGreaterThanOrEqual(starts[1].timeIntervalSince(starts[0]), 0.65, "a repository's next run waits out minInterval")
+        }
         XCTAssertEqual(models.map(\.path), ["note0.md", "note1.md", "note2.md"])
         XCTAssertEqual(models[1].source(forLines: 0...1)?.session, "aaaaaaaa-1111", "each note gets its own part")
     }
