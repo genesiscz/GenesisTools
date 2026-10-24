@@ -90,14 +90,24 @@ const STATUSES: ReadonlySet<string> = new Set<DecisionStatus>([
     "superseded",
 ]);
 const TAGS: ReadonlySet<string> = new Set<LoggedEntry["tag"]>(["question", "action", "directive", "message"]);
-/** How often the files behind the items are checked; the CLI runs only when one changed. */
+/** How often the files behind the items are checked; the CLI runs only when this session's part of them changed. */
 const TICK_MS = 10_000;
+/**
+ * What the logs cannot show (a read mark in the widget, a form's answer) is read again this often, and only in a
+ * session that has entries or forms. Every running session shares the store, so reading on each of its changes would
+ * start a `bun` in every session at once.
+ */
+const SLOW_MS = 5 * 60_000;
 /** A tool call more than this before its entry did not record it. */
 const ENTRY_WINDOW_MS = 10 * 60_000;
 const FIRST_ASK = /(^|[^[])❓\s*\**\s*DECISION\s+(\d+)/gm;
 
 let held: SessionAnswers | undefined;
-let heldStamp = "";
+/** What the last read saw: the hash of this session's lines in the shared logs. */
+let heldStamp: string | undefined;
+let lastReadAt = 0;
+/** Each shared file's size and time at the last check, with the hash of this session's lines in it. */
+const seenFiles = new Map<string, { mark: string; own: string; lines: number }>();
 let reading: Promise<SessionAnswers | undefined> | undefined;
 let started = false;
 /** Decision number to the uuid of its first ask; entry id to the tool call that recorded it. Found once, kept. */
@@ -117,7 +127,9 @@ export function jumpRowOf(target: { decision: number } | { entry: string }): str
 /** Drops what was read: a test starts another session. */
 export function forgetAnswers(): void {
     held = undefined;
-    heldStamp = "";
+    heldStamp = undefined;
+    lastReadAt = 0;
+    seenFiles.clear();
     reading = undefined;
     started = false;
     askRows.clear();
@@ -306,21 +318,57 @@ function blocksOf(entry: Record<string, unknown>): Record<string, unknown>[] {
         : [];
 }
 
-/** The files a change of any item shows in: the decision log, today's Q→A log, and the store of forms and reads. */
-async function stampOf(host: Host): Promise<string> {
+/** A short hash (FNV-1a) of a text. */
+function hashOf(value: string): string {
+    let hash = 0x811c9dc5;
+
+    for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+
+    return hash.toString(36);
+}
+
+/**
+ * The hash and count of the lines of a shared file that name this session; the file is read only after its size or
+ * time moved.
+ */
+async function ownLines(host: Host, file: string, session: string): Promise<{ own: string; lines: number }> {
+    const stat = await host.stat(file).catch(() => undefined);
+    const mark = stat ? `${stat.mtimeMs}:${stat.size}` : "-";
+    const seen = seenFiles.get(file);
+
+    if (seen?.mark === mark) {
+        return seen;
+    }
+
+    const content = stat ? await host.read(file).catch(() => "") : "";
+    const mine = content.split("\n").filter((line) => line.includes(session));
+    const found = { mark, own: hashOf(mine.join("\n")), lines: mine.length };
+    seenFiles.set(file, found);
+
+    return found;
+}
+
+/** Where a change of this session's items shows: its lines in the decision log and in today's Q→A log. */
+async function stampOf(host: Host): Promise<{ own: string; lines: number }> {
     const home = (await host.env("GENESIS_TOOLS_HOME")) ?? (await host.env("HOME"));
 
     if (!home) {
-        return "";
+        return { own: "", lines: 0 };
     }
 
     const question = `${home}/.genesis-tools/question`;
+    const session = await host.sessionId();
     const now = new Date();
     const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-    const files = [`${question}/decisions/decisions.jsonl`, `${question}/log/${day}.jsonl`, `${question}/qa.db`];
-    const stats = await Promise.all(files.map((file) => host.stat(file).catch(() => undefined)));
+    const own = await Promise.all([
+        ownLines(host, `${question}/decisions/decisions.jsonl`, session),
+        ownLines(host, `${question}/log/${day}.jsonl`, session),
+    ]);
 
-    return stats.map((stat) => (stat ? `${stat.mtimeMs}:${stat.size}` : "-")).join("|");
+    return { own: own.map((file) => file.own).join("|"), lines: own.reduce((sum, file) => sum + file.lines, 0) };
 }
 
 /** The transcript's size at the last search: a search that found nothing new waits for the transcript to grow. */
@@ -398,8 +446,19 @@ export function refreshAnswers(host: Host, why: string, force = false): Promise<
 
     const work = (async () => {
         const stamp = await stampOf(host);
+        const ownMoved = stamp.own !== heldStamp;
+        const hasItems = Boolean(held && held.entries.length + held.forms.length > 0);
+        const slow = hasItems && Date.now() - lastReadAt >= SLOW_MS;
 
-        if (!force && held && stamp === heldStamp) {
+        // A session the logs do not name has nothing to read: no `bun` starts for it.
+        if (!force && !held && stamp.lines === 0) {
+            held = { decisions: [], todos: [], entries: [], forms: [], at: Date.now() };
+            heldStamp = stamp.own;
+            host.redraw();
+            return held;
+        }
+
+        if (!force && held && !ownMoved && !slow) {
             return held;
         }
 
@@ -424,7 +483,9 @@ export function refreshAnswers(host: Host, why: string, force = false): Promise<
         }
 
         held = read;
-        heldStamp = stamp;
+        heldStamp = stamp.own;
+        lastReadAt = Date.now();
+        await logMod(host, "answers", { event: "read", why, own: ownMoved, slow });
         await findRows(
             host,
             read.decisions.map((decision) => decision.n),
@@ -442,14 +503,15 @@ export function refreshAnswers(host: Host, why: string, force = false): Promise<
     return reading;
 }
 
-/** Starts the reads once per module load: the first now, then each tick when the files changed. */
+/** Starts the checks once per module load: the first now, then each tick; a read runs only when this session changed. */
 export function startAnswers(host: Host): void {
     if (started) {
         return;
     }
 
     started = true;
-    void refreshAnswers(host, "start", true);
+    // Not forced: a session the logs do not name reads nothing, so a reload of the mods starts no `bun` there.
+    void refreshAnswers(host, "start");
     host.every(TICK_MS, () => {
         void refreshAnswers(host, "tick");
     });
@@ -532,7 +594,8 @@ async function questionCommand(host: Host, args: readonly string[]): Promise<Rec
 export async function stageAnswer(
     host: Host,
     n: number,
-    answer: { option?: string; text?: string }
+    answer: { option?: string; text?: string },
+    { refresh = true }: { refresh?: boolean } = {}
 ): Promise<{ error?: string }> {
     const args = ["draft", "--decision", String(n)];
 
@@ -571,7 +634,9 @@ export async function stageAnswer(
         host.redraw();
     }
 
-    void refreshAnswers(host, "stage", true);
+    if (refresh) {
+        void refreshAnswers(host, "stage", true);
+    }
 
     return {};
 }

@@ -623,9 +623,20 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                             hint: "Unstages every answer in the decision store and empties the answer fields.",
                             onPress: () => {
                                 typed.clear();
-                                void Promise.all(
-                                    staged.map((decision) => stageAnswer(host, decision.n, { option: "", text: "" }))
-                                ).then(() => pressed(host, "decisions-clear", "Unstaged every answer."));
+                                // One `tools` start at a time, then one read: never a process per row at once.
+                                void (async () => {
+                                    for (const decision of staged) {
+                                        await stageAnswer(
+                                            host,
+                                            decision.n,
+                                            { option: "", text: "" },
+                                            { refresh: false }
+                                        );
+                                    }
+
+                                    await refreshAnswers(host, "clear", true);
+                                    await pressed(host, "decisions-clear", "Unstaged every answer.");
+                                })();
                             },
                         },
                     ])}
