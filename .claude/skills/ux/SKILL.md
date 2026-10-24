@@ -1,6 +1,6 @@
 ---
 name: ux
-description: UX polish and verification for GenesisTools' native macOS surfaces — the notch/side widget, Clicky, the Settings window, the hub and the review window (src/macos/GenesisKit, src/macos/GenesisTools). Use it whenever you design, change, review or test anything a user sees or touches there, even if the request only says "polish this", "it jumps", "padding looks off", "can't click it", "make it shippable", "test every setting", "the animation is janky", "the permission error is hidden" or "check the widget". It routes to the shippable checklist, live-testing recipes for the real app, motion verification and the ledger of things that were wrong on the first try. Pair it with the swift skill (performance) and the design skills it names.
+description: UX polish, audits and verification for GenesisTools' native macOS surfaces — the notch/side widget, Clicky, the Settings window, the hub, the recording picker, the permission and approval dialogs and the review window (src/macos/GenesisKit, src/macos/GenesisTools). Use it whenever you design, change, review, audit or test anything a user sees or touches there, even if the request only says "polish this", "review this view", "what would you change", "it jumps", "padding looks off", "can't click it", "make it shippable", "test every setting", "the animation is janky", "keyboard does nothing", "VoiceOver", "the error is unreadable", "the permission error is hidden" or "check the widget". It routes to a pass-by-pass code audit, the shippable checklist (pointer, hit targets, keyboard, VoiceOver, feedback, errors, undo, empty states, Reduce Motion, attention, counts and words, settings), live-testing recipes for the real app, motion verification and the ledger of things that were wrong on the first try. Pair it with the swift skill (performance) and the design skills it names.
 ---
 
 # Native UX for GenesisTools
@@ -11,13 +11,24 @@ chevron reacted, a list whose last item was cut off, a permission error printed 
 that looked fine in code and showed an empty card for 130 ms on screen. So the work is mostly **using the
 thing for real, frame by frame, and comparing it with the checklist**, then fixing the shape of the code.
 
+## Reviewing or auditing a surface
+
+Asked to review, audit or list what you would change: follow [references/audit.md](references/audit.md). It maps
+the surface, walks the passes (pointer and targets, keyboard, VoiceOver, feedback and errors, undo and lost work,
+empty states, motion, things that appear by themselves, counts and words, layout, windows and settings) with search
+recipes, and
+starts with what the shared components already do, so that no finding claims a defect they handle. Its first step
+is `bun .claude/skills/ux/scripts/ux-scan.ts <files>`, which prints the candidates of every pass at once. Report what
+the user meets, not code style.
+
 ## The loop
 
 1. **Read the ledger first** ([references/findings.md](references/findings.md)): each entry is a mistake made
    once, with how to see it and the fix. Do not repeat one.
 2. **Run the real surface, not a mental model.** The real GenesisTools.app with its real grants, driven in the
    background so the user's pointer and windows are never touched: [references/live-testing.md](references/live-testing.md).
-3. **Walk the checklist** for every view you touch: [references/checklist.md](references/checklist.md).
+3. **Walk the checklist** for every view you touch: [references/checklist.md](references/checklist.md), with the
+   passes of [references/audit.md](references/audit.md) over your own diff.
 4. **Verify motion with instruments**, not with one screenshot: [references/motion.md](references/motion.md).
    Window frames from the window server, transition callbacks from the app, and only then a recording.
 5. **Evidence in annotated pairs** ([references/screenshots.md](references/screenshots.md): same size and scale,

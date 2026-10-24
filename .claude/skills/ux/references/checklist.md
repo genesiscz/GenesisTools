@@ -1,6 +1,17 @@
 # Shippable checklist for a native view
 
-Walk it for every view you change. Each line exists because it was missed at least once.
+Walk it for every view you change. Each line exists because it was missed at least once, or because one of the
+skills distilled on 2026-10-24 states it and the app broke it ([sources.md](sources.md)). [audit.md](audit.md) says
+how to find a violation in code.
+
+Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overlays-martin-2026-10-14) ·
+[Layout](#layout) · [Widget and panel controls](#widget-and-panel-controls-martin-2026-10-23-1440) ·
+[Hit targets](#hit-targets) · [Keyboard](#keyboard) · [VoiceOver](#voiceover) · [Feedback](#feedback) ·
+[Errors and recovery](#errors-and-recovery) · [Undo and destructive actions](#undo-and-destructive-actions) ·
+[Empty and loading states](#empty-and-loading-states) · [Motion and Reduce Motion](#motion-and-reduce-motion) ·
+[Attention and notifications](#attention-and-notifications) · [Counts, words and text](#counts-words-and-text) ·
+[Settings](#settings) · [Real time and state](#real-time-and-state) ·
+[Loading, swaps and diffs](#loading-swaps-and-diffs-martin-2026-10-13-1722)
 
 ## Affordance
 - Every clickable thing shows the pointer cursor on hover and has a hover state. The hand comes from the shared styles
@@ -15,6 +26,17 @@ Walk it for every view you change. Each line exists because it was missed at lea
   view: SwiftUI `Text(.init(markdown))` never draws an image.
 - Items that can be acted on can be acted on in place: tick a task, expand an answer, create a new one.
   Opening another window is the exception, not the default.
+- A custom button style draws a pressed state that differs from its hover state (`configuration.isPressed`).
+- A drop target highlights (an accent outline or fill) while a drag is over it (`isTargeted`).
+- Rest, hover and pressed keep the same size, padding and font weight; hover changes only opacity, fill, a ring or
+  a layout-neutral scale. A hover reacts to enter and exit, never to every pointer move, and clears on exit.
+- A click acts on mouse-up, so a press dragged off the control cancels it. No busy cursor as a loading cue: the
+  element that waits shows it.
+- Every context-menu action also has a visible control or a key: a right click is never the only way.
+- Status and essential data show inline, not only on hover; what a hover preview shows is also reachable by click
+  or keyboard.
+- An overlay, scrim or note layer that is not a control passes clicks through (`.allowsHitTesting(false)`), unless
+  it blocks on purpose. A `DragGesture(minimumDistance: 0)` on a container swallows the taps of its buttons.
 
 ## Windows and overlays (Martin, 2026-10-14)
 - No `isMovableByWindowBackground` on a window with SwiftUI content: the hosting view counts as background
@@ -27,6 +49,20 @@ Walk it for every view you change. Each line exists because it was missed at lea
 - A movable overlay tracks the drag in its own `mouseDragged` from each event's location and saves on mouse-up;
   `performDrag(with:)` moved a panel only on the first drag of a show.
 - ⌘W closes the current tab; on a window with no tabs left it closes the window.
+- A resizable window has a minimum size that keeps its UI usable.
+- A floating panel is non-activating, does not hide when the app deactivates, becomes key only when it takes text,
+  and never uses a shielding window level.
+- Place a window by the pointer's screen, the window's own screen or the saved display, never by `NSScreen.main`
+  alone.
+- A modal that does not need an answer does not block quitting or an update (`preventsApplicationTerminationWhenModal
+  = false`).
+- A popover holds a short option or a detail; a reply, a form or a multi-step flow gets a panel, a sheet or inline UI.
+- A window opened by the app goes through `DockTile.policy(for:)` for its activation policy, so it comes to the front
+  and keeps the Dock icon while it is open.
+- In a regular window, a selection takes the inactive look when the window is not key. A non-activating panel (the
+  widget) keeps its look, since it is never key by design.
+- State that can change outside the app (a privacy grant, a login, a file) is read again when the app becomes active
+  or the window becomes key.
 
 ## Layout
 - Equal, intentional insets on all four sides; controls aligned in one column; descriptions under titles.
@@ -42,7 +78,11 @@ Walk it for every view you change. Each line exists because it was missed at lea
   and badges are fully visible at the smallest window size.
 - Segmented tabs in a non-activating panel: the native `Picker` greys its selection out of the key window; use
   `GenSegmentedTabs`.
-- One navigation per surface; no two controls that do the same thing side by side.
+- One navigation per surface; no two controls that do the same thing side by side, and no two reload buttons on
+  screen at once.
+- Text in a fixed frame has a line limit and truncates; a label that embeds a title or a path otherwise wraps or
+  clips at real lengths.
+- One control is drawn one way across the app: the kit's version, not a native one beside it.
 - Distinct icons for distinct features (two modules once shared `waveform`).
 
 ## Widget and panel controls (Martin, 2026-10-23 14:40)
@@ -81,14 +121,195 @@ Walk it for every view you change. Each line exists because it was missed at lea
 - A flash reaches every place the session shows, including a list the alert itself opened: such a list is built
   after the trigger changed, so it needs the flash start time, not only the trigger.
 
+## Hit targets
+- A clickable control is at least 22 by 22 pt including its padding; a smaller one states why in a comment.
+- The hit area is at least the drawn shape. A small glyph gets the padding of a shared hover style (`.genHoverIcon`
+  is a 22 pt circle); a row that acts takes clicks over its whole width and height (`.contentShape(Rectangle())`).
+- Neighbours split the gap between them. A strip between two bubbles or two icons where a click does nothing is a
+  dead zone: grow each target into half the gap, or move the spacing inside the targets.
+
+## Keyboard
+- Every list: Up and Down move the selection, Return opens it, Esc clears or closes. A list the user can only click
+  is a defect, in a panel as much as in a window.
+- Return picks the safe choice. In a dialog, a prompt or a card, the default button keeps the user's work (Keep,
+  Cancel, Not now); Send, Delete, Approve and Discard are never on Return. Check what Return does when no field has
+  focus.
+- Esc closes every popup, sheet, card and overlay without acting, cancels an operation that is running, and in an
+  edited text field puts the previous value back.
+- Every action the mouse can start, the keyboard can start too. A view that acts only through `.onTapGesture` needs
+  a Button or a key handler beside it.
+- A surface that opens to be typed in (a composer, a search, a find bar, a prompt) focuses its field when it opens,
+  without waiting for its animation to end.
+- A control that takes keyboard focus shows a focus ring or a visible focused look; never remove the ring without
+  one.
+- A shortcut without a modifier (a bare letter or digit) never fires while a text field has focus, and the user can
+  turn single-letter shortcuts off; a new shortcut prefers a modifier.
+- When a sheet, popover or panel closes, focus returns to the control that opened it; after a delete it moves to a
+  neighbour, never to nothing.
+- A multi-line composer says which key sends (Return or ⌘Return) and which adds a line (⇧Return), in a hint beside
+  the field.
+- A control with a shortcut shows it in its tooltip ("Send (⌘↩)"); where the app has a menu bar, the shortcut is
+  also a menu item.
+- A search or filter field shows a clear button while it holds text, and Esc clears it.
+- Shortcuts work wherever focus is inside the window or panel, not only when the root view has focus.
+- A key that macOS defines keeps its meaning: ⌘H Hide, ⌘M Minimize, ⌘W Close, ⌘Q Quit, ⌘, Settings. One meaning per
+  shortcut across all windows of the app.
+- ⌘1 to ⌘9 switch tabs and modes, in their visible order.
+- Hover never moves the keyboard selection. The pointer's highlight and the keyboard's selection are two states.
+
+## VoiceOver
+- Every icon-only control has a label (`IconButton` gives one); a decorative image is hidden.
+- A status icon, badge or count that means something has a label too. `.instantTooltip` and `.help` set none: a
+  meaning that lives only in a tooltip does not reach VoiceOver.
+- A selected row, tab, filter or option says so (`.accessibilityAddTraits(.isSelected)` or a value), not only by a
+  checkmark or a tint.
+- An action that appears only on hover is also an `.accessibilityAction(named:)` on its row, or a context-menu item.
+- A change that happens without the user's action is announced: an alert arrives, a send fails, recording starts or
+  stops, a grant changes (`AccessibilityNotification.Announcement`, or
+  `NSAccessibility.post(element:notification: .announcementRequested, userInfo:)` in AppKit).
+- A row made of several texts reads as one element with its state (`.accessibilityElement(children: .combine)`).
+- Colour is never the only signal: a state shown in colour also has a symbol or a word, and the view reads
+  `accessibilityDifferentiateWithoutColor` where it can add one.
+- The accessibility label matches the visible text and leaves out the control type ("Send", not "Send button").
+- A control drawn from shapes or gestures has a role, a value and an action (`accessibilityAddTraits`,
+  `accessibilityValue`, `accessibilityAction`).
+- A view that faded out, has zero size or sits off screen is hidden from VoiceOver, and an exiting view ignores
+  clicks.
+- Translucency comes from system materials, not `Color.opacity` plus a blur, which ignores Reduce Transparency.
+- A report of an accessibility change names the manual checks that ran: VoiceOver, Full Keyboard Access, the
+  Accessibility Inspector. A code audit alone proves little.
+- VoiceOver reads in the visual order. Where a layout draws a later view first (a pinned header, a composer above
+  its list), fix the order with `accessibilitySortPriority` or grouping.
+- Custom colours have a stronger variant under Increase Contrast (`@Environment(\.colorSchemeContrast)`), above all
+  faint text and hairlines.
+
 ## Feedback
 - Every action answers within 100 ms: visible state change, sound for capture, progress for slow work.
-- Errors say what happened and what to do, in a dialog when the user must act. A missing grant goes through
-  `PermissionCenter` (GenesisKit Permissions/); test each path with `bun scripts/native/staging.ts deny <kind>`.
-- Counts mean something: "99+ unread" made of weeks-old items is noise; age them out or let the user clear.
-  Never print a raw total of sessions; count what needs attention. One numbering scheme per list.
+- No spinner or skeleton for work under about 200 ms; after that, one spinner per section; a skeleton only for loads
+  over about 500 ms. A placeholder has the size of what replaces it, so nothing moves when the data arrives.
+- Anything the user waits on shows an error, a reason or a Cancel within about 10 s, not at a 30 s or 120 s process
+  timeout.
+- A success note fades after a few seconds (the hub's `NoticePill` is the model): at least 2 s, about 1 s plus 50 ms
+  per word. A new note replaces the old one. An error stays until it is closed.
+- A success never gets a modal alert; a modal is for a decision or a failure the user must act on.
+- The first frame of a window or panel uses the saved setting (size, look, tab), never a default that snaps to the
+  saved one.
+- The result of an action reaches the user where they are. When the view that started it is gone (a panel collapsed,
+  a popover closed), a failure flashes the trigger and offers Retry, or posts a notification.
+- A wait that blocks the user's agent (an approval, a decision) escalates: a sound when it arrives, a notification
+  after a delay that is a setting.
+- Every loading state ends in content, an empty state or an error; a skeleton after a failed read stays forever.
+  A transient state ("Copied", "Saved") reverts by itself.
+- On press, a control flips its own state in the same frame: disabled, label kept, width stable, a spinner inside,
+  so a second press cannot start the action twice. A disabled control says why (a tooltip or a caption); a greyed
+  control with no reason is a dead end.
+- A bulk action ends with a result: how many worked, how many failed and which. It never completes silently.
+- Say what is loading ("Reading the session"), not the bare word Loading. Past 5 to 10 s show progress and a Cancel;
+  a longer job runs in the background and reports when it ends.
+- Stale, partial or disconnected data looks different from live data and says when it was last updated.
+- The primary action of a pane (Send, Apply, Save) has a shortcut, and the button or its tooltip shows it.
+
+## Errors and recovery
+- Errors say what happened and what to do, in one sentence, with Retry where a retry can work, in a dialog when the
+  user must act. Raw output (stderr, a stack, `localizedDescription`) goes behind a Details disclosure.
+- The tone (success, warning, error) is stored with the message by the code that knows it. Picking a colour from
+  words in the text is a defect: one message without the word shows a failure in green.
+- A failure shows on the row, card or section that failed. It does not blank the pane, and a recoverable error never
+  raises a modal.
+- Each cause has its own text and its own next step: not installed, no receiver, refused, offline, timed out. One
+  generic "failed" for all of them is a defect.
+- A failed send keeps what the user wrote: the typed reply, the staged answers, the filters. Clear the input only
+  after the receiver confirms.
+- A failure is the app's problem, not the user's: no blame, no "you must", no "Something went wrong".
+- A missing grant goes through `PermissionCenter` (GenesisKit Permissions/); test each path with
+  `bun scripts/native/staging.ts deny <kind>`.
+
+## Undo and destructive actions
+- A frequent destructive action (dismiss, discard, remove, clear) gets Undo: a note with an Undo button for a few
+  seconds, and ⌘Z. Undo beats a confirmation for things done many times a day.
+- A rare, large one (delete a project, forget a key) asks first; its button is marked destructive and is not the
+  default. It names the action and the object, with the count when it removes several ("Delete 3 drafts"), never
+  OK, Yes or No.
+- Every sheet, alert and multi-step flow has a visible Cancel besides Esc.
+- A routine destructive action is a quiet secondary button, kept apart from the common action; each card, dialog or
+  sheet has one primary action.
+- A confirmation the user meets many times offers "Do not ask again", which persists and can be undone in settings.
+- A sheet or panel with Cancel edits a draft: it writes on commit and restores on Cancel.
+- Text the user typed survives a dismissal: a popover closed by an outside click, a panel that collapses, a row that
+  scrolls away. Something the user staged (an image, a draft) is never dropped in a lazy row's `onDisappear`.
+
+## Empty and loading states
+- An empty pane says why it is empty and offers the next step as a button (`EmptyState(actionTitle:action:)`).
+  Never tell the user to run a command where a button can do it.
+- Loading, none yet, filtered out, permission missing and failed are different states with different text. Empty
+  data behind a missing grant names the grant and opens its settings pane.
+- An empty pane hides the filters, sort and tabs that would do nothing.
+- A first run offers one suggested action, not a tour, and asks for a permission when it is first needed, not at
+  launch.
+
+## Motion and Reduce Motion
+- Every animation honours Reduce Motion: fades stay, travel, scale, bounce and loops go. Use `GenMotion`, the shared
+  styles or `@GenReduceMotion`; never pass a literal `false` where a component asks for the Reduce Motion state.
+- That includes AppKit and Core Animation: `NSAnimationContext`, `animator()`, `CABasicAnimation` and hand-made
+  timers that move a window read `NSWorkspace.shared.accessibilityDisplayShouldReduceMotion`.
+- Under Reduce Motion, travel and scale become an instant change or a crossfade of 200 ms at most.
+- Read Reduce Motion when you animate, never once into a `static let`; test it by switching it in System Settings
+  while the app runs.
+- Nothing waits on motion: a timer or a state change never assumes an animation ran or finished. When the motion is
+  skipped, the flow still completes.
+- Routine changes use `GenMotion` or another named curve: ease-out or a critically damped spring, no linear, no
+  ease-in, no bounce on a functional control; a spring with overshoot is for a drag release or a one-shot moment.
+  Hover and press take about 100 to 150 ms, other transitions 150 to 250 ms, an exit about 75% of its entrance.
+- Animate opacity and transforms, not frame, padding or spacing. Do not animate frequent or keyboard-driven actions,
+  or anything in settings: there, speed is the feature.
+- An animation yields to new input; chain steps with the completion of `withAnimation`, not a delay. Never use the
+  old `.animation(_:)` modifier without a `value:`.
+- Nothing scales in from 0: start at 0.9 to 0.95 with a fade.
+- A decorative loop (shimmer, pulse, breathing dot) stops when its view is hidden or idle, and goes still under
+  Reduce Motion. A progress indicator keeps running under Reduce Motion: it carries meaning.
+- An attention flash lasts 1 to 2 s and blinks at most 3 times a second; a burst of alerts gives one cue, not one
+  per alert.
+
+## Attention and notifications
+- Anything that appears by itself (a popup, a HUD, a flash, a sound) can be closed without acting (× and Esc), says
+  what caused it, and has its duration and its sound as settings.
+- A notification is for something the user must act on, never for progress. No system notification for a session
+  the user is looking at; never two for one unread item; group related ones.
+- Every alert opens what it is about (its session, its composer) or says why it has no next action.
+- A note's timer pauses while the pointer or focus is on it; a note never steals focus and has at most one action.
+- Each alert kind has its own short sound (under 1 s), quiet by default; no sound for frequent or hover events. A
+  master mute and quiet hours sit beside at most three category switches, not one switch per event.
+
+## Counts, words and text
+- Counts mean something: "99+ unread" made of weeks-old items is noise; age them out or let the user clear. A badge
+  counts one kind of thing, the kind that needs the user, and reads the same as the same count on other surfaces.
+  Never print a raw total of sessions. One numbering scheme per list.
+- One word per concept on every surface: the row, the button, the settings card and the error say the same word.
+- Option badges and the keys that pick them use the same symbols.
+- Values from the data (a state, a kind, an id, a source, an error detail) are mapped to words before they reach a
+  label or a tooltip; "CI: success" or a raw session id as a title is the data talking, not the app.
+- A tooltip or caption says what happens, not which command runs. It is one or two short sentences, never repeats
+  the visible label, and never holds something the user needs to finish the task.
+- Truncated text shows its full text on hover; an error is never truncated.
+- A button names its action in one to three words and keeps the verb through the flow; never OK, Yes or No.
+- No em dash or en dash in a visible string: use a period, a comma, a colon or parentheses.
+- An icon only where a standard glyph exists, in one symbol style and weight; an icon on every row is noise.
+- Each state has one colour from one palette, the same on the rail, the inbox and the hub. Colour means state, never
+  identity. Numbers that change in place use `.monospacedDigit()`.
 - Labels: sentence case, no ALL-CAPS titles (tiny kickers excepted), no instructions to run commands that
   do not exist, no hand-edit-this-JSON advice where a control belongs.
+- Text the user must read is at least 11 pt and keeps 4.5:1 contrast against its real background. Faint 9 pt text
+  (white at 40 to 50% on a dark fill) fails both.
+
+## Settings
+- Every setting can be found: a search field once the window has more than a few pages.
+- One setting, one place, one name and one range. A quick control elsewhere (a popover) writes the same key with the
+  same words and the same choices.
+- A sub-option is disabled (or hidden) while its parent switch is off or the permission it needs is missing, and
+  says which.
+- Settings pages are flat: a sidebar or tabs with sections, no push navigation.
+- A group holds about seven rows and a page a handful of groups; per-event toggles fold into one choice.
+- A text field commits on Return and on focus loss, and validates on commit, not on every keystroke.
 
 ## Real time and state
 - New data appears without a reload; the view does not jump when it arrives.
