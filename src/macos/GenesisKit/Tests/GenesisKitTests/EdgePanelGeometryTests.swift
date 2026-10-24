@@ -817,7 +817,7 @@ final class WidgetVisibilityTests: XCTestCase {
             kind: "decision", key: key, at: Date().timeIntervalSince1970 * 1000, needsAnswer: true,
             title: "Pick a parser for DECISION 8", number: 8)
         seen = try read("peek", WidgetPeekView(model: model, item: peek))
-        XCTAssertTrue(seen.contains("New decision"), "read: \(seen)")
+        XCTAssertTrue(seen.contains("Decision 8"), "read: \(seen)")
         XCTAssertTrue(seen.contains("Pick a parser"), "read: \(seen)")
 
         model.openDecision(id: "d_8_fixture-session", sessionKey: key)
@@ -826,7 +826,8 @@ final class WidgetVisibilityTests: XCTestCase {
 
     func testAlertKickerAndOwnAnswerCardStates() {
         let item = WidgetInboxItem(id: "a", sourceId: "a", kind: "decision", key: "k", at: 1, needsAnswer: true, number: 9)
-        XCTAssertEqual(WidgetAlerts.kicker(item), "New decision · DECISION 9")
+        // The number once, in sentence case (R10).
+        XCTAssertEqual(WidgetAlerts.kicker(item), "Decision 9")
         var card = WidgetCard(id: "decision:d_9_s", kind: "decision", sessionKey: "k", sourceId: "d_9_s", at: 1,
             title: "T", body: "", status: "superseded", choices: [], attachments: [], refs: [], read: true)
         card.supersededBy = .init(id: "d_12_s", number: 12, sessionKey: "k", title: "Newer")
@@ -1752,7 +1753,7 @@ final class WidgetRosterTests: XCTestCase {
                     var heights: [CGFloat] = []
                     for count in [0, 128, 0] {
                         model.updateInbox(WidgetInboxSummary(
-                            unread: count, needsAnswer: 0, complete: true, truncated: false, sessions: []))
+                            unread: count, needsAnswer: count, complete: true, truncated: false, sessions: []))
                         let metrics = WidgetSideStripMetrics(classic: style == "classic", moduleIDs: ids,
                             visibleSessionCount: model.railActivitySessions.count, hasInboxBadge: count > 0)
                         let root = WidgetHostView(model: model, registry: registry,
