@@ -138,5 +138,8 @@ final class SpawnStormTests: XCTestCase {
                                         arguments: ["/Users/x/.genesis-tools/bin/gt-agents", "/repo/src/agents/index.ts", "blame",
                                                     "--repo", "/vault", "--files", "a/b.md", "--json"]),
                        "GenesisTools agents blame")
+        XCTAssertEqual(SpawnMeter.label(executable: URL(fileURLWithPath: "/usr/bin/git"),
+                                        arguments: ["-c", "core.quotepath=off", "cat-file", "-t", "96c986d3c53f34fde9beb70d8f3e3c987edcfe3f^{commit}"]),
+                       "git cat-file", "a commit id would split one command's count")
     }
 }
