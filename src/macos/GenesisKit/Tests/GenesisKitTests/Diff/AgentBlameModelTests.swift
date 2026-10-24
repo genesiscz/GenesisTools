@@ -21,6 +21,43 @@ final class AgentBlameModelTests: XCTestCase {
         }
     }
 
+    /// A repository change used to start one blame per open note (51 to 66 GenesisTools launches at once in Genesis
+    /// Markdown, 2026-10-24); the notes of one repository now share one run, and a second wave waits for the first.
+    func testTheOpenNotesOfARepositoryShareOneBlameRun() async throws {
+        final class Counting: GenesisKitGTCLIProvider, @unchecked Sendable {
+            let lock = NSLock()
+            var runs: [[String]] = []
+            override func agentBlame(repo: String, paths: [String]) throws -> AgentBlameResult {
+                lock.withLock { runs.append(paths) }
+                Thread.sleep(forTimeInterval: 0.2)
+                return AgentBlameResult(
+                    sources: [AgentBlameSource(provider: "claude", session: "aaaaaaaa-1111", turn: "t1",
+                                               ts: "2026-10-24T10:00:00Z", prompt: "Write it")],
+                    files: paths.map { AgentBlameFile(path: $0, ranges: [[1, 2, 0]]) }, elapsedMs: 1)
+            }
+            override func repoStatus(_ folder: URL, commits: Int) throws -> GitRepoStatus? { nil }
+        }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("blame-queue-\(UUID())")
+            .resolvingSymlinksInPath()
+        let provider = Counting()
+        let previous = GenesisKitGT.provider
+        GenesisKitGT.provider = provider
+        defer { GenesisKitGT.provider = previous }
+        AgentBlameQueue.shared.remember(root: folder, for: folder)
+        let models = (0..<3).map { _ in AgentBlameModel() }
+        for (index, model) in models.enumerated() { model.follow(folder.appendingPathComponent("note\(index).md")) }
+        try await Task.sleep(for: .milliseconds(450))
+        // A second wave while the first runs: one more run for all of it, after the first.
+        for model in models { model.reload() }
+        try await Task.sleep(for: .milliseconds(1200))
+
+        let runs = provider.lock.withLock { provider.runs }
+        XCTAssertEqual(runs, [["note0.md", "note1.md", "note2.md"], ["note0.md", "note1.md", "note2.md"]],
+                       "one run per wave for the three notes, never one per note")
+        XCTAssertEqual(models.map(\.path), ["note0.md", "note1.md", "note2.md"])
+        XCTAssertEqual(models[1].source(forLines: 0...1)?.session, "aaaaaaaa-1111", "each note gets its own part")
+    }
+
     func testDisablingAttributionDiscardsAnInFlightReply() async throws {
         final class Delayed: GenesisKitGTCLIProvider {
             let gate = DispatchSemaphore(value: 0)

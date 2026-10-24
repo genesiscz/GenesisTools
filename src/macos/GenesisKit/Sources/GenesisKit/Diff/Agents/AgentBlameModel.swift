@@ -31,24 +31,21 @@ public final class AgentBlameModel: ObservableObject {
         reload()
     }
 
+    /// Asks again. The blame runs once per repository for every file that asked meanwhile (`AgentBlameQueue`).
     public func reload() {
         guard let url else { return }
         ticket += 1
-        let ticket = self.ticket
-        let provider = GenesisKitGT.provider
-        DispatchQueue.global(qos: .utility).async {
-            let queries = GitQueries(provider: provider)
-            guard let root = queries.root(of: url.deletingLastPathComponent()), let path = GitQueries.relative(url, to: root),
-                  let result = try? provider.agentBlame(repo: root.path, paths: [path]) else { return }
-            let file = DiffFile(id: path, path: path, status: .modified, additions: 0, deletions: 0)
-            var state = AgentBlameState()
-            state.merge(result, files: [file], asked: [path])
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.ticket == ticket, self.url == url else { return }
-                self.path = path
-                self.state = state
-            }
-        }
+        AgentBlameQueue.shared.request(.init(model: self, ticket: ticket, url: url))
+    }
+
+    /// The part of a shared blame result that is this file's, unless a newer request or another file replaced it.
+    func apply(_ result: AgentBlameResult, path: String, ticket: Int, url: URL) {
+        guard self.ticket == ticket, self.url == url else { return }
+        let file = DiffFile(id: path, path: path, status: .modified, additions: 0, deletions: 0)
+        var state = AgentBlameState()
+        state.merge(result, files: [file], asked: [path])
+        self.path = path
+        self.state = state
     }
 
     /// The session that wrote most of these 0-based lines, nil when no agent wrote any of them.
