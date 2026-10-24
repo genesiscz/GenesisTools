@@ -603,6 +603,7 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
     package func didClose() {
         closed = true
         stopWatching()
+        PermissionSettingsGuide.shared.dismiss(kind)
     }
 
     // MARK: - Watching for the grant
@@ -728,6 +729,7 @@ public final class PermissionDialogModel: ObservableObject, Identifiable {
         status = .granted
         note = nil
         stopWatching()
+        PermissionSettingsGuide.shared.dismiss(kind)
         center?.dialogGranted(kind)
         let callbacks = needs.compactMap(\.onGranted)
         needs.removeAll()

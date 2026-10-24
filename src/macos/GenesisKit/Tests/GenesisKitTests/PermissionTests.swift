@@ -1092,3 +1092,54 @@ final class PermissionTests: XCTestCase {
         XCTAssertEqual(answer, .denied)
     }
 }
+
+/// The drag helper over System Settings: where it sits, which lists take a dragged app, and its preference.
+@MainActor
+final class PermissionSettingsGuideTests: XCTestCase {
+    override func tearDown() {
+        UserDefaults.standard.removeObject(forKey: PermissionSettingsGuide.enabledKey)
+        super.tearDown()
+    }
+
+    func testTheGuideSitsAtTheBottomOfThePrivacyPaneNotTheSidebar() {
+        let origin = PermissionSettingsGuide.origin(size: CGSize(width: 180, height: 170),
+                                                    settingsWindow: CGRect(x: 100, y: 50, width: 1000, height: 800))
+        XCTAssertEqual(origin, CGPoint(x: 640, y: 78), "centred over the list right of a 260 pt sidebar, 28 pt up")
+    }
+
+    func testOnlyTheListsWithAPlusButtonTakeADraggedApp() {
+        XCTAssertEqual(Set(PermissionKind.allCases.filter(\.addsByDrag)),
+                       [.accessibility, .inputMonitoring, .screenRecording, .fullDiskAccess])
+    }
+
+    func testTheGuideFollowsItsPreferenceAndClosesForItsOwnKindOnly() {
+        let guide = PermissionSettingsGuide()
+        UserDefaults.standard.set(false, forKey: PermissionSettingsGuide.enabledKey)
+        guide.show(for: .accessibility)
+        XCTAssertNil(guide.kind, "off: only the pane opens")
+
+        UserDefaults.standard.removeObject(forKey: PermissionSettingsGuide.enabledKey)
+        guide.show(for: .accessibility)
+        XCTAssertEqual(guide.kind, .accessibility)
+        guide.dismiss(.screenRecording)
+        XCTAssertEqual(guide.kind, .accessibility, "another kind's grant leaves it up")
+        guide.dismiss(.accessibility)
+        XCTAssertNil(guide.kind)
+    }
+
+    func testTheHelperDrawsTheIconAndTheLine() throws {
+        let view = PermissionGuideView(kind: .screenRecording, appName: "GenesisTools",
+                                       appURL: URL(fileURLWithPath: "/System/Applications/Calculator.app"),
+                                       onClose: {})
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let image = try XCTUnwrap(renderer.cgImage)
+        XCTAssertGreaterThan(image.width, 200)
+        XCTAssertGreaterThan(image.height, 250)
+        if let directory = ProcessInfo.processInfo.environment["PERMISSION_SNAPSHOT_DIR"] {
+            let rep = NSBitmapImageRep(cgImage: image)
+            try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+                .write(to: URL(fileURLWithPath: directory).appendingPathComponent("permission-settings-guide.png"))
+        }
+    }
+}

@@ -154,6 +154,7 @@ public struct SystemPermissions: PermissionSystem {
     public func openSettings(_ kind: PermissionKind) -> Bool {
         let opened = NSWorkspace.shared.open(kind.settingsURL)
         KitHost.log("permission \(kind.rawValue) open settings \(kind.settingsAnchor) opened=\(opened)")
+        if opened { PermissionSettingsGuide.shared.show(for: kind) }
         return opened
     }
 

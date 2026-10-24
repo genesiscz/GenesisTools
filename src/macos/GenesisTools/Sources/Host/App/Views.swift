@@ -115,6 +115,7 @@ struct ServicesView: View {
 struct SettingsView: View {
     @ObservedObject var model: SettingsModel
     @AppStorage(AppMainWindow.key) private var mainWindow = AppMainWindow.permissions
+    @AppStorage(PermissionSettingsGuide.enabledKey) private var settingsGuide = true
 
     var body: some View {
         Form {
@@ -125,6 +126,13 @@ struct SettingsView: View {
                     }
                 }
                 Text("A Dock click, a Finder double-click or `open -a GenesisTools`. This window stays one click away: the hub's lock button, ⌘, in the hub, or `tools macos permissions ui`.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Privacy panes") {
+                Toggle("Show a drag helper over System Settings", isOn: $settingsGuide)
+                Text("When GenesisTools opens a Privacy pane, its icon floats at the bottom of the list. Drag it into Accessibility, Input Monitoring, Screen Recording or Full Disk Access; other lists only need its switch turned on.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
