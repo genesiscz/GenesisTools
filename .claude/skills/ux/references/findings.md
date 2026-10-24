@@ -255,3 +255,37 @@ checklist.md or motion.md as well.
   the answers; a send no receiver took says "Not delivered to <session>: <reason>" with a Send again button, for
   every kind of agent (`resend-answers`). Rule: a send reports what the receiver confirmed, never what was attempted,
   and every not-delivered result offers the retry in place.
+- 2026-10-24 18:09 — **The hover list closed under a scrolling pointer, and the scroll went to the window below.**
+  Under the Glass theme the gaps between session rows were not part of the panel: SwiftUI does not hit-test Liquid
+  Glass itself, so with the pointer still, each gap that scrolled under it read as "the pointer left", and 220 ms later
+  the preview closed. Solid themes never showed it (their fill is hit-tested). A window-server probe
+  (`SLSFindWindowAndOwner`) showed the window did own those points, which ruled out click-through; synthetic taps in a
+  scratch window then showed taps on the gap reaching nothing. Fix: the glass surfaces take `.contentShape` of their
+  shape (`NativeGlassShapeSurface`, `NativeGlassControl`, `WidgetGlassControl`). Rule: a glass panel is tested with a
+  click between its rows, not only on them.
+- 2026-10-24 18:09 — **A session was "missing" from the list because it showed under its first prompt.** Claude Code
+  names a session itself (`ai-title` lines, the name its /resume list and the terminal tab show); the history reader
+  knew only `custom-title` and the old `summary`, so the row read "pls /genesis-tools:research with xhigh…" while
+  Martin looked for "Kalendora hotfix research". Fix: `ai-title` is the summary (a `/rename` still wins), parser
+  version 6. Rule: a row's title is the name the user sees for that thing elsewhere.
+- 2026-10-24 18:09 — **"Loading this session's inbox…" on every switch, and the pane shrank and grew back.** The cards
+  came only with a snapshot naming the session: a `hub widget call` process (330 ms), the watch's 180 ms debounce, the
+  snapshot (65 to 105 ms). Fix: every snapshot carries the cards of up to 16 sessions that need you (`warmKeys`), the
+  widget caches each session it saw (`WidgetSessionCache`), the pick goes to the watch's stdin at once, the pane keeps
+  its height while a never-seen session loads, and nearby messages show the last read while a fresh one runs. Rule: a
+  switch shows what is known at once and lets the fresh data replace it.
+- 2026-10-24 19:43 — **Correction to the 18:09 hover-list entry: the glass gaps were not the cause.** Inside a ScrollView the gaps
+  between rows are hit-tested under plain glass too (probe: row and gap reach the panel; only a blank part outside the
+  scroll view does not), so the contentShape fix never touched this bug, and the list kept closing (19:01:00 to
+  19:01:38, three times while Martin scrolled). What closes it is SwiftUI's `.onHover` reporting "left" with the
+  pointer still on the panel. Fix: the panel's window decides "pointer inside" by geometry (an NSTrackingArea on
+  `EdgePanelRootView`), and SwiftUI's hover only logs `widget.hover swiftui-left … under it: <view chain>` when it
+  disagrees. Rule: a window-level "pointer inside" comes from the window's geometry, never from a hit test, and a fix
+  is not done until the user's own repro stops.
+- 2026-10-24 19:43 — **A bug that is a burst of processes was invisible to every watcher.** Genesis Markdown started one
+  `tools agents blame` per open note on every repository refresh: 51 to 66 at once, about 9,300 an hour, load average
+  380-580 and launchservicesd at 69-159%, while its log held a blame line only when one run was slow. Fix: one blame per
+  repository for every note that asked (`AgentBlameQueue`), and GenesisKit's `SpawnMeter` writes `spawn.storm` to the
+  perf log when 40 children start within 10 s or 16 run at once; `tools hub dev monitor` reports it and now also
+  reads Genesis Markdown's `~/.genesis/logs/perf.log`. Rule: work that starts processes per item is queued per shared
+  resource, and the launcher counts what it starts.

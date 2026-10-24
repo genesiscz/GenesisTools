@@ -29,7 +29,7 @@ public enum SpawnMeter {
                 skipValue = false
                 continue
             }
-            if argument == "-C" || argument == "--git-dir" {
+            if argument == "-C" || argument == "-c" || argument == "--git-dir" {
                 skipValue = true
                 continue
             }
@@ -46,9 +46,11 @@ public enum SpawnMeter {
 
 /// The burst rule, apart from the clock and the log: `burstStarts` starts within `window` seconds, or `burstRunning`
 /// children at once. A burst is reported when it starts, every `reportEvery` seconds while it lasts, and when it ends.
+/// The hub opening a pull request starts about 24 in 10 s with 5 running (2026-10-24 19:45), which is normal; the blame
+/// waves had 51 to 66 running.
 public struct SpawnStorm {
-    public static let burstStarts = 24
-    public static let burstRunning = 12
+    public static let burstStarts = 40
+    public static let burstRunning = 16
     public static let window: TimeInterval = 10
     public static let reportEvery: TimeInterval = 30
 

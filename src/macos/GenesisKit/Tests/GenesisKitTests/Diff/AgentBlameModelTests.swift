@@ -106,16 +106,19 @@ final class SpawnStormTests: XCTestCase {
             XCTAssertNil(storm.start("GenesisTools agents blame", at: Double(index) * 0.1), "under the burst size: quiet")
             _ = storm.finish(at: Double(index) * 0.1 + 0.05)
         }
-        if let line = storm.start("git status", at: 2.4) { lines.append(line) }
+        let last = Double(SpawnStorm.burstStarts - 1) * 0.1
+        if let line = storm.start("git status", at: last) { lines.append(line) }
         XCTAssertEqual(lines.count, 1)
-        XCTAssertTrue(lines[0].hasPrefix("spawn.storm 24 child processes started in 10 s"), lines[0])
-        XCTAssertTrue(lines[0].contains("GenesisTools agents blame ×23, git status ×1"), lines[0])
+        let burst = SpawnStorm.burstStarts
+        XCTAssertTrue(lines[0].hasPrefix("spawn.storm \(burst) child processes started in 10 s"), lines[0])
+        XCTAssertTrue(lines[0].contains("GenesisTools agents blame ×\(burst - 1), git status ×1"), lines[0])
 
-        XCTAssertNil(storm.start("git status", at: 3), "no second line within 30 s")
-        XCTAssertTrue(storm.start("git status", at: 33)?.hasPrefix("spawn.storm ongoing 30 s") == true)
+        XCTAssertNil(storm.start("git status", at: 4.5), "no second line within 30 s")
+        XCTAssertTrue(storm.start("git status", at: 34)?.hasPrefix("spawn.storm ongoing 30 s") == true)
         // The first finish once the window holds few starts and few children run ends it.
         let over = storm.finish(at: 40)
-        XCTAssertTrue(over?.hasPrefix("spawn.storm over after 37 s: 26 child processes started") == true, over ?? "nil")
+        XCTAssertTrue(over?.hasPrefix("spawn.storm over after \(Int(40 - last)) s: \(SpawnStorm.burstStarts + 2) child processes started") == true,
+                      over ?? "nil")
         XCTAssertNil(storm.finish(at: 41))
         XCTAssertNil(storm.start("git status", at: 61), "a quiet start after the burst ended")
     }
@@ -124,12 +127,12 @@ final class SpawnStormTests: XCTestCase {
         var storm = SpawnStorm()
         var line: String?
         for index in 0..<SpawnStorm.burstRunning { line = storm.start("rg", at: Double(index)) ?? line }
-        XCTAssertTrue(line?.contains("12 running") == true, line ?? "nil")
+        XCTAssertTrue(line?.contains("\(SpawnStorm.burstRunning) running") == true, line ?? "nil")
     }
 
     func testLabelsNameTheCommandNotItsPaths() {
         XCTAssertEqual(SpawnMeter.label(executable: URL(fileURLWithPath: "/usr/bin/git"),
-                                        arguments: ["-C", "/Users/x/vault", "--no-optional-locks", "status", "-z"]),
+                                        arguments: ["-C", "/Users/x/vault", "-c", "core.quotepath=off", "status", "-z"]),
                        "git status")
         XCTAssertEqual(SpawnMeter.label(executable: URL(fileURLWithPath: "/Applications/GenesisTools.app/Contents/MacOS/GenesisTools"),
                                         arguments: ["/Users/x/.genesis-tools/bin/gt-agents", "/repo/src/agents/index.ts", "blame",
