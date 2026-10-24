@@ -73,9 +73,9 @@ final class WidgetKeymapTests: XCTestCase {
     func testOpenHubLeavesCommandHToHideAndJAndKNameTheSession() throws {
         let keys = Keymap(library: WidgetKeymap.library, store: nil, layout: TableKeyLayout.us)
         let commandH = KeyStroke(keyCode: 4, character: "h", modifiers: .command)
-        XCTAssertEqual(keys.commands(for: commandH, in: [.window]).map(\.id), [])
+        XCTAssertEqual(keys.commands(for: commandH, in: [.app, .window]).map(\.id), [])
         let commandO = KeyStroke(keyCode: 31, character: "o", modifiers: .command)
-        XCTAssertEqual(keys.commands(for: commandO, in: [.window]).map(\.id), [WidgetKeymap.hub])
+        XCTAssertEqual(keys.commands(for: commandO, in: [.app]).map(\.id), [WidgetKeymap.hub])
         let titles = Dictionary(uniqueKeysWithValues: WidgetKeymap.library.commands.map { ($0.id, $0.title) })
         XCTAssertEqual(titles[WidgetKeymap.previous], "Previous Session")
         XCTAssertEqual(titles[WidgetKeymap.next], "Next Session")

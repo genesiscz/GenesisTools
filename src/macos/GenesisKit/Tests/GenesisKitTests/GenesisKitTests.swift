@@ -1207,7 +1207,7 @@ final class WidgetInboxNotificationTests: XCTestCase {
     func testInboxTooltipDescribesOnlyTheAgentsModule() {
         let inbox = WidgetInboxSummary(unread: 3, needsAnswer: 1, complete: true, truncated: false, sessions: [])
         XCTAssertEqual(WidgetHostView.moduleTooltip(id: "agents", title: "Agents", inbox: inbox),
-                       "Inbox: 3 unread, 1 need an answer")
+                       "Inbox: 1 waiting for your answer, 3 unread")
         XCTAssertEqual(WidgetHostView.moduleTooltip(id: "shelf", title: "Shelf", inbox: inbox), "Shelf")
         XCTAssertEqual(WidgetHostView.moduleTooltip(id: nil, title: "Widgets", inbox: inbox), "Widgets")
     }

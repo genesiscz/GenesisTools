@@ -143,7 +143,8 @@ final class RecordingSessionControllerTests: XCTestCase {
         crashed.onFailed = { message, _ in messages.append(message) }
         try crashed.start(target: .display(index: 0, name: nil), excludeWindowIDs: [], frameRate: 15, showsBorder: true)
         exit(9, "bun crashed\n")
-        XCTAssertEqual(messages, ["bun crashed"])
+        // One sentence on screen; the stderr tail goes to the log (C6).
+        XCTAssertEqual(messages, ["The recorder stopped unexpectedly. The details are in the log."])
     }
 }
 
