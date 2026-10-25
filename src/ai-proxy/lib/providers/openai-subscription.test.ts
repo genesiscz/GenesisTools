@@ -1306,6 +1306,76 @@ describe("account failures on the Anthropic route (Claude Code)", () => {
     });
 });
 
+describe("Claude Code's WebSearch on the Codex agent", () => {
+    // The shape WHAM streamed for a hosted search on 2026-10-26: the call and the citation arrive as their own
+    // events, and response.completed carries an empty output.
+    const event = (type: string, data: Record<string, unknown>) =>
+        `event: ${type}\ndata: ${SafeJSON.stringify({ type, ...data })}\n\n`;
+    const searchStream =
+        event("response.created", { response: { id: "resp_ws", status: "in_progress" } }) +
+        event("response.output_item.done", {
+            item: {
+                type: "web_search_call",
+                id: "ws_1",
+                status: "completed",
+                action: {
+                    type: "search",
+                    query: "bun release",
+                    sources: [{ type: "url", url: "https://bun.sh/blog" }],
+                },
+            },
+        }) +
+        event("response.output_text.delta", { delta: "Bun v1.4.4." }) +
+        event("response.output_text.annotation.added", {
+            annotation: { type: "url_citation", url: "https://bun.sh/blog?utm_source=openai", title: "Bun Blog" },
+        }) +
+        event("response.completed", {
+            response: { id: "resp_ws", status: "completed", output: [], usage: { input_tokens: 10, output_tokens: 3 } },
+        });
+
+    it("runs the hosted web_search on WHAM and answers with search blocks that carry real titles and URLs", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return new Response(searchStream, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }) as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify({
+            model: "codex/gpt-6-luna",
+            max_tokens: 4096,
+            system: "You are an assistant for performing a web search tool use",
+            tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8, allowed_domains: ["bun.sh"] }],
+            messages: [{ role: "user", content: "Perform a web search for the query: bun release" }],
+        });
+        const res = await provider.messages?.(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6-luna",
+            bodyText
+        );
+        const message = (await res?.json()) as { content: Array<Record<string, unknown>> };
+
+        expect(sent).toHaveLength(1);
+        expect(sent[0]?.tools).toEqual([{ type: "web_search", filters: { allowed_domains: ["bun.sh"] } }]);
+        expect(sent[0]?.include).toEqual(["reasoning.encrypted_content", "web_search_call.action.sources"]);
+        expect(message.content.map((block) => block.type)).toEqual([
+            "server_tool_use",
+            "web_search_tool_result",
+            "text",
+        ]);
+        expect(message.content[0]?.input).toEqual({ query: "bun release" });
+        expect(message.content[1]?.content).toEqual([
+            {
+                type: "web_search_result",
+                title: "Bun Blog",
+                url: "https://bun.sh/blog",
+                encrypted_content: "",
+                page_age: null,
+            },
+        ]);
+    });
+});
+
 describe("Claude Code's model_validation probe", () => {
     const probe = {
         model: "codex/gpt-6.1-sol",

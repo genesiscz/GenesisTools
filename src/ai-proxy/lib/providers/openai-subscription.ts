@@ -28,6 +28,17 @@ import {
     resolveWhamItemReferences,
     whamItemScope,
 } from "@app/ai-proxy/lib/providers/wham-item-store";
+import {
+    braveSearchFn,
+    type EmulationOutcome,
+    emulateWebSearch,
+    nativeTranslationLoss,
+    nativeWebSearch,
+    parseWebSearchServerTool,
+    unsupportedNativeResponse,
+    type WebSearchServerTool,
+    webSearchResponse,
+} from "@app/ai-proxy/lib/server-tools/web-search";
 import { loginAccountName } from "@app/ai-proxy/lib/sessions/records";
 import {
     anthropicToResponses,
@@ -332,6 +343,14 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             return toAnthropicErrorResponse(jsonError(400, "Invalid JSON body"));
         }
 
+        // Claude Code's WebSearch: a nested request offering the web_search server tool (S2 section 4). Turned into a
+        // plain function tool, the model only ever called it with no answer to come back.
+        const webSearch = parseWebSearchServerTool(parsed);
+
+        if (webSearch) {
+            return this.webSearchMessages(req, model, parsed, webSearch, context);
+        }
+
         const concreteModel = resolveOpenAiSubModel(model, this.account.openaiSub?.aliases);
         const fresh = Date.now() - this.liveFetchedAt <= MODALITY_CACHE_TTL_MS ? this.liveRecords : null;
         const catalog = codexModelInfo(concreteModel, fresh);
@@ -482,6 +501,70 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             ),
             { status: 200, headers: { "Content-Type": "application/json" } }
         );
+    }
+
+    /**
+     * The web_search server tool on the Codex agent: one WHAM request with OpenAI's hosted `web_search` tool, whose
+     * searches come back as `server_tool_use` and `web_search_tool_result` blocks with real titles and URLs. When the
+     * hosted path cannot carry the request or fails, and BRAVE_API_KEY is set, the Brave loop runs over this route's
+     * own turns instead.
+     */
+    private async webSearchMessages(
+        req: Request,
+        model: string,
+        body: Record<string, unknown>,
+        tool: WebSearchServerTool,
+        context?: ProviderRequestContext
+    ): Promise<Response> {
+        const client: FailureClient = {
+            anthropic: true,
+            ...(context?.sessionId ? { sessionId: context.sessionId } : {}),
+        };
+        const loss = nativeTranslationLoss(body, tool, "openai");
+        logger.info({ model, maxUses: tool.maxUses, loss }, "ai-proxy: running web_search server tool for codex");
+
+        const run = async (signal?: AbortSignal): Promise<EmulationOutcome | Response> => {
+            const native =
+                loss === undefined
+                    ? await nativeWebSearch({
+                          body,
+                          tool,
+                          dialect: "openai",
+                          callResponses: async (responsesBody) => {
+                              const response = await this.respond(req, model, responsesBody, client);
+                              return response.ok ? response : toAnthropicErrorResponse(response);
+                          },
+                      })
+                    : unsupportedNativeResponse(
+                          "codex",
+                          loss,
+                          "the Codex hosted search takes plain text and an allow-list only"
+                      );
+
+            if (!(native instanceof Response)) {
+                return native;
+            }
+
+            const braveKey = env.brave.getKey();
+
+            if (braveKey === undefined) {
+                return native;
+            }
+
+            logger.warn(
+                { status: native.status, model, loss },
+                "ai-proxy: codex hosted web_search unavailable — falling back to the Brave loop"
+            );
+            return emulateWebSearch({
+                body,
+                tool,
+                signal,
+                search: braveSearchFn(braveKey, signal),
+                callUpstream: (turnBody) => this.nativeMessages(req, model, SafeJSON.stringify(turnBody), context),
+            });
+        };
+
+        return webSearchResponse(body.stream === true, run);
     }
 
     /**
@@ -926,7 +1009,8 @@ function mapResponsesTools(tools: unknown, dropped: string[]): unknown[] | undef
     const kept: unknown[] = [];
 
     for (const tool of tools) {
-        if (isObject(tool) && tool.type === "function") {
+        // `web_search` is OpenAI's hosted search, sent the way codex-rs sends it; WHAM runs it server-side.
+        if (isObject(tool) && (tool.type === "function" || tool.type === "web_search")) {
             kept.push(tool);
             continue;
         }
@@ -1074,6 +1158,11 @@ export function buildWhamResponsesBody(
 
     if (parsed.store === true) {
         dropped.push("store");
+    }
+
+    // A hosted search names the pages it read only when asked (probed on WHAM 2026-10-26); Claude Code lists them.
+    if (Array.isArray(body.tools) && body.tools.some((tool) => isObject(tool) && tool.type === "web_search")) {
+        body.include = ["reasoning.encrypted_content", "web_search_call.action.sources"];
     }
 
     const cacheKey = resolveWhamCacheKey(parsed, body, model, options.clientSessionHeader);
@@ -1289,6 +1378,9 @@ async function accumulateResponsesJson(
     let text = "";
     const functionCalls: unknown[] = [];
     const reasoningItems: unknown[] = [];
+    // A hosted web search: its calls (query and sources) and the answer's url_citation annotations.
+    const searchCalls: unknown[] = [];
+    const annotations: unknown[] = [];
     let completed: Record<string, unknown> | undefined;
     let failure: string | undefined;
     let failureCode: string | undefined;
@@ -1317,6 +1409,20 @@ async function accumulateResponsesJson(
 
         if (event.type === "response.output_item.done" && isObject(event.item) && event.item.type === "function_call") {
             functionCalls.push(event.item);
+            continue;
+        }
+
+        if (
+            event.type === "response.output_item.done" &&
+            isObject(event.item) &&
+            event.item.type === "web_search_call"
+        ) {
+            searchCalls.push(event.item);
+            continue;
+        }
+
+        if (event.type === "response.output_text.annotation.added" && isObject(event.annotation)) {
+            annotations.push(event.annotation);
             continue;
         }
 
@@ -1364,6 +1470,8 @@ async function accumulateResponsesJson(
         output.push(item);
     }
 
+    output.push(...searchCalls);
+
     if (text.length > 0) {
         // Responses API clients (Vercel AI SDK) require an id on every output item; WHAM omits it.
         output.push({
@@ -1371,7 +1479,7 @@ async function accumulateResponsesJson(
             type: "message",
             role: "assistant",
             status: "completed",
-            content: [{ type: "output_text", text, annotations: [] }],
+            content: [{ type: "output_text", text, annotations }],
         });
     }
 

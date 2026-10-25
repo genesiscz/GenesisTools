@@ -93,6 +93,13 @@ How it works (`lib/anthropic-messages.ts`):
   compaction turn goes out with `tool_choice: "none"`. Reasoning summaries show as thinking text, never as visible
   text (`openaiSub.reasoningSummary`: `auto` by default, `detailed`, `none`). `AI_PROXY_CODEX_MESSAGES_ROUTE=chat`
   restores the older chat hop for Codex, as `AI_PROXY_GROK_MESSAGES_ROUTE=shim` does for Grok.
+- **WebSearch** (Anthropic's `web_search_20250305` server tool) runs on the upstream's own hosted search: xAI's
+  `web_search` on Grok, OpenAI's `web_search` on Codex (`filters.allowed_domains` for an allow-list). Each search comes
+  back as `server_tool_use` plus `web_search_tool_result` with its real titles and URLs, then the answer, which is
+  what Claude Code's WebSearch reads. A request the hosted search cannot carry (client tools, tool results, images,
+  exclusions on Codex) or a hosted search that fails takes the Brave loop when `BRAVE_API_KEY` is set. Claude Code
+  2.1.296 sends WebSearch's request to the haiku slot, so in `tools claude codex` with a Claude account Anthropic
+  runs the search; with `--claude none` the Codex hosted search does. WebFetch's page pass goes to the same slot.
 
 Caveats: `count_tokens` is a ~4-chars-per-token estimate by choice (the anthropic-subscription
 upstream does expose a real counter; proxying to it would cost a round trip per turn and is

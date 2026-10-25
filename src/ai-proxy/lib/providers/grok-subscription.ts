@@ -15,11 +15,12 @@ import {
     braveSearchFn,
     type EmulationOutcome,
     emulateWebSearch,
-    emulationStream,
     nativeTranslationLoss,
     nativeWebSearch,
     parseWebSearchServerTool,
+    unsupportedNativeResponse,
     type WebSearchServerTool,
+    webSearchResponse,
 } from "@app/ai-proxy/lib/server-tools/web-search";
 import {
     anthropicToGrokResponses,
@@ -360,7 +361,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                               return response.ok ? response : toAnthropicErrorResponse(response);
                           },
                       })
-                    : unsupportedNativeResponse(loss);
+                    : unsupportedNativeResponse("grok", loss, "xAI's native server-side search takes plain text only");
 
             if (!(native instanceof Response)) {
                 return native;
@@ -402,23 +403,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             });
         };
 
-        if (body.stream === true) {
-            return new Response(emulationStream(run), {
-                status: 200,
-                headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
-            });
-        }
-
-        const outcome = await run();
-
-        if (outcome instanceof Response) {
-            return outcome;
-        }
-
-        return new Response(SafeJSON.stringify(outcome.message), {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-        });
+        return webSearchResponse(body.stream === true, run);
     }
 
     async getUsage(): Promise<UsageSummary> {
@@ -591,19 +576,6 @@ export class GrokSubscriptionProvider implements ProxyProvider {
  * client sees, and it names what is unsupported rather than answering from a
  * silently truncated conversation.
  */
-function unsupportedNativeResponse(loss: string): Response {
-    return new Response(
-        SafeJSON.stringify({
-            type: "error",
-            error: {
-                type: "invalid_request_error",
-                message: `web_search on grok cannot be combined with ${loss}: xAI's native server-side search takes plain text only. Set BRAVE_API_KEY to run the emulated search loop, which keeps the full request.`,
-            },
-        }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-    );
-}
-
 /**
  * A cache key the client chose itself on the OpenAI doors: the body's `prompt_cache_key`, else its own
  * `x-grok-conv-id` header. Forwarded unchanged as the conversation header; nothing is invented for these clients.

@@ -11,6 +11,7 @@ import {
     nativeTranslationLoss,
     nativeWebSearch,
     parseWebSearchServerTool,
+    responsesToAnthropicMessage,
     type WebSearchResult,
 } from "./web-search";
 
@@ -214,7 +215,24 @@ describe("emulateWebSearch", () => {
 
         expect(queries).toEqual(["grok 4.6"]);
         expect(outcome.searches).toBe(1);
-        expect(outcome.message.content).toEqual([{ type: "text", text: "Grok 4.6 shipped." }]);
+        // The search itself, as Anthropic answers it, then the final turn: Claude Code reads the titles and URLs.
+        expect(outcome.message.content).toEqual([
+            { type: "server_tool_use", id: "srvtoolu_toolu_1", name: "web_search", input: { query: "grok 4.6" } },
+            {
+                type: "web_search_tool_result",
+                tool_use_id: "srvtoolu_toolu_1",
+                content: [
+                    {
+                        type: "web_search_result",
+                        title: "Grok 4.6",
+                        url: "https://x.ai/news/grok-4-6",
+                        encrypted_content: "",
+                        page_age: null,
+                    },
+                ],
+            },
+            { type: "text", text: "Grok 4.6 shipped." },
+        ]);
         // Output tokens are summed across turns; input reflects the last turn.
         expect(outcome.message.usage).toMatchObject({ input_tokens: 50, output_tokens: 12 });
 
@@ -274,7 +292,7 @@ describe("emulateWebSearch", () => {
 
         expect(searches).toBe(1);
         expect(outcome.searches).toBe(1);
-        expect((outcome.message.content as Record<string, unknown>[])[0].text).toContain("limit reached");
+        expect((outcome.message.content as Record<string, unknown>[]).at(-1)?.text).toContain("limit reached");
     });
 
     it("returns the upstream error response untouched", async () => {
@@ -427,9 +445,20 @@ describe("nativeWebSearch (/responses server-side search)", () => {
         expect(outcome.searches).toBe(2);
         const blocks = outcome.message.content as Record<string, unknown>[];
         expect(blocks[0]).toMatchObject({ type: "thinking", thinking: "checking x.ai" });
-        expect(blocks[1].type).toBe("text");
-        expect(blocks[1].text).toContain("Grok 4.6 shipped.");
-        expect(blocks[1].text).toContain("Sources:\n- https://x.ai/news/grok-4-6");
+        // The one `search` call (not the open_page); with no sources of its own it lists the answer's citations.
+        expect(blocks[1]).toMatchObject({
+            type: "server_tool_use",
+            name: "web_search",
+            input: { query: "latest grok" },
+        });
+        expect(blocks[2]).toMatchObject({
+            type: "web_search_tool_result",
+            tool_use_id: blocks[1].id,
+            content: [{ type: "web_search_result", title: "x.ai", url: "https://x.ai/news/grok-4-6" }],
+        });
+        expect(blocks[3].type).toBe("text");
+        expect(blocks[3].text).toContain("Grok 4.6 shipped.");
+        expect(blocks[3].text).toContain("Sources:\n- https://x.ai/news/grok-4-6");
         // The count the upstream actually spent, in the field Anthropic
         // reports it in — max_uses cannot bound it, so it must be visible.
         expect(outcome.message.usage).toEqual({
@@ -509,7 +538,80 @@ describe("nativeWebSearch (/responses server-side search)", () => {
     });
 });
 
+describe("OpenAI's hosted search on the Codex agent (dialect openai)", () => {
+    it("sends the allow-list under filters and sends exclusions to the Brave loop", () => {
+        const body = { model: "codex/gpt-6.1-sol", messages: [{ role: "user", content: "q" }] };
+        const built = buildResponsesWebSearchBody(body, { ...TOOL, allowedDomains: ["bun.sh"] }, "openai");
+
+        expect(built.tools).toEqual([{ type: "web_search", filters: { allowed_domains: ["bun.sh"] } }]);
+        expect(nativeTranslationLoss(body, { ...TOOL, allowedDomains: ["bun.sh"] }, "openai")).toBeUndefined();
+        expect(nativeTranslationLoss(body, { ...TOOL, blockedDomains: ["a.com"] }, "openai")).toContain(
+            "allow-list only"
+        );
+    });
+
+    it("lists each search's sources, titled by the answer's citations (utm_source ignored) or the host", () => {
+        const { message } = responsesToAnthropicMessage({
+            id: "resp_1",
+            output: [
+                {
+                    type: "web_search_call",
+                    id: "ws_1",
+                    status: "completed",
+                    action: {
+                        type: "search",
+                        query: "bun release",
+                        sources: [
+                            { type: "url", url: "https://bun.sh/blog/bun-v1.4.4" },
+                            { type: "url", url: "https://example.org/bun" },
+                        ],
+                    },
+                },
+                {
+                    type: "message",
+                    content: [
+                        {
+                            type: "output_text",
+                            text: "Bun v1.4.4.",
+                            annotations: [
+                                {
+                                    type: "url_citation",
+                                    url: "https://bun.sh/blog/bun-v1.4.4?utm_source=openai",
+                                    title: "Bun v1.4.4 | Bun Blog",
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        });
+        const result = (message.content ?? [])[1] as Record<string, unknown>;
+
+        expect((message.content ?? [])[0]).toEqual({
+            type: "server_tool_use",
+            id: "srvtoolu_ws_1",
+            name: "web_search",
+            input: { query: "bun release" },
+        });
+        expect((result.content as Record<string, unknown>[]).map((entry) => [entry.title, entry.url])).toEqual([
+            ["Bun v1.4.4 | Bun Blog", "https://bun.sh/blog/bun-v1.4.4"],
+            ["example.org", "https://example.org/bun"],
+        ]);
+    });
+});
+
 describe("messageToAnthropicSse", () => {
+    it("streams a server_tool_use's query as input_json_delta, the way Claude Code's WebSearch reads it", () => {
+        const sse = messageToAnthropicSse({
+            content: [{ type: "server_tool_use", id: "srvtoolu_1", name: "web_search", input: { query: "bun" } }],
+        });
+
+        expect(sse).toContain(
+            '"content_block":{"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{}}'
+        );
+        expect(sse).toContain('"delta":{"type":"input_json_delta","partial_json":"{\\"query\\":\\"bun\\"}"}');
+    });
+
     it("produces a spec-shaped stream that reassembles to the same message", () => {
         const sse = messageToAnthropicSse({
             id: "msg_1",

@@ -144,6 +144,39 @@ function customSearchTool(tool: WebSearchServerTool): Record<string, unknown> {
     };
 }
 
+/**
+ * One search as Anthropic answers it: the `server_tool_use` block Claude Code's WebSearch reads the query from, and the
+ * `web_search_tool_result` it reads each `{title, url}` from (S2 section 4: `content.map((w)=>({title,url}))`).
+ */
+export function searchBlocks(
+    id: string,
+    name: string,
+    query: string,
+    results: Array<{ title: string; url: string }>
+): Record<string, unknown>[] {
+    return [
+        { type: "server_tool_use", id, name, input: { query } },
+        {
+            type: "web_search_tool_result",
+            tool_use_id: id,
+            content: results.map((result) => ({
+                type: "web_search_result",
+                title: result.title,
+                url: result.url,
+                encrypted_content: "",
+                page_age: null,
+            })),
+        },
+    ];
+}
+
+/** Thinking stays first, then the searches, then the answer: the order Anthropic streams them in. */
+function withSearchBlocks(content: unknown[], blocks: Record<string, unknown>[]): unknown[] {
+    const thinking = content.filter((block) => isObject(block) && block.type === "thinking");
+    const rest = content.filter((block) => !(isObject(block) && block.type === "thinking"));
+    return [...thinking, ...blocks, ...rest];
+}
+
 interface AnthropicMessage {
     content?: unknown[];
     stop_reason?: string;
@@ -179,6 +212,7 @@ export async function emulateWebSearch(options: {
 
     let searches = 0;
     let outputTokens = 0;
+    const blocks: Record<string, unknown>[] = [];
     // One turn past max_uses so the model can conclude after the limit answer.
     const maxTurns = tool.maxUses + 2;
 
@@ -205,7 +239,11 @@ export async function emulateWebSearch(options: {
 
         if (calls.length === 0 || message.stop_reason !== "tool_use") {
             return {
-                message: { ...message, usage: { ...message.usage, output_tokens: outputTokens } },
+                message: {
+                    ...message,
+                    content: withSearchBlocks(content, blocks),
+                    usage: { ...message.usage, output_tokens: outputTokens },
+                },
                 searches,
             };
         }
@@ -226,6 +264,7 @@ export async function emulateWebSearch(options: {
                         domainAllowed(r.url, { allowed: tool.allowedDomains, blocked: tool.blockedDomains })
                     );
                     resultText = formatResults(results);
+                    blocks.push(...searchBlocks(`srvtoolu_${String(call.id)}`, tool.name, query, results));
                 } catch (err) {
                     // The query is model-generated request material — log its
                     // size, never its content (it can carry prompts/secrets).
@@ -300,10 +339,10 @@ export function messageToAnthropicSse(message: AnthropicMessage): string {
                     signature: typeof block.signature === "string" ? block.signature : "",
                 },
             });
-        } else if (block.type === "tool_use") {
+        } else if (block.type === "tool_use" || block.type === "server_tool_use") {
             emit("content_block_start", {
                 index,
-                content_block: { type: "tool_use", id: block.id, name: block.name, input: {} },
+                content_block: { type: block.type, id: block.id, name: block.name, input: {} },
             });
             emit("content_block_delta", {
                 index,
@@ -343,18 +382,34 @@ const MAX_FILTER_DOMAINS = 5;
  * which keeps the original Anthropic body intact. Dropping them silently
  * would answer a search using context the model never saw.
  */
-export function nativeTranslationLoss(body: Record<string, unknown>, tool?: WebSearchServerTool): string | undefined {
-    // Domain filters the upstream cannot express. It takes ONE list of at most
-    // five domains, so a request pairing an allow-list with exclusions, or
-    // excluding more than five domains, would come back with sources it asked
-    // to avoid. Slicing an over-long ALLOW list only tightens the request, so
-    // that case stays on the native path.
-    if (tool?.allowedDomains !== undefined && tool.blockedDomains !== undefined) {
-        return "both allowed_domains and blocked_domains";
-    }
+/**
+ * Whose hosted search runs the native path: xAI's (`allowed_domains` or `excluded_domains`, five at most) or OpenAI's
+ * on the Codex agent (`filters.allowed_domains` only, no exclusions).
+ */
+export type WebSearchDialect = "xai" | "openai";
 
-    if ((tool?.blockedDomains?.length ?? 0) > MAX_FILTER_DOMAINS) {
-        return `${tool?.blockedDomains?.length} blocked_domains (the upstream takes ${MAX_FILTER_DOMAINS})`;
+export function nativeTranslationLoss(
+    body: Record<string, unknown>,
+    tool?: WebSearchServerTool,
+    dialect: WebSearchDialect = "xai"
+): string | undefined {
+    if (dialect === "openai") {
+        if (tool?.blockedDomains !== undefined) {
+            return "blocked_domains (OpenAI's hosted search takes an allow-list only)";
+        }
+    } else {
+        // Domain filters the upstream cannot express. It takes ONE list of at most
+        // five domains, so a request pairing an allow-list with exclusions, or
+        // excluding more than five domains, would come back with sources it asked
+        // to avoid. Slicing an over-long ALLOW list only tightens the request, so
+        // that case stays on the native path.
+        if (tool?.allowedDomains !== undefined && tool.blockedDomains !== undefined) {
+            return "both allowed_domains and blocked_domains";
+        }
+
+        if ((tool?.blockedDomains?.length ?? 0) > MAX_FILTER_DOMAINS) {
+            return `${tool?.blockedDomains?.length} blocked_domains (the upstream takes ${MAX_FILTER_DOMAINS})`;
+        }
     }
 
     const custom = Array.isArray(body.tools)
@@ -384,7 +439,8 @@ export function nativeTranslationLoss(body: Record<string, unknown>, tool?: WebS
 
 export function buildResponsesWebSearchBody(
     body: Record<string, unknown>,
-    tool: WebSearchServerTool
+    tool: WebSearchServerTool,
+    dialect: WebSearchDialect = "xai"
 ): Record<string, unknown> {
     const instructions = systemText(body.system);
     const wsTool: Record<string, unknown> = { type: "web_search" };
@@ -401,7 +457,13 @@ export function buildResponsesWebSearchBody(
     // add two constraints: max 5 domains per list, and the lists cannot be
     // combined. Allowed wins when both are present — clamping an allow-list
     // only tightens it, while dropping exclusions would loosen a filter.
-    if (tool.allowedDomains !== undefined) {
+    if (dialect === "openai") {
+        // OpenAI's hosted tool keeps its one list under `filters` (probed on WHAM 2026-10-26: all 8 sources stayed on
+        // the allowed domain). Exclusions never get here: nativeTranslationLoss sends them to the Brave loop.
+        if (tool.allowedDomains !== undefined) {
+            wsTool.filters = { allowed_domains: tool.allowedDomains };
+        }
+    } else if (tool.allowedDomains !== undefined) {
         if (tool.allowedDomains.length > MAX_FILTER_DOMAINS) {
             logger.debug(
                 { count: tool.allowedDomains.length },
@@ -514,12 +576,41 @@ function truncatedByCap(response: Record<string, unknown>): boolean {
     return isObject(details) && details.reason === "max_output_tokens";
 }
 
-/** The completed /responses JSON as an Anthropic message, citations appended. */
-export function responsesToAnthropicMessage(response: Record<string, unknown>): EmulationOutcome {
+/** A citation's URL without the `utm_source` OpenAI appends, so it matches the search's own source URL. */
+function sourceKey(url: string): string {
+    try {
+        const parsed = new URL(url);
+        parsed.searchParams.delete("utm_source");
+        return parsed.toString();
+    } catch (err) {
+        logger.debug({ err }, "ai-proxy: web_search source is not a URL; matched as written");
+        return url;
+    }
+}
+
+function hostOf(url: string): string {
+    try {
+        return new URL(url).hostname;
+    } catch (err) {
+        logger.debug({ err }, "ai-proxy: web_search source is not a URL; its title is the URL");
+        return url;
+    }
+}
+
+/**
+ * The completed /responses JSON as an Anthropic message: each `search` call becomes a `server_tool_use` plus a
+ * `web_search_tool_result` listing its sources (titles from the answer's citations, else the host name; a search
+ * without sources lists the citations), then the answer with its sources appended.
+ */
+export function responsesToAnthropicMessage(
+    response: Record<string, unknown>,
+    toolName = "web_search"
+): EmulationOutcome {
     let text = "";
     let thinking = "";
     let searches = 0;
-    const citations = new Set<string>();
+    const citations = new Map<string, { url: string; title?: string }>();
+    const calls: Array<{ id: string; query: string; sources: string[] }> = [];
 
     for (const item of Array.isArray(response.output) ? response.output : []) {
         if (!isObject(item)) {
@@ -528,6 +619,17 @@ export function responsesToAnthropicMessage(response: Record<string, unknown>): 
 
         if (item.type === "web_search_call") {
             searches += 1;
+            const action = isObject(item.action) ? item.action : {};
+
+            if (action.type === "search" || typeof action.query === "string") {
+                calls.push({
+                    id: typeof item.id === "string" ? item.id : `ws_${calls.length + 1}`,
+                    query: typeof action.query === "string" ? action.query : "",
+                    sources: (Array.isArray(action.sources) ? action.sources : []).flatMap((source) =>
+                        isObject(source) && typeof source.url === "string" ? [source.url] : []
+                    ),
+                });
+            }
         } else if (item.type === "reasoning" && Array.isArray(item.summary)) {
             for (const part of item.summary) {
                 if (isObject(part) && typeof part.text === "string") {
@@ -544,7 +646,10 @@ export function responsesToAnthropicMessage(response: Record<string, unknown>): 
 
                 for (const ann of Array.isArray(part.annotations) ? part.annotations : []) {
                     if (isObject(ann) && ann.type === "url_citation" && typeof ann.url === "string") {
-                        citations.add(ann.url);
+                        citations.set(sourceKey(ann.url), {
+                            url: ann.url,
+                            ...(typeof ann.title === "string" ? { title: ann.title } : {}),
+                        });
                     }
                 }
             }
@@ -552,7 +657,7 @@ export function responsesToAnthropicMessage(response: Record<string, unknown>): 
     }
 
     if (citations.size > 0) {
-        text += `\n\nSources:\n${[...citations].map((url) => `- ${url}`).join("\n")}`;
+        text += `\n\nSources:\n${[...citations.values()].map((citation) => `- ${citation.url}`).join("\n")}`;
     }
 
     const usage = isObject(response.usage) ? response.usage : {};
@@ -561,6 +666,19 @@ export function responsesToAnthropicMessage(response: Record<string, unknown>): 
     if (thinking.length > 0) {
         content.push({ type: "thinking", thinking, signature: "" });
     }
+
+    const anySources = calls.some((call) => call.sources.length > 0);
+
+    calls.forEach((call, index) => {
+        const results =
+            !anySources && index === 0
+                ? [...citations.values()].map((citation) => ({
+                      url: citation.url,
+                      title: citation.title ?? hostOf(citation.url),
+                  }))
+                : call.sources.map((url) => ({ url, title: citations.get(sourceKey(url))?.title ?? hostOf(url) }));
+        content.push(...searchBlocks(`srvtoolu_${call.id}`, toolName, call.query, results));
+    });
 
     content.push({ type: "text", text });
 
@@ -596,15 +714,18 @@ export async function nativeWebSearch(options: {
     body: Record<string, unknown>;
     tool: WebSearchServerTool;
     callResponses: (body: Record<string, unknown>) => Promise<Response>;
+    dialect?: WebSearchDialect;
 }): Promise<EmulationOutcome | Response> {
-    const response = await options.callResponses(buildResponsesWebSearchBody(options.body, options.tool));
+    const response = await options.callResponses(
+        buildResponsesWebSearchBody(options.body, options.tool, options.dialect)
+    );
 
     if (!response.ok) {
         return response;
     }
 
     const parsed = (await response.json()) as Record<string, unknown>;
-    const outcome = responsesToAnthropicMessage(parsed);
+    const outcome = responsesToAnthropicMessage(parsed, options.tool.name);
 
     if (outcome.searches > options.tool.maxUses) {
         logger.warn(
@@ -614,6 +735,44 @@ export async function nativeWebSearch(options: {
     }
 
     return outcome;
+}
+
+/** The web_search answer in the shape the client asked for: a pinged stream, or one JSON message. */
+export async function webSearchResponse(
+    stream: boolean,
+    run: (signal?: AbortSignal) => Promise<EmulationOutcome | Response>
+): Promise<Response> {
+    if (stream) {
+        return new Response(emulationStream(run), {
+            status: 200,
+            headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+        });
+    }
+
+    const outcome = await run();
+
+    if (outcome instanceof Response) {
+        return outcome;
+    }
+
+    return new Response(SafeJSON.stringify(outcome.message), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+    });
+}
+
+/** The native path would lose part of the request and no Brave key is set: say what, and how to get it through. */
+export function unsupportedNativeResponse(upstream: string, loss: string, reason: string): Response {
+    return new Response(
+        SafeJSON.stringify({
+            type: "error",
+            error: {
+                type: "invalid_request_error",
+                message: `web_search on ${upstream} cannot be combined with ${loss}: ${reason}. Set BRAVE_API_KEY to run the emulated search loop, which keeps the full request.`,
+            },
+        }),
+        { status: 400, headers: { "Content-Type": "application/json" } }
+    );
 }
 
 const PING_INTERVAL_MS = 10_000;
