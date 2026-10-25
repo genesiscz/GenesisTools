@@ -39,7 +39,27 @@ export async function resolveOpenAiSubToken(
         );
     }
 
+    warnLegacyOnce(account.name);
     return resolveFromCodexCli(account.openaiSub?.codexAuthPath);
+}
+
+const warnedLegacy = new Set<string>();
+
+/**
+ * The Codex CLI read is legacy: a new codex proxy account names a managed login (`openaiSub.accountName`, set by
+ * `tools ai-proxy accounts login codex` and `accounts bind`), so every Codex token comes from `CodexAccountBinding`.
+ * Old configs keep working; the log says once per process how to move them.
+ */
+function warnLegacyOnce(proxyAccount: string): void {
+    if (warnedLegacy.has(proxyAccount)) {
+        return;
+    }
+
+    warnedLegacy.add(proxyAccount);
+    logger.warn(
+        { account: proxyAccount, fix: `tools ai-proxy accounts bind ${proxyAccount} --codex <login>` },
+        "ai-proxy: codex account reads the Codex CLI's own auth.json (legacy, never refreshed); bind it to a managed login"
+    );
 }
 
 /**

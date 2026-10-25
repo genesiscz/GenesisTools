@@ -1,13 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAccountsAllowEnv, runAccountsSetKey, runAccountsSetRouting } from "@app/ai-proxy/commands/accounts";
+import {
+    codexAccountAuthStatus,
+    runAccountsAllowEnv,
+    runAccountsBind,
+    runAccountsSetKey,
+    runAccountsSetRouting,
+} from "@app/ai-proxy/commands/accounts";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
 import { resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
+import { type AiConfigData, CONFIG_VERSION } from "@genesiscz/utils/ai/config/schema";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 /**
  * These cover the non-interactive halves of `accounts set-key` / `allow-env` —
@@ -353,5 +362,78 @@ describe("runAccountsSetRouting --match (per-model routes)", () => {
         expect((await readAccount("router"))?.openrouter?.routes).toEqual([
             { match: "moonshotai/kimi-k3", provider: { order: ["Morph"] } },
         ]);
+    });
+});
+
+describe("codex accounts: one auth engine", () => {
+    /** An AI-config `openai-sub` login with no credentials: enough for `bind` to find it, nothing to migrate. */
+    function seedCodexLogins(...names: string[]): void {
+        const data: AiConfigData = {
+            version: CONFIG_VERSION,
+            defaults: {},
+            accounts: names.map((name) => ({
+                id: `acc_${name}`,
+                name,
+                provider: "openai-sub",
+                enabled: true,
+                billing: { mode: "subscription" },
+                credentials: {},
+                useEnvApiKey: false,
+            })),
+        };
+        mkdirSync(join(tempDir, ".genesis-tools", "ai"), { recursive: true });
+        writeFileSync(join(tempDir, ".genesis-tools", "ai", "config.json"), SafeJSON.stringify(data, null, 2));
+        AiConfigStore.invalidate();
+    }
+
+    const legacy = account({ name: "codex", provider: "openai-subscription", providerSlug: "codex" });
+
+    afterEach(() => {
+        AiConfigStore.invalidate();
+        process.exitCode = 0;
+    });
+
+    it("bind points a legacy codex account at a managed login and drops the CLI-cache path", async () => {
+        seedCodexLogins("personal", "work");
+        await seed({ ...legacy, openaiSub: { codexAuthPath: "/somewhere/auth.json", defaultReasoningEffort: "high" } });
+
+        await runAccountsBind("codex", { codex: "work" });
+
+        expect((await readAccount("codex"))?.openaiSub).toEqual({
+            accountName: "work",
+            defaultReasoningEffort: "high",
+        });
+    });
+
+    it("bind refuses a login that does not exist and changes nothing", async () => {
+        seedCodexLogins("personal");
+        await seed(legacy);
+
+        await runAccountsBind("codex", { codex: "shop" });
+
+        expect(process.exitCode).toBe(1);
+        expect((await readAccount("codex"))?.openaiSub).toBeUndefined();
+    });
+
+    it("bind refuses an account that is not a codex account", async () => {
+        seedCodexLogins("personal");
+        await seed(account());
+
+        await runAccountsBind("work", { codex: "personal" });
+
+        expect((await readAccount("work"))?.openaiSub).toBeUndefined();
+    });
+
+    it("status names the legacy read of the Codex CLI login, and never refreshes", async () => {
+        const missing = join(tempDir, "no-auth.json");
+        const status = await codexAccountAuthStatus({ ...legacy, openaiSub: { codexAuthPath: missing } });
+
+        expect(status).toEqual({
+            source: `legacy Codex CLI login (${missing}, read-only)`,
+            plan: undefined,
+            expiresAt: undefined,
+            error: "no token",
+        });
+        expect(status.login).toBeUndefined();
     });
 });

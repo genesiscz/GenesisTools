@@ -204,13 +204,13 @@ Speaks OpenAI to proxy clients on both `/v1/chat/completions` and `/v1/responses
 }
 ```
 
-Two token sources, tried in order:
-- `openaiSub.accountName` set → the named `openai-sub` account in `~/.genesis-tools/ai/config.json` (refreshed via Codex OAuth and persisted).
-- `openaiSub.accountName` omitted → the Codex CLI's own cache (`~/.codex/auth.json`, read-only; run `codex login` to refresh it). Override the path with `openaiSub.codexAuthPath`.
+Token source:
+- `openaiSub.accountName` (required for a new account) → the named `openai-sub` login in `~/.genesis-tools/ai/config.json`, through `CodexAccountBinding`: the one Codex auth engine that `tools codex run` and `tools codex spawn` use too, refreshed under one lock.
+- Legacy: `openaiSub.accountName` omitted → the Codex CLI's own cache (`~/.codex/auth.json`, read-only, never refreshed by GenesisTools; override the path with `openaiSub.codexAuthPath`). Configs written before 2026-10-25 keep working; the proxy logs a warning once per process, and `tools ai-proxy accounts status` names the fix: `tools ai-proxy accounts bind <account> --codex <login>`.
 
 Behavior notes:
 - **Rate limits / failover:** a 429 puts the account on an in-memory cooldown (honours `Retry-After`, else exponential backoff); `failoverAccountNames` (additional `openai-sub` AI-config accounts) are tried in order within the same request. A 401 triggers one forced token refresh + retry before the account is marked unhealthy for 15 minutes.
-- **Parameters:** WHAM rejects `max_output_tokens`, `temperature`, and `top_p` — the proxy strips them (warned once per process, surfaced in the `x-ai-proxy-dropped` response header). Client `reasoning` passes through (unknown efforts clamp to `low`); when omitted, `openaiSub.defaultReasoningEffort` applies (`"none"` omits the field, default `low`).
+- **Parameters:** WHAM rejects `max_output_tokens`, `temperature`, and `top_p` — the proxy strips them (warned once per process, surfaced in the `x-ai-proxy-dropped` response header). Client `reasoning` passes through; its effort is checked against the model's catalog list (see "Pinning reasoning effort" above). When omitted, `openaiSub.defaultReasoningEffort` applies (`"none"` omits the field), else the model's own default from the catalog, else `low`.
 - **Aliases:** built-ins `latest`, `codex`, `mini` resolve against the catalog; `openaiSub.aliases` adds per-account ones. Unknown ids pass through so WHAM's own 400 surfaces.
 - **Usage:** `tools ai-proxy usage` reports proxy-observed token counts from the local store — ChatGPT exposes no plan-quota endpoint, so weekly-limit numbers are never claimed.
 - **Local health checks:** shell proxies break localhost curls — use `curl --noproxy '*' http://127.0.0.1:<port>/…` (or unset `http_proxy`/`https_proxy`).

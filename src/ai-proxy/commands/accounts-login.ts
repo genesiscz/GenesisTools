@@ -103,7 +103,9 @@ async function runCodexLogin(): Promise<void> {
     if (!isInteractive()) {
         out.log.error("Codex login needs a TTY (browser OAuth + code paste).");
         out.log.info(suggestCommand("tools ai-proxy", { replaceCommand: ["accounts", "login", "codex"] }));
-        out.log.info("Alternative: run `codex login` and configure openaiSub.codexAuthPath (CLI-cache mode).");
+        out.log.info(
+            `Alternative: ${toolCommand("codex login")} <name>, then ${suggestCommand("tools ai-proxy", { replaceCommand: ["accounts", "bind", "<proxy account>", "--codex", "<name>"] })}.`
+        );
         return;
     }
 

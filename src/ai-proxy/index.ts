@@ -3,6 +3,7 @@
 import {
     type AccountsRoutingPatch,
     runAccountsAllowEnv,
+    runAccountsBind,
     runAccountsList,
     runAccountsRemove,
     runAccountsSetEnabled,
@@ -343,6 +344,14 @@ accountsCmd
     .description("Auth detail for codex accounts (source, expiry, plan)")
     .action(async () => {
         await runAccountsStatus();
+    });
+
+accountsCmd
+    .command("bind <name>")
+    .description("Point a codex account at a managed login (tools codex login), instead of the Codex CLI's auth.json")
+    .option("--codex <login>", "The managed openai-sub login, e.g. one listed by `tools ai-proxy accounts status`")
+    .action(async (name: string, options: { codex?: string }) => {
+        await runAccountsBind(name, options);
     });
 
 accountsCmd
