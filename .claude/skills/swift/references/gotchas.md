@@ -519,3 +519,13 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   click-through, and a hit test through AppKit looks fine. Add `.contentShape(shape)` after the glass. A window with a
   clear background does pass alpha-0 pixels through; `ignoresMouseEvents = false`, set explicitly, makes it take them.
   Synthetic `mouseMoved` events do not drive SwiftUI hover, so test the hit region with a click (`WidgetBubbleHitTests`).
+- **Correction (2026-10-24 19:43): the hit-test gap above is real, but it was not why the widget's hover list closed.** Inside a
+  ScrollView a gap between rows is hit-tested under plain glass, so the list's gaps were never the hole. SwiftUI's
+  `.onHover` on the panel still reported "left" while the pointer sat on it during a scroll. A window-level "pointer
+  inside" now comes from an `NSTrackingArea` on the window's root view (`.mouseEnteredAndExited`, `.activeAlways`,
+  `.inVisibleRect`); SwiftUI hover only logs disagreements.
+- **One process per item, on every refresh, is a storm.** A model per open document that spawns its own child on each
+  repository change multiplies: Genesis Markdown ran 51 to 66 `tools agents blame` at once (each a full app launch),
+  plus one `git rev-parse` per note. Queue such work per shared resource (one run for every item that asked, one run
+  in flight, the next after it) and cache what is per folder. GenesisKit's launchers count starts (`SpawnMeter`), so
+  the next one shows up as `spawn.storm` in the perf log.
