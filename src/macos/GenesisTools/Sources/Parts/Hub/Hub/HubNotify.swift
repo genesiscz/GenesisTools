@@ -82,10 +82,12 @@ struct HubNotifyStatus: Decodable, Equatable {
         }
     }
 
-    /// The button that fixes the daemon task (`tools hub notify install`), or nil while it ticks every minute.
+    /// The button that fixes the daemon task (`tools hub notify install`), or nil while it ticks every minute or the
+    /// task list could not be read (the task may be there).
     var daemonFixTitle: String? {
-        guard daemonTask != true || daemonTaskEvery != daemonTaskWanted else { return nil }
-        return daemonTask == true ? "Tick every minute" : "Add the daemon task"
+        guard let daemonTask else { return nil }
+        guard !daemonTask || daemonTaskEvery != daemonTaskWanted else { return nil }
+        return daemonTask ? "Tick every minute" : "Add the daemon task"
     }
 }
 

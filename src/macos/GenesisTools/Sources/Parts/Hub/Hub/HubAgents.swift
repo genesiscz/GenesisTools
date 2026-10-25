@@ -278,6 +278,8 @@ final class HubAgentsModel: ObservableObject {
     private(set) var showingCached = false
     @Published private(set) var loaded = false
     @Published private(set) var error: String?
+    /// A `--session` or `--agent` request the loaded list does not hold; the list itself loaded fine.
+    @Published var requestMiss: String?
     /// `AgentTree.key(parent:child:)` of the open child.
     @Published var selectedID: String? {
         didSet {
@@ -938,6 +940,7 @@ final class HubAgentsModel: ObservableObject {
     /// named by its id, its id's start, or its teammate name; the parent by its id or id's start.
     func request(parent: String?, child: String) {
         pendingRequest = (parent, child)
+        requestMiss = nil
         resolvePendingRequest(final: false)
     }
 
@@ -952,7 +955,7 @@ final class HubAgentsModel: ObservableObject {
                 revealRequest += 1
             } else if final {
                 pendingRequest = nil
-                error = "No agent session \(wanted.parent?.prefix(8) ?? "") in the list"
+                requestMiss = "No agent session \(wanted.parent?.prefix(8) ?? "") in the list."
             }
             return
         }
@@ -965,7 +968,7 @@ final class HubAgentsModel: ObservableObject {
             revealRequest += 1
         } else if final {
             pendingRequest = nil
-            error = "No agent \(wanted.child)\(wanted.parent.map { " under session \($0.prefix(8))" } ?? "") in the list"
+            requestMiss = "No agent \(wanted.child)\(wanted.parent.map { " under session \($0.prefix(8))" } ?? "") in the list."
         }
     }
 
@@ -1172,6 +1175,11 @@ struct AgentsListView: View {
                                 }
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 4)
+                            }
+                            if let miss = agents.requestMiss {
+                                NoticePill(text: miss, tone: .warning) { agents.requestMiss = nil }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 4)
                             }
                             ForEach(sections, id: \.title) { section in
                                 Section {

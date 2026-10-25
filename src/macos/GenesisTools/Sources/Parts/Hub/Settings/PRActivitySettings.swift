@@ -205,7 +205,7 @@ private struct PRActivityProjectRow: View {
             [MenuButtonItem.action("Default (\(HubNotifyWords.cadenceTitle(config.intervalMinutes).lowercased()))", checked: own == nil) {
                 store.set(["--repo", path, "--reset-repo-interval"])
             }, .divider]
-                + HubNotifyWords.cadenceChoices.map { minutes in
+                + HubNotifyWords.cadenceOptions(including: own ?? config.intervalMinutes).map { minutes in
                     .action(HubNotifyWords.cadenceTitle(minutes), checked: own == minutes) {
                         store.set(["--repo", path, "--interval", String(minutes)])
                     }

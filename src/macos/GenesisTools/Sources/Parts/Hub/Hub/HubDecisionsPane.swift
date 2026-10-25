@@ -119,7 +119,7 @@ struct DecisionsView: View {
                 .font(.system(size: 11))
                 .foregroundColor(ReviewPalette.dim)
                 .lineLimit(1)
-                .instantTooltip("Posted and harvested decisions, and the ones the last reply asks. A click on an option marks it; Send delivers every marked answer to the session.")
+                .instantTooltip("Posted and harvested decisions, and the ones the last reply asks. A click on an option stages it; Send delivers every staged answer to the session.")
             if model.loadingDecisions {
                 ProgressView().controlSize(.small)
             }

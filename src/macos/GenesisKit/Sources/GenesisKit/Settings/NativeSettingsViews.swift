@@ -183,24 +183,37 @@ private struct NativeSettingsPageScroll: View {
                     page.content()
                         .environment(\.nativeSettingsPageID, id)
                         .onPreferenceChange(NativeSettingsSearchKey.self) { entries in
-                            MainActor.assumeIsolated { search.set(id, entries) }
+                            MainActor.assumeIsolated {
+                                let had = search.entries[id].map(holdsTarget) ?? false
+                                search.set(id, entries)
+                                // A card drawn after its page loaded its settings: scroll once it is there.
+                                if !had, holdsTarget(entries) { Task { await reveal(proxy) } }
+                            }
                         }
                 }.padding(.horizontal, 28).padding(.bottom, 28)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
-            // Only a fresh request scrolls: a page visited again later stays where its reader left it.
-            .task(id: center.token) {
-                guard let anchor = center.anchor, let at = center.requestedAt, Date().timeIntervalSince(at) < 2 else { return }
-                try? await Task.sleep(for: .milliseconds(80))
-                let place = UnitPoint(x: 0.5, y: 0.15)
-                if still {
-                    proxy.scrollTo(anchor, anchor: place)
-                } else {
-                    withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(anchor, anchor: place) }
-                }
-            }
+            .task(id: center.token) { await reveal(proxy) }
         }
         .id(id)
+    }
+
+    private func holdsTarget(_ entries: [NativeSettingsSearchEntry]) -> Bool {
+        guard let anchor = center.anchor else { return false }
+        return entries.contains { NativeSettingsSearch.anchor(page: page.id, key: $0.key) == anchor }
+    }
+
+    /// Only a fresh request scrolls: a page visited again later stays where its reader left it.
+    private func reveal(_ proxy: ScrollViewProxy) async {
+        guard center.anchor != nil, let at = center.requestedAt, Date().timeIntervalSince(at) < 2 else { return }
+        try? await Task.sleep(for: .milliseconds(80))
+        guard let anchor = center.anchor else { return }
+        let place = UnitPoint(x: 0.5, y: 0.15)
+        if still {
+            proxy.scrollTo(anchor, anchor: place)
+        } else {
+            withAnimation(.easeInOut(duration: 0.25)) { proxy.scrollTo(anchor, anchor: place) }
+        }
     }
 }
 

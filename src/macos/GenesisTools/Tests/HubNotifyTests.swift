@@ -95,6 +95,9 @@ final class HubNotifyTests: XCTestCase {
             .replacingOccurrences(of: "\"daemonTaskEvery\":null", with: "\"daemonTaskEvery\":\"every 5 minutes\"").utf8))
         XCTAssertEqual(stale.daemonTitle, "The daemon task still runs every 5 minutes")
         XCTAssertEqual(stale.daemonFixTitle, "Tick every minute")
+        let unread = try HubNotifyStatus.decode(Data(firstRunJSON
+            .replacingOccurrences(of: "\"daemonTask\":false", with: "\"daemonTask\":null").utf8))
+        XCTAssertNil(unread.daemonFixTitle, "an unreadable task list offers no fix: the task may be there")
     }
 
     /// One cadence list for the bell and the page; a stored value outside it stays pickable.

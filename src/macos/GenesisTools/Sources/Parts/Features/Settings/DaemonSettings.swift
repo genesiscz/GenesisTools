@@ -239,8 +239,9 @@ final class DaemonSettingsStore: ObservableObject {
     }
 
     /// One `tools daemon config set <task> <flags> --json`. The switch moves at once; the CLI's answer (the stored
-    /// task) replaces it, and a refused change puts the old value back and says why.
-    func set(_ task: DaemonTaskConfig, _ flags: [String], optimistic: ((inout DaemonTaskConfig) -> Void)? = nil) {
+    /// task) replaces it, and a refused change puts the old value back, says why and runs `onFailure`.
+    func set(_ task: DaemonTaskConfig, _ flags: [String], optimistic: ((inout DaemonTaskConfig) -> Void)? = nil,
+             onFailure: (() -> Void)? = nil) {
         writeGeneration += 1
         let before = status
         if let optimistic, let index = status?.tasks.firstIndex(where: { $0.name == task.name }) {
@@ -257,6 +258,7 @@ final class DaemonSettingsStore: ObservableObject {
                 show("Saved \(task.name). The daemon uses it from its next tick.", error: false)
             case .failure(let error):
                 status = before
+                onFailure?()
                 show("\(task.name): \(error)", error: true)
             }
         }
@@ -641,9 +643,9 @@ private struct DaemonTaskEditor: View {
         .onAppear(perform: syncFields)
         // Another setting's save brings a new task; a field the user is still typing in keeps their text.
         .onChange(of: task) { old, _ in
+            syncFields(from: old)
             sentEvery = nil
             sentRetryTimes = nil
-            syncFields(from: old)
         }
         // A click on another field or Tab saves what was typed, as Return does.
         .onChange(of: editing) { old, _ in
@@ -673,7 +675,10 @@ private struct DaemonTaskEditor: View {
     /// Takes the new task's values, except in a field that has the focus and holds an edit not saved yet.
     private func syncFields(from old: DaemonTaskConfig) {
         if editing != .every || every == old.every { every = task.every }
-        if editing != .retryTimes || retryTimes == Self.times(old) { retryTimes = Self.times(task) }
+        // The text just saved comes back in the stored form ("10:00,12:00" as "10:00, 12:00"), so it is not saved again.
+        if editing != .retryTimes || retryTimes == Self.times(old) || retryTimes == sentRetryTimes {
+            retryTimes = Self.times(task)
+        }
     }
 
     private func commit(_ field: Field?) {
@@ -691,14 +696,15 @@ private struct DaemonTaskEditor: View {
         let value = every.trimmingCharacters(in: .whitespaces)
         guard !value.isEmpty, value != task.every, value != sentEvery else { return }
         sentEvery = value
-        store.set(task, ["--every", value])
+        // A failed save lets the same text be sent again.
+        store.set(task, ["--every", value], onFailure: { if sentEvery == value { sentEvery = nil } })
     }
 
     private func commitRetryTimes() {
         let value = retryTimes.trimmingCharacters(in: .whitespaces)
         guard task.missedRun.mode == "retry-at", !value.isEmpty, value != Self.times(task), value != sentRetryTimes else { return }
         sentRetryTimes = value
-        store.set(task, ["--retry-at", value])
+        store.set(task, ["--retry-at", value], onFailure: { if sentRetryTimes == value { sentRetryTimes = nil } })
     }
 }
 

@@ -1239,8 +1239,11 @@ struct InboxSendBar: View {
             guard let number = item.number else { return nil }
             let letters = (item.draftOption ?? "").map { "\($0)) " }.joined()
             let note = item.draft?.trimmed ?? ""
-            let labels = (item.draftOption ?? "").compactMap { letter in
-                (item.choices ?? []).first { $0.id == String(letter) }?.label
+            // Most labels already start with their own "b) "; drop it so the letter is not written twice.
+            let labels = (item.draftOption ?? "").compactMap { letter -> String? in
+                guard let label = (item.choices ?? []).first(where: { $0.id == String(letter) })?.label else { return nil }
+                let prefix = "\(letter)) "
+                return label.hasPrefix(prefix) ? String(label.dropFirst(prefix.count)) : label
             }
             let text = note.isEmpty ? labels.joined(separator: " / ") : note
             return "DECISION \(number): \(letters)\(text)".trimmed
@@ -1267,8 +1270,9 @@ struct InboxSendBar: View {
                     .disabled(drafted.isEmpty || sending || session.sessionId == nil)
                     // One session answers the chord: the selected one, or the only one with staged answers.
                     .keyboardShortcut(ownsShortcut ? KeyboardShortcut(.return, modifiers: .command) : nil)
-                    .instantTooltip("Send every staged answer to the agent as one message (⌘↩)")
-                    .accessibilityHint(Text("Command-Return"))
+                    .instantTooltip(ownsShortcut ? "Send every staged answer to the agent as one message (⌘↩)"
+                                    : "Send every staged answer to the agent as one message")
+                    .accessibilityHint(Text(ownsShortcut ? "Command-Return" : ""))
                     if sending {
                         ProgressView().controlSize(.small)
                     }

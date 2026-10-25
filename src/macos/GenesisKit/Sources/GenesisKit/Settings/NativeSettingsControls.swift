@@ -16,7 +16,12 @@ public struct NativeSettingsDisclosure<Content: View>: View {
     private let identifier: String
     private let content: Content
     @State private var expanded: Bool
+    /// The search keys of the rows inside, read from the folded copy, so a search jump to one of them opens this.
+    @State private var keys: [String] = []
     @GenReduceMotion private var reduceMotion
+    @Environment(\.nativeSettingsIndexing) private var indexing
+    @Environment(\.nativeSettingsPageID) private var page
+    @ObservedObject private var center = NativeSettingsHighlightCenter.shared
 
     public init(_ title: String, identifier: String, @ViewBuilder content: () -> Content) {
         self.title = title
@@ -47,10 +52,40 @@ public struct NativeSettingsDisclosure<Content: View>: View {
             .accessibilityIdentifier(identifier)
             .accessibilityLabel(title)
             .accessibilityValue(expanded ? "Expanded" : "Collapsed")
-            if expanded { content.padding(.top, 8).transition(.genReveal) }
+            if expanded || indexing {
+                content.padding(.top, 8).transition(.genReveal)
+            } else {
+                folded
+            }
         }
         // The section closes over its content; a few points of slack keep a control's focus ring.
         .clipShape(Rectangle().inset(by: -3))
+        .onChange(of: center.token) { _, _ in openForSearch() }
+        .onChange(of: keys) { _, _ in openForSearch() }
+    }
+
+    /// The content while folded: drawn with no height and hidden, as the search indexer draws other pages, so the
+    /// settings search still lists the rows inside.
+    private var folded: some View {
+        content
+            .environment(\.nativeSettingsIndexing, true)
+            .frame(height: 0)
+            .clipped()
+            .hidden()
+            .disabled(true)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+            .onPreferenceChange(NativeSettingsSearchKey.self) { entries in
+                MainActor.assumeIsolated { keys = entries.map(\.key) }
+            }
+    }
+
+    /// Opens the section when a fresh search jump names a row inside it.
+    private func openForSearch() {
+        guard !expanded, !indexing, let page, let anchor = center.anchor, let at = center.requestedAt,
+              Date().timeIntervalSince(at) < 2,
+              keys.contains(where: { NativeSettingsSearch.anchor(page: page, key: $0) == anchor }) else { return }
+        expanded = true
     }
 }
 
