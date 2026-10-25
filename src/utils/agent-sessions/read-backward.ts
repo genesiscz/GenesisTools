@@ -45,7 +45,17 @@ export function readJsonlBackward(
         }
 
         const entries = options.rowEntries(row, line);
-        const stop = entries.findLastIndex((entry) => options.until(entry));
+        // A loop, not `findLastIndex`: the dashboards compile src/utils with a `lib` older than ES2023.
+        let stop = -1;
+
+        for (let index = entries.length - 1; index >= 0; index--) {
+            const entry = entries[index];
+
+            if (entry && options.until(entry)) {
+                stop = index;
+                break;
+            }
+        }
 
         if (stop >= 0) {
             rows.push(entries.slice(stop));
