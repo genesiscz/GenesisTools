@@ -19,13 +19,13 @@ import * as prompts from "@genesiscz/utils/prompts/p";
 import { withFileLock } from "@genesiscz/utils/storage";
 import { ClickyLibraryUnavailableError, ensureClickyLibrary, unpackClickyLibrary } from "../clicky-library";
 import {
-    assertFullXcodeToolchain,
     bundleClickyLibrary,
     downloadClickyLibrary,
     offerCodesignTrust,
     pinnedRetiredBundles,
     readAppFaceProcesses,
     readRunningExecutableInodes,
+    requireAppBuildSdk,
     runningExecutableInodes,
     runStreaming,
     sourceHash,
@@ -464,24 +464,30 @@ describe("runningExecutableInodes", () => {
     });
 });
 
-describe("assertFullXcodeToolchain", () => {
-    it("does not throw when the full Xcode toolchain is active", () => {
-        expect(() =>
-            assertFullXcodeToolchain({ kind: "xcode", developerDir: "/Applications/Xcode.app/Contents/Developer" })
-        ).not.toThrow();
+describe("requireAppBuildSdk", () => {
+    it("builds with Xcode's own SDK when the full Xcode toolchain is active", () => {
+        expect(requireAppBuildSdk({ kind: "xcode" })).toEqual({});
     });
 
-    it("refuses with the Xcode-install hint instead of letting swift build run and dump errors", () => {
+    it("builds with the Command Line Tools SDK that passed the probe (#564)", () => {
+        const sdkRoot = "/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk";
+
+        expect(requireAppBuildSdk({ kind: "command-line-tools", sdkRoot })).toEqual({ sdkRoot });
+    });
+
+    it("refuses with the Xcode-install hint when no SDK can build, instead of letting swift build dump errors", () => {
         expect(() =>
-            assertFullXcodeToolchain({
-                kind: "command-line-tools",
-                developerDir: "/Library/Developer/CommandLineTools",
+            requireAppBuildSdk({
+                kind: "unsupported",
+                toolchain: { kind: "command-line-tools", developerDir: "/Library/Developer/CommandLineTools" },
             })
         ).toThrow("GenesisTools.app needs the full Xcode");
     });
 
     it("refuses the same way when xcode-select names no toolchain at all", () => {
-        expect(() => assertFullXcodeToolchain({ kind: "none" })).toThrow("GenesisTools.app needs the full Xcode");
+        expect(() => requireAppBuildSdk({ kind: "unsupported", toolchain: { kind: "none" } })).toThrow(
+            "GenesisTools.app needs the full Xcode"
+        );
     });
 });
 

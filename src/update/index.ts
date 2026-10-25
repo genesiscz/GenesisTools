@@ -12,7 +12,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { detectXcodeToolchain, genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
+import { genesisAppBuildHint, resolveAppBuildSdk } from "@genesiscz/utils/macos/xcode";
 import pc from "picocolors";
 import type { UpdateMode, UpdateOptions } from "./channel";
 import { createUpdateProgram, postPullInvocation, switchChannel } from "./channel";
@@ -426,13 +426,14 @@ async function refreshGenesisApp(): Promise<void> {
         return;
     }
 
-    // buildApp() refuses this too, but only after the "Rebuilding" line: say it once and move on.
-    const toolchain = detectXcodeToolchain();
+    // buildApp() refuses this too, but only after the "Rebuilding" line: say it once and move on. The Command Line
+    // Tools build too when one of their SDKs needs no SwiftUI macro plugin (#564).
+    const sdk = resolveAppBuildSdk();
 
-    if (toolchain.kind !== "xcode") {
-        logger.info({ toolchain }, "update: GenesisTools.app rebuild skipped, no full Xcode");
-        out.println(pc.yellow("\n  Skipped rebuilding GenesisTools.app: it needs Xcode, not the Command Line Tools."));
-        out.println(pc.dim(`  ${genesisAppBuildHint(toolchain)}`));
+    if (sdk.kind === "unsupported") {
+        logger.info({ toolchain: sdk.toolchain }, "update: GenesisTools.app rebuild skipped, no usable SDK");
+        out.println(pc.yellow("\n  Skipped rebuilding GenesisTools.app: no installed SDK can build it without Xcode."));
+        out.println(pc.dim(`  ${genesisAppBuildHint(sdk.toolchain)}`));
         return;
     }
 

@@ -29,7 +29,7 @@ import {
     genesisAppLauncherPath,
 } from "@genesiscz/utils/macos/genesis-app";
 import { readStagingMarker } from "@genesiscz/utils/macos/native-inbox";
-import { detectXcodeToolchain, genesisAppBuildHint, type XcodeToolchain } from "@genesiscz/utils/macos/xcode";
+import { type AppBuildSdk, genesisAppBuildHint, resolveAppBuildSdk } from "@genesiscz/utils/macos/xcode";
 import { dispatchNotification } from "@genesiscz/utils/notifications";
 import { boundedCommand } from "@genesiscz/utils/process/bounded-command";
 import { clearPidFile, writePidFile } from "@genesiscz/utils/process/pidfile";
@@ -275,9 +275,18 @@ export async function runStreaming({
     return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
 }
 
-function run(cmd: string[], cwd?: string): { code: number; stdout: string; stderr: string } {
+function run(
+    cmd: string[],
+    cwd?: string,
+    extraEnv?: Record<string, string>
+): { code: number; stdout: string; stderr: string } {
     logger.debug({ cmd, cwd }, "permissions app: spawn");
-    const proc = Bun.spawnSync(cmd, { cwd, stdout: "pipe", stderr: "pipe" });
+    const proc = Bun.spawnSync(cmd, {
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+        ...(extraEnv ? { env: { ...env.getProcessEnv(), ...extraEnv } } : {}),
+    });
     return {
         code: proc.exitCode,
         stdout: new TextDecoder().decode(proc.stdout),
@@ -589,15 +598,17 @@ export async function buildApp(options?: BuildAppOptions): Promise<BuildResult> 
 }
 
 /**
- * Refuses before `swift build` ever runs when the active toolchain is the Command Line Tools
- * (or nothing at all): GenesisKit's SwiftUI macros (`@State`, `@Entry`) need the `SwiftUIMacros`
- * compiler plugin, which ships only with full Xcode, and a build without it fails with 100+
- * cascading "plugin for module 'SwiftUIMacros' not found" errors instead of one clear message (#445).
+ * The SDK the build compiles against, or a refusal before `swift build` ever runs. Full Xcode builds as before. With
+ * the Command Line Tools, the build uses the newest SDK whose SwiftUI `@State` needs no macro plugin (the 26.5 SDK
+ * next to 27.0, #564), passed as `SDKROOT`. Only when no installed SDK passes does it refuse with the Xcode hint,
+ * instead of 100+ cascading "plugin for module 'SwiftUIMacros' not found" errors (#445).
  */
-export function assertFullXcodeToolchain(toolchain: XcodeToolchain): void {
-    if (toolchain.kind !== "xcode") {
-        throw new Error(genesisAppBuildHint(toolchain));
+export function requireAppBuildSdk(sdk: AppBuildSdk): { sdkRoot?: string } {
+    if (sdk.kind === "unsupported") {
+        throw new Error(genesisAppBuildHint(sdk.toolchain));
     }
+
+    return sdk.kind === "command-line-tools" ? { sdkRoot: sdk.sdkRoot } : {};
 }
 
 /** Wraps a step reporter so each step's duration is kept; `summary()` names them all, slowest first. */
@@ -652,7 +663,7 @@ async function buildAppSteps(
         throw new Error("swift not found. Install Xcode or the Command Line Tools, then re-run.");
     }
 
-    assertFullXcodeToolchain(detectXcodeToolchain());
+    const { sdkRoot } = requireAppBuildSdk(resolveAppBuildSdk());
 
     // SwiftPM's debug configuration with `-O`, in its own scratch folder: release mode is never incremental, so one
     // changed line recompiled all 91 files of the app (58.7 s with whole-module optimization, 18.3 s without), while
@@ -712,6 +723,7 @@ async function buildAppSteps(
             ...env.getProcessEnv(),
             GENESIS_APP_PARTS: partsEnvValue(parts),
             GENESIS_KIT_BASE_ONLY: parts.length === 0 ? "1" : undefined,
+            ...(sdkRoot ? { SDKROOT: sdkRoot } : {}),
         },
         onLine: reportProgress,
     });
@@ -739,7 +751,11 @@ async function buildAppSteps(
     // missing: without it macOS draws the blank generic page in Finder and notifications.
     if (!existsSync(iconPath)) {
         step("render app icon");
-        const icon = run(["swift", join(APP_SOURCE_DIR, ICON_GENERATOR)], APP_SOURCE_DIR);
+        const icon = run(
+            ["swift", join(APP_SOURCE_DIR, ICON_GENERATOR)],
+            APP_SOURCE_DIR,
+            sdkRoot ? { SDKROOT: sdkRoot } : undefined
+        );
 
         if (icon.code !== 0) {
             logger.warn({ stderr: icon.stderr }, "app icon generation failed; bundle will use the generic icon");
