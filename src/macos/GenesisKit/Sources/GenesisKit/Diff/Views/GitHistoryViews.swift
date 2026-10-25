@@ -209,6 +209,13 @@ public struct GitCommitView: View {
                                 .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(picked == file.id ? 0.14 : 0)))
                             }
                             .buttonStyle(RowButtonStyle(cornerRadius: 5))
+                            // The keyboard's place is the picked row's own ring: the system focus ring around the padded
+                            // list was clipped by the scroll view and sat off the rows (Martin, 2026-10-25).
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .strokeBorder(Color.accentColor.opacity(filesFocused && picked == file.id ? 0.8 : 0), lineWidth: 1.5)
+                                    .allowsHitTesting(false)
+                            )
                             .instantTooltip(file.path, monospaced: true)
                             .accessibilityAddTraits(picked == file.id ? .isSelected : [])
                             .id(file.id)
@@ -218,6 +225,7 @@ public struct GitCommitView: View {
                     // Up and Down pick the file before or after: the diff beside follows.
                     .focusable()
                     .focused($filesFocused)
+                    .focusEffectDisabled()
                     .onKeyPress(.upArrow, phases: [.down, .repeat]) { _ in step(-1, proxy) }
                     .onKeyPress(.downArrow, phases: [.down, .repeat]) { _ in step(1, proxy) }
                 }
