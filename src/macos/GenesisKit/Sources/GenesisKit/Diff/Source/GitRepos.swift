@@ -4,8 +4,9 @@
 //
 //  The repositories the git components show, one status per repository: one `git status` serves every tab, the
 //  status bar and the file tree. A repository refreshes a quarter second after its git folder changes (the index
-//  and HEAD: a stage, a commit, a checkout) or a host says one of its files was saved. Idle, it costs nothing:
-//  file events, no timer.
+//  and HEAD: a stage, a commit, a checkout) or a host says one of its files was saved, and at most every
+//  `workingTreeInterval` while files change in its working tree (another program's edit, an agent's new file).
+//  Idle, it costs nothing: file events, no timer.
 //
 
 import Combine
@@ -87,13 +88,25 @@ public final class GitRepoModel: ObservableObject {
     /// Every completed refresh invalidates followers, even when HEAD or index changes leave status equal.
     @Published public private(set) var generation = 0
     private var watch: DispatchSourceFileSystemObject?
+    private var workingTree: DirectoryWatcher?
     private var pending: DispatchWorkItem?
     private var loading = false
     private var again = false
+    private var lastLoad = Date.distantPast
+
+    /// The least time between two refreshes that working-tree file events start. Before it, an edit by another
+    /// program never reached the panel: the status and its dates stayed as the last git event left them, hours old
+    /// (Martin, 2026-10-25: "Last update" showed a note from 5 h ago while agents wrote files every minute).
+    nonisolated(unsafe) public static var workingTreeInterval: TimeInterval = 3
 
     init(root: URL) {
         self.root = root
         load()
+        let gitFolder = root.appendingPathComponent(".git").path
+        workingTree = DirectoryWatcher(paths: [root.path], latency: 1, fileEvents: false,
+                                       accepts: { $0 != gitFolder && !$0.hasPrefix(gitFolder + "/") }) { [weak self] _ in
+            self?.workingTreeChanged()
+        }
         let provider = GenesisKitGT.provider
         DispatchQueue.global(qos: .utility).async { [root] in
             let result = try? provider.git(["rev-parse", "--absolute-git-dir"], in: root, input: nil, gitDirectory: nil, environment: nil)
@@ -106,18 +119,36 @@ public final class GitRepoModel: ObservableObject {
 
     deinit {
         watch?.cancel()
+        workingTree?.stop()
     }
 
     /// Reads the status now: the Try again of a failed read.
     public func retry() {
         pending?.cancel()
+        pending = nil
         load()
+    }
+
+    /// Files changed in the working tree: a refresh, but no sooner than `workingTreeInterval` after the last one, so
+    /// an agent writing a file a second costs one status every few seconds.
+    private func workingTreeChanged() {
+        guard pending == nil else { return }
+        let wait = max(0.25, Self.workingTreeInterval - Date().timeIntervalSince(lastLoad))
+        let work = DispatchWorkItem { [weak self] in
+            self?.pending = nil
+            self?.load()
+        }
+        pending = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: work)
     }
 
     /// A refresh a quarter second after the last call: a commit writes the index several times.
     public func refresh() {
         pending?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.load() }
+        let work = DispatchWorkItem { [weak self] in
+            self?.pending = nil
+            self?.load()
+        }
         pending = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
@@ -128,6 +159,7 @@ public final class GitRepoModel: ObservableObject {
             return
         }
         loading = true
+        lastLoad = Date()
         let provider = GenesisKitGT.provider
         let root = self.root
         DispatchQueue.global(qos: .utility).async {

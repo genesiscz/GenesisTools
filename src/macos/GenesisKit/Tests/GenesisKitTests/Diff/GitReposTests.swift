@@ -67,6 +67,25 @@ final class GitReposTests: XCTestCase {
         XCTAssertNil(file.state)
     }
 
+    /// Martin, 2026-10-25: the panel's "Last update" showed a note from 5 h ago while agents wrote files every minute;
+    /// only git's own folder events and the viewer's saves refreshed the status.
+    func testAFileAnotherProgramWritesRefreshesTheStatus() async throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gitworktree-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("notes"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try git(["init", "-q", "-b", "main"], in: repo)
+        try git(["commit", "--allow-empty", "-q", "-m", "First"], in: repo)
+        let saved = GitRepoModel.workingTreeInterval
+        GitRepoModel.workingTreeInterval = 0.3
+        defer { GitRepoModel.workingTreeInterval = saved }
+        let model = GitRepoModel(root: repo)
+        await wait("the first status") { model.status != nil }
+        XCTAssertEqual(model.status?.entries, [])
+        // Written by "another program": nobody calls refresh, git's folder does not change.
+        try "new\n".write(to: repo.appendingPathComponent("notes/agent.md"), atomically: true, encoding: .utf8)
+        await wait("the untracked file", timeout: 8) { model.status?.entries.map(\.path) == ["notes/agent.md"] }
+    }
+
     func testAnotherFileInTheSameFolderLoadsItsOwnStateAndHistory() async throws {
         // The status bar and the git sidebar outlive a document switch: a sibling note must load with no git event.
         let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gitsibling-\(UUID().uuidString)")
