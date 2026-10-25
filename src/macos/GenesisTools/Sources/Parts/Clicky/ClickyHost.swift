@@ -53,7 +53,7 @@ final class ClickyHost: NSObject {
         guard let button = item?.button else { return }
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentViewController = NSHostingController(
+        let controller = NSHostingController(
             rootView: ClickyPopoverView(
                 model: model,
                 showSettings: { [weak self] in
@@ -65,6 +65,11 @@ final class ClickyHost: NSObject {
                     self.stop()
                     if shouldQuit { NSApp.terminate(nil) }
                 }))
+        // Sized before it shows: a popover that only learns its height after `show` grew upward past the top of the
+        // display, over the menu bar, so its first 200 pt could not be seen (Martin, 2026-10-25).
+        controller.sizingOptions = [.preferredContentSize]
+        popover.contentSize = controller.view.fittingSize
+        popover.contentViewController = controller
         self.popover = popover
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
