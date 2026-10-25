@@ -1,7 +1,7 @@
 /**
  * The files that still write a model fact the catalog owns (.claude/rules/models.md), counted 2026-10-25 when
  * lint-rules `no-model-id-literal-outside-catalog`, `no-model-price-table` and `no-effort-vocabulary-list` were added
- * (❓ DECISION 22 b, a Haiku survey in GenesisBrain/GenesisTools/2026-10-25-LintRatchets/ModelFacts.haiku.md).
+ * (❓ DECISION 22 b, a Haiku survey, ModelFacts, in the notes of 2026-10-25).
  * Ratchets: no file may join a list, and `lint-rules.test.ts` fails when a listed file no longer offends.
  */
 export const MODEL_ID_LITERAL_RATCHET: ReadonlySet<string> = new Set<string>([

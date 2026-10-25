@@ -1,8 +1,8 @@
 /**
  * The files that still branch on a harness name, read a hook payload field themselves, or find a running agent by its
  * command line, counted 2026-10-25 when lint-rules `no-harness-name-branch`, `no-hook-payload-read` and
- * `no-agent-name-in-command-match` were added (❓ DECISION 22 b, a Haiku survey in
- * GenesisBrain/GenesisTools/2026-10-25-LintRatchets/HarnessBranching.haiku.md). Ratchets: no file may join a list, and
+ * `no-agent-name-in-command-match` were added (❓ DECISION 22 b, a Haiku survey,
+ * HarnessBranching, in the notes of 2026-10-25). Ratchets: no file may join a list, and
  * `lint-rules.test.ts` fails when a listed file no longer offends. A harness difference belongs in its provider
  * (`ProviderPlugin`, `NativeSessionReader`), a payload field in `src/agents/lib/hooks/payload.ts`, and process
  * matching in `src/utils/process/classify.ts`.
