@@ -17,7 +17,7 @@ import XCTest
 /// Options: MARKDOWN_REPO_BENCH_TABS (39) or MARKDOWN_REPO_BENCH_TAB_LIST=<file of note paths, the last selected>;
 /// MARKDOWN_REPO_BENCH_OUT=<jsonl> (one line per step, appended; a summary over every run in the file is written
 /// beside it as <out>.summary.md); MARKDOWN_REPO_BENCH_LABEL (before / after; default "run"); MARKDOWN_REPO_BENCH_PHASES
-/// (comma list, default all: floor,open,publish,tabs,filter,sort,refresh,scroll,fold,offmain);
+/// (comma list, default all: floor,open,publish,tabs,filter,sort,refresh,scroll,ab,fold,offmain);
 /// MARKDOWN_REPO_BENCH_SAMPLE=<path> runs `/usr/bin/sample` on this process while MARKDOWN_REPO_BENCH_SAMPLE_PHASE
 /// (publish) repeats for MARKDOWN_REPO_BENCH_SAMPLE_SECS (8); MARKDOWN_REPO_BENCH_QUERY (analy), _SHOW_MORE (5 pages),
 /// _WIDTH / _HEIGHT (2056 x 1290), _GIT_WIDTH (560), _FILES_WIDTH (346), _FILES=0 (no file tree), _WRAP=0, _OPENS (5),
@@ -90,7 +90,7 @@ final class RepoPanelBench {
         self.env = env
         self.root = root
         label = env["MARKDOWN_REPO_BENCH_LABEL"] ?? "run"
-        let all = "floor,open,publish,tabs,filter,sort,refresh,scroll,fold,offmain"
+        let all = "floor,open,publish,tabs,filter,sort,refresh,scroll,ab,fold,offmain"
         phases = Set((env["MARKDOWN_REPO_BENCH_PHASES"] ?? all).split(separator: ",").map { String($0).trimmingCharacters(in: .whitespaces) })
     }
 
@@ -140,6 +140,7 @@ final class RepoPanelBench {
         if phases.contains("sort") { sort() }
         if phases.contains("refresh") { refresh() }
         if phases.contains("scroll") { scroll("scroll") }
+        if phases.contains("ab") { attribution() }
         if phases.contains("fold") { try fold() }
         if phases.contains("offmain") { try offMain() }
         if let path = env["MARKDOWN_REPO_BENCH_SAMPLE"] { try sample(to: path) }
@@ -457,6 +458,36 @@ final class RepoPanelBench {
             step += 1
         }
         print("repo bench: \(phase) \(step) steps over \(Int(scroll.documentView?.frame.height ?? 0)) pt")
+    }
+
+    /// Attribution by difference: the same unrelated publish, tab switch and status refresh with the git sidebar on
+    /// Repository, on This file, and closed, interleaved step by step. What Repository costs over This file is the
+    /// panel's share; the sample cannot name it, because the panel's work is SwiftUI's own layout frames.
+    private func attribution() {
+        let ids = MarkdownTreeLagBenchTests.alternatingSelection(ids: model.docs.suffix(2).map(\.id), selections: 2)
+        func show(_ variant: String) {
+            model.showGit = variant != "closed"
+            if variant != "closed" { UserDefaults.standard.set(variant, forKey: Self.tabKey) }
+            settleQuiet()
+        }
+        for step in 0..<10 {
+            for variant in ["repo", "file", "closed"] {
+                show(variant)
+                measure("ab.publish." + variant, step: step) { model.objectWillChange.send() }
+                // Always a real switch: to whichever of the two tabs is not selected.
+                if let ids, let target = ids.first(where: { $0 != model.selected?.id }) {
+                    measure("ab.tabs." + variant, step: step, Settle(cap: 4)) { model.select(target) }
+                }
+                if step < 2 {
+                    let generation = repo.generation
+                    measure("ab.refresh." + variant, step: step, Settle(processQuiet: true, cap: 60, until: { self.repo.generation > generation })) {
+                        repo.refresh()
+                    }
+                }
+            }
+        }
+        model.select(model.docs.last?.id)
+        show("repo")
     }
 
     /// The largest untracked folder opened, several "Show more" pages, a scroll through the long list, and the folder
