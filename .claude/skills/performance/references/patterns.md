@@ -25,6 +25,14 @@ slowness is one of these shapes again.
   session folders for all 15 ids: 234 to 31 ms of CPU (dbb74251ed).
 - Look for the shape: a loop over N items where each call opens, reads or catches up the same thing.
 
+- **Filter by the cheap property, hash only the matches.** Pairing moved files by content: `git cat-file
+  --batch-check` gives every deleted blob's size, `lstat` gives every untracked file's size, and only files whose size
+  matches a deleted blob are hashed (`hash-object --stdin-paths`). 46 ms on the vault's 650 deletions and 5,000
+  untracked files, against 3.9 s for git's own rename detection; hashes cached by file identity (GenesisKit
+  `GitWorktreeRenames`, TS `src/utils/git/worktree-renames.ts`).
+- **Two languages, one rule, one fixture.** The Swift and TypeScript twins of a rule read the same case file
+  (`GenesisKitFixtures/Git/contract-worktree-renames.json`), so the rule cannot drift between the app and the CLI.
+
 ## Ask the cheapest source
 
 - **Liveness by signal 0.** Whether a Claude session is alive: the `~/.claude/sessions` registry plus
