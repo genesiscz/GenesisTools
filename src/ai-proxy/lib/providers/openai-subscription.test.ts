@@ -348,6 +348,55 @@ describe("OpenAiSubscriptionProvider", () => {
         });
     });
 
+    it("keeps one cache key per conversation: body prompt_cache_key and all three session headers, every turn", async () => {
+        const sent: Array<{ key: unknown; headers: Headers }> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = SafeJSON.parse(String(init?.body)) as { prompt_cache_key?: unknown };
+            sent.push({ key: body.prompt_cache_key, headers: new Headers(init?.headers) });
+            return whamStreamResponse();
+        }) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const turn = async (messages: unknown[], extra: Record<string, unknown> = {}) => {
+            const bodyText = SafeJSON.stringify({
+                messages: [{ role: "system", content: "Be terse." }, ...messages],
+                ...extra,
+            });
+            const res = await provider.chatCompletions(
+                new Request("http://localhost/v1/chat/completions", { method: "POST", body: bodyText }),
+                "gpt-5.5",
+                bodyText
+            );
+            await res.text();
+        };
+        const first = { role: "user", content: "say ok" };
+
+        // A client that names no key: one key from model, instructions and first message, stable as turns grow.
+        await turn([first]);
+        await turn([first, { role: "assistant", content: "ok" }, { role: "user", content: "again" }]);
+        // Tools are not hashed (model, instructions and the first message only), so their order does not move the key.
+        const tool = (name: string) => ({ type: "function", function: { name, parameters: { type: "object" } } });
+        await turn([first], { tools: [tool("a"), tool("b")] });
+        await turn([first], { tools: [tool("b"), tool("a")] });
+        // A client key (Claude Code's session id, stamped by the /v1/messages translation) wins as is.
+        const session = "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b";
+        await turn([first], { prompt_cache_key: session });
+
+        const [a, b, withTools, reordered, c] = sent;
+        expect(typeof a?.key).toBe("string");
+        expect(b?.key).toBe(a?.key);
+        expect(withTools?.key).toBe(a?.key);
+        expect(reordered?.key).toBe(a?.key);
+        expect(c?.key).toBe(session);
+
+        for (const call of sent) {
+            for (const header of ["session_id", "session-id", "thread-id"]) {
+                expect(call.headers.get(header)).toBe(String(call.key));
+            }
+        }
+    });
+
     it("forwards a chat request to WHAM and maps the response to chat.completion", async () => {
         let capturedUrl: unknown;
         let capturedInit: RequestInit | undefined;

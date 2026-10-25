@@ -1,4 +1,5 @@
 import type { ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
+import type { PromptCacheKey } from "@genesiscz/utils/ai/prompt-cache-key";
 
 export interface OpenAiModel {
     id: string;
@@ -17,6 +18,12 @@ export interface RealtimeConnectTarget {
 export interface ProviderInspectionOptions {
     /** Diagnostic inspection must not rotate or persist credentials. */
     probe?: boolean;
+}
+
+/** What the proxy knows about a request beyond its body, for providers that need it. */
+export interface ProviderRequestContext {
+    /** The conversation's cache key (`@genesiscz/utils/ai/prompt-cache-key`), when one was resolved. */
+    promptCacheKey?: PromptCacheKey;
 }
 
 export interface ProxyProvider {
@@ -41,7 +48,13 @@ export interface ProxyProvider {
      * body with NO reshape — which is the only way `cache_control`, thinking
      * signatures and exact tool schemas survive the trip.
      */
-    messages?(req: Request, model: string, bodyText: string): Promise<Response>;
+    messages?(req: Request, model: string, bodyText: string, context?: ProviderRequestContext): Promise<Response>;
+    /**
+     * True when this provider routes its prompt cache by the OpenAI `prompt_cache_key` field, so the
+     * `/v1/messages` translation carries the conversation's key into the OpenAI body (the Codex agent).
+     * Absent = the field is never added: a strict upstream may answer 400 to a parameter it does not know.
+     */
+    acceptsPromptCacheKey?: boolean;
     /**
      * True when the messages() upstream tolerates the OpenAI `reasoning_effort`
      * field, so an `:<effort>` suffix may be stamped onto the passthrough body

@@ -271,6 +271,55 @@ describe("countAnthropicInputTokens", () => {
     });
 });
 
+describe("anthropicMessagesPipeline: the conversation's cache key", () => {
+    const SESSION = "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b";
+    const body = SafeJSON.stringify({
+        model: PROXY_MODEL,
+        max_tokens: 32,
+        metadata: { user_id: SafeJSON.stringify({ device_id: "d", account_uuid: "a", session_id: SESSION }) },
+        messages: [{ role: "user", content: "hi" }],
+    });
+    const answer = () =>
+        new Response(
+            SafeJSON.stringify({
+                choices: [{ index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+                usage: { prompt_tokens: 3, completion_tokens: 1 },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+
+    it("carries Claude Code's session id as prompt_cache_key to a provider that keys its cache by it", async () => {
+        const provider = { ...fakeProvider(answer), acceptsPromptCacheKey: true };
+        const result = await anthropicMessagesPipeline({
+            provider,
+            upstreamModel: UPSTREAM_MODEL,
+            proxyModel: PROXY_MODEL,
+            req: request(),
+            bodyText: body,
+        });
+
+        expect(SafeJSON.parse(provider.seen[0]?.bodyText ?? "{}", { strict: true })).toMatchObject({
+            prompt_cache_key: SESSION,
+        });
+        expect(result.promptCacheKey).toEqual({ key: SESSION, source: "claude-session" });
+    });
+
+    it("adds no prompt_cache_key for a provider that did not ask for one", async () => {
+        const provider = fakeProvider(answer);
+        await anthropicMessagesPipeline({
+            provider,
+            upstreamModel: UPSTREAM_MODEL,
+            proxyModel: PROXY_MODEL,
+            req: request(),
+            bodyText: body,
+        });
+
+        expect(SafeJSON.parse(provider.seen[0]?.bodyText ?? "{}", { strict: true })).not.toHaveProperty(
+            "prompt_cache_key"
+        );
+    });
+});
+
 describe("anthropicMessagesPipeline", () => {
     it("translates a non-streaming answer into an Anthropic message", async () => {
         const provider = fakeProvider(

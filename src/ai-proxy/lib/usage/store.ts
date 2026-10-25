@@ -11,6 +11,7 @@ import type {
 } from "@app/ai-proxy/lib/usage/types";
 import { noteUnreadableUsageFile, preserveBeforeReplacing } from "@app/ai-proxy/lib/usage/unreadable-files";
 import type { GrokBillingConfig, GrokSettings } from "@genesiscz/utils/ai/grok";
+import { splitPromptTokens } from "@genesiscz/utils/ai/usage/cache-stats";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
@@ -222,6 +223,14 @@ function bumpDailyAggregate(record: UsageRequestRecord): void {
         current.estimated_requests = (current.estimated_requests ?? 0) + 1;
     }
 
+    if (record.usage) {
+        const split = splitPromptTokens(record.usage);
+        current.uncached_input_tokens = (current.uncached_input_tokens ?? 0) + split.uncached;
+        current.cache_read_tokens = (current.cache_read_tokens ?? 0) + split.cacheRead;
+        current.cache_write_tokens = (current.cache_write_tokens ?? 0) + split.cacheWrite;
+        current.reasoning_tokens = (current.reasoning_tokens ?? 0) + (record.usage.reasoning_tokens ?? 0);
+    }
+
     store.days[day][key] = current;
     saveDailyStore();
 }
@@ -409,6 +418,17 @@ function addDayIntoSummary(day: Record<string, DailyModelUsage>, summary: DailyM
 
         if (stats.estimated_requests) {
             summary.estimated_requests = (summary.estimated_requests ?? 0) + stats.estimated_requests;
+        }
+
+        for (const field of [
+            "uncached_input_tokens",
+            "cache_read_tokens",
+            "cache_write_tokens",
+            "reasoning_tokens",
+        ] as const) {
+            if (stats[field] !== undefined) {
+                summary[field] = (summary[field] ?? 0) + stats[field];
+            }
         }
     }
 }

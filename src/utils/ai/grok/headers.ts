@@ -25,6 +25,14 @@ export function readGrokClientVersion(homePath?: string): string {
     return DEFAULT_GROK_CLIENT_VERSION;
 }
 
+/**
+ * xAI routes its prompt cache by conversation: the `x-grok-conv-id` header, with the same value as the body's
+ * `prompt_cache_key` (docs.x.ai, "maximizing cache hits"; hermes-agent sends both). No key, no header.
+ */
+export function grokConversationHeaders(cacheKey: string | undefined): Record<string, string> {
+    return cacheKey ? { "x-grok-conv-id": cacheKey } : {};
+}
+
 export function buildCliProxyHeaders({
     token,
     modelOverride,

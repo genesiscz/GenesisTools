@@ -367,15 +367,22 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         );
                     }
 
-                    const { response, responseBody, timeline, openAiBodyText, clientResponseBody, captureFailure } =
-                        await anthropicMessagesPipeline({
-                            startedAt: requestStarted,
-                            provider,
-                            upstreamModel: route.upstreamId,
-                            proxyModel: model,
-                            req,
-                            bodyText: routedBody,
-                        });
+                    const {
+                        response,
+                        responseBody,
+                        timeline,
+                        openAiBodyText,
+                        clientResponseBody,
+                        captureFailure,
+                        promptCacheKey,
+                    } = await anthropicMessagesPipeline({
+                        startedAt: requestStarted,
+                        provider,
+                        upstreamModel: route.upstreamId,
+                        proxyModel: model,
+                        req,
+                        bodyText: routedBody,
+                    });
                     const elapsedMs = Math.round(performance.now() - requestStarted);
 
                     // The usage layer only parses the OpenAI shape, and the exchange it
@@ -410,6 +417,10 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                             status: response.status,
                             elapsedMs,
                             ...readRequestTags(req.headers),
+                            // A prefix and the source only: enough to see the key stay constant across turns.
+                            cacheKey: promptCacheKey
+                                ? `${promptCacheKey.key.slice(0, 13)} (${promptCacheKey.source})`
+                                : undefined,
                             userAgent: req.headers.get("User-Agent") ?? undefined,
                         },
                         "ai-proxy: request"

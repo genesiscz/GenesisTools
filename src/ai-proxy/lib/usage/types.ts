@@ -14,6 +14,16 @@ export interface TokenUsage {
      */
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
+    /**
+     * OpenAI-shaped cache reads (`prompt_tokens_details.cached_tokens`, Responses
+     * `input_tokens_details.cached_tokens`): a PART of prompt_tokens, unlike the
+     * Anthropic field above, so a hit rate reads one or the other and never adds
+     * both (`splitPromptTokens` in `@genesiscz/utils/ai/usage/cache-stats`).
+     * Before 2026-10-25 the Codex agent booked no cache count at all.
+     */
+    cached_prompt_tokens?: number;
+    /** Reasoning tokens the upstream reported (`completion_tokens_details` / `output_tokens_details`). */
+    reasoning_tokens?: number;
     cost_in_usd_ticks?: number;
     /**
      * USD the upstream itself charged for this exchange, as it reported it.
@@ -94,6 +104,12 @@ export interface DailyModelUsage {
     rate_limits: number;
     /** Requests whose tokens were locally estimated (upstream sent no usage). */
     estimated_requests?: number;
+    /** Cache reads in either convention (see `TokenUsage.cached_prompt_tokens`); absent on days before 2026-10-25. */
+    cache_read_tokens?: number;
+    cache_write_tokens?: number;
+    /** Input outside the cache, in either convention. */
+    uncached_input_tokens?: number;
+    reasoning_tokens?: number;
 }
 
 export interface DailyUsageStore {

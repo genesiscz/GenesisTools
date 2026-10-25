@@ -1,4 +1,4 @@
-import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import type { ProviderRequestContext, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { safeStreamControllerError } from "@app/ai-proxy/lib/safe-stream-controller";
 import { withSseKeepalive } from "@app/ai-proxy/lib/sse-keepalive";
 import { normalizeAnthropicToOpenAI } from "@app/ai-proxy/lib/translators/formats/anthropic/normalize";
@@ -13,6 +13,12 @@ import {
 import { type CallTimeline, TimelineCollector } from "@app/ai-proxy/lib/usage/call-timeline";
 import { captureResponseBody } from "@app/ai-proxy/lib/usage/capture-response";
 import { type PipelineResult, pipelineResult } from "@app/ai-proxy/lib/usage/pipeline-result";
+import {
+    claudeSessionIdFromMetadata,
+    type PromptCacheKey,
+    type PromptCacheKeyPolicy,
+    resolvePromptCacheKey,
+} from "@genesiscz/utils/ai/prompt-cache-key";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
@@ -36,6 +42,8 @@ const PING_INTERVAL_MS = 10_000;
 const CLIENT_CAPTURE_MAX_CHARS = 1_000_000;
 
 export interface AnthropicMessagesResult extends PipelineResult {
+    /** The conversation's cache key and where it came from; absent when the body named nothing to key on. */
+    promptCacheKey?: PromptCacheKey;
     /** The translated request body, for the usage row (the client's body is Anthropic-shaped). */
     openAiBodyText: string;
     /** The Anthropic frames the client actually received, for triage. */
@@ -67,7 +75,11 @@ function errorPipelineResult(
  * OpenAI field name differs per upstream, so both are set and providers drop
  * whichever they reject.
  */
-export function anthropicBodyToOpenAiBody(parsed: Record<string, unknown>, upstreamModel: string): string {
+export function anthropicBodyToOpenAiBody(
+    parsed: Record<string, unknown>,
+    upstreamModel: string,
+    promptCacheKey?: string
+): string {
     // A spread is SHALLOW, so `body.messages` was the caller's own array and
     // `normalizeAnthropicToOpenAI` unshifted the system turn straight into it.
     // Calling this twice on one body produced two system messages, and the
@@ -77,6 +89,10 @@ export function anthropicBodyToOpenAiBody(parsed: Record<string, unknown>, upstr
     normalizeAnthropicToOpenAI(body);
 
     body.model = upstreamModel;
+
+    if (promptCacheKey) {
+        body.prompt_cache_key = promptCacheKey;
+    }
 
     return SafeJSON.stringify(body);
 }
@@ -534,6 +550,7 @@ async function anthropicPassthrough({
     bodyText,
     prof,
     startedAt,
+    context,
 }: {
     provider: ProxyProvider;
     upstreamModel: string;
@@ -541,10 +558,11 @@ async function anthropicPassthrough({
     bodyText: string;
     prof: ProfilerScope;
     startedAt?: number;
+    context: ProviderRequestContext;
 }): Promise<AnthropicMessagesResult> {
     const collector = new TimelineCollector(startedAt ?? performance.now());
     const endDispatch = prof.start("messages.passthrough-dispatch");
-    const upstream = await provider.messages?.(req, upstreamModel, bodyText);
+    const upstream = await provider.messages?.(req, upstreamModel, bodyText, context);
     collector.markUpstreamHeaders();
     endDispatch();
 
@@ -561,6 +579,7 @@ async function anthropicPassthrough({
         captureFailure: captured.captureFailure,
         openAiBodyText: bodyText,
         clientResponseBody: captured.responseBody,
+        promptCacheKey: context.promptCacheKey,
     };
 }
 
@@ -571,6 +590,7 @@ export async function anthropicMessagesPipeline({
     req,
     bodyText,
     startedAt,
+    cacheKeyPolicy,
 }: {
     provider: ProxyProvider;
     upstreamModel: string;
@@ -579,6 +599,8 @@ export async function anthropicMessagesPipeline({
     bodyText: string;
     /** performance.now() taken when the proxy received the request (timeline anchor). */
     startedAt?: number;
+    /** How the conversation's cache key is chosen (default: Claude Code's session id). */
+    cacheKeyPolicy?: PromptCacheKeyPolicy;
 }): Promise<AnthropicMessagesResult> {
     const prof = profiler.scope("ai-proxy");
     const parsed = SafeJSON.parse(bodyText, { strict: true });
@@ -588,15 +610,36 @@ export async function anthropicMessagesPipeline({
     }
 
     const wantsStream = parsed.stream === true;
+    const promptCacheKey = resolvePromptCacheKey({
+        policy: cacheKeyPolicy,
+        claudeSessionId: claudeSessionIdFromMetadata(parsed.metadata),
+        content: {
+            model: upstreamModel,
+            system: parsed.system,
+            first: Array.isArray(parsed.messages) ? parsed.messages[0] : undefined,
+        },
+    });
 
     // Both ends already speak Anthropic: translating down to OpenAI and back
     // would only lose fields OpenAI cannot carry. Forward untouched.
     if (provider.messages) {
-        return anthropicPassthrough({ provider, upstreamModel, req, bodyText, prof, startedAt });
+        return anthropicPassthrough({
+            provider,
+            upstreamModel,
+            req,
+            bodyText,
+            prof,
+            startedAt,
+            context: { promptCacheKey },
+        });
     }
 
     const openAiBodyText = prof.measure("messages.translate-request", () =>
-        anthropicBodyToOpenAiBody(parsed, upstreamModel)
+        anthropicBodyToOpenAiBody(
+            parsed,
+            upstreamModel,
+            provider.acceptsPromptCacheKey ? promptCacheKey?.key : undefined
+        )
     );
 
     const result = wantsStream
@@ -612,5 +655,5 @@ export async function anthropicMessagesPipeline({
           })
         : await messagesJson({ provider, upstreamModel, proxyModel, req, openAiBodyText, prof, startedAt });
 
-    return { ...result, openAiBodyText };
+    return { ...result, openAiBodyText, promptCacheKey: provider.acceptsPromptCacheKey ? promptCacheKey : undefined };
 }

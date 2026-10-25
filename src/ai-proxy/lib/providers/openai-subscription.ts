@@ -25,6 +25,7 @@ import {
     tryFetchWhamModels,
     type WhamModelRecord,
 } from "@genesiscz/utils/ai/openai/sub-models";
+import { type PromptCacheKey, resolvePromptCacheKey } from "@genesiscz/utils/ai/prompt-cache-key";
 // The one predicate in the repo for "did this failure happen below HTTP?".
 // Duplicating it here is how the poll gate and the proxy would drift apart.
 import { isTransportFailure } from "@genesiscz/utils/ai/usage-poll/poll-gate";
@@ -48,6 +49,7 @@ const MODALITY_CACHE_TTL_MS = 10 * 60_000;
 export class OpenAiSubscriptionProvider implements ProxyProvider {
     readonly id = "openai-subscription";
     readonly accountFingerprint: string;
+    readonly acceptsPromptCacheKey = true;
     private readonly account: AiProxyAccountConfig;
     /** The live WHAM model list, when the image guard or `listModels` already fetched it (10 min). */
     private liveRecords: WhamModelRecord[] | null = null;
@@ -152,11 +154,19 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         token,
         accountId,
         whamBodyText,
+        sessionId,
         signal,
     }: {
         token: string;
         accountId?: string;
         whamBodyText: string;
+        /**
+         * The conversation's cache key. The backend routes the prompt cache by the session HEADER (probed
+         * 2026-10-25: a fixed header hit 11 of 12 warm requests, the body key alone 0 of 12), so a random id per
+         * request threw the cache away. Both spellings go out: `session_id` (older clients) and codex-rs's
+         * `session-id` + `thread-id`.
+         */
+        sessionId: string;
         signal: AbortSignal;
     }): Promise<Response> {
         return fetch(WHAM_RESPONSES_URL, {
@@ -167,7 +177,9 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 "Content-Type": "application/json",
                 "OpenAI-Beta": "responses=experimental",
                 originator: "codex_cli_rs",
-                session_id: crypto.randomUUID(),
+                session_id: sessionId,
+                "session-id": sessionId,
+                "thread-id": sessionId,
                 Accept: "text/event-stream",
             },
             body: whamBodyText,
@@ -222,11 +234,15 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             body: whamBody,
             dropped,
             effortError,
+            cacheKey,
         } = buildWhamResponsesBody(parsed, concreteModel, {
             defaultReasoningEffort: this.account.openaiSub?.defaultReasoningEffort,
             itemScope,
             catalog,
+            clientSessionHeader: req.headers.get("session-id") ?? req.headers.get("session_id") ?? undefined,
         });
+        // A body with nothing to key on (no client key, no instructions, no input) still gets one id per request.
+        const sessionId = cacheKey?.key ?? randomUUID();
 
         if (effortError) {
             logger.info({ account: this.account.name, model: concreteModel, effortError }, "ai-proxy: effort refused");
@@ -276,7 +292,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
             let attempt: Response;
             try {
-                attempt = await this.fetchWham({ token, accountId, whamBodyText, signal: req.signal });
+                attempt = await this.fetchWham({ token, accountId, whamBodyText, sessionId, signal: req.signal });
             } catch (err) {
                 const aborted = clientAbortResponse(err, { err, account: this.account.name });
                 if (aborted) {
@@ -297,7 +313,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 void attempt.body?.cancel();
                 try {
                     ({ token, accountId } = await candidate.resolve({ forceRefresh: true }));
-                    attempt = await this.fetchWham({ token, accountId, whamBodyText, signal: req.signal });
+                    attempt = await this.fetchWham({ token, accountId, whamBodyText, sessionId, signal: req.signal });
                 } catch (err) {
                     const aborted = clientAbortResponse(err, { err, account: this.account.name });
                     if (aborted) {
@@ -398,6 +414,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 elapsedMs,
                 dropped: dropped.length > 0 ? dropped : undefined,
                 authSource: this.account.openaiSub?.accountName ? "ai-config" : "codex-auth.json",
+                cacheKey: cacheKey ? `${cacheKey.key.slice(0, 13)} (${cacheKey.source})` : undefined,
             },
             "ai-proxy: WHAM upstream request ok"
         );
@@ -599,6 +616,8 @@ export interface WhamBodyBuildResult {
     dropped: string[];
     /** Set when the catalog says the model has no such effort: the caller answers 400 with this text. */
     effortError?: string;
+    /** The conversation's cache key, sent as `prompt_cache_key` and as the session headers. */
+    cacheKey?: PromptCacheKey;
 }
 
 const warnedDroppedParams = new Set<string>();
@@ -630,6 +649,8 @@ export function buildWhamResponsesBody(
          * older fixed allowlist and its `max` to `xhigh` clamp apply.
          */
         catalog?: CodexModelInfo;
+        /** A `session-id` / `session_id` header the client sent (a native Codex client keys its cache by it). */
+        clientSessionHeader?: string;
     }
 ): WhamBodyBuildResult {
     const body: Record<string, unknown> = {
@@ -716,9 +737,15 @@ export function buildWhamResponsesBody(
         dropped.push("store");
     }
 
+    const cacheKey = resolveWhamCacheKey(parsed, body, model, options.clientSessionHeader);
+
+    if (cacheKey) {
+        body.prompt_cache_key = cacheKey.key;
+    }
+
     if (options.catalog && options.catalog.efforts.length > 0) {
         const effortError = applyCatalogEffort({ parsed, body, model, catalog: options.catalog, options });
-        return { body, dropped, effortError };
+        return { body, dropped, effortError, cacheKey };
     }
 
     if (isObject(parsed.reasoning)) {
@@ -766,7 +793,29 @@ export function buildWhamResponsesBody(
         }
     }
 
-    return { body, dropped };
+    return { body, dropped, cacheKey };
+}
+
+/**
+ * The key the client chose (its `prompt_cache_key`, else its session header) wins and is forwarded unchanged. A
+ * `/v1/messages` request arrives with Claude Code's session id already stamped as `prompt_cache_key` by the
+ * Anthropic translation. Any other client gets a key from the model, the instructions and the first input item,
+ * which every later turn of the same conversation repeats.
+ */
+function resolveWhamCacheKey(
+    parsed: Record<string, unknown>,
+    body: Record<string, unknown>,
+    model: string,
+    clientSessionHeader: string | undefined
+): PromptCacheKey | undefined {
+    const clientKey = typeof parsed.prompt_cache_key === "string" ? parsed.prompt_cache_key : clientSessionHeader;
+    const first = Array.isArray(body.input) ? body.input[0] : undefined;
+
+    if (!clientKey && body.instructions === undefined && first === undefined) {
+        return undefined;
+    }
+
+    return resolvePromptCacheKey({ clientKey, content: { model, system: body.instructions ?? "", first } });
 }
 
 /**

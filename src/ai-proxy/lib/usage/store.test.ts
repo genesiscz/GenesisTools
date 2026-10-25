@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getTodayUsageSummary, recordUsageRequest, setUsageStoreDirForTests } from "@app/ai-proxy/lib/usage/store";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
+import { hitPercent } from "@genesiscz/utils/ai/usage/cache-stats";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 
@@ -203,5 +204,43 @@ describe("daily usage store", () => {
 
         expect(attempts).toBeGreaterThan(0);
         expect(readFileSync(dailyFile(), "utf8")).toBe(before);
+    });
+
+    it("books cache read, cache write, uncached input and reasoning in both usage conventions", () => {
+        // OpenAI shape (Codex, Grok): the cached count is a part of prompt_tokens.
+        recordUsageRequest({
+            ...request(),
+            usage: {
+                prompt_tokens: 1000,
+                completion_tokens: 20,
+                total_tokens: 1020,
+                cached_prompt_tokens: 900,
+                reasoning_tokens: 12,
+            },
+        });
+        // Anthropic shape: the cache counts sit outside prompt_tokens.
+        recordUsageRequest({
+            ...request(),
+            usage: {
+                prompt_tokens: 50,
+                completion_tokens: 5,
+                total_tokens: 55,
+                cache_read_input_tokens: 400,
+                cache_creation_input_tokens: 150,
+            },
+        });
+        flushScheduledWrite();
+
+        const today = getTodayUsageSummary("work");
+        const split = {
+            uncached: today.uncached_input_tokens ?? 0,
+            cacheRead: today.cache_read_tokens ?? 0,
+            cacheWrite: today.cache_write_tokens ?? 0,
+        };
+
+        expect(split).toEqual({ uncached: 150, cacheRead: 1300, cacheWrite: 150 });
+        expect(today.reasoning_tokens).toBe(12);
+        expect(hitPercent(split)).toBeCloseTo((1300 / 1600) * 100, 6);
+        expect(hitPercent({ uncached: 0, cacheRead: 0, cacheWrite: 0 })).toBeUndefined();
     });
 });

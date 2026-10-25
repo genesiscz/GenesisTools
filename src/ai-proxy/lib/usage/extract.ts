@@ -69,6 +69,27 @@ function normalizeUsage(raw: unknown): TokenUsage | undefined {
         usage.cache_creation_input_tokens = raw.cache_creation_input_tokens;
     }
 
+    // OpenAI-shaped cache reads sit INSIDE prompt_tokens: kept in their own
+    // field so the Anthropic convention above stays exact. The transcript had
+    // these all along; the ledger dropped them, so `tools ai-proxy usage`
+    // could not see that the Codex agent hit the cache 6% of the time.
+    const promptDetails = isObject(raw.prompt_tokens_details)
+        ? raw.prompt_tokens_details
+        : isObject(raw.input_tokens_details)
+          ? raw.input_tokens_details
+          : undefined;
+
+    if (promptDetails && typeof promptDetails.cached_tokens === "number") {
+        usage.cached_prompt_tokens = promptDetails.cached_tokens;
+    }
+
+    const outputDetails =
+        completionDetails ?? (isObject(raw.output_tokens_details) ? raw.output_tokens_details : undefined);
+
+    if (outputDetails && typeof outputDetails.reasoning_tokens === "number") {
+        usage.reasoning_tokens = outputDetails.reasoning_tokens;
+    }
+
     // Recorded verbatim but never booked as cost: two measured samples on
     // differently-priced grok models (grok-4.3 vs grok-4-fast, 2026-08-19)
     // returned near-identical tick counts for similar token totals, so the tick

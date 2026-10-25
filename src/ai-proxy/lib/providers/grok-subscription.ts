@@ -2,7 +2,12 @@ import { accountConfigFingerprint, resolveGrokAuthPath } from "@app/ai-proxy/lib
 import { listGrokProxyModels } from "@app/ai-proxy/lib/model-meta";
 import { mapGrokError } from "@app/ai-proxy/lib/providers/grok-errors";
 import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
-import type { OpenAiModel, ProviderInspectionOptions, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import type {
+    OpenAiModel,
+    ProviderInspectionOptions,
+    ProviderRequestContext,
+    ProxyProvider,
+} from "@app/ai-proxy/lib/providers/types";
 import { parseRetryAfterSeconds } from "@app/ai-proxy/lib/providers/wham-errors";
 import { harvestResponsesOutput, whamItemScope } from "@app/ai-proxy/lib/providers/wham-item-store";
 import { prepareGrokUpstreamBody } from "@app/ai-proxy/lib/rewrite-upstream-body";
@@ -42,10 +47,12 @@ import {
     GrokSubscriptionClient,
     resolveGrokSubToken,
 } from "@genesiscz/utils/ai/grok";
+import { grokConversationHeaders } from "@genesiscz/utils/ai/grok/headers";
 import { GROK_CLI_CHAT_PROXY_BASE_URL } from "@genesiscz/utils/ai/grok/paths";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 export class GrokSubscriptionProvider implements ProxyProvider {
     readonly id = "grok-subscription";
@@ -136,8 +143,9 @@ export class GrokSubscriptionProvider implements ProxyProvider {
     // on the body for shapes Grok's deserializer rejects, and one on the SSE.
     // `stringifyUnknownToolResultBlocks` is the only lossy one — see
     // docs/ai-proxy/FlowMatrix.md.
-    async messages(req: Request, model: string, bodyText: string): Promise<Response> {
+    async messages(req: Request, model: string, bodyText: string, context?: ProviderRequestContext): Promise<Response> {
         const parsed = SafeJSON.parse(bodyText, { strict: true });
+        const cacheKey = context?.promptCacheKey?.key;
 
         let outBody = bodyText;
         let toolMatchers: ToolMatcher[] = [];
@@ -183,7 +191,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             // AI_PROXY_GROK_MESSAGES_ROUTE=shim restores the passthrough
             // below instantly.
             if (env.aiProxy.getGrokMessagesRoute() === "responses") {
-                return this.messagesViaResponses(req, model, parsed as Record<string, unknown>);
+                return this.messagesViaResponses(req, model, parsed as Record<string, unknown>, cacheKey);
             }
 
             const body = stringifyUnknownToolResultBlocks(
@@ -212,7 +220,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             modelOverride: model,
             requestedModel: model,
             imageRouted: false,
-            headers: { "anthropic-version": "2023-06-01" },
+            headers: { "anthropic-version": "2023-06-01", ...grokConversationHeaders(cacheKey) },
         });
 
         // `dispatch` re-wraps upstream failures in the OpenAI error envelope,
@@ -248,10 +256,15 @@ export class GrokSubscriptionProvider implements ProxyProvider {
     private async messagesViaResponses(
         req: Request,
         model: string,
-        parsed: Record<string, unknown>
+        parsed: Record<string, unknown>,
+        cacheKey: string | undefined
     ): Promise<Response> {
         const anthropicBody = hoistSystemMessages(ensureToolRequiredArrays(parsed));
         const responsesBody = anthropicToGrokResponses(anthropicBody, model);
+
+        if (cacheKey) {
+            responsesBody.prompt_cache_key = cacheKey;
+        }
 
         const send = (bodyText: string): Promise<Response> =>
             this.dispatch({
@@ -261,6 +274,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                 modelOverride: model,
                 requestedModel: model,
                 imageRouted: false,
+                headers: grokConversationHeaders(cacheKey),
             });
 
         let response = await send(SafeJSON.stringify(responsesBody));
@@ -436,6 +450,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
             modelOverride: prepared.upstreamModel,
             requestedModel: upstreamModel,
             imageRouted: prepared.imageRouted,
+            headers: grokConversationHeaders(clientCacheKey(bodyText, req)),
         });
     }
 
@@ -587,4 +602,22 @@ function unsupportedNativeResponse(loss: string): Response {
         }),
         { status: 400, headers: { "Content-Type": "application/json" } }
     );
+}
+
+/**
+ * A cache key the client chose itself on the OpenAI doors: the body's `prompt_cache_key`, else its own
+ * `x-grok-conv-id` header. Forwarded unchanged as the conversation header; nothing is invented for these clients.
+ */
+function clientCacheKey(bodyText: string, req: Request): string | undefined {
+    try {
+        const parsed = SafeJSON.parse(bodyText, { strict: true });
+
+        if (isObject(parsed) && typeof parsed.prompt_cache_key === "string" && parsed.prompt_cache_key.length > 0) {
+            return parsed.prompt_cache_key;
+        }
+    } catch (err) {
+        logger.debug({ err }, "ai-proxy: grok body is not JSON; no client cache key");
+    }
+
+    return req.headers.get("x-grok-conv-id") ?? undefined;
 }

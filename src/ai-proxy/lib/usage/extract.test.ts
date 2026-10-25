@@ -31,6 +31,28 @@ describe("extractLatestUsageFromSse", () => {
         });
     });
 
+    it("books OpenAI-shaped cache reads and reasoning tokens apart from the Anthropic fields (chat and Responses)", () => {
+        const chat =
+            'data: {"object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":34668,"completion_tokens":5,"total_tokens":34673,"prompt_tokens_details":{"cached_tokens":32768},"completion_tokens_details":{"reasoning_tokens":3}}}\n\n';
+        const responses =
+            'data: {"type":"response.completed","response":{"usage":{"input_tokens":7280,"input_tokens_details":{"cached_tokens":7040},"output_tokens":9,"output_tokens_details":{"reasoning_tokens":4},"total_tokens":7289}}}\n\n';
+
+        expect(extractLatestUsageFromSse(chat)).toEqual({
+            prompt_tokens: 34668,
+            completion_tokens: 5,
+            total_tokens: 34673,
+            cached_prompt_tokens: 32768,
+            reasoning_tokens: 3,
+        });
+        expect(extractLatestUsageFromSse(responses)).toEqual({
+            prompt_tokens: 7280,
+            completion_tokens: 9,
+            total_tokens: 7289,
+            cached_prompt_tokens: 7040,
+            reasoning_tokens: 4,
+        });
+    });
+
     it("returns undefined when no event carries usage", () => {
         const sse = 'data: {"type":"response.output_text.delta","delta":"x"}\n\n';
         expect(extractLatestUsageFromSse(sse)).toBeUndefined();
@@ -66,6 +88,7 @@ describe("extractLatestUsageFromSse", () => {
             prompt_tokens: 195,
             completion_tokens: 129,
             total_tokens: 324,
+            reasoning_tokens: 127,
             cost_in_usd_ticks: 4318500,
         });
     });
@@ -81,6 +104,7 @@ describe("extractLatestUsageFromSse", () => {
             prompt_tokens: 195,
             completion_tokens: 129,
             total_tokens: 324,
+            reasoning_tokens: 127,
         });
     });
 });

@@ -336,6 +336,43 @@ describe("GrokSubscriptionProvider.messages /responses route (default)", () => {
         expect(message.stop_reason).toBe("end_turn");
     });
 
+    it("sends the conversation's cache key as prompt_cache_key and as x-grok-conv-id on every turn", async () => {
+        const provider = makeProvider();
+        const client = provider as unknown as {
+            client: {
+                fetch: (path: string, init: { body?: unknown; headers?: Record<string, string> }) => Promise<Response>;
+            };
+        };
+        const seen: Array<{ key: unknown; header: string | undefined }> = [];
+        client.client.fetch = async (_path, init) => {
+            const sentBody = SafeJSON.parse(String(init.body), { strict: true }) as Record<string, unknown>;
+            seen.push({ key: sentBody.prompt_cache_key, header: init.headers?.["x-grok-conv-id"] });
+            return new Response(envelope, { status: 200, headers: { "content-type": "application/json" } });
+        };
+        const key = { key: "0f1e2d3c-4b5a-4968-8776-5a4b3c2d1e0f", source: "claude-session" as const };
+        const send = (messages: unknown[]) => {
+            const body = SafeJSON.stringify({ model: "grok-4.6", max_tokens: 100, messages });
+            return provider.messages(
+                new Request("http://proxy/v1/messages", { method: "POST", body }),
+                "grok-4.6",
+                body,
+                { promptCacheKey: key }
+            );
+        };
+
+        await send([{ role: "user", content: "2+2?" }]);
+        await send([
+            { role: "user", content: "2+2?" },
+            { role: "assistant", content: "4" },
+            { role: "user", content: "and 3+3?" },
+        ]);
+
+        expect(seen).toEqual([
+            { key: key.key, header: key.key },
+            { key: key.key, header: key.key },
+        ]);
+    });
+
     it("retries once without reasoning items when the upstream cannot decrypt them", async () => {
         const { provider, sent } = stubbedProvider((calls) =>
             calls.length === 1

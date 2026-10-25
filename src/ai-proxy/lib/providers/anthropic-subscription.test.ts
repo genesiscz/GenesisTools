@@ -136,4 +136,90 @@ describe("AnthropicSubscriptionProvider", () => {
         expect(text).toContain("Hi");
         expect(text).toContain("data: [DONE]");
     });
+
+    it("/v1/messages passthrough: the cached prefix arrives byte-identical, behind one billing block stable per conversation", async () => {
+        // Anthropic caches only at explicit cache_control breakpoints, and only on a byte-identical prefix.
+        // Claude Code places them on the last tool, the system blocks and the latest user turn. The subscription
+        // fetch puts its billing block before them (system[0]); it hashes only the FIRST user message, so it is
+        // the same on every turn of one conversation and the prefix stays cacheable.
+        const ephemeral = { type: "ephemeral" };
+        const client = {
+            model: "claude-haiku-4-5",
+            max_tokens: 64,
+            stream: false,
+            metadata: {
+                user_id: SafeJSON.stringify({ device_id: "dev", session_id: "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b" }),
+            },
+            tools: [
+                {
+                    name: "Read",
+                    description: "read a file",
+                    input_schema: { type: "object", properties: { path: { type: "string" } } },
+                },
+                {
+                    name: "Bash",
+                    description: "run",
+                    input_schema: { type: "object", properties: {} },
+                    cache_control: ephemeral,
+                },
+            ],
+            system: [
+                {
+                    type: "text",
+                    text: "You are Claude Code, Anthropic's official CLI for Claude.",
+                    cache_control: ephemeral,
+                },
+                {
+                    type: "text",
+                    text: "You are an interactive agent. ünïcödé stays as sent.",
+                    cache_control: ephemeral,
+                },
+            ],
+            messages: [
+                { role: "user", content: "first" },
+                { role: "assistant", content: [{ type: "text", text: "ok" }] },
+                { role: "user", content: [{ type: "text", text: "second", cache_control: ephemeral }] },
+            ],
+        };
+        const sent: Array<Record<string, unknown>> = [];
+
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+
+            return new Response(
+                SafeJSON.stringify({ id: "msg_1", type: "message", role: "assistant", content: [], usage: {} }),
+                { status: 200, headers: { "content-type": "application/json" } }
+            );
+        }) as typeof fetch;
+
+        const { AnthropicSubscriptionProvider } = await import("./anthropic-subscription");
+        const provider = await AnthropicSubscriptionProvider.create(account);
+        const send = async (body: typeof client) => {
+            const bodyText = SafeJSON.stringify(body);
+            const res = await provider.messages(
+                new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+                "haiku",
+                bodyText
+            );
+            expect(res.status).toBe(200);
+        };
+
+        await send(client);
+        await send({
+            ...client,
+            messages: [...client.messages, { role: "assistant", content: [{ type: "text", text: "done" }] }],
+        });
+
+        const [first, next] = sent;
+        const system = first?.system as Array<{ text: string }>;
+
+        for (const field of ["tools", "messages", "metadata"] as const) {
+            expect(SafeJSON.stringify(first?.[field])).toBe(SafeJSON.stringify(client[field]));
+        }
+
+        expect(system[0]?.text).toStartWith("x-anthropic-billing-header:");
+        expect(SafeJSON.stringify(system.slice(1))).toBe(SafeJSON.stringify(client.system));
+        expect(SafeJSON.stringify(next?.system)).toBe(SafeJSON.stringify(first?.system));
+        expect(SafeJSON.stringify(next?.tools)).toBe(SafeJSON.stringify(first?.tools));
+    });
 });
