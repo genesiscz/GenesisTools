@@ -1,0 +1,431 @@
+/**
+ * Session records: one file per `tools claude codex` session, the key it presents, and the accounts it may use.
+ *
+ * `~/.genesis-tools/ai-proxy/sessions/<id>.json` (file 0600, folder 0700, atomic writes). `<id>` IS Claude Code's
+ * session id: the launcher generates it and passes `claude --session-id <id>`, and Claude Code keeps it across
+ * `--resume`, so the record, `tags.session`, the ai-proxy transcript file and the upstream cache key all carry the
+ * one id Claude Code writes its own transcript under. The record stores only a SHA-256 of the session key.
+ */
+import { createHash, randomBytes } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
+import type { PromptCacheKeyPolicy } from "@genesiscz/utils/ai/prompt-cache-key";
+import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
+import { isProcessAlive } from "@genesiscz/utils/process-alive";
+import { processStartMs, START_MS_TOLERANCE } from "@genesiscz/utils/process-identity";
+import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
+
+export const SESSION_KEY_PREFIX = "gts_";
+export const SESSION_RECORD_FILE_MODE = 0o600;
+export const SESSION_DIR_MODE = 0o700;
+/** Closed records stay for stats this long unless `sessionRetentionDays` says otherwise. */
+export const DEFAULT_SESSION_RETENTION_DAYS = 30;
+
+/** Which upstream route a manual switch moved. */
+export type SessionAgent = "codex" | "claude" | "grok";
+
+export interface SessionMove {
+    agent: SessionAgent;
+    from: string;
+    to: string;
+    at: string;
+}
+
+/** A metered account the user confirmed for this session (`--allow-metered <account>` or the y/N prompt). */
+export interface MeteredConfirmation {
+    account: string;
+    confirmedAt: string;
+    how: "flag" | "prompt";
+}
+
+export type SessionCloseReason = "exited" | "process-gone" | "pid-recycled";
+
+export interface AiProxySessionRecord {
+    version: 1;
+    /** Claude Code's session id; the file name. */
+    id: string;
+    /** SHA-256 (hex) of the `gts_` key; the key itself is never stored. */
+    keyHash: string;
+    createdAt: string;
+    lastSeenAt?: string;
+    closedAt?: string;
+    closeReason?: SessionCloseReason;
+    launcherPid?: number;
+    claudePid?: number;
+    claudePidStartMs?: number;
+    cwd?: string;
+    /** `--fork-session`: Claude Code picks a new id, so the first request names it (stored in `claudeSessionId`). */
+    forkPending?: boolean;
+    /** The session id Claude Code sent in `metadata.user_id`, when it is not the record id (fork). */
+    claudeSessionId?: string;
+    codexProxyAccount?: string;
+    codexAccount?: string;
+    claudeProxyAccount?: string;
+    claudeAccount?: string;
+    grokProxyAccount?: string;
+    model?: string;
+    effort?: string;
+    window?: number;
+    compactPercent?: number;
+    cacheKeyPolicy?: PromptCacheKeyPolicy;
+    moves: SessionMove[];
+    meteredConfirmed: MeteredConfirmation[];
+}
+
+export type NewSessionRecord = Omit<
+    AiProxySessionRecord,
+    "version" | "keyHash" | "createdAt" | "moves" | "meteredConfirmed"
+> &
+    Partial<Pick<AiProxySessionRecord, "moves" | "meteredConfirmed">>;
+
+/** The session id every request of this session is tagged with: the forked id once known, else the record id. */
+export function sessionTagId(record: AiProxySessionRecord): string {
+    return record.claudeSessionId ?? record.id;
+}
+
+/** Proxy accounts this session may route to. */
+export function sessionProxyAccounts(record: AiProxySessionRecord): string[] {
+    return [record.codexProxyAccount, record.claudeProxyAccount, record.grokProxyAccount].filter(
+        (name): name is string => typeof name === "string" && name.length > 0
+    );
+}
+
+export function sessionsDir(): string {
+    return join(getAiProxyStorage().getBaseDir(), "sessions");
+}
+
+/** Ids become file names: a Claude Code UUID, or anything else made of safe characters. */
+function assertSafeId(id: string): void {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(id)) {
+        throw new Error(`invalid session id "${id}"`);
+    }
+}
+
+function recordPath(id: string): string {
+    assertSafeId(id);
+    return join(sessionsDir(), `${id}.json`);
+}
+
+export function isSessionKey(token: string | null | undefined): token is string {
+    return typeof token === "string" && token.startsWith(SESSION_KEY_PREFIX);
+}
+
+export function newSessionKey(): string {
+    return `${SESSION_KEY_PREFIX}${randomBytes(32).toString("base64url")}`;
+}
+
+export function hashSessionKey(key: string): string {
+    return createHash("sha256").update(key).digest("hex");
+}
+
+function isSessionRecord(value: unknown): value is AiProxySessionRecord {
+    return (
+        isJsonObject(value) &&
+        value.version === 1 &&
+        typeof value.id === "string" &&
+        typeof value.keyHash === "string" &&
+        typeof value.createdAt === "string" &&
+        Array.isArray(value.moves) &&
+        Array.isArray(value.meteredConfirmed)
+    );
+}
+
+function ensureSessionsDir(): string {
+    const dir = sessionsDir();
+
+    if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true, mode: SESSION_DIR_MODE });
+    }
+
+    // mkdir's mode is masked by the umask, and an older folder may be wider: set it outright.
+    chmodSync(dir, SESSION_DIR_MODE);
+    return dir;
+}
+
+export function writeSessionRecord(record: AiProxySessionRecord): void {
+    ensureSessionsDir();
+    atomicWriteFileSync(recordPath(record.id), `${SafeJSON.stringify(record, null, 2)}\n`, {
+        mode: SESSION_RECORD_FILE_MODE,
+    });
+}
+
+export function readSessionRecord(id: string): AiProxySessionRecord | undefined {
+    const path = recordPath(id);
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    try {
+        const parsed = SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+
+        if (isSessionRecord(parsed)) {
+            return parsed;
+        }
+
+        logger.warn({ path }, "ai-proxy: session record has an unknown shape, ignored");
+    } catch (err) {
+        logger.warn({ path, err }, "ai-proxy: session record is unreadable, ignored");
+    }
+
+    return undefined;
+}
+
+export function listSessionRecords(): AiProxySessionRecord[] {
+    const dir = sessionsDir();
+
+    if (!existsSync(dir)) {
+        return [];
+    }
+
+    const records: AiProxySessionRecord[] = [];
+
+    for (const name of readdirSync(dir)) {
+        if (!name.endsWith(".json")) {
+            continue;
+        }
+
+        const record = readSessionRecord(name.slice(0, -".json".length));
+
+        if (record) {
+            records.push(record);
+        }
+    }
+
+    return records;
+}
+
+/** Make a record and its key. The key is returned once and never stored. */
+export function createSessionRecord(input: NewSessionRecord): { record: AiProxySessionRecord; key: string } {
+    if (readSessionRecord(input.id)) {
+        throw new Error(`session ${input.id} already has a record`);
+    }
+
+    const key = newSessionKey();
+    const record: AiProxySessionRecord = {
+        ...input,
+        version: 1,
+        keyHash: hashSessionKey(key),
+        createdAt: new Date().toISOString(),
+        moves: input.moves ?? [],
+        meteredConfirmed: input.meteredConfirmed ?? [],
+    };
+
+    writeSessionRecord(record);
+    sessionKeyIndex.remember(record);
+    return { record, key };
+}
+
+/** Read, change and write one record; undefined when it does not exist. */
+export function updateSessionRecord(
+    id: string,
+    change: (record: AiProxySessionRecord) => void
+): AiProxySessionRecord | undefined {
+    const record = readSessionRecord(id);
+
+    if (!record) {
+        return undefined;
+    }
+
+    change(record);
+    writeSessionRecord(record);
+    return record;
+}
+
+export function closeSessionRecord(
+    id: string,
+    reason: SessionCloseReason = "exited"
+): AiProxySessionRecord | undefined {
+    return updateSessionRecord(id, (record) => {
+        if (!record.closedAt) {
+            record.closedAt = new Date().toISOString();
+            record.closeReason = reason;
+        }
+    });
+}
+
+/**
+ * Key hash → record id, so a request costs one map lookup and one small file read (the file, not the map, says
+ * whether the session is still open). A key the map does not know triggers one rescan of the folder, because the
+ * launcher writes a new record from another process.
+ */
+class SessionKeyIndex {
+    private byHash = new Map<string, string>();
+    private scannedDir: string | undefined;
+
+    remember(record: AiProxySessionRecord): void {
+        this.byHash.set(record.keyHash, record.id);
+    }
+
+    private rescan(): void {
+        this.byHash.clear();
+        this.scannedDir = sessionsDir();
+
+        for (const record of listSessionRecords()) {
+            this.byHash.set(record.keyHash, record.id);
+        }
+    }
+
+    resolve(key: string): AiProxySessionRecord | undefined {
+        const hash = hashSessionKey(key);
+
+        if (this.scannedDir !== sessionsDir()) {
+            this.rescan();
+        }
+
+        let id = this.byHash.get(hash);
+
+        if (!id) {
+            this.rescan();
+            id = this.byHash.get(hash);
+        }
+
+        const record = id ? readSessionRecord(id) : undefined;
+        return record?.keyHash === hash ? record : undefined;
+    }
+
+    reset(): void {
+        this.byHash.clear();
+        this.scannedDir = undefined;
+    }
+}
+
+const sessionKeyIndex = new SessionKeyIndex();
+
+export type SessionKeyResolution =
+    | { state: "open"; record: AiProxySessionRecord }
+    | { state: "unknown" }
+    | { state: "closed"; record: AiProxySessionRecord };
+
+export function resolveSessionKey(key: string): SessionKeyResolution {
+    const record = sessionKeyIndex.resolve(key);
+
+    if (!record) {
+        return { state: "unknown" };
+    }
+
+    return record.closedAt ? { state: "closed", record } : { state: "open", record };
+}
+
+export function _resetSessionKeyIndexForTest(): void {
+    sessionKeyIndex.reset();
+}
+
+export interface ProcessProbe {
+    alive: (pid: number) => boolean;
+    startMs: (pid: number) => number | null;
+}
+
+const realProcessProbe: ProcessProbe = { alive: isProcessAlive, startMs: processStartMs };
+
+export interface SessionSweepResult {
+    closed: Array<{ id: string; reason: SessionCloseReason }>;
+    pruned: string[];
+}
+
+/**
+ * Close open records whose Claude process is gone (or whose pid now belongs to a newer process), and delete closed
+ * records older than the retention. A launcher that exits normally closes its own record; this catches a crash.
+ */
+export function sweepSessionRecords(
+    options: { retentionDays?: number; now?: number; probe?: ProcessProbe } = {}
+): SessionSweepResult {
+    const now = options.now ?? Date.now();
+    const probe = options.probe ?? realProcessProbe;
+    const retentionMs = (options.retentionDays ?? DEFAULT_SESSION_RETENTION_DAYS) * 86_400_000;
+    const result: SessionSweepResult = { closed: [], pruned: [] };
+
+    for (const record of listSessionRecords()) {
+        if (record.closedAt) {
+            if (now - Date.parse(record.closedAt) > retentionMs) {
+                unlinkSync(recordPath(record.id));
+                result.pruned.push(record.id);
+            }
+
+            continue;
+        }
+
+        const pid = record.claudePid ?? record.launcherPid;
+
+        if (pid === undefined) {
+            continue;
+        }
+
+        let reason: SessionCloseReason | undefined;
+
+        if (!probe.alive(pid)) {
+            reason = "process-gone";
+        } else if (record.claudePid !== undefined && record.claudePidStartMs !== undefined) {
+            const startMs = probe.startMs(record.claudePid);
+
+            if (startMs !== null && Math.abs(startMs - record.claudePidStartMs) > START_MS_TOLERANCE) {
+                reason = "pid-recycled";
+            }
+        }
+
+        if (reason) {
+            closeSessionRecord(record.id, reason);
+            result.closed.push({ id: record.id, reason });
+        }
+    }
+
+    if (result.closed.length > 0 || result.pruned.length > 0) {
+        logger.info(
+            { closed: result.closed, pruned: result.pruned.length, dir: sessionsDir() },
+            "ai-proxy: session sweep"
+        );
+    }
+
+    return result;
+}
+
+/** lastSeenAt is written at most this often, so a busy session does not rewrite its record on every request. */
+const LAST_SEEN_WRITE_MS = 60_000;
+const warnedMismatches = new Set<string>();
+
+/**
+ * Called for every request of a session with the session id Claude Code put in `metadata.user_id`. A fork names
+ * its id here once; any other difference is logged (once per pair) and never re-keys the session. Returns the
+ * record the request should be tagged with.
+ */
+export function noteSessionRequest(
+    record: AiProxySessionRecord,
+    claudeSessionId: string | undefined,
+    now = Date.now()
+): AiProxySessionRecord {
+    if (record.forkPending && !record.claudeSessionId && claudeSessionId) {
+        return (
+            updateSessionRecord(record.id, (current) => {
+                current.claudeSessionId = claudeSessionId;
+                current.forkPending = false;
+                current.lastSeenAt = new Date(now).toISOString();
+            }) ?? record
+        );
+    }
+
+    if (claudeSessionId && claudeSessionId !== sessionTagId(record)) {
+        const pair = `${record.id}:${claudeSessionId}`;
+
+        if (!warnedMismatches.has(pair)) {
+            warnedMismatches.add(pair);
+            logger.warn(
+                { session: record.id, expected: sessionTagId(record), claudeSessionId },
+                "ai-proxy: a session key's request carries another Claude Code session id; tagged with the record's"
+            );
+        }
+    }
+
+    const lastSeen = record.lastSeenAt ? Date.parse(record.lastSeenAt) : 0;
+
+    if (now - lastSeen >= LAST_SEEN_WRITE_MS) {
+        return (
+            updateSessionRecord(record.id, (current) => {
+                current.lastSeenAt = new Date(now).toISOString();
+            }) ?? record
+        );
+    }
+
+    return record;
+}

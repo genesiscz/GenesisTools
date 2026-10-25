@@ -2,7 +2,13 @@ import { resolveProxyRoute } from "@app/ai-proxy/lib/account-model-ref";
 import { anthropicMessagesPipeline, countAnthropicInputTokens } from "@app/ai-proxy/lib/anthropic-messages";
 import { handleAudioTranscriptions } from "@app/ai-proxy/lib/audio";
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
-import { clientProviderDenial, type ResolvedClient, resolveClient, validateClients } from "@app/ai-proxy/lib/clients";
+import {
+    type ResolvedClient,
+    resolveClient,
+    routeDenial,
+    sessionKeyRejection,
+    validateClients,
+} from "@app/ai-proxy/lib/clients";
 import { setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
@@ -10,6 +16,8 @@ import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
+import { noteSessionRequest, sweepSessionRecords } from "@app/ai-proxy/lib/sessions/records";
+import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import { handleChatCompletions } from "@app/ai-proxy/lib/translators";
@@ -19,10 +27,10 @@ import { scheduleBillingSync } from "@app/ai-proxy/lib/usage/billing-sync";
 import type { CallTimeline } from "@app/ai-proxy/lib/usage/call-timeline";
 import { checkClientQuota } from "@app/ai-proxy/lib/usage/client-ledger";
 import { scheduleUsageTracking } from "@app/ai-proxy/lib/usage/track-response";
-import { readRequestTags } from "@app/ai-proxy/lib/usage/transcripts";
 import type { RequestTags } from "@app/ai-proxy/lib/usage/types";
 import { CopilotAuthExpiredError } from "@genesiscz/utils/ai/github-copilot";
 import { GrokAuthExpiredError } from "@genesiscz/utils/ai/grok";
+import { claudeSessionIdFromMetadata } from "@genesiscz/utils/ai/prompt-cache-key";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -126,11 +134,41 @@ function jsonError(status: number, error: Record<string, unknown>): Response {
 }
 
 /**
+ * A refusal in the client's own error shape. Claude Code reads `type: "error"` first and showed an OpenAI-shaped
+ * body as a blank failure, so `/v1/messages` gets Anthropic's envelope; the OpenAI endpoints keep theirs.
+ */
+function refusal(
+    status: 403 | 429,
+    message: string,
+    openAi: { type: string; code: string },
+    anthropic: boolean
+): Response {
+    if (!anthropic) {
+        return jsonError(status, { message, ...openAi });
+    }
+
+    const type = status === 429 ? "rate_limit_error" : "permission_error";
+    return new Response(SafeJSON.stringify({ type: "error", error: { type, message } }), {
+        status,
+        headers: { "Content-Type": "application/json" },
+    });
+}
+
+/**
  * Read a model-bearing POST body once, with the size and shape guards every
  * inference route needs. Shared by /v1/chat/completions, /v1/responses and
  * /v1/messages so a guard added for one door is never missing from another.
  */
-async function readModelBody(req: Request): Promise<{ bodyText: string; model: string } | { error: Response }> {
+interface ModelBody {
+    bodyText: string;
+    model: string;
+    /** The session id Claude Code put in `metadata.user_id`. */
+    claudeSessionId?: string;
+    /** The conversation id the client sent on its own: Claude Code's session id, else a body `prompt_cache_key`. */
+    conversationId?: string;
+}
+
+async function readModelBody(req: Request): Promise<ModelBody | { error: Response }> {
     const contentLength = req.headers.get("content-length");
 
     if (contentLength) {
@@ -147,10 +185,10 @@ async function readModelBody(req: Request): Promise<{ bodyText: string; model: s
         return { error: jsonError(413, { message: "Request body too large" }) };
     }
 
-    let parsed: { model?: string };
+    let parsed: { model?: string; metadata?: unknown; prompt_cache_key?: unknown };
 
     try {
-        parsed = SafeJSON.parse(bodyText, { strict: true }) as { model?: string };
+        parsed = SafeJSON.parse(bodyText, { strict: true }) as typeof parsed;
     } catch (err) {
         logger.debug({ err }, "ai-proxy: invalid JSON body");
         return { error: jsonError(400, { message: "Invalid JSON body" }) };
@@ -180,7 +218,15 @@ async function readModelBody(req: Request): Promise<{ bodyText: string; model: s
         };
     }
 
-    return { bodyText, model: parsed.model };
+    const claudeSessionId = claudeSessionIdFromMetadata(parsed.metadata);
+    const cacheKey = typeof parsed.prompt_cache_key === "string" ? parsed.prompt_cache_key.trim() : "";
+
+    return {
+        bodyText,
+        model: parsed.model,
+        claudeSessionId,
+        conversationId: claudeSessionId ?? (cacheKey || undefined),
+    };
 }
 
 /** Model → account route plus a live provider, with the per-client denial and quota gates. */
@@ -189,18 +235,21 @@ async function authorizeModelRoute({
     config,
     model,
     providers,
+    anthropic = false,
 }: {
+    /** The request came in on `/v1/messages`: refusals use Anthropic's error envelope. */
+    anthropic?: boolean;
     client: ResolvedClient;
     config: AiProxyConfig;
     model: string;
     providers: Map<string, ProxyProvider>;
 }): Promise<{ route: ResolvedRoute; provider: ProxyProvider } | { error: Response }> {
     const route = await resolveProxyRoute(model, config.accounts);
-    const denial = clientProviderDenial(client, route.account.provider);
+    const denial = routeDenial(client, route.account);
 
     if (denial) {
         logger.warn({ client: client.name, model, denial }, "ai-proxy: provider denied");
-        return { error: jsonError(403, { message: denial, type: "forbidden", code: "provider_not_allowed" }) };
+        return { error: refusal(403, denial, { type: "forbidden", code: "provider_not_allowed" }, anthropic) };
     }
 
     const quota = checkClientQuota(client);
@@ -208,11 +257,7 @@ async function authorizeModelRoute({
     if (!quota.ok) {
         logger.warn({ client: client.name, reason: quota.reason }, "ai-proxy: quota exceeded");
         return {
-            error: jsonError(429, {
-                message: quota.reason,
-                type: "quota_exceeded",
-                code: "monthly_quota_exceeded",
-            }),
+            error: refusal(429, quota.reason, { type: "quota_exceeded", code: "monthly_quota_exceeded" }, anthropic),
         };
     }
 
@@ -230,6 +275,12 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
     if (clientProblems.length > 0) {
         throw new Error(`ai-proxy: invalid clients config — ${clientProblems.join("; ")}`);
+    }
+
+    try {
+        sweepSessionRecords({ retentionDays: runtime.config.sessionRetentionDays });
+    } catch (err) {
+        logger.warn({ err }, "ai-proxy: session sweep failed; records stay as they are");
     }
 
     const listen = runtime.config.listen;
@@ -254,6 +305,20 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
             const config = await loadConfigFresh();
             setCodexModelOverrides(config.codexModels);
+
+            // An unknown or closed session key is refused before any route runs, and never forwarded anywhere.
+            const sessionRejection = sessionKeyRejection(req);
+
+            if (sessionRejection) {
+                logger.warn({ path, reason: sessionRejection }, "ai-proxy: session key refused");
+
+                return refusal(
+                    403,
+                    sessionRejection,
+                    { type: "permission_error", code: "session_unknown" },
+                    path.startsWith("/v1/messages")
+                );
+            }
 
             if (path === "/v1/realtime" && req.method === "GET") {
                 return handleRealtimeUpgrade({ req, url, server, config, providers: runtime.providers });
@@ -326,6 +391,8 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                 }
 
                 const { bodyText, model } = body;
+                const session = client.session ? noteSessionRequest(client.session, body.claudeSessionId) : undefined;
+                const tags = requestTagsFor(req.headers, session, body.conversationId);
 
                 try {
                     const routed = await authorizeModelRoute({
@@ -333,6 +400,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         config,
                         model,
                         providers: runtime.providers,
+                        anthropic: true,
                     });
 
                     if ("error" in routed) {
@@ -382,6 +450,8 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         proxyModel: model,
                         req,
                         bodyText: routedBody,
+                        cacheKeyPolicy: session?.cacheKeyPolicy,
+                        recordId: session?.id,
                     });
                     const elapsedMs = Math.round(performance.now() - requestStarted);
 
@@ -406,7 +476,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         // A stream that stalled and was cut short is not a
                         // success; the other two routes already forward this.
                         captureFailure,
-                        tags: readRequestTags(req.headers),
+                        tags,
                     });
 
                     logger.info(
@@ -416,11 +486,10 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                             upstreamModel: route.upstreamId,
                             status: response.status,
                             elapsedMs,
-                            ...readRequestTags(req.headers),
-                            // A prefix and the source only: enough to see the key stay constant across turns.
-                            cacheKey: promptCacheKey
-                                ? `${promptCacheKey.key.slice(0, 13)} (${promptCacheKey.source})`
-                                : undefined,
+                            ...tags,
+                            // The whole key: a session id or a content hash, never a secret, and the only place the
+                            // log can be joined with Claude Code's own transcript and the upstream's cache.
+                            cacheKey: promptCacheKey ? `${promptCacheKey.key} (${promptCacheKey.source})` : undefined,
                             userAgent: req.headers.get("User-Agent") ?? undefined,
                         },
                         "ai-proxy: request"
@@ -468,6 +537,8 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                 }
 
                 const { bodyText, model } = body;
+                const session = client.session ? noteSessionRequest(client.session, body.claudeSessionId) : undefined;
+                const tags = requestTagsFor(req.headers, session, body.conversationId);
 
                 try {
                     const routed = await authorizeModelRoute({
@@ -512,7 +583,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                             // the 2026-08-19 field-loss audit could not quantify
                             // anything on the OpenAI doors (0 of 3,068 recoverable).
                             clientRequestBody: bodyText,
-                            tags: readRequestTags(req.headers),
+                            tags,
                         });
 
                         logger.info(
@@ -522,7 +593,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                                 upstreamModel: route.upstreamId,
                                 status: response.status,
                                 elapsedMs,
-                                ...readRequestTags(req.headers),
+                                ...tags,
                                 userAgent: req.headers.get("User-Agent") ?? undefined,
                             },
                             "ai-proxy: request"
@@ -575,7 +646,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         // Verbatim client bytes, pre effort-stamp — see the
                         // /v1/responses call above.
                         clientRequestBody: bodyText,
-                        tags: readRequestTags(req.headers),
+                        tags,
                     });
 
                     logger.info(
@@ -587,7 +658,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                             translate: mode,
                             thinking: thinkingMode,
                             elapsedMs,
-                            ...readRequestTags(req.headers),
+                            ...tags,
                             userAgent: req.headers.get("User-Agent") ?? undefined,
                         },
                         "ai-proxy: request"

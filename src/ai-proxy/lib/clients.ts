@@ -1,12 +1,27 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { statSync } from "node:fs";
 import { extractBearerToken } from "@app/ai-proxy/lib/auth-middleware";
-import type { AiProxyClientConfig, AiProxyConfig, AiProxyProviderType } from "@app/ai-proxy/lib/types";
+import {
+    type AiProxySessionRecord,
+    isSessionKey,
+    resolveSessionKey,
+    sessionProxyAccounts,
+} from "@app/ai-proxy/lib/sessions/records";
+import type {
+    AiProxyAccountConfig,
+    AiProxyClientConfig,
+    AiProxyConfig,
+    AiProxyProviderType,
+} from "@app/ai-proxy/lib/types";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { logger } from "@genesiscz/utils/logger";
 import { isSecureRef, resolveSecret, type SecretStore } from "@genesiscz/utils/security";
 import { vaultAdmin } from "@genesiscz/utils/security/SecretStore";
 
 export const OWNER_CLIENT_NAME = "owner";
+/** Every `gts_` session key books under this one client name; `tags.session` tells the sessions apart. */
+export const SESSION_CLIENT_NAME = "session";
 
 const MIN_KEY_LENGTH = 16;
 
@@ -153,6 +168,8 @@ export interface ResolvedClient {
     name: string;
     isOwner: boolean;
     config?: AiProxyClientConfig;
+    /** Set for a `gts_` session key: owner-equivalent, but only for the accounts its record names. */
+    session?: AiProxySessionRecord;
 }
 
 function digestsEqual(a: string, b: string): boolean {
@@ -175,6 +192,15 @@ export async function resolveClient(req: Request, config: AiProxyConfig): Promis
 
     if (!token) {
         return null;
+    }
+
+    // A session key is looked up by its hash in the session records, never compared with client keys. Unknown and
+    // closed keys get a 403 from the server before any route runs (`sessionKeyRejection`).
+    if (isSessionKey(token)) {
+        const resolution = resolveSessionKey(token);
+        return resolution.state === "open"
+            ? { name: SESSION_CLIENT_NAME, isOwner: false, session: resolution.record }
+            : null;
     }
 
     let resolved: ResolvedClient | null = null;
@@ -303,6 +329,11 @@ export function clientProviderDenial(client: ResolvedClient, providerType: AiPro
         return null;
     }
 
+    // A session is judged per account (`routeDenial`); without the account, refuse rather than guess.
+    if (client.session) {
+        return "a session key is checked against the accounts in its session record";
+    }
+
     if (SUBSCRIPTION_PROVIDER_TYPES.has(providerType)) {
         return `provider "${providerType}" bills a personal subscription and is owner-only`;
     }
@@ -314,4 +345,64 @@ export function clientProviderDenial(client: ResolvedClient, providerType: AiPro
     }
 
     return null;
+}
+
+/** The denial for one routed request: a session against its record, every other client by provider type. */
+export function routeDenial(client: ResolvedClient, account: AiProxyAccountConfig): string | null {
+    return client.session
+        ? sessionRouteDenial(client.session, account)
+        : clientProviderDenial(client, account.provider);
+}
+
+/**
+ * A session may use the proxy accounts its record names. A subscription account is allowed; a metered one only
+ * when the user confirmed it for this session, and never with an API key taken from the proxy's environment.
+ */
+export function sessionRouteDenial(record: AiProxySessionRecord, account: AiProxyAccountConfig): string | null {
+    const allowed = sessionProxyAccounts(record);
+
+    if (!allowed.includes(account.name)) {
+        return `account "${account.name}" is not part of session ${record.id} (its accounts: ${allowed.join(", ") || "none"})`;
+    }
+
+    if (SUBSCRIPTION_PROVIDER_TYPES.has(account.provider)) {
+        return null;
+    }
+
+    if (!record.meteredConfirmed.some((confirmation) => confirmation.account === account.name)) {
+        return (
+            `account "${account.name}" (${account.provider}) is billed per token, and this session uses subscription ` +
+            `accounts only. To use it anyway, relaunch with: ${toolCommand("claude codex")} … --allow-metered ${account.name}`
+        );
+    }
+
+    if (!account.apiKey?.trim()) {
+        return (
+            `account "${account.name}" has no API key of its own, so it would spend a key from the proxy's ` +
+            "environment, which a session never does. Store a key on the account first."
+        );
+    }
+
+    return null;
+}
+
+/** Why a `gts_` bearer gets no access, or null when the request does not carry one or it is open. */
+export function sessionKeyRejection(req: Request): string | null {
+    const token = extractBearerToken(req);
+
+    if (!isSessionKey(token)) {
+        return null;
+    }
+
+    const resolution = resolveSessionKey(token);
+
+    if (resolution.state === "open") {
+        return null;
+    }
+
+    const closed =
+        resolution.state === "closed"
+            ? ` (session ${resolution.record.id} closed ${formatLocalDateTimeStamp(resolution.record.closedAt ?? Date.now())})`
+            : "";
+    return `unknown or closed session${closed}; relaunch with ${toolCommand("claude codex")}`;
 }

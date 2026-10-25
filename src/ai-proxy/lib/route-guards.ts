@@ -1,6 +1,6 @@
 import { resolveProxyRoute } from "@app/ai-proxy/lib/account-model-ref";
 import type { ResolvedClient } from "@app/ai-proxy/lib/clients";
-import { clientProviderDenial, resolveClient } from "@app/ai-proxy/lib/clients";
+import { resolveClient, routeDenial } from "@app/ai-proxy/lib/clients";
 import { acquireProvider, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import type { AiProxyConfig, ResolvedRoute } from "@app/ai-proxy/lib/types";
@@ -52,7 +52,7 @@ export async function guardProxyRoute(input: {
         return jsonError(400, err instanceof Error ? err.message : String(err));
     }
 
-    const denial = clientProviderDenial(client, route.account.provider);
+    const denial = routeDenial(client, route.account);
 
     if (denial) {
         logger.warn(

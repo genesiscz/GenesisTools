@@ -414,7 +414,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 elapsedMs,
                 dropped: dropped.length > 0 ? dropped : undefined,
                 authSource: this.account.openaiSub?.accountName ? "ai-config" : "codex-auth.json",
-                cacheKey: cacheKey ? `${cacheKey.key.slice(0, 13)} (${cacheKey.source})` : undefined,
+                // Sent as prompt_cache_key and as the session_id, session-id and thread-id headers.
+                cacheKey: cacheKey ? `${cacheKey.key} (${cacheKey.source})` : undefined,
             },
             "ai-proxy: WHAM upstream request ok"
         );

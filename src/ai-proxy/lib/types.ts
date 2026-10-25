@@ -277,6 +277,8 @@ export interface AiProxyConfig {
      * live list, the Codex CLI cache and the static table (`@genesiscz/utils/ai/openai/codex-models`).
      */
     codexModels?: Record<string, CodexModelOverride>;
+    /** Closed session records (`sessions/<id>.json`) are deleted after this many days. Default 30. */
+    sessionRetentionDays?: number;
 }
 
 /** `ultra` is a Codex UI level: the Codex agent resolves it per model (codex-rs `resolve_reasoning_effort`). */
