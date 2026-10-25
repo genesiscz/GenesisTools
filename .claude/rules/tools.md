@@ -17,7 +17,7 @@ Loaded by Claude Code when you read, write or edit TypeScript under `src/` or `s
 
 ## Utility Convention
 
-When creating a new tool and writing helper functions, check if the utility is **general-purpose** (usable by other tools). If so, place it in `src/utils/` instead of inside the tool directory:
+Whenever you write a helper, in a new tool or in a change to an existing one, ask whether another tool could use it. If so, it goes in `src/utils/`, not in `src/<tool>/`. The tells: it parses a format another tool also reads (a transcript, a git output, a config file), it wraps a CLI or an OS service, or a second tool already has a private copy (`tools ts refactors <paths> --include shadowed` lists those). A transcript fact is a provider reader member: `.claude/rules/agent-transcripts.md`.
 
 **🛑 `src/utils/**` is the `@genesiscz/utils` package and can NEVER import `@app/*`.** That includes every subfolder (`src/utils/claude/`, `src/utils/ai/`, …); there is no exception for a folder named after a tool. If code you are writing under `src/utils/` needs an `@app/<tool>/...` module, that module belongs in `src/utils/**` too: move it there (with its tests) and import it via `@genesiscz/utils/...`. Never solve it by moving YOUR file out to the tool directory, and never by a relative `../../<tool>/` path. `scripts/ci/check-package-boundaries.ts` fails CI on any `@app/*` import under `src/utils/**`; run it before you commit a move.
 
