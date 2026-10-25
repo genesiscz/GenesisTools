@@ -497,3 +497,25 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   occluded (below the desktop it is never drawn), so show it at alpha 0.02 above the others with
   `ignoresMouseEvents`, then drop the alpha channel of the capture: the colours are stored unassociated, so the
   opaque copy is the panel as it looks on screen (`WidgetScrollReplayTests`, `GENESIS_WIDGET_REPLAY_PNG`).
+- **A reused `NSHostingView` with `sizingOptions = []` measures 0x0 after a new root view once it has been on screen.**
+  The recording picker set `hosting.rootView`, called `layoutSubtreeIfNeeded()` and sized its panel from
+  `fittingSize`: right the first time, 0x1 on every later opening, and `onGeometryChange` never fired to repair it
+  because the content's size had not changed. Make a fresh hosting view per presentation, or size from the view.
+- **`tools control click` (an accessibility press) on a SwiftUI control sometimes does nothing on the first try.** In the
+  live widget, the video button, Decisions tab and Stop and discard each needed a second press now and then. Check the
+  effect after each press (a window appears, a value changes) and press again; never read one silent press as a broken
+  control, and never as a working one.
+- **A window per item stalls the main thread.** The recording outline made one borderless `NSPanel` per listed window
+  up front (76 windows) so their ids could be excluded from the movie: 1.6 s of main thread at the recording start
+  (hang stack: `RecordingTargetOutline.init`). One clear panel per display that draws every rect on it costs two or
+  three windows. Read the `main-stall` stack after the first live run of any code that creates windows.
+- **Under Bun, an abandoned child keeps the process alive three ways.** A cancelled caller of a detached build exited
+  only when the build ended (20 s) until it unref'd the child, its stdout pipe and the build's deadline timer; the
+  child alone was not enough (probe: 4 s with the child unref'd, 0.03 s with the pipe too).
+- **SwiftUI does not hit-test Liquid Glass.** A view whose only background is `.glassEffect(in: shape)` takes taps and
+  hover only on its opaque content: between two rows, or on the blank part of a card, a tap reaches nothing and
+  `.onHover` reports false (scratch probe, 2026-10-24: row TAP, gap none, blank none; solid fill TAP everywhere). The
+  window server still owns those points (`SLSFindWindowAndOwner` names the window), so the window is not
+  click-through, and a hit test through AppKit looks fine. Add `.contentShape(shape)` after the glass. A window with a
+  clear background does pass alpha-0 pixels through; `ignoresMouseEvents = false`, set explicitly, makes it take them.
+  Synthetic `mouseMoved` events do not drive SwiftUI hover, so test the hit region with a click (`WidgetBubbleHitTests`).
