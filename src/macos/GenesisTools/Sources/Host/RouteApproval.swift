@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 
 /// The Allow / Deny card for a route that runs a command. Same look as RouteToast: dark card,
-/// gold hairline, the GenesisTools mark. Only a click allows: the card takes the keyboard while
-/// the user may still be typing elsewhere, so Return does nothing here. Esc denies.
+/// gold hairline, the GenesisTools mark. Return does nothing here: the card takes the keyboard while
+/// the user may still be typing elsewhere. A click allows, or Space after Tab with Full Keyboard Access. Esc denies.
 enum RouteApproval {
     /// The "Running" toast is already up (statusBar level, same spot) and would hide this card,
     /// so it steps aside while the question is open and only comes back when the run is allowed.
@@ -167,7 +167,7 @@ private final class ApprovalBody: NSView {
             rows.append(caption("Then opens", open))
         }
 
-        rows.append(label("Runs once, without a shell. Nothing happens if you deny. Only a click allows it.",
+        rows.append(label("Runs once, without a shell. Nothing happens if you deny. Return does not allow it; click Allow.",
                           size: 11, weight: .regular, color: Palette.dim))
         rows.append(buttonRow())
 
@@ -281,7 +281,7 @@ private final class ApprovalBody: NSView {
         let allow = ApprovalButton(title: "Allow", hint: nil, primary: true)
         allow.target = self
         allow.action = #selector(allowClicked)
-        allow.toolTip = "Runs the command once. Only a click allows it, so a key pressed while you type cannot."
+        allow.toolTip = "Runs the command once. Return does not press it, so a key pressed while you type cannot."
         allow.setAccessibilityHelp("Runs the command once.")
 
         let row = NSStackView(views: [NSView(), deny, allow])

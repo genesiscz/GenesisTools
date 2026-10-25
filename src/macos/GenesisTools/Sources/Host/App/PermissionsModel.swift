@@ -115,7 +115,9 @@ final class PermissionsModel: ObservableObject {
     }
 
     private func recheckProbes(now: Date = Date()) {
-        let kinds = PermissionKind.allCases.filter { probeResults[$0] != nil }
+        // Every probe kind, not only those answered here: another feature may have asked, and `recheck` skips a kind
+        // macOS never answered.
+        let kinds = PermissionKind.allCases.filter { $0.requestStyle == .probe }
         guard !kinds.isEmpty, !rechecking, busy == nil else { return }
         rechecking = true
         lastProbeRecheck = now

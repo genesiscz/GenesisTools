@@ -80,7 +80,6 @@ final class ApprovalReminder {
     private var pending: DispatchWorkItem?
     private var expiry: DispatchWorkItem?
     private var postedID: String?
-    private var relay: ApprovalNotificationRelay?
 
     init(model: ApprovalDialogModel, onClick: @escaping () -> Void) {
         self.model = model
@@ -111,26 +110,33 @@ final class ApprovalReminder {
         }
     }
 
+    /// nil where Notification Center must not be touched: under `swift test` the bundle is not an app, and
+    /// `UNUserNotificationCenter.current()` raises there and ends the process.
+    private static var center: UNUserNotificationCenter? {
+        guard NSClassFromString("XCTestCase") == nil, Bundle.main.bundlePath.hasSuffix(".app") else { return nil }
+        return UNUserNotificationCenter.current()
+    }
+
     private func post() {
         pending = nil
-        guard !model.answered, NotificationEngine.shared.centerProvider() != nil else { return }
+        guard !model.answered, let center = Self.center else { return }
         // A click on the card must reach this process's panel, and must not reach the host's own click handler,
         // which ends a process it finds without a route.
-        let center = UNUserNotificationCenter.current()
-        let relay = ApprovalNotificationRelay(previous: center.delegate, onClick: onClick)
-        center.delegate = relay
-        self.relay = relay
+        ApprovalNotificationRelay.register(token: token, center: center, onClick: onClick)
 
-        let body = [model.purpose, model.command].compactMap { $0 }.joined(separator: " ")
-        let result = NotificationEngine.shared.post(EngineNotification(
-            source: "approval", title: model.title, subtitle: "Waiting for your answer", body: body,
-            idPrefix: "approval.\(model.identifier)", replaceKey: "approval.\(model.identifier)",
-            userInfo: [ApprovalNotificationRelay.tokenKey: token],
-            sound: ApprovalAttention.sound == "none" ? nil : UNNotificationSound.default))
-        if case let .posted(id) = result {
-            postedID = id
-            KitHost.log("approval \(model.identifier) reminder posted id=\(id)")
+        let content = UNMutableNotificationContent()
+        content.title = model.title
+        content.subtitle = "Waiting for your answer"
+        content.body = [model.purpose, model.command].compactMap { $0 }.joined(separator: " ")
+        content.sound = ApprovalAttention.sound == "none" ? nil : UNNotificationSound.default
+        content.threadIdentifier = "approval.\(model.identifier)"
+        content.userInfo = [ApprovalNotificationRelay.tokenKey: token]
+        let id = "approval.\(model.identifier).\(token)"
+        center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { error in
+            if let error { KitHost.log("approval reminder failed id=\(id): \(error.localizedDescription)") }
         }
+        postedID = id
+        KitHost.log("approval \(model.identifier) reminder posted id=\(id)")
     }
 
     /// Cancels a reminder not posted yet, takes a posted one out of Notification Center, and gives the click handling
@@ -140,29 +146,45 @@ final class ApprovalReminder {
         pending = nil
         expiry?.cancel()
         expiry = nil
+        guard let center = Self.center else { return }
         if let id = postedID {
-            NotificationEngine.shared.centerProvider()?.removeDelivered(identifiers: [id])
+            center.removeDeliveredNotifications(withIdentifiers: [id])
             postedID = nil
         }
-        if let relay {
-            let center = UNUserNotificationCenter.current()
-            if center.delegate === relay { center.delegate = relay.previous }
-            self.relay = nil
-        }
+        ApprovalNotificationRelay.unregister(token: token, center: center)
     }
 }
 
-/// Takes a click on any approval reminder and brings the waiting panel forward; every other notification goes on to
-/// the delegate that was in place before (the host's), so its routes and replies still run.
+/// Takes a click on an approval reminder and brings that request's panel forward; every other notification goes on
+/// to the delegate that was in place before (the host's), so its routes and replies still run. One relay serves every
+/// reminder of the process, and the host's delegate comes back when the last reminder stops.
 final class ApprovalNotificationRelay: NSObject, UNUserNotificationCenterDelegate {
     static let tokenKey = "genesis.approval"
 
-    let previous: UNUserNotificationCenterDelegate?
-    private let onClick: () -> Void
+    private static var shared: ApprovalNotificationRelay?
+    /// The click handler of each reminder still waiting, by its token. Read and written on the main thread only.
+    private static var handlers: [String: () -> Void] = [:]
 
-    init(previous: UNUserNotificationCenterDelegate?, onClick: @escaping () -> Void) {
+    /// Strong: the notification center holds its delegate weakly, and the host's must still be there on restore.
+    private let previous: UNUserNotificationCenterDelegate?
+
+    private init(previous: UNUserNotificationCenterDelegate?) {
         self.previous = previous
-        self.onClick = onClick
+    }
+
+    static func register(token: String, center: UNUserNotificationCenter, onClick: @escaping () -> Void) {
+        handlers[token] = onClick
+        guard shared == nil else { return }
+        let relay = ApprovalNotificationRelay(previous: center.delegate)
+        shared = relay
+        center.delegate = relay
+    }
+
+    static func unregister(token: String, center: UNUserNotificationCenter) {
+        handlers[token] = nil
+        guard handlers.isEmpty, let relay = shared else { return }
+        if center.delegate === relay { center.delegate = relay.previous }
+        shared = nil
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
@@ -174,7 +196,7 @@ final class ApprovalNotificationRelay: NSObject, UNUserNotificationCenterDelegat
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
-        guard response.notification.request.content.userInfo[Self.tokenKey] != nil else {
+        guard let token = response.notification.request.content.userInfo[Self.tokenKey] as? String else {
             if previous?.userNotificationCenter?(center, didReceive: response, withCompletionHandler: completionHandler) == nil {
                 completionHandler()
             }
@@ -182,9 +204,9 @@ final class ApprovalNotificationRelay: NSObject, UNUserNotificationCenterDelegat
         }
 
         KitHost.log("approval reminder clicked id=\(response.notification.request.identifier)")
-        let onClick = onClick
         DispatchQueue.main.async {
-            onClick()
+            // A reminder that already stopped has no handler: its panel is gone, so the click does nothing.
+            Self.handlers[token]?()
             completionHandler()
         }
     }
