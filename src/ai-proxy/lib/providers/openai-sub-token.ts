@@ -6,6 +6,7 @@ import {
     readCodexAuthJson,
     resolveCodexAccountToken,
 } from "@genesiscz/utils/ai/openai/codex-auth";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface OpenAiSubToken {
@@ -57,7 +58,7 @@ function warnLegacyOnce(proxyAccount: string): void {
 
     warnedLegacy.add(proxyAccount);
     logger.warn(
-        { account: proxyAccount, fix: `tools ai-proxy accounts bind ${proxyAccount} --codex <login>` },
+        { account: proxyAccount, fix: toolCommand("ai-proxy accounts bind", proxyAccount, "--codex", "<login>") },
         "ai-proxy: codex account reads the Codex CLI's own auth.json (legacy, never refreshed); bind it to a managed login"
     );
 }

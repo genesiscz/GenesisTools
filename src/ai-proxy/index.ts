@@ -35,6 +35,7 @@ import type { AiProxyProviderType, CursorTranslationMode, ThinkingPresentationMo
 import { setProxyUsageSink } from "@app/ai-proxy/lib/usage/usage-events";
 import { recordUsage } from "@genesiscz/utils/ai/usage";
 import { runTool } from "@genesiscz/utils/cli";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { configureLogger } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
@@ -385,8 +386,13 @@ accountsCmd
 
 accountsCmd
     .command("bind <name>")
-    .description("Point a codex account at a managed login (tools codex login), instead of the Codex CLI's auth.json")
-    .option("--codex <login>", "The managed openai-sub login, e.g. one listed by `tools ai-proxy accounts status`")
+    .description(
+        `Point a codex account at a managed login (${toolCommand("codex login")}), instead of the Codex CLI's auth.json`
+    )
+    .option(
+        "--codex <login>",
+        `The managed openai-sub login, e.g. one listed by \`${toolCommand("ai-proxy accounts status")}\``
+    )
     .action(async (name: string, options: { codex?: string }) => {
         await runAccountsBind(name, options);
     });
