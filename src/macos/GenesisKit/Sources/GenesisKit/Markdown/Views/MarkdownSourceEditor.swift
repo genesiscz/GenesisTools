@@ -30,15 +30,30 @@ final class SourceTextView: NSTextView {
     /// The lines that differ from HEAD, drawn as bars in the left inset (green added, blue changed, a red mark where
     /// lines were removed). A click on a bar calls `onHunk` with the bar's rect.
     var gitHunks: [GitHunk] = [] {
-        didSet { if gitHunks != oldValue { needsDisplay = true } }
+        didSet {
+            guard gitHunks != oldValue else { return }
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+            setAccessibilityCustomActions(gitHunks.isEmpty ? nil : hunkActions())
+        }
     }
     var onHunk: ((GitHunk, NSRect) -> Void)?
+    /// The tooltips of the bars on screen, removed before the next set is added.
+    private var hunkTips: [NSView.ToolTipTag] = []
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
+        // Colour is not the only signal when the reader asks for that: changed lines draw as a dashed bar.
+        let dashed = NSWorkspace.shared.accessibilityDisplayShouldDifferentiateWithoutColor
         for (hunk, bar) in hunkBars() where bar.intersects(rect) {
             Self.color(hunk.kind).setFill()
-            if hunk.kind == .deleted {
+            if hunk.kind == .modified, dashed {
+                var y = bar.minY
+                while y < bar.maxY {
+                    NSBezierPath(rect: NSRect(x: bar.minX, y: y, width: bar.width, height: min(3, bar.maxY - y))).fill()
+                    y += 5
+                }
+            } else if hunk.kind == .deleted {
                 // A small wedge on the line the removed text stood before.
                 let path = NSBezierPath()
                 path.move(to: NSPoint(x: bar.minX, y: bar.minY))
@@ -52,6 +67,65 @@ final class SourceTextView: NSTextView {
         }
     }
 
+
+    /// The pointing hand and a tooltip over each bar on screen: the bars open the change, so they look clickable.
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        hunkTips.forEach { removeToolTip($0) }
+        hunkTips = []
+        guard onHunk != nil else { return }
+        let visible = visibleRect
+        for (hunk, bar) in hunkBars() {
+            let target = bar.insetBy(dx: -4, dy: -2)
+            guard target.intersects(visible) else { continue }
+            addCursorRect(target, cursor: .pointingHand)
+            hunkTips.append(addToolTip(target, owner: Self.hunkTip(hunk.kind) as NSString, userData: nil))
+        }
+    }
+
+    /// What a bar is, in words: the tooltip and the spoken name of the change.
+    static func hunkTip(_ kind: GitHunk.Kind) -> String {
+        switch kind {
+        case .added: return "Added lines. Click to see the change"
+        case .modified: return "Changed lines. Click to see the change"
+        case .deleted: return "Removed lines. Click to see what was removed"
+        }
+    }
+
+    /// The bars from the keyboard and VoiceOver: Next change and Previous change move the caret to a hunk and open it,
+    /// as a click on its bar does.
+    private func hunkActions() -> [NSAccessibilityCustomAction] {
+        [
+            NSAccessibilityCustomAction(name: "Next change") { [weak self] in self?.openHunk(step: 1) ?? false },
+            NSAccessibilityCustomAction(name: "Previous change") { [weak self] in self?.openHunk(step: -1) ?? false },
+        ]
+    }
+
+    /// The hunk after (or before) the caret's line, wrapping at the ends; false when there is none.
+    @discardableResult
+    func openHunk(step: Int) -> Bool {
+        let bars = hunkBars()
+        let caretLine = SourceEditing.line(at: selectedRange().location, starts: SourceEditing.lineStarts(string))
+        guard let index = Self.hunkIndex(bars.map(\.0), from: caretLine, step: step) else { return false }
+        let (hunk, bar) = bars[index]
+        let starts = SourceEditing.lineStarts(string)
+        if hunk.newStart < starts.count {
+            setSelectedRange(NSRange(location: starts[hunk.newStart], length: 0))
+            scrollRangeToVisible(selectedRange())
+        }
+        GenAnnounce.post(Self.hunkTip(hunk.kind).components(separatedBy: ".").first ?? "")
+        onHunk?(hunk, bar)
+        return true
+    }
+
+    /// The next hunk that starts after `line` (step 1) or the last one that starts before it (step -1), wrapping.
+    static func hunkIndex(_ hunks: [GitHunk], from line: Int, step: Int) -> Int? {
+        guard !hunks.isEmpty else { return nil }
+        if step >= 0 {
+            return hunks.firstIndex { $0.newStart > line } ?? 0
+        }
+        return hunks.lastIndex { $0.newStart < line } ?? hunks.count - 1
+    }
 
     static func color(_ kind: GitHunk.Kind) -> NSColor {
         switch kind {
@@ -224,6 +298,10 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     var onOpenLink: ((String) -> Void)? = nil
     /// Vault names for `[[` and tags for `#`. nil = no completion.
     var completions: ((MarkdownCompletion.Request) -> [String])? = nil
+    /// The list opens by itself after `[[` or `#word` (the setting "Suggest links and tags while typing"). Off: only
+    /// Esc (AppKit's Complete) opens it.
+    /// nil: follow the setting.
+    var completesWhileTyping: Bool? = nil
     /// Files dropped onto the editor. nil = AppKit's own handling, which
     /// pastes the path into the document.
     var onDropFiles: (([URL]) -> Void)? = nil
@@ -278,6 +356,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         view.usesFindBar = true
         view.textContainerInset = NSSize(width: 12, height: 12)
         view.setAccessibilityIdentifier("markdown-source-view")
+        view.setAccessibilityLabel("Markdown source")
         scroll.drawsBackground = true
         context.coordinator.view = view
         context.coordinator.watchScroll(scroll)
@@ -303,13 +382,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             source.gitHunks = gitHunks
         }
         if view.string != text {
-            context.coordinator.invalidateLineStarts()
-            let sel = view.selectedRange()
-            context.coordinator.programmaticSelection = true
-            view.string = text
-            let end = (text as NSString).length
-            view.setSelectedRange(NSRange(location: min(sel.location, end), length: 0))
-            context.coordinator.programmaticSelection = false
+            context.coordinator.replaceFromOutside(with: text, in: view)
         }
         if selection == nil { context.coordinator.lastSelection = nil }
         if let wanted = selection, context.coordinator.lastSelection != wanted {
@@ -330,6 +403,27 @@ struct MarkdownSourceEditor: NSViewRepresentable {
                 Self.reveal(wanted.range, in: view)
             }
         }
+    }
+
+    /// The smallest replacement that turns `old` into `new`: the common start and end are kept, in UTF-16 units.
+    static func changedRange(old: NSString, new: NSString) -> (range: NSRange, replacement: String) {
+        let oldLength = old.length
+        let newLength = new.length
+        var prefix = 0
+        let shorter = min(oldLength, newLength)
+        while prefix < shorter, old.character(at: prefix) == new.character(at: prefix) { prefix += 1 }
+        var suffix = 0
+        while suffix < shorter - prefix,
+              old.character(at: oldLength - 1 - suffix) == new.character(at: newLength - 1 - suffix) { suffix += 1 }
+        // Never split a surrogate pair: a cut that lands before a low surrogate moves back by one.
+        func splitsPair(_ text: NSString, at index: Int) -> Bool {
+            index > 0 && index < text.length && UTF16.isTrailSurrogate(text.character(at: index))
+        }
+        while prefix > 0, splitsPair(old, at: prefix) || splitsPair(new, at: prefix) { prefix -= 1 }
+        while suffix > 0, splitsPair(old, at: oldLength - suffix) || splitsPair(new, at: newLength - suffix) { suffix -= 1 }
+        let range = NSRange(location: prefix, length: oldLength - prefix - suffix)
+        let replacement = new.substring(with: NSRange(location: prefix, length: newLength - prefix - suffix))
+        return (range, replacement)
     }
 
     private static func reveal(_ range: NSRange, in view: NSTextView) {
@@ -436,6 +530,34 @@ struct MarkdownSourceEditor: NSViewRepresentable {
 
         func invalidateLineStarts() { cachedStarts = nil }
 
+        /// True while a change from outside lands, so it opens no completion list.
+        private var replacingFromOutside = false
+
+        /// Text changed from outside the editor (Replace All, Restore, Merge, Discard edits and reload): only the part
+        /// that differs is replaced, through the text view, so it is one step on the editor's undo stack and ⌘Z takes
+        /// it back. Assigning `string` registered nothing, so ⌘Z after Replace All undid the typing before it.
+        func replaceFromOutside(with text: String, in view: NSTextView) {
+            invalidateLineStarts()
+            let sel = view.selectedRange()
+            programmaticSelection = true
+            replacingFromOutside = true
+            defer {
+                replacingFromOutside = false
+                programmaticSelection = false
+            }
+            let change = MarkdownSourceEditor.changedRange(old: view.string as NSString, new: text as NSString)
+            view.breakUndoCoalescing()
+            if view.shouldChangeText(in: change.range, replacementString: change.replacement) {
+                view.textStorage?.replaceCharacters(in: change.range, with: change.replacement)
+                view.didChangeText()
+            } else {
+                view.string = text
+            }
+            view.breakUndoCoalescing()
+            let end = (text as NSString).length
+            view.setSelectedRange(NSRange(location: min(sel.location, end), length: 0))
+        }
+
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let view, let report = parent.onSelectionChange else { return }
             report(view.selectedRange(), !programmaticSelection)
@@ -451,7 +573,9 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         /// re-enters this while it inserts the chosen value, hence the guard.
         private var completing = false
         private func offerCompletion() {
-            guard !completing, parent.completions != nil,
+            let automatic = parent.completesWhileTyping
+                ?? MainActor.assumeIsolated { GenesisKitMarkdownConfiguration.shared.completeWhileTyping }
+            guard automatic, !completing, !replacingFromOutside, parent.completions != nil,
                   let view = view as? SourceTextView,
                   view.completionRequest != nil else { return }
             completing = true

@@ -13,6 +13,7 @@ import SwiftUI
 struct MarkdownConflictBanner: View {
     @ObservedObject var doc: MarkdownDocument
     @ObservedObject var model: MarkdownDocumentsModel
+    @State private var discard = MarkdownDiscardEdits()
 
     var body: some View {
         HStack(spacing: 10) {
@@ -25,18 +26,20 @@ struct MarkdownConflictBanner: View {
                 action("Compare", id: "markdown-conflict-compare", tip: "Show my edits against the version on disk") { model.compareOpen = true }
                 action("Merge", id: "markdown-conflict-merge", tip: "Combine both versions; conflicts are marked in the text") { doc.mergeDiskChange() }
                 action("Keep mine", id: "markdown-conflict-keep", tip: "Keep my edits; the next save overwrites the disk file") { doc.keepMine() }
-                action("Reload", id: "markdown-conflict-reload", destructive: true, tip: "Discard my edits and load the version on disk") { doc.takeDisk() }
+                action(MarkdownDiscardEdits.verb, id: "markdown-conflict-reload", destructive: true,
+                       tip: "Throw away my edits and load the version on disk. Asks first") { discard.ask(.takeDisk) }
             } else if doc.mergeConflicts > 0 {
                 // After a merge `text` already is the disk version, so the
                 // watcher's `reload` would see nothing new and do nothing.
-                action("Reload from disk", id: "markdown-conflict-reload", destructive: true, tip: "Discard the merged text and load the file from disk") {
-                    doc.discardDraft()
-                }
+                action(MarkdownDiscardEdits.verb, id: "markdown-conflict-reload", destructive: true,
+                       tip: "Throw away the merged text and load the file from disk. Asks first") { discard.ask(.discardDraft) }
             } else {
                 action("Save", id: "markdown-missing-save") { model.saveSelected() }
-                action("Discard", id: "markdown-missing-discard", destructive: true) { doc.discardDraft() }
+                action("Discard edits", id: "markdown-missing-discard", destructive: true,
+                       tip: "Throw away my edits; the file stays gone. Asks first") { discard.ask(.discardDraft) }
             }
         }
+        .markdownDiscardEditsAlert($discard, doc: doc)
         .font(GenTypography.body(12))
         .foregroundColor(model.theme.text)
         .padding(.horizontal, 12)
@@ -46,6 +49,9 @@ struct MarkdownConflictBanner: View {
             Rectangle().fill(Color.genWarning.opacity(0.4)).frame(height: 1)
         }
         .accessibilityIdentifier("markdown-conflict-banner")
+        // The banner comes by itself (an edit on disk, a deleted file), so VoiceOver is told.
+        .onAppear { GenAnnounce.post(message) }
+        .onChange(of: message) { _, now in GenAnnounce.post(now) }
     }
 
     private var message: String {
@@ -82,6 +88,7 @@ struct MarkdownConflictBanner: View {
 struct MarkdownCompareSheet: View {
     @ObservedObject var doc: MarkdownDocument
     @ObservedObject var model: MarkdownDocumentsModel
+    @State private var discard = MarkdownDiscardEdits()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -110,8 +117,9 @@ struct MarkdownCompareSheet: View {
                 Button("Close") { model.compareOpen = false }
                     .keyboardShortcut(.cancelAction)
                 if doc.hasDiskChange {
-                    Button("Reload") { doc.takeDisk(); model.compareOpen = false }
-                        .instantTooltip("Discard my edits and load the version on disk")
+                    Button(MarkdownDiscardEdits.verb) { discard.ask(.takeDisk) }
+                        .instantTooltip("Throw away my edits and load the version on disk. Asks first")
+                        .accessibilityIdentifier("markdown-compare-reload")
                     Button("Keep mine") { doc.keepMine(); model.compareOpen = false }
                         .instantTooltip("Keep my edits; the next save overwrites the disk file")
                     Button("Merge") { doc.mergeDiskChange(); model.compareOpen = false }
@@ -124,6 +132,7 @@ struct MarkdownCompareSheet: View {
         }
         .frame(minWidth: 720, idealWidth: 900, minHeight: 420, idealHeight: 640)
         .foregroundColor(model.theme.text)
+        .markdownDiscardEditsAlert($discard, doc: doc) { model.compareOpen = false }
         .accessibilityIdentifier("markdown-compare-sheet")
     }
 
@@ -157,5 +166,79 @@ struct MarkdownCompareSheet: View {
         .padding(.vertical, 1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(tint.map { $0.opacity(0.12) } ?? Color.clear)
+    }
+}
+
+/// Throwing away unsaved edits (Discard edits and reload, after a change on disk, a merge or a deleted file) asks
+/// first: outside the source editor nothing brings the draft back. The alert names
+/// the loss in changed lines, and its default button keeps the edits.
+struct MarkdownDiscardEdits: Equatable {
+    /// One verb for one loss, on the banner, the compare sheet and the alert.
+    static let verb = "Discard edits and reload"
+
+    enum Way: Equatable {
+        /// Load the version on disk the watcher reported (`MarkdownDocument.takeDisk`).
+        case takeDisk
+        /// Drop the draft and read the file again (`MarkdownDocument.discardDraft`): after a merge, or a deleted file.
+        case discardDraft
+    }
+
+    var pending: Way?
+
+    mutating func ask(_ way: Way) { pending = way }
+
+    /// Lines that differ between the draft and the disk version the alert counts.
+    static func changedLines(_ diff: [TextMerge.DiffLine]) -> Int {
+        diff.reduce(0) { count, line in
+            if case .equal = line { return count }
+            return count + 1
+        }
+    }
+
+    static func message(changedLines n: Int, missing: Bool) -> String {
+        let lines = n == 1 ? "1 changed line" : "\(n) changed lines"
+        return missing
+            ? "Your unsaved edits (\(lines)) are thrown away, and the file stays gone from disk."
+            : "Your unsaved edits (\(lines)) are thrown away and the file is read from disk again."
+    }
+
+    static func confirmTitle(missing: Bool) -> String { missing ? "Discard edits" : verb }
+}
+
+private struct MarkdownDiscardEditsAlert: ViewModifier {
+    @Binding var state: MarkdownDiscardEdits
+    @ObservedObject var doc: MarkdownDocument
+    let after: () -> Void
+
+    func body(content: Content) -> some View {
+        let missing = doc.missing
+        content.alert(
+            missing ? "Discard your edits?" : "Discard your edits and reload?",
+            isPresented: Binding(get: { state.pending != nil }, set: { if !$0 { state.pending = nil } })
+        ) {
+            // Return keeps the edits: the safe choice is the default, the loss is never on Return.
+            Button("Keep my edits", role: .cancel) { state.pending = nil }
+                .keyboardShortcut(.defaultAction)
+            Button(MarkdownDiscardEdits.confirmTitle(missing: missing), role: .destructive) {
+                let way = state.pending
+                state.pending = nil
+                switch way {
+                case .takeDisk: doc.takeDisk()
+                case .discardDraft: doc.discardDraft()
+                case nil: return
+                }
+                after()
+            }
+        } message: {
+            Text(MarkdownDiscardEdits.message(changedLines: MarkdownDiscardEdits.changedLines(doc.diskDiff), missing: missing))
+        }
+    }
+}
+
+extension View {
+    /// The confirmation in front of `MarkdownDocument.takeDisk` and `discardDraft`. `after` runs once the edits are gone.
+    func markdownDiscardEditsAlert(_ state: Binding<MarkdownDiscardEdits>, doc: MarkdownDocument,
+                                   after: @escaping () -> Void = {}) -> some View {
+        modifier(MarkdownDiscardEditsAlert(state: state, doc: doc, after: after))
     }
 }

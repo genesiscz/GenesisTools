@@ -94,6 +94,11 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
     /// Ticks on the page's scrollbar where the find matches are.
     @Published public var scrollbarMatchMarks: Bool { didSet { store(scrollbarMatchMarks, "scrollbarMatchMarks") } }
 
+    // MARK: Editor
+
+    /// The source editor opens the list of notes after `[[` and of tags after `#word` by itself. Off: Esc opens it.
+    @Published public var completeWhileTyping: Bool { didSet { store(completeWhileTyping, "completeWhileTyping") } }
+
     // MARK: Git
 
     /// Every git control: the file's state, the gutter, the Changes mode, the history and the tree marks. A note
@@ -151,6 +156,7 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
         codeBlockBar = bool("codeBlockBar", true)
         stickySection = bool("stickySection", true)
         scrollbarMatchMarks = bool("scrollbarMatchMarks", true)
+        completeWhileTyping = bool("completeWhileTyping", true)
         git = bool("git", true)
         gitGutter = bool("gitGutter", true)
         gitTreeDecorations = bool("gitTreeDecorations", true)

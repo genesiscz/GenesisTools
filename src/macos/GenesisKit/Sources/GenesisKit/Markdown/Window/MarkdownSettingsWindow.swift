@@ -33,6 +33,11 @@ struct MarkdownSettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                NativeSettingsCard("Editor", subtitle: "The source view, in Edit and Split.") {
+                    NativeSettingsToggle("Suggest links and tags while typing",
+                                         detail: "The list of notes opens after [[ and the list of tags after #. Off: press Esc to open it.",
+                                         identifier: "markdown.settings.completeWhileTyping", isOn: $configuration.completeWhileTyping)
+                }
                 NativeSettingsCard("Git", subtitle: "Shown for notes inside a git repository.") {
                     NativeSettingsToggle("Git integration",
                                          detail: "The file's state, the gutter, the Changes mode, the history and the tree marks.",
