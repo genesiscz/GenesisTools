@@ -7,7 +7,7 @@ import { isGatewayOauth, serverAuth } from "../auth/policy.ts";
 import { gatewayBaseUrl, gatewayListen } from "../auth/project.ts";
 import { ensureGatewayClientToken } from "../auth/secrets.ts";
 import { accessTokenForRequest } from "../auth/tokens.ts";
-import { autoLoginRefusal, type LoginLauncher } from "./auto-login.ts";
+import { autoLoginRefusal, type LoginLauncher, staticClientRefusal } from "./auto-login.ts";
 import {
     headersToClient,
     headersToUpstream,
@@ -54,8 +54,12 @@ function jsonRpcError(message: string, status = 401): Response {
  * its own "Authenticate" button cannot use it here, because that button registers an
  * OAuth client against the GATEWAY's origin, which serves no metadata and answers 404.
  */
-function loginRequiredResponse(name: string, server: UnifiedMCPServerConfig, launcher: LoginLauncher): Response {
-    const refusal = autoLoginRefusal(name, server);
+async function loginRequiredResponse(
+    name: string,
+    server: UnifiedMCPServerConfig,
+    launcher: LoginLauncher
+): Promise<Response> {
+    const refusal = autoLoginRefusal(name, server) ?? (await staticClientRefusal(name, server));
 
     if (refusal) {
         logger.info({ server: name }, "gateway skipped auto-login that cannot finish unattended");
@@ -211,7 +215,7 @@ export async function startGatewayServer(
             const resource = auth?.resource ?? upstreamUrl.replace(/\/+$/, "");
             const tokenEndpoint = auth?.tokenEndpoint;
             const diagnostic = isDiagnosticRequest(request);
-            const loginRequired = (): Response =>
+            const loginRequired = (): Response | Promise<Response> =>
                 diagnostic ? loginNeededResponse(name) : loginRequiredResponse(name, unified, launcher);
 
             if (!tokenEndpoint) {

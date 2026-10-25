@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { autoLoginRefusal, createLoginLauncher } from "./auto-login.ts";
+import { autoLoginRefusal, createLoginLauncher, staticClientRefusal } from "./auto-login.ts";
 import { loginSpawnArgs } from "./login-runner.ts";
 import { gatewayRepoRoot } from "./service.ts";
 
@@ -390,6 +390,47 @@ describe("auto-login refuses a preset that needs an interactive client_name", ()
                 auth: { kind: "oauth", gateway: true },
             })
         ).toBeUndefined();
+    });
+});
+
+describe("auto-login refuses a static-client server with no stored app", () => {
+    const crm = {
+        type: "http" as const,
+        url: "https://mcp.crm.example",
+        auth: { kind: "oauth" as const, gateway: true, policy: "static-client" as const },
+    };
+
+    test("no stored app: the refusal names auth client and the redirect URL", async () => {
+        const reason = await staticClientRefusal("crm", crm, async () => false);
+
+        expect(reason).toContain("auth client crm --client-id <id>");
+        expect(reason).toContain("http://127.0.0.1:8320/callback");
+    });
+
+    test("a custom redirect URL is the one named", async () => {
+        const reason = await staticClientRefusal(
+            "crm",
+            { ...crm, auth: { ...crm.auth, redirectUri: "http://127.0.0.1:9123/cb" } },
+            async () => false
+        );
+
+        expect(reason).toContain("http://127.0.0.1:9123/cb");
+    });
+
+    test("a stored app lets the login start", async () => {
+        expect(await staticClientRefusal("crm", crm, async () => true)).toBeUndefined();
+    });
+
+    test("a dynamic-registration server never asks the store", async () => {
+        const reason = await staticClientRefusal(
+            "shop",
+            { type: "http", url: "https://mcp.shop.example/mcp", auth: { kind: "oauth", gateway: true } },
+            async () => {
+                throw new Error("store must not be read");
+            }
+        );
+
+        expect(reason).toBeUndefined();
     });
 });
 

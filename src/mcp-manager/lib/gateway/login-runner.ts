@@ -23,7 +23,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { sendNotification } from "@genesiscz/utils/macos/notifications";
 import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { serverAuth } from "../auth/policy.ts";
-import { autoLoginRefusal, createLoginLauncher, type LoginLauncher } from "./auto-login.ts";
+import { autoLoginRefusal, createLoginLauncher, type LoginLauncher, staticClientRefusal } from "./auto-login.ts";
 import { pendingLoginPath, readPendingLogin, takeLivePendingLogin, writePendingLogin } from "./login-state.ts";
 import { gatewayRepoRoot } from "./service.ts";
 
@@ -56,7 +56,8 @@ export async function runLogin(
         throw new Error(`Unknown server '${server}'`);
     }
 
-    const refusal = autoLoginRefusal(server, unified, clientNameOverride);
+    const refusal =
+        autoLoginRefusal(server, unified, clientNameOverride) ?? (await staticClientRefusal(server, unified));
 
     if (refusal) {
         throw new Error(refusal);

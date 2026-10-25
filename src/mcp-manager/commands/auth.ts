@@ -9,8 +9,8 @@ import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/uti
 import pc from "picocolors";
 import { CLIENT_NAME_DEFAULT } from "../lib/auth/constants.ts";
 import { type AuthTokenState, describeAuthStatus } from "../lib/auth/display.ts";
-import { DynamicClientRegistrationError, loginMcpServer } from "../lib/auth/login.ts";
-import { isGatewayOauth, serverAuth } from "../lib/auth/policy.ts";
+import { DynamicClientRegistrationError, loginMcpServer, staticRedirectUriFor } from "../lib/auth/login.ts";
+import { isGatewayOauth, policyFor, serverAuth } from "../lib/auth/policy.ts";
 import {
     CLIENT_NAME_ABORT,
     clientNameSelectOptions,
@@ -18,9 +18,10 @@ import {
     oauthClientPresetFor,
     suggestedLoginCommand,
 } from "../lib/auth/presets.ts";
-import { deleteServerTokens } from "../lib/auth/secrets.ts";
+import { deleteServerTokens, hasStaticClient, writeStaticClient } from "../lib/auth/secrets.ts";
 import { deleteAuthStatus, readAuthStatus } from "../lib/auth/status.ts";
 import { accessTokenForRequest, peekAccessToken } from "../lib/auth/tokens.ts";
+import { staticClientRefusal } from "../lib/gateway/auto-login.ts";
 import { ensureGatewayUp } from "../lib/gateway/ensure.ts";
 import { runLogin } from "../lib/gateway/login-runner.ts";
 import { clearPendingLogin, takeLivePendingLogin, writePendingLogin } from "../lib/gateway/login-state.ts";
@@ -82,6 +83,15 @@ export async function authLogin(
         if (held.url) {
             ui.dim(held.url);
         }
+        return;
+    }
+
+    const staticRefusal = await staticClientRefusal(name, server);
+
+    if (staticRefusal) {
+        ui.err(staticRefusal);
+        process.exitCode = 1;
+
         return;
     }
 
@@ -223,6 +233,116 @@ function printDcrFailure(view: DcrFailureView): void {
     }
 }
 
+/**
+ * Store a pre-registered OAuth app for a server without dynamic registration (HubSpot).
+ *
+ * The secret comes from a hidden prompt, or from stdin when stdin is not a terminal. It is
+ * never an argument, so it stays out of shell history and `ps`, and it goes to the vault only:
+ * the unified config gets the policy and the redirect URL, which are not secret.
+ */
+export async function authClient(
+    serverName: string | undefined,
+    opts: { clientId?: string; redirectUri?: string } = {}
+): Promise<void> {
+    const config = await readUnifiedConfig();
+    const server = serverName ? config.mcpServers[serverName] : undefined;
+
+    if (!serverName || !server) {
+        logger.error(`Unknown server '${serverName ?? ""}'. Add it with ${toolCommand("mcp-manager install")} first.`);
+        process.exitCode = 1;
+
+        return;
+    }
+
+    if (!(server.url ?? server.httpUrl)) {
+        logger.error(`${serverName} has no HTTP url. A static OAuth client only applies to a remote server.`);
+        process.exitCode = 1;
+
+        return;
+    }
+
+    const clientId = opts.clientId?.trim();
+
+    if (!clientId) {
+        logger.error(
+            `--client-id is required: ${toolCommand("mcp-manager auth client", serverName, "--client-id", "<id>")}`
+        );
+        process.exitCode = 1;
+
+        return;
+    }
+
+    const redirectUri = opts.redirectUri?.trim() || staticRedirectUriFor(server);
+    const redirectProblem = loopbackRedirectProblem(redirectUri);
+
+    if (redirectProblem) {
+        logger.error(redirectProblem);
+        process.exitCode = 1;
+
+        return;
+    }
+
+    const clientSecret = await readClientSecret(serverName);
+
+    if (clientSecret === undefined) {
+        return;
+    }
+
+    if (!clientSecret) {
+        logger.error("The client secret is empty. Pipe it on stdin or type it at the hidden prompt.");
+        process.exitCode = 1;
+
+        return;
+    }
+
+    await writeStaticClient(serverName, { clientId, clientSecret });
+    setGlobalOptions({ yes: true });
+    server.auth = {
+        ...server.auth,
+        kind: "oauth",
+        gateway: true,
+        policy: "static-client",
+        redirectUri,
+    };
+    await writeUnifiedConfig(config);
+    ui.ok(`stored the OAuth client for ${serverName}`);
+    ui.kv("client", clientId);
+    ui.kv("redirect", redirectUri);
+    ui.dim("The provider must list this exact redirect URL.");
+    ui.dim(`next: ${toolCommand("mcp-manager auth login", serverName)}`);
+}
+
+async function readClientSecret(server: string): Promise<string | undefined> {
+    if (!process.stdin.isTTY) {
+        return (await Bun.stdin.text()).trim();
+    }
+
+    const typed = await p.password({ message: `Client secret for ${server}` });
+
+    if (p.isCancel(typed) || typeof typed !== "string") {
+        return undefined;
+    }
+
+    return typed.trim();
+}
+
+/** The callback listener binds this URL, so it must be a loopback http URL with an explicit port. */
+function loopbackRedirectProblem(redirectUri: string): string | undefined {
+    let url: URL;
+
+    try {
+        url = new URL(redirectUri);
+    } catch {
+        return `--redirect-uri is not a URL: ${redirectUri}`;
+    }
+
+    if (url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname) || !url.port) {
+        return `--redirect-uri must be http://127.0.0.1:<port>/<path> (loopback, explicit port), not ${redirectUri}`;
+    }
+
+    return undefined;
+}
+
 export async function authLogout(serverName: string | undefined): Promise<void> {
     if (!serverName) {
         logger.error("server name required");
@@ -270,6 +390,7 @@ export async function authStatus(serverName: string | undefined): Promise<void> 
     const names = serverName ? [serverName] : Object.keys(config.mcpServers).sort();
     const table = createBoxTable(["SERVER", "AUTH", "TOKEN", "EXPIRES"]);
     const loginNeeded: string[] = [];
+    const staticClients: Array<{ name: string; redirectUri: string; stored: boolean }> = [];
     let rows = 0;
     let issuer: string | undefined;
 
@@ -304,6 +425,14 @@ export async function authStatus(serverName: string | undefined): Promise<void> 
             loginNeeded.push(name);
         }
 
+        if (policyFor(server) === "static-client") {
+            staticClients.push({
+                name,
+                redirectUri: staticRedirectUriFor(server),
+                stored: await hasStaticClient(name),
+            });
+        }
+
         if (serverName) {
             const status = await readAuthStatus(name);
             issuer = "issuer" in status ? status.issuer : undefined;
@@ -324,6 +453,16 @@ export async function authStatus(serverName: string | undefined): Promise<void> 
 
     if (issuer) {
         ui.dim(`issuer ${issuer}`);
+    }
+
+    for (const client of staticClients) {
+        ui.dim(`${client.name} redirect URL (register it with the provider): ${client.redirectUri}`);
+
+        if (!client.stored) {
+            ui.warn(
+                `${client.name} has no stored OAuth client: ${toolCommand("mcp-manager auth client", client.name, "--client-id", "<id>")}`
+            );
+        }
     }
 
     for (const name of loginNeeded) {

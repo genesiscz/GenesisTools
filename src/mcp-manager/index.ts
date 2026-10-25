@@ -17,6 +17,7 @@ handleReadmeFlag(import.meta.url);
 
 import { runTool } from "@genesiscz/utils/cli";
 import {
+    authClient,
     authLogin,
     authLogout,
     authRefresh,
@@ -47,6 +48,7 @@ import {
     syncFromProviders,
     syncServers,
 } from "./commands/index.js";
+import { STATIC_CLIENT_REDIRECT_URI_DEFAULT } from "./lib/auth/constants.ts";
 import { setGlobalOptions } from "./utils/config.utils.js";
 
 /**
@@ -305,6 +307,19 @@ auth.command("login [server]")
             clientName: cmdOptions.clientName,
             worker: cmdOptions.worker,
         });
+    });
+
+auth.command("client <server>")
+    .description(
+        "Store a pre-registered OAuth app for a server without dynamic registration (secret: hidden prompt or stdin)"
+    )
+    .requiredOption("--client-id <id>", "OAuth client ID from the provider's app")
+    .option(
+        "--redirect-uri <url>",
+        `Loopback redirect URL registered with the provider (default ${STATIC_CLIENT_REDIRECT_URI_DEFAULT})`
+    )
+    .action(async (server, cmdOptions) => {
+        await authClient(server, { clientId: cmdOptions.clientId, redirectUri: cmdOptions.redirectUri });
     });
 
 auth.command("logout [server]").action(async (server) => {

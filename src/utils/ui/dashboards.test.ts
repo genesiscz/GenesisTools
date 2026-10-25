@@ -36,6 +36,7 @@ describe("port registry", () => {
         expect(WEB_SERVICES["ai-proxy"].port).toBe(8317);
         expect(WEB_SERVICES["mcp-gateway"].port).toBe(8318);
         expect(WEB_SERVICES["telegram-webhook"].port).toBe(8319);
+        expect(WEB_SERVICES["mcp-oauth-callback"].port).toBe(8320);
         expect(registryEntryForPort(9886)?.name).toBe("YouTube Server");
     });
 

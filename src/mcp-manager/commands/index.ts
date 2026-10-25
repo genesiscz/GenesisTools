@@ -2,7 +2,7 @@
  * Re-export all commands
  */
 
-export { authLogin, authLogout, authRefresh, authStatus } from "./auth.js";
+export { authClient, authLogin, authLogout, authRefresh, authStatus } from "./auth.js";
 export { backupAllConfigs } from "./backup.js";
 export { openConfig } from "./config.js";
 export { configJson } from "./config-json.js";

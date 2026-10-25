@@ -26,6 +26,8 @@ export interface McpServerAuth {
     authorizationServer?: string;
     tokenEndpoint?: string;
     clientName?: string;
+    /** Fixed loopback redirect for a static-client server; it must match the one registered with the provider. */
+    redirectUri?: string;
 }
 
 export interface McpGatewayListen {

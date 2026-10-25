@@ -714,6 +714,39 @@ A harness's own "Authenticate" button cannot do this: it runs Dynamic Client Reg
 against the gateway's origin, which serves no OAuth metadata and answers 404. Claude Code
 reports that as `Dynamic Client Registration rejected (HTTP 404)`.
 
+### Servers without dynamic registration (HubSpot)
+
+Some servers publish no `registration_endpoint`, so mcp-manager cannot register an OAuth client
+by itself. HubSpot's official MCP (`https://mcp.hubspot.com`) is one. Create the app by hand at the
+provider (HubSpot: Development, then MCP Connectors, then Create) and enter this redirect URL
+exactly:
+
+```
+http://127.0.0.1:8320/callback
+```
+
+Then store the app and log in:
+
+```bash
+tools mcp-manager install hubspot https://mcp.hubspot.com -t http
+tools mcp-manager auth client hubspot --client-id <id>   # secret: hidden prompt, or pipe it on stdin
+tools mcp-manager auth login hubspot
+tools mcp-manager auth status hubspot                    # prints the redirect URL again
+```
+
+`auth client` sets `auth.policy` to `static-client` and stores the client ID and secret in the
+GenesisTools vault (`mcp/<server>/static-client-*`). The secret is never an argument and never
+goes into the unified config, a provider config or a log. `auth logout` keeps the stored app;
+running `auth client` again replaces it.
+
+The login uses the stored app with PKCE S256 and sends `client_secret` in the POST body
+(`client_secret_post`), for the code exchange and for every refresh. The callback binds port 8320
+(`WEB_SERVICES["mcp-oauth-callback"]`), not a random port, because the provider matches the
+redirect URL exactly. A different loopback URL is possible with `auth client --redirect-uri
+http://127.0.0.1:<port>/<path>`; the app at the provider must then list that one. When the
+gateway gets a request for such a server and no app is stored, its 401 names the `auth client`
+command and the redirect URL instead of opening a browser.
+
 **Config changes need no restart.** The gateway re-reads the unified config on every request,
 so adding or editing a server is picked up immediately and sessions already connected keep
 their streams. Reconnect a harness only for a server it has never connected to: Claude Code

@@ -16,8 +16,10 @@
 import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/types.js";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { logger } from "@genesiscz/utils/logger";
-import { serverAuth } from "../auth/policy.ts";
+import { staticRedirectUriFor } from "../auth/login.ts";
+import { policyFor, serverAuth } from "../auth/policy.ts";
 import { oauthClientPresetFor } from "../auth/presets.ts";
+import { hasStaticClient } from "../auth/secrets.ts";
 
 export type LoginRequestOutcome = "started" | "in-flight" | "cooling-down";
 
@@ -77,6 +79,23 @@ export function autoLoginRefusal(
     }
 
     return `${name} needs an interactive client_name. Run ${toolCommand("mcp-manager auth login", name)}`;
+}
+
+/**
+ * A static-client server (no dynamic registration, HubSpot) cannot log in until its
+ * pre-registered app is stored. Opening a browser would only fail after the redirect,
+ * so the caller names the `auth client` command and the redirect URL instead.
+ */
+export async function staticClientRefusal(
+    name: string,
+    server: UnifiedMCPServerConfig,
+    stored: (server: string) => Promise<boolean> = hasStaticClient
+): Promise<string | undefined> {
+    if (policyFor(server) !== "static-client" || (await stored(name))) {
+        return undefined;
+    }
+
+    return `${name} needs a pre-registered OAuth app. Register the redirect URL ${staticRedirectUriFor(server)} with the provider, then run ${toolCommand("mcp-manager auth client", name, "--client-id", "<id>")}`;
 }
 
 export function createLoginLauncher(deps: LoginLauncherDeps): LoginLauncher {

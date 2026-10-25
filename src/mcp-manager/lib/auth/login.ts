@@ -2,6 +2,7 @@ import type { UnifiedMCPServerConfig } from "@app/mcp-manager/utils/providers/ty
 import { startCallbackListener } from "@genesiscz/utils/ai/oauth/callback-server";
 import { presentAuthorizationUrl } from "@genesiscz/utils/ai/oauth/login-ui";
 import { generatePkcePair } from "@genesiscz/utils/ai/oauth/pkce";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import {
@@ -11,12 +12,13 @@ import {
     startDeviceFlow,
 } from "@genesiscz/utils/oauth/device-flow";
 import type { DeviceFlowConfig } from "@genesiscz/utils/oauth/types";
+import { STATIC_CLIENT_REDIRECT_URI_DEFAULT } from "./constants.ts";
 import { discoverMcp } from "./discovery.ts";
 import { mcpFetchChecked, readJsonRecord } from "./fetch.ts";
 import { clientNameFor, policyFor, serverAuth } from "./policy.ts";
 import { type DcrFailureView, describeDcrFailure } from "./presets.ts";
 import { safeTokenErrorCode } from "./redact.ts";
-import { replaceServerTokens } from "./secrets.ts";
+import { readStaticClient, replaceServerTokens, type StaticClient } from "./secrets.ts";
 import { writeAuthStatus } from "./status.ts";
 import { assertDiscoveryTarget } from "./url-policy.ts";
 
@@ -28,6 +30,21 @@ export class DynamicClientRegistrationError extends Error {
         this.name = "DynamicClientRegistrationError";
         this.view = view;
     }
+}
+
+/** Thrown when a static-client server has no stored app. The gateway turns it into a 401 that names the fix. */
+export class StaticClientMissingError extends Error {
+    constructor(server: string, redirectUri: string) {
+        super(
+            `${server} has no stored OAuth client. Create an app at the provider with the redirect URL ${redirectUri}, then run ${toolCommand("mcp-manager auth client", server, "--client-id", "<id>")}`
+        );
+        this.name = "StaticClientMissingError";
+    }
+}
+
+/** The fixed callback a static-client server's provider must have registered. */
+export function staticRedirectUriFor(config: UnifiedMCPServerConfig): string {
+    return serverAuth(config)?.redirectUri ?? STATIC_CLIENT_REDIRECT_URI_DEFAULT;
 }
 
 export interface LoginOptions {
@@ -55,6 +72,21 @@ export interface LoginResult {
 
 function form(body: Record<string, string>): URLSearchParams {
     return new URLSearchParams(body);
+}
+
+async function registerDynamicClient(
+    registrationEndpoint: string | undefined,
+    redirectUri: string,
+    clientName: string,
+    hint: { server: string; mcpUrl: string }
+): Promise<{ client_id: string; client_secret?: string }> {
+    if (!registrationEndpoint) {
+        throw new Error(
+            `${hint.mcpUrl} has no registration_endpoint, so it needs a pre-registered OAuth app. Run ${toolCommand("mcp-manager auth client", hint.server, "--client-id", "<id>")}`
+        );
+    }
+
+    return registerClient(registrationEndpoint, redirectUri, clientName, hint);
 }
 
 async function registerClient(
@@ -209,38 +241,49 @@ export async function loginMcpServer(options: LoginOptions): Promise<LoginResult
 
     const policy = policyFor(options.config);
     const clientName = options.clientName?.trim() || clientNameFor(options.config);
+    // A static client is a pre-registered app: the provider matches the redirect URL
+    // exactly, so the callback binds the one fixed port that app was registered with.
+    let staticClient: StaticClient | undefined;
+    const staticRedirectUri = policy === "static-client" ? staticRedirectUriFor(options.config) : undefined;
+
+    if (staticRedirectUri) {
+        staticClient = await readStaticClient(options.server);
+
+        if (!staticClient) {
+            throw new StaticClientMissingError(options.server, staticRedirectUri);
+        }
+    }
+
     const pkce = await generatePkcePair();
     const listener = await startCallbackListener({
-        redirectUri: "http://127.0.0.1:0/callback",
-        port: 0,
+        redirectUri: staticRedirectUri ?? "http://127.0.0.1:0/callback",
+        port: staticRedirectUri ? undefined : 0,
         timeoutMs: 10 * 60 * 1000,
         verifyState: (state) => (state === pkce.state ? undefined : "state mismatch"),
         brand: { app: "Genesis Tools", product: "mcp-manager" },
     });
 
     if (!listener) {
-        throw new Error("Could not bind a loopback callback port");
+        throw new Error(
+            staticRedirectUri
+                ? `Could not bind ${staticRedirectUri}. Is another login holding that port? The provider only accepts this exact redirect URL.`
+                : "Could not bind a loopback callback port"
+        );
     }
 
-    const redirectUri = `http://127.0.0.1:${listener.port}/callback`;
+    const redirectUri = staticRedirectUri ?? `http://127.0.0.1:${listener.port}/callback`;
 
     // Registration lives INSIDE the try that owns the listener. It throws on three
     // ordinary paths — a static-client policy, a server with no registration_endpoint,
     // and the Figma 403 this PR exists for — and outside the try each of those left the
     // loopback port bound for the full 10-minute timeout after the command returned.
     try {
-        if (policy === "static-client") {
-            throw new Error(`${options.server} policy is static-client; store a client-id first`);
-        }
-
-        if (!as.registration_endpoint) {
-            throw new Error(`${as.issuer} has no registration_endpoint`);
-        }
-
-        const registered = await registerClient(as.registration_endpoint, redirectUri, clientName, {
-            server: options.server,
-            mcpUrl,
-        });
+        const registered = staticClient
+            ? { client_id: staticClient.clientId, client_secret: staticClient.clientSecret }
+            : await registerDynamicClient(as.registration_endpoint, redirectUri, clientName, {
+                  server: options.server,
+                  mcpUrl,
+              });
         const clientId = registered.client_id;
 
         if (options.device || policy === "device-code") {

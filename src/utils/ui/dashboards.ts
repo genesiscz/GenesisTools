@@ -403,6 +403,17 @@ export const WEB_SERVICES = {
         note: `Bind 127.0.0.1 only. The tunnel rule for the webhook path points here (\`${toolCommand("telegram-bot webhook tunnel")}\`).`,
         matchProcess: matchGenesisTool("telegram-bot"),
     },
+    "mcp-oauth-callback": {
+        key: "mcp-oauth-callback",
+        name: "MCP OAuth Callback",
+        description: "Loopback OAuth redirect for MCP servers with a pre-registered app (no dynamic registration).",
+        port: 8320,
+        launch: null,
+        portOverride: null,
+        serviceKind: "other",
+        note: `Bound only while ${toolCommand("mcp-manager auth login")} waits for the browser. The provider app must list http://127.0.0.1:8320/callback exactly.`,
+        matchProcess: matchGenesisTool("mcp-manager"),
+    },
 } as const satisfies Record<string, WebServiceEntry>;
 
 export type WebServiceKey = keyof typeof WEB_SERVICES;

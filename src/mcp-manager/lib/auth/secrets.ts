@@ -90,9 +90,55 @@ export async function readServerTokenSnapshot(
         expiresAt: expiresNumber !== undefined && Number.isFinite(expiresNumber) ? expiresNumber : undefined,
         hasRefresh: snapshot.has(secretPath(server, "refresh-token")),
         refreshToken: options.includeRefreshToken ? await snapshot.get(secretPath(server, "refresh-token")) : undefined,
-        clientId: options.includeClient ? await snapshot.get(secretPath(server, "client-id")) : undefined,
-        clientSecret: options.includeClient ? await snapshot.get(secretPath(server, "client-secret")) : undefined,
+        // A stored static client wins over the slot a login wrote: `auth client` may have
+        // rotated the secret since, and a refresh must post the current one.
+        clientId: options.includeClient
+            ? ((await snapshot.get(secretPath(server, "static-client-id"))) ??
+              (await snapshot.get(secretPath(server, "client-id"))))
+            : undefined,
+        clientSecret: options.includeClient
+            ? ((await snapshot.get(secretPath(server, "static-client-secret"))) ??
+              (await snapshot.get(secretPath(server, "client-secret"))))
+            : undefined,
     };
+}
+
+export interface StaticClient {
+    clientId: string;
+    clientSecret?: string;
+}
+
+/**
+ * A pre-registered OAuth app for a server without dynamic registration (HubSpot).
+ *
+ * Kept apart from the `client-id` / `client-secret` slots a login writes, because a
+ * logout or a fresh login clears those, and this app was typed in by hand once.
+ */
+export async function writeStaticClient(server: string, client: StaticClient): Promise<void> {
+    await withServerCredentialsLock(server, async () => {
+        await writeSecret(secretPath(server, "static-client-id"), client.clientId);
+
+        if (client.clientSecret) {
+            await writeSecret(secretPath(server, "static-client-secret"), client.clientSecret);
+        } else {
+            await deleteSecret(secretPath(server, "static-client-secret"));
+        }
+    });
+}
+
+export async function readStaticClient(server: string): Promise<StaticClient | undefined> {
+    const snapshot = secretSnapshot();
+    const clientId = await snapshot.get(secretPath(server, "static-client-id"));
+
+    if (!clientId) {
+        return undefined;
+    }
+
+    return { clientId, clientSecret: await snapshot.get(secretPath(server, "static-client-secret")) };
+}
+
+export async function hasStaticClient(server: string): Promise<boolean> {
+    return hasSecret(secretPath(server, "static-client-id"));
 }
 
 /**
