@@ -73,7 +73,9 @@ let executable: Target = .executableTarget(
 // and `--bench` runs. The exceptions render into a window nobody sees (alpha 0, below the desktop,
 // never activated): LiveTimeTests and SessionTranscriptScrollTests, copied from Genesis, and
 // WindowTitlebarTests (clicks sent to the title bar strip). It always tests every part.
-let testDependencies: [Target.Dependency] = [.target(name: "GenesisToolsHost")]
+let testDependencies: [Target.Dependency] = [
+    .target(name: "GenesisToolsHost"), .product(name: "GenesisKitTestHooks", package: "GenesisKit"),
+]
     + allParts.map { Target.Dependency.target(name: $0.target) }
 let tests: Target = .testTarget(name: "GenesisToolsTests", dependencies: testDependencies, path: "Tests")
 

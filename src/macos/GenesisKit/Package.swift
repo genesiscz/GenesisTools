@@ -35,6 +35,7 @@ let kitProducts: [Product] = [
     // Test targets only: the one copy of the `tools` disk fixtures (KitFixture). The GenesisTools bun tests
     // read the same files by path. An app target never links it.
     .library(name: "GenesisKitFixtures", targets: ["GenesisKitFixtures"]),
+    .library(name: "GenesisKitTestHooks", targets: ["GenesisKitTestHooks"]),
 ]
 
 // The markdown viewer's "Native+" renderer: diagrams and highlighted code without a web view.
@@ -62,11 +63,14 @@ let kitTargets: [Target] = [
     .target(name: "GenesisKitDisk", dependencies: ["GenesisKit"], path: "Sources/GenesisKitDisk"),
     // Disk/: the frozen CLI contracts and real `tools` JSON output the disk decoders are tested against.
     .target(name: "GenesisKitFixtures", path: "Sources/GenesisKitFixtures", resources: [.copy("Disk")]),
+    // Tests only: a window asked to become key is only ordered front, and the app never activates, so a test run
+    // never takes the user's keyboard focus.
+    .target(name: "GenesisKitTestHooks", path: "Sources/GenesisKitTestHooks", linkerSettings: [.linkedFramework("AppKit")]),
     .testTarget(
         name: "GenesisKitTests",
         dependencies: [
             "GenesisKitBase", "GenesisKit", "GenesisKitCharts", "GenesisKitOverlay", "GenesisKitPosture", "GenesisKitDisk",
-            "GenesisKitFixtures",
+            "GenesisKitFixtures", "GenesisKitTestHooks",
         ],
         path: "Tests/GenesisKitTests"
     ),

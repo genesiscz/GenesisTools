@@ -158,8 +158,9 @@ public final class EdgePanelController<Content: View> {
     private var generation = 0
     public private(set) var isExpanded = false
     /// An expanded panel takes the keyboard (its composer). Off only for scripted motion checks on the user's own
-    /// screen, which must not take the keyboard from the app they are typing in.
-    public var becomesKeyOnExpand = true
+    /// screen, which must not take the keyboard from the app they are typing in. Off under XCTest: every expand in
+    /// a test run made the test process the key window, which took the user's focus about ten times per run.
+    public var becomesKeyOnExpand = NSClassFromString("XCTestCase") == nil
     /// Driver callback timing only; neither callback count nor gaps establish compositor frame delivery.
     public private(set) var lastTransitionTiming: AnimationTiming.Summary?
     /// Slows every transition by this factor (`GENESIS_WIDGET_MOTION_SCALE`), for frame-by-frame review.
