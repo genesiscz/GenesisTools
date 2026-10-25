@@ -167,7 +167,9 @@ export async function buildExtension(opts: { devReload?: boolean; targets?: stri
     for (const target of targets) {
         const proc = Bun.spawn(["bun", "--bun", "vite", "build", "-c", resolve(root, "vite.config.ts")], {
             stdio: ["inherit", "inherit", "inherit"],
-            env: { ...process.env, EXT_TARGET: target, EXT_DEV: opts.devReload ? "1" : "0" },
+            // A shell with NODE_ENV=development makes Vite emit jsxDEV calls next to production React, and the
+            // panel throws "jsxDEV is not a function" before it draws.
+            env: { ...process.env, NODE_ENV: "production", EXT_TARGET: target, EXT_DEV: opts.devReload ? "1" : "0" },
         });
         const exit = await proc.exited;
 
