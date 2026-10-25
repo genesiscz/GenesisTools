@@ -30,6 +30,10 @@ public final class GitFileDiffModel: ObservableObject {
     /// The last failure in full: `phase` holds its sentence, this adds the raw text for Details.
     @Published public private(set) var failure: GitFailure?
     private var ticket = 0
+    /// What the shown result answers (file, scope, pick, rename, compare). A reload of the same question keeps the result on
+    /// screen until the new one lands: setting `.loading` each time flashed "No unstaged changes in this file." away and
+    /// back on every status refresh of a busy repository (Martin, 2026-10-25: "flashes every few seconds").
+    private var shownRequest: String?
     /// The last load, for `retry`.
     private var lastLoad: (() -> Void)?
     /// How many commits of a file's history the chooser lists.
@@ -49,7 +53,8 @@ public final class GitFileDiffModel: ObservableObject {
         lastLoad = { [weak self] in self?.load(url, workingText: text, scope: scope, commit: pick, renamedFrom: renamedFrom) }
         ticket += 1
         let ticket = self.ticket
-        if file == nil { phase = .loading }
+        let request = "load|\(url.path)|\(scope.rawValue)|\(pick ?? "")|\(renamedFrom ?? "")"
+        if file == nil, request != shownRequest { phase = .loading }
         let provider = GenesisKitGT.provider
         let makeDiff = self.makeDiff
         DispatchQueue.global(qos: .userInitiated).async {
@@ -72,6 +77,7 @@ public final class GitFileDiffModel: ObservableObject {
                     self.fail(error)
                 case .success(let (sides, file)):
                     self.failure = nil
+                    self.shownRequest = request
                     self.history = sides.history
                     self.commit = sides.commit
                     self.oldText = sides.old
@@ -96,7 +102,8 @@ public final class GitFileDiffModel: ObservableObject {
         lastLoad = { [weak self] in self?.loadCompare(url, workingText: text, old: old, new: new) }
         ticket += 1
         let ticket = self.ticket
-        if file == nil { phase = .loading }
+        let request = "compare|\(url.path)|\(old.sha)|\(new?.sha ?? "")"
+        if file == nil, request != shownRequest { phase = .loading }
         let provider = GenesisKitGT.provider
         let makeDiff = self.makeDiff
         DispatchQueue.global(qos: .userInitiated).async {
@@ -122,6 +129,7 @@ public final class GitFileDiffModel: ObservableObject {
                     self.fail(error)
                 case .success(let (sides, file)):
                     self.failure = nil
+                    self.shownRequest = request
                     self.oldText = sides.old
                     if sides.old == sides.new {
                         self.file = nil
@@ -142,6 +150,7 @@ public final class GitFileDiffModel: ObservableObject {
     }
 
     private func fail(_ error: Error) {
+        shownRequest = nil
         let failure = (error as? GitFailure.Thrown)?.failure
             ?? GitFailure(error, fallback: "Git could not read this file's versions. Try again.")
         file = nil

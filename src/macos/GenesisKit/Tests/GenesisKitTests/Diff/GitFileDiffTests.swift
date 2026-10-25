@@ -434,6 +434,34 @@ final class GitFileDiffTests: XCTestCase {
         XCTAssertEqual(model.workingText(for: doc), "recovered draft")
     }
 
+    /// Martin, 2026-10-25: "No unstaged changes in this file." flashed every few seconds. Each status refresh reloaded the
+    /// diff, and a reload with no diff on screen went through `.loading`, which drew nothing for a moment.
+    func testReloadingTheSameEmptyDiffKeepsItsMessage() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("diff-flash-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let note = root.appendingPathComponent("note.md")
+        _ = try git(["init", "-q", "-b", "main"], in: root)
+        try "saved\n".write(to: note, atomically: true, encoding: .utf8)
+        _ = try git(["add", "."], in: root)
+        _ = try git(["commit", "-q", "-m", "Saved"], in: root)
+        let model = GitFileDiffModel()
+        model.load(note, text: "saved\n", scope: .unstaged)
+        let deadline = Date().addingTimeInterval(5)
+        while model.phase == .loading || model.phase == .idle, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(model.phase, .empty("No unstaged changes in this file."))
+        var phases: [GitFileDiffModel.Phase] = []
+        let watch = model.$phase.dropFirst().sink { phases.append($0) }
+        for _ in 0..<3 {
+            model.load(note, text: "saved\n", scope: .unstaged)
+            try await Task.sleep(for: .milliseconds(300))
+        }
+        watch.cancel()
+        XCTAssertFalse(phases.contains(.loading), "a reload of the same question keeps the message: \(phases)")
+        model.load(note, text: "saved\n", scope: .staged)
+        XCTAssertEqual(model.phase, .loading, "another question still shows that it is loading")
+    }
+
     func testNormalAndHistoricalDiffCountsRunOffMain() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("diff-worker-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
