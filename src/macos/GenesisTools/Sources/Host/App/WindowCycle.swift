@@ -183,8 +183,14 @@ package enum WindowCycle {
 
     /// Cmd+Tab activates on the release of ⌘, so a modifier change is the newest input. A click (the Dock,
     /// a window, a notification, a link in a browser) or a typed key (a launcher, a terminal) is newer otherwise.
-    package static func cameByCommandTab(sinceFlags: Double, sinceMouse: Double, sinceKey: Double) -> Bool {
-        sinceFlags < 1 && sinceFlags < sinceMouse && sinceFlags < sinceKey
+    ///
+    /// The activation can also arrive while ⌘ is still down, right after the Tab press: logged 2026-10-25 15:13 as
+    /// "flags 1.65s, mouse 8.92s, key 0.29s ago", and the window stayed behind. A typed key with ⌘ held is that case;
+    /// a launcher's typed key has no ⌘ held.
+    package static func cameByCommandTab(sinceFlags: Double, sinceMouse: Double, sinceKey: Double,
+                                         commandHeld: Bool = false) -> Bool {
+        if sinceFlags < 1 && sinceFlags < sinceMouse && sinceFlags < sinceKey { return true }
+        return commandHeld && sinceKey < 1 && sinceKey < sinceMouse
     }
 
     private static func handle(_ event: NSEvent) -> Bool {
@@ -323,9 +329,11 @@ package enum WindowCycle {
         guard Date().timeIntervalSince(lastCycleRaise) > 1.5 else { return }
         let since = { (type: CGEventType) in CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: type) }
         let mouse = min(since(.leftMouseDown), since(.rightMouseDown), since(.otherMouseDown))
-        guard cameByCommandTab(sinceFlags: since(.flagsChanged), sinceMouse: mouse, sinceKey: since(.keyDown)) else {
-            HubPerf.log(String(format: "windowCycle: active, not by Cmd+Tab (flags %.2fs, mouse %.2fs, key %.2fs ago)",
-                               since(.flagsChanged), mouse, since(.keyDown)))
+        let commandHeld = CGEventSource.flagsState(.combinedSessionState).contains(.maskCommand)
+        guard cameByCommandTab(sinceFlags: since(.flagsChanged), sinceMouse: mouse, sinceKey: since(.keyDown),
+                               commandHeld: commandHeld) else {
+            HubPerf.log(String(format: "windowCycle: active, not by Cmd+Tab (flags %.2fs, mouse %.2fs, key %.2fs ago, ⌘ %@)",
+                               since(.flagsChanged), mouse, since(.keyDown), commandHeld ? "held" : "up"))
             return
         }
         let candidates = currentCandidates()

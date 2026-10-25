@@ -79,6 +79,10 @@ final class WindowCycleTests: XCTestCase {
         XCTAssertTrue(WindowCycle.cameByCommandTab(sinceFlags: 0.05, sinceMouse: 4, sinceKey: 0.2))
         XCTAssertFalse(WindowCycle.cameByCommandTab(sinceFlags: 2, sinceMouse: 4, sinceKey: 0.1), "a typed key (a launcher)")
         XCTAssertFalse(WindowCycle.cameByCommandTab(sinceFlags: 0.3, sinceMouse: 0.02, sinceKey: 5), "a click (Dock, link, notification)")
+        XCTAssertTrue(WindowCycle.cameByCommandTab(sinceFlags: 1.65, sinceMouse: 8.92, sinceKey: 0.29, commandHeld: true),
+                      "activated while ⌘ is still down, right after Tab (logged 2026-10-25 15:13)")
+        XCTAssertFalse(WindowCycle.cameByCommandTab(sinceFlags: 1.65, sinceMouse: 8.92, sinceKey: 0.29, commandHeld: false),
+                       "the same timing with ⌘ up is a typed key")
     }
 
     /// Any process can post the raise and focus notifications: a payload that does not fit is a plain raise or is
