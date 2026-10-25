@@ -1154,7 +1154,9 @@ export async function widgetSnapshot({
         if (item.draftOption || item.draft) {
             staged.push(item);
         }
-        if (inboxCounted(session, timeOf(row.updatedTs))) {
+        // "Mark all read" compares the time it was asked: staging an older decision updates the row, and must not
+        // count it as new again. A recent update still keeps the decision fresh in a quiet session.
+        if (item.at > (state.inboxClearedAt ?? 0) && inboxFresh(session, timeOf(row.updatedTs))) {
             pendingDecisions += 1;
             putInbox(session, item, 1);
         }

@@ -85,6 +85,20 @@ final class RecordingSessionControllerTests: XCTestCase {
         XCTAssertEqual(controller.notice, "The recording reached its 10 min limit.")
     }
 
+    /// The channel takes 512 bytes a line: a window with a long title still switches, by its ids, without the title.
+    func testASwitchToAWindowWithALongTitleFitsTheChannel() throws {
+        let (controller, channel, _, _, _) = controller()
+        try controller.start(target: .display(index: 0, name: nil), excludeWindowIDs: [], frameRate: 15, showsBorder: true)
+        let title = String(repeating: "Ž", count: 400)
+        controller.switchTo(.window(ids: [501], app: "Editor", title: title, pid: 42))
+        controller.switchTo(.window(ids: [502], app: "Editor", title: "notes.txt", pid: 42))
+        XCTAssertEqual(channel.sent, [
+            #"{"cmd":"switch","target":{"app":"Editor","kind":"window","pid":42,"windowIds":[501]}}"#,
+            #"{"cmd":"switch","target":{"app":"Editor","kind":"window","pid":42,"title":"notes.txt","windowIds":[502]}}"#,
+        ])
+        XCTAssertNil(controller.notice)
+    }
+
     func testPreparingSaysWhyTheStartIsSlowUntilTheFirstFrame() throws {
         let (controller, channel, _, _, receive) = controller()
         try controller.start(target: .display(index: 0, name: nil), excludeWindowIDs: [], frameRate: 15, showsBorder: true)

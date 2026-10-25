@@ -3178,6 +3178,21 @@ describe("widget inbox notifications", () => {
                 expect(cleared.sessions.find((session) => session.key.includes("live-fixture"))?.status).toBe(
                     "waiting"
                 );
+                // Staging the cleared decision updates its row; it was asked before the clear, so it stays read.
+                decisions = decisions.map((row) =>
+                    row.sessionId === "live-fixture"
+                        ? {
+                              ...row,
+                              state: "drafted",
+                              draftOption: "yes",
+                              createdTs: new Date(now - hour).toISOString(),
+                              updatedTs: new Date(now + 500).toISOString(),
+                          }
+                        : row
+                );
+                const afterStage = (await widgetSnapshot({ root: directory, sources, now })).notifications;
+                expect(afterStage?.needsAnswer).toBe(0);
+                expect(afterStage?.staged.map((item) => item.sourceId)).toEqual(["d_1_live-fixture"]);
                 decisions = [...decisions, decision("new-fixture", now + 1000)];
                 expect((await widgetSnapshot({ root: directory, sources, now })).notifications?.needsAnswer).toBe(1);
             }

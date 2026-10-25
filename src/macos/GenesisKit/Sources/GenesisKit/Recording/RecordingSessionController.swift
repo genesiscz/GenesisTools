@@ -98,8 +98,19 @@ public final class RecordingSessionController: ObservableObject {
     public func discard() { send(["cmd": "discard"]) }
 
     public func switchTo(_ target: RecordingTarget) {
-        send(["cmd": "switch", "target": target.wire])
+        var wire = target.wire
+        // The channel takes one line of at most 512 bytes. A window's title and a display's name are labels only, so
+        // a long one is left out rather than the switch refused.
+        let line = try? JSONSerialization.data(withJSONObject: ["cmd": "switch", "target": wire], options: [.sortedKeys])
+        if (line?.count ?? 0) >= Self.commandLimit {
+            wire["title"] = nil
+            wire["name"] = nil
+        }
+        send(["cmd": "switch", "target": wire])
     }
+
+    /// `ToolsLineStream.sendInput`'s limit; the newline takes one byte of it.
+    static let commandLimit = 512
 
     /// Ends the child at once (an app that quits): it stops and keeps what it recorded on SIGTERM.
     public func terminate() {

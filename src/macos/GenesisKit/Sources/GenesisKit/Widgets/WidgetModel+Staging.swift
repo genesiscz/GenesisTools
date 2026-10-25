@@ -20,6 +20,8 @@ extension WidgetModel {
     /// A click on a decision option in a session's inbox. A second click on the staged option clears the pick.
     public func choose(_ card: WidgetCard, option: String) {
         guard decisionClickStages else {
+            // `submit` answers the selected card; another open row's click must answer its own decision.
+            selectedCardID = card.id
             submit(choice: option)
             return
         }

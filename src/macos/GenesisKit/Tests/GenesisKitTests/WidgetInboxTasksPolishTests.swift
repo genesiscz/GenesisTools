@@ -1096,6 +1096,41 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertNil(model.pendingStage["d1"])
     }
 
+    /// Several decision rows can be open at once: a click on one row's option answers that row's decision, not the
+    /// one selected last.
+    func testTheSendSettingAnswersTheClickedDecisionNotTheSelectedOne() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("staging-send-\(UUID())")
+        let journal = root.appendingPathComponent("native-submissions")
+        try FileManager.default.createDirectory(at: journal, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
+        let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: root.path, defaults: defaults,
+            appearance: NativeSettingsAppearance(defaults: defaults, notificationNamespace: "staging." + UUID().uuidString,
+                                                 observeExternalChanges: false))
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        var fixture = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(try snapshot(draftOption: nil, decisionClick: "send").utf8)) as? [String: Any])
+        var cards = try XCTUnwrap(fixture["cards"] as? [[String: Any]])
+        var other = cards[0]
+        other["id"] = "decision:d2"
+        other["sourceId"] = "d2"
+        other["number"] = 8
+        cards.append(other)
+        fixture["cards"] = cards
+        model.receive([String(decoding: try JSONSerialization.data(withJSONObject: fixture), as: UTF8.self)])
+        model.select(key)
+        model.selectedCardID = "decision:d2"
+
+        model.choose(try XCTUnwrap(model.cards.first { $0.sourceId == "d1" }), option: "b")
+        let file = try XCTUnwrap(try FileManager.default.contentsOfDirectory(at: journal, includingPropertiesForKeys: nil)
+            .first { $0.pathExtension == "json" }, "the answer is queued")
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any])
+        let payload = try XCTUnwrap(request["payload"] as? [String: Any])
+        XCTAssertEqual(payload["id"] as? String, "d1")
+        XCTAssertEqual(payload["option"] as? String, "b")
+    }
+
     func testTheSendSettingAnswersAtOnceFromTheInboxOfEverySession() async throws {
         let model = StagingFixture.model()
         defer { model.stop() }

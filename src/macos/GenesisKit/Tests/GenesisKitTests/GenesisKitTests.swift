@@ -537,20 +537,37 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         model.action(["action": "fixture-barrier"], completed: { saved.fulfill() })
         await fulfillment(of: [saved], timeout: 2)
     }
+    /// A test program made once under `name` and never renamed or deleted, so syspolicyd never checks a file that is
+    /// gone. Concurrent runs write their own draft and hard-link it into place; the loser uses the winner's file.
+    static func persistentScript(_ name: String, _ body: String) throws -> URL {
+        let folder = try XCTUnwrap(FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first)
+            .appendingPathComponent("GenesisKitTests/\(name)")
+        let script = folder.appendingPathComponent("tools")
+        if FileManager.default.isExecutableFile(atPath: script.path) { return script }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let draft = folder.appendingPathComponent("draft-\(UUID().uuidString)")
+        try body.write(to: draft, atomically: false, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: draft.path)
+        do { try FileManager.default.linkItem(at: draft, to: script) } catch CocoaError.fileWriteFileExists {}
+        return script
+    }
     /// The reply box microphone dictates live in both modes (Martin, 2026-10-23: the words should appear "live" while
     /// he talks). A voice note also passes `--save-audio`, and when it stops it is filed with its session and text.
     func testVoiceNoteDictatesLiveAndFilesItsAudioWithTheSession() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("voice-routing-\(UUID())")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
-        let binary = root.appendingPathComponent("tools")
         let marker = root.appendingPathComponent("voice-invoked")
         let snapshot = #"{"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"fixture","voiceLanguage":"en"},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}"#
         let complete = #"{"kind":"complete","text":"Fixture words"}"#
         let clip = root.appendingPathComponent("incoming.pcm").path
         // The real listener prints "complete" before it closes the audio file; the fixture flushes it a moment later.
-        try "#!/bin/sh\nif [ \"$1\" = voice ]; then echo \"$*\" > '\(marker.path)'; printf '%s\\n' '\(complete)'; sleep 0.3; printf flushed > '\(clip)'; exit 0; fi\nprintf '%s\\n' '\(snapshot)'\n".write(to: binary, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
+        // The fake `tools` is made once and kept (tests.md: a new executable that is started and then deleted crashed
+        // syspolicyd); this run reaches it through a link in its own folder, which is where `$0` puts the files.
+        let binary = root.appendingPathComponent("tools")
+        try FileManager.default.createSymbolicLink(at: binary, withDestinationURL: try Self.persistentScript(
+            "voice-routing-v1",
+            "#!/bin/sh\nrun=\"$(dirname \"$0\")\"\nif [ \"$1\" = voice ]; then echo \"$*\" > \"$run/voice-invoked\"; printf '%s\\n' '\(complete)'; sleep 0.3; printf flushed > \"$run/incoming.pcm\"; exit 0; fi\nprintf '%s\\n' '\(snapshot)'\n"))
         let defaults = UserDefaults(suiteName: "voice-routing-\(UUID())")!
         let model = WidgetModel(binaryPath: binary.path, stateRoot: root.path, defaults: defaults)
         defer { model.stop() }
