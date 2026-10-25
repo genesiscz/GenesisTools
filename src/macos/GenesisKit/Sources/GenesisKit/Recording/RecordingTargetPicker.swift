@@ -101,6 +101,7 @@ public struct RecordingTargetPicker: View {
     private let onChoose: (RecordingTarget) -> Void
     private let onCancel: () -> Void
     private let onRetry: () -> Void
+    private let onFilterChange: (RecordingPickerTab, String) -> Void
     @State private var tab: RecordingPickerTab
     @State private var query = ""
     @State private var highlighted: String?
@@ -110,14 +111,17 @@ public struct RecordingTargetPicker: View {
 
     public init(load: Load, title: String = "Choose what to record", initial: RecordingTarget?,
                 onChoose: @escaping (RecordingTarget) -> Void, onCancel: @escaping () -> Void,
-                onRetry: @escaping () -> Void = {}) {
+                onRetry: @escaping () -> Void = {}, restoring: (tab: RecordingPickerTab, query: String)? = nil,
+                onFilterChange: @escaping (RecordingPickerTab, String) -> Void = { _, _ in }) {
         self.load = load
         self.title = title
         self.initial = initial
         self.onChoose = onChoose
         self.onCancel = onCancel
         self.onRetry = onRetry
-        _tab = State(initialValue: RecordingPickerTab.of(initial))
+        self.onFilterChange = onFilterChange
+        _tab = State(initialValue: restoring?.tab ?? RecordingPickerTab.of(initial))
+        _query = State(initialValue: restoring?.query ?? "")
     }
 
     private var rows: [RecordingPickerRow] {
@@ -145,8 +149,8 @@ public struct RecordingTargetPicker: View {
             filterFocused = true
         }
         .onChange(of: load) { _, _ in highlight(initial: true) }
-        .onChange(of: tab) { _, _ in highlight(initial: false) }
-        .onChange(of: query) { _, _ in highlight(initial: false) }
+        .onChange(of: tab) { _, _ in onFilterChange(tab, query); highlight(initial: false) }
+        .onChange(of: query) { _, _ in onFilterChange(tab, query); highlight(initial: false) }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(title)
     }

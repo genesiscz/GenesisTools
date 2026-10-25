@@ -57,6 +57,9 @@ public final class ScreenRecorder: ObservableObject {
     private var targets: RecordingTargets?
     private var pickerLoad: RecordingTargetPicker.Load = .loading
     private var pickerInitial: RecordingTarget?
+    /// The picker's tab and filter text, kept here because every `presentPicker` builds a new view; nil until the person
+    /// changes either, so a list that arrives later does not reset what they typed while it loaded.
+    private var pickerFilter: (tab: RecordingPickerTab, query: String)?
     private var pickerTitle = "Choose what to record"
     private var pickerChoose: ((RecordingTarget) -> Void)?
     private var pickerCancel: (() -> Void)?
@@ -135,6 +138,7 @@ public final class ScreenRecorder: ObservableObject {
         pickerCancel = cancel
         pickerLoad = targets.map { .loaded($0) } ?? .loading
         pickerInitial = controller?.target ?? targets?.defaultTarget(preferredPid: preferredPid)
+        pickerFilter = nil
         presentPicker()
         Task { [weak self] in await self?.refreshTargets(preferredPid: preferredPid) }
     }
@@ -175,7 +179,9 @@ public final class ScreenRecorder: ObservableObject {
                 self.pickerLoad = .loading
                 self.presentPicker()
                 Task { await self.refreshTargets(preferredPid: nil) }
-            })
+            },
+            restoring: pickerFilter,
+            onFilterChange: { [weak self] tab, query in self?.pickerFilter = (tab, query) })
         picker.present(view, near: pickerAnchor) { [weak self] in self?.pickerCancel?() }
     }
 

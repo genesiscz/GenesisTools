@@ -48,6 +48,8 @@ final class ClickyAudio {
     /// The click that arrived while the engine starts; it plays once the engine runs (a newer one replaces it).
     private var pendingClick: (() -> Void)?
     private var stopAfterStart = false
+    /// A hardware change stopped the engine while it was starting; the start then finished on a stopped engine.
+    private var configChangedWhileStarting = false
     private final class EngineBox: @unchecked Sendable {
         let engine: AVAudioEngine
         init(_ engine: AVAudioEngine) { self.engine = engine }
@@ -152,8 +154,8 @@ final class ClickyAudio {
         // A hardware change stops the engine without telling `running`; the next click must start it again.
         NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
-                guard let self, !self.starting else { return }
-                self.running = false
+                guard let self else { return }
+                if self.starting { self.configChangedWhileStarting = true } else { self.running = false }
             }
         }
     }
@@ -200,6 +202,15 @@ final class ClickyAudio {
                     self.running = failure == nil
                     PerfLog.mark(String(format: "clicky.audio.start %.1fms off-main", ms)
                         + (failure.map { " failed: \($0.localizedDescription)" } ?? ""))
+                    if self.configChangedWhileStarting {
+                        // The engine stopped during the start: start it again before the waiting click plays.
+                        self.configChangedWhileStarting = false
+                        if !self.stopAfterStart {
+                            self.running = false
+                            self.startEngine()
+                            return
+                        }
+                    }
                     if self.stopAfterStart {
                         self.pendingClick = nil
                         self.stopVoices()
