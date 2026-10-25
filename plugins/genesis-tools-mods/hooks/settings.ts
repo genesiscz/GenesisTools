@@ -16,7 +16,13 @@ export interface ModsSettings {
     agentModel: { enabled: boolean; format: "label" | "short" };
     /** Read by the CLI's agents panel command (`hooks/agent-row.ts`), not by a hook of this plugin. */
     agentRow: { enabled: boolean; format: "label" | "short" };
-    decisions: { enabled: boolean; chip: "any" | "waiting" | "off"; expand: "waiting" | "all" | "none" };
+    decisions: {
+        enabled: boolean;
+        chip: "any" | "waiting" | "off";
+        expand: "waiting" | "all" | "none";
+        history: "collapsed" | "shown";
+        enter: "stage-then-send" | "stage";
+    };
     inbox: { enabled: boolean; chip: "any" | "unread" | "off"; expand: "unread" | "all" | "none" };
     links: { enabled: boolean };
     git: {
@@ -44,7 +50,7 @@ export const MODS_DEFAULTS: ModsSettings = {
     idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
     agentModel: { enabled: false, format: "label" },
     agentRow: { enabled: false, format: "label" },
-    decisions: { enabled: false, chip: "any", expand: "waiting" },
+    decisions: { enabled: false, chip: "any", expand: "waiting", history: "collapsed", enter: "stage-then-send" },
     inbox: { enabled: false, chip: "any", expand: "none" },
     links: { enabled: false },
     git: {
@@ -178,6 +184,14 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
                 decisions.expand === "waiting" || decisions.expand === "all" || decisions.expand === "none"
                     ? decisions.expand
                     : d.decisions.expand,
+            history:
+                decisions.history === "collapsed" || decisions.history === "shown"
+                    ? decisions.history
+                    : d.decisions.history,
+            enter:
+                decisions.enter === "stage-then-send" || decisions.enter === "stage"
+                    ? decisions.enter
+                    : d.decisions.enter,
         },
         inbox: {
             enabled: enabled("inbox", d.inbox.enabled),

@@ -199,11 +199,16 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
 }
 
 /** Throws before calling `send` when nothing is answered and unsent. */
+/** The rows a send delivers: answered, with an answer, and not reserved by a queue. */
+export function dueDecisions(rows: DecisionRecord[]): DecisionRecord[] {
+    return rows.filter((row) => row.state === "answered" && !row.delivery?.queueId && hasAnswer(row));
+}
+
 export function deliverDecisions(
     rows: DecisionRecord[],
     send: (text: string) => void
 ): { text: string; numbers: number[] } {
-    const due = rows.filter((row) => row.state === "answered" && !row.delivery?.queueId && hasAnswer(row));
+    const due = dueDecisions(rows);
 
     if (due.length === 0) {
         throw new Error("nothing to send");
@@ -234,7 +239,7 @@ export function decisionLine(row: DecisionRecord): string {
     return `DECISION ${row.number}: ${answer}`.trimEnd();
 }
 
-function decisionLines(rows: DecisionRecord[]): string {
+export function decisionLines(rows: DecisionRecord[]): string {
     return rows.map(decisionLine).join("\n");
 }
 

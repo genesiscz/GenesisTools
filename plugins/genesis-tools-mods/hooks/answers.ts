@@ -69,6 +69,8 @@ export interface SessionAnswers {
     todos: LoggedTodo[];
     entries: LoggedEntry[];
     forms: LoggedForm[];
+    /** The message `[send]` submits now, as the CLI's `stagedSendText` builds it; absent when nothing is staged. */
+    staged?: string;
     /** When this read finished. */
     at: number;
 }
@@ -228,6 +230,7 @@ export function answersFrom(stdout: string, at = Date.now()): SessionAnswers | u
             at: timeOf(item.at),
             prompts: list(item.questions).map((question) => text(question.prompt)),
         })),
+        ...(text(parsed.staged) ? { staged: text(parsed.staged) } : {}),
         at,
     };
 }

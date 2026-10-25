@@ -35,6 +35,7 @@ import {
     sessionDecisions,
     type TranscriptScan,
 } from "./build";
+import { stagedSendText } from "./drafts";
 import { fillExcerpts } from "./excerpts";
 
 const { log } = logger.scoped("question-inbox");
@@ -220,6 +221,8 @@ export interface SessionTodo {
 export interface SessionInbox {
     sessionId: string;
     decisions: InboxDecision[];
+    /** The message `inbox send` would submit now (`stagedSendText`); absent when nothing is staged. */
+    staged?: string;
     todos: SessionTodo[];
     /** Its newest Q→A entries (messages and recorded answers), oldest first, with `readAt`. */
     entries: QaRow[];
@@ -261,9 +264,12 @@ export async function loadSessionInbox(
         .sort((a, b) => a.number - b.number);
     const waiting = forms(session).map(inboxForm);
 
+    const staged = stagedSendText(stored, session);
+
     return {
         sessionId: session,
         decisions: await decisions(session, stored),
+        ...(staged ? { staged } : {}),
         todos,
         entries: entries(session),
         forms: waiting,

@@ -808,7 +808,7 @@ function registerMods(hooks: Command): void {
                 [
                     "mods.decisions",
                     mods.decisions.enabled,
-                    `chip ${mods.decisions.chip} · open ${mods.decisions.expand}`,
+                    `chip ${mods.decisions.chip} · open ${mods.decisions.expand} · answered ${mods.decisions.history} · Enter ${mods.decisions.enter}`,
                 ],
                 ["mods.inbox", mods.inbox.enabled, `chip ${mods.inbox.chip} · open ${mods.inbox.expand}`],
                 ["mods.links", mods.links.enabled, ""],

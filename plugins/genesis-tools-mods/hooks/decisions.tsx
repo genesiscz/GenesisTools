@@ -45,6 +45,15 @@ export const DECISIONS_PANE = "genesis-decisions";
 let chat: { open: OpenDecisions; answered: Set<number> } = { open: [], answered: new Set() };
 /** Rows opened or closed against `mods.decisions.expand`. */
 const flipped = new Set<number>();
+/** The answered, done and closed decisions shown or folded against `mods.decisions.history`. */
+let historyFlipped = false;
+/**
+ * The fields whose drawn value carries a trailing zero-width mark. The engine empties a field after Enter and keeps
+ * it empty until a drawing passes a `value` different from the one drawn before; the mark flips on each Enter, so the
+ * next drawing differs and the field shows the staged text again. What the field reports is read without it.
+ */
+const marked = new Set<number>();
+const MARK = "\u2060";
 /** What each answer field holds before Enter stages it, so a redraw or a press elsewhere keeps the typed text. */
 const typed = new Map<number, string>();
 
@@ -324,6 +333,13 @@ export async function decisionsChip(
     };
 }
 
+/** `text` cut to `cells` characters with `…` where it was cut. */
+function cut(text: string, cells: number): string {
+    const chars = [...text];
+
+    return chars.length <= cells ? text : `${chars.slice(0, cells - 1).join("")}…`;
+}
+
 function tailOf(decision: ShownDecision): { text: string; color?: string } {
     const ago = decision.at ? ` · ${liveAgo(decision.at, { unit: "minute" })}` : "";
     const picked = decision.option ? `${decision.option}) ` : "";
@@ -332,7 +348,8 @@ function tailOf(decision: ShownDecision): { text: string; color?: string } {
         case "waiting":
             return { text: `waiting${ago}`, color: "yellow" };
         case "drafted":
-            return { text: `staged ${stagedText(decision)}`, color: "cyan" };
+            // The whole answer is in the field below; a long one here took the row and squeezed the title.
+            return { text: `staged ${cut(stagedText(decision), 24)}`, color: "cyan" };
         case "chat-answered":
             return { text: "answered in chat", color: "green" };
         case "answered":
@@ -350,7 +367,7 @@ function tailOf(decision: ShownDecision): { text: string; color?: string } {
 
 /** The Decisions sidebar: a summary line, the decisions by state, each opening to its options and [jump to]. */
 async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
-    const { Box, Text } = kit.ui;
+    const { Box, Button, Text } = kit.ui;
     const elements = kit.ui;
     // The mobile app draws no field yet; there an answer is staged from the options alone.
     const Input = "Input" in elements ? elements.Input : undefined;
@@ -427,48 +444,121 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
     };
 
     /**
-     * The own-answer field in a rounded border, so it reads as a field: cyan while its text is the staged answer.
-     * It keeps what was typed (`drafts`); Enter stages the text, Enter on an empty field unstages it.
+     * The own-answer field. While the ring is elsewhere it sits in a rounded border, so it reads as a field: cyan
+     * while its text is the staged answer. It keeps what was typed (`typed`); Enter stages the text, Enter on an
+     * empty field unstages it, and with `mods.decisions.enter` `stage-then-send` Enter on the staged, unchanged answer
+     * sends every staged answer (a terminal passes no Cmd+Enter to a mod's field).
+     *
+     * While the engine's Input has the keys it takes the pane's whole body width, whatever box holds it, and wraps a
+     * long text itself; inside the border it ran 6 columns over and cut the text. So with the keys the field drops
+     * its border and margin for two cyan rules across the pane. Without the keys the engine draws one cut line, so a
+     * longer answer is a Button under the field's key holding the answer wrapped over as many lines as it takes;
+     * Tab onto it brings the Input back.
      */
     const ownField = (decision: ShownDecision): RenderElement | null => {
         if (!Input) {
             return null;
         }
 
+        const key = `d${decision.n}-own`;
         const stored = decision.draft ?? "";
         const draft = typed.get(decision.n) ?? stored;
+        const unmarked = (value: string) => value.replaceAll(MARK, "");
         const isOwnStaged = stored !== "" && stored === draft;
+        const sendsOnEnter = isOwnStaged && settings.enter === "stage-then-send";
+        const isEditing = kit.isFocused === true && kit.focused === key;
+        // Inside the margin (2), the border (2) and the padding (2).
+        const inner = Math.max(10, kit.columns - 6);
+        const isLong = [...draft].length > inner;
+        const lines = isLong && !isEditing ? wrapWords(draft, inner, 40) : [];
         // Only for the status bar's line while the field has focus; Enter is the field's own.
         kit.pressables?.push({
-            key: `d${decision.n}-own`,
+            key,
             label: "answer",
-            hint: `Your own answer to DECISION ${decision.n}. Enter stages it; Enter on an empty field unstages it.`,
+            hint: sendsOnEnter
+                ? `Enter sends every staged answer now; change the text to stage it again instead.`
+                : `Your own answer to DECISION ${decision.n}. Enter stages it; Enter on an empty field unstages it.`,
             onPress: () => undefined,
         });
+        const wrapped = lines.map((line, index) => (
+            <Text key={`${key}-l${index}`} color={isOwnStaged ? "cyan" : undefined}>
+                {line}
+            </Text>
+        ));
+        const field = (
+            <Input
+                key={key}
+                value={marked.has(decision.n) ? `${draft}${MARK}` : draft}
+                placeholder="your own answer, Enter stages it"
+                submitLabel={sendsOnEnter ? "send all" : isOwnStaged ? "staged" : "stage"}
+                onInput={(value: string) => {
+                    typed.set(decision.n, unmarked(value));
+                }}
+                onSubmit={(value: string) => {
+                    const words = unmarked(value).trim();
+                    typed.set(decision.n, words);
+
+                    if (marked.has(decision.n)) {
+                        marked.delete(decision.n);
+                    } else {
+                        marked.add(decision.n);
+                    }
+
+                    if (settings.enter === "stage-then-send" && words !== "" && words === stored) {
+                        void send("send");
+                        return;
+                    }
+
+                    void stage(decision, { text: words }, key);
+                }}
+            />
+        );
+
+        if (isEditing) {
+            const rule = (side: string) => (
+                <Text key={`${key}-${side}`} color="cyan" wrap="truncate-end">
+                    {"─".repeat(Math.max(1, kit.columns))}
+                </Text>
+            );
+
+            return (
+                <Box key={`${key}-box`} flexDirection="column">
+                    {rule("top")}
+                    {/* A docked pane keeps its last column; the engine sizes the field to the column before it. */}
+                    <Box marginRight={kit.placement === "dock" ? -1 : 0}>{field}</Box>
+                    {rule("bottom")}
+                </Box>
+            );
+        }
 
         return (
             <Box
-                key={`d${decision.n}-own-box`}
+                key={`${key}-box`}
+                flexDirection="column"
+                marginLeft={2}
                 borderStyle="round"
                 borderColor={isOwnStaged ? "cyan" : undefined}
                 borderDimColor={!isOwnStaged}
                 paddingX={1}
             >
-                <Input
-                    key={`d${decision.n}-own`}
-                    value={draft}
-                    placeholder="your own answer, Enter stages it"
-                    submitLabel={isOwnStaged ? "staged" : "stage"}
-                    onInput={(value: string) => {
-                        typed.set(decision.n, value);
-                    }}
-                    onSubmit={(value: string) => {
-                        typed.set(decision.n, value.trim());
-                        void stage(decision, { text: value.trim() }, `d${decision.n}-own`);
-                    }}
-                />
+                {isLong ? (
+                    <Button key={key} plain onPress={() => undefined}>
+                        {wrapped}
+                    </Button>
+                ) : (
+                    field
+                )}
             </Box>
         );
+    };
+
+    /** The letters of the answer given: the recorded option, else letters the answer starts with (`b)`, `ac)`). */
+    const pickedOf = (decision: ShownDecision): string => {
+        if (decision.option) {
+            return decision.option;
+        }
+
+        return /^\s*([a-z]{1,4})\)/.exec(decision.answer ?? "")?.[1] ?? "";
     };
 
     const body = (decision: ShownDecision): RenderElement => {
@@ -479,52 +569,126 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
             hint: `Scrolls the transcript to where DECISION ${decision.n} was first asked.`,
             onPress: () => void jumpTo(host, `${key}-jump`, { decision: decision.n }),
         };
+        const picked = pickedOf(decision);
+        // The answer in words, when it says more than the letters picked.
+        const said = (decision.answer ?? "").replace(/^\s*[a-z]{1,4}\)\s*/, "").trim();
 
         return (
-            <Box key={`${key}-body`} flexDirection="column" marginLeft={2} marginBottom={1}>
-                {wrapWords(decision.prompt.trim() === decision.title.trim() ? "" : decision.prompt, width, 4).map(
-                    (text, index) => (
-                        <Text key={`${key}-p${index}`} dimColor wrap="truncate-end">
-                            {text}
-                        </Text>
-                    )
-                )}
-                {decision.options.map((option) => {
-                    const isStaged = (decision.draftOption ?? "").includes(option.letter);
-                    const isPicked = decision.option === option.letter;
-                    const mark = isStaged ? "● " : isPicked ? "✓ " : "  ";
-                    const star = decision.recommended === option.letter ? " (recommended)" : "";
-                    const label = `${mark}${option.letter}) ${option.text}${star}`;
-
-                    if (!isWaiting(decision)) {
-                        return (
-                            <Text key={`${key}-${option.letter}`} dimColor={!isPicked} wrap="truncate-end">
-                                {label}
+            <Box key={`${key}-body`} flexDirection="column" marginBottom={1}>
+                <Box flexDirection="column" marginLeft={2}>
+                    {wrapWords(decision.prompt.trim() === decision.title.trim() ? "" : decision.prompt, width, 4).map(
+                        (text, index) => (
+                            <Text key={`${key}-p${index}`} dimColor wrap="truncate-end">
+                                {text}
                             </Text>
-                        );
-                    }
+                        )
+                    )}
+                    {decision.options.map((option) => {
+                        const isStaged = (decision.draftOption ?? "").includes(option.letter);
+                        const isPicked = picked.includes(option.letter);
+                        const mark = isStaged ? "● " : isPicked ? "✓ " : "  ";
+                        const star = decision.recommended === option.letter ? " (recommended)" : "";
+                        const label = `${mark}${option.letter}) ${option.text}${star}`;
 
-                    return listRow(kit, {
-                        key: `${key}-${option.letter}`,
-                        label,
-                        ...(isStaged ? { color: "cyan" } : {}),
-                        hint: isStaged
-                            ? `Unstages ${option.letter}) for DECISION ${decision.n}.`
-                            : `Stages ${option.letter}) as the answer to DECISION ${decision.n}; [send] sends every staged answer.`,
-                        onPress: () =>
-                            void stage(
-                                decision,
-                                { option: isStaged ? "" : option.letter },
-                                `d${decision.n}-${option.letter}`
-                            ),
-                    });
-                })}
-                {decision.answer ? <Text wrap="truncate-end">{`Answer: ${decision.answer}`}</Text> : null}
+                        if (!isWaiting(decision)) {
+                            return (
+                                <Text
+                                    key={`${key}-${option.letter}`}
+                                    color={isPicked ? "green" : undefined}
+                                    bold={isPicked}
+                                    dimColor={!isPicked}
+                                    wrap="truncate-end"
+                                >
+                                    {label}
+                                </Text>
+                            );
+                        }
+
+                        return listRow(kit, {
+                            key: `${key}-${option.letter}`,
+                            label,
+                            ...(isStaged ? { color: "cyan" } : {}),
+                            hint: isStaged
+                                ? `Unstages ${option.letter}) for DECISION ${decision.n}.`
+                                : `Stages ${option.letter}) as the answer to DECISION ${decision.n}; [send] sends every staged answer.`,
+                            onPress: () =>
+                                void stage(
+                                    decision,
+                                    { option: isStaged ? "" : option.letter },
+                                    `d${decision.n}-${option.letter}`
+                                ),
+                        });
+                    })}
+                    {!isWaiting(decision) && said
+                        ? wrapWords(`answer: ${said}`, width, 8).map((text, index) => (
+                              <Text key={`${key}-a${index}`} color="green" wrap="truncate-end">
+                                  {text}
+                              </Text>
+                          ))
+                        : null}
+                </Box>
                 {isWaiting(decision) && Input ? ownField(decision) : null}
-                {actionRow(kit, [jump])}
+                <Box marginLeft={2}>{actionRow(kit, [jump])}</Box>
             </Box>
         );
     };
+
+    /** One state group: its title and each decision's row, opening to its body. */
+    const group = (title: string, rows: ShownDecision[]): RenderElement | null => {
+        if (rows.length === 0) {
+            return null;
+        }
+
+        return (
+            <Box key={`group-${title}`} flexDirection="column" marginTop={1}>
+                {sectionTitle(kit, title, `(${rows.length})`)}
+                {rows.map((decision) => {
+                    const open = isOpen(decision);
+                    const tail = tailOf(decision);
+
+                    return (
+                        <Box key={`row-d${decision.n}`} flexDirection="column">
+                            {listRow(
+                                kit,
+                                {
+                                    key: `d${decision.n}-row`,
+                                    label: `${open ? "▾" : "▸"} D${decision.n} ${decision.title}`,
+                                    isDim: !isWaiting(decision),
+                                    hint: open
+                                        ? "Folds this decision."
+                                        : "Opens this decision: its options and [jump to].",
+                                    onPress: () => {
+                                        if (flipped.has(decision.n)) {
+                                            flipped.delete(decision.n);
+                                        } else {
+                                            flipped.add(decision.n);
+                                        }
+
+                                        host.redraw();
+                                    },
+                                },
+                                <Text color={tail.color} dimColor={!tail.color} wrap="truncate-end">
+                                    {tail.text}
+                                </Text>
+                            )}
+                            {open ? body(decision) : null}
+                        </Box>
+                    );
+                })}
+            </Box>
+        );
+    };
+
+    const [first, ...rest] = GROUPS;
+    const waitingRows = first ? list.filter((decision) => first.statuses.includes(decision.status)) : [];
+    const history = rest.map((held) => ({
+        title: held.title,
+        rows: list.filter((decision) => held.statuses.includes(decision.status)),
+    }));
+    const historyCount = history.reduce((sum, held) => sum + held.rows.length, 0);
+    const showsHistory = (settings.history === "shown") !== historyFlipped;
+    // What [send] submits, as the CLI builds it; this session's own list where the CLI is older.
+    const outgoing = read?.staged ?? message;
 
     return sidebarFrame(
         kit,
@@ -552,62 +716,25 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                     : "From this session's messages (the decision log needs the tools CLI)."
             )}
             {list.length === 0 ? dimNote(kit, "No decisions in this session yet.") : null}
-            {GROUPS.map((group) => {
-                const rows = list.filter((decision) => group.statuses.includes(decision.status));
-
-                if (rows.length === 0) {
-                    return null;
-                }
-
-                return (
-                    <Box key={`group-${group.title}`} flexDirection="column" marginTop={1}>
-                        {sectionTitle(kit, group.title, `(${rows.length})`)}
-                        {rows.map((decision) => {
-                            const open = isOpen(decision);
-                            const tail = tailOf(decision);
-
-                            return (
-                                <Box key={`row-d${decision.n}`} flexDirection="column">
-                                    {listRow(
-                                        kit,
-                                        {
-                                            key: `d${decision.n}-row`,
-                                            label: `${open ? "▾" : "▸"} D${decision.n} ${decision.title}`,
-                                            isDim: !isWaiting(decision),
-                                            hint: open
-                                                ? "Folds this decision."
-                                                : "Opens this decision: its options and [jump to].",
-                                            onPress: () => {
-                                                if (flipped.has(decision.n)) {
-                                                    flipped.delete(decision.n);
-                                                } else {
-                                                    flipped.add(decision.n);
-                                                }
-
-                                                host.redraw();
-                                            },
-                                        },
-                                        <Text color={tail.color} dimColor={!tail.color}>
-                                            {tail.text}
-                                        </Text>
-                                    )}
-                                    {open ? body(decision) : null}
-                                </Box>
-                            );
-                        })}
-                    </Box>
-                );
-            })}
-            {message ? (
+            {first ? group(first.title, waitingRows) : null}
+            {outgoing ? (
                 <Box flexDirection="column" marginTop={1}>
-                    {sectionTitle(kit, "Staged")}
-                    <Text wrap="wrap">{message}</Text>
+                    {sectionTitle(kit, "Staged", `(${staged.length})`)}
+                    {dimNote(kit, "send submits exactly this:")}
+                    {outgoing.split("\n").flatMap((line, index) =>
+                        wrapWords(line, width, 6).map((text, part) => (
+                            <Text key={`staged-${index}-${part}`} color="cyan" wrap="truncate-end">
+                                {text}
+                            </Text>
+                        ))
+                    )}
                     {actionRow(kit, [
                         {
                             key: "decisions-send",
                             label: "send",
                             isPrimary: true,
-                            hint: "Sends every staged answer as one message through this session's prompt; the decision log marks them sent.",
+                            hotkey: "s",
+                            hint: "Sends every staged answer as one message through this session's prompt (hotkey s); the decision log marks them sent.",
                             onPress: () => void send("send"),
                         },
                         {
@@ -640,6 +767,29 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                             },
                         },
                     ])}
+                </Box>
+            ) : waiting > 0 ? (
+                <Box marginTop={1}>
+                    {dimNote(kit, "Nothing staged: press an option, or type an answer and press Enter.")}
+                </Box>
+            ) : null}
+            {historyCount > 0 ? (
+                <Box flexDirection="column" marginTop={1}>
+                    {listRow(kit, {
+                        key: "decisions-history",
+                        label: showsHistory
+                            ? `▾ hide the ${historyCount} answered, done and closed`
+                            : `▸ show ${plural(historyCount, "answered decision")}`,
+                        isDim: true,
+                        hint: showsHistory
+                            ? "Folds the answered, done and closed decisions into this one row."
+                            : "Shows the answered, done and closed decisions; an opened one marks the answer given.",
+                        onPress: () => {
+                            historyFlipped = !historyFlipped;
+                            host.redraw();
+                        },
+                    })}
+                    {showsHistory ? history.map((held) => group(held.title, held.rows)) : null}
                 </Box>
             ) : null}
         </Box>

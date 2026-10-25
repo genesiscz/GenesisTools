@@ -6,7 +6,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { deliverDecisions, parseDecisionBlocks } from "../decisions/read";
 import { type DecisionRecord, postDecisions, readDecisions } from "../decisions/store";
-import { dismissDecision, draftDecision, sendDrafts } from "./drafts";
+import { dismissDecision, draftDecision, sendDrafts, stagedSendText } from "./drafts";
 
 // A decision post reads its checkout with eight `git` starts; see no-git.ts for the CI hang they caused.
 answerGitWithoutSpawning();
@@ -113,6 +113,8 @@ describe("sendDrafts", () => {
         const deps = { file, events, block: async () => null };
         await draftDecision({ session: "s", number: 1, option: "a" }, deps);
         await draftDecision({ session: "s", number: 2, text: "my own words" }, deps);
+        // The mods Decisions sidebar shows this above its [send]: it must be what the send submits.
+        const preview = stagedSendText(readDecisions(file), "s");
 
         const result = await sendDrafts(
             { session: "s", provider: "claude", inSession: true },
@@ -129,6 +131,8 @@ describe("sendDrafts", () => {
         expect(result.promoted).toEqual([1, 2]);
         expect(result.channel).toBe("prompt");
         expect(result.text).toBe("DECISION 1: a) a1\nDECISION 2: my own words");
+        expect(preview).toBe(result.text);
+        expect(stagedSendText(readDecisions(file), "s")).toBeUndefined();
         const rows = readDecisions(file);
         expect(rows.map((row) => [row.state, row.delivery?.route])).toEqual([
             ["sent", "prompt"],

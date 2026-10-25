@@ -302,9 +302,17 @@ export interface ModsConfig {
      * The Decisions sidebar (`/decisions`, the band's `decisions` chip): every decision of the session from the
      * decision log and its messages, by state, an answer staged per decision and sent in one message, and `jump to`
      * the first ask. `chip`: shown while the session has any decision, only while one waits, or never. `expand`:
-     * which rows start open: the waiting ones, all, or none.
+     * which rows start open: the waiting ones, all, or none. `history`: the answered, done and closed decisions
+     * start folded under one `show N answered` row, or shown. `enter`: Enter in an answer field stages it, and Enter
+     * again on the staged, unchanged answer sends every staged answer (`stage-then-send`), or only stages (`stage`).
      */
-    decisions: { enabled: boolean; chip: "any" | "waiting" | "off"; expand: "waiting" | "all" | "none" };
+    decisions: {
+        enabled: boolean;
+        chip: "any" | "waiting" | "off";
+        expand: "waiting" | "all" | "none";
+        history: "collapsed" | "shown";
+        enter: "stage-then-send" | "stage";
+    };
     /**
      * The Inbox sidebar (`/mod-inbox`, the band's `inbox` chip): the forms, messages, answers and todos the session
      * put in the GenesisTools inbox. `chip`: shown while it has any, only while one is unread, or never. `expand`:
@@ -515,7 +523,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
         agentModel: { enabled: false, format: "label" },
         agentRow: { enabled: false, format: "label" },
-        decisions: { enabled: false, chip: "any", expand: "waiting" },
+        decisions: { enabled: false, chip: "any", expand: "waiting", history: "collapsed", enter: "stage-then-send" },
         inbox: { enabled: false, chip: "any", expand: "none" },
         links: { enabled: false },
         git: {
@@ -1177,6 +1185,8 @@ export function mergeMods(stored: unknown): ModsConfig {
             enabled: enabled("decisions", base.decisions.enabled),
             chip: oneOf(decisions.chip, ["any", "waiting", "off"], base.decisions.chip),
             expand: oneOf(decisions.expand, ["waiting", "all", "none"], base.decisions.expand),
+            history: oneOf(decisions.history, ["collapsed", "shown"], base.decisions.history),
+            enter: oneOf(decisions.enter, ["stage-then-send", "stage"], base.decisions.enter),
         },
         inbox: {
             enabled: enabled("inbox", base.inbox.enabled),

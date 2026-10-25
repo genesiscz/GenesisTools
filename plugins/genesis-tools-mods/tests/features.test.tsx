@@ -1045,7 +1045,13 @@ test("mods settings: a value equal to the file's shipped copy follows today's de
             },
         })
     );
-    expect(sidebars.decisions).toEqual({ enabled: true, chip: "waiting", expand: "waiting" });
+    expect(sidebars.decisions).toEqual({
+        enabled: true,
+        chip: "waiting",
+        expand: "waiting",
+        history: "collapsed",
+        enter: "stage-then-send",
+    });
     expect(sidebars.inbox).toEqual({ enabled: true, chip: "unread", expand: "all" });
     expect(modsSettings(undefined).inbox).toEqual({ enabled: false, chip: "any", expand: "none" });
 });

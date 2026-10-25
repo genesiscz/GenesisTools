@@ -749,7 +749,12 @@ describe("applySetting", () => {
             enabled: false,
             chip: "waiting",
             expand: "waiting",
+            history: "collapsed",
+            enter: "stage-then-send",
         });
+        expect(set("mods.decisions.history", "shown").decisions.history).toBe("shown");
+        expect(set("mods.decisions.enter", "stage").decisions.enter).toBe("stage");
+        expect(() => set("mods.decisions.enter", "send")).toThrow("stage-then-send or stage");
         expect(() => set("mods.decisions.expand", "unread")).toThrow("waiting, all or none");
         expect(set("mods.inbox", "true").inbox).toEqual({ enabled: true, chip: "any", expand: "none" });
         expect(set("mods.inbox.expand", "unread").inbox.expand).toBe("unread");

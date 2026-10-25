@@ -257,14 +257,19 @@ checked against real use.
   while it is on) writes it into `~/.claude/settings.json`, pointing at `src/agents/bin/hook-subagent-line.ts`, and
   `disable` takes it out again. A `subagentStatusLine` of your own is left alone. Claude Code runs the command every
   5 s, so the time on a row moves in 5 s steps.
-- `mods.decisions` (`chip` `any`, `expand` `waiting`): the Decisions sidebar, opened by `/decisions` or the band's
-  `decisions 1 waiting` chip. It lists every `❓ DECISION N` of the session from the decision log (`tools question
-  inbox --session <id> --json --all-items`) and from its messages, grouped as waiting, answered, done and closed. A
-  waiting one opens to its options: a press stages an option, a field stages your own words, and `send` submits
-  `D16: a)` per decision in one message. `jump to` scrolls the transcript to where it was first asked; a row from
-  before a compaction is not drawn, so it opens the transcript search there instead (`tools claude cmux find
-  --decision`). `chip` `waiting` shows the chip only while a decision waits, `off` never; `expand` `all` or `none`
-  opens every row or none.
+- `mods.decisions` (`chip` `any`, `expand` `waiting`, `history` `collapsed`, `enter` `stage-then-send`): the
+  Decisions sidebar, opened by `/decisions` or the band's `decisions 1 waiting` chip. It lists every `❓ DECISION N`
+  of the session from the decision log (`tools question inbox --session <id> --json --all-items`) and from its
+  messages. The waiting ones come first; each opens to its options: a press stages an option, the field stages your
+  own words (a long answer grows the field over several lines). Under them, the Staged section shows the exact
+  message `send` submits (the CLI builds it, `stagedSendText`), with `send` (hotkey `s`), `put in prompt` and
+  `clear` right below. The answered, done and closed decisions follow, folded under one `show N answered` row while
+  `history` is `collapsed`; an opened one marks the picked option and shows the answer given. `jump to` scrolls the
+  transcript to where a decision was first asked; a row from before a compaction is not drawn, so it opens the
+  transcript search there instead (`tools claude cmux find --decision`). `chip` `waiting` shows the chip only while
+  a decision waits, `off` never; `expand` `all` or `none` opens every row or none. `enter` `stage-then-send`: Enter
+  on a staged, unchanged answer sends every staged answer (a terminal does not pass Cmd+Enter to a mod's field);
+  `stage` only stages.
 - `mods.inbox` (`chip` `any`, `expand` `none`): the Inbox sidebar, opened by `/mod-inbox` or the band's `inbox 2 new`
   chip. It lists what the session put in the GenesisTools inbox: the forms it waits on, the messages it sent, the
   questions and answers it recorded, and its todos. An entry opens to its text, `jump to` (the tool call that sent

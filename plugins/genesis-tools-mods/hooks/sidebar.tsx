@@ -48,6 +48,8 @@ export interface Pressable {
     color?: string;
     /** The status bar's line while the focus ring is on this Button: what a press does, as a sentence. */
     hint?: string;
+    /** One digit or lowercase letter that presses it while its site holds the keys (not while a field has them). */
+    hotkey?: string;
 }
 
 const FEEDBACK_MS = 20_000;
@@ -259,7 +261,9 @@ export function listRow(kit: Kit, row: Pressable, tail: RenderElement | null = n
             </Box>
             <Box flexGrow={1} />
             {tail ? (
-                <Box flexShrink={0} marginLeft={1}>
+                // Shrinks first: a long tail (a staged answer, a long status) once took the row and drew the label
+                // one character per line.
+                <Box flexShrink={4} minWidth={0} marginLeft={1}>
                     {tail}
                 </Box>
             ) : null}
@@ -308,6 +312,7 @@ export function actionButton(kit: Kit, action: Pressable): RenderElement {
             key={action.key}
             dimColor={action.isDim}
             {...(action.isPrimary ? ({ variant: "primary" } as const) : {})}
+            {...(action.hotkey ? { hotkey: action.hotkey } : {})}
             onPress={action.onPress}
         >
             {action.label}
