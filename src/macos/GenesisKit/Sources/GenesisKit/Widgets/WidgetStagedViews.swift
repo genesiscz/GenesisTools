@@ -95,7 +95,8 @@ struct WidgetStagedList: View {
                         model.stagedView = nil
                     }
                     .buttonStyle(.borderedProminent).disabled(chosen.isEmpty)
-                    .keyboardShortcut(.return, modifiers: [.command])
+                    // The leave question over this list owns ⌘↩ while it is shown.
+                    .keyboardShortcut(model.stagedLeavePrompt ? nil : KeyboardShortcut(.return, modifiers: [.command]))
                     .instantTooltip("Sends the checked decisions now, one message per session (⌘↩)")
                     Button("Discard checked") { model.discardStaged(chosen.map(\.sourceId)) }
                         .buttonStyle(.genHover()).disabled(chosen.isEmpty)

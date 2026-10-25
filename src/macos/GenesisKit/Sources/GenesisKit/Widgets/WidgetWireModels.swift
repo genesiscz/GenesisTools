@@ -357,9 +357,13 @@ public struct WidgetShortcutChord: Codable, Equatable, Sendable {
 }
 
 extension WidgetPreferences {
-    /// The shortcut that opens the widget, or nil while it is off.
+    /// The shortcut that opens the widget, or nil while it is off. A stored chord without ⌘, ⌥ or ⌃ would take a
+    /// plain key from every app, so the default stands in for it.
     public var openShortcutChord: WidgetShortcutChord? {
-        (openShortcutEnabled ?? true) ? openShortcut ?? .defaultOpen : nil
+        guard openShortcutEnabled ?? true else { return nil }
+        let chord = openShortcut ?? .defaultOpen
+        let required = HotkeyChord.command | HotkeyChord.option | HotkeyChord.control
+        return chord.modifiers & required != 0 ? chord : .defaultOpen
     }
 }
 

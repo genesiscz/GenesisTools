@@ -107,6 +107,8 @@ public final class WidgetShelfStore: ObservableObject {
     private var removalTimer: Task<Void, Never>?
     /// The CLI removal once the Undo ran out; teardown waits for it.
     private var removal: Task<Void, Never>?
+    /// Items whose CLI removal started and has not finished; a list read must not show them again.
+    private var removingIDs: Set<String> = []
 
     public init(
         binaryPath: String, stateRoot: String? = nil,
@@ -225,7 +227,7 @@ public final class WidgetShelfStore: ObservableObject {
                     guard !self.stopped, !Task.isCancelled else { return }
                     let snapshot = try JSONDecoder().decode(WidgetShelfSnapshot.self, from: data)
                     // A removed item stays on disk during its Undo; it stays off the list.
-                    let shown = snapshot.items.filter { $0.id != self.removed?.id }
+                    let shown = snapshot.items.filter { $0.id != self.removed?.id && !self.removingIDs.contains($0.id) }
                     if self.items != shown {
                         self.captureItems = shown.filter { $0.kind == .capture }
                         self.items = shown
@@ -506,6 +508,7 @@ public final class WidgetShelfStore: ObservableObject {
         let previous = removal
         // The request is held, not the store: a removal that runs at teardown still reaches the CLI.
         let request = request
+        removingIDs.insert(item.id)
         removal = Task { [weak self] in
             await previous?.value
             do {
@@ -514,6 +517,7 @@ public final class WidgetShelfStore: ObservableObject {
                 // Still on the shelf: say why; the list read below shows it again.
                 if let self, !self.stopped { self.report(error) }
             }
+            self?.removingIDs.remove(item.id)
             if let self, !self.stopped { self.refresh() }
         }
     }

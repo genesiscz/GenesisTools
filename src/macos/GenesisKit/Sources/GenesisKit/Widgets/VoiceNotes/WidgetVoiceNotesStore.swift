@@ -51,6 +51,8 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     private var discardTimer: Task<Void, Never>?
     /// The CLI delete of a discarded note once its Undo ran out; teardown waits for it.
     private var discardDelete: Task<Void, Never>?
+    /// Notes whose CLI delete started and has not finished; a list read must not show them again.
+    private var deletingIDs: Set<String> = []
     private var watcher: DirectoryWatcher?
     private var watchedPath: String?
     private var cached = false
@@ -137,7 +139,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
                 guard !stopped, generation == requestedGeneration else { return }
                 let snapshot = try JSONDecoder().decode(WidgetVoiceNoteSnapshot.self, from: data)
                 // A discarded note is still on disk during its Undo; it stays out of the list.
-                notes = snapshot.notes.filter { $0.id != discarded?.id }
+                notes = snapshot.notes.filter { $0.id != discarded?.id && !deletingIDs.contains($0.id) }
                 drafts = drafts.filter { id, _ in self.notes.contains { $0.id == id } || id == self.discarded?.id }
                 if selected == nil { selectedID = notes.first?.id }
                 cached = true
@@ -357,12 +359,15 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         let previous = discardDelete
         // The request is held, not the store: a delete that runs at teardown still reaches the CLI.
         let request = request
+        deletingIDs.insert(note.id)
         discardDelete = Task { [weak self] in
             await previous?.value
             do {
                 _ = try await request(["discard", note.id, "--revision", String(note.revision)])
+                self?.deletingIDs.remove(note.id)
             } catch {
                 // The recording is still on disk: show why and read the list again, so it comes back.
+                self?.deletingIDs.remove(note.id)
                 guard let self, !self.stopped else { return }
                 self.report(error)
                 self.cached = false

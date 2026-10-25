@@ -382,8 +382,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             model.requestCollapse()
             return
         }
-        let surface = peekSurface() ?? panels.keys.sorted { $0.key < $1.key }.first
-        guard let surface else { return }
+        guard let surface = peekSurface() else {
+            model.postNote("Add Agent Inbox to a visible edge to open it with the shortcut.")
+            showSettings(pageID: "widgets.modules")
+            return
+        }
         PerfLog.mark("widget.shortcut open \(surface.key)")
         model.openModule("agents", on: surface)
     }
@@ -810,7 +813,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private func handleKey(_ event: NSEvent) -> NSEvent? {
         // The alert popup never takes the keyboard, but when the widget has it (a panel of another edge is key), Esc
         // closes the popup before anything else.
-        if model.expanded == nil, model.peekItem != nil, let stroke = KeyStroke(event),
+        if model.expanded == nil, model.peekItem != nil, panels.values.contains(where: { $0.panel === event.window }),
+           let stroke = KeyStroke(event),
            WidgetKeymap.commandIDs(for: stroke, in: [.window], keymap: WidgetKeymap.shared).contains(WidgetKeymap.collapse) {
             model.dismissPeek()
             return nil

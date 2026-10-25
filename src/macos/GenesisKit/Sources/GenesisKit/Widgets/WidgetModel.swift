@@ -1353,6 +1353,9 @@ public final class WidgetModel: ObservableObject {
     /// The session list's rows in the order it draws them (its search, pins and open groups applied), written by
     /// the list as it changes. Empty: the list has not said, and the keys leave it alone.
     public var sessionListOrder: [String] = []
+    /// Whether the inbox of every session has a row the keys chose, written by that view. Without one, Return is not
+    /// the list's and reaches the focused control (Mark all read).
+    public var inboxOverviewHasFocus = false
 
     /// Whether the agents pane shows a list that takes Up, Down and Return: the inbox of every session, a session's
     /// inbox with entries, or the session list. Not the staged view, the leave question or the conversation.
@@ -1368,6 +1371,7 @@ public final class WidgetModel: ObservableObject {
     @discardableResult
     public func moveInList(_ kind: WidgetListKey.Kind) -> Bool {
         guard keyboardList else { return false }
+        if inboxOverview, kind == .open, !inboxOverviewHasFocus { return false }
         listKey = WidgetListKey(kind: kind, serial: (listKey?.serial ?? 0) + 1)
         // The inbox of every session owns its filter, grouping and highlight (WidgetInboxOverview).
         if inboxOverview { return true }

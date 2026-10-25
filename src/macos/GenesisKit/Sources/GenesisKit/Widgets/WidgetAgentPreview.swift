@@ -170,6 +170,10 @@ struct AgentWidgetPreview: View {
         // Like the row button's own popover: while it is open the edge panel must not collapse.
         .onChange(of: cmuxPanelKey) { _, key in model.cmuxPopoverOpen = key != nil }
         .onDisappear { if cmuxPanelKey != nil { model.cmuxPopoverOpen = false } }
+        // A row that leaves the list takes its popover along; its key must not hold the panel open.
+        .onChange(of: model.previewList.map(\.key)) { _, keys in
+            if let key = cmuxPanelKey, !keys.contains(key) { cmuxPanelKey = nil }
+        }
     }
 
     private var sortTooltip: String {

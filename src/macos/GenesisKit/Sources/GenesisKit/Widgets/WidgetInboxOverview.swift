@@ -42,6 +42,8 @@ struct WidgetInboxOverview: View {
                     guard let key else { return }
                     handle(key.kind, rows: drawnOrder(items), proxy: proxy)
                 }
+                .onChange(of: focusID) { _, id in model.inboxOverviewHasFocus = id != nil }
+                .onDisappear { model.inboxOverviewHasFocus = false }
         }
     }
 

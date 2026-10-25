@@ -657,10 +657,13 @@ final class WidgetInboxPolishTests: XCTestCase {
         XCTAssertEqual(WidgetModel.noteSeconds(nil, hasAction: true), 10, "a note with Undo or Send again stays 10 s")
         XCTAssertEqual(WidgetModel.noteSeconds(try prefs(#"{"noteSeconds":20}"#), hasAction: true), 20)
         XCTAssertNil(WidgetModel.noteSeconds(try prefs(#"{"noteSeconds":0}"#), hasAction: false), "0 keeps it")
-        XCTAssertEqual(try prefs(#"{}"#).openShortcutChord, .defaultOpen, "the shortcut is on, ⌃⌥⌘W, by default")
+        XCTAssertEqual(try prefs(#"{"alertSound":"Glass"}"#).openShortcutChord, .defaultOpen,
+                       "the shortcut is on, ⌃⌥⌘W, by default")
         XCTAssertNil(try prefs(#"{"openShortcutEnabled":false}"#).openShortcutChord)
         XCTAssertEqual(try prefs(#"{"openShortcut":{"keyCode":2,"modifiers":6400}}"#).openShortcutChord,
                        WidgetShortcutChord(keyCode: 2, modifiers: 6400))
+        XCTAssertEqual(try prefs(#"{"openShortcut":{"keyCode":13,"modifiers":512}}"#).openShortcutChord, .defaultOpen,
+                       "a chord with only Shift would take a plain key from every app")
     }
 
     /// The rail badge counts what waits for an answer, the hub's Inbox count; unread answers do not (R1). A lost
