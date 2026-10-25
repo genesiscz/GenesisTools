@@ -56,6 +56,8 @@ final class ClickyAudio {
         let voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)]
         let format: AVAudioFormat
         private var wired = false
+        /// The output device the next start plays on; nil keeps the engine's own choice (the system output).
+        var device: AudioDeviceID?
 
         init(engine: AVAudioEngine, voices: [(AVAudioPlayerNode, AVAudioUnitVarispeed)], format: AVAudioFormat) {
             self.engine = engine
@@ -66,6 +68,9 @@ final class ClickyAudio {
         /// Wires the voices once, then starts. The first `mainMixerNode` read creates the output unit, which waits for
         /// CoreAudio: 0.5 s on the main thread when the settings face launched (HangWatch, 2026-10-23 21:30).
         func start() throws {
+            if let device, !AudioOutputs.pin(engine, to: device) {
+                PerfLog.mark("clicky.audio.output \(device) refused")
+            }
             if !wired {
                 for (player, rate) in voices {
                     engine.attach(player)
@@ -79,6 +84,16 @@ final class ClickyAudio {
         }
     }
     private let box: EngineBox
+    private var outputDevice: AudioDeviceID?
+
+    /// Plays on `device` from the next click on. A change stops the engine, so the next click starts it on the new device.
+    func setOutput(_ device: AudioDeviceID?) {
+        guard device != outputDevice else { return }
+        outputDevice = device
+        let box = box
+        startQueue.async { box.device = device }
+        stopVoices()
+    }
     private struct PackBank {
         let reference: ClickyPackReference
         let manifestHash: String

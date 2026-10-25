@@ -56,14 +56,55 @@ public struct ClickyPreferences: Codable, Equatable {
     public var collectStats = true
     public var reduceMotion = false
     public var reduceTransparency = false
+    /// The output Clicky plays on; nil follows the system output (and its rules).
+    public var outputDeviceUID: String?
+    public var outputDeviceName: String?
+    public var outputRules: [ClickyOutputRule] = []
+    /// Offer another output when the one Clicky plays on is late by more than `delayWarningMilliseconds`.
+    public var delayWarning = true
+    public var delayWarningMilliseconds = 150
+    /// Outputs the user chose to keep although they are late: never offered again.
+    public var delayAcceptedUIDs: [String] = []
 
     public init() {}
+
+    /// Every key is optional, so preferences saved by an older build keep their values and take the new defaults.
+    public init(from decoder: Decoder) throws {
+        self.init()
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        func read<T: Decodable>(_ key: CodingKeys, into field: inout T) throws {
+            if let value = try values.decodeIfPresent(T.self, forKey: key) { field = value }
+        }
+        try read(.selectedSwitch, into: &selectedSwitch)
+        selectedPack = try values.decodeIfPresent(ClickyPackReference.self, forKey: .selectedPack)
+        try read(.volume, into: &volume)
+        try read(.releaseSounds, into: &releaseSounds)
+        try read(.randomizedPitch, into: &randomizedPitch)
+        try read(.spatialAudio, into: &spatialAudio)
+        try read(.repeatSounds, into: &repeatSounds)
+        try read(.quietHours, into: &quietHours)
+        try read(.quietStart, into: &quietStart)
+        try read(.quietEnd, into: &quietEnd)
+        try read(.excludedApplications, into: &excludedApplications)
+        try read(.visualizer, into: &visualizer)
+        try read(.notifications, into: &notifications)
+        try read(.collectStats, into: &collectStats)
+        try read(.reduceMotion, into: &reduceMotion)
+        try read(.reduceTransparency, into: &reduceTransparency)
+        outputDeviceUID = try values.decodeIfPresent(String.self, forKey: .outputDeviceUID)
+        outputDeviceName = try values.decodeIfPresent(String.self, forKey: .outputDeviceName)
+        try read(.outputRules, into: &outputRules)
+        try read(.delayWarning, into: &delayWarning)
+        try read(.delayWarningMilliseconds, into: &delayWarningMilliseconds)
+        try read(.delayAcceptedUIDs, into: &delayAcceptedUIDs)
+    }
 
     public mutating func normalize() {
         volume = volume.isFinite ? min(1, max(0, volume)) : 0.45
         quietStart = min(1439, max(0, quietStart))
         quietEnd = min(1439, max(0, quietEnd))
         excludedApplications = Array(Set(excludedApplications.filter { !$0.isEmpty })).sorted()
+        delayWarningMilliseconds = min(5000, max(20, delayWarningMilliseconds))
     }
 
     public func isQuiet(at date: Date, calendar: Calendar = .current) -> Bool {

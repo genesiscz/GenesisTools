@@ -54,6 +54,12 @@ public final class ClickyModel: ObservableObject {
     private var syncingAppearance = false
     private let log = Logger(subsystem: "dev.genesis.tools", category: "Clicky")
     private var audio: ClickyAudio?
+    /// The connected outputs and where Clicky plays, refreshed when the system output or the device list changes.
+    @Published public private(set) var outputs: [AudioOutputDevice] = []
+    @Published public private(set) var output: ClickyOutputResolution?
+    private var outputMonitor: AudioOutputMonitor?
+    /// Late outputs already offered an alternative in this run: the prompt shows once per output and launch.
+    private var delayPrompted: Set<String> = []
     private var previewGeneration = 0
     private let inputMonitor: any ClickyInputMonitoring
     private var observers: [NSObjectProtocol] = []
@@ -111,7 +117,7 @@ public final class ClickyModel: ObservableObject {
         }
         soundLibrary.install = { [weak self] reference, pack in
             guard let self else { throw ClickyPackError.invalid("Clicky is no longer available.") }
-            if self.audio == nil { self.audio = ClickyAudio() }
+            if self.audio == nil { self.makeAudio() }
             try self.audio?.install(reference: reference, pack: pack)
             self.previewGeneration &+= 1
             self.inputState.clear()
@@ -122,6 +128,8 @@ public final class ClickyModel: ObservableObject {
         }
         soundLibrary.restore(preferences.selectedPack)
         guard !previewOnly && observeSystemEvents else { return }
+        outputMonitor = AudioOutputMonitor { [weak self] in self?.refreshOutput() }
+        refreshOutput()
         let workspace = NSWorkspace.shared.notificationCenter
         for name in [
             NSWorkspace.didActivateApplicationNotification, NSWorkspace.willSleepNotification,
@@ -203,7 +211,7 @@ public final class ClickyModel: ObservableObject {
             return
         case .started: break
         }
-        if audio == nil { audio = ClickyAudio() }
+        if audio == nil { makeAudio() }
         enabled = true
         if !restoring { defaults.set(true, forKey: Self.enabledKey) }
         if preferences.collectStats && statisticsLoadError == nil {
@@ -212,6 +220,7 @@ public final class ClickyModel: ObservableObject {
             pendingStats = true
         }
         refreshContext()
+        offerFasterOutputIfLate()
         if !restoring { notify("Clicky enabled", body: "Your selected switch is \(selectedSoundName).") }
         log.notice("Input feedback activated\(restoring ? " (restored at launch)" : ""); no input content is retained")
     }
@@ -261,6 +270,8 @@ public final class ClickyModel: ObservableObject {
     }
 
     public func shutdown() {
+        outputMonitor?.stop()
+        outputMonitor = nil
         soundLibrary.stop()
         deactivate(remember: false)
         boundaryTimer?.invalidate()
@@ -446,7 +457,79 @@ public final class ClickyModel: ObservableObject {
             }
         }
         if let data = try? JSONEncoder().encode(preferences) { defaults.set(data, forKey: "clicky.preferences.v1") }
+        if previous.outputDeviceUID != preferences.outputDeviceUID || previous.outputRules != preferences.outputRules
+            || previous.delayWarning != preferences.delayWarning
+            || previous.delayWarningMilliseconds != preferences.delayWarningMilliseconds {
+            refreshOutput()
+        }
         refreshContext()
+    }
+
+    // MARK: - Output
+
+    private func makeAudio() {
+        audio = ClickyAudio()
+        audio?.setOutput(output?.effective?.id)
+    }
+
+    /// Reads the outputs again, decides where Clicky plays, and offers a faster output when that one is late.
+    public func refreshOutput() {
+        outputs = AudioOutputs.outputs()
+        let resolved = ClickyOutputRouting.resolve(preferences: preferences, outputs: outputs,
+                                                   systemID: AudioOutputs.systemDefaultID())
+        if resolved != output, let effective = resolved.effective {
+            log.notice("Output \(effective.name, privacy: .public), \(effective.delayText, privacy: .public): \(resolved.reason, privacy: .public)")
+        }
+        output = resolved
+        audio?.setOutput(resolved.effective?.id)
+        offerFasterOutputIfLate()
+    }
+
+    private var delayLimit: TimeInterval { Double(preferences.delayWarningMilliseconds) / 1000 }
+
+    private func offerFasterOutputIfLate() {
+        guard enabled, !previewOnly, preferences.delayWarning, let late = output?.effective, late.delay > delayLimit,
+              !preferences.delayAcceptedUIDs.contains(late.uid), !delayPrompted.contains(late.uid),
+              let faster = AudioOutputs.suggestion(instead: late, outputs: outputs, limit: delayLimit)
+        else { return }
+        delayPrompted.insert(late.uid)
+        ClickyDelayPrompt.shared.show(
+            late: late, suggestion: faster, reduceMotion: appearance.reduceMotion,
+            onSwitch: { [weak self] in self?.playLateOutputOn(faster, instead: late) },
+            onKeep: { [weak self] in self?.preferences.delayAcceptedUIDs.append(late.uid) })
+    }
+
+    /// The prompt's answer: a hand-picked late output is replaced; a late system output gets a rule.
+    private func playLateOutputOn(_ faster: AudioOutputDevice, instead late: AudioOutputDevice) {
+        if preferences.outputDeviceUID == late.uid {
+            pickOutput(faster)
+        } else {
+            setRule(when: late, playOn: faster)
+        }
+    }
+
+    /// nil follows the system output.
+    public func pickOutput(_ device: AudioOutputDevice?) {
+        preferences.outputDeviceUID = device?.uid
+        preferences.outputDeviceName = device?.name
+    }
+
+    public func setRule(when system: AudioOutputDevice, playOn target: AudioOutputDevice) {
+        var rules = preferences.outputRules.filter { $0.whenUID != system.uid }
+        rules.append(ClickyOutputRule(whenUID: system.uid, whenName: system.name, playOnUID: target.uid,
+                                      playOnName: target.name))
+        preferences.outputRules = rules
+    }
+
+    public func removeRule(_ id: ClickyOutputRule.ID) {
+        preferences.outputRules.removeAll { $0.id == id }
+    }
+
+    /// Late outputs the user kept are offered an alternative again.
+    public func askAgainAboutLateOutputs() {
+        preferences.delayAcceptedUIDs = []
+        delayPrompted = []
+        offerFasterOutputIfLate()
     }
 
     private func flushStatistics() {
@@ -576,7 +659,7 @@ public final class ClickyModel: ObservableObject {
     }
 
     private func playSelected(keyCode: UInt16, release: Bool, preview: Bool, pan: Float) {
-        if audio == nil { audio = ClickyAudio() }
+        if audio == nil { makeAudio() }
         do {
             let imported = try audio?.playSelected(keyCode: keyCode, release: release, preview: preview,
                                                    preferences: preferences, pan: pan) ?? false
@@ -594,7 +677,7 @@ public final class ClickyModel: ObservableObject {
     }
 
     private func play(profile: ClickySwitch, release: Bool, pan: Float) {
-        if audio == nil { audio = ClickyAudio() }
+        if audio == nil { makeAudio() }
         do {
             try audio?.play(profile: profile, release: release, preferences: preferences, pan: pan)
             if preferences.visualizer {

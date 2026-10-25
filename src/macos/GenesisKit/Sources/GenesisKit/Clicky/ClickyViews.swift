@@ -255,6 +255,7 @@ private struct ClickySettingsPageContent: View {
                 }
             }
             ClickySoundLibraryView(model: model, library: model.soundLibrary)
+            ClickyOutputCard(model: model)
             card("Sound behavior") {
                 setting(
                     "Key release sounds", detail: "A separate sound when each key comes back up.",
