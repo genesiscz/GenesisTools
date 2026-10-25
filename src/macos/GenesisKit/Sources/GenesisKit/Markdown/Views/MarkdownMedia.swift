@@ -222,6 +222,9 @@ final class VaultMediaIndex {
 
     var attachmentFolder: String? { snapshot.attachmentFolder }
 
+    /// False until the first scan has finished: a name-only reference that misses now may still be found.
+    var isReady: Bool { builtAt != nil }
+
     /// Never reads the filesystem on the caller's queue. Concurrent requests share one scan;
     /// callbacks run on the main queue after the complete snapshot has been published.
     func refreshIfNeeded(now: Date = Date(), completion: @escaping () -> Void) {
@@ -337,7 +340,14 @@ final class MarkdownMediaRegistry {
         var map: [String: [String: String]] = [:]
         for ref in references where map[ref.key] == nil {
             guard let url = MarkdownMedia.resolve(ref.key, in: context, index: index),
-                  let kind = MarkdownMedia.kind(ofExtension: url.pathExtension) else { continue }
+                  let kind = MarkdownMedia.kind(ofExtension: url.pathExtension) else {
+                // The vault scan is still running and will render again: a miss now is no answer yet, so the page
+                // draws a quiet placeholder instead of "not found" (a pending lookup never shows its negative answer).
+                if let index, !index.isReady, onIndexReady != nil {
+                    map[ref.key] = ["kind": "pending", "name": (ref.key as NSString).lastPathComponent]
+                }
+                continue
+            }
             let token = nextTokens[url.path] ?? tokenByPath[url.path] ?? UUID().uuidString.lowercased()
             nextTokens[url.path] = token
             next[token] = Entry(url: url, kind: kind, context: context)

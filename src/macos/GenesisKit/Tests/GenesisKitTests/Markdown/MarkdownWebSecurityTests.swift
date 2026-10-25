@@ -454,7 +454,8 @@ final class MarkdownWebSecurityTests: XCTestCase {
         let context = MarkdownMedia.Context(folder: v.note.deletingLastPathComponent(), vaultRoot: v.vault)
         var staleCalls = 0
         let first = registry.update(markdown: "![[by-name.png]]", context: context) { staleCalls += 1 }
-        XCTAssertTrue(first.isEmpty, "the first render returns while the walk is blocked")
+        XCTAssertEqual(first["by-name.png"]?["kind"], "pending",
+                       "the first render returns while the walk is blocked, with no negative answer yet")
         await fulfillment(of: [started], timeout: 3)
         XCTAssertTrue(index.lookup("by-name.png").isEmpty, "lookup reads only the available cache")
         let ready = expectation(description: "latest document notified")

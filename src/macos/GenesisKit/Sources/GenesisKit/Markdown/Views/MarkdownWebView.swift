@@ -225,6 +225,7 @@ struct MarkdownWebView: NSViewRepresentable {
     /// (`MarkdownWebSpare.recycle`), so the next tab switch renders into a loaded page instead of building one.
     static func dismantleNSView(_ web: WKWebView, coordinator: Coordinator) {
         coordinator.renderReady = nil
+        coordinator.hideNotice()
         coordinator.web = nil
         if coordinator.parent.proxy?.web === web {
             coordinator.parent.proxy?.web = nil
@@ -301,9 +302,12 @@ struct MarkdownWebView: NSViewRepresentable {
             c.lastDiffMarks = diffMarks
             c.applyDiffMarks()
         }
-        if c.lastScrollTarget != scrollTarget, let t = scrollTarget, !t.isEmpty {
+        // nil is remembered too, so the same heading asked for again after a reset jumps again.
+        if c.lastScrollTarget != scrollTarget {
             c.lastScrollTarget = scrollTarget
-            c.eval("window.gnScrollToSlug(\(Self.jsString(MarkdownBlocks.slugify(t))))")
+            if let t = scrollTarget, !t.isEmpty {
+                c.scrollToHeading(t)
+            }
         }
         if c.lastHighlightToken != highlightToken {
             c.lastHighlightToken = highlightToken
@@ -336,6 +340,12 @@ struct MarkdownWebView: NSViewRepresentable {
         guard let documentURL, documentURL.isFileURL else { return nil }
         let vault = vaultRoot.flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
         return MarkdownMedia.Context(folder: documentURL.deletingLastPathComponent(), vaultRoot: vault)
+    }
+
+    /// A picture the page loads from the web (`https:`), which the viewer never opens.
+    static func isRemoteSource(_ src: String) -> Bool {
+        let lower = src.trimmingCharacters(in: .whitespaces).lowercased()
+        return lower.hasPrefix("https:") || lower.hasPrefix("http:")
     }
 
     static func jsString(_ s: String) -> String {
@@ -425,6 +435,11 @@ struct MarkdownWebView: NSViewRepresentable {
         var lastLineHighlight: LineHighlight?
         var lastGitMarks: [GitMark] = []
         var lastDiffMarks: [DiffMark] = []
+        /// The notice over the page (`MarkdownPageNotice`), and what it shows.
+        var noticeHost: MarkdownPageNoticeHost?
+        var currentNotice: MarkdownPageNotice?
+        var noticeToken = 0
+        var noticeFrameWatch: NSObjectProtocol?
 
         func applyDiffMarks() {
             eval("window.gnDiff([\(lastDiffMarks.map(\.json).joined(separator: ","))])")
@@ -527,11 +542,17 @@ struct MarkdownWebView: NSViewRepresentable {
             let mediaJSON = (try? JSONSerialization.data(withJSONObject: map)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
             web?.evaluateJavaScript(
                 "window.gnRender(\(MarkdownWebView.jsString(body)),\(props),\(editable),\(vocabulary),\(mediaJSON),\(parent.lineNumbers),\(tag))"
-            ) { [weak self] _, error in
+            ) { [weak self] result, error in
                 if let error {
                     MarkdownWebView.report("render \(tag) call failed: \(error.localizedDescription)")
                 } else {
                     self?.renderReady?()
+                    // A render that drew takes a failure notice away (Retry worked, or the text was fixed).
+                    if (result as? String) == "ok" {
+                        MainActor.assumeIsolated {
+                            if self?.currentNotice?.kind == .failure { self?.hideNotice() }
+                        }
+                    }
                 }
             }
             confirmRender(tag)
@@ -578,6 +599,9 @@ struct MarkdownWebView: NSViewRepresentable {
                     }
                     guard self.resends < 3, let markdown = self.lastMarkdown else {
                         MarkdownWebView.report("render \(tag) never reached the page (it has \(arrived)), giving up")
+                        MainActor.assumeIsolated {
+                            self.show(.failure("Render \(tag) never reached the page after 3 sends (the page has \(arrived))."))
+                        }
                         return
                     }
                     self.resends += 1
@@ -591,12 +615,37 @@ struct MarkdownWebView: NSViewRepresentable {
         /// is sent again once it is ready.
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             ready = false
+            processEnds += 1
+            // A page whose process ends again before it ever got ready would only loop: the reader gets Retry.
+            guard processEnds < 2 else {
+                MarkdownWebView.report("web process ended again before the page was ready, giving up")
+                MainActor.assumeIsolated {
+                    show(.failure("The page's web process ended twice before the page was ready."))
+                }
+                return
+            }
             MarkdownWebView.report("web process ended, reloading the page")
             webView.loadHTMLString(MarkdownWebView.template, baseURL: URL(string: "\(MarkdownWebView.assetScheme)://asset/"))
             armReadyWatchdog()
         }
 
         private var watchdogReloads = 0
+        /// Web process ends since the page was last ready.
+        private var processEnds = 0
+
+        /// Retry on the failure notice: the template again, from a clean count, and the text once it is ready.
+        @MainActor
+        func retryPage() {
+            hideNotice()
+            guard let web else { return }
+            watchdogReloads = 0
+            processEnds = 0
+            resends = 0
+            ready = false
+            MarkdownWebView.report("retry: reloading the page")
+            web.loadHTMLString(MarkdownWebView.template, baseURL: URL(string: "\(MarkdownWebView.assetScheme)://asset/"))
+            armReadyWatchdog()
+        }
 
         /// A page that is not ready 5 s after it started loading is loaded again, at most twice.
         func armReadyWatchdog() {
@@ -604,6 +653,9 @@ struct MarkdownWebView: NSViewRepresentable {
                 guard let self, !self.ready, let web = self.web else { return }
                 guard self.watchdogReloads < 2 else {
                     MarkdownWebView.report("page still not ready after \(self.watchdogReloads) reloads")
+                    MainActor.assumeIsolated {
+                        self.show(.failure("The page was not ready after \(self.watchdogReloads) reloads of 5 s each."))
+                    }
                     return
                 }
                 self.watchdogReloads += 1
@@ -618,6 +670,7 @@ struct MarkdownWebView: NSViewRepresentable {
         func becameReady(_ via: String) {
             guard !ready else { return }
             ready = true
+            processEnds = 0
             if let vars = lastCSSVariables {
                 applyTheme(vars)
             }
@@ -643,8 +696,15 @@ struct MarkdownWebView: NSViewRepresentable {
             // A [[Note#Heading]] click opens a new pane: its target arrived
             // before the page was ready and would otherwise be dropped.
             if let t = lastScrollTarget, !t.isEmpty {
-                eval("window.gnScrollToSlug(\(MarkdownWebView.jsString(MarkdownBlocks.slugify(t))))")
+                scrollToHeading(t)
             }
+        }
+
+        /// A heading by its text or its slug (`examples-1` for the second "Examples"). The page names a heading it
+        /// does not have (`deadAnchor`), so the click that asked for it gets an answer.
+        func scrollToHeading(_ target: String) {
+            let label = target.replacingOccurrences(of: MarkdownOutline.repeatMark, with: "")
+            eval("window.gnScrollToSlug(\(MarkdownWebView.jsString(MarkdownBlocks.slugify(target))),\(MarkdownWebView.jsString(label)))")
         }
 
         // JS bridge.
@@ -662,7 +722,21 @@ struct MarkdownWebView: NSViewRepresentable {
                 func n(_ key: String) -> CGFloat { CGFloat(r[key] as? Double ?? 0) * zoom }
                 parent.onGitMark?(index, NSRect(x: n("x"), y: n("y"), width: max(4, n("w")), height: max(4, n("h"))))
             case "renderError":
-                MarkdownWebView.report("render failed: \(body["message"] as? String ?? "?") \(body["stack"] as? String ?? "")")
+                let message = body["message"] as? String ?? "?"
+                let stack = body["stack"] as? String ?? ""
+                MarkdownWebView.report("render failed: \(message) \(stack)")
+                MainActor.assumeIsolated { show(.failure(stack.isEmpty ? message : "\(message)\n\(stack)")) }
+            case "deadAnchor":
+                let label = (body["label"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? body["slug"] as? String ?? ""
+                MainActor.assumeIsolated { show(.noHeading(label)) }
+            case "image.refused":
+                let src = body["src"] as? String ?? ""
+                MainActor.assumeIsolated { show(MarkdownWebView.isRemoteSource(src) ? .remotePicture(src) : .pictureGone) }
+            case "propsRemoved":
+                let name = body["key"] as? String ?? ""
+                let notice: MarkdownPageNotice = (body["item"] as? String).map { .itemRemoved($0, from: name) }
+                    ?? .propertyRemoved(name)
+                MainActor.assumeIsolated { show(notice) }
             case "pageError":
                 MarkdownWebView.report("page error line \(body["line"] as? Int ?? 0): \(body["message"] as? String ?? "?")")
             case "scroll":
@@ -672,9 +746,19 @@ struct MarkdownWebView: NSViewRepresentable {
             case "section":
                 if let slug = body["slug"] as? String { parent.onActiveSection(slug) }
             case "openurl":
-                if let s = body["url"] as? String, let url = MarkdownWebView.externalURL(s) { NSWorkspace.shared.open(url) }
+                guard let s = body["url"] as? String else { break }
+                if let url = MarkdownWebView.externalURL(s) {
+                    NSWorkspace.shared.open(url)
+                } else {
+                    MainActor.assumeIsolated { show(.blockedLink(s)) }
+                }
             case "openrel":
-                if let href = body["href"] as? String, MarkdownWebView.isLocalHref(href) { parent.onRelativeLink?(href) }
+                guard let href = body["href"] as? String, MarkdownWebView.isLocalHref(href) else { break }
+                if let open = parent.onRelativeLink {
+                    open(href)
+                } else {
+                    MainActor.assumeIsolated { show(.noFileLinks) }
+                }
             case "json":
                 // Only a token this render registered from the document's own references.
                 guard let token = body["token"] as? String else { break }
@@ -896,7 +980,13 @@ img{max-width:100%;height:auto;border-radius:6px;}
 .dd-md-embed-stub{display:inline-flex;gap:8px;align-items:center;background:var(--dd-bg-panel);
   border:1px dashed var(--dd-border-strong);border-radius:6px;padding:2px 10px;color:var(--dd-text-dim);font-size:.9em;}
 .dd-md-embed-icon{color:var(--dd-accent);}
-.gn-img-missing{opacity:.7;border-style:dashed;}
+.gn-img-missing{opacity:.85;border-style:dashed;}
+#gn-article.gn-is-empty::after{content:"This note is empty.";display:block;color:var(--dd-text-dim);font-style:italic;}
+.gn-img-pending{display:inline-block;min-width:120px;min-height:64px;border-radius:6px;background:var(--dd-bg-panel);vertical-align:middle;}
+#gn-article img[data-gn-img]{cursor:zoom-in;}
+#gn-article img[data-gn-img]:focus-visible{outline:2px solid var(--dd-accent);outline-offset:2px;}
+a.dd-md-embed-stub{cursor:pointer;}
+a.dd-md-embed-stub:hover{border-color:var(--dd-accent);color:var(--dd-accent);}
 .gn-json-chip{display:inline-flex;gap:6px;align-items:center;background:var(--dd-bg-panel);border:1px solid var(--dd-border);
   border-radius:6px;padding:1px 8px;color:var(--dd-text);font:inherit;font-size:.92em;cursor:pointer;text-decoration:none;}
 .gn-json-chip:hover{border-color:var(--dd-accent);color:var(--dd-accent);}
@@ -978,14 +1068,15 @@ mark.gn-find-current{background:rgba(250,204,21,.75);color:#0c0e10;}
 .gn-prop-value .gn-chip{display:inline-flex;align-items:center;gap:3px;background:var(--dd-bg-elevated);border:1px solid var(--dd-border);
   border-radius:4px;padding:1px 6px;font-size:.92em;color:var(--dd-text);max-width:100%;}
 .gn-prop-tags .gn-chip{background:var(--dd-tag-bg);color:var(--dd-tag-text);border-color:rgba(94,234,212,.18);border-radius:999px;}
-.gn-chip-x{cursor:pointer;color:var(--dd-text-faint);margin-left:2px;line-height:1;}
-.gn-chip-x:hover{color:var(--dd-text);}
+.gn-chip-x{cursor:pointer;color:var(--dd-text-faint);margin:-3px -5px -3px 0;padding:3px 5px;border:0;border-radius:4px;background:transparent;font:inherit;line-height:1;}
+.gn-chip-x:hover,.gn-chip-x:focus-visible{color:var(--dd-text);background:rgba(127,127,127,.18);}
+.gn-chip-x:focus-visible{outline:1px solid var(--dd-accent);outline-offset:0;}
 .gn-prop-value .gn-chip-in{flex:1 1 80px;}
 .gn-prop-value a{border-bottom:1px dashed var(--dd-link-underline);}
-.gn-prop-remove{flex:none;opacity:0;border:0;background:transparent;color:var(--dd-text-faint);cursor:pointer;font-size:15px;line-height:1;padding:3px 5px;border-radius:4px;}
-.gn-prop:hover .gn-prop-remove{opacity:1;} .gn-prop-remove:hover{color:var(--dd-text);background:var(--dd-bg-elevated);}
+.gn-prop-remove{flex:none;opacity:0;border:0;background:transparent;color:var(--dd-text-faint);cursor:pointer;font-size:15px;line-height:1;padding:4px 7px;min-width:24px;min-height:24px;border-radius:4px;}
+.gn-prop:hover .gn-prop-remove,.gn-prop:focus-within .gn-prop-remove{opacity:1;} .gn-prop-remove:hover{color:var(--dd-text);background:var(--dd-bg-elevated);}
+.gn-prop-remove:focus-visible{outline:1px solid var(--dd-accent);outline-offset:-1px;}
 .gn-props-add{margin:4px 0 0 4px;border:0;background:transparent;color:var(--dd-text-faint);cursor:pointer;font:inherit;font-size:.92em;padding:3px 6px;border-radius:4px;}
-.gn-render-error{margin:24px 0;padding:12px 14px;border:1px solid rgba(248,113,113,.5);border-radius:8px;background:rgba(248,113,113,.08);color:var(--dd-text);font-size:.95em;}
 #gn-git-layer{position:absolute;left:0;top:0;width:0;height:0;pointer-events:none;z-index:2;}
 .gn-git-bar{position:absolute;width:3px;border:0;padding:0;margin:0;border-radius:2px;pointer-events:auto;cursor:pointer;}
 .gn-git-bar:focus-visible{outline:2px solid var(--dd-text);outline-offset:4px;}
@@ -1025,6 +1116,8 @@ h1:hover > .gn-anchor,h2:hover > .gn-anchor,h3:hover > .gn-anchor,h4:hover > .gn
 #gn-toast{position:absolute;z-index:60;pointer-events:none;padding:2px 8px;border-radius:6px;transform:translateY(-50%);
   font:600 11.5px/1.5 var(--dd-sans);color:var(--dd-bg);background:var(--dd-accent);opacity:0;transition:opacity .15s ease-out;}
 #gn-toast.gn-on{opacity:1;}
+/* Read by VoiceOver only: what a button did ("Copied"). */
+#gn-live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;}
 .gn-code{margin:1.15em 0;background:var(--dd-code-bg);border:1px solid var(--dd-border);border-radius:8px;overflow:hidden;}
 .gn-code > pre{margin:0;border:0;border-radius:0;}
 .gn-code-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;height:30px;padding:0 6px 0 14px;
@@ -1053,7 +1146,7 @@ body.gn-nogrips .gn-sticky-in{max-width:none;}
 /* A jump leaves the bar's height free above the heading, so the bar never covers it. */
 body.gn-sticky-on h1,body.gn-sticky-on h2,body.gn-sticky-on h3,body.gn-sticky-on h4,body.gn-sticky-on h5,body.gn-sticky-on h6{
   scroll-margin-top:calc(var(--gn-sticky-h) + 12px);}
-@media (prefers-reduced-motion:reduce){.gn-anchor,#gn-toast,.gn-code-copy,#gn-sticky{transition:none;}}
+@media (prefers-reduced-motion:reduce){.gn-anchor,#gn-toast,.gn-code-copy,#gn-sticky,details > summary::before{transition:none;}}
 @media (prefers-reduced-transparency:reduce){#gn-sticky{background:var(--dd-bg);-webkit-backdrop-filter:none;backdrop-filter:none;}}
 @media print{#gn-sticky,#gn-toast,.gn-anchor,.gn-code-copy{display:none !important;}}
 body.gn-export #gn-sticky,body.gn-export #gn-toast,body.gn-export .gn-anchor,body.gn-export .gn-code-copy{display:none !important;}
@@ -1061,7 +1154,7 @@ body.gn-export #gn-sticky,body.gn-export #gn-toast,body.gn-export .gn-anchor,bod
 </head>
 <body>
 <div id="gn-column"><div class="gn-grip gn-grip-l" role="separator" aria-orientation="vertical" aria-label="Reading width" aria-keyshortcuts="ArrowLeft ArrowRight Enter" tabindex="0"></div><article id="gn-article"></article><div class="gn-grip gn-grip-r" role="separator" aria-orientation="vertical" aria-label="Reading width" aria-keyshortcuts="ArrowLeft ArrowRight Enter" tabindex="0"></div></div>
-<nav id="gn-sticky" aria-label="Current section"><div class="gn-sticky-in"></div></nav><div id="gn-toast" role="status" aria-live="polite"></div>
+<nav id="gn-sticky" aria-label="Current section"><div class="gn-sticky-in"></div></nav><div id="gn-toast" role="status" aria-live="polite"></div><div id="gn-live" role="status" aria-live="polite"></div>
 <script nonce="__GN_NONCE__">
 // mermaid.min.js (UMD) already set globalThis.mermaid synchronously above.
 if(window.mermaid){
@@ -1080,6 +1173,10 @@ if(window.mermaid){
 (function(){
 function gnEsc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function gnSlug(s){return String(s).toLowerCase().replace(/[^a-z0-9\s-]/g,'').trim().replace(/\s+/g,'-');}
+// Heading ids are unique per render: the second "Examples" is examples-1, the third examples-2, and a suffix
+// already taken moves on. MarkdownBlocks.uniqueSlugs does the same for the outline, so a row names one heading.
+var gnSlugSeen={};
+function gnUniqueSlug(s){var c=s,n=0;while(Object.prototype.hasOwnProperty.call(gnSlugSeen,c)){n++;c=s+'-'+n;}gnSlugSeen[c]=1;return c;}
 function gnPost(m){try{window.webkit.messageHandlers.bridge.postMessage(m);}catch(e){}}
 var HLJS_ALIAS={ts:"typescript",tsx:"typescript",js:"javascript",jsx:"javascript",sh:"bash",shell:"bash",zsh:"bash",yml:"yaml",rb:"ruby",py:"python",rs:"rust",toml:"ini",conf:"ini",text:"plaintext",log:"plaintext"};
 var GN_ALIAS={note:"note",abstract:"abstract",summary:"abstract",tldr:"abstract",info:"info",todo:"todo",
@@ -1108,7 +1205,7 @@ var gnValidateLink=md.validateLink;md.validateLink=function(url){return /^file:/
 md.renderer.rules.heading_open=function(tokens,idx,options,env,self){
   var inline=tokens[idx+1];
   var text=(inline&&inline.content)?inline.content:'';
-  tokens[idx].attrSet('id',gnSlug(text));
+  tokens[idx].attrSet('id',gnUniqueSlug(gnSlug(text)));
   return self.renderToken(tokens,idx,options);
 };
 // A file shown as one code block (json, yaml, a source file, a log) numbers
@@ -1184,9 +1281,12 @@ md.renderer.rules.wikilink=function(tokens,idx){
       +(size?' width="'+size[1]+'"'+(size[2]?' height="'+size[2]+'"':''):'')+'>';
   }
   if(hit&&hit.kind==='json')return gnJSONChip(hit,meta.alias||meta.target);
+  if(meta.embed&&hit&&hit.kind==='pending')return gnPendingHTML(meta.target);
+  if(meta.embed&&GN_IMG_EXT.test(meta.target))return gnMissingImage(meta.target).outerHTML;
   if(meta.embed){
-    var missing=GN_IMG_EXT.test(meta.target)?' gn-img-missing" title="Not found: '+gnEsc(meta.target):'';
-    return '<span class="dd-md-embed-stub'+missing+'" data-target="'+gnEsc(meta.target)+'"><span class="dd-md-embed-icon">⧉</span> '+gnEsc(label)+'</span>';
+    // `![[Other note]]`: drawn as a stub, and a click opens the note like its wikilink.
+    var eref=meta.target+(meta.heading?'#'+meta.heading:'');
+    return '<a href="#" class="dd-wikilink dd-md-embed-stub" data-wikilink="'+gnEsc(eref)+'" title="Open '+gnEsc(meta.target)+'"><span class="dd-md-embed-icon" aria-hidden="true">⧉</span> '+gnEsc(label)+'</a>';
   }
   var ref=meta.target+(meta.heading?'#'+meta.heading:'');
   return '<a href="#" class="dd-wikilink" data-wikilink="'+gnEsc(ref)+'">'+gnEsc(label)+'</a>';
@@ -1288,9 +1388,16 @@ function gnJSONChip(hit,label){
   return '<button type="button" class="gn-json-chip" aria-expanded="false" data-gn-json="'+gnEsc(hit.token)+'" title="'+gnEsc(hit.name)+'">'
     +'<span class="gn-json-icon">{ }</span> '+gnEsc(label||hit.name)+'</button>';
 }
-function gnMissingImage(ref,alt){
-  var s=document.createElement('span');s.className='dd-md-embed-stub gn-img-missing';s.title='Not found: '+ref;
-  s.innerHTML='<span class="dd-md-embed-icon">⧉</span> ';s.appendChild(document.createTextNode(alt||ref));return s;
+// A picture that is not there says so in its own words, not only in a tooltip, so VoiceOver reads it too.
+function gnMissingImage(ref,alt,why){
+  var text=(why||'Picture not found')+': '+(alt||ref);
+  var s=document.createElement('span');s.className='dd-md-embed-stub gn-img-missing';s.title=ref;
+  s.setAttribute('role','img');s.setAttribute('aria-label',text);
+  s.innerHTML='<span class="dd-md-embed-icon" aria-hidden="true">⧉</span> ';s.appendChild(document.createTextNode(text));return s;
+}
+// The vault scan has not answered yet: a quiet box, no "not found", until Swift renders again.
+function gnPendingHTML(ref){
+  return '<span class="gn-img-pending" role="img" aria-label="Loading picture '+gnEsc(ref)+'"></span>';
 }
 function gnApplyMedia(frag){
   var imgs=frag.querySelectorAll('img');var viewable=0;
@@ -1299,9 +1406,18 @@ function gnApplyMedia(frag){
     img.removeAttribute('data-gn-ref');img.removeAttribute('srcset');img.removeAttribute('data-gn-img');
     var hit=gnMedia[gnMediaKey(ref)];
     if(hit&&hit.kind==='image'){img.setAttribute('src',hit.src);}
+    else if(hit&&hit.kind==='pending'){var tp=document.createElement('template');tp.innerHTML=gnPendingHTML(ref);img.parentNode.replaceChild(tp.content.firstChild,img);continue;}
     else if(!/^(https?:|data:image\/)/i.test(ref.trim())){img.parentNode.replaceChild(gnMissingImage(ref,img.getAttribute('alt')),img);continue;}
+    // A file over the size limit, one deleted since the render, a web picture that does not load: the pill
+    // with the cause, never the browser's broken-picture glyph.
+    // The element stays (hidden), so the page keeps what the note wrote.
+    (function(im,r){im.addEventListener('error',function(){if(!im.parentNode||im.gnFailed)return;im.gnFailed=true;
+      im.style.display='none';im.parentNode.insertBefore(gnMissingImage(r,im.getAttribute('alt'),'Picture could not be loaded'),im.nextSibling);});})(img,ref);
     // The image viewer opens only what the page loads itself: a registered vault picture or an embedded one.
-    if(/^(gnmedia:|data:image\/)/i.test(img.getAttribute('src')||''))img.setAttribute('data-gn-img',String(viewable++));
+    // Return or Space opens it too, so the keyboard and VoiceOver reach it.
+    if(/^(gnmedia:|data:image\/)/i.test(img.getAttribute('src')||'')){img.setAttribute('data-gn-img',String(viewable++));
+      img.setAttribute('tabindex','0');img.setAttribute('role','button');
+      img.setAttribute('aria-label','Open picture'+((img.getAttribute('alt')||'').trim()?' '+img.getAttribute('alt').trim():''));}
     // `![caption|300](x.png)`: Obsidian's size suffix on the alt text.
     var alt=img.getAttribute('alt')||'';var size=/\|\s*(\d+)(?:x(\d+))?\s*$/.exec(alt);
     if(size){img.setAttribute('alt',alt.slice(0,size.index).trim());img.setAttribute('width',size[1]);if(size[2])img.setAttribute('height',size[2]);}
@@ -1353,7 +1469,12 @@ window.gnShowJSON=function(token,text){
 var GN_SCHEME=/^[a-z][a-z0-9+.-]*:/i;
 function gnWireLinks(){
   var wl=document.querySelectorAll('a.dd-wikilink[data-wikilink]');
-  for(var i=0;i<wl.length;i++){(function(a){a.addEventListener('click',function(e){e.preventDefault();var t=a.getAttribute('data-wikilink');if(t.charAt(0)==='#'){window.gnScrollToSlug(gnSlug(t.slice(1)));return;}gnPost({type:'wikilink',target:t});});})(wl[i]);}
+  for(var i=0;i<wl.length;i++){(function(a){a.addEventListener('click',function(e){e.preventDefault();var t=a.getAttribute('data-wikilink');if(t.charAt(0)==='#'){window.gnScrollToSlug(gnSlug(t.slice(1)),t.slice(1));return;}gnPost({type:'wikilink',target:t});});})(wl[i]);}
+  // `[Setup](#setup)`: the page's own heading, answered like a wikilink's when it is not there.
+  var hl=document.querySelectorAll('#gn-article a[href^="#"]:not(.dd-wikilink)');
+  for(var h=0;h<hl.length;h++){(function(a){var frag=a.getAttribute('href').slice(1);if(!frag)return;
+    a.addEventListener('click',function(e){e.preventDefault();var t=frag;try{t=decodeURIComponent(frag);}catch(x){}
+      window.gnScrollToSlug(gnSlug(t),t);});})(hl[h]);}
   var xl=document.querySelectorAll('a[href]:not([href^="#"]):not(.dd-wikilink)');
   for(var j=0;j<xl.length;j++){(function(a){a.addEventListener('click',function(e){e.preventDefault();
     var href=a.getAttribute('href').trim();var scheme=GN_SCHEME.exec(href);
@@ -1417,6 +1538,7 @@ function gnPageAfterRender(){
 }
 function gnHeadingText(h){return (h.textContent||'').replace(/\s+/g,' ').trim();}
 function gnCopied(btn){
+  var live=document.getElementById('gn-live');if(live){live.textContent='';live.textContent='Copied';}
   btn.setAttribute('data-label','Copied');btn.setAttribute('aria-label','Copied');btn.classList.add('gn-done');
   clearTimeout(btn.gnT);
   btn.gnT=setTimeout(function(){btn.setAttribute('data-label','Copy');btn.setAttribute('aria-label','Copy code');btn.classList.remove('gn-done');},1400);
@@ -1535,6 +1657,10 @@ function gnPropText(v){
   // [[Note]] inside a text value is a link, like in Obsidian.
   return gnEsc(v).replace(/\[\[([^\]\|#]+)(?:#[^\]\|]*)?(?:\|([^\]]+))?\]\]/g,function(m,t,a){return '<a href="#" class="dd-wikilink" data-wikilink="'+gnEsc(t.trim())+'">'+gnEsc(a||t.trim())+'</a>';});
 }
+// The rows before the last removal, for the Undo on Swift's "Property removed" notice.
+var gnPropsBefore=null;
+function gnPropsKeep(){gnPropsBefore=JSON.parse(JSON.stringify(gnProps));}
+window.gnPropsUndo=function(){if(!gnPropsBefore)return;gnProps=gnPropsBefore;gnPropsBefore=null;gnPropsPost();};
 function gnPropsPost(){
   var items=gnProps.map(function(p){return {key:p.key,kind:p.kind,value:p.value||'',items:p.items||[],inline:!!p.inline};});
   gnPost({type:'properties',items:items});
@@ -1598,8 +1724,10 @@ function gnPropRow(p,i){
   gnPropValue(val,p);
   row.appendChild(keyBox);row.appendChild(val);
   if(gnPropsEditable){
-    var rm=document.createElement('button');rm.className='gn-prop-remove';rm.title='Remove property';rm.textContent='×';
-    rm.addEventListener('click',function(){gnProps.splice(gnProps.indexOf(p),1);gnPropsPost();});
+    var rm=document.createElement('button');rm.type='button';rm.className='gn-prop-remove';rm.title='Remove property';rm.textContent='×';
+    rm.setAttribute('aria-label','Remove property '+(p.key||'(unnamed)'));
+    rm.addEventListener('click',function(){gnPropsKeep();gnProps.splice(gnProps.indexOf(p),1);gnPropsPost();
+      gnPost({type:'propsRemoved',key:p.key||''});});
     row.appendChild(rm);
   }
   return row;
@@ -1633,8 +1761,10 @@ function gnPropValue(val,p){
   function commit(){gnPropsPost();}
   if(p.kind==='list'||p.kind==='tags'){
     (p.items||[]).forEach(function(it,j){var c=document.createElement('span');c.className='gn-chip';
-      c.innerHTML='<span>'+(p.kind==='tags'?'#':'')+gnPropText(it)+'</span><span class="gn-chip-x" title="Remove">×</span>';
-      c.querySelector('.gn-chip-x').addEventListener('click',function(){p.items.splice(j,1);gnPropsFocus={key:p.key,what:'.gn-chip-in'};commit();});
+      c.innerHTML='<span>'+(p.kind==='tags'?'#':'')+gnPropText(it)+'</span><button type="button" class="gn-chip-x" title="Remove">×</button>';
+      var x=c.querySelector('.gn-chip-x');x.setAttribute('aria-label','Remove '+(p.kind==='tags'?'tag ':'')+it);
+      x.addEventListener('click',function(){gnPropsKeep();p.items.splice(j,1);gnPropsFocus={key:p.key,what:'.gn-chip-in'};commit();
+        gnPost({type:'propsRemoved',key:p.key||'',item:String(it)});});
       val.appendChild(c);});
     if(!ro){var inp=document.createElement('input');inp.type='text';inp.className='gn-chip-in';inp.placeholder=p.items&&p.items.length?'':(p.kind==='tags'?'Add tag…':'Add item…');
       inp.setAttribute('spellcheck','false');
@@ -1657,7 +1787,8 @@ function gnPropValue(val,p){
       inp.addEventListener('keydown',function(e){
         if(gnSugKey(e))return;
         if(e.key==='Enter'||e.key===','){e.preventDefault();addItem(typed(),true);}
-        else if(e.key==='Backspace'&&!inp.value&&p.items&&p.items.length){p.items.pop();gnPropsFocus={key:p.key,what:'.gn-chip-in'};commit();}});
+        else if(e.key==='Backspace'&&!inp.value&&p.items&&p.items.length){gnPropsKeep();var gone=p.items.pop();gnPropsFocus={key:p.key,what:'.gn-chip-in'};commit();
+          gnPost({type:'propsRemoved',key:p.key||'',item:String(gone)});}});
       inp.addEventListener('blur',function(){addItem(typed(),false);});
       val.appendChild(inp);}
     return;
@@ -1764,6 +1895,7 @@ function gnRenderNow(markdown,props,editable,vocabulary,media,lines){
   gnMedia=media||{};
   var ex=gnExtractCallouts(markdown);
   gnLineMap=ex.lineMap;
+  gnSlugSeen={};
   var html=md.render(ex.text);
   gnLineMap=null;
   for(var i=0;i<ex.callouts.length;i++){
@@ -1779,6 +1911,9 @@ function gnRenderNow(markdown,props,editable,vocabulary,media,lines){
   var nav=gnNav;
   var art=document.getElementById('gn-article');
   art.textContent='';art.appendChild(gnApplyMedia(gnSummaryMarkdown(gnSanitize(html))));
+  // An empty note says so, so it never looks like a page that failed to draw. Drawn by CSS: the find and a copy
+  // of the page never see it.
+  art.classList.toggle('gn-is-empty',!String(markdown||'').trim());
   gnRenderProps(props,editable);
   gnSugClose();
   gnWireLinks();gnWireJSON();window.gnRunMermaid();gnLastSlug='';
@@ -1805,14 +1940,15 @@ function gnRenderNow(markdown,props,editable,vocabulary,media,lines){
 // The 7th argument is Swift's tag for this render. The page keeps the last tag it got, also when the render
 // threw, so Swift can tell a render that never arrived from one that arrived and failed.
 window.gnRenderedTag='';
+// A render that throws keeps whatever the article shows (the last good text, when the throw came before it was
+// replaced) and Swift puts "This page could not be drawn." with Retry over the page; the raw error sits behind
+// its Details. The return value tells Swift the render drew ("ok"), which takes such a notice away.
 window.gnRender=function(){
   window.gnRenderedTag=String(arguments[6]||'');
-  try{gnRenderNow.apply(null,arguments);}
+  try{gnRenderNow.apply(null,arguments);return 'ok';}
   catch(e){
-    var art=document.getElementById('gn-article');
-    if(art){art.textContent='';var box=document.createElement('div');box.className='gn-render-error';
-      box.textContent='This document could not be rendered: '+String(e&&e.message||e);art.appendChild(box);}
     gnPost({type:'renderError',message:String(e&&e.message||e),stack:String(e&&e.stack||'').slice(0,2000)});
+    return 'failed';
   }
 };
 window.addEventListener('error',function(e){gnPost({type:'pageError',message:String(e.message||''),line:e.lineno||0});});
@@ -1972,14 +2108,27 @@ document.addEventListener('mousedown',function(e){
   var im=gnViewerImage(e.target);if(im)gnPost({type:'image.press',src:im.getAttribute('src')||''});
 });
 document.addEventListener('dblclick',function(e){
+  var im=gnViewerImage(e.target);
+  if(!im){
+    // A picture the viewer does not open (a web picture): the double-click still gets an answer.
+    var other=e.target&&e.target.closest?e.target.closest('#gn-article img'):null;
+    if(other){e.preventDefault();gnPost({type:'image.refused',src:other.getAttribute('src')||''});}
+    return;
+  }
+  e.preventDefault();gnOpenViewer(im);
+});
+document.addEventListener('keydown',function(e){
+  if(e.key!=='Enter'&&e.key!==' ')return;
   var im=gnViewerImage(e.target);if(!im)return;
-  e.preventDefault();
+  e.preventDefault();gnOpenViewer(im);
+});
+function gnOpenViewer(im){
   var rows=Array.prototype.slice.call(document.querySelectorAll('#gn-article tr'));
   var all=document.querySelectorAll('#gn-article img[data-gn-img]');var images=[];
   for(var i=0;i<all.length;i++){var tr=all[i].closest('tr');
     images.push({n:+all[i].getAttribute('data-gn-img'),src:all[i].getAttribute('src')||'',alt:all[i].getAttribute('alt')||'',row:tr?'r'+rows.indexOf(tr):null});}
   gnPost({type:'image.open',n:+im.getAttribute('data-gn-img'),images:images,rect:gnViewerRect(im)});
-});
+}
 window.gnImageRect=function(n){var im=document.querySelector('#gn-article img[data-gn-img="'+(+n)+'"]');return JSON.stringify(im?gnViewerRect(im):null);};
 // The page as a rendered diff (Swift's DiffMark list, new body lines plus the old text): added blocks tinted green,
 // changed ones blue with their old version above them struck through in red, removed text struck through where it
@@ -2152,7 +2301,12 @@ window.gnHighlightLines=function(a,b,mode,scroll){
 };
 window.gnScrollTo=function(px){var sc=document.scrollingElement||document.documentElement;sc.scrollTop=Math.max(0,px||0);};
 window.gnScrollTop=function(){var sc=document.scrollingElement||document.documentElement;return sc.scrollTop;};
-window.gnScrollToSlug=function(slug){var el=document.getElementById(slug);if(el){gnNav++;el.scrollIntoView({behavior:'smooth',block:'start'});}};
+// `label` is the heading as the link or the outline named it, for the answer when the note has no such heading.
+window.gnScrollToSlug=function(slug,label){
+  var el=slug?document.getElementById(slug):null;
+  if(el&&document.getElementById('gn-article').contains(el)){gnNav++;el.scrollIntoView({behavior:gnScrollBehavior(),block:'start'});return true;}
+  gnPost({type:'deadAnchor',slug:String(slug||''),label:String(label||slug||'')});return false;
+};
 // Find bar: wrap every occurrence in a <mark>, then walk them. The marks are
 // plain DOM, so a re-render drops them and Swift re-issues the search.
 // `opts` comes from Swift (MarkdownFindCommand.jsOptions): matchCase,
@@ -2290,7 +2444,7 @@ window.gnFindStep=function(delta){
   var cur=ms[gnFindIdx];
   cur.classList.add('gn-find-current');
   gnNav++;
-  cur.scrollIntoView({behavior:'smooth',block:'center'});
+  cur.scrollIntoView({behavior:gnScrollBehavior(),block:'center'});
   gnPlaceTicks();
   gnPost({type:'find',index:gnFindIdx+1,count:ms.length});
 };
@@ -2345,7 +2499,7 @@ window.gnHighlight=function(q){
   var els=document.querySelectorAll('#gn-article p,#gn-article li,#gn-article h1,#gn-article h2,#gn-article h3,#gn-article td');
   for(var i=0;i<els.length;i++){
     if((els[i].textContent||'').toLowerCase().indexOf(q)!==-1){
-      els[i].scrollIntoView({behavior:'smooth',block:'center'});
+      els[i].scrollIntoView({behavior:gnScrollBehavior(),block:'center'});
       (function(el){el.classList.remove('gn-flash');void el.offsetWidth;el.classList.add('gn-flash');
         setTimeout(function(){el.classList.remove('gn-flash');},1300);})(els[i]);
       break;

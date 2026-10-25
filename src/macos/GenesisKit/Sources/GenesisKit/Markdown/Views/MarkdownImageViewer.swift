@@ -79,6 +79,8 @@ extension MarkdownWebView.Coordinator {
             }
             guard items.contains(where: { $0.id == String(selected) }) else {
                 PerfLog.mark("imageviewer.refused n=\(selected) (not a vault or embedded picture)")
+                // Moved or deleted since the render: the double-click gets an answer.
+                self.show(.pictureGone)
                 return
             }
             ImageViewer.present(ImageViewerRequest(
