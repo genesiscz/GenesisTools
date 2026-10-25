@@ -1,4 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { isError, namedAccount } from "@app/ai-proxy/lib/sessions/accounts";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import {
@@ -8,8 +11,10 @@ import {
     sessionArgs,
     sessionEnv,
 } from "@app/claude/lib/codex-session/launch";
+import { guardSharedModel, isSessionOnlyModel, restoreSharedModel } from "@app/claude/lib/codex-session/settings-guard";
 import { type CodexModelInfo, mergeCodexModelRecords } from "@genesiscz/utils/ai/openai/codex-models";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const catalog = mergeCodexModelRecords({ cache: [] });
 const codexModel = (slug: string): CodexModelInfo | undefined => catalog.get(slug);
@@ -207,5 +212,45 @@ describe("environment and arguments", () => {
                 passthrough: ["--effort", "low", "--settings", "{}"],
             })
         ).toEqual(["--resume", "s1", "--effort", "low", "--settings", "{}"]);
+    });
+});
+
+describe("the shared settings model guard (a /model pick must not become every session's default)", () => {
+    function settingsFile(content: Record<string, unknown>): string {
+        const path = join(mkdtempSync(join(tmpdir(), "codex-model-guard-")), "settings.json");
+        writeFileSync(path, `${SafeJSON.stringify(content, null, 2)}\n`, { mode: 0o600 });
+        return path;
+    }
+
+    const read = (path: string): unknown => SafeJSON.parse(readFileSync(path, "utf8"), { strict: true });
+
+    it("knows which ids only a proxy session can run", () => {
+        expect(
+            ["codex/gpt-6-astra", "grok/grok-4.6", "opus", "claude-opus-5-5[1m]", undefined].map(isSessionOnlyModel)
+        ).toEqual([true, true, false, false, false]);
+    });
+
+    it("puts back the launch model and changes nothing else, mode included; a Claude id stays", () => {
+        const path = settingsFile({ model: "codex/gpt-6-astra", env: { KEEP: "1" } });
+
+        expect(restoreSharedModel(path, "opus")).toBe("codex/gpt-6-astra");
+        expect(read(path)).toEqual({ model: "opus", env: { KEEP: "1" } });
+        expect(statSync(path).mode & 0o777).toBe(0o600);
+        writeFileSync(path, SafeJSON.stringify({ model: "sonnet" }));
+        expect(restoreSharedModel(path, "opus")).toBeUndefined();
+        expect(read(path)).toEqual({ model: "sonnet" });
+    });
+
+    it("repairs a file that already holds a session-only id at launch, and drops the key on stop when there was none", () => {
+        const broken = settingsFile({ model: "codex/gpt-6-astra", hooks: {} });
+        const brokenGuard = guardSharedModel(broken);
+        brokenGuard.stop();
+        const clean = settingsFile({ hooks: {} });
+        const cleanGuard = guardSharedModel(clean);
+        writeFileSync(clean, SafeJSON.stringify({ model: "grok/grok-4.6", hooks: {} }));
+        cleanGuard.stop();
+
+        expect([brokenGuard.launchModel, read(broken)]).toEqual([undefined, { hooks: {} }]);
+        expect(read(clean)).toEqual({ hooks: {} });
     });
 });

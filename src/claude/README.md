@@ -150,6 +150,9 @@ session's accounts only.
   command that switches: `tools ai-proxy session <id> use --codex <account>` (also `--claude`,
   `--grok`; without a flag it lists the accounts). The next turn runs on the new account, with
   no restart; the status line keeps the launch's names.
+- **`/model` stays in the session.** Claude Code saves a `/model` pick into the shared `~/.claude/settings.json`,
+  where every other session would read `codex/…` as its default and fail. While the session runs, the launcher puts
+  the file's launch-time `model` back whenever a `codex/` or `grok/` id lands there; the session keeps its pick.
 - **Window.** `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and the compact window are the model's usable
   tokens from the Codex catalog, passed in `--settings` too, because the `env` of
   `~/.claude/settings.json` would otherwise win. `-c <percent>` changes the compact percent.

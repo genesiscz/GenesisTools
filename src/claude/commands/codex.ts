@@ -39,6 +39,7 @@ import {
     sessionArgs,
     sessionEnv,
 } from "@app/claude/lib/codex-session/launch";
+import { guardSharedModel } from "@app/claude/lib/codex-session/settings-guard";
 import { ensureOnboardingSkippedForOAuthToken } from "@app/claude/lib/launch-env";
 import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
 import { getSharedAccountsUsage } from "@app/claude/lib/usage/shared-cache";
@@ -401,6 +402,8 @@ export async function runCodexSession(
         "[codex] launching a claude codex session"
     );
 
+    // A /model pick in this session would become every other session's default through the shared settings.
+    const modelGuard = configDir ? undefined : guardSharedModel();
     const code = await spawnClaude(args, launchEnv, (pid) => {
         updateSessionRecord(sessionId, (record) => {
             record.claudePid = pid;
@@ -408,6 +411,7 @@ export async function runCodexSession(
         });
     });
 
+    modelGuard?.stop();
     closeSessionRecord(sessionId, "exited");
     process.exit(code);
 }
