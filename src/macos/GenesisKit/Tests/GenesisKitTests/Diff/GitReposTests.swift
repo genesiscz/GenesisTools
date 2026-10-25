@@ -150,23 +150,16 @@ final class GitReposTests: XCTestCase {
         XCTAssertFalse(tree.hasRepository)
     }
 
-    func testTheRevealButtonFindsTheOpenFileInItsListFolderAndPage() {
-        func entry(_ path: String, untracked: Bool = false) -> GitStatusEntry {
-            GitStatusEntry(path: path, oldPath: nil, staged: nil, unstaged: untracked ? .untracked : .modified)
-        }
-        var lists = GitRepoPanelLists.Lists()
-        lists.changed = [entry("a.md"), entry("notes/b.md")]
-        lists.groups = [GitUntrackedGroup(folder: "drafts", files: (0..<150).map { entry("drafts/\($0).md", untracked: true) })]
-        let changed = GitRepoPanel.revealTarget(path: "notes/b.md", in: lists)
-        XCTAssertEqual(changed?.key, "changes")
-        XCTAssertNil(changed?.folder)
-        XCTAssertEqual(changed?.index, 1)
-        // Folded and past the first page of 100: the folder opens and the page grows.
-        let folded = GitRepoPanel.revealTarget(path: "drafts/120.md", in: lists)
-        XCTAssertEqual(folded?.key, "folder:drafts")
-        XCTAssertEqual(folded?.folder, "drafts")
-        XCTAssertEqual(folded?.index, 120)
-        XCTAssertNil(GitRepoPanel.revealTarget(path: "clean.md", in: lists), "a file with no change has no row")
+    func testTheRevealButtonFindsTheOpenFileInItsListAndFolder() {
+        let entries = [GitStatusEntry(path: "a.md", unstaged: .modified), GitStatusEntry(path: "notes/b.md", unstaged: .modified)]
+            + (0..<150).map { GitStatusEntry(path: "drafts/\($0).md", unstaged: .untracked) }
+        let lists = GitRepoPanelLists.derive(entries, dates: [:], inputs: .init(root: URL(fileURLWithPath: "/r"), order: .name, filter: "", untracked: true))
+        XCTAssertEqual(lists.places["notes/b.md"], .init(id: "changes:notes/b.md"))
+        // Folded: the reveal opens the folder; with no pages, the row is in the table once the folder is open.
+        XCTAssertEqual(lists.places["drafts/120.md"], .init(id: "folder:drafts:drafts/120.md", folder: "drafts"))
+        let open = GitRepoPanel.rows(lists, order: .name, untracked: true, isOpen: { $0 == "drafts" }, commits: [])
+        XCTAssertTrue(open.contains { $0.id == "folder:drafts:drafts/120.md" })
+        XCTAssertNil(lists.places["clean.md"], "a file with no change has no row")
     }
 
     func testTheTreeCountsSumEachFilesLinesIntoItsFolders() {

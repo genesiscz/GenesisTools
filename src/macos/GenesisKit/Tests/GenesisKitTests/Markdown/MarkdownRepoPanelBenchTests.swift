@@ -519,14 +519,14 @@ final class RepoPanelBench {
         }
         measure("fold.open", step: 0, Settle(processQuiet: true, cap: 10), extra: ["files": largest.files.count]) { click(row.point) }
         let pages = int("MARKDOWN_REPO_BENCH_SHOW_MORE", 5)
-        var rows = GitRepoPanel.page
+        var rows = 100  // the old page size; since the table (2026-10-25) a folder lists every file and has no Show more
         for page in 0..<pages {
             let remaining = largest.files.count - rows
             guard remaining > 0, let more = findText({ $0.contains("Show") && $0.contains("more of \(remaining)") }, from: row.y) else {
                 print("repo bench: no Show more button for \(remaining) remaining rows")
                 break
             }
-            rows += GitRepoPanel.page
+            rows += 100
             measure("fold.showMore", step: page, Settle(processQuiet: true, cap: 10), extra: ["rows": min(rows, largest.files.count)]) {
                 click(more.point)
             }
@@ -627,13 +627,13 @@ final class RepoPanelBench {
         for step in 0..<3 { time("off.parseStatus", step: step, extra: ["bytes": raw.stdout.count]) { _ = GitQueries.parseStatus(text) } }
         let other = try provider.repoStatus(repoRoot, commits: 0)
         for step in 0..<3 { time("off.statusEquality", step: step) { _ = status == other } }
-        let reader = GitChangeDates().readDates
+        let reader = GitRepoPanelLists.modificationDates
         var dates: [String: Date] = [:]
         for step in 0..<3 { time("off.readDates", step: step, extra: ["paths": entries.count]) { dates = reader(repoRoot, entries.map(\.path)) } }
         var step = 0
         for order in GitChangeOrder.allCases {
             for filter in ["", env["MARKDOWN_REPO_BENCH_QUERY"] ?? "analy"] {
-                let inputs = GitRepoPanelLists.Inputs(root: repoRoot, generation: 0, datesVersion: 0, order: order, filter: filter, untracked: true)
+                let inputs = GitRepoPanelLists.Inputs(root: repoRoot, order: order, filter: filter, untracked: true)
                 time("off.derive", step: step, extra: ["order": order.rawValue, "filter": filter]) {
                     _ = GitRepoPanelLists.derive(entries, dates: dates, inputs: inputs)
                 }

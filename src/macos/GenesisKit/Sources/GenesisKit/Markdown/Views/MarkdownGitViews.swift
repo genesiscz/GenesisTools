@@ -8,10 +8,13 @@
 
 import SwiftUI
 
-/// The git sidebar beside Files and Outline.
-struct MarkdownGitSidebar: View {
+/// The git sidebar beside Files and Outline. `Equatable` on the document, the model's identity and the theme: it
+/// observes the document and the repositories itself, so a publish of the window's model (a heading report, a tab
+/// switch) no longer runs it, and with it the repository panel (+13.9 ms per publish on a vault, 2026-10-25).
+struct MarkdownGitSidebar: View, Equatable {
     @ObservedObject var doc: MarkdownDocument
-    @ObservedObject var model: MarkdownDocumentsModel
+    let model: MarkdownDocumentsModel
+    let theme: MarkdownTheme
     @ObservedObject private var repos = GitRepos.shared
     @StateObject private var fileHistory = GitHistoryModel()
     @StateObject private var repoLog = GitHistoryModel(limit: 15)
@@ -20,6 +23,10 @@ struct MarkdownGitSidebar: View {
     /// blanking the panel (Martin, 2026-10-25).
     @State private var lastRepo: GitRepoModel?
 
+    static func == (lhs: MarkdownGitSidebar, rhs: MarkdownGitSidebar) -> Bool {
+        lhs.doc === rhs.doc && lhs.model === rhs.model && lhs.theme == rhs.theme
+    }
+
     var body: some View {
         let _ = RenderProbe.hit("md.gitSidebar")
         VStack(alignment: .leading, spacing: 0) {
@@ -27,42 +34,63 @@ struct MarkdownGitSidebar: View {
                 .frame(maxWidth: .infinity)
                 .padding(8)
                 .accessibilityIdentifier("markdown-git-tab")
-            Rectangle().fill(model.theme.border).frame(height: 1)
-            ScrollView {
-                Group {
-                    switch repos.lookup(for: doc.folder) {
-                    case .pending:
-                        if tab == "repo", let lastRepo {
-                            repoPanel(lastRepo, revealPath: nil)
-                        }
-                    case .repo(let repo):
-                        if tab == "file" {
-                            fileTab
-                        } else {
-                            repoPanel(repo, revealPath: GitQueries.relative(doc.url, to: repo.root))
-                                .onAppear { lastRepo = repo }
-                                .onChange(of: repo.root) { _, _ in lastRepo = repo }
-                        }
-                    case .none:
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("This file is not in a git repository.")
-                                .font(.system(size: 11))
-                                .foregroundColor(model.theme.textSecondary)
-                            if tab == "repo", let lastRepo {
-                                Text(verbatim: "Showing \(lastRepo.root.lastPathComponent), the last repository.")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(model.theme.textSecondary)
-                                repoPanel(lastRepo, revealPath: nil)
-                            }
-                        }
-                    }
+            Rectangle().fill(theme.border).frame(height: 1)
+            if tab == "repo" {
+                // The panel's rows scroll in their own table; a scroll view around it would lay the window out again.
+                repoTab
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            } else {
+                ScrollView {
+                    fileTab
+                        .padding(8)
                 }
-                .padding(8)
             }
         }
-        .background(model.theme.page.opacity(0.6))
+        .background(theme.page.opacity(0.6))
         .onAppear { follow() }
         .onChange(of: doc.url) { _, _ in follow() }
+    }
+
+    @ViewBuilder
+    private var repoTab: some View {
+        switch repos.lookup(for: doc.folder) {
+        case .pending:
+            if let lastRepo { repoPanel(lastRepo, revealPath: nil) }
+        case .repo(let repo):
+            repoPanel(repo, revealPath: GitQueries.relative(doc.url, to: repo.root))
+                .onAppear { lastRepo = repo }
+                .onChange(of: repo.root) { _, _ in lastRepo = repo }
+        case .none:
+            VStack(alignment: .leading, spacing: 4) {
+                notInGit
+                if let lastRepo {
+                    Text(verbatim: "Showing \(lastRepo.root.lastPathComponent), the last repository.")
+                        .font(.system(size: 11))
+                        .foregroundColor(theme.textSecondary)
+                        .padding(.horizontal, 8)
+                    repoPanel(lastRepo, revealPath: nil)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var fileTab: some View {
+        switch repos.lookup(for: doc.folder) {
+        case .pending:
+            EmptyView()
+        case .repo:
+            MarkdownGitFileHistory(doc: doc, model: model, history: fileHistory)
+        case .none:
+            notInGit
+        }
+    }
+
+    private var notInGit: some View {
+        Text("This file is not in a git repository.")
+            .font(.system(size: 11))
+            .foregroundColor(theme.textSecondary)
+            .padding(tab == "repo" ? 8 : 0)
     }
 
     private func repoPanel(_ repo: GitRepoModel, revealPath: String?) -> some View {
@@ -70,22 +98,30 @@ struct MarkdownGitSidebar: View {
             repo: repo,
             log: repoLog,
             revealPath: revealPath,
-            onOpenFile: { entry, staged in model.openChanges(entry, staged: staged, root: repo.root) },
-            onOpenCommit: { model.openCommit($0, root: repo.root) }
+            onOpenFile: { [model] entry, staged in model.openChanges(entry, staged: staged, root: repo.root) },
+            onOpenCommit: { [model] in model.openCommit($0, root: repo.root) }
         )
+        .equatable()
     }
 
     private func follow() {
         fileHistory.follow(.file(doc.url))
         repoLog.follow(.repository(doc.folder))
     }
+}
 
-    @ViewBuilder
-    private var fileTab: some View {
-        if let failure = fileHistory.failure {
-            GitFailureNotice(failure) { fileHistory.reload() }
+/// This file's commits. It observes the window's model (the version shown in the tab), so it lives apart from the
+/// sidebar, which does not.
+private struct MarkdownGitFileHistory: View {
+    @ObservedObject var doc: MarkdownDocument
+    @ObservedObject var model: MarkdownDocumentsModel
+    @ObservedObject var history: GitHistoryModel
+
+    var body: some View {
+        if let failure = history.failure {
+            GitFailureNotice(failure) { history.reload() }
         }
-        if fileHistory.failure == nil && fileHistory.loaded && fileHistory.commits.isEmpty {
+        if history.failure == nil && history.loaded && history.commits.isEmpty {
             Text("No commits have this file yet.")
                 .font(.system(size: 11))
                 .foregroundColor(model.theme.textSecondary)
@@ -96,7 +132,7 @@ struct MarkdownGitSidebar: View {
                     .foregroundColor(model.theme.textSecondary)
                     .fixedSize(horizontal: false, vertical: true)
                 GitCommitList(
-                    commits: fileHistory.commits,
+                    commits: history.commits,
                     selected: model.revisionView.flatMap { $0.docID == doc.id ? $0.commit.sha : nil },
                     onOpen: { model.viewRevision($0, of: doc) },
                     onCompare: { model.compareRevision($0, with: nil, of: doc) },

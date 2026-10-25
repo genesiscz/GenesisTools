@@ -126,7 +126,8 @@ struct MarkdownDocumentsView: View {
                     }
                     if model.showGit && model.configuration.git {
                         gitDivider
-                        MarkdownGitSidebar(doc: doc, model: model)
+                        MarkdownGitSidebar(doc: doc, model: model, theme: model.theme)
+                            .equatable()
                             .frame(width: model.gitWidth)
                     }
                 }
