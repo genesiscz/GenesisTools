@@ -51,7 +51,7 @@ public struct FileTreeRow: Identifiable, Equatable, Sendable {
 }
 
 /// A path as a list identity, hashed once. SwiftUI hashes and compares a lazy list's ids on every scroll frame, and a
-/// non-ASCII `String` ("ČEZ") is normalized to NFC on each hash and each comparison: the profile of a tree scroll in
+/// non-ASCII `String` ("Účty") is normalized to NFC on each hash and each comparison: the profile of a tree scroll in
 /// the installed viewer had that normalization as its largest piece of app-side work (2026-10-15). Equal keys have
 /// equal bytes. A listing path is already one form (`standardizedFileURL.path`, then `nativeUTF8`). A selected
 /// document path can be the other Unicode form of that file, so `init(selection:)` applies the listing's form first.

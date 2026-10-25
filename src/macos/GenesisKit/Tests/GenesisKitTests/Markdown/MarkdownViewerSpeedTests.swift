@@ -13,7 +13,7 @@ final class MarkdownViewerSpeedTests: XCTestCase {
 
     /// A non-ASCII path from `URL.path` is a bridged NSString; the document keeps a native copy.
     func testADocumentKeepsItsPathAsANativeString() throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ČEZ-\(UUID().uuidString)")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("Účty-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appendingPathComponent("Návrh.md")

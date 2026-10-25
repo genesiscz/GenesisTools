@@ -68,9 +68,9 @@ final class FileTreeSearchTests: XCTestCase {
 
     func testRipgrepLinesParseEvenWhenThePathHasAColon() {
         let root = "/Users/alice/vault"
-        let hit = FileTreeSearch.parseRipgrepLine("/Users/alice/vault/ČEZ/Bugs/12:30 meeting.md:17:  See [[#Not the auth cluster]].", root: root)
-        XCTAssertEqual(hit?.relative, "ČEZ/Bugs/12:30 meeting.md")
-        XCTAssertEqual(hit?.path, "/Users/alice/vault/ČEZ/Bugs/12:30 meeting.md")
+        let hit = FileTreeSearch.parseRipgrepLine("/Users/alice/vault/Účty/Bugs/12:30 meeting.md:17:  See [[#Not the auth cluster]].", root: root)
+        XCTAssertEqual(hit?.relative, "Účty/Bugs/12:30 meeting.md")
+        XCTAssertEqual(hit?.path, "/Users/alice/vault/Účty/Bugs/12:30 meeting.md")
         XCTAssertEqual(hit?.line, 17)
         XCTAssertEqual(hit?.snippet, "See [[#Not the auth cluster]].")
         XCTAssertEqual(hit?.name, "12:30 meeting.md")
@@ -178,7 +178,7 @@ final class FileTreeSearchRipgrepTests: XCTestCase {
 }
 
 /// Names mode used to answer "No match" for a phrase that sits in a note but in no file name
-/// ("Followupy" in a ČEZ report, 2026-10-06). It now falls back to a text search.
+/// ("Followupy" in a work report, 2026-10-06). It now falls back to a text search.
 @MainActor
 final class FileTreeSearchFallbackTests: XCTestCase {
     private func waitUntilIdle(_ model: FileTreeSearchModel) async {

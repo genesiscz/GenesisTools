@@ -35,9 +35,9 @@ describe("parseDomain", () => {
     });
 
     it("converts an IDN to punycode and keeps the unicode form", () => {
-        const parsed = parseDomain("čez.cz");
-        expect(parsed?.domain).toBe("xn--ez-dma.cz");
-        expect(parsed?.unicode).toBe("čez.cz");
+        const parsed = parseDomain("příklad.cz");
+        expect(parsed?.domain).toBe("xn--pklad-zsa96e.cz");
+        expect(parsed?.unicode).toBe("příklad.cz");
     });
 
     it("rejects bare words and invalid labels", () => {
