@@ -140,3 +140,12 @@ Research notes: `<notes vault>/Dev/Bun/2026-10-12-BunCpuProfiling/`.
     `Button`) recomputed per cell per frame. Fewer hover and focus regions per row means less of it.
   - "External: Time" as a root cause on a scrolling list is the frame clock, not a stray animation: turning
     animations off on cell reuse changed neither the count nor the CPU.
+
+## The native app: hangs and spins (2026-10-23 21:14)
+
+The TypeScript tools above do not see GenesisTools.app's main thread. For the app, run `tools hub dev monitor`
+under the Monitor tool for the whole session (pass `--min-profile-ms 4000`, or every slow background CLI timer
+floods it), and read the stack file each `hang` or `spin` line names. A face reports only when its entry point
+calls `HangWatch.start()`; on 2026-10-23 the widget, markdown and settings faces did not, so two widget spins and
+the Clicky key-tap stalls went unseen. The swift skill's gotchas.md ("Hangs that reached the user on 2026-10-23")
+has the details.
