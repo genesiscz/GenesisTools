@@ -384,7 +384,24 @@ export async function extractTailUsageUncached(filePath: string): Promise<{ usag
             const haveUsage = parsed.model != null;
             const haveUser = parsed.lastUserAt != null;
 
-            if ((haveClock && haveUsage && haveUser) || size <= 0 || bytes >= size || bytes >= TAIL_MAX_BYTES) {
+            if ((haveClock && haveUsage && haveUser) || size <= 0 || bytes >= size) {
+                return { usage: parsed, read: true };
+            }
+
+            if (bytes >= TAIL_MAX_BYTES) {
+                // A cap that hides a field must say so: `lastUserAt` stayed null for a session whose newest prompt sat
+                // 1.4 MB from the end, and nothing in the log said why (2026-10-25).
+                logger.info(
+                    {
+                        filePath,
+                        capBytes: TAIL_MAX_BYTES,
+                        size,
+                        missing: [!haveClock && "lastCacheAt", !haveUsage && "model", !haveUser && "lastUserAt"].filter(
+                            Boolean
+                        ),
+                    },
+                    "[sessions] tail read stopped at its cap; the missing fields stay empty for this session"
+                );
                 return { usage: parsed, read: true };
             }
 

@@ -45,6 +45,14 @@ export function readClaudeActivity(filePath: string, options: ReadClaudeActivity
             .split("\n")
             .map((line) => parseTranscriptLine(line))
             .filter((record): record is Record<string, unknown> => record !== null);
+        if (records.length === 0) {
+            // The state then comes from the modification time alone; say so, or a wrong state has no trace.
+            logger.debug(
+                { filePath, tailBytes: ACTIVITY_TAIL_BYTES, size: stat.size },
+                "[transcripts] the activity tail holds no whole record; the state comes from mtime alone"
+            );
+        }
+
         const events = claudeRecordsToEvents(records);
         const state = classifyActivity({
             events,
