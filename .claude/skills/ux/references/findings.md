@@ -289,3 +289,4 @@ checklist.md or motion.md as well.
   perf log when 40 children start within 10 s or 16 run at once; `tools hub dev monitor` reports it and now also
   reads Genesis Markdown's `~/.genesis/logs/perf.log`. Rule: work that starts processes per item is queued per shared
   resource, and the launcher counts what it starts.
+- 2026-10-24 20:29 — **Second correction: the hover list's real cause was alpha passthrough, not SwiftUI's hover.** The 19:43 tracking-area fix still flapped (open and close about once a second, 20:25 to 20:27), because the edge panel's clear window gave its alpha-0 pixels to the window below while the list laid out. `ignoresMouseEvents = false` on the panel (3e80832422) fixed it; the list then stayed open under a resting pointer. Rule: a clear window that must keep the pointer sets `ignoresMouseEvents = false` explicitly; check that the window hides with `orderOut`, so no invisible window keeps taking clicks.
