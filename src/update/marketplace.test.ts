@@ -1,12 +1,27 @@
 import { describe, expect, it } from "bun:test";
 import { resolve } from "node:path";
-import { planMarketplaceAction } from "./marketplace";
+import { planMarketplaceAction, pluginStepDecision } from "./marketplace";
 
 const CHECKOUT = "/Users/me/GenesisTools";
 
 function plan(args: Parameters<typeof planMarketplaceAction>[0] extends infer T ? Omit<T, "resolvePath"> : never) {
     return planMarketplaceAction({ ...args, resolvePath: resolve });
 }
+
+describe("pluginStepDecision", () => {
+    it("never prompts without a terminal: it runs the default instead", () => {
+        expect(pluginStepDecision({ hasClaude: true, plugins: true, interactive: false })).toBe("run");
+    });
+
+    it("asks on a terminal", () => {
+        expect(pluginStepDecision({ hasClaude: true, plugins: true, interactive: true })).toBe("ask");
+    });
+
+    it("skips with --no-plugins or without a claude binary", () => {
+        expect(pluginStepDecision({ hasClaude: true, plugins: false, interactive: false })).toBe("skip");
+        expect(pluginStepDecision({ hasClaude: false, plugins: true, interactive: true })).toBe("skip");
+    });
+});
 
 describe("planMarketplaceAction", () => {
     it("registers the checkout when no marketplace exists yet", () => {

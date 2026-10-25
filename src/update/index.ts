@@ -12,7 +12,7 @@ import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
-import { genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
+import { detectXcodeToolchain, genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
 import { Command } from "commander";
 import pc from "picocolors";
 import { printUpdateCatalogue } from "./diff";
@@ -24,6 +24,7 @@ import {
     type MarketplaceLookup,
     PLUGIN_REF,
     planMarketplaceAction,
+    pluginStepDecision,
 } from "./marketplace";
 import { offerMcpRegistration } from "./mcp-registration-offer";
 import { recoverFromFailedPull } from "./recovery";
@@ -90,7 +91,8 @@ async function pluginIsInstalled(id: string): Promise<boolean> {
 const program = new Command()
     .name("update")
     .description("Update GenesisTools to the latest version")
-    .action(async () => {
+    .option("--no-plugins", "Skip the Claude Code marketplace and plugin step")
+    .action(async (opts: { plugins: boolean }) => {
         const genesisPath = env.tools.getPath() || resolve(import.meta.dir, "../..");
         const srcDir = join(genesisPath, "src");
 
@@ -170,14 +172,26 @@ const program = new Command()
             out.println(pc.dim(`  Install Claude Code, then run: ${toolCommand("update")}`));
         }
 
+        const pluginStep = pluginStepDecision({
+            hasClaude: resolvedClaude !== null,
+            plugins: opts.plugins,
+            interactive: isInteractive(),
+        });
+        logger.debug({ pluginStep }, "update: Claude plugin step");
+
+        if (pluginStep === "run") {
+            out.println(pc.dim(`\n  No terminal to ask, so the Claude plugin step runs (skip it with --no-plugins).`));
+        }
+
         const runClaudeUpdates =
-            resolvedClaude !== null &&
-            (await p.confirm({
-                message: inClaudeCode
-                    ? "Run Claude plugin update and marketplace update?"
-                    : "Run Claude marketplace update, add, and plugin install?",
-                initialValue: true,
-            }));
+            pluginStep === "run" ||
+            (pluginStep === "ask" &&
+                (await p.confirm({
+                    message: inClaudeCode
+                        ? "Run Claude plugin update and marketplace update?"
+                        : "Run Claude marketplace update, add, and plugin install?",
+                    initialValue: true,
+                })));
         if (p.isCancel(runClaudeUpdates)) {
             p.cancel("Cancelled");
             process.exit(0);
@@ -376,6 +390,16 @@ async function refreshGenesisApp(): Promise<void> {
     const status = appStatus();
 
     if (genesisAppRefreshAction(status) === "skip") {
+        return;
+    }
+
+    // buildApp() refuses this too, but only after the "Rebuilding" line: say it once and move on.
+    const toolchain = detectXcodeToolchain();
+
+    if (toolchain.kind !== "xcode") {
+        logger.info({ toolchain }, "update: GenesisTools.app rebuild skipped, no full Xcode");
+        out.println(pc.yellow("\n  Skipped rebuilding GenesisTools.app: it needs Xcode, not the Command Line Tools."));
+        out.println(pc.dim(`  ${genesisAppBuildHint(toolchain)}`));
         return;
     }
 

@@ -23,8 +23,10 @@ The tool discovers the GenesisTools install path from `$GENESIS_TOOLS_PATH` or t
 1. `git checkout -- bun.lock` to discard local lockfile drift.
 2. `git pull` in the GenesisTools repo.
 3. `bun install` — retries once with a clean `node_modules` if the first attempt fails.
-4. Prompts to refresh the Claude Code plugin:
+4. Refreshes the Claude Code plugin. A terminal gets asked first; without one (an agent, CI) the step runs without asking, and `--no-plugins` skips it:
    - Inside a Claude Code session: runs `claude plugin marketplace update` and `claude plugin update`.
    - Outside: runs `marketplace add`, `marketplace update`, then `plugin install genesis-tools@genesis-tools`.
 
-Cancel the Claude step if you only want the source update.
+Cancel the Claude step, or pass `--no-plugins`, if you only want the source update.
+
+An installed GenesisTools.app whose sources changed is rebuilt only with full Xcode. With the Command Line Tools only (`xcode-select -p` is `/Library/Developer/CommandLineTools`) the rebuild is skipped with a hint, because the SwiftUI macro plugins ship only with Xcode.

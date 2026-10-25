@@ -3,6 +3,26 @@ export const MARKETPLACE_NAME = "genesis-tools";
 export const MARKETPLACE_FALLBACK_SOURCE = "https://github.com/genesiscz/GenesisTools";
 export const PLUGIN_REF = "genesis-tools@genesis-tools";
 
+export type PluginStepDecision = "skip" | "run" | "ask";
+
+/**
+ * Whether step 4 refreshes the Claude Code plugin, and whether it may ask first.
+ *
+ * Only a terminal can answer a prompt. Under an agent stdin is /dev/null, and the confirm used to
+ * wait there forever (arwen, 2026-10-25), so without a TTY the step takes the prompt's default (yes).
+ */
+export function pluginStepDecision(opts: {
+    hasClaude: boolean;
+    plugins: boolean;
+    interactive: boolean;
+}): PluginStepDecision {
+    if (!opts.hasClaude || !opts.plugins) {
+        return "skip";
+    }
+
+    return opts.interactive ? "ask" : "run";
+}
+
 export interface MarketplaceEntry {
     name?: string;
     source?: "directory" | "git" | "github";
