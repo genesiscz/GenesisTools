@@ -310,7 +310,7 @@ export function registerNavCommands(program: Command): void {
 
     nav.command("open")
         .description(
-            "Open the hub on a place AND record who asked and why. Agents: use this instead of tools hub open, so the person can go Back"
+            `Open the hub on a place AND record who asked and why. Agents: use this instead of ${toolCommand("hub open")}, so the person can go Back`
         )
         .argument(
             "[link-or-target]",
