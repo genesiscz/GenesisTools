@@ -28,6 +28,12 @@ struct GitRepoTableKeys {
 final class GitRepoTableBox {
     fileprivate weak var table: NSTableView?
     fileprivate var rows: () -> [GitPanelRow] = { [] }
+    fileprivate var rebuild: ((GitPanelRow) -> Bool) -> Void = { _ in }
+
+    /// The rows on screen that match take their views again (the open file changed: only its old and new rows differ).
+    func refresh(where match: @escaping (GitPanelRow) -> Bool) {
+        rebuild(match)
+    }
 
     /// Scrolls the row with `id` to the middle of the table, animated unless Reduce Motion is on. False when it has
     /// no row (yet).
@@ -93,6 +99,7 @@ struct GitRepoTable<Revision: Equatable>: NSViewRepresentable {
         context.coordinator.table = table
         box.table = table
         box.rows = { [weak coordinator = context.coordinator] in coordinator?.rows ?? [] }
+        box.rebuild = { [weak coordinator = context.coordinator] match in coordinator?.rebuildAvailable(where: match) }
         apply(to: context.coordinator, table: table, force: true)
         let slot = MarkdownOverlaySlot(overlay: scroll)
         slot.contentHeight = { [weak table, weak scroll] in
@@ -134,13 +141,18 @@ struct GitRepoTable<Revision: Equatable>: NSViewRepresentable {
             let span = PerfSpans.begin("git.panel.table", "\(old.count) → \(rows.count) rows")
             if force {
                 table.reloadData()
-            } else if !Self.animate(from: old, to: rows, in: table, reduceMotion: reduced) {
+            } else if Self.animate(from: old, to: rows, in: table, reduceMotion: reduced) {
+                // Rows moved with their row views: rebuild those whose value changed, found by id.
+                let before = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                if !revisionChanged { coordinator.rebuildAvailable { before[$0.id] != $0 } }
+            } else {
                 // A sort, a filter or a large fold: the row views on screen stay and take their new rows. A reload threw
                 // every row view away, and each new one re-ran AppKit's key-view loop and moved a SwiftUI host into the
                 // window: 1,159 + 892 of 2,172 busy samples of a sort on a vault (2026-10-25).
                 if old.count != rows.count { table.noteNumberOfRowsChanged() }
+                if !revisionChanged { coordinator.rebuildAvailable(changedFrom: old) }
             }
-            coordinator.rebuildAvailable()
+            if force || revisionChanged { coordinator.rebuildAvailable() }
             span.end()
             coordinator.keepCursor()
         } else if revisionChanged {
@@ -200,13 +212,25 @@ struct GitRepoTable<Revision: Equatable>: NSViewRepresentable {
 
         func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { false }
 
-        /// Every row view the table holds (on screen and the few it prepared beyond) takes its current row.
-        func rebuildAvailable() {
+        /// Every row view the table holds (on screen and the few it prepared beyond) that `match` picks takes its current
+        /// row. Each rebuild swaps a hosted SwiftUI root, about a millisecond, so only rows that changed are rebuilt.
+        func rebuildAvailable(where match: (GitPanelRow) -> Bool = { _ in true }) {
             guard let table else { return }
             let rows = rows
             let cell = cell
             table.enumerateAvailableRowViews { rowView, index in
-                guard index < rows.count else { return }
+                guard index < rows.count, match(rows[index]) else { return }
+                (rowView.view(atColumn: 0) as? MarkdownTreeTableCell)?.show(cell(rows[index]))
+            }
+        }
+
+        /// After an in-place refill: a row view shows another row when its index now holds a different value.
+        func rebuildAvailable(changedFrom old: [GitPanelRow]) {
+            guard let table else { return }
+            let rows = rows
+            let cell = cell
+            table.enumerateAvailableRowViews { rowView, index in
+                guard index < rows.count, index >= old.count || old[index] != rows[index] else { return }
                 (rowView.view(atColumn: 0) as? MarkdownTreeTableCell)?.show(cell(rows[index]))
             }
         }

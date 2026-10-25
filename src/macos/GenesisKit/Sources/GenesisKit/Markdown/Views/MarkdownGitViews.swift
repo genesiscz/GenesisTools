@@ -17,7 +17,7 @@ struct MarkdownGitSidebar: View, Equatable {
     let theme: MarkdownTheme
     @ObservedObject private var repos = GitRepos.shared
     @StateObject private var fileHistory = GitHistoryModel()
-    @StateObject private var repoLog = GitHistoryModel(limit: 15)
+    @StateObject private var repoLog = GitHistoryModel(limit: 50)
     @AppStorage("markdown.config.gitSidebarTab") private var tab = "file"
     /// The last repository the Repository tab showed: a tab outside any repository keeps it on screen rather than
     /// blanking the panel (Martin, 2026-10-25).
@@ -30,7 +30,9 @@ struct MarkdownGitSidebar: View, Equatable {
     var body: some View {
         let _ = RenderProbe.hit("md.gitSidebar")
         VStack(alignment: .leading, spacing: 0) {
-            GenSegmentedTabs("Git", items: [.init("file", "This file"), .init("repo", "Repository")], selection: $tab)
+            // Changes keeps the stored value "repo" of the former Repository tab, so a saved choice still lands on it.
+            GenSegmentedTabs("Git", items: [.init("file", "This file"), .init("repo", "Changes"), .init("commits", "Commits")],
+                             selection: $tab)
                 .frame(maxWidth: .infinity)
                 .padding(8)
                 .accessibilityIdentifier("markdown-git-tab")
@@ -39,6 +41,11 @@ struct MarkdownGitSidebar: View, Equatable {
                 // The panel's rows scroll in their own table; a scroll view around it would lay the window out again.
                 repoTab
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            } else if tab == "commits" {
+                ScrollView {
+                    commitsTab
+                        .padding(8)
+                }
             } else {
                 ScrollView {
                     fileTab
@@ -86,20 +93,37 @@ struct MarkdownGitSidebar: View, Equatable {
         }
     }
 
+    /// The repository's recent commits; a click opens one in a sheet.
+    @ViewBuilder
+    private var commitsTab: some View {
+        switch repos.lookup(for: doc.folder) {
+        case .pending:
+            EmptyView()
+        case .repo(let repo):
+            if repoLog.loaded && repoLog.commits.isEmpty {
+                Text("No commits yet.")
+                    .font(.system(size: 11))
+                    .foregroundColor(theme.textSecondary)
+            } else {
+                GitCommitList(commits: repoLog.commits, onOpen: { [model] in model.openCommit($0, root: repo.root) })
+            }
+        case .none:
+            notInGit
+        }
+    }
+
     private var notInGit: some View {
         Text("This file is not in a git repository.")
             .font(.system(size: 11))
             .foregroundColor(theme.textSecondary)
-            .padding(tab == "repo" ? 8 : 0)
+            .padding(tab == "file" ? 0 : 8)
     }
 
     private func repoPanel(_ repo: GitRepoModel, revealPath: String?) -> some View {
         GitRepoPanel(
             repo: repo,
-            log: repoLog,
             revealPath: revealPath,
-            onOpenFile: { [model] entry, staged in model.openChanges(entry, staged: staged, root: repo.root) },
-            onOpenCommit: { [model] in model.openCommit($0, root: repo.root) }
+            onOpenFile: { [model] entry, staged in model.openChanges(entry, staged: staged, root: repo.root) }
         )
         .equatable()
     }

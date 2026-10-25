@@ -15,7 +15,7 @@ final class GitRepoPanelKeyboardTests: XCTestCase {
         lists.untrackedTotal = 3
 
         func keys(_ order: GitChangeOrder, untracked: Bool, open: Bool) -> [String] {
-            GitRepoPanel.keyRows(GitRepoPanel.rows(lists, order: order, untracked: untracked, isOpen: { _ in open }, commits: []))
+            GitRepoPanel.keyRows(GitRepoPanel.rows(lists, order: order, untracked: untracked, isOpen: { _ in open }))
         }
         XCTAssertEqual(keys(.name, untracked: true, open: false), ["staged:a.md", "changes:b.md", "folder-row:data", "untracked:c.md"])
         XCTAssertEqual(keys(.name, untracked: true, open: true),
@@ -38,7 +38,7 @@ final class GitRepoPanelKeyboardTests: XCTestCase {
                      "data/run/1.json": now.addingTimeInterval(-7200), "data/run/2.json": now.addingTimeInterval(-600),
                      "staged.md": now]
         let lists = GitRepoPanelLists.derive(entries, dates: dates, inputs: .init(root: URL(fileURLWithPath: "/r"), order: .lastUpdate, filter: "", untracked: true))
-        let rows = GitRepoPanel.rows(lists, order: .lastUpdate, untracked: true, isOpen: { _ in false }, commits: [])
+        let rows = GitRepoPanel.rows(lists, order: .lastUpdate, untracked: true, isOpen: { _ in false })
         XCTAssertEqual(rows.map(\.id), ["section:staged", "staged:staged.md", "section:changes",
                                        "untracked:Health/new.md", "folder-row:data", "changes:Dev/Index.md"])
         XCTAssertEqual(lists.places["data/run/2.json"], .init(id: "folder:data:data/run/2.json", folder: "data"), "the reveal button's lookup")
@@ -52,7 +52,7 @@ final class GitRepoPanelKeyboardTests: XCTestCase {
             .section(key: "changes", title: "Changes · 2"),
             .file(entry: GitStatusEntry(path: "a.md", unstaged: .modified), staged: false, id: "changes:a.md", indent: false, date: nil),
             .folder(folder: "data", count: 2, newest: nil, open: false),
-            .commitsHeader,
+            .section(key: "untracked", title: "Untracked · 0"),
         ]
         XCTAssertEqual(GitPanelRow.action(for: .escape, rows: rows, cursor: nil), .none, "Esc reaches the window or a sheet")
         XCTAssertEqual(GitPanelRow.action(for: .escape, rows: rows, cursor: 1), .clear)

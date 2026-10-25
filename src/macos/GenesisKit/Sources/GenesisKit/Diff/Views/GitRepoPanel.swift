@@ -2,7 +2,8 @@
 //  GitRepoPanel.swift
 //  GenesisKit
 //
-//  A repository at a glance: branch with ahead and behind, the staged, changed and untracked files, recent commits.
+//  A repository's changes at a glance: branch with ahead and behind, the staged, changed and untracked files. Its commits
+//  are the git sidebar's own Commits tab (Martin, 2026-10-25: the changes tab shows the files, nothing else).
 //  A vault can hold thousands of untracked files (a data folder an agent wrote), so untracked files fold under the
 //  shallowest folder that holds no other change, as `git status` folds them. The rows live in an AppKit table
 //  (`GitRepoTable`) that builds only the rows on screen, so 5,000 rows scroll like 50 and no list needs pages. The sort
@@ -176,11 +177,9 @@ enum GitPanelRow: Equatable, Identifiable {
     case section(key: String, title: String)
     case file(entry: GitStatusEntry, staged: Bool, id: String, indent: Bool, date: Date?)
     case folder(folder: String, count: Int, newest: Date?, open: Bool)
-    case commitsHeader
-    case commit(GitCommit)
 
     enum Kind: Hashable {
-        case section, file, folder, commitsHeader, commit
+        case section, file, folder
     }
 
     var id: String {
@@ -188,8 +187,6 @@ enum GitPanelRow: Equatable, Identifiable {
         case .section(let key, _): return "section:" + key
         case .file(_, _, let id, _, _): return id
         case .folder(let folder, _, _, _): return GitRepoPanel.folderRowID(folder)
-        case .commitsHeader: return "section:commits"
-        case .commit(let commit): return "commit:" + commit.sha
         }
     }
 
@@ -198,16 +195,14 @@ enum GitPanelRow: Equatable, Identifiable {
         case .section: return .section
         case .file: return .file
         case .folder: return .folder
-        case .commitsHeader: return .commitsHeader
-        case .commit: return .commit
         }
     }
 
-    /// The keyboard stops on files, folders and commits, never on a heading.
+    /// The keyboard stops on files and folders, never on a heading.
     var selectable: Bool {
         switch self {
-        case .file, .folder, .commit: return true
-        case .section, .commitsHeader: return false
+        case .file, .folder: return true
+        case .section: return false
         }
     }
 
@@ -218,13 +213,11 @@ enum GitPanelRow: Equatable, Identifiable {
         case .file(let entry, _, _, _, _): return String(GitChangeList.name(entry.path))
         case .folder(let folder, let count, _, let open):
             return "\(GitChangeList.name(folder)), folder, \(Plural.count(count, "file")), \(open ? "expanded" : "collapsed")"
-        case .commitsHeader: return "Recent commits"
-        case .commit(let commit): return commit.subject
         }
     }
 
-    /// What a key does: Up and Down walk the selectable rows (they repeat while held), Return opens a file or a commit
-    /// and opens or closes a folder, Right opens and Left closes a folder, Esc lets the keyed row go and is ignored when
+    /// What a key does: Up and Down walk the selectable rows (they repeat while held), Return opens a file and opens or
+    /// closes a folder, Right opens and Left closes a folder, Esc lets the keyed row go and is ignored when
     /// nothing is keyed, so it still reaches the window or a sheet.
     enum KeyAction: Equatable {
         case none
@@ -414,15 +407,13 @@ final class GitRepoPanelLists: ObservableObject {
     }
 }
 
-/// A repository at a glance: branch with ahead and behind, the staged, changed and untracked files, recent commits.
-/// `Equatable` on what it shows (the repository, its log, the open file), not on its callbacks: the parent builds it
+/// A repository's changes: branch with ahead and behind, the staged, changed and untracked files.
+/// `Equatable` on what it shows (the repository, the open file), not on its callbacks: the parent builds it
 /// with new closures on every render, and before this every publish of the window's model ran the panel again
 /// (+13.9 ms per publish, +45 ms per tab switch on a vault, 2026-10-25).
 public struct GitRepoPanel: View, Equatable {
     @ObservedObject var repo: GitRepoModel
-    @ObservedObject var log: GitHistoryModel
     var onOpenFile: (GitStatusEntry, _ staged: Bool) -> Void
-    var onOpenCommit: (GitCommit) -> Void
 
     @StateObject private var derived = GitRepoPanelLists()
     @AppStorage("genesiskit.gitRepoPanel.order") private var orderRaw = GitChangeOrder.lastUpdate.rawValue
@@ -437,17 +428,14 @@ public struct GitRepoPanel: View, Equatable {
     /// The open file, relative to the repository's root: the reveal button scrolls to its row.
     var revealPath: String?
 
-    public init(repo: GitRepoModel, log: GitHistoryModel, revealPath: String? = nil,
-                onOpenFile: @escaping (GitStatusEntry, Bool) -> Void, onOpenCommit: @escaping (GitCommit) -> Void) {
+    public init(repo: GitRepoModel, revealPath: String? = nil, onOpenFile: @escaping (GitStatusEntry, Bool) -> Void) {
         self.repo = repo
-        self.log = log
         self.revealPath = revealPath
         self.onOpenFile = onOpenFile
-        self.onOpenCommit = onOpenCommit
     }
 
     public static func == (lhs: GitRepoPanel, rhs: GitRepoPanel) -> Bool {
-        lhs.repo === rhs.repo && lhs.log === rhs.log && lhs.revealPath == rhs.revealPath
+        lhs.repo === rhs.repo && lhs.revealPath == rhs.revealPath
     }
 
     private var order: GitChangeOrder { GitChangeOrder(rawValue: orderRaw) ?? .lastUpdate }
@@ -461,9 +449,10 @@ public struct GitRepoPanel: View, Equatable {
         let reads: Int
     }
 
+    /// What the cells draw besides their rows: the reveal flash. The open file (`revealPath`) is not here: a tab switch
+    /// changes it, and rebuilding every visible cell for it cost +51 ms per switch; its two rows are refreshed alone.
     private struct Revision: Equatable {
         let flash: String?
-        let revealPath: String?
     }
 
     public var body: some View {
@@ -473,15 +462,15 @@ public struct GitRepoPanel: View, Equatable {
         // changes the rows once, when the new lists arrive, instead of once with the old lists and once with the new.
         let shape = derived.settled ?? inputs
         let rows = rowCache.rows(version: derived.version, root: repo.root, key: RowCache.Key(
-            order: shape.order, untracked: shape.untracked, filtering: !shape.filter.isEmpty, open: openFolders, commits: log.commits)) {
+            order: shape.order, untracked: shape.untracked, filtering: !shape.filter.isEmpty, open: openFolders)) {
             Self.rows(lists, order: shape.order, untracked: shape.untracked,
-                      isOpen: { openFolders.contains($0) || !shape.filter.isEmpty }, commits: log.commits)
+                      isOpen: { openFolders.contains($0) || !shape.filter.isEmpty })
         }
         VStack(alignment: .leading, spacing: 0) {
             header(lists)
                 .padding(.horizontal, 8)
                 .padding(.top, 8)
-            GitRepoTable(rows: rows, revision: Revision(flash: flash, revealPath: revealPath), box: box, keys: keys) { row in
+            GitRepoTable(rows: rows, revision: Revision(flash: flash), box: box, keys: keys) { row in
                 AnyView(cell(row))
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -492,6 +481,12 @@ public struct GitRepoPanel: View, Equatable {
         }
         // Main-thread busy time after each interaction, written to perf.log (`main busy … git.panel.*`), so a later
         // build's numbers can be compared with these without a bench.
+        .onChange(of: revealPath) { old, new in
+            box.refresh { row in
+                guard case .file(let entry, _, _, _, _) = row else { return false }
+                return entry.path == old || entry.path == new
+            }
+        }
         .onAppear { PerfMainBusy.measure("git.panel.open") }
         .onChange(of: orderRaw) { _, _ in PerfMainBusy.measure("git.panel.sort") }
         .onChange(of: filter) { _, _ in PerfMainBusy.measure("git.panel.filter") }
@@ -503,8 +498,7 @@ public struct GitRepoPanel: View, Equatable {
 
     /// The rows in drawn order. Other orders: Staged, Changes, Untracked (folders, then loose files). Last update with
     /// untracked files shown: Staged, then one Changes list newest first. An open folder's files follow its row.
-    static func rows(_ lists: GitRepoPanelLists.Lists, order: GitChangeOrder, untracked: Bool, isOpen: (String) -> Bool,
-                     commits: [GitCommit]) -> [GitPanelRow] {
+    static func rows(_ lists: GitRepoPanelLists.Lists, order: GitChangeOrder, untracked: Bool, isOpen: (String) -> Bool) -> [GitPanelRow] {
         var rows: [GitPanelRow] = []
         let dated = order == .lastUpdate
         func file(_ entry: GitStatusEntry, staged: Bool, id: String, indent: Bool = false) -> GitPanelRow {
@@ -545,14 +539,10 @@ public struct GitRepoPanel: View, Equatable {
                 rows += lists.loose.map { file($0, staged: false, id: "untracked:" + $0.path) }
             }
         }
-        if !commits.isEmpty {
-            rows.append(.commitsHeader)
-            rows += commits.map { .commit($0) }
-        }
         return rows
     }
 
-    /// The rows the keys walk, in drawn order (the file, folder and commit rows).
+    /// The rows the keys walk, in drawn order (the file and folder rows).
     static func keyRows(_ rows: [GitPanelRow]) -> [String] {
         rows.filter(\.selectable).map(\.id)
     }
@@ -566,7 +556,6 @@ public struct GitRepoPanel: View, Equatable {
             let untracked: Bool
             let filtering: Bool
             let open: Set<String>
-            let commits: [GitCommit]
         }
         private var last: (version: Int, root: URL, key: Key, rows: [GitPanelRow])?
 
@@ -586,7 +575,7 @@ public struct GitRepoPanel: View, Equatable {
         )
     }
 
-    /// Return opens the keyed file or commit, or flips its folder; Right and Left open and close a folder.
+    /// Return opens the keyed file or flips its folder; Right and Left open and close a folder.
     private func activate(_ row: GitPanelRow, open: Bool?) {
         switch row {
         case .file(let entry, let staged, _, _, _):
@@ -594,10 +583,7 @@ public struct GitRepoPanel: View, Equatable {
             onOpenFile(entry, staged)
         case .folder(let folder, _, _, let isOpen):
             if open ?? !isOpen { openFolders.insert(folder) } else { openFolders.remove(folder) }
-        case .commit(let commit):
-            guard open == nil else { return }
-            onOpenCommit(commit)
-        case .section, .commitsHeader:
+        case .section:
             break
         }
     }
@@ -769,15 +755,9 @@ public struct GitRepoPanel: View, Equatable {
     private func cell(_ row: GitPanelRow) -> some View {
         let _ = RenderProbe.hit("git.row")
         switch row {
-        // Every row is one height (the table's): headings sit on the row's bottom edge, a commit is one line.
+        // Every row is one height (the table's): headings sit on the row's bottom edge.
         case .section(_, let title):
             Text(verbatim: title)
-                .kicker()
-                .padding(.bottom, 2)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                .accessibilityAddTraits(.isHeader)
-        case .commitsHeader:
-            Text("Recent commits")
                 .kicker()
                 .padding(.bottom, 2)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
@@ -786,28 +766,6 @@ public struct GitRepoPanel: View, Equatable {
             fileRow(entry, staged: staged, id: id, indent: indent, date: date)
         case .folder(let folder, let count, let newest, let open):
             folderRow(folder, count: count, newest: newest, open: open)
-        case .commit(let commit):
-            Button {
-                onOpenCommit(commit)
-            } label: {
-                HStack(spacing: 6) {
-                    Text(verbatim: commit.short)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                    Text(verbatim: commit.subject)
-                        .font(.system(size: 11.5))
-                        .lineLimit(1)
-                    Spacer(minLength: 4)
-                    age(commit.date)
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .help("\(commit.subject)\n\(commit.author) · \(commit.short)")
-            .buttonStyle(RowButtonStyle(cornerRadius: 5))
-            .accessibilityAction(named: "Copy commit id") { Clipboard.copy(commit.sha, what: "commit id") }
-            .accessibilityIdentifier("git-commit-\(commit.short)")
         }
     }
 

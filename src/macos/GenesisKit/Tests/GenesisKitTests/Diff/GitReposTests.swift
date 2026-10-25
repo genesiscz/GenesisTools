@@ -157,7 +157,7 @@ final class GitReposTests: XCTestCase {
         XCTAssertEqual(lists.places["notes/b.md"], .init(id: "changes:notes/b.md"))
         // Folded: the reveal opens the folder; with no pages, the row is in the table once the folder is open.
         XCTAssertEqual(lists.places["drafts/120.md"], .init(id: "folder:drafts:drafts/120.md", folder: "drafts"))
-        let open = GitRepoPanel.rows(lists, order: .name, untracked: true, isOpen: { $0 == "drafts" }, commits: [])
+        let open = GitRepoPanel.rows(lists, order: .name, untracked: true, isOpen: { $0 == "drafts" })
         XCTAssertTrue(open.contains { $0.id == "folder:drafts:drafts/120.md" })
         XCTAssertNil(lists.places["clean.md"], "a file with no change has no row")
     }
