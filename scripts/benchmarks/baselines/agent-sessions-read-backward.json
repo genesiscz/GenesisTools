@@ -1,0 +1,22 @@
+{
+    "name": "agent-sessions-read-backward",
+    "capturedAt": "2026-10-25T21:05:56.353Z",
+    "commit": "7023872e3c",
+    "loadAvg": [
+        15.1826171875,
+        24.6220703125,
+        26.3828125
+    ],
+    "hostname": "MacBook-Pro-2262.local",
+    "metrics": {
+        "current.hook.cold.cpuMs": 18.535,
+        "current.hook.entries": 6,
+        "current.hook.found": 5,
+        "current.hook.warm.cpuMs": 4.591,
+        "current.full.cold.cpuMs": 200.86,
+        "current.full.entries": 11418,
+        "current.full.found": 0,
+        "current.full.warm.cpuMs": 189.931
+    },
+    "notes": "5 live Claude transcripts, read-only; cut 2026-10-25T20:05:50.102Z | commit 7023872e3c | uptime 22:05  up 6 days, 12:59, 36 users, load averages: 15.18 24.62 26.38"
+}

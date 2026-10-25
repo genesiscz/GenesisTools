@@ -35,3 +35,6 @@ re-deriving how it was produced.
 
 - [`clones/`](clones/) — the `tools du` / APFS clone-detection microbenches and their runners.
   Predates these conventions and uses relative imports rather than `@app/benchmark/lib`.
+- [`agent-sessions/`](agent-sessions/) — `session-listing.ts` (the session list and each provider's discovery) and
+  `read-backward.ts` (`readSessionBackward` on real Claude transcripts, the decision Stop hook's read; `--before
+  <checkout>` runs an older commit's code beside the current one, with a check that both read the same entries).
