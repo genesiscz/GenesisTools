@@ -19,7 +19,8 @@ import XCTest
 /// beside it as <out>.summary.md); MARKDOWN_REPO_BENCH_LABEL (before / after; default "run"); MARKDOWN_REPO_BENCH_PHASES
 /// (comma list, default all: floor,open,publish,tabs,filter,sort,refresh,scroll,ab,fold,offmain);
 /// MARKDOWN_REPO_BENCH_SAMPLE=<path> runs `/usr/bin/sample` on this process while MARKDOWN_REPO_BENCH_SAMPLE_PHASE
-/// (publish) repeats for MARKDOWN_REPO_BENCH_SAMPLE_SECS (8); MARKDOWN_REPO_BENCH_QUERY (analy), _SHOW_MORE (5 pages),
+/// (publish) repeats for MARKDOWN_REPO_BENCH_SAMPLE_SECS (8), on MARKDOWN_REPO_BENCH_SAMPLE_TAB (repo; file for a
+/// difference); MARKDOWN_REPO_BENCH_QUERY (analy), _SHOW_MORE (5 pages),
 /// _WIDTH / _HEIGHT (2056 x 1290), _GIT_WIDTH (560), _FILES_WIDTH (346), _FILES=0 (no file tree), _WRAP=0, _OPENS (5),
 /// _REFRESHES (3), _DEBUG=1 (print what the fold phase reads while it looks for a row).
 ///
@@ -649,7 +650,8 @@ final class RepoPanelBench {
     private func sample(to path: String) throws {
         let phase = env["MARKDOWN_REPO_BENCH_SAMPLE_PHASE"] ?? "publish"
         let seconds = int("MARKDOWN_REPO_BENCH_SAMPLE_SECS", 8)
-        UserDefaults.standard.set("repo", forKey: Self.tabKey)
+        // MARKDOWN_REPO_BENCH_SAMPLE_TAB=file samples the same phase with the sidebar on This file, for a difference.
+        UserDefaults.standard.set(env["MARKDOWN_REPO_BENCH_SAMPLE_TAB"] ?? "repo", forKey: Self.tabKey)
         settleQuiet()
         let sampler = Process()
         sampler.executableURL = URL(fileURLWithPath: "/usr/bin/sample")
