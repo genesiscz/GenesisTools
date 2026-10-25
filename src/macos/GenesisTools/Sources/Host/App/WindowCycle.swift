@@ -314,13 +314,27 @@ package enum WindowCycle {
 
     /// The tile owner came to the front. On Cmd+Tab back, show the window that was key when GenesisTools left.
     private static func becameActive() {
-        guard let left = leftFrom else { return }
+        guard NSApp.activationPolicy() == .regular else { return }
+        guard let left = leftFrom else {
+            HubPerf.log("windowCycle: active, no window list from leaving (another face took focus since)")
+            return
+        }
         leftFrom = nil
-        guard NSApp.activationPolicy() == .regular, Date().timeIntervalSince(lastCycleRaise) > 1.5 else { return }
+        guard Date().timeIntervalSince(lastCycleRaise) > 1.5 else { return }
         let since = { (type: CGEventType) in CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: type) }
         let mouse = min(since(.leftMouseDown), since(.rightMouseDown), since(.otherMouseDown))
-        guard cameByCommandTab(sinceFlags: since(.flagsChanged), sinceMouse: mouse, sinceKey: since(.keyDown)),
-              let target = restoreTarget(left, candidates: currentCandidates(), own: getpid()) else { return }
+        guard cameByCommandTab(sinceFlags: since(.flagsChanged), sinceMouse: mouse, sinceKey: since(.keyDown)) else {
+            HubPerf.log(String(format: "windowCycle: active, not by Cmd+Tab (flags %.2fs, mouse %.2fs, key %.2fs ago)",
+                               since(.flagsChanged), mouse, since(.keyDown)))
+            return
+        }
+        let candidates = currentCandidates()
+        guard let target = restoreTarget(left, candidates: candidates, own: getpid()) else {
+            let first = left.first { item in candidates.contains { $0.number == item.number } }
+            HubPerf.log("windowCycle: Cmd+Tab back, nothing to hand off (left \(left.count) windows, first on screen "
+                + (first.map { "\($0.number) of pid \($0.pid)" } ?? "none") + ")")
+            return
+        }
         HubPerf.log("windowCycle: Cmd+Tab back, showing window \(target.number) of pid \(target.pid)")
         handOff(to: target, session: nil)
     }
