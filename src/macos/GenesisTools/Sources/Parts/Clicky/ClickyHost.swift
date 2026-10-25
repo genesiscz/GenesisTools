@@ -56,8 +56,9 @@ final class ClickyHost: NSObject {
         let controller = NSHostingController(
             rootView: ClickyPopoverView(
                 model: model,
+                // Clicky's own first page: with no page the window reopened wherever it was last (Widgets → Providers).
                 showSettings: { [weak self] in
-                    self?.showSettings()
+                    self?.showSettings(pageID: ClickySettingsPages.pageID(.sound))
                 },
                 quit: { [weak self] in
                     guard let self else { return }
