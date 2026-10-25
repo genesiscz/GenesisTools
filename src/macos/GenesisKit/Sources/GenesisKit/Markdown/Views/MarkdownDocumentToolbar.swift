@@ -101,22 +101,14 @@ struct MarkdownDocumentToolbar: View {
                 }
             }
             .layoutPriority(1)
-            // The window runs every other key (`MarkdownKeymap.registerWindowCommands`); these two need the share
-            // model's error line.
-            .keymapAction("markdown.file.pdf", in: MarkdownKeymap.shared, perform: exportPDF)
-            .keymapAction("markdown.file.print", in: MarkdownKeymap.shared, perform: printDocument)
 
             Spacer(minLength: 8)
-
-            if let error = share.error ?? model.exportError {
-                Text(error)
-                    .font(GenTypography.mono(9.5))
-                    .foregroundColor(model.theme.accent)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .instantTooltip(error)
-                    .accessibilityIdentifier("markdown-export-error")
-            }
+        }
+        // A failed share goes to the window's message slot (`MarkdownNoticeSlot`) with the rest: one sentence, the
+        // command's own words behind Details, kept until it is closed.
+        .onChange(of: share.error) { _, error in
+            guard let error else { return }
+            model.post(Self.shareNotice(error))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -276,6 +268,7 @@ struct MarkdownDocumentToolbar: View {
                     ) {
                         let note = doc.url
                         model.exportError = nil
+                        share.error = nil
                         Task { await share.share(note: note) }
                     }
                     .disabled(share.busy)
@@ -298,16 +291,25 @@ struct MarkdownDocumentToolbar: View {
         NSWorkspace.shared.activateFileViewerSelecting([doc.url])
     }
 
+    /// A share failure for the slot. The share model's own sentences ("Brave did not open the share link. It is on
+    /// the clipboard.") show as they are; anything else (a command's stderr, a system error) goes behind Details
+    /// under one sentence.
+    static func shareNotice(_ error: String) -> MarkdownNotice {
+        let text = error.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sentence = !text.contains("\n") && text.count <= 160 && text.hasSuffix(".") && text.first?.isUppercase == true
+        return sentence
+            ? MarkdownNotice(text, tone: .error)
+            : MarkdownNotice("The note could not be shared on the dev dashboard.", tone: .error, more: text)
+    }
+
     private func exportPDF() {
         share.error = nil
-        model.exportError = nil
-        MarkdownExport.savePDF(from: model.webProxy, note: doc.url, in: NSApp.keyWindow) { model.exportError = $0 }
+        model.exportPDF()
     }
 
     private func printDocument() {
         share.error = nil
-        model.exportError = nil
-        model.webProxy.printDocument(title: doc.title, in: NSApp.keyWindow) { model.exportError = $0 }
+        model.printDocument()
     }
 
     /// The reading engine, cycled by a click. Always named: the name is the state.

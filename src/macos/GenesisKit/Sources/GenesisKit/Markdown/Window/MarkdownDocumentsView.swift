@@ -27,6 +27,8 @@ struct MarkdownDocumentsView: View {
     }
 
     @State private var filesDragStart: Double?
+    /// A Finder drag is over the window: the content gets an accent outline (UX audit W10).
+    @State private var dropTargeted = false
 
     /// The sidebar's right edge: drag to resize, double-click for the standard width, arrows when focused.
     private var filesDivider: some View {
@@ -128,6 +130,7 @@ struct MarkdownDocumentsView: View {
                             .frame(width: model.gitWidth)
                     }
                 }
+                .overlay(alignment: .topTrailing) { MarkdownNoticeSlot(model: model) }
                 MarkdownStatusBar(doc: doc, model: model)
             } else {
                 // A bare grey line gave no way forward. Say what the window
@@ -139,7 +142,7 @@ struct MarkdownDocumentsView: View {
                     Text("No document open")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(model.theme.text)
-                    Text("Drop a Markdown file here, open one, or run genesis open <file> in a terminal.")
+                    Text("Drop a Markdown file here, or open one.")
                         .font(.system(size: 12))
                         .foregroundStyle(model.theme.textSecondary)
                         .multilineTextAlignment(.center)
@@ -148,10 +151,12 @@ struct MarkdownDocumentsView: View {
                         .buttonStyle(.genHover(accent: model.theme.accent))
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(model.theme.accent)
-                        .instantTooltip("Choose Markdown files to open as tabs")
+                        .instantTooltip(MarkdownKeymap.hint("Choose Markdown files to open as tabs", "markdown.file.open"))
                         .accessibilityIdentifier("markdown-viewer-open-files")
+                    MarkdownEmptyRecents(model: model)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .topTrailing) { MarkdownNoticeSlot(model: model) }
             }
         }
         // Paints the whole window but takes no clicks in the toolbar row: its empty part belongs to
@@ -174,6 +179,18 @@ struct MarkdownDocumentsView: View {
         .dropDestination(for: URL.self) { urls, _ in
             model.acceptDrop(urls)
             return true
+        } isTargeted: { targeted in
+            if dropTargeted != targeted { dropTargeted = targeted }
+        }
+        .overlay {
+            if dropTargeted {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(model.theme.accent.opacity(0.8), lineWidth: 2)
+                    .padding(.top, MarkdownDocumentToolbar.height)
+                    .padding(3)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
         // The window's keys run through `MarkdownKeymap.registerWindowCommands`, in Genesis.app's process as well
         // as the viewer's own.
@@ -181,6 +198,46 @@ struct MarkdownDocumentsView: View {
 
     private var tabBar: some View {
         MarkdownTabBar(model: model, configuration: model.configuration)
+    }
+}
+
+/// The empty window's next step besides Open…: the last few files that are still on disk, one button each
+/// (UX audit W23).
+private struct MarkdownEmptyRecents: View {
+    @ObservedObject var model: MarkdownDocumentsModel
+
+    private var files: [URL] {
+        model.recents.entries.lazy
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+            .prefix(5)
+            .map { URL(fileURLWithPath: $0.path) }
+    }
+
+    var body: some View {
+        let files = files
+        if !files.isEmpty {
+            VStack(spacing: 4) {
+                Text("Recent").font(.system(size: 11, weight: .semibold)).foregroundStyle(model.theme.textMuted)
+                    .padding(.top, 8)
+                ForEach(files, id: \.self) { file in
+                    Button { model.open([file]) } label: {
+                        HStack(spacing: 6) {
+                            Text(MarkdownDocument.title(for: file)).foregroundStyle(model.theme.text)
+                            Text(file.deletingLastPathComponent().lastPathComponent)
+                                .foregroundStyle(model.theme.textSecondary)
+                        }
+                        .font(.system(size: 12))
+                        .lineLimit(1)
+                        .padding(.horizontal, 8).padding(.vertical, 3)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip(file.path)
+                    .accessibilityLabel("Open \(MarkdownDocument.title(for: file)), in \(file.deletingLastPathComponent().lastPathComponent)")
+                }
+            }
+            .frame(maxWidth: 340)
+        }
     }
 }
 
@@ -245,7 +302,7 @@ private struct MarkdownTabBar: View {
         }
         .contentShape(Rectangle())
         .contextMenu {
-            MarkdownTabGroupingMenu(configuration: configuration)
+            MarkdownTabGroupingMenu(configuration: configuration, notices: model)
             Divider()
             MarkdownWrapTabsToggle(configuration: configuration)
         }
@@ -427,6 +484,7 @@ private struct MarkdownTabGroupChip: View {
     let model: MarkdownDocumentsModel
     @State private var renaming = false
     @State private var name = ""
+    @FocusState private var nameFocused: Bool
     @State private var dropSide: MarkdownTabDropSide?
     @State private var width: CGFloat = 0
 
@@ -453,7 +511,7 @@ private struct MarkdownTabGroupChip: View {
         .buttonStyle(.genHoverPlain())
         .padding(.vertical, 2)
         .instantTooltip(tooltip)
-        .accessibilityLabel("\(group.title) group, \(group.tabIDs.count) tabs, \(collapsed ? "folded" : "open")")
+        .accessibilityLabel("\(group.title) group, \(group.tabIDs.count) \(group.tabIDs.count == 1 ? "tab" : "tabs"), \(collapsed ? "folded" : "open")")
         .accessibilityAddTraits(.isHeader)
         .accessibilityIdentifier("markdown-tab-group-" + group.id)
         .draggable(MarkdownTabDrag.begin(.group(group.id)))
@@ -462,15 +520,25 @@ private struct MarkdownTabGroupChip: View {
             width: width, chip: true, side: $dropSide, perform: drop))
         .markdownTabDropLine(dropSide)
         .contextMenu { menu }
+        // The field takes the focus when the popover opens, and the name is kept on Return and on any other way
+        // the popover closes (a click outside); Esc puts the old name back (UX audit W17).
         .popover(isPresented: $renaming, arrowEdge: .bottom) {
             TextField("Group name", text: $name)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 220)
                 .padding(12)
-                .onSubmit {
-                    model.renameGroup(group.id, to: name)
+                .focused($nameFocused)
+                .onAppear { nameFocused = true }
+                .onSubmit { renaming = false }
+                .onExitCommand {
+                    name = group.title
                     renaming = false
                 }
+        }
+        .onChange(of: renaming) { _, open in
+            guard !open else { return }
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty, trimmed != group.title { model.renameGroup(group.id, to: trimmed) }
         }
     }
 
@@ -524,7 +592,7 @@ private struct MarkdownTabGroupChip: View {
             model.closeGroup(group.id)
         }
         Divider()
-        MarkdownTabGroupingMenu(configuration: model.configuration)
+        MarkdownTabGroupingMenu(configuration: model.configuration, notices: model)
     }
 
     /// A stable colour per group id, so a group keeps its colour across launches and reorders.
@@ -553,30 +621,54 @@ enum MarkdownTabDrag: Equatable {
 /// "Group Tabs By" and "Group From", in the tab bar's menu, every chip's and every tab's.
 struct MarkdownTabGroupingMenu: View {
     @ObservedObject var configuration: GenesisKitMarkdownConfiguration
+    /// Where the reset's Undo note goes.
+    var notices: MarkdownDocumentsModel?
 
     var body: some View {
         Picker("Group Tabs By", selection: $configuration.tabGrouping) {
             ForEach(MarkdownTabGroupRule.allCases, id: \.self) { Text($0.title).tag($0) }
         }
-        Picker("Group From", selection: $configuration.tabGroupFrom) {
+        // An option its parent switch makes moot is dimmed, and its parent is named in the title (UX audit W21).
+        let grouping = configuration.tabGrouping != .off
+        Picker(grouping ? "Group From" : "Group From (Grouping Is Off)", selection: $configuration.tabGroupFrom) {
             Text("Always").tag(0)
             Text("6 Open Tabs").tag(6)
             Text("10 Open Tabs").tag(10)
             Text("20 Open Tabs").tag(20)
         }
-        Toggle("Each Group on Its Own Rows", isOn: $configuration.tabGroupRows)
-        Picker("Wrapped Tabs Show", selection: $configuration.wrapTabsMaxRows) {
+        .disabled(!grouping)
+        Toggle(configuration.wrapTabs && grouping ? "Each Group on Its Own Rows" : "Each Group on Its Own Rows (Needs Wrap Tabs and Grouping)",
+               isOn: $configuration.tabGroupRows)
+            .disabled(!configuration.wrapTabs || !grouping)
+        Picker(configuration.wrapTabs ? "Wrapped Tabs Show" : "Wrapped Tabs Show (Wrap Tabs Is Off)",
+               selection: $configuration.wrapTabsMaxRows) {
             Text("2 Rows").tag(2)
             Text("4 Rows").tag(4)
             Text("6 Rows").tag(6)
             Text("Every Row").tag(0)
         }
+        .disabled(!configuration.wrapTabs)
         if configuration.tabBarHeight > 0 {
-            Button("Forget the Dragged Tab Bar Height") { configuration.tabBarHeight = 0 }
+            Button("Reset Tab Bar Height") { configuration.tabBarHeight = 0 }
         }
         if configuration.tabGroupState != MarkdownTabGroupState() {
-            Button("Reset Group Names, Order and Moves") { configuration.tabGroupState = MarkdownTabGroupState() }
+            Button("Reset Group Names, Order and Moves") { resetGroups() }
         }
+    }
+}
+
+extension MarkdownTabGroupingMenu {
+    /// Every hand edit to the groups goes at once, so the reset says so and offers Undo (UX audit W22).
+    private func resetGroups() {
+        let before = configuration.tabGroupState
+        configuration.tabGroupState = MarkdownTabGroupState()
+        guard let model = notices else { return }
+        model.post(MarkdownNotice("Group names, order and moves were reset.", tone: .info, actions: [
+            .button("Undo", symbol: "arrow.uturn.backward") { [weak model, configuration] in
+                configuration.tabGroupState = before
+                model?.dismissNotice()
+            },
+        ]))
     }
 }
 
@@ -589,8 +681,9 @@ private struct MarkdownTabMoveMenu: View {
         let groups = model.tabGroups
         let current = model.group(of: doc.id)?.id
         Menu("Move to Group") {
+            // With the detail (the folder above, the project) two groups of one name can be told apart (UX audit W20).
             ForEach(groups.filter { $0.id != current }) { group in
-                Button(group.title) { model.dropTab(doc.id, onGroup: group.id) }
+                Button(group.title + (group.detail.map { " · " + $0 } ?? "")) { model.dropTab(doc.id, onGroup: group.id) }
             }
             if groups.count > 1 { Divider() }
             Button("New Group with This Tab") { model.newGroup(with: doc.id) }
@@ -635,7 +728,10 @@ private struct MarkdownDocumentTab: View, Equatable {
         // A tab that previews on hover shows its path in the preview's header instead: a tooltip there
         // would sit under the preview.
         let previews = !active && model.configuration.hoverPreview
-        HStack(spacing: 6) {
+        // No gap and no outer tap gesture: the select button's label carries the tab's left and vertical padding and
+        // the close button's carries the right, so the whole drawn tab shows the hover and the hand, and every click
+        // lands on a button (UX audit W15).
+        HStack(spacing: 0) {
             Button {
                 selectOrKeep(via: "button")
             } label: {
@@ -655,43 +751,54 @@ private struct MarkdownDocumentTab: View, Equatable {
                         GitFileMark(file: doc.url)
                     }
                 }
+                .padding(.leading, 12)
+                .padding(.trailing, 3)
+                .padding(.vertical, 7)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverPlain())
+            .instantTooltip(previews ? "" : tooltip)
             .accessibilityLabel(accessibilityTitle)
             .accessibilityAddTraits(active ? .isSelected : [])
+            .accessibilityAction(named: "Move Left") { model.shiftTab(doc.id, by: -1) }
+            .accessibilityAction(named: "Move Right") { model.shiftTab(doc.id, by: 1) }
             Button {
                 MarkdownDocumentWindow.input.notice("\(MarkdownTabLog.note(action: "close", index: tabIndex), privacy: .public)")
                 model.close(doc)
             } label: {
+                // A 22 pt target around the 9 pt glyph (UX audit W11). With the 9 pt right padding inside the label
+                // and no gap before it, the glyph's centre and the tab's width stay where the old 16 pt frame, 6 pt
+                // gap and 12 pt padding put them.
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
-                    // A 9pt glyph alone was a 9×9pt target.
-                    .frame(width: 16, height: 16)
+                    .opacity(0.6)
+                    .frame(width: 22, height: 22)
+                    .padding(.trailing, 9)
+                    .padding(.vertical, 3)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverPlain())
-            .opacity(0.6)
-            .instantTooltip("Close tab")
+            .instantTooltip(MarkdownKeymap.hint("Close tab", "markdown.tab.close"))
             .accessibilityLabel("Close \(doc.title)")
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
         .background(active ? fill : Color.clear)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .contentShape(Rectangle())
-        .onTapGesture { selectOrKeep(via: "tap") }
         .contextMenu {
             if preview {
                 Button("Keep Tab") { model.keep(doc) }
                 Divider()
             }
             MarkdownTabMenu(doc: doc, model: model)
+            Button("Move Tab Left") { model.shiftTab(doc.id, by: -1) }
+                .disabled(!model.canShiftTab(doc.id, by: -1))
+            Button("Move Tab Right") { model.shiftTab(doc.id, by: 1) }
+                .disabled(!model.canShiftTab(doc.id, by: 1))
             Divider()
             if model.groupsTabs {
                 MarkdownTabMoveMenu(doc: doc, model: model)
             }
-            MarkdownTabGroupingMenu(configuration: model.configuration)
+            MarkdownTabGroupingMenu(configuration: model.configuration, notices: model)
             MarkdownWrapTabsToggle(configuration: model.configuration)
         }
         .draggable(MarkdownTabDrag.begin(.tab(doc.id))) {
@@ -701,7 +808,6 @@ private struct MarkdownDocumentTab: View, Equatable {
         .onDrop(of: [.utf8PlainText, .plainText], delegate: MarkdownTabDropDelegate(
             width: width, chip: false, side: $dropSide, perform: drop))
         .markdownTabDropLine(dropSide)
-        .instantTooltip(previews ? "" : doc.url.path)
         .markdownHoverPreview(active ? nil : doc.url, model: model)
         .frameProbe("md.tab." + doc.id)
     }
@@ -729,6 +835,12 @@ private struct MarkdownDocumentTab: View, Equatable {
         if MouseClick.current >= 2 {
             model.keep(doc)
         }
+    }
+
+    /// The path, and for the italic preview tab what italic means (UX audit W24).
+    private var tooltip: String {
+        guard preview else { return doc.url.path }
+        return "Preview tab: the next file you open from the sidebar replaces it. Double-click to keep it.\n" + doc.url.path
     }
 
     private var accessibilityTitle: String {
@@ -807,10 +919,18 @@ enum MarkdownPaneContent {
             self.pixels = CGFloat(MediaThumbnailCache.bucket(forPixels: pixels))
         }
 
+        /// The file part of the request: what makes a shown picture wrong, as opposed to only the wrong size.
+        var file: PictureFile { PictureFile(url: url, modifiedAt: modifiedAt) }
+
         /// Loads the picture through the shared off-main decoder and thumbnail cache.
         func load() async -> MarkdownHoverImage.Picture {
             await MarkdownHoverImage.picture(url: url, pixels: pixels, draft: nil)
         }
+    }
+
+    struct PictureFile: Hashable {
+        let url: URL
+        let modifiedAt: Date?
     }
 
     /// Whether the current pane renders a web page whose completion must precede the tab swap.
@@ -833,6 +953,16 @@ private struct MarkdownDocumentPane: View {
     @StateObject private var gutter = GitGutterModel()
     @StateObject private var blame = AgentBlameModel()
     @State private var binaryPicture: MarkdownHoverImage.Picture = .loading
+    /// The file and date the shown picture was decoded from: a new size of the same file keeps it on screen while
+    /// the new size decodes (UX audit W9).
+    @State private var binaryPictureFile: MarkdownPaneContent.PictureFile?
+    /// Try Again after a failed decode.
+    @State private var binaryPictureAttempt = 0
+
+    private var showsPicture: Bool {
+        if case .ready = binaryPicture { return true }
+        return false
+    }
     @Environment(\.displayScale) private var displayScale
     @ObservedObject private var configuration = GenesisKitMarkdownConfiguration.shared
 
@@ -943,18 +1073,28 @@ private struct MarkdownDocumentPane: View {
                             .accessibilityLabel(doc.url.lastPathComponent)
                             .accessibilityIdentifier("markdown-binary-image")
                     } else if case .failed = binaryPicture {
-                        pathButton
+                        VStack(spacing: 8) {
+                            Text("The picture could not be shown")
+                                .font(.headline)
+                            pathButton
+                            Button("Try Again") { binaryPictureAttempt += 1 }
+                                .buttonStyle(.genHover(accent: model.theme.accent))
+                                .foregroundStyle(model.theme.accent)
+                                .accessibilityIdentifier("markdown-binary-retry")
+                        }
                     } else {
                         ProgressView().controlSize(.small)
                     }
                 }
                 .padding(16)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .task(id: request) {
-                    binaryPicture = .loading
+                .task(id: [AnyHashable(request), AnyHashable(binaryPictureAttempt)]) {
+                    // Only another file (or a changed one) takes the picture away; a new size decodes behind it.
+                    if binaryPictureFile != request.file || !showsPicture { binaryPicture = .loading }
                     let picture = await request.load()
                     guard !Task.isCancelled else { return }
                     binaryPicture = picture
+                    binaryPictureFile = request.file
                 }
             }
         } else {

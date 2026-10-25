@@ -29,12 +29,15 @@ public enum MarkdownKeymap {
         KeymapCommand("markdown.tab.reopen", "Reopen Closed Tab", group: "Tabs", keys: [.character("t", [.shift, .command])]),
         KeymapCommand("markdown.tab.next", "Next Tab", group: "Tabs", keys: [.code(30, [.shift, .command])]),
         KeymapCommand("markdown.tab.previous", "Previous Tab", group: "Tabs", keys: [.code(33, [.shift, .command])]),
+    ] + tabNumberCommands + [
         // History
         KeymapCommand("markdown.history.back", "Back", group: "History",
                       detail: "The note you read before this one; a closed tab opens again.",
                       keys: [.code(33, .command)]),
         KeymapCommand("markdown.history.forward", "Forward", group: "History", keys: [.code(30, .command)]),
         // Files
+        KeymapCommand("markdown.file.open", "Open…", group: "Files", detail: "Markdown and text files, several at once.",
+                      keys: [.character("o", .command)]),
         KeymapCommand("markdown.file.save", "Save", group: "Files", keys: [.character("s", .command)]),
         KeymapCommand("markdown.file.reload", "Reload from Disk", group: "Files", keys: [.character("r", .command)]),
         KeymapCommand("markdown.file.reveal", "Reveal in Finder", group: "Files", keys: [.character("r", [.shift, .command])]),
@@ -117,20 +120,43 @@ public enum MarkdownKeymap {
                       scope: .app, configurable: false),
     ])
 
+    /// ⌘1 to ⌘8 select the tab at that place in the bar's order, ⌘9 the last one (as in a browser).
+    static let tabNumberCommands: [KeymapCommand] = (1...9).map { number in
+        KeymapCommand(tabNumberCommand(number), number == 9 ? "Last Tab" : "Tab \(number)", group: "Tabs",
+                      keys: [.character(String(number), .command)])
+    }
+
+    static func tabNumberCommand(_ number: Int) -> String { "markdown.tab.select\(number)" }
+
     /// The window's own commands, held for as long as the window lives. Everything the model can do alone runs here;
-    /// the toolbar adds Save as PDF and Print (`.keymapAction`), the find bar its own keys while it is open.
+    /// the find bar adds its own keys while it is open.
     static func registerWindowCommands(
         model: MarkdownDocumentsModel, window: NSWindow, keymap: Keymap = shared,
         dispatcher: KeymapDispatcher = .shared, closeTab: @escaping () -> Void
     ) -> [KeymapRegistration] {
-        let actions: [(String, () -> Void)] = [
+        windowActions(model: model, window: window, keymap: keymap, closeTab: closeTab)
+            .map { id, run in dispatcher.register(id, in: keymap, window: window, perform: run) }
+    }
+
+    /// What each window command does: the keys (`registerWindowCommands`) and the menu bar
+    /// (`MarkdownDocumentWindowController.performCommand`) run the same closure.
+    static func windowActions(
+        model: MarkdownDocumentsModel, window: NSWindow?, keymap: Keymap = shared, closeTab: @escaping () -> Void
+    ) -> [(String, () -> Void)] {
+        let tabs: [(String, () -> Void)] = (1...9).map { number in
+            (tabNumberCommand(number), { model.selectTab(number: number) })
+        }
+        return tabs + [
             ("markdown.tab.close", closeTab),
             ("markdown.tab.reopen", { model.reopenLastClosed() }),
             ("markdown.tab.next", { model.selectTab(offset: 1) }),
             ("markdown.tab.previous", { model.selectTab(offset: -1) }),
             ("markdown.history.back", { model.goBack() }),
             ("markdown.history.forward", { model.goForward() }),
+            ("markdown.file.open", { MarkdownDocumentsView.chooseFiles(into: model) }),
             ("markdown.file.save", { model.saveSelected() }),
+            ("markdown.file.pdf", { model.exportPDF() }),
+            ("markdown.file.print", { model.printDocument() }),
             ("markdown.file.reload", { model.selected?.reload() }),
             ("markdown.file.reveal", {
                 if let url = model.selected?.url { NSWorkspace.shared.activateFileViewerSelecting([url]) }
@@ -149,7 +175,6 @@ public enum MarkdownKeymap {
             ("markdown.window.close", { [weak window] in window?.performClose(nil) }),
             ("markdown.help.shortcuts", { KeymapHelpWindow.show(keymap) }),
         ]
-        return actions.map { id, run in dispatcher.register(id, in: keymap, window: window, perform: run) }
     }
 
     /// The source editor's command for a key press, if it has one (`MarkdownSourceEditor`).

@@ -19,9 +19,9 @@ final class MarkdownViewerAppTests: XCTestCase {
         let closeWindow = file?.items.first { $0.title == "Close Window" }
         XCTAssertEqual(closeWindow?.keyEquivalent, "w")
         XCTAssertEqual(closeWindow?.keyEquivalentModifierMask, [.command, .shift])
-        // Without an Edit menu ⌘C/⌘V never reach the text views.
+        // Without an Edit menu ⌘C/⌘V never reach the text views. Find and Find in Files follow them.
         let edit = menu.items.first { $0.title == "Edit" }?.submenu
-        XCTAssertEqual(edit?.items.map(\.keyEquivalent).filter { !$0.isEmpty }, ["z", "z", "x", "c", "v", "a"])
+        XCTAssertEqual(edit?.items.map(\.keyEquivalent).filter { !$0.isEmpty }, ["z", "z", "x", "c", "v", "a", "f", "f"])
         XCTAssertEqual(menu.items.first?.submenu?.items.last?.title, "Quit Viewer")
     }
 }

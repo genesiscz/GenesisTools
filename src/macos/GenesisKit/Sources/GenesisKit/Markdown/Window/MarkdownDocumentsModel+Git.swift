@@ -64,7 +64,10 @@ extension MarkdownDocumentsModel {
                 self.revisionCompare = nil
                 switch result {
                 case .success(let text): self.revisionView = MarkdownRevision(docID: id, commit: commit, text: text)
-                case .failure(let error): self.exportError = "Could not read revision: \(error)"
+                case .failure(let error):
+                    // One sentence; git's own words behind Details.
+                    self.post(MarkdownNotice("This version of the note could not be read.", tone: .error,
+                                             more: String(describing: error)))
                 }
             }
         }

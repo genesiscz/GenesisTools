@@ -184,6 +184,33 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
     @objc public func reopenClosedTab(_ sender: Any?) { model.reopenLastClosed() }
     @objc public func showKeyboardShortcuts(_ sender: Any?) { KeymapHelpWindow.show(MarkdownKeymap.shared) }
 
+    /// The menu bar's items for the window commands (`MarkdownViewerMenu.command`): the item names its command, and
+    /// the same closure the key runs does the work.
+    @objc public func performCommand(_ sender: Any?) {
+        guard let id = (sender as? NSMenuItem)?.representedObject as? String else { return }
+        menuActions[id]?()
+    }
+
+    private lazy var menuActions: [String: () -> Void] = Dictionary(
+        MarkdownKeymap.windowActions(model: model, window: window) { [weak self] in self?.closeSelectedTabOrWindow() },
+        uniquingKeysWith: { first, _ in first }
+    )
+
+    /// Whether a window command's menu item can run now.
+    func canPerform(_ id: String) -> Bool {
+        switch id {
+        case "markdown.file.open", "markdown.view.files", "markdown.view.outline", "markdown.find.files":
+            return true
+        case "markdown.file.pdf", "markdown.file.print":
+            return model.selected != nil && model.canExport
+        case "markdown.find.open":
+            return model.selected != nil && model.supportsFind
+        default:
+            if id.hasPrefix("markdown.tab.select") { return model.docs.count > 1 }
+            return model.selected != nil
+        }
+    }
+
     /// Green-button zoom / title-bar double-click fill the visible screen,
     /// then restore. Without this, AppKit fits the WKWebView and the window
     /// barely moves.
@@ -265,6 +292,7 @@ extension MarkdownDocumentWindowController: NSMenuItemValidation {
         case #selector(goForward(_:)): return model.canGoForward
         case #selector(nextTab(_:)), #selector(previousTab(_:)): return model.docs.count > 1
         case #selector(reopenClosedTab(_:)): return model.canReopenClosedTab
+        case #selector(performCommand(_:)): return (item.representedObject as? String).map(canPerform) ?? false
         default: return true
         }
     }

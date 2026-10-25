@@ -174,13 +174,12 @@ extension MarkdownDocumentsModel {
         }
     }
 
-    /// Closes every tab of a group; a dirty one asks first, as a single close does.
-    func closeGroup(_ groupID: String) {
+    /// Closes every tab of a group as one action (`closeTabs`: one Undo); a dirty one asks first, as a single
+    /// close does.
+    func closeGroup(_ groupID: String, confirm: @MainActor (MarkdownDocument) -> UnsavedChoice = MarkdownDocumentsModel.askUnsaved) {
         guard let group = tabGroups.first(where: { $0.id == groupID }) else { return }
-        for id in group.tabIDs {
-            guard let doc = docs.first(where: { $0.id == id }) else { continue }
-            guard close(doc) else { return }
-        }
+        let tabs = group.tabIDs.compactMap { id in docs.first { $0.id == id } }
+        closeTabs(tabs, confirm: confirm)
     }
 
     /// One write per action: each assignment to the state publishes and re-runs the bar.

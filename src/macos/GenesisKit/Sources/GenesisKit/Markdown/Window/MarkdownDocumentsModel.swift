@@ -112,11 +112,30 @@ final class MarkdownDocumentsModel: ObservableObject {
     func acceptDrop(_ urls: [URL]) {
         let (tabs, external) = MarkdownDrop.split(urls)
         if !tabs.isEmpty { open(tabs) }
-        for url in external { NSWorkspace.shared.open(url) }
+        for url in external { openDropped(url) }
         if let folder = MarkdownDrop.firstFolder(urls) {
             filesRoot = folder.standardizedFileURL.path
             showFiles = true
         }
+    }
+
+    /// A dropped file this viewer does not show. A document opens in its app and the note names the app; anything
+    /// that could run (an app, a script, an executable) waits for Open Anyway, since a stray drop must not start a
+    /// program (UX audit W14).
+    private func openDropped(_ url: URL) {
+        let name = url.lastPathComponent
+        if let app = defaultApp(url), MarkdownDocumentLinks.mayOpenWithDefaultApp(url, app: app) {
+            openExternally(url)
+            post(MarkdownNotice("Opened \u{201C}\(name)\u{201D} in \(app.name).", tone: .info))
+            return
+        }
+        post(MarkdownNotice(
+            "\u{201C}\(name)\u{201D} is not a file this viewer shows, and opening it can start a program.",
+            tone: .warning,
+            actions: [.button("Open Anyway", symbol: "arrow.up.forward.app") { [weak self] in
+                self?.dismissNotice()
+                self?.openExternally(url)
+            }]))
     }
 
     /// "Go to Location…" (⇧⌘G): the sheet, and the folder (or a link's file) the file tree last revealed.
@@ -418,6 +437,13 @@ final class MarkdownDocumentsModel: ObservableObject {
     }
     /// Closed tabs, newest last, so ⌘⇧T walks back through them.
     @Published private(set) var recentlyClosed: [URL] = []
+    /// How many of the newest `recentlyClosed` entries one batch close (a group, every other tab) left: ⌘⇧T and the
+    /// note's Undo reopen them together. 0 after a single close.
+    private(set) var closedBatchCount = 0
+    /// While `closeTabs` runs: the files it closed so far.
+    private var closingBatch: [URL]?
+    /// How many closed tabs ⌘⇧T keeps; a batch larger than this is kept whole.
+    static let reopenLimit = 100
     /// File → Open Recent (MarkdownRecents.swift), kept in this window's defaults.
     private(set) var recents = MarkdownRecents() {
         didSet {
@@ -467,8 +493,57 @@ final class MarkdownDocumentsModel: ObservableObject {
     @Published var commitSheet: MarkdownCommitSheet?
     /// The live reading web view, for PDF export and print.
     let webProxy = MarkdownWebProxy()
-    /// Last export failure, shown in the toolbar until the next action.
-    @Published var exportError: String?
+    /// The window's one message (`MarkdownNoticeSlot`): a save failure, a replace count, a closed batch of tabs.
+    @Published private(set) var notice: MarkdownNotice?
+    private var noticeClear: Task<Void, Never>?
+
+    /// Shows `notice` in place of the one before, announces it to VoiceOver, and clears it after its lifetime
+    /// (an error stays until it is closed).
+    func post(_ notice: MarkdownNotice) {
+        self.notice = notice
+        GenAnnounce.post(notice.text, priority: notice.tone == .error ? .high : .medium)
+        noticeClear?.cancel()
+        guard let lifetime = notice.lifetime else { return }
+        let id = notice.id
+        noticeClear = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(lifetime))
+            guard !Task.isCancelled else { return }
+            self?.dismissNotice(id)
+        }
+    }
+
+    /// Save as PDF… (⇧⌘S, File menu, toolbar): the reading page of the selected tab, a failure in the slot.
+    func exportPDF() {
+        guard let doc = selected else { return }
+        exportError = nil
+        MarkdownExport.savePDF(from: webProxy, note: doc.url, in: NSApp.keyWindow) { [weak self] in self?.exportError = $0 }
+    }
+
+    /// Print… (⌘P, File menu, toolbar).
+    func printDocument() {
+        guard let doc = selected else { return }
+        exportError = nil
+        webProxy.printDocument(title: doc.title, in: NSApp.keyWindow) { [weak self] in self?.exportError = $0 }
+    }
+
+    /// Closes the shown note; with an id, only while that note is still the one shown.
+    func dismissNotice(_ id: UUID? = nil) {
+        guard let notice, id == nil || notice.id == id else { return }
+        self.notice = nil
+    }
+
+    /// The shown error's sentence. Setting a text posts it as an error; setting nil closes an error (a success
+    /// stays for its own lifetime).
+    var exportError: String? {
+        get { notice?.tone == .error ? notice?.text : nil }
+        set {
+            if let newValue {
+                post(MarkdownNotice(newValue, tone: .error))
+            } else if notice?.tone == .error {
+                dismissNotice()
+            }
+        }
+    }
 
     /// Where ⌘F looks. With the editor on screen it searches the source, which
     /// is also the only place a replace makes sense; otherwise it marks matches
@@ -609,7 +684,7 @@ final class MarkdownDocumentsModel: ObservableObject {
         findCount = 0
         findIndex = 0
         sourceSelection = nil
-        exportError = "Replaced \(result.count) \(result.count == 1 ? "match" : "matches")"
+        post(MarkdownNotice("Replaced \(result.count) \(result.count == 1 ? "match" : "matches")", tone: .success))
     }
 
     func show(_ range: NSRange) {
@@ -728,6 +803,31 @@ final class MarkdownDocumentsModel: ObservableObject {
         select(order[next])
     }
 
+    /// ⌘1 to ⌘8: the tab at that place in the bar's order; ⌘9 the last tab.
+    func selectTab(number: Int) {
+        let order = visibleTabOrder
+        guard !order.isEmpty, number >= 1 else { return }
+        let index = number >= 9 ? order.count - 1 : number - 1
+        guard order.indices.contains(index) else { return }
+        select(order[index])
+    }
+
+    /// Move Tab Left or Right (the tab's menu and its VoiceOver actions): one place in the bar's order, across a
+    /// group's edge into the next group, as a drag there would. The keyboard twin of a tab drag (UX audit W6).
+    func shiftTab(_ id: String, by offset: Int) {
+        let order = visibleTabOrder
+        guard let index = order.firstIndex(of: id) else { return }
+        let target = index + offset
+        guard order.indices.contains(target) else { return }
+        dropTab(id, beside: order[target], after: offset > 0)
+    }
+
+    func canShiftTab(_ id: String, by offset: Int) -> Bool {
+        let order = visibleTabOrder
+        guard let index = order.firstIndex(of: id) else { return false }
+        return order.indices.contains(index + offset)
+    }
+
     /// Moves a tab before another one, or to the end with nil (a drag in the tab bar). The order is saved like any
     /// other tab change.
     func moveTab(_ id: String, before target: String?) {
@@ -751,10 +851,35 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// which is already on screen whenever `diskChange` is set.
     func saveSelected() {
         guard let doc = selected else { return }
-        switch doc.save() {
-        case .saved, .nothingToSave, .blockedByDiskChange: break
-        case .failed(let message): exportError = message
+        _ = save(doc)
+    }
+
+    /// Saves `doc` and says so when it did not work: a failure as an error note with Try Again, a save refused
+    /// because the file changed on disk with the tab selected, where its conflict banner is. Every save the reader
+    /// starts goes through here: ⌘S, and Save in the unsaved-changes prompt of a tab, the window or ⌘Q, which used to
+    /// leave the tab open with no word (UX audit W1).
+    @discardableResult
+    func save(_ doc: MarkdownDocument) -> MarkdownDocument.SaveOutcome {
+        let outcome = doc.save()
+        switch outcome {
+        case .saved, .nothingToSave:
+            break
+        case .blockedByDiskChange:
+            if selectedId != doc.id { select(doc.id) }
+            post(MarkdownNotice(
+                "\u{201C}\(doc.title)\u{201D} was not saved: the file changed on disk. Pick a version in the banner, then save again.",
+                tone: .error))
+        case .failed(let message):
+            if selectedId != doc.id { select(doc.id) }
+            post(MarkdownNotice(message, tone: .error, actions: [
+                .button("Try Again", symbol: "arrow.clockwise") { [weak self, weak doc] in
+                    guard let self, let doc else { return }
+                    self.dismissNotice()
+                    self.save(doc)
+                },
+            ]))
         }
+        return outcome
     }
 
     /// Closing a dirty tab asks first. Returns false when the reader cancelled. `remember: false` keeps
@@ -768,7 +893,7 @@ final class MarkdownDocumentsModel: ObservableObject {
         if doc.isDirty {
             switch confirm(doc) {
             case .save:
-                if doc.save() != .saved { return false }
+                if save(doc) != .saved { return false }
             case .discard: break
             case .cancel: return false
             }
@@ -778,6 +903,38 @@ final class MarkdownDocumentsModel: ObservableObject {
     }
 
     enum UnsavedChoice { case save, discard, cancel }
+
+    /// Closes several tabs as one action (Close Tabs in Group, Close Other Tabs). Each dirty tab asks first, and a
+    /// cancel stops there. Two or more closed tabs leave a note with Undo, and ⌘⇧T reopens them all at once: before,
+    /// ⌘⇧T brought back one tab per press and the stack forgot all but 20 (UX audit W3). Returns false on a cancel.
+    @discardableResult
+    func closeTabs(
+        _ tabs: [MarkdownDocument],
+        confirm: @MainActor (MarkdownDocument) -> UnsavedChoice = MarkdownDocumentsModel.askUnsaved
+    ) -> Bool {
+        closingBatch = []
+        var finished = true
+        for doc in tabs where docs.contains(where: { $0.id == doc.id }) {
+            guard close(doc, confirm: confirm) else {
+                finished = false
+                break
+            }
+        }
+        let closed = closingBatch ?? []
+        closingBatch = nil
+        closedBatchCount = closed.count
+        if closed.count > 1 {
+            let count = closed.count
+            post(MarkdownNotice("Closed \(count) tabs.", tone: .info, actions: [
+                .button("Reopen \(count) Tabs", symbol: "arrow.uturn.backward") { [weak self] in
+                    guard let self else { return }
+                    self.dismissNotice()
+                    self.reopenLastClosed()
+                },
+            ]))
+        }
+        return finished
+    }
 
     /// Closing the whole window (or quitting): every unsaved tab is saved or
     /// discarded, but no tab is removed, so the session reopens with the same
@@ -794,7 +951,7 @@ final class MarkdownDocumentsModel: ObservableObject {
             select(doc.id)
             switch confirm(doc) {
             case .save:
-                if doc.save() != .saved { return false }
+                if save(doc) != .saved { return false }
             case .discard:
                 doc.discardDraft()
             case .cancel:
@@ -833,8 +990,11 @@ final class MarkdownDocumentsModel: ObservableObject {
             recentlyClosed.append(doc.url)
             recents.closed(doc.url)
         }
-        if recentlyClosed.count > 20 {
-            recentlyClosed.removeFirst()
+        if remember {
+            if closingBatch != nil { closingBatch?.append(doc.url) } else { closedBatchCount = 0 }
+        }
+        if recentlyClosed.count > max(Self.reopenLimit, closingBatch?.count ?? 0) {
+            recentlyClosed.removeFirst(recentlyClosed.count - max(Self.reopenLimit, closingBatch?.count ?? 0))
         }
         let position = docs.firstIndex { $0.id == doc.id }
         docs.removeAll { $0.id == doc.id }
@@ -850,6 +1010,17 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// ⌘⇧T. A file that is open again already (reopened by hand, or by a new
     /// `genesis open`) is dropped from the stack rather than re-selected twice.
     func reopenLastClosed() {
+        if closedBatchCount > 1 {
+            let batch = Array(recentlyClosed.suffix(closedBatchCount))
+            recentlyClosed.removeLast(batch.count)
+            closedBatchCount = 0
+            let closed = batch.filter { url in !docs.contains { $0.url == url } }
+            if !closed.isEmpty {
+                open(closed)
+                return
+            }
+        }
+        closedBatchCount = 0
         while let url = recentlyClosed.popLast() {
             if docs.contains(where: { $0.url == url }) {
                 continue
@@ -916,6 +1087,9 @@ final class MarkdownDocumentsModel: ObservableObject {
             openExternally(url)
             return
         } else if MarkdownDocumentLinks.hasScheme(target) {
+            // A click that does nothing looks broken: say which kind of link was refused (UX audit W8).
+            let scheme = target.prefix { $0 != ":" }
+            post(MarkdownNotice("Links that start with \u{201C}\(scheme):\u{201D} are not opened from a note.", tone: .warning))
             return
         }
         // `Note#Heading` (or a bare `#Heading`, this note) jumps to the heading
@@ -929,6 +1103,7 @@ final class MarkdownDocumentsModel: ObservableObject {
             target, folder: doc.folder, vaultRoot: GenesisKit.host?.markdownVaultRoot
         ) else {
             GenesisKit.log("markdown: link \(target) resolves to nothing")
+            post(MarkdownNotice("Nothing found for \u{201C}\(target)\u{201D}.", tone: .warning))
             return
         }
         let route = MarkdownLinkRoute.decide(url, fragment: fragment)

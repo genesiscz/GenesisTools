@@ -30,6 +30,15 @@ extension MarkdownTabDrag {
         }
     }
 
+    /// The tab-bar drag in flight, or nil for any other drag. The drag pasteboard holds the dragged text when it
+    /// can be read during the drag, and that wins: plain text from a page or another app is no tab drag, even when an
+    /// earlier tab drag that ended outside the bar left `active` set. Text not readable yet falls back to `active`
+    /// (UX audit W13).
+    @MainActor static func inFlight(pasteboard: NSPasteboard = NSPasteboard(name: .drag)) -> MarkdownTabDrag? {
+        if let text = pasteboard.string(forType: .string) { return parse(text) }
+        return active
+    }
+
     /// The side a drop at `x` lands on, in a target `width` wide. `chip`: a tab held over a chip goes into it.
     static func side(x: CGFloat, width: CGFloat, chip: Bool, dragging: MarkdownTabDrag?) -> MarkdownTabDropSide {
         if chip, case .tab = dragging { return .into }
@@ -45,7 +54,7 @@ struct MarkdownTabDropDelegate: DropDelegate {
     let perform: @MainActor (MarkdownTabDrag, MarkdownTabDropSide) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
-        info.hasItemsConforming(to: [.utf8PlainText, .plainText])
+        info.hasItemsConforming(to: [.utf8PlainText, .plainText]) && MainActor.assumeIsolated { MarkdownTabDrag.inFlight() != nil }
     }
 
     func dropEntered(info: DropInfo) {
@@ -67,7 +76,10 @@ struct MarkdownTabDropDelegate: DropDelegate {
         side = nil
         guard let provider = info.itemProviders(for: [.utf8PlainText, .plainText]).first else { return false }
         _ = provider.loadObject(ofClass: String.self) { text, _ in
-            guard let text, let drag = MarkdownTabDrag.parse(text) else { return }
+            guard let text, let drag = MarkdownTabDrag.parse(text) else {
+                Task { @MainActor in MarkdownTabDrag.active = nil }
+                return
+            }
             Task { @MainActor [chip, width, perform] in
                 // A tab on a chip goes in; the side was guessed from the recorded drag, so read it again here.
                 let resolved: MarkdownTabDropSide = chip
@@ -82,7 +94,7 @@ struct MarkdownTabDropDelegate: DropDelegate {
 
     private func update(_ info: DropInfo) {
         let next = MarkdownTabDrag.side(
-            x: info.location.x, width: width, chip: chip, dragging: MarkdownTabDrag.active)
+            x: info.location.x, width: width, chip: chip, dragging: MainActor.assumeIsolated { MarkdownTabDrag.inFlight() })
         if side != next { side = next }
     }
 }

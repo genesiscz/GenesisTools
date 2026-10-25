@@ -219,6 +219,7 @@ public enum MarkdownViewerMenu {
         menu.addItem(submenu(appMenu, title: appName))
 
         let file = NSMenu(title: "File")
+        command(file, "Open…", "markdown.file.open", keymap: keymap)
         // The files opened lately: an open one checked, a closed one with when it was closed (MarkdownRecents.swift).
         let recent = NSMenu(title: "Open Recent")
         recent.delegate = MarkdownRecentMenu.shared
@@ -230,6 +231,12 @@ public enum MarkdownViewerMenu {
         keyed(file, "Go to Location…", #selector(MarkdownDocumentWindowController.goToLocation(_:)), "markdown.file.goto", keymap: keymap)
         file.addItem(.separator())
         keyed(file, "Save", #selector(MarkdownDocumentWindowController.saveSelected(_:)), "markdown.file.save", keymap: keymap)
+        command(file, "Reload from Disk", "markdown.file.reload", keymap: keymap)
+        file.addItem(.separator())
+        command(file, "Save as PDF…", "markdown.file.pdf", keymap: keymap)
+        command(file, "Print…", "markdown.file.print", keymap: keymap)
+        file.addItem(.separator())
+        command(file, "Reveal in Finder", "markdown.file.reveal", keymap: keymap)
         keyed(file, "Copy Path", #selector(MarkdownDocumentWindowController.copyPath(_:)), "markdown.file.copyPath", keymap: keymap)
         menu.addItem(submenu(file, title: "File"))
 
@@ -242,7 +249,23 @@ public enum MarkdownViewerMenu {
         edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(.separator())
+        command(edit, "Find…", "markdown.find.open", keymap: keymap)
+        command(edit, "Find in Files…", "markdown.find.files", keymap: keymap)
         menu.addItem(submenu(edit, title: "Edit"))
+
+        // Every keyed command has a menu item, so the menu bar lists what the keys do (UX audit W5).
+        let view = NSMenu(title: "View")
+        command(view, "Show or Hide Files", "markdown.view.files", keymap: keymap)
+        command(view, "Show or Hide Outline", "markdown.view.outline", keymap: keymap)
+        view.addItem(.separator())
+        command(view, "Reading View or Source", "markdown.view.source", keymap: keymap)
+        command(view, "Editor and Preview Side by Side", "markdown.view.split", keymap: keymap)
+        view.addItem(.separator())
+        command(view, "Bigger Text", "markdown.view.bigger", keymap: keymap)
+        command(view, "Smaller Text", "markdown.view.smaller", keymap: keymap)
+        command(view, "Actual Size", "markdown.view.actualSize", keymap: keymap)
+        menu.addItem(submenu(view, title: "View"))
 
         let go = NSMenu(title: "Go")
         keyed(go, "Back", #selector(MarkdownDocumentWindowController.goBack(_:)), "markdown.history.back", keymap: keymap)
@@ -251,6 +274,10 @@ public enum MarkdownViewerMenu {
         keyed(go, "Next Tab", #selector(MarkdownDocumentWindowController.nextTab(_:)), "markdown.tab.next", keymap: keymap)
         keyed(go, "Previous Tab", #selector(MarkdownDocumentWindowController.previousTab(_:)), "markdown.tab.previous", keymap: keymap)
         keyed(go, "Reopen Closed Tab", #selector(MarkdownDocumentWindowController.reopenClosedTab(_:)), "markdown.tab.reopen", keymap: keymap)
+        go.addItem(.separator())
+        for number in 1...9 {
+            command(go, number == 9 ? "Last Tab" : "Tab \(number)", MarkdownKeymap.tabNumberCommand(number), keymap: keymap)
+        }
         menu.addItem(submenu(go, title: "Go"))
 
         let window = NSMenu(title: "Window")
@@ -271,6 +298,15 @@ public enum MarkdownViewerMenu {
     private static func keyed(_ menu: NSMenu, _ title: String, _ action: Selector, _ command: String, keymap: Keymap) -> NSMenuItem {
         let item = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
         keymap.bind(item, to: command)
+        return item
+    }
+
+    /// An item that runs a window command (`MarkdownKeymap.windowActions`) through the window controller, with the
+    /// command's key in force.
+    @discardableResult
+    private static func command(_ menu: NSMenu, _ title: String, _ command: String, keymap: Keymap) -> NSMenuItem {
+        let item = keyed(menu, title, #selector(MarkdownDocumentWindowController.performCommand(_:)), command, keymap: keymap)
+        item.representedObject = command
         return item
     }
 
