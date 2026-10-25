@@ -58,7 +58,8 @@ day of review (PRs #499, #501).
   the window before, `NSWindowController.init(window:)` drops it.
 
 ## Martin's UX calls for this viewer (2026-10-13)
-- Lists of changes fold untracked files by folder, page, and stay lazy; counts are meaningful.
+- Lists of changes fold untracked files by folder and build only the rows on screen (an AppKit table; no pages and
+  no "Show more" since 2026-10-25); counts are meaningful.
 - Diffs: left strips for whole added or removed blocks, word marks inside changed lines, no row backgrounds; `+`
   green, `−` red. Commit choosers are popovers with details, built when opened. Tabs: `GenSegmentedTabs`, animated.
 - A pane never goes blank between two contents: the old one stays until the new one has rendered.

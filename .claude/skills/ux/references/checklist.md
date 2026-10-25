@@ -342,8 +342,9 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
   that lists changes (the sidebar, the hub review, the status bar's "Moved from"), never as a deletion plus a new file.
 - "Last update" is one newest-first list across tracked edits and untracked files. Split sections each sorted on their
   own hid every new note under a five-hour-old edit (Martin, 2026-10-25).
-- A list with more than one section lets the user fold each section (a chevron on the heading, Return/Left/Right on
-  the keyed heading, Expanded/Collapsed for VoiceOver), and the fold survives a restart.
+- A long list of changes or files (long enough to scroll) with more than one section lets the user fold each
+  section: a chevron on the heading, the outline keys (Left on a file keys its heading, Left folds an open heading,
+  Right opens a folded one, Return toggles), Expanded/Collapsed for VoiceOver, and the fold survives a restart.
 - A panel that follows the open tab keeps its last useful content when the new tab has none (a file outside any
   repository), instead of replacing it with "not in a git repository".
 - A list of hosted projects quietly leaves out what is not hosted (a clone of a local folder, no remote); an error

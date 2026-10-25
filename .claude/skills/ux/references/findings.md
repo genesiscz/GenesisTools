@@ -5,16 +5,17 @@ checklist.md or motion.md as well.
 
 - 2026-10-25 21:55 — **The git sidebar's Repository list (Martin's report, six points).** Branch feat/2026-10-25-repo-panel.
   - *A deleted file said "This file is not in a git repository", and the list then said it too.* git ran in the deleted
-    file's folder. Fix: the nearest existing ancestor; the list keeps the last repository (6434034912).
+    file's folder. Fix: the nearest existing ancestor; the list keeps the last repository (02b5a96462).
   - *650 "deletions" were a folder moved by hand.* Fix: exact-content rename pairing shared by the sidebar, the hub and
-    the CLI, one fixture for both languages (21a9e51cb3, 0bed3775f1).
+    the CLI, one fixture for both languages (02b5a96462, 6a29a2b024).
   - *Last update topped out at a note 5 h old.* Two causes: the status never refreshed for other programs' edits, and
-    untracked files sat in their own section below the tracked edits. Fix: a working-tree watcher and one merged list.
+    untracked files sat in their own section below the tracked edits. Fix: a working-tree watcher (c6b4b56aea) and one
+    merged list.
   - *I replaced the tab's content with commits.* Martin wanted the files as before, faster, and commits as their own
     tab. Lesson: a speed change keeps what the view shows; ask before moving content between views.
   - *"No unstaged changes in this file." flashed every few seconds.* Fix: a reload of the same request keeps its answer
-    (ef1f036d98). *The commit sheet's focus ring sat off the row.* Fix: its own ring (cb1fb7db98).
-  - *Sections could not fold.* Fix: foldable headings (224e15a64f).
+    (c85a5ac03f). *The commit sheet's focus ring sat off the row.* Fix: its own ring (38199e7589).
+  - *Sections could not fold.* Fix: foldable headings (d2c252e9b5).
 - 2026-10-23 16:30 — **Widget round 2 and the markdown tab bar (Martin's screenshots 23-28).**
   - *Rail bubbles had no hover answer.* `.genHoverPlain` drew a rectangular plate a round bubble hid. Fix:
     `WidgetBubbleChrome`, a round ring that pulses once on enter and settles (opacity only).
