@@ -174,7 +174,7 @@ public enum GitChangeList {
 
 /// One row of the panel's table, a value: the table compares rows to know which cells to build again.
 enum GitPanelRow: Equatable, Identifiable {
-    case section(key: String, title: String)
+    case section(key: String, title: String, open: Bool)
     case file(entry: GitStatusEntry, staged: Bool, id: String, indent: Bool, date: Date?)
     case folder(folder: String, count: Int, newest: Date?, open: Bool)
 
@@ -184,7 +184,7 @@ enum GitPanelRow: Equatable, Identifiable {
 
     var id: String {
         switch self {
-        case .section(let key, _): return "section:" + key
+        case .section(let key, _, _): return "section:" + key
         case .file(_, _, let id, _, _): return id
         case .folder(let folder, _, _, _): return GitRepoPanel.folderRowID(folder)
         }
@@ -198,18 +198,14 @@ enum GitPanelRow: Equatable, Identifiable {
         }
     }
 
-    /// The keyboard stops on files and folders, never on a heading.
-    var selectable: Bool {
-        switch self {
-        case .file, .folder: return true
-        case .section: return false
-        }
-    }
+    /// The keyboard stops on every row: a heading folds its section like a folder row (Martin, 2026-10-25: "i should be
+    /// able to fold the Changes").
+    var selectable: Bool { true }
 
     /// What VoiceOver says when the keyboard lands on the row.
     var spoken: String {
         switch self {
-        case .section(_, let title): return title
+        case .section(_, let title, let open): return "\(title), section, \(open ? "expanded" : "collapsed")"
         case .file(let entry, _, _, _, _): return String(GitChangeList.name(entry.path))
         case .folder(let folder, let count, _, let open):
             return "\(GitChangeList.name(folder)), folder, \(Plural.count(count, "file")), \(open ? "expanded" : "collapsed")"
@@ -217,7 +213,7 @@ enum GitPanelRow: Equatable, Identifiable {
     }
 
     /// What a key does: Up and Down walk the selectable rows (they repeat while held), Return opens a file and opens or
-    /// closes a folder, Right opens and Left closes a folder, Esc lets the keyed row go and is ignored when
+    /// closes a folder or a section, Right opens and Left closes a folder or a section, Esc lets the keyed row go and is ignored when
     /// nothing is keyed, so it still reaches the window or a sheet.
     enum KeyAction: Equatable {
         case none
@@ -243,7 +239,11 @@ enum GitPanelRow: Equatable, Identifiable {
         case .up: return .select(selectable.last { $0 < index } ?? index)
         case .open: return .activate(index)
         case .right, .left:
-            guard case .folder(_, _, _, let open) = rows[index] else { return .none }
+            let open: Bool
+            switch rows[index] {
+            case .folder(_, _, _, let isOpen), .section(_, _, let isOpen): open = isOpen
+            case .file: return .none
+            }
             let wanted = key == .right
             return open == wanted ? .none : .setOpen(index, wanted)
         case .navigate, .parent, .escape: return .none
@@ -420,6 +420,8 @@ public struct GitRepoPanel: View, Equatable {
     @AppStorage("genesiskit.gitRepoPanel.untracked") private var showUntracked = true
     @State private var filter = ""
     @State private var openFolders: Set<String> = []
+    /// The folded sections' keys (staged, changes, untracked), comma separated: a fold outlives the window.
+    @AppStorage("genesiskit.gitRepoPanel.folded") private var foldedRaw = ""
     /// The row "Show the open file" picked, lit for a moment.
     @State private var flash: String?
     @State private var box = GitRepoTableBox()
@@ -439,6 +441,17 @@ public struct GitRepoPanel: View, Equatable {
     }
 
     private var order: GitChangeOrder { GitChangeOrder(rawValue: orderRaw) ?? .lastUpdate }
+
+    /// A filter shows its matches in every section, like it opens every folder.
+    private var folded: Set<String> {
+        filter.isEmpty ? Set(foldedRaw.split(separator: ",").map(String.init)) : []
+    }
+
+    private func setFolded(_ key: String, _ isFolded: Bool) {
+        var keys = Set(foldedRaw.split(separator: ",").map(String.init))
+        if isFolded { keys.insert(key) } else { keys.remove(key) }
+        foldedRaw = keys.sorted().joined(separator: ",")
+    }
 
     private var inputs: GitRepoPanelLists.Inputs {
         GitRepoPanelLists.Inputs(root: repo.root, order: order, filter: filter, untracked: showUntracked)
@@ -462,8 +475,8 @@ public struct GitRepoPanel: View, Equatable {
         // changes the rows once, when the new lists arrive, instead of once with the old lists and once with the new.
         let shape = derived.settled ?? inputs
         let rows = rowCache.rows(version: derived.version, root: repo.root, key: RowCache.Key(
-            order: shape.order, untracked: shape.untracked, filtering: !shape.filter.isEmpty, open: openFolders)) {
-            Self.rows(lists, order: shape.order, untracked: shape.untracked,
+            order: shape.order, untracked: shape.untracked, filtering: !shape.filter.isEmpty, open: openFolders, folded: folded)) {
+            Self.rows(lists, order: shape.order, untracked: shape.untracked, folded: folded,
                       isOpen: { openFolders.contains($0) || !shape.filter.isEmpty })
         }
         VStack(alignment: .leading, spacing: 0) {
@@ -491,14 +504,17 @@ public struct GitRepoPanel: View, Equatable {
         .onChange(of: orderRaw) { _, _ in PerfMainBusy.measure("git.panel.sort") }
         .onChange(of: filter) { _, _ in PerfMainBusy.measure("git.panel.filter") }
         .onChange(of: openFolders) { _, _ in PerfMainBusy.measure("git.panel.fold") }
+        .onChange(of: foldedRaw) { _, _ in PerfMainBusy.measure("git.panel.section") }
         .onChange(of: showUntracked) { _, _ in PerfMainBusy.measure("git.panel.untracked") }
     }
 
     // MARK: Rows
 
     /// The rows in drawn order. Other orders: Staged, Changes, Untracked (folders, then loose files). Last update with
-    /// untracked files shown: Staged, then one Changes list newest first. An open folder's files follow its row.
-    static func rows(_ lists: GitRepoPanelLists.Lists, order: GitChangeOrder, untracked: Bool, isOpen: (String) -> Bool) -> [GitPanelRow] {
+    /// untracked files shown: Staged, then one Changes list newest first. An open folder's files follow its row; a folded
+    /// section keeps only its heading.
+    static func rows(_ lists: GitRepoPanelLists.Lists, order: GitChangeOrder, untracked: Bool, folded: Set<String> = [],
+                     isOpen: (String) -> Bool) -> [GitPanelRow] {
         var rows: [GitPanelRow] = []
         let dated = order == .lastUpdate
         func file(_ entry: GitStatusEntry, staged: Bool, id: String, indent: Bool = false) -> GitPanelRow {
@@ -510,14 +526,18 @@ public struct GitRepoPanel: View, Equatable {
             guard open else { return }
             rows += group.files.map { file($0, staged: false, id: "folder:\(group.folder):\($0.path)", indent: true) }
         }
-        if !lists.staged.isEmpty {
-            rows.append(.section(key: "staged", title: "Staged · \(lists.staged.count)"))
+        /// Adds the heading and tells whether the section's rows follow it.
+        func section(_ key: String, _ title: String) -> Bool {
+            let open = !folded.contains(key)
+            rows.append(.section(key: key, title: title, open: open))
+            return open
+        }
+        if !lists.staged.isEmpty, section("staged", "Staged · \(lists.staged.count)") {
             rows += lists.staged.map { file($0, staged: true, id: "staged:" + $0.path) }
         }
         if untracked, order == .lastUpdate {
             let total = lists.changed.count + lists.untrackedTotal
-            if total > 0 {
-                rows.append(.section(key: "changes", title: "Changes · \(total)"))
+            if total > 0, section("changes", "Changes · \(total)") {
                 let groups = Dictionary(lists.groups.map { ($0.folder, $0) }, uniquingKeysWith: { first, _ in first })
                 for item in lists.recent {
                     switch item {
@@ -529,12 +549,10 @@ public struct GitRepoPanel: View, Equatable {
                 }
             }
         } else {
-            if !lists.changed.isEmpty {
-                rows.append(.section(key: "changes", title: "Changes · \(lists.changed.count)"))
+            if !lists.changed.isEmpty, section("changes", "Changes · \(lists.changed.count)") {
                 rows += lists.changed.map { file($0, staged: false, id: "changes:" + $0.path) }
             }
-            if untracked, lists.untrackedTotal > 0 {
-                rows.append(.section(key: "untracked", title: "Untracked · \(lists.untrackedTotal)"))
+            if untracked, lists.untrackedTotal > 0, section("untracked", "Untracked · \(lists.untrackedTotal)") {
                 lists.groups.forEach(folder)
                 rows += lists.loose.map { file($0, staged: false, id: "untracked:" + $0.path) }
             }
@@ -556,6 +574,7 @@ public struct GitRepoPanel: View, Equatable {
             let untracked: Bool
             let filtering: Bool
             let open: Set<String>
+            let folded: Set<String>
         }
         private var last: (version: Int, root: URL, key: Key, rows: [GitPanelRow])?
 
@@ -575,7 +594,7 @@ public struct GitRepoPanel: View, Equatable {
         )
     }
 
-    /// Return opens the keyed file or flips its folder; Right and Left open and close a folder.
+    /// Return opens the keyed file or flips its folder or section; Right and Left open and close a folder or a section.
     private func activate(_ row: GitPanelRow, open: Bool?) {
         switch row {
         case .file(let entry, let staged, _, _, _):
@@ -583,8 +602,8 @@ public struct GitRepoPanel: View, Equatable {
             onOpenFile(entry, staged)
         case .folder(let folder, _, _, let isOpen):
             if open ?? !isOpen { openFolders.insert(folder) } else { openFolders.remove(folder) }
-        case .section:
-            break
+        case .section(let key, _, let isOpen):
+            setFolded(key, !(open ?? !isOpen))
         }
     }
 
@@ -756,17 +775,36 @@ public struct GitRepoPanel: View, Equatable {
         let _ = RenderProbe.hit("git.row")
         switch row {
         // Every row is one height (the table's): headings sit on the row's bottom edge.
-        case .section(_, let title):
-            Text(verbatim: title)
-                .kicker()
-                .padding(.bottom, 2)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                .accessibilityAddTraits(.isHeader)
+        case .section(let key, let title, let open):
+            sectionRow(key, title: title, open: open)
         case .file(let entry, let staged, let id, let indent, let date):
             fileRow(entry, staged: staged, id: id, indent: indent, date: date)
         case .folder(let folder, let count, let newest, let open):
             folderRow(folder, count: count, newest: newest, open: open)
         }
+    }
+
+    private func sectionRow(_ key: String, title: String, open: Bool) -> some View {
+        Button {
+            setFolded(key, open)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: open ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 10)
+                Text(verbatim: title)
+                    .kicker()
+                Spacer(minLength: 0)
+            }
+            .padding(.bottom, 2)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(open ? "Fold \(title)" : "Unfold \(title)")
+        .accessibilityAddTraits(.isHeader)
+        .accessibilityValue(open ? "Expanded" : "Collapsed")
     }
 
     private func folderRow(_ folder: String, count: Int, newest: Date?, open: Bool) -> some View {

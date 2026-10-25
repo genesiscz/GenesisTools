@@ -1,7 +1,7 @@
 import XCTest
 @testable import GenesisKit
 
-/// The repository panel from the keyboard: the keys walk the rows in drawn order, and the branch says its counts in words.
+/// The repository panel from the keyboard: the keys walk the rows in drawn order (headings too: they fold), and the branch says its counts in words.
 @MainActor
 final class GitRepoPanelKeyboardTests: XCTestCase {
     func testTheKeysWalkTheRowsInTheOrderThePanelDrawsThem() {
@@ -17,11 +17,13 @@ final class GitRepoPanelKeyboardTests: XCTestCase {
         func keys(_ order: GitChangeOrder, untracked: Bool, open: Bool) -> [String] {
             GitRepoPanel.keyRows(GitRepoPanel.rows(lists, order: order, untracked: untracked, isOpen: { _ in open }))
         }
-        XCTAssertEqual(keys(.name, untracked: true, open: false), ["staged:a.md", "changes:b.md", "folder-row:data", "untracked:c.md"])
+        XCTAssertEqual(keys(.name, untracked: true, open: false), ["section:staged", "staged:a.md", "section:changes", "changes:b.md",
+                                                            "section:untracked", "folder-row:data", "untracked:c.md"])
         XCTAssertEqual(keys(.name, untracked: true, open: true),
-                       ["staged:a.md", "changes:b.md", "folder-row:data", "folder:data:data/1.json", "folder:data:data/2.json", "untracked:c.md"],
+                       ["section:staged", "staged:a.md", "section:changes", "changes:b.md", "section:untracked", "folder-row:data",
+                        "folder:data:data/1.json", "folder:data:data/2.json", "untracked:c.md"],
                        "an open folder lists every file: the table builds only the rows on screen, so there are no pages")
-        XCTAssertEqual(keys(.name, untracked: false, open: true), ["staged:a.md", "changes:b.md"])
+        XCTAssertEqual(keys(.name, untracked: false, open: true), ["section:staged", "staged:a.md", "section:changes", "changes:b.md"])
     }
 
     /// Martin, 2026-10-25: the changes section topped out at a note 5 h old while untracked files a minute old sat below.
@@ -47,22 +49,44 @@ final class GitRepoPanelKeyboardTests: XCTestCase {
         XCTAssertEqual(newest, dates["data/run/2.json"], "a folder ranks by its newest file")
     }
 
-    func testTheKeyboardSkipsHeadingsAndLetsEscapeThroughWhenNothingIsKeyed() {
+    func testTheKeyboardWalksEveryRowAndLetsEscapeThroughWhenNothingIsKeyed() {
         let rows: [GitPanelRow] = [
-            .section(key: "changes", title: "Changes · 2"),
+            .section(key: "changes", title: "Changes · 2", open: true),
             .file(entry: GitStatusEntry(path: "a.md", unstaged: .modified), staged: false, id: "changes:a.md", indent: false, date: nil),
             .folder(folder: "data", count: 2, newest: nil, open: false),
-            .section(key: "untracked", title: "Untracked · 0"),
+            .section(key: "untracked", title: "Untracked · 0", open: false),
         ]
         XCTAssertEqual(GitPanelRow.action(for: .escape, rows: rows, cursor: nil), .none, "Esc reaches the window or a sheet")
         XCTAssertEqual(GitPanelRow.action(for: .escape, rows: rows, cursor: 1), .clear)
-        XCTAssertEqual(GitPanelRow.action(for: .down, rows: rows, cursor: nil), .select(1))
+        XCTAssertEqual(GitPanelRow.action(for: .down, rows: rows, cursor: nil), .select(0))
         XCTAssertEqual(GitPanelRow.action(for: .down, rows: rows, cursor: 1), .select(2))
-        XCTAssertEqual(GitPanelRow.action(for: .down, rows: rows, cursor: 2), .select(2), "the last row stays")
-        XCTAssertEqual(GitPanelRow.action(for: .up, rows: rows, cursor: 1), .select(1), "a heading is never keyed")
+        XCTAssertEqual(GitPanelRow.action(for: .down, rows: rows, cursor: 3), .select(3), "the last row stays")
+        XCTAssertEqual(GitPanelRow.action(for: .up, rows: rows, cursor: 1), .select(0), "a heading is keyed: it folds")
         XCTAssertEqual(GitPanelRow.action(for: .right, rows: rows, cursor: 2), .setOpen(2, true))
         XCTAssertEqual(GitPanelRow.action(for: .left, rows: rows, cursor: 2), .none, "a closed folder does not close again")
+        XCTAssertEqual(GitPanelRow.action(for: .left, rows: rows, cursor: 0), .setOpen(0, false), "Left folds an open section")
+        XCTAssertEqual(GitPanelRow.action(for: .left, rows: rows, cursor: 3), .none, "a folded section does not fold again")
+        XCTAssertEqual(GitPanelRow.action(for: .right, rows: rows, cursor: 3), .setOpen(3, true))
+        XCTAssertEqual(GitPanelRow.action(for: .left, rows: rows, cursor: 1), .none, "a file has nothing to fold")
         XCTAssertEqual(GitPanelRow.action(for: .open, rows: rows, cursor: 1), .activate(1))
+        XCTAssertEqual(rows[3].spoken, "Untracked · 0, section, collapsed")
+    }
+
+    /// Martin, 2026-10-25: "i should be able to fold the Changes". A folded section keeps its heading and drops its rows,
+    /// in both layouts.
+    func testAFoldedSectionKeepsOnlyItsHeading() {
+        var lists = GitRepoPanelLists.Lists()
+        lists.staged = [GitStatusEntry(path: "a.md", staged: .modified)]
+        lists.changed = [GitStatusEntry(path: "b.md", unstaged: .modified)]
+        lists.loose = [GitStatusEntry(path: "c.md", unstaged: .untracked)]
+        lists.untrackedTotal = 1
+        lists.recent = [.file(lists.changed[0]), .file(lists.loose[0])]
+        let byName = GitRepoPanel.rows(lists, order: .name, untracked: true, folded: ["changes"], isOpen: { _ in false })
+        XCTAssertEqual(byName.map(\.id), ["section:staged", "staged:a.md", "section:changes", "section:untracked", "untracked:c.md"])
+        guard case .section(_, _, let open) = byName[2] else { return XCTFail("the changes heading") }
+        XCTAssertFalse(open)
+        let byDate = GitRepoPanel.rows(lists, order: .lastUpdate, untracked: true, folded: ["staged", "changes"], isOpen: { _ in false })
+        XCTAssertEqual(byDate.map(\.id), ["section:staged", "section:changes"])
     }
 
     func testCommitAndFileKeysSelectAndRevealTheSameRow() {
