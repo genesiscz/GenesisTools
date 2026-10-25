@@ -61,7 +61,6 @@ export const NATIVE_HOME_CODEX_GROK_RATCHET: ReadonlySet<string> = new Set<strin
     "src/mcp-manager/utils/providers/codex.ts",
     "src/mcp-manager/utils/providers/grok.ts",
     "src/utils/ai/openai/codex-auth.ts",
-    "src/utils/ai/openai/codex-models.ts",
     "src/utils/ai/transcripts/resolve.ts",
     "src/utils/ai/transcripts/session-title.ts",
     "src/utils/cli/failures/caller.ts",
