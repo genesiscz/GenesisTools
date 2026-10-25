@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, readSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import {
     type AgentSessionRow,
@@ -9,7 +9,9 @@ import {
 import { decisionFiles } from "@app/question/lib/decisions/read";
 import { type DecisionRecord, readDecisions } from "@app/question/lib/decisions/store";
 import { cleanSessionTitle } from "@genesiscz/utils/agent-sessions/user-text";
+import { readTailWindow } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { concurrentMap } from "@genesiscz/utils/async";
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { startOfDay } from "@genesiscz/utils/date";
 import { type CommandRunner, spawnRunner } from "@genesiscz/utils/git/origins";
 import { type CommitInfo, LOG_FORMAT_WITH_SOURCE, parseLogZ } from "@genesiscz/utils/git/porcelain";
@@ -18,6 +20,7 @@ import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import { Storage } from "@genesiscz/utils/storage";
 import { cached, capMaxCacheAge } from "@genesiscz/utils/storage/cache-flag";
+import { startedAtOf } from "./agents/parent";
 import type { NotifyItem } from "./notify";
 import { readNotifyState } from "./notify-poll";
 import type { ThreadsResult } from "./pr";
@@ -1283,6 +1286,12 @@ export const realTimelineDeps: TimelineDeps = {
     sessions: (hours) => listAgentSessionRows({ hours, withUsage: false, maxDiscoveryAgeMs: POLLED_LISTING_REUSE_MS }),
     birth: (path) => {
         try {
+            if (isZstdPath(path)) {
+                // A compressed rollout was born when Codex compressed it, after the session: its first record says when.
+                const started = Date.parse(startedAtOf(path) ?? "");
+                return Number.isFinite(started) ? started : null;
+            }
+
             const info = statSync(path);
             return info.birthtimeMs > 0 ? info.birthtimeMs : null;
         } catch (error) {
@@ -1292,25 +1301,19 @@ export const realTimelineDeps: TimelineDeps = {
     },
     lastBranch: (path) => {
         try {
-            const size = statSync(path).size;
-            const fd = openSync(path, "r");
+            // A compressed rollout decompresses whole for any window, so it reads the largest one once.
+            const windows = isZstdPath(path) ? BRANCH_TAIL_BYTES.slice(-1) : BRANCH_TAIL_BYTES;
 
-            try {
-                for (const bytes of BRANCH_TAIL_BYTES) {
-                    const length = Math.min(bytes, size);
-                    const buffer = Buffer.alloc(length);
-                    const read = readSync(fd, buffer, 0, length, size - length);
-                    const branch = lastRecordedBranch(buffer.subarray(0, read).toString("utf8"));
+            for (const bytes of windows) {
+                const { buffer, start } = readTailWindow(path, bytes);
+                const branch = lastRecordedBranch(buffer.toString("utf8"));
 
-                    if (branch || length === size) {
-                        return branch;
-                    }
+                if (branch || start === 0) {
+                    return branch;
                 }
-
-                return null;
-            } finally {
-                closeSync(fd);
             }
+
+            return null;
         } catch (error) {
             log.debug({ error, path }, "timeline: could not read the session's last branch");
             return null;

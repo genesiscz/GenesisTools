@@ -1,3 +1,4 @@
+import { readTextChunks } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { NativeSourceIssue } from "./types";
 
@@ -60,8 +61,8 @@ function isMissing(error: unknown): boolean {
     );
 }
 
+/** The records of a JSONL file, plain or `.jsonl.zst` (Codex compresses its old rollouts), one parsed line at a time. */
 export async function* scanJsonlRecords(options: ScanJsonlOptions): AsyncGenerator<ScannedJsonlRecord> {
-    const reader = Bun.file(options.path).stream().getReader();
     const decoder = new TextDecoder();
     let pending = "";
     let line = 0;
@@ -84,13 +85,9 @@ export async function* scanJsonlRecords(options: ScanJsonlOptions): AsyncGenerat
     }
 
     try {
-        while (true) {
+        for await (const chunk of readTextChunks(options.path)) {
             options.signal?.throwIfAborted();
-            const chunk = await reader.read();
-            if (chunk.done) {
-                break;
-            }
-            pending += decoder.decode(chunk.value, { stream: true });
+            pending += decoder.decode(chunk, { stream: true });
             let newline = pending.indexOf("\n");
             while (newline >= 0) {
                 const original = pending.slice(0, newline).replace(/\r$/, "");
@@ -116,7 +113,5 @@ export async function* scanJsonlRecords(options: ScanJsonlOptions): AsyncGenerat
     } catch (error) {
         options.signal?.throwIfAborted();
         report(options, isMissing(error) ? "Source missing" : "Source read failed");
-    } finally {
-        await reader.cancel();
     }
 }

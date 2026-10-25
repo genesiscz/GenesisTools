@@ -1,4 +1,6 @@
 import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
+import { isZstdPath, zstdContentBytes } from "@genesiscz/utils/compress/zstd";
+import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { readPrefixMark } from "./file-scan";
 import { parseTranscriptLine } from "./parse-line";
@@ -55,6 +57,54 @@ function scheduleSweep(): void {
     sweep.unref?.();
 }
 
+/**
+ * A `.jsonl.zst` rollout (Codex 0.164 compresses old ones): its lines go through a fresh parser once, frame by frame,
+ * and nothing is kept, because the file never grows. The size gate counts its decompressed bytes; a small file, or an
+ * app-server event file, is left to the full parse as in the plain form.
+ */
+function foldCompressed(path: string, create: () => TurnFold, minBytes: number): TranscriptTurn[] | null {
+    folds.delete(path);
+
+    try {
+        const contentBytes = zstdContentBytes(path);
+
+        if (contentBytes !== undefined && contentBytes < minBytes) {
+            return null;
+        }
+
+        const fold = create();
+        let records: Record<string, unknown>[] = [];
+
+        for (const line of readLinesSync(path)) {
+            const record = parseTranscriptLine(line);
+
+            if (!record) {
+                continue;
+            }
+
+            if ("method" in record) {
+                return null;
+            }
+
+            records.push(record);
+
+            if (records.length >= FOLD_BATCH_RECORDS) {
+                fold.push(records);
+                records = [];
+            }
+        }
+
+        if (records.length > 0) {
+            fold.push(records);
+        }
+
+        return fold.snapshot();
+    } catch (error) {
+        logger.debug({ error, path }, "[transcripts] compressed transcript fold unreadable; parsing the whole file");
+        return null;
+    }
+}
+
 function keep(path: string, entry: FoldEntry): void {
     folds.delete(path);
     folds.set(path, entry);
@@ -84,6 +134,10 @@ export function foldTurnsAppendOnly(
     create: () => TurnFold,
     { minBytes = FOLD_MIN_BYTES }: { minBytes?: number } = {}
 ): TranscriptTurn[] | null {
+    if (isZstdPath(path)) {
+        return foldCompressed(path, create, minBytes);
+    }
+
     let fd: number | null = null;
     try {
         // A stat, not an open, for the common small file: the full parse opens it next.

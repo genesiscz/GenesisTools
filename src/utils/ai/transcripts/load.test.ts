@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import { appendFileSync, mkdirSync, mkdtempSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { codexNativeLinesToTurns, createCodexTurnParser } from "./codex";
 import * as fileScan from "./file-scan";
@@ -369,5 +370,63 @@ describe("verified prefix continuation", () => {
         } finally {
             fs.closeSync(fd);
         }
+    });
+});
+
+describe("a compressed Codex rollout (.jsonl.zst, one zstd frame as Codex 0.164 writes it)", () => {
+    const at = "2026-10-16T18:00:00.000Z";
+    const item = (payload: Record<string, unknown>) =>
+        SafeJSON.stringify({ type: "response_item", timestamp: at, payload });
+    const message = (role: "user" | "assistant", text: string) =>
+        item({ type: "message", role, content: [{ type: role === "user" ? "input_text" : "output_text", text }] });
+    const text = `${[
+        SafeJSON.stringify({
+            type: "session_meta",
+            timestamp: at,
+            payload: { id: "fixture", base_instructions: { text: "x".repeat(20_000) } },
+        }),
+        SafeJSON.stringify({ type: "turn_context", timestamp: at, payload: { model: "gpt-fixture" } }),
+        message("user", "first"),
+        item({ type: "function_call", call_id: "c1", name: "exec_command", arguments: '{"cmd":"ls"}' }),
+        item({ type: "function_call_output", call_id: "c1", output: "done" }),
+        message("assistant", "first answer"),
+        message("user", "second žluťoučký"),
+        message("assistant", "second answer"),
+    ].join("\n")}\n`;
+
+    function pair(): { plain: string; zst: string } {
+        const plain = join(fixtureRoot(), "rollout-2026-10-16T18-00-00-fixture.jsonl");
+        writeFileSync(plain, text);
+        const zst = `${plain}.zst`;
+        writeFileSync(zst, compressBytes(text));
+        return { plain, zst };
+    }
+
+    const resolvedOf = (filePath: string): ResolvedTranscript => ({
+        provider: "codex",
+        source: "native",
+        sessionId: "fixture",
+        filePath,
+    });
+
+    test("loads the same turns as its plain form", async () => {
+        const { plain, zst } = pair();
+        const expected = await transcriptEnvelope(resolvedOf(plain));
+        const actual = await transcriptEnvelope(resolvedOf(zst));
+
+        expect(expected.turns.length).toBeGreaterThan(2);
+        expect(actual.turns).toEqual(expected.turns);
+        expect(actual.turnCount).toBe(expected.turnCount);
+    });
+
+    test("records and the turn fold read its decompressed lines; a small one is left to the full parse", () => {
+        const { plain, zst } = pair();
+        const full = codexNativeLinesToTurns(fs.readFileSync(plain, "utf8").split("\n"));
+
+        expect(readRecordsAppendOnly(zst)).toEqual(readRecordsAppendOnly(plain));
+        expect(readRecordsAppendOnly(zst)).toHaveLength(8);
+        expect(foldTurnsAppendOnly(zst, createCodexTurnParser, { minBytes: 0 })).toEqual(full);
+        // The size gate counts decompressed bytes, as the plain form's stat does.
+        expect(foldTurnsAppendOnly(zst, createCodexTurnParser)).toBeNull();
     });
 });

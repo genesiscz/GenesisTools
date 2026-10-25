@@ -1,4 +1,5 @@
 import { watchFileFeed } from "@genesiscz/utils/fs/file-feed-watcher";
+import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { type CompactSessionOptions, compactSession } from "./index";
 import type { CompactResult } from "./schema";
@@ -35,7 +36,7 @@ export async function followCompact(options: FollowCompactOptions): Promise<numb
         debounceMs: FOLLOW_DEBOUNCE_MS,
         signal: options.signal,
         onChange: async () => {
-            const text = await Bun.file(options.filePath).text();
+            const text = readWholeTextSync(options.filePath);
             const sourceBytes = Buffer.byteLength(text, "utf8");
             if (sourceBytes === lastBytes) {
                 return;

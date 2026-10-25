@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import { findCodexRollout } from "@genesiscz/utils/session-changes/codex";
 import type { WorkerBackend } from "@genesiscz/utils/worker/capabilities";
 import { addTokens, EMPTY_TOKENS, type WorkerAuthMode, type WorkerTokens } from "@genesiscz/utils/worker/cost";
@@ -122,7 +123,7 @@ export function loadWorkerSessionEvents(
             return null;
         }
 
-        id = basename(rollout, ".jsonl");
+        id = transcriptStem(basename(rollout));
     }
 
     // The by-name door only: `loadEvents` would fall back to reading EVERY Claude transcript

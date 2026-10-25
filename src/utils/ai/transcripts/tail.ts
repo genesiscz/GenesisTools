@@ -1,3 +1,4 @@
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { FileTailer } from "@genesiscz/utils/fs/file-tailer";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -92,6 +93,15 @@ export async function followTranscript(resolved: ResolvedTranscript, opts: Follo
     };
 
     await emit();
+
+    if (isZstdPath(resolved.filePath)) {
+        // A `.jsonl.zst` rollout is one Codex closed and compressed: nothing appends to it, so there is nothing to follow.
+        logger.debug(
+            { path: resolved.filePath },
+            "transcript follow: a compressed transcript is closed; not following"
+        );
+        return;
+    }
 
     const onLine = (): void => {
         opts.onGrowth?.();

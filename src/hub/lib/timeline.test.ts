@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentSessionRow } from "@app/ai/lib/sessions/agent-session-rows";
 import type { DecisionRecord } from "@app/question/lib/decisions/store";
+import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { env } from "@genesiscz/utils/env";
 import { Storage } from "@genesiscz/utils/storage";
 import type { ThreadsResult } from "./pr";
@@ -998,5 +999,20 @@ describe("timeline session branch", () => {
 
         expect(realTimelineDeps.lastBranch(path)).toBe("feat/new");
         expect(realTimelineDeps.lastBranch(join(dir, "missing.jsonl"))).toBeNull();
+    });
+
+    test("a compressed rollout (.jsonl.zst) starts at its first record's time and its branch is read from its content", () => {
+        const dir = mkdtempSync(`${tmpdir()}/gt-timeline-branch-`);
+        const path = join(dir, "rollout-fixture.jsonl.zst");
+        const huge = `{"type":"user","message":{"content":"${"x".repeat(200 * 1024)}"}}`;
+        const first = `{"timestamp":"2026-10-16T18:00:00.000Z","type":"session_meta","payload":{"id":"fixture"}}`;
+        writeFileSync(
+            path,
+            compressBytes([first, `{"git_branch":"feat/old"}`, `{"git_branch":"feat/new"}`, huge, ""].join("\n"))
+        );
+
+        // Its birth time on disk is when it was compressed, after the session.
+        expect(realTimelineDeps.birth(path)).toBe(Date.parse("2026-10-16T18:00:00.000Z"));
+        expect(realTimelineDeps.lastBranch(path)).toBe("feat/new");
     });
 });

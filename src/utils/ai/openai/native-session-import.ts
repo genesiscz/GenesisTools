@@ -7,7 +7,10 @@ import type {
     NativeSessionImportContext,
     NativeSessionImportResult,
 } from "@genesiscz/utils/agent-sessions/types";
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
+import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import { NETWORKED_LOCK_WAIT_MS, withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { genesisToolsDirIn } from "@genesiscz/utils/storage/root";
 import { z } from "zod";
@@ -34,6 +37,11 @@ const recordSchema = z.object({
     createdAt: z.string(),
 });
 type ImportRecord = z.infer<typeof recordSchema>;
+
+/** A rollout's text bytes: a `.jsonl.zst` (Codex compresses its old rollouts) decompressed, so the copy is plain JSONL. */
+async function rolloutBytes(path: string): Promise<Buffer> {
+    return isZstdPath(path) ? Buffer.from(readWholeTextSync(path), "utf8") : readFile(path);
+}
 
 function digest(value: string | Buffer): string {
     return createHash("sha256").update(value).digest("hex");
@@ -81,7 +89,7 @@ export async function importNativeCodexSession(
         }
     }
     const sourcePath = await realpath(session.filePath);
-    const bytes = await readFile(sourcePath);
+    const bytes = await rolloutBytes(sourcePath);
     const lines = bytes.toString("utf8").split("\n");
     for (const line of lines) {
         if (line.trim()) {
@@ -159,9 +167,9 @@ export async function importNativeCodexSession(
                 createdAt: new Date().toISOString(),
             };
             try {
-                const stagedPath = join(staging, basename(sourcePath));
+                const stagedPath = join(staging, `${transcriptStem(basename(sourcePath))}.jsonl`);
                 await writeFile(stagedPath, bytes, { mode: 0o600, flag: "wx" });
-                if (digest(await readFile(sourcePath)) !== hash) {
+                if (digest(await rolloutBytes(sourcePath)) !== hash) {
                     throw new Error("Source changed while staging its snapshot");
                 }
                 await writeRecord(recordPath, record);
@@ -185,7 +193,7 @@ export async function importNativeCodexSession(
                 await writeRecord(recordPath, record);
                 await verifyThread("thread/read", copiedId);
                 await verifyThread("thread/resume", copiedId);
-                if (digest(await readFile(sourcePath)) !== hash) {
+                if (digest(await rolloutBytes(sourcePath)) !== hash) {
                     throw new Error("Source changed during native import");
                 }
                 record.status = "complete";

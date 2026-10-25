@@ -192,7 +192,8 @@ source only for threads the destination lacks and are remapped onto the destinat
 id, and `selected-project` is left alone. The merged file is written atomically.
 
 What it does **not** carry: `auth.json`, `history.jsonl` (the up-arrow recall buffer), the
-per-home SQLite databases, and `archived_sessions/` — only `sessions/` is enumerated, so a
+per-home SQLite databases, and `archived_sessions/` — only `sessions/` is enumerated (both
+`rollout-*.jsonl` and the `rollout-*.jsonl.zst` files Codex 0.164 compresses, copied as they are), so a
 source home's archived threads stay where they are. ⚠️ `--archive-source` renames `sessions/`
 only, and a home without one is no longer discovered, so an un-migrated `archived_sessions/`
 becomes invisible to later runs; copy it by hand, or leave that source unarchived.

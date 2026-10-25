@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { findCodexRollout, isCodexRollout } from "./codex";
 import { readClaudeTranscriptFolded } from "./fold";
 import {
     analyzeCommand,
@@ -850,5 +851,22 @@ describe("readClaudeTranscriptFolded", () => {
         expect(final.calls.find((call) => call.id === "t-main")?.finishedAt).not.toBeNull();
         expect(final.turns.find((turn) => turn.turnId === "p1")?.prompt).toBe("from the agent");
         expect(final.calls.find((call) => call.id === "t-sub")?.agentId).toBe("a1");
+    });
+});
+
+describe("findCodexRollout (Codex 0.164 compresses old rollouts to .jsonl.zst)", () => {
+    it("finds a compressed rollout in the day tree and one directly in archived_sessions", () => {
+        const home = mkdtempSync(join(tmpdir(), "gt-codex-rollouts-"));
+        const day = join(home, "sessions", "2026", "10", "01");
+        mkdirSync(day, { recursive: true });
+        mkdirSync(join(home, "archived_sessions"), { recursive: true });
+        const compressed = join(day, "rollout-2026-10-01T09-00-00-thread-zst.jsonl.zst");
+        const archived = join(home, "archived_sessions", "rollout-2026-03-10T20-11-50-thread-old.jsonl.zst");
+        writeFileSync(compressed, "");
+        writeFileSync(archived, "");
+
+        expect(findCodexRollout("thread-zst", [home])).toBe(compressed);
+        expect(findCodexRollout("thread-old", [home])).toBe(archived);
+        expect(isCodexRollout(compressed)).toBe(true);
     });
 });

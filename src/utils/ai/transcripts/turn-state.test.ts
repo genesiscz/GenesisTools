@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { appendFileSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compressBytes, SeekableZstdWriter } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { readHead, readTailAt } from "./native-scan";
 import {
     claudeTurnState,
     codexTurnState,
@@ -382,6 +384,68 @@ describe("readTurnState", () => {
         const before = statSync(file).size;
         appendFileSync(file, `${SafeJSON.stringify(grokLine(1, "user_message_chunk", text("second")))}\n`);
         expect(readTurnState("grok", file, { stallTimeoutMs: 900_000 })?.turnStartOffset).toBe(before);
+    });
+
+    it("reads a compressed Codex rollout (.jsonl.zst) from its content, and a closed one is FINISHED, never RUNNING", () => {
+        const dir = mkdtempSync(join(tmpdir(), "turn-state-"));
+        const plain = join(dir, "rollout-fixture.jsonl");
+        const lines = [
+            codexLine(0, "event_msg", { type: "task_started" }),
+            codexLine(4, "event_msg", { type: "task_complete", last_agent_message: "Shipped." }),
+            codexLine(5, "event_msg", { type: "task_started" }),
+            codexLine(6, "response_item", { type: "reasoning" }),
+        ];
+        writeFileSync(plain, `${lines.map((line) => SafeJSON.stringify(line)).join("\n")}\n`);
+        const zst = `${plain}.zst`;
+        writeFileSync(zst, compressBytes(readFileSync(plain)));
+        // Just written, mid-turn: the plain file reads as running, as a live rollout would.
+        const options = { now: Date.now(), stallTimeoutMs: 900_000 };
+        const live = readTurnState("codex", plain, options);
+        const closed = readTurnState("codex", zst, options);
+
+        expect(live?.state).toBe("RUNNING");
+        expect(closed?.state).toBe("FINISHED");
+        expect(closed?.turnStartedAt).toBe(live?.turnStartedAt ?? -1);
+        expect(closed?.lastText).toBe(live?.lastText ?? "-");
+        expect(closed?.tailStartOffset).toBe(0);
+
+        // A turn that ended waits at the prompt in a live session; nobody waits at a closed one.
+        const ended = join(dir, "ended.jsonl.zst");
+        writeFileSync(
+            ended,
+            compressBytes(
+                `${lines
+                    .slice(0, 2)
+                    .map((line) => SafeJSON.stringify(line))
+                    .join("\n")}\n`
+            )
+        );
+        const endedState = readTurnState("codex", ended, options);
+        expect(endedState?.state).toBe("FINISHED");
+        expect(endedState?.lastText).toBe("Shipped.");
+    });
+
+    it("cuts a .zst tail and head at the same content offsets as the plain file, across seekable frames too", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "turn-state-"));
+        const plain = join(dir, "rollout-fixture.jsonl");
+        const text = Array.from({ length: 200 }, (_, i) => `{"n":${i},"text":"${"é".repeat(i % 13)}"}\n`).join("");
+        writeFileSync(plain, text);
+        const single = `${plain}.zst`;
+        writeFileSync(single, compressBytes(text));
+        const framed = join(dir, "framed.jsonl.zst");
+        const parts: Uint8Array[] = [];
+        const writer = new SeekableZstdWriter({ write: (bytes) => parts.push(bytes), frameBytes: 256 });
+        await writer.push(Buffer.from(text));
+        const stats = await writer.finish();
+        writeFileSync(framed, Buffer.concat(parts));
+
+        expect(stats.frames).toBeGreaterThan(4);
+        for (const zst of [single, framed]) {
+            for (const bytes of [1, 100, 700, text.length + 10]) {
+                expect(readTailAt(zst, bytes)).toEqual(readTailAt(plain, bytes));
+                expect(readHead(zst, bytes)).toEqual(readHead(plain, bytes));
+            }
+        }
     });
 });
 

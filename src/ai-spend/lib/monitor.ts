@@ -4,6 +4,8 @@ import { join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
 import { CLAUDE_ALL_ACCOUNT_ID, CLAUDE_ALL_ACCOUNT_NAME, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
+import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync, Storage } from "@genesiscz/utils/storage/storage";
@@ -446,6 +448,11 @@ function fastCandidates(driver: MonitorDriver, roots: string[], cache: AgentCach
  * would drift, and the one that drifted would silently lose events.
  */
 export function readTail(path: string, offset: number, size: number): string {
+    // A `.jsonl.zst` (a Codex rollout Codex compressed) never grows: read it whole once, then there is no tail.
+    if (isZstdPath(path)) {
+        return offset === 0 ? readWholeTextSync(path) : "";
+    }
+
     const length = size - offset;
     const fd = openSync(path, "r");
 

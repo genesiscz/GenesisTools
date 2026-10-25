@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { foldJsonlResumable } from "./jsonl-fold";
 import { scanJsonlRecords } from "./source-scan";
@@ -294,4 +295,22 @@ test("malformed fold stores and entries are cache misses, never source failures"
         writeFileSync(storePath, SafeJSON.stringify({ version: 1, files }, { strict: true }));
         expect(resumedFold(uncachedPath(), storePath)).toEqual(expected);
     }
+});
+
+test("a .jsonl.zst rollout scans and folds like its plain form, and a second fold is served from the kept fold", async () => {
+    const root = mkdtempSync(join(tmpdir(), "gt-jsonl-zst-"));
+    const content = '{"n":1}\n\n{broken\n{"n":2,"text":"žluťoučký"}\r\n{"n":3,"t":"unfinished';
+    const plain = join(root, "rollout.jsonl");
+    const compressed = join(root, "rollout.jsonl.zst");
+    writeFileSync(plain, content);
+    writeFileSync(compressed, compressBytes(content));
+
+    const expected = await fullScan(plain);
+    expect(expected.rows).toHaveLength(2);
+    expect(await fullScan(compressed)).toEqual(expected);
+
+    const storePath = join(root, "store.json");
+    expect(resumedFold(compressed, storePath)).toEqual(expected);
+    // The second one comes from the kept fold: a compressed rollout never grows.
+    expect(resumedFold(compressed, storePath)).toEqual(expected);
 });

@@ -12,6 +12,7 @@ import {
     nativeSessionRootsForHome,
     nativeTranscriptMaxDepth,
     primaryCodexHome,
+    transcriptStem,
 } from "./session-paths";
 
 describe("nativeHome", () => {
@@ -156,6 +157,16 @@ describe("isNativeTranscript", () => {
         expect(isNativeTranscript("grok", "events.jsonl")).toBe(false);
         expect(isNativeTranscript("claude", "abc.jsonl")).toBe(true);
         expect(isNativeTranscript("codex", "rollout.jsonl")).toBe(true);
+    });
+
+    test("codex also accepts the .jsonl.zst rollouts Codex 0.164 compresses; the stem is the same for both forms", () => {
+        const name = "rollout-2026-10-16T20-01-33-01a145e0-5602-7a41-93fa-ffc564c21132";
+
+        expect(isNativeTranscript("codex", `${name}.jsonl.zst`)).toBe(true);
+        expect(isNativeTranscript("claude", "abc.jsonl.zst")).toBe(false);
+        expect(isNativeTranscript("codex", "rollout.zst")).toBe(false);
+        expect(transcriptStem(`${name}.jsonl.zst`)).toBe(name);
+        expect(transcriptStem(`${name}.jsonl`)).toBe(name);
     });
 });
 

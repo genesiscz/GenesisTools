@@ -14,6 +14,7 @@ import { join } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import { registerBuiltInPlugins } from "@genesiscz/utils/ai/providers/plugins";
 import { CLAUDE_ALL_ACCOUNT_ID, UNBOUND_ACCOUNT_ID } from "@genesiscz/utils/ai/usage";
+import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import { setupStorageSandbox } from "@genesiscz/utils/storage/test-sandbox";
@@ -26,6 +27,7 @@ import {
     localDayString,
     type MonitorReport,
     mondayOfWeek,
+    readTail,
 } from "./monitor";
 import { DEFAULT_PRICING } from "./pricing";
 import { monitorEnvelope } from "./register";
@@ -859,5 +861,18 @@ describe("monitor account rows", () => {
 
         expect(report.accounts).toBeUndefined();
         expect(report.today.cost).toBeCloseTo(0.8, 6);
+    });
+});
+
+describe("readTail on a compressed rollout (.jsonl.zst)", () => {
+    test("reads the whole text once and has no tail after it: the file never grows", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-spend-zst-"));
+        const path = join(dir, "rollout-2026-10-01T09-00-00-thread.jsonl.zst");
+        const text = '{"type":"event_msg"}\n{"type":"turn_context"}\n';
+        writeFileSync(path, compressBytes(text));
+        const size = statSync(path).size;
+
+        expect(readTail(path, 0, size)).toBe(text);
+        expect(readTail(path, Buffer.byteLength(text), size)).toBe("");
     });
 });

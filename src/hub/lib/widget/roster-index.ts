@@ -6,6 +6,7 @@ import { HistoryDatabase } from "@genesiscz/utils/agent-sessions/database";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
 import { resolveHistoryProvider } from "@genesiscz/utils/agent-sessions/provider";
 import { logger } from "@genesiscz/utils/logger";
+import { isNativeTranscript } from "@genesiscz/utils/providers/session-paths";
 import { readDataVersion } from "@genesiscz/utils/workers/sqlite-wake";
 import { hubAgents } from "../agents";
 import type { AgentsTree } from "../agents/types";
@@ -202,7 +203,8 @@ export function widgetRosterChange({
     for (const root of roots.codex) {
         if (under(root, path) !== undefined) {
             const name = basename(path);
-            return name.startsWith("rollout-") && name.endsWith(".jsonl") ? "codex" : undefined;
+            // Codex 0.164 compresses a closed rollout to `rollout-….jsonl.zst`: the rename changes the index too.
+            return name.startsWith("rollout-") && isNativeTranscript("codex", name) ? "codex" : undefined;
         }
     }
 

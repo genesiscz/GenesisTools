@@ -13,6 +13,7 @@
  * one `stat`, one bounded tail read, no process spawn and no write.
  */
 import { statSync } from "node:fs";
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type ActivityEvent, type ActivityState, classifyActivity, claudeRecordsToEvents } from "./activity";
@@ -128,6 +129,12 @@ export interface TurnStateInput {
     stallTimeoutMs: number;
     /** The byte offset in the file where each record's line starts, aligned with `records`. */
     offsets?: ReadonlyArray<number>;
+    /**
+     * True when nothing writes the transcript any more: a `.jsonl.zst` rollout, which Codex 0.164 writes only for a
+     * session it closed. The state is then `FINISHED`, whatever the last turn did; `asksQuestion`, `lastText` and the
+     * rest still describe that turn.
+     */
+    closed?: boolean;
 }
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -292,12 +299,15 @@ function snapshotOf({
 }): TurnSnapshot {
     const lastEventAt = events.at(-1)?.ts ?? null;
     const lastActivityAt = Math.max(lastEventAt ?? 0, input.lastModified);
-    const state = classifyActivity({
-        events,
-        lastModified: input.lastModified,
-        now: input.now,
-        stallTimeoutMs: input.stallTimeoutMs,
-    });
+    // A closed transcript has no process behind it: the session is over, and nobody waits at its prompt any more.
+    const state: ActivityState = input.closed
+        ? "FINISHED"
+        : classifyActivity({
+              events,
+              lastModified: input.lastModified,
+              now: input.now,
+              stallTimeoutMs: input.stallTimeoutMs,
+          });
 
     return {
         // A turn that ended is never a stall, however long the session then sits at its prompt.
@@ -934,6 +944,9 @@ export interface ReadTurnStateOptions {
  *
  * A last record longer than `TURN_TAIL_BYTES` leaves no whole record in the tail. The state then comes
  * from the modification time alone: `RUNNING` or `STALLED`, never a finish.
+ *
+ * A `.jsonl.zst` rollout is read from its decompressed content (offsets count decompressed bytes) and is closed
+ * (`TurnStateInput.closed`): Codex compresses only a rollout it no longer writes.
  */
 export function readTurnState(
     provider: TurnProvider,
@@ -975,6 +988,7 @@ export function readTurnState(
                 lastModified: stat.mtimeMs,
                 now,
                 stallTimeoutMs: options.stallTimeoutMs,
+                ...(isZstdPath(filePath) ? { closed: true } : {}),
             }),
             tailStartOffset: tail.start,
         };

@@ -1,6 +1,18 @@
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync } from "node:fs";
+import {
+    closeSync,
+    existsSync,
+    fstatSync,
+    mkdirSync,
+    openSync,
+    readFileSync,
+    readSync,
+    type Stats,
+    statSync,
+} from "node:fs";
 import { dirname } from "node:path";
 import { readPrefixMark } from "@genesiscz/utils/ai/transcripts/file-scan";
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
+import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { atomicWriteFileSync } from "@genesiscz/utils/storage/storage";
@@ -134,6 +146,10 @@ export interface FoldJsonlOptions<S> {
  * Returns null when the file cannot be read (the issue is reported: "Source missing" / "Source read failed").
  */
 export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
+    if (isZstdPath(options.path)) {
+        return foldCompressed(options);
+    }
+
     let fd: number | null = null;
     try {
         fd = openSync(options.path, "r");
@@ -169,24 +185,8 @@ export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
             options.onIssue(message);
         }
 
-        const fold1 = (text: string, line: number, partial: boolean, into: S, issues: string[] | null): void => {
-            const original = text.replace(/\r$/, "");
-            if (!original.trim()) {
-                return;
-            }
-
-            let value: JsonValue;
-            try {
-                value = SafeJSON.parse(original, { strict: true }) as JsonValue;
-            } catch {
-                const message = `${partial ? "Partial final record" : "Malformed record"} at line ${line}`;
-                issues?.push(message);
-                options.onIssue(message);
-                return;
-            }
-
-            options.apply(into, asRecord(value));
-        };
+        const fold1 = (text: string, line: number, partial: boolean, into: S, issues: string[] | null): void =>
+            foldLine(options, { text, line, partial, into, issues });
 
         // Complete lines, in chunks, cut at newline bytes.
         let position = fold.consumed;
@@ -250,4 +250,121 @@ export function foldJsonlResumable<S>(options: FoldJsonlOptions<S>): S | null {
     } finally {
         closeSync(fd);
     }
+}
+
+/** Folds one JSONL line into `into`; a line that does not parse is an issue ("Malformed record at line N"). */
+function foldLine<S>(
+    options: FoldJsonlOptions<S>,
+    input: { text: string; line: number; partial: boolean; into: S; issues: string[] | null }
+): void {
+    const original = input.text.replace(/\r$/, "");
+    if (!original.trim()) {
+        return;
+    }
+
+    let value: JsonValue;
+    try {
+        value = SafeJSON.parse(original, { strict: true }) as JsonValue;
+    } catch {
+        const message = `${input.partial ? "Partial final record" : "Malformed record"} at line ${input.line}`;
+        input.issues?.push(message);
+        options.onIssue(message);
+        return;
+    }
+
+    options.apply(input.into, asRecord(value));
+}
+
+/**
+ * A `.jsonl.zst` (Codex compresses its old rollouts) never grows, so it is folded whole once and kept by inode, size
+ * and mtime. It is persisted from 2 MB compressed, about the 8 MB of text a plain file needs (Codex rollouts shrink
+ * about 3.7 times).
+ */
+function foldCompressed<S>(options: FoldJsonlOptions<S>): S | null {
+    let status: Stats;
+    try {
+        status = statSync(options.path);
+    } catch (error) {
+        const missing = error !== null && typeof error === "object" && "code" in error && error.code === "ENOENT";
+        options.onIssue(missing ? "Source missing" : "Source read failed");
+        return null;
+    }
+
+    const mark = `zst:${status.size}:${status.mtimeMs}`;
+    const resumable = status.size >= (options.resumeMinBytes ?? RESUME_MIN_BYTES) / 4;
+    const store: FoldStore = resumable ? readStore(options.storePath) : { version: 1, files: {} };
+    const kept = [memoryFolds.get(options.path), store.files[options.path]].find(
+        (candidate): candidate is StoredFold<S> =>
+            validFold(candidate, options.validState) && candidate.ino === status.ino && candidate.mark === mark
+    );
+
+    if (kept) {
+        for (const message of kept.issues) {
+            options.onIssue(message);
+        }
+
+        return options.copy(kept.state);
+    }
+
+    const fold: StoredFold<S> = {
+        ino: status.ino,
+        consumed: status.size,
+        line: 0,
+        mark,
+        issues: [],
+        state: options.initial(),
+    };
+
+    try {
+        // One line behind, so the last one is known: an unfinished last line is a partial record, as in a plain file.
+        let previous: string | undefined;
+        for (const text of readLinesSync(options.path)) {
+            options.signal?.throwIfAborted();
+            if (previous !== undefined) {
+                fold.line++;
+                foldLine(options, {
+                    text: previous,
+                    line: fold.line,
+                    partial: false,
+                    into: fold.state,
+                    issues: fold.issues,
+                });
+            }
+
+            previous = text;
+        }
+
+        if (previous) {
+            fold.line++;
+            foldLine(options, {
+                text: previous,
+                line: fold.line,
+                partial: true,
+                into: fold.state,
+                issues: fold.issues,
+            });
+        }
+    } catch (error) {
+        options.signal?.throwIfAborted();
+        logger.debug({ error, path: options.path }, "[agent-sessions] compressed fold failed");
+        options.onIssue("Source read failed");
+        return null;
+    }
+
+    memoryFolds.delete(options.path);
+    memoryFolds.set(options.path, { ...fold, issues: [...fold.issues], state: options.copy(fold.state) });
+    if (memoryFolds.size > MEMORY_FILES) {
+        const oldest = memoryFolds.keys().next().value;
+        if (oldest !== undefined) {
+            memoryFolds.delete(oldest);
+        }
+    }
+
+    if (resumable) {
+        delete store.files[options.path];
+        store.files[options.path] = { ...fold, state: options.copy(fold.state) } as StoredFold<unknown>;
+        writeStore(options.storePath, store);
+    }
+
+    return options.copy(fold.state);
 }

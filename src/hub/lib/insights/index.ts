@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { closeSync, mkdirSync, openSync, readFileSync, statSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
     type AgentSessionRow,
@@ -25,6 +25,7 @@ import { codexModelOf, readTail, scanClaudeNative, toolInputKeys } from "@genesi
 import { buildToolStats, buildTurnCosts, type CallPricer } from "@genesiscz/utils/ai/transcripts/turn-cost";
 import { concurrentMap } from "@genesiscz/utils/async";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { Storage } from "@genesiscz/utils/storage";
 import { cached } from "@genesiscz/utils/storage/cache-flag";
@@ -89,7 +90,8 @@ export function catalogPricer(): CallPricer {
 
 function readText(path: string): string | null {
     try {
-        return readFileSync(path, "utf8");
+        // A `.jsonl.zst` rollout (Codex 0.164 compresses old ones) reads as its decompressed text.
+        return readWholeTextSync(path);
     } catch (err) {
         log.warn({ err, path }, "session file unreadable");
         return null;

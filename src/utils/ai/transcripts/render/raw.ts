@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
+import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import type { TranscriptEnvelope } from "../types";
 import { type RenderContext, TranscriptRenderer } from "./renderer";
 
@@ -32,7 +34,10 @@ export class RawRenderer extends TranscriptRenderer {
             this.offset = 0;
         }
 
-        const bytes = readFileSync(envelope.filePath);
+        // A `.jsonl.zst` rollout (Codex 0.164 compresses old ones) prints its decompressed lines; it never grows.
+        const bytes = isZstdPath(envelope.filePath)
+            ? Buffer.from(readWholeTextSync(envelope.filePath))
+            : readFileSync(envelope.filePath);
         if (bytes.length <= this.offset) {
             return;
         }

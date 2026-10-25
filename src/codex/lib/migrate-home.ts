@@ -5,10 +5,12 @@ import { appendFile, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { applyFolderRetention, planFolderRetention } from "@genesiscz/utils/compress/retention";
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
+import { readFirstLines, readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { type OpenFilesQuery, type OpenFilesResult, openFiles } from "@genesiscz/utils/process/open-files";
-import { codexHomesIn } from "@genesiscz/utils/providers/session-paths";
+import { codexHomesIn, isNativeTranscript, transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import { Storage } from "@genesiscz/utils/storage";
 
 const { log } = logger.scoped("codex-migrate-home");
@@ -25,7 +27,8 @@ export const PROVENANCE_NOTE =
     "AILaunchers/Verify-CodexAccountProvenance.md in the notes vault holds the per-rollout home mapping; " +
     "after the move `session_metadata.source_home` is re-keyed to the destination and that attribution is gone.";
 
-const ROLLOUT_ID = /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/i;
+/** Codex 0.164 compresses old rollouts to `.jsonl.zst`; the thread id is the same in both names. */
+const ROLLOUT_ID = /-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl(?:\.zst)?$/i;
 
 export interface RolloutFile {
     /** Absolute path of the rollout. */
@@ -329,7 +332,7 @@ export function enumerateRollouts(sessionsDir: string): RolloutFile[] {
                 continue;
             }
 
-            if (!entry.isFile() || !entry.name.startsWith("rollout-") || !entry.name.endsWith(".jsonl")) {
+            if (!entry.isFile() || !entry.name.startsWith("rollout-") || !isNativeTranscript("codex", entry.name)) {
                 continue;
             }
 
@@ -348,8 +351,7 @@ export function enumerateRollouts(sessionsDir: string): RolloutFile[] {
 
 export async function readRolloutMetaIds(path: string): Promise<RolloutMetaIds> {
     try {
-        const head = await Bun.file(path).slice(0, 16_384).text();
-        const firstLine = head.split("\n", 1)[0];
+        const firstLine = readFirstLines(path, { maxBytes: 16_384 }).lines[0];
 
         if (!firstLine) {
             return {};
@@ -369,7 +371,18 @@ async function sha256(path: string): Promise<string> {
         .digest("hex");
 }
 
+/** SHA-256 of the rollout's text: a `.jsonl.zst` is decompressed first, so both forms of one rollout compare equal. */
+async function textSha256(path: string): Promise<string> {
+    return createHash("sha256")
+        .update(isZstdPath(path) ? readWholeTextSync(path) : await readFile(path))
+        .digest("hex");
+}
+
 async function sameContent(left: RolloutFile, right: RolloutFile): Promise<boolean> {
+    if (isZstdPath(left.path) !== isZstdPath(right.path)) {
+        return (await textSha256(left.path)) === (await textSha256(right.path));
+    }
+
     if (left.size !== right.size) {
         return false;
     }
@@ -1077,7 +1090,9 @@ export async function migrateHome(options: MigrateHomeOptions = {}): Promise<Mig
                 // Same id at the same place with the same bytes is this command's own earlier run,
                 // which is what makes a repeat a no-op. Anything else sharing an id is a genuine
                 // clash and the whole run refuses rather than picking a winner.
-                const migrated = existing.relativePath === file.relativePath && (await sameContent(existing, file));
+                const migrated =
+                    transcriptStem(existing.relativePath) === transcriptStem(file.relativePath) &&
+                    (await sameContent(existing, file));
 
                 if (migrated) {
                     source.alreadyPresent += 1;

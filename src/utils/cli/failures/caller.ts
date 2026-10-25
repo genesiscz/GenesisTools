@@ -54,7 +54,10 @@ function codexRollout(threadId: string, codexHome: string, now: Date): string | 
             continue;
         }
 
-        const name = readdirSync(dir).find((entry) => entry.endsWith(`-${threadId}.jsonl`));
+        // Codex 0.164 compresses old rollouts to `.jsonl.zst`; `readLastLines` below reads either form.
+        const name = readdirSync(dir).find(
+            (entry) => entry.endsWith(`-${threadId}.jsonl`) || entry.endsWith(`-${threadId}.jsonl.zst`)
+        );
         if (name) {
             return join(dir, name);
         }

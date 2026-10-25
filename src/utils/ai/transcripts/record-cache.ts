@@ -1,4 +1,6 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
+import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { readPrefixMark } from "./file-scan";
 import { parseTranscriptLine } from "./parse-line";
@@ -109,10 +111,38 @@ function readBytes(fd: number, offset: number, length: number): Buffer {
     return buffer.subarray(0, read);
 }
 
+/**
+ * A `.jsonl.zst` rollout (Codex 0.164 compresses old ones) never grows, so nothing is kept: its lines are parsed once
+ * from its decompressed frames. Its size on disk says nothing about its records, so the size window does not apply.
+ */
+function readCompressedRecords(path: string): Record<string, unknown>[] {
+    cache.delete(path);
+    const records: Record<string, unknown>[] = [];
+
+    for (const line of readLinesSync(path)) {
+        const parsed = parseTranscriptLine(line);
+
+        if (parsed) {
+            records.push(parsed);
+        }
+    }
+
+    return records;
+}
+
 export function readRecordsAppendOnly(
     path: string,
     { minCacheBytes = CACHE_MIN_BYTES }: { minCacheBytes?: number } = {}
 ): Record<string, unknown>[] {
+    if (isZstdPath(path)) {
+        try {
+            return readCompressedRecords(path);
+        } catch (error) {
+            logger.debug({ error, path }, "[transcripts] compressed transcript records unreadable");
+            throw error;
+        }
+    }
+
     let fd: number | null = null;
     try {
         fd = openSync(path, "r");

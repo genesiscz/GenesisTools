@@ -3,8 +3,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { basename, join, relative } from "node:path";
 import { listArchive } from "@genesiscz/utils/compress/tar";
+import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { OpenFilesQuery, OpenFilesResult } from "@genesiscz/utils/process/open-files";
 import {
@@ -955,5 +956,31 @@ describe("inspectHome", () => {
 
         expect(report.status).toBe("busy");
         expect(report.holders[0]?.pid).toBe(4242);
+    });
+});
+
+describe("compressed rollouts (Codex 0.164 writes old ones as .jsonl.zst)", () => {
+    test("are listed by thread id and count as already migrated when the destination holds the plain form", async () => {
+        const root = scratch();
+        const thread = uuid("0091");
+        const destination = makeHome(root, "destination", [{ date: "2026-10-01", uuid: thread }]);
+        const plain = enumerateRollouts(join(destination, "sessions"))[0];
+        const source = makeHome(root, "source", []);
+        const day = join(source, "sessions", "2026", "10", "01");
+        mkdirSync(day, { recursive: true });
+        writeFileSync(join(day, `${basename(plain?.path ?? "")}.zst`), compressBytes(readFileSync(plain?.path ?? "")));
+
+        expect(enumerateRollouts(join(source, "sessions")).map((file) => file.nativeId)).toEqual([thread]);
+
+        const plan = await migrateHome({
+            from: [source],
+            to: destination,
+            apply: false,
+            backupRoot: join(root, "backups"),
+            stamp: "20261025-223000",
+            inspectOpenFiles: clear,
+        });
+
+        expect(plan.totals).toMatchObject({ rollouts: 1, toCopy: 0, alreadyPresent: 1, collisions: 0 });
     });
 });

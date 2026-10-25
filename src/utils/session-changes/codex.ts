@@ -49,15 +49,18 @@ function codexHomes(): string[] {
 }
 
 /**
- * The rollout of a Codex thread: `<home>/sessions/YYYY/MM/DD/rollout-<ts>-<thread id>.jsonl`, or
- * the same under `archived_sessions`. Newest days are searched first.
+ * The rollout of a Codex thread: `<home>/sessions/YYYY/MM/DD/rollout-<ts>-<thread id>.jsonl` (or `.jsonl.zst` once
+ * Codex compressed it), or the same in `archived_sessions`, which also keeps files directly in its root. Newest days
+ * are searched first.
  */
 export function findCodexRollout(threadId: string, homes: string[] = codexHomes()): string | null {
     if (!/^[A-Za-z0-9-]+$/.test(threadId)) {
         return null;
     }
 
-    const suffix = `-${threadId}.jsonl`;
+    const isThread = (entry: string) =>
+        entry.startsWith("rollout-") &&
+        (entry.endsWith(`-${threadId}.jsonl`) || entry.endsWith(`-${threadId}.jsonl.zst`));
 
     for (const home of homes) {
         for (const bucket of ["sessions", "archived_sessions"]) {
@@ -67,13 +70,17 @@ export function findCodexRollout(threadId: string, homes: string[] = codexHomes(
                 continue;
             }
 
+            const flat = listDir(root).find(isThread);
+
+            if (flat) {
+                return join(root, flat);
+            }
+
             for (const year of listDir(root)) {
                 for (const month of listDir(join(root, year))) {
                     for (const day of listDir(join(root, year, month))) {
                         const dayDir = join(root, year, month, day);
-                        const hit = listDir(dayDir).find(
-                            (entry) => entry.startsWith("rollout-") && entry.endsWith(suffix)
-                        );
+                        const hit = listDir(dayDir).find(isThread);
 
                         if (hit) {
                             return join(dayDir, hit);
@@ -88,7 +95,7 @@ export function findCodexRollout(threadId: string, homes: string[] = codexHomes(
 }
 
 export function isCodexRollout(path: string): boolean {
-    return /(^|\/)rollout-[^/]+\.jsonl$/.test(path);
+    return /(^|\/)rollout-[^/]+\.jsonl(?:\.zst)?$/.test(path);
 }
 
 /** The text of a user message item, unless it is a harness preamble (`<environment_context>`, plugin lists). */

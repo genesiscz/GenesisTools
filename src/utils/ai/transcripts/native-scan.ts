@@ -1,4 +1,5 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { isZstdPath, readZstdFramesSync, zstdContentBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { NativeCall, NativeScan, ToolTiming } from "./insights-types";
 import { parseTranscriptLine } from "./parse-line";
@@ -218,30 +219,128 @@ export function readTail(path: string, bytes: number): string {
     return readTailAt(path, bytes).text;
 }
 
-/** `readTail`, plus the byte offset in the file where the returned text begins (a whole line's start). */
-/** `raw` is the tail's bytes, for callers that count byte offsets: re-encoding `text` changes the length of a line that holds invalid UTF-8. */
-export function readTailAt(path: string, bytes: number): { text: string; start: number; raw: Buffer } {
+/** The last bytes of a file's content, cut anywhere: `start` is where `buffer` begins, `size` the content's length. */
+export interface TailWindow {
+    buffer: Buffer;
+    start: number;
+    size: number;
+}
+
+/**
+ * The last `bytes` of a `.zst` file's decompressed content, frames read from the end until they cover the window.
+ * A Codex rollout is one frame, so it decompresses whole; a seekable file costs its last frames. Offsets count
+ * decompressed bytes: the file never grows, so they are stable.
+ */
+function zstdTailWindow(path: string, bytes: number): TailWindow {
+    const known = zstdContentBytes(path);
+    const frames: Buffer[] = [];
+    let kept = 0;
+    let seen = 0;
+
+    for (const frame of readZstdFramesSync(path, { fromEnd: true })) {
+        seen += frame.length;
+
+        if (kept < bytes) {
+            frames.push(Buffer.from(frame.buffer, frame.byteOffset, frame.length));
+            kept += frame.length;
+        }
+
+        if (kept >= bytes && known !== undefined) {
+            break;
+        }
+    }
+
+    // When the frame headers do not give the content size, every frame was decompressed to count it.
+    const size = known ?? seen;
+    const content = Buffer.concat(frames.reverse());
+    const buffer = content.subarray(Math.max(0, content.length - bytes));
+    return { buffer, start: size - buffer.length, size };
+}
+
+/**
+ * The last `bytes` of a file, or of a `.zst` file's decompressed content (Codex 0.164 compresses its old rollouts),
+ * with no line handling. Throws when the file cannot be read.
+ */
+export function readTailWindow(path: string, bytes: number): TailWindow {
+    if (isZstdPath(path)) {
+        return zstdTailWindow(path, bytes);
+    }
+
     const fd = openSync(path, "r");
 
     try {
         const size = fstatSync(fd).size;
         const start = Math.max(0, size - bytes);
         const buffer = Buffer.alloc(size - start);
-        readSync(fd, buffer, 0, buffer.length, start);
+        let read = 0;
 
-        if (start === 0) {
-            return { text: buffer.toString("utf8"), start: 0, raw: buffer };
+        while (read < buffer.length) {
+            const got = readSync(fd, buffer, read, buffer.length - read, start + read);
+
+            if (got === 0) {
+                break;
+            }
+
+            read += got;
         }
 
-        // The window almost certainly starts mid-line: drop that fragment, counted in bytes.
-        const firstNewline = buffer.indexOf(0x0a);
-        if (firstNewline === -1) {
-            return { text: "", start: size, raw: Buffer.alloc(0) };
-        }
-
-        const raw = buffer.subarray(firstNewline + 1);
-        return { text: raw.toString("utf8"), start: start + firstNewline + 1, raw };
+        return { buffer: buffer.subarray(0, read), start, size };
     } finally {
         closeSync(fd);
     }
+}
+
+/**
+ * The first `bytes` of a file, or of a `.zst` file's decompressed content, cut anywhere: for a field near the start of
+ * a first line too long to read whole (a Codex `session_meta` carries ~20 KB of instructions). Throws when the file
+ * cannot be read.
+ */
+export function readHead(path: string, bytes: number): Buffer {
+    if (isZstdPath(path)) {
+        const frames: Buffer[] = [];
+        let kept = 0;
+
+        for (const frame of readZstdFramesSync(path)) {
+            frames.push(Buffer.from(frame.buffer, frame.byteOffset, frame.length));
+            kept += frame.length;
+
+            if (kept >= bytes) {
+                break;
+            }
+        }
+
+        return Buffer.concat(frames).subarray(0, bytes);
+    }
+
+    const fd = openSync(path, "r");
+
+    try {
+        const buffer = Buffer.alloc(bytes);
+        const read = readSync(fd, buffer, 0, bytes, 0);
+        return buffer.subarray(0, read);
+    } finally {
+        closeSync(fd);
+    }
+}
+
+/**
+ * `readTail`, plus the byte offset where the returned text begins (a whole line's start). For a `.zst` the offsets
+ * count decompressed bytes. `raw` is the tail's bytes, for callers that count byte offsets: re-encoding `text`
+ * changes the length of a line that holds invalid UTF-8.
+ */
+export function readTailAt(path: string, bytes: number): { text: string; start: number; raw: Buffer } {
+    const { buffer, start, size } = readTailWindow(path, bytes);
+
+    if (start === 0) {
+        return { text: buffer.toString("utf8"), start: 0, raw: buffer };
+    }
+
+    // The window almost certainly starts mid-line: drop that fragment, counted in bytes.
+    const firstNewline = buffer.indexOf(0x0a);
+    if (firstNewline === -1) {
+        return { text: "", start: size, raw: Buffer.alloc(0) };
+    }
+
+    const raw = buffer.subarray(firstNewline + 1);
+    return { text: raw.toString("utf8"), start: start + firstNewline + 1, raw };
 }

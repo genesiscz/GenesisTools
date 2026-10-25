@@ -21,6 +21,7 @@ import {
     turnsFromLines,
 } from "@genesiscz/utils/ai/transcripts";
 import { readTailBytes } from "@genesiscz/utils/claude/session.utils";
+import { isZstdPath, zstdContentBytes } from "@genesiscz/utils/compress/zstd";
 import { runMigrations } from "@genesiscz/utils/database/migrations";
 import type { ImageAttachment } from "@genesiscz/utils/image/attachments";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -510,13 +511,16 @@ async function widgetResult(node: AgentNode): Promise<string> {
     if (cached?.mtime === stat.mtimeMs) {
         return cached.text;
     }
+    // A `.jsonl.zst` rollout's size on disk is not its text's: the gate and the tail windows count decompressed bytes,
+    // or every window is tried when the frame headers do not say.
+    const size = isZstdPath(node.filePath) ? (zstdContentBytes(node.filePath) ?? Number.POSITIVE_INFINITY) : stat.size;
     // A large transcript used to show "open Conversation or Hub": the widget must show the result itself.
     let text: string;
-    if (stat.size > 8 * 1024 * 1024 && node.harness === "claude") {
-        text = (await lastClaudeAssistantText(node.filePath, stat.size)).slice(0, 32_000);
-    } else if (stat.size > 8 * 1024 * 1024) {
+    if (size > 8 * 1024 * 1024 && node.harness === "claude") {
+        text = (await lastClaudeAssistantText(node.filePath, size)).slice(0, 32_000);
+    } else if (size > 8 * 1024 * 1024) {
         const resolved = await resolveTranscript(node.filePath, {}, node.harness);
-        text = (await lastAssistantTextOf(resolved, stat.size)).slice(0, 32_000);
+        text = (await lastAssistantTextOf(resolved, size)).slice(0, 32_000);
     } else {
         const resolved = await resolveTranscript(node.filePath, {}, node.harness);
         const envelope = await transcriptEnvelope(resolved, { limit: 20 });

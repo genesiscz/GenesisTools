@@ -3,6 +3,7 @@ import { basename, dirname, join, sep } from "node:path";
 import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { DiscoveredHome } from "@genesiscz/utils/ai/providers/account-features";
 import { logger } from "@genesiscz/utils/logger";
+import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import { resolveDriverRoots, rootForFile } from "../account-roots";
 import { claudeDriver } from "../drivers/claude";
 import { codexDriver } from "../drivers/codex";
@@ -155,7 +156,7 @@ function sessionFromFile(file: string, source: SourceId): string {
         return basename(dirname(file));
     }
 
-    return basename(file).replace(/\.jsonl$/, "");
+    return transcriptStem(basename(file));
 }
 
 function projectFromFile(file: string, source: SourceId): string {

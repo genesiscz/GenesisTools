@@ -1,6 +1,7 @@
 import { stat } from "node:fs/promises";
 import { basename } from "node:path";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
+import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import { sourceFingerprint } from "./fingerprint";
 import { historySourceKey } from "./identity";
 import type {
@@ -56,7 +57,7 @@ function metadataSession<Kind extends AgentKind>(options: {
 }): AgentSession<Kind> {
     const { kind, source, metadata, entries, records, fileMtime } = options;
     const sourceMetadata = source.metadata ?? {};
-    const fallbackId = basename(source.filePath, ".jsonl");
+    const fallbackId = transcriptStem(basename(source.filePath));
     const isSubagent = metadata?.isSubagent ?? sourceMetadata.isSubagent ?? false;
     const sessionId =
         kind === "claude" && isSubagent

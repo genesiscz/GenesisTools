@@ -163,7 +163,7 @@ Each agent contributes a driver under `lib/drivers/`. A driver declares only thr
 | Agent | Files | Usage line | Cost |
 |---|---|---|---|
 | `claude` | `~/.claude/projects/**/*.jsonl`, `~/.config/claude/projects/**`, `$CLAUDE_CONFIG_DIR/projects/**` | `type: "assistant"` with `message.usage` | catalog rates for `anthropic` |
-| `codex` | `~/.codex/{sessions,archived_sessions}/**/*.jsonl`, or every `$CODEX_HOME` in the comma-separated list | `type: "event_msg"` with `payload.type: "token_count"`; the model comes from the preceding `turn_context` line | catalog rates for `openai` |
+| `codex` | `~/.codex/{sessions,archived_sessions}/**/*.jsonl` and `*.jsonl.zst` (Codex 0.164 compresses its old rollouts), or every `$CODEX_HOME` in the comma-separated list | `type: "event_msg"` with `payload.type: "token_count"`; the model comes from the preceding `turn_context` line | catalog rates for `openai` |
 | `grok` | `~/.grok/sessions/**/updates.jsonl`, or under `$GROK_HOME` | `params.update.sessionUpdate: "turn_completed"`, one event per entry in `usage.modelUsage` | catalog rates for `xai` (xAI's list prices); the `costUsdTicks` Grok recorded only when the model has no rate |
 
 Line shapes and token arithmetic mirror ccusage's Rust adapters, so the numbers line up with what ccusage reports for the same files:

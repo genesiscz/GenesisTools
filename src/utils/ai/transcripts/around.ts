@@ -1,13 +1,12 @@
-import { statSync } from "node:fs";
 import type { TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
 import type { ConversationMessage } from "@genesiscz/utils/claude/types";
 import { logger } from "@genesiscz/utils/logger";
 import { claudeMessagesToTurns } from "./claude";
 import { codexNativeLinesToTurns } from "./codex";
 import { grokNativeLinesToTurns } from "./grok";
+import { readTailWindow } from "./native-scan";
 import { parseTranscriptLine } from "./parse-line";
 import type { ResolvedTranscript } from "./resolve";
-import { readRange } from "./turn-index";
 import { isoFromRecordTimestamp, type TranscriptTurn } from "./types";
 
 export interface TranscriptAround {
@@ -206,10 +205,9 @@ export function transcriptAround({
             detail: "Receipt context currently supports native Claude, Codex and Grok transcripts.",
         };
     }
-    const size = statSync(resolved.filePath).size;
     const budget = Math.max(1, Math.min(8 * 1024 * 1024, Math.floor(maxBytes)));
-    const start = Math.max(0, size - budget);
-    const buffer = readRange(resolved.filePath, start, size);
+    // A `.jsonl.zst` rollout is windowed over its decompressed content; `size` and offsets count those bytes.
+    const { buffer, start, size } = readTailWindow(resolved.filePath, budget);
     result.bytesRead = buffer.length;
     result.fileSize = size;
     result.truncated = start > 0;

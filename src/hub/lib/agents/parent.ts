@@ -1,5 +1,5 @@
-import { closeSync, openSync, readSync } from "node:fs";
 import { readTaskNotifications } from "@genesiscz/utils/ai/transcripts/file-scan";
+import { readHead } from "@genesiscz/utils/ai/transcripts/native-scan";
 import { listSubagents } from "@genesiscz/utils/ai/transcripts/subagents";
 import { logger } from "@genesiscz/utils/logger";
 import { readSessionTeam, unreadInbox } from "./team";
@@ -9,21 +9,13 @@ import type { WorkerAgent } from "./workers";
 
 const HEAD_BYTES = 16 * 1024;
 
-/** The first `timestamp` in a transcript's head: when the session started. */
+/** The first `timestamp` in a transcript's head (a `.jsonl.zst` rollout's decompressed head): when the session started. */
 export function startedAtOf(path: string): string | null {
-    let fd: number | null = null;
     try {
-        fd = openSync(path, "r");
-        const buffer = Buffer.alloc(HEAD_BYTES);
-        const read = readSync(fd, buffer, 0, HEAD_BYTES, 0);
-        return /"timestamp":"([^"]+)"/.exec(buffer.subarray(0, read).toString("utf8"))?.[1] ?? null;
+        return /"timestamp":"([^"]+)"/.exec(readHead(path, HEAD_BYTES).toString("utf8"))?.[1] ?? null;
     } catch (error) {
         logger.debug({ error, path }, "[hub agents] unreadable parent head");
         return null;
-    } finally {
-        if (fd !== null) {
-            closeSync(fd);
-        }
     }
 }
 

@@ -11,6 +11,7 @@ import { selectedProvider } from "@genesiscz/utils/ai/evaluation/cli";
 import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
 import { isInteractive, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import type { Command } from "commander";
@@ -136,7 +137,7 @@ export function registerCompact(program: Command): void {
                         return;
                     }
 
-                    const text = file === "-" ? await Bun.stdin.text() : await Bun.file(file).text();
+                    const text = file === "-" ? await Bun.stdin.text() : readWholeTextSync(file);
                     if (!text.trim()) {
                         throw new Error("compact needs a transcript on stdin or a file path.");
                     }

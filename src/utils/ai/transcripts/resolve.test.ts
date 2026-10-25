@@ -92,6 +92,37 @@ describe("resolveTranscript", () => {
         expect(hit.sessionId).toBe(id);
     });
 
+    test("finds a compressed codex rollout (.jsonl.zst) and one directly in archived_sessions, with the thread id", async () => {
+        const root = fixtureRoot();
+        const roots = {
+            grokHome: join(root, "empty-grok"),
+            grokWorker: join(root, "empty-worker"),
+            claudeProjects: join(root, "empty-claude"),
+            codexHome: join(root, "codex"),
+            codexWorker: join(root, "empty-codex-w"),
+        };
+        const compressed = "eeeeeeee-1111-2222-3333-444444444444";
+        const dir = join(root, "codex", "sessions", "2026", "10", "01");
+        mkdirSync(dir, { recursive: true });
+        const zst = join(dir, `rollout-2026-10-01T09-00-00-${compressed}.jsonl.zst`);
+        writeFileSync(zst, "not read here");
+        const archived = "dddddddd-1111-2222-3333-444444444444";
+        mkdirSync(join(root, "codex", "archived_sessions"), { recursive: true });
+        const flat = join(root, "codex", "archived_sessions", `rollout-2026-03-10T20-11-50-${archived}.jsonl.zst`);
+        writeFileSync(flat, "not read here");
+
+        expect(await resolveTranscript(compressed.slice(0, 8), roots)).toMatchObject({
+            provider: "codex",
+            source: "native",
+            filePath: zst,
+            sessionId: compressed,
+        });
+        expect(await resolveTranscript(archived.slice(0, 8), roots)).toMatchObject({
+            filePath: flat,
+            sessionId: archived,
+        });
+    });
+
     test("finds a claude jsonl under an injected projects dir", async () => {
         const root = fixtureRoot();
         const id = "12345678-aaaa-bbbb-cccc-ddddeeee0001";

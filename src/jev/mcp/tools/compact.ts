@@ -1,5 +1,6 @@
 import { type CompactResult, compactSession, parseCompactSource } from "@genesiscz/utils/ai/compact";
 import { createEvaluator, type Evaluator } from "@genesiscz/utils/ai/evaluation/service";
+import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 import { z } from "zod";
 
@@ -36,7 +37,7 @@ export async function handleJevCompact(
         throw new Error("jev_compact needs either `text` or `file`.");
     }
 
-    const text = parsed.text ?? (await Bun.file(parsed.file ?? "").text());
+    const text = parsed.text ?? readWholeTextSync(parsed.file ?? "");
     log.info({ file: parsed.file, chars: text.length, llm: parsed.llm === true }, "jev_compact called");
     return compactSession({
         text,

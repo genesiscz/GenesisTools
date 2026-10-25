@@ -1,5 +1,5 @@
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-import { isZstdPath, readZstdFrames, readZstdFramesSync } from "@genesiscz/utils/compress/zstd";
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from "node:fs";
+import { isZstdPath, readZstdFrames, readZstdFramesSync, zstdContentBytes } from "@genesiscz/utils/compress/zstd";
 import {
     cPath,
     errnoError,
@@ -52,6 +52,19 @@ export function* readTextChunksSync(path: string, { chunkBytes = CHUNK_BYTES }: 
     }
 
     yield* plainChunksSync(path, chunkBytes);
+}
+
+/**
+ * The whole text of a file, plain or `.zst` (its frames joined): for callers that parse the full text anyway, such as
+ * a Codex rollout that Codex 0.164 compressed. Prefer {@link readLinesSync} when lines are enough. Throws like
+ * `readFileSync` when the file cannot be opened.
+ */
+export function readWholeTextSync(path: string): string {
+    if (!isZstdPath(path)) {
+        return readFileSync(path, "utf8");
+    }
+
+    return Buffer.concat([...readZstdFramesSync(path)].map(asBuffer)).toString("utf8");
 }
 
 /**
@@ -316,12 +329,6 @@ export function readLastLines(path: string, { maxBytes = END_BYTES, method }: Ed
     }
 }
 
-/**
- * The lines of a plain file from its END backwards, newest first, read in chunks of `chunkBytes` (256 KB by
- * default): for an append-only journal whose readers want only its recent part. Stop iterating as soon as a line is
- * older than you need, and the rest of the file is never read. A line without its trailing newline (a writer in the
- * middle of it) still comes out. Throws when the file cannot be opened; `.zst` files are not supported.
- */
 export interface BackwardLineEnd {
     reason: "eof" | "maxBytes" | "aborted";
     position: number;
@@ -332,10 +339,83 @@ export interface BackwardLineOptions {
     chunkBytes?: number;
     maxBytes?: number;
     signal?: AbortSignal;
-    /** Absolute byte offset of the line about to be yielded. */
+    /** Absolute byte offset of the line about to be yielded (in the decompressed content for a `.zst` file). */
     onLine?: (position: number) => void;
 }
 
+/** A chunk of a file read from its end, and the absolute offset of its first byte. */
+interface ChunkAt {
+    chunk: Buffer;
+    position: number;
+}
+
+/** A file opened for a read from its end: its length, and its bytes newest first down to `start`. */
+interface BackwardSource {
+    end: number;
+    chunks(start: number): Generator<ChunkAt, void>;
+    close?(): void;
+}
+
+/** A plain file read `chunkBytes` at a time from its end. */
+function plainBackwardSource(path: string, chunkBytes: number): BackwardSource {
+    const fd = openSync(path, "r");
+
+    try {
+        const end = fstatSync(fd).size;
+        return {
+            end,
+            *chunks(start) {
+                for (let position = end; position > start; ) {
+                    const size = Math.min(chunkBytes, position - start);
+                    position -= size;
+                    const chunk = Buffer.allocUnsafe(size);
+                    const read = readSync(fd, chunk, 0, size, position);
+                    yield { chunk: chunk.subarray(0, read), position };
+                }
+            },
+            close: () => closeSync(fd),
+        };
+    } catch (error) {
+        closeSync(fd);
+        throw error;
+    }
+}
+
+/**
+ * A `.zst` file read frame by frame from its last frame, its offsets counting decompressed bytes (a single-frame file,
+ * as Codex writes its old rollouts, decompresses whole). When no frame header names its size, every frame is
+ * decompressed first to learn where the content ends.
+ */
+function zstdBackwardSource(path: string): BackwardSource {
+    const known = zstdContentBytes(path);
+    const frames = known === undefined ? [...readZstdFramesSync(path, { fromEnd: true })] : undefined;
+    const end = known ?? frames?.reduce((sum, frame) => sum + frame.length, 0) ?? 0;
+
+    return {
+        end,
+        *chunks(start) {
+            let position = end;
+
+            for (const frame of frames ?? readZstdFramesSync(path, { fromEnd: true })) {
+                if (position <= start) {
+                    return;
+                }
+
+                const keep = Math.min(frame.length, position - start);
+                position -= keep;
+                yield { chunk: asBuffer(frame).subarray(frame.length - keep), position };
+            }
+        },
+    };
+}
+
+/**
+ * The lines of a file from its END backwards, newest first, read in chunks of `chunkBytes` (256 KB by default): for
+ * an append-only journal whose readers want only its recent part. Stop iterating as soon as a line is older than you
+ * need, and the rest of the file is never read. A line without its trailing newline (a writer in the middle of it)
+ * still comes out. `maxBytes` stops the read that far from the end and drops the line it cuts. A `.zst` path is read
+ * frame by frame from its last frame, its offsets in the decompressed content. Throws when the file cannot be opened.
+ */
 export function* readLinesBackwardSync(
     path: string,
     { chunkBytes = 256 * 1024, maxBytes = Number.POSITIVE_INFINITY, signal, onLine }: BackwardLineOptions = {}
@@ -344,27 +424,30 @@ export function* readLinesBackwardSync(
         throw new Error("Backward read requires a positive chunk size and a nonnegative byte limit");
     }
 
-    const fd = openSync(path, "r");
+    const source = isZstdPath(path) ? zstdBackwardSource(path) : plainBackwardSource(path, chunkBytes);
+    const start = Math.max(0, source.end - maxBytes);
+    const chunks = source.chunks(start);
+    let position = source.end;
+    let bytesRead = 0;
+    // Retain slices until a delimiter is reached, then join once per line.
+    let parts: Buffer[] = [];
 
     try {
-        const fileSize = fstatSync(fd).size;
-        const start = Math.max(0, fileSize - maxBytes);
-        let position = fileSize;
-        let bytesRead = 0;
-        // Retain slices until a delimiter is reached, then join once per line.
-        let parts: Buffer[] = [];
-
-        while (position > start) {
+        for (;;) {
             if (signal?.aborted) {
                 return { reason: "aborted", position, bytesRead };
             }
 
-            const size = Math.min(chunkBytes, position - start);
-            position -= size;
-            const chunk = Buffer.allocUnsafe(size);
-            const read = readSync(fd, chunk, 0, size, position);
-            bytesRead += read;
-            let end = read;
+            const next = chunks.next();
+
+            if (next.done) {
+                break;
+            }
+
+            const { chunk } = next.value;
+            position = next.value.position;
+            bytesRead += chunk.length;
+            let end = chunk.length;
 
             for (
                 let index = end > 0 ? chunk.lastIndexOf(10, end - 1) : -1;
@@ -409,6 +492,7 @@ export function* readLinesBackwardSync(
 
         return { reason: "eof", position: 0, bytesRead };
     } finally {
-        closeSync(fd);
+        chunks.return();
+        source.close?.();
     }
 }

@@ -7,7 +7,7 @@ import { sessionsDir as codexWorkerDir } from "@genesiscz/utils/codex/worker-pat
 import { env } from "@genesiscz/utils/env";
 import { sessionsDir as grokWorkerDir } from "@genesiscz/utils/grok/worker-paths";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { nativeSessionRoots } from "@genesiscz/utils/providers/session-paths";
+import { isNativeTranscript, nativeSessionRoots, transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import type { TranscriptProvider } from "./types";
 
 export type TranscriptSource = "native" | "worker";
@@ -250,7 +250,7 @@ function resolvePath(
     provider?: TranscriptProvider
 ): ResolvedTranscript | null {
     const filePath = resolve(path);
-    const stem = basename(filePath).replace(/\.jsonl$/, "");
+    const stem = transcriptStem(basename(filePath));
     const located: Array<{ root: string; provider: TranscriptProvider; source: TranscriptSource }> = [
         ...claudeRoots.map((root) => ({ root, provider: "claude" as const, source: "native" as const })),
         { root: roots.claudeWorker, provider: "claude", source: "worker" },
@@ -431,9 +431,35 @@ function splitCodexHomes(codexHome: string): string[] {
 }
 
 function codexNativeSessionId(entry: string): string {
-    const stem = basename(entry, ".jsonl").replace(/^rollout-/, "");
+    const stem = transcriptStem(basename(entry)).replace(/^rollout-/, "");
     const uuid = stem.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     return uuid?.[0] ?? stem;
+}
+
+/** Files of one Codex bucket: the `YYYY/MM/DD` tree, and files directly in it (`archived_sessions` is flat). */
+function* codexBucketEntries(root: string, fs: FolderReads): Generator<{ dir: string; entry: string }> {
+    for (const year of fs.listDir(root)) {
+        const yearDir = join(root, year);
+        if (!fs.isDir(yearDir)) {
+            yield { dir: root, entry: year };
+            continue;
+        }
+        for (const month of fs.listDir(yearDir)) {
+            const monthDir = join(yearDir, month);
+            if (!fs.isDir(monthDir)) {
+                continue;
+            }
+            for (const day of fs.listDir(monthDir)) {
+                const dayDir = join(monthDir, day);
+                if (!fs.isDir(dayDir)) {
+                    continue;
+                }
+                for (const entry of fs.listDir(dayDir)) {
+                    yield { dir: dayDir, entry };
+                }
+            }
+        }
+    }
 }
 
 function findCodexNative(query: string, codexHome: string, fs: FolderReads): RankedHit[] {
@@ -441,38 +467,19 @@ function findCodexNative(query: string, codexHome: string, fs: FolderReads): Ran
     const homes = splitCodexHomes(codexHome);
     for (const home of homes) {
         for (const bucket of ["sessions", "archived_sessions"]) {
-            const root = join(home, bucket);
-            for (const year of fs.listDir(root)) {
-                const yearDir = join(root, year);
-                if (!fs.isDir(yearDir)) {
+            for (const { dir, entry } of codexBucketEntries(join(home, bucket), fs)) {
+                // Codex 0.164 compresses old rollouts to `.jsonl.zst`.
+                if (!isNativeTranscript("codex", entry) || !idMatches(query, entry)) {
                     continue;
                 }
-                for (const month of fs.listDir(yearDir)) {
-                    const monthDir = join(yearDir, month);
-                    if (!fs.isDir(monthDir)) {
-                        continue;
-                    }
-                    for (const day of fs.listDir(monthDir)) {
-                        const dayDir = join(monthDir, day);
-                        if (!fs.isDir(dayDir)) {
-                            continue;
-                        }
-                        for (const entry of fs.listDir(dayDir)) {
-                            if (!entry.endsWith(".jsonl") || !idMatches(query, entry)) {
-                                continue;
-                            }
-                            const filePath = join(dayDir, entry);
-                            const id = codexNativeSessionId(entry);
-                            hits.push({
-                                provider: "codex",
-                                source: "native",
-                                sessionId: id,
-                                filePath,
-                                mtime: fs.mtimeOf(filePath),
-                            });
-                        }
-                    }
-                }
+                const filePath = join(dir, entry);
+                hits.push({
+                    provider: "codex",
+                    source: "native",
+                    sessionId: codexNativeSessionId(entry),
+                    filePath,
+                    mtime: fs.mtimeOf(filePath),
+                });
             }
         }
     }

@@ -1,5 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
+import { readWholeTextSync } from "@genesiscz/utils/fs/read-lines";
 import { logger } from "@genesiscz/utils/logger";
 
 export interface WalkOptions {
@@ -77,9 +79,10 @@ export function walkFiles(roots: string[], options: WalkOptions): string[] {
     return out;
 }
 
+/** A usage file's text, a `.jsonl.zst` decompressed (Codex compresses its old rollouts). */
 export function readText(file: string): string | null {
     try {
-        return readFileSync(file, "utf8");
+        return readWholeTextSync(file);
     } catch (err) {
         logger.debug({ err, file }, "ai-spend: failed to read usage file");
         return null;
@@ -88,7 +91,7 @@ export function readText(file: string): string | null {
 
 export function readBytes(file: string): Buffer | null {
     try {
-        return readFileSync(file);
+        return isZstdPath(file) ? Buffer.from(readWholeTextSync(file), "utf8") : readFileSync(file);
     } catch (err) {
         logger.debug({ err, file }, "ai-spend: failed to read usage file");
         return null;

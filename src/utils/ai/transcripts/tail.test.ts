@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { ResolvedTranscript } from "./resolve";
 import { followTranscript } from "./tail";
@@ -260,6 +261,45 @@ describe("followTranscript", () => {
             ac.abort();
             await done;
             rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    test("a compressed rollout (.jsonl.zst) emits its envelope once and is not followed", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-tail-"));
+        const file = join(dir, "rollout-fixture.jsonl.zst");
+        writeFileSync(
+            file,
+            compressBytes(
+                `${SafeJSON.stringify({
+                    type: "event_msg",
+                    timestamp: "2026-10-16T18:00:00.000Z",
+                    payload: { type: "agent_message", message: "from the archive" },
+                })}\n`
+            )
+        );
+        const envelopes: TranscriptEnvelope[] = [];
+        const ac = new AbortController();
+        const done = followTranscript(
+            { provider: "codex", source: "native", sessionId: "tail-zst", filePath: file },
+            {
+                signal: ac.signal,
+                onEnvelope: (envelope) => {
+                    envelopes.push(envelope);
+                },
+            }
+        );
+
+        try {
+            // Returns by itself: nothing appends to a compressed rollout. The sleep only runs out on a regression.
+            const outcome = await Promise.race([
+                done.then(() => "returned"),
+                Bun.sleep(1500).then(() => "still following"),
+            ]);
+            expect(outcome).toBe("returned");
+            expect(envelopes.map((envelope) => envelope.turns[0]?.text)).toEqual(["from the archive"]);
+        } finally {
+            ac.abort();
+            await done;
         }
     });
 });

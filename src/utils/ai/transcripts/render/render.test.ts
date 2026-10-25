@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { grokWorkerTextToTurns } from "../grok";
 import { type TranscriptEnvelope, type TranscriptTurn, terminatedOf, totalsOf } from "../types";
@@ -298,6 +299,19 @@ describe("RawRenderer", () => {
         expect(lines).toHaveLength(1);
         renderer.close(ctx);
         expect(lines).toEqual(['{"type":"text","data":"héllo → wörld"}', '{"type":"end"}']);
+    });
+
+    test("a compressed rollout (.jsonl.zst) prints its decompressed lines, once", () => {
+        const dir = mkdtempSync(join(tmpdir(), "raw-render-"));
+        const path = join(dir, "rollout-fixture.jsonl.zst");
+        writeFileSync(path, compressBytes('{"type":"text","data":"héllo"}\n{"type":"end"}\n'));
+
+        const { ctx, lines } = capture({ follow: true });
+        const renderer = rendererFor("raw");
+        renderer.envelope(envelopeOf([], { filePath: path }), ctx);
+        renderer.envelope(envelopeOf([], { filePath: path }), ctx);
+        renderer.close(ctx);
+        expect(lines).toEqual(['{"type":"text","data":"héllo"}', '{"type":"end"}']);
     });
 });
 

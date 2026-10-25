@@ -3,6 +3,7 @@ import { basename } from "node:path";
 import { resolveCachedSessionId, type SessionIdResolution } from "@genesiscz/utils/agent-sessions/cached-title";
 import { suggestEnumFlag } from "@genesiscz/utils/cli";
 import { out } from "@genesiscz/utils/logger";
+import { transcriptStem } from "@genesiscz/utils/providers/session-paths";
 import { findCodexRollout } from "@genesiscz/utils/session-changes/codex";
 import { Storage } from "@genesiscz/utils/storage/storage";
 import type { Command } from "commander";
@@ -160,7 +161,7 @@ export function resolveSessionFlag(
         const rollout = sessionId.startsWith("rollout-") ? null : findRollout(sessionId);
 
         if (rollout) {
-            const stem = basename(rollout, ".jsonl");
+            const stem = transcriptStem(basename(rollout));
             return { id: stem, note: `--id ${id} is Codex rollout ${stem}` };
         }
     }

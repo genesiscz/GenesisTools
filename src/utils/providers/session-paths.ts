@@ -125,11 +125,24 @@ export function nativeSessionRootsForHome(kind: NativeSessionProvider, home: str
     return [join(home, "sessions")];
 }
 
+/** Codex CLI 0.164 compresses its old rollouts to `rollout-….jsonl.zst` (single-frame zstd). */
+const CODEX_COMPRESSED_SUFFIX = ".jsonl.zst";
+
 export function isNativeTranscript(kind: NativeSessionProvider, fileName: string): boolean {
     if (kind === "grok") {
         return fileName === "updates.jsonl";
     }
+
+    if (kind === "codex" && fileName.endsWith(CODEX_COMPRESSED_SUFFIX)) {
+        return true;
+    }
+
     return fileName.endsWith(".jsonl");
+}
+
+/** A transcript file name without `.jsonl` or `.jsonl.zst`: the id part, the same for both forms of one file. */
+export function transcriptStem(fileName: string): string {
+    return fileName.replace(/\.jsonl(?:\.zst)?$/, "");
 }
 
 export function nativeTranscriptMaxDepth(kind: NativeSessionProvider): number {

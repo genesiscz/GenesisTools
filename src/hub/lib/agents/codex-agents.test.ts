@@ -1,7 +1,17 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, utimesSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    mkdtempSync,
+    readFileSync,
+    renameSync,
+    statSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { SafeJSON } from "@genesiscz/utils/json";
 import * as storage from "@genesiscz/utils/storage/storage";
 import {
@@ -359,6 +369,43 @@ describe("attachCodexAgents", () => {
         const tops = attachCodexAgents([broken, ...records], { now: NOW, cachePath: cache, model: null });
 
         expect((tops.get(ROOT) ?? []).map((node) => node.id)).toEqual([CHILD_B, CHILD_A]);
+    });
+});
+
+describe("a compressed rollout (.jsonl.zst, one zstd frame as Codex 0.164 writes it)", () => {
+    test("reads the head, model and tool calls of its content, and a closed rollout is never running", () => {
+        const dir = temp();
+        const plain = rollout(
+            dir,
+            CHILD_A,
+            meta({ id: CHILD_A, parent: ROOT, depth: 1, nickname: "Cicero", role: "worker", path: "/root/a" }) +
+                turnContext("gpt-6.1-sol") +
+                turn("task_started") +
+                call("custom_tool_call") +
+                call("function_call") +
+                call("custom_tool_call_output"),
+            30_000
+        );
+        const zst = { filePath: `${plain.filePath}.zst`, mtime: plain.mtime };
+        writeFileSync(zst.filePath, compressBytes(readFileSync(plain.filePath)));
+        utimesSync(zst.filePath, zst.mtime / 1000, zst.mtime / 1000);
+
+        expect(codexAgentHeadOf(zst.filePath)).toEqual(codexAgentHeadOf(plain.filePath));
+        expect(codexAgentHeadOf(zst.filePath)?.nickname).toBe("Cicero");
+        expect(codexAgentModel(zst.filePath)).toBe("gpt-6.1-sol");
+        // Fresh and mid-turn: the plain rollout runs; the compressed one was closed by Codex.
+        expect(codexTurnState({ filePath: plain.filePath, mtime: plain.mtime, now: NOW })).toBe("running");
+        expect(codexTurnState({ filePath: zst.filePath, mtime: zst.mtime, now: NOW })).toBe("killed");
+
+        const cache = join(dir, "cache.json");
+        const nodeOf = () =>
+            (attachCodexAgents([record(CHILD_A, zst)], { now: NOW, cachePath: cache, model: null }).get(ROOT) ?? [])[0];
+
+        expect(nodeOf()).toMatchObject({ name: "Cicero", model: "gpt-6.1-sol", status: "killed", toolCalls: 2 });
+        // Counted to its end once: the entry's offset is its size on disk, so the next read answers from the entry.
+        const saved: unknown = SafeJSON.parse(readFileSync(cache, "utf8"), { strict: true });
+        expect(saved).toMatchObject({ [zst.filePath]: { offset: statSync(zst.filePath).size, calls: 2 } });
+        expect(nodeOf()?.toolCalls).toBe(2);
     });
 });
 

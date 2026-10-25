@@ -2,6 +2,9 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, sta
 import { basename, dirname } from "node:path";
 import { POLLED_LISTING_REUSE_MS } from "@app/ai/lib/sessions/agent-session-rows";
 import { catalogHistory } from "@genesiscz/utils/agent-sessions/open-service";
+import { readHead, readTailWindow } from "@genesiscz/utils/ai/transcripts/native-scan";
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
+import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -92,6 +95,7 @@ export async function recentCodexAgentRecords({
     );
 }
 
+/** A plain rollout's bytes. A `.jsonl.zst` one is read through `readHead` / `readTailWindow` and never by offset. */
 function readBytes(path: string, position: number, length: number): Buffer {
     const fd = openSync(path, "r");
 
@@ -117,7 +121,7 @@ export function codexAgentHeadOf(path: string): CodexAgentHead | null {
     let head: string;
 
     try {
-        head = readBytes(path, 0, HEAD_BYTES).toString("utf8");
+        head = readHead(path, HEAD_BYTES).toString("utf8");
     } catch (error) {
         logger.debug({ error, path }, "[hub agents] unreadable codex agent head");
         return null;
@@ -149,15 +153,16 @@ export function codexAgentHeadOf(path: string): CodexAgentHead | null {
  * - `turn_aborted`: interrupted.
  * - `task_started` with nothing after it: mid-turn, running while the file is fresh and killed once
  *   it went quiet.
+ *
+ * A `.jsonl.zst` rollout is one Codex closed and compressed, so it is never running: as if it went quiet.
  */
 export function codexTurnState(options: { filePath: string; mtime: number; now: number }): AgentStatus {
     const { filePath, mtime, now } = options;
+    const closed = isZstdPath(filePath);
     let tail: string;
 
     try {
-        const size = statSync(filePath).size;
-
-        tail = readBytes(filePath, Math.max(0, size - TAIL_BYTES), TAIL_BYTES).toString("utf8");
+        tail = readTailWindow(filePath, TAIL_BYTES).buffer.toString("utf8");
     } catch (error) {
         logger.debug({ error, filePath }, "[hub agents] unreadable codex agent tail");
         return "completed";
@@ -178,10 +183,10 @@ export function codexTurnState(options: { filePath: string; mtime: number; now: 
     }
 
     if (last === "task_started") {
-        return now - mtime < TURN_STALE_MS ? "running" : "killed";
+        return !closed && now - mtime < TURN_STALE_MS ? "running" : "killed";
     }
 
-    return now - mtime < NO_MARKER_FRESH_MS ? "running" : "completed";
+    return !closed && now - mtime < NO_MARKER_FRESH_MS ? "running" : "completed";
 }
 
 /**
@@ -192,7 +197,7 @@ export function codexAgentModel(path: string): string | null {
     let text: string;
 
     try {
-        text = readBytes(path, 0, MODEL_SCAN_BYTES).toString("utf8");
+        text = readHead(path, MODEL_SCAN_BYTES).toString("utf8");
     } catch (error) {
         logger.debug({ error, path }, "[hub agents] unreadable codex agent model");
         return null;
@@ -229,9 +234,10 @@ interface ScanEntry {
 
 type ScanCache = Record<string, ScanEntry>;
 
-const CALL_MARKERS = [Buffer.from('"type":"custom_tool_call"'), Buffer.from('"type":"function_call"')];
+const CALL_MARKERS = ['"type":"custom_tool_call"', '"type":"function_call"'];
 
-function countCalls(buffer: Buffer): number {
+/** Markers are ASCII, so a match's length is the same in a string and in its bytes. */
+function countCalls(buffer: Buffer | string): number {
     let count = 0;
 
     for (const marker of CALL_MARKERS) {
@@ -246,8 +252,25 @@ function countCalls(buffer: Buffer): number {
     return count;
 }
 
-/** Tool calls of an append-only rollout, counting only what was appended since the last read. */
+/**
+ * Tool calls of an append-only rollout, counting only what was appended since the last read. A `.jsonl.zst` rollout
+ * never grows: its decompressed lines are counted once, and the entry (offset = its size on disk) answers after that.
+ */
 function scanCalls(path: string, size: number, entry: ScanEntry | undefined): { calls: number; offset: number } {
+    if (isZstdPath(path)) {
+        if (entry && entry.size === size && entry.offset === size) {
+            return { calls: entry.calls, offset: size };
+        }
+
+        let counted = 0;
+
+        for (const line of readLinesSync(path)) {
+            counted += countCalls(line);
+        }
+
+        return { calls: counted, offset: size };
+    }
+
     let calls = entry && entry.size <= size ? entry.calls : 0;
     let offset = entry && entry.size <= size ? entry.offset : 0;
 
@@ -331,7 +354,8 @@ function nodeOf(
 
     if (model === null && !modelFinal) {
         model = codexAgentModel(record.filePath);
-        modelFinal = model !== null || size > MODEL_SCAN_BYTES;
+        // A compressed rollout is closed: a model its head does not name never comes.
+        modelFinal = model !== null || size > MODEL_SCAN_BYTES || isZstdPath(record.filePath);
     }
 
     const next: ScanEntry = {

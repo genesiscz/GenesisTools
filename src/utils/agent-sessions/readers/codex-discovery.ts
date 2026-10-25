@@ -1,12 +1,14 @@
 import { Database } from "bun:sqlite";
 import { readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { isZstdPath } from "@genesiscz/utils/compress/zstd";
 import { FileIdentityCache, fileIdentity } from "@genesiscz/utils/fs/identity-cache";
 import { type EdgeLines, readFirstLines } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { profiler } from "@genesiscz/utils/profile";
+import { isNativeTranscript } from "@genesiscz/utils/providers/session-paths";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
 import { type HistoryDiscoveryOptions, walkSourceRoots } from "../source-discovery";
 import { asRecord, type JsonRecord, type JsonValue, scanJsonlRecords, text } from "../source-scan";
@@ -378,7 +380,7 @@ export async function discoverCodexHistorySources(
         filtered,
         filePaths: options.filePaths,
         signal: options.signal,
-        includeFile: ({ path }) => basename(path).startsWith("rollout-") && path.endsWith(".jsonl"),
+        includeFile: ({ path }) => basename(path).startsWith("rollout-") && isNativeTranscript("codex", basename(path)),
     });
     const issues = [...walked.issues];
     const incompleteRoots = new Set<string>();
@@ -449,7 +451,8 @@ export async function discoverCodexHistorySources(
             filePath: file.path,
             dataPaths: [file.path],
             metadataPaths,
-            ...(header.historyMode === "paginated" ? {} : { searchPaths: [file.path] }),
+            // rg reads raw bytes, so a compressed rollout gets no rg prefilter and is searched by the reader.
+            ...(header.historyMode === "paginated" || isZstdPath(file.path) ? {} : { searchPaths: [file.path] }),
             metadata,
         };
         let projection: string | undefined;
