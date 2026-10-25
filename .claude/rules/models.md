@@ -36,6 +36,13 @@ These read the catalog and need no edit of their own:
 - **The OpenRouter snapshot**: `src/utils/ai/catalog/data/openrouter-snapshot.json`, refreshed with `bun scripts/ai/update-openrouter-snapshot.ts`. A diff there is a price change; read it before you commit.
 - **The handoff-to skill rankings**: `plugins/genesis-tools/skills/handoff-to/SKILL.md` and `references/codex.md`. Changing them bumps the plugin version (`.claude/rules/plugins.md`).
 
+## Lint
+
+Three lint rules keep model facts in the owners above, each with a list in `scripts/ci/model-facts-ratchet.ts` that
+only shrinks (2026-10-25): `no-model-id-literal-outside-catalog` (a whole literal that is a model id), `no-model-price-table`
+(`opus: { input: … }`) and `no-effort-vocabulary-list` (an array or union of effort words). A list of efforts for one
+provider is `effortRange(from, to)` or a filter of `REASONING_EFFORTS` (`src/utils/ai/catalog/efforts.ts`).
+
 ## Checklist for a new model or a price change
 
 1. Read the vendor's own page, not a blog: the model page (`platform.claude.com/docs/en/models/<model>`, `developers.openai.com/api/docs/models/<id>`, `docs.x.ai/developers/<model>`) and the vendor pricing page. Note the date you read it in the code comment.

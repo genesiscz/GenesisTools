@@ -46,6 +46,16 @@ provider, so a new provider is a list of members to fill in and no feature parse
 - **Lint enforces it**: `no-transcript-format-outside-readers` in `scripts/ci/lint-rules.ts` fails a transcript record
   type or field literal (`"continued-in"`, `"turn_context"`, `'"type":"user"'`, …) outside the readers. The files that
   still do it are listed in `scripts/ci/transcript-format-ratchet.ts`; a file only ever leaves that list.
+- **Four more lints guard the same seam** (2026-10-25), each with a list in `scripts/ci/` that only shrinks:
+  - `no-hand-built-claude-home`, `no-hand-built-codex-grok-home` (`native-home-ratchet.ts`): a path into
+    `~/.claude`, `~/.codex`, `~/.grok` or their env overrides goes through `nativeHome(kind)` or
+    `nativeSessionRoots(kind)` in `src/utils/providers/session-paths.ts`.
+  - `no-harness-name-branch` (`harness-ratchet.ts`): `x.harness === "codex"` or a `case "grok":` in a tool is a
+    provider member instead.
+  - `no-hook-payload-read`: a hook payload field (`transcript_path`, `tool_input`, …) is read in
+    `src/agents/lib/hooks/payload.ts` only; add a typed `HookPayload` field there.
+  - `no-agent-name-in-command-match`: finding a running agent by its command line goes through
+    `src/utils/process/classify.ts`.
 - **A reader that caps or skips records says so in the log.** A byte cap, a timeout or a skipped row that hides
   newer records logs the path, the cap and what was missed, so a frozen age or a missing prompt is found from
   `~/.genesis-tools/logs/` and not by a user.

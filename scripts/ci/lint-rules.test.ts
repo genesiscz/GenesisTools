@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Lang, parse } from "@ast-grep/napi";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
+import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import {
     BARE_REQUIRE_RATCHET,
     checkSource,
@@ -12,6 +13,8 @@ import {
     namesTranscriptFormat,
     pluginsDisabledFor,
 } from "./lint-rules";
+import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
+import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 
@@ -516,6 +519,96 @@ describe("no-transcript-format-outside-readers", () => {
 
             if (!literals.some((node) => namesTranscriptFormat(node.text()))) {
                 stale.push(file);
+            }
+        }
+
+        expect(stale).toEqual([]);
+    });
+});
+
+describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
+    test("each rule flags its shape outside the owners and passes the owner and a look-alike", () => {
+        const cases: { rule: string; hit: [string, string]; owner?: [string, string]; miss: [string, string] }[] = [
+            {
+                rule: "no-hand-built-claude-home",
+                hit: ['const p = join(homedir(), ".claude", "projects");', "src/hub/lib/x.ts"],
+                owner: ['const p = join(homedir(), ".claude");', "src/utils/providers/session-paths.ts"],
+                miss: ['const p = join(repoRoot, ".claude", "rules");', "src/hub/lib/x.ts"],
+            },
+            {
+                rule: "no-hand-built-codex-grok-home",
+                hit: ['const p = join(homedir(), ".codex");', "src/hub/lib/x.ts"],
+                owner: ['const p = join(homedir(), ".codex");', "src/utils/providers/session-paths.ts"],
+                miss: ['const p = join(repoRoot, ".codex-review");', "src/hub/lib/x.ts"],
+            },
+            {
+                rule: "no-model-id-literal-outside-catalog",
+                hit: ['export const DEFAULT_MODEL = "claude-opus-5";', "src/ai/lib/x.ts"],
+                owner: ['const id = "claude-opus-5-5";', "src/utils/ai/catalog/static.ts"],
+                miss: ['const hint = "Try: opus, claude-sonnet-5-5, haiku";', "src/ai/lib/x.ts"],
+            },
+            {
+                rule: "no-model-price-table",
+                hit: ["const P = { opus: { input: 15, output: 75 } };", "src/ai-spend/lib/x.ts"],
+                miss: ["const P = { opus: { ...base } };", "src/ai-spend/lib/x.ts"],
+            },
+            {
+                rule: "no-effort-vocabulary-list",
+                hit: ['export const E = ["low", "medium", "high", "xhigh"] as const;', "src/utils/worker/x.ts"],
+                owner: ['export const E = ["low", "high", "xhigh"];', "src/utils/ai/catalog/efforts.ts"],
+                miss: ['const args = ["--effort", "xhigh", "--yes"];', "src/claude/lib/x.ts"],
+            },
+            {
+                rule: "no-harness-name-branch",
+                hit: ['if (node.harness === "claude") {}', "src/hub/lib/x.ts"],
+                owner: ['if (kind === "codex") {}', "src/utils/agent-sessions/x.ts"],
+                miss: ['if (theme.name === "claude") {}', "src/hub/lib/x.ts"],
+            },
+            {
+                rule: "no-hook-payload-read",
+                hit: ["const t = payload.raw.transcript_path;", "src/agents/lib/hooks/x.ts"],
+                owner: ["const t = raw.transcript_path;", "src/agents/lib/hooks/payload.ts"],
+                miss: ['const fixture = { transcript_path: "/x.jsonl" };', "src/agents/lib/hooks/x.ts"],
+            },
+            {
+                rule: "no-agent-name-in-command-match",
+                hit: ["const live = /claude/i.test(process.command);", "src/question/lib/x.ts"],
+                owner: ["const live = /claude/i.test(process.command);", "src/utils/process/classify.ts"],
+                miss: ['const t = text.includes("claude");', "src/timely/x.ts"],
+            },
+        ];
+
+        for (const { rule, hit, owner, miss } of cases) {
+            expect({ rule, found: rules(...hit).includes(rule) }).toEqual({ rule, found: true });
+            expect({ rule, miss: rules(...miss).includes(rule) }).toEqual({ rule, miss: false });
+
+            if (owner) {
+                expect({ rule, owner: rules(...owner).includes(rule) }).toEqual({ rule, owner: false });
+            }
+        }
+    });
+
+    test("every file on a ratchet list still offends its rule, so a migrated file leaves the list", async () => {
+        const lists: [string, ReadonlySet<string>][] = [
+            ["no-transcript-format-outside-readers", TRANSCRIPT_FORMAT_RATCHET],
+            ["no-hand-built-claude-home", NATIVE_HOME_CLAUDE_RATCHET],
+            ["no-hand-built-codex-grok-home", NATIVE_HOME_CODEX_GROK_RATCHET],
+            ["no-model-id-literal-outside-catalog", MODEL_ID_LITERAL_RATCHET],
+            ["no-model-price-table", MODEL_PRICE_TABLE_RATCHET],
+            ["no-effort-vocabulary-list", EFFORT_LIST_RATCHET],
+            ["no-harness-name-branch", HARNESS_BRANCH_RATCHET],
+            ["no-hook-payload-read", HOOK_PAYLOAD_READ_RATCHET],
+            ["no-agent-name-in-command-match", AGENT_PROCESS_MATCH_RATCHET],
+        ];
+        const stale: string[] = [];
+
+        for (const [rule, files] of lists) {
+            for (const file of files) {
+                const found = checkSource(file, await Bun.file(file).text(), { ratchets: false });
+
+                if (!found.some((finding) => finding.rule === rule)) {
+                    stale.push(`${rule}: ${file}`);
+                }
             }
         }
 

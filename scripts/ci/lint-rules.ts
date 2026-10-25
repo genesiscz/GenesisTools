@@ -35,6 +35,9 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { findInFiles, Lang, type NapiConfig, parse, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
+import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
+import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
 import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 
@@ -71,8 +74,10 @@ interface Rule {
     allowedFiles?: ReadonlySet<string>;
 }
 
-function ruleApplies(rule: Rule, file: string): boolean {
-    return (rule.onlyIn?.test(file) ?? true) && !rule.allowedIn?.test(file) && !rule.allowedFiles?.has(file);
+function ruleApplies(rule: Rule, file: string, ratchets = true): boolean {
+    return (
+        (rule.onlyIn?.test(file) ?? true) && !rule.allowedIn?.test(file) && !(ratchets && rule.allowedFiles?.has(file))
+    );
 }
 
 /**
@@ -191,6 +196,98 @@ export function namesTranscriptFormat(text: string): boolean {
     return TRANSCRIPT_FORMAT.test(text);
 }
 
+/** `~/.claude…`, `.claude/projects|sessions|settings.json|…`, `.claude.json`: a path into Claude's own home. */
+const CLAUDE_HOME_LITERAL =
+    /^["'`](?:~[/\\]\.claude(?:\.json|[/\\]|["'`])|(?:[^\s"'`]*[/\\])?\.claude(?:\.json["'`]|[/\\](?:projects|sessions|settings\.json|statusline|helpers|teams|\.credentials\.json)(?:[/\\"'`]|$)))/;
+const CLAUDE_CONFIG_DIR_LITERAL = /^["'`]CLAUDE_CONFIG_DIR["'`]$/;
+const BARE_CLAUDE_SEGMENT = /^["'`](?:[^\s"'`]*[/\\])?\.claude["'`]$/;
+const CODEX_GROK_HOME_LITERAL =
+    /^["'`](?:~[/\\]\.(?:codex|grok)[/\\"'`]|(?:[^\s"'`]*[/\\])?\.(?:codex|grok)[/\\](?:sessions|archived_sessions|config\.toml|auth\.json)(?:[/\\"'`]|$))/;
+const BARE_CODEX_GROK_SEGMENT = /^["'`](?:[^\s"'`]*[/\\])?\.(?:codex|grok)["'`]$/;
+const CODEX_GROK_ENV_LITERAL = /^["'`](?:CODEX_HOME|GROK_HOME)["'`]$/;
+/** A call argument that is the user's home: a bare `.claude` segment joined to it is the agent's home. */
+const HOME_ARGUMENT = /homedir\(\)|getHome\(\)|\bhome(?:Dir)?\b|\.HOME\b/;
+const NATIVE_HOME_TESTS =
+    /(?:^|\/)__tests__\/|^src\/utils\/agent-sessions\/testing\/|^plugins\/|\.test\.tsx?$|test-utils\.ts$/;
+
+/** Whether the nearest enclosing call (five levels up at most) also takes the user's home as an argument. */
+function homeArgumentOfNearestCall(node: SgNode): boolean {
+    let up = node.parent();
+
+    for (let depth = 0; up && depth < 5; depth++) {
+        if (up.kind() === "call_expression") {
+            return HOME_ARGUMENT.test(up.field("arguments")?.text() ?? "");
+        }
+
+        up = up.parent();
+    }
+
+    return false;
+}
+
+export function buildsClaudeHome(text: string, node: SgNode): boolean {
+    return (
+        CLAUDE_HOME_LITERAL.test(text) ||
+        CLAUDE_CONFIG_DIR_LITERAL.test(text) ||
+        (BARE_CLAUDE_SEGMENT.test(text) && homeArgumentOfNearestCall(node))
+    );
+}
+
+export function buildsCodexGrokHome(text: string, node: SgNode): boolean {
+    return (
+        CODEX_GROK_HOME_LITERAL.test(text) ||
+        CODEX_GROK_ENV_LITERAL.test(text) ||
+        (BARE_CODEX_GROK_SEGMENT.test(text) && homeArgumentOfNearestCall(node))
+    );
+}
+
+/** A whole literal that is a model id: `claude-opus-5-5`, `anthropic/claude-sonnet-5.5`, `gpt-6-sol:xhigh`, `grok-4.7`, `o3`. */
+const MODEL_ID_LITERAL =
+    /^(["'`])(?:(?:[\w.@-]+\/)*(?:claude-(?:opus|sonnet|haiku|fable)-[\w.-]+|gpt-(?!3-encoder)\d[\w.-]*|grok-(?:code-)?\d[\w.-]*|o[134])(?:\[1m\])?(?::(?:minimal|low|medium|high|xhigh|max))?)\1$/;
+/** The catalog and the lists models.md names as owners; tests and fixtures carry ids on purpose. */
+const MODEL_FACT_OWNERS =
+    /(^|\/)(src\/utils\/ai\/catalog\/|src\/utils\/ai\/anthropic\/|src\/utils\/ai\/openai\/sub-models|src\/utils\/ai\/grok\/models|src\/ai-proxy\/lib\/(billing|translators)\/|src\/ai-proxy\/lib\/reasoning-effort-vocab|src\/claude\/lib\/models|scripts\/ai\/)|^plugins\/|\.test\.tsx?$|(^|\/)(testing|fixtures?|__fixtures__)\//;
+/** `opus: { input: 15, …`: a price row keyed by a Claude family. */
+const FAMILY_PRICE_ENTRY = /^["']?(?:opus|sonnet|haiku|fable)["']?\s*:\s*\{\s*input\s*:\s*\d/;
+const EFFORT = "(?:minimal|none|low|medium|high|xhigh|max|ultra)";
+/** An array or union made only of three or more effort words, one of them `xhigh`. */
+const EFFORT_LIST = new RegExp(
+    `^(?:\\[(?=[^\\]]*xhigh)\\s*(?:(["'])${EFFORT}\\1\\s*,?\\s*){3,}\\]|(?=[\\s\\S]*xhigh)(?:(["'])${EFFORT}\\2\\s*\\|\\s*){2,}(["'])${EFFORT}\\3)$`
+);
+
+/** A literal passed to `toolCommand(...)`: a usage example in help text, not a model choice. */
+function isToolCommandArgument(node: SgNode): boolean {
+    const args = node.parent();
+
+    return args?.kind() === "arguments" && args.parent()?.field("function")?.text() === "toolCommand";
+}
+
+export function namesModelId(text: string, node: SgNode): boolean {
+    return MODEL_ID_LITERAL.test(text) && !isToolCommandArgument(node);
+}
+
+export function isFamilyPriceEntry(text: string): boolean {
+    return FAMILY_PRICE_ENTRY.test(text);
+}
+
+export function isEffortList(text: string): boolean {
+    return EFFORT_LIST.test(text);
+}
+
+/** Harness branching, hook payload reads and agent process matching (Haiku survey, HarnessBranching.haiku.md). */
+const AGENT_HARNESS_LITERAL = /^(["'`])(?:claude|codex|grok)\1$/;
+const AGENT_HARNESS_WORD = /claude|codex|grok/i;
+const AGENT_COMPARE_OPS = new Set(["===", "!==", "==", "!="]);
+const AGENT_OPERAND = /harness|provider|alias|kind|agent|backend|source|resolved|target|basename|argv0|^base$|\.base$/i;
+const AGENT_SUBJECT = /command|cmd|argv|\bargs\b|\bcomm\b|process|\bproc\b/i;
+const AGENT_SESSION_OWNERS =
+    /(?:^|\/)src\/(?:utils\/process\/|utils\/claude\/peer-message\.ts$|codex\/lib\/process-scan\.ts$|grok\/lib\/process-scan\.ts$|claude\/lib\/active-sessions\.ts$)/;
+const AGENT_HARNESS_OWNERS =
+    /(?:^|\/)src\/(?:utils\/agent-sessions\/|utils\/ai\/providers\/|utils\/providers\/session-paths\.ts$|agents\/lib\/hooks\/(?:payload|config)\.ts$|utils\/process\/|utils\/claude\/peer-message\.ts$|codex\/lib\/process-scan\.ts$|grok\/lib\/process-scan\.ts$|claude\/lib\/active-sessions\.ts$)/;
+const AGENT_PAYLOAD_READ_SRC =
+    "(?:\\.(?:transcript_path|hook_event_name|tool_input|tool_response|last_assistant_message|stop_hook_active)|(?:^|\\.)raw\\.(?:hookEventName|toolInput|toolResponse|transcriptPath|lastAssistantMessage|stopHookActive))$";
+const AGENT_PAYLOAD_READ = new RegExp(AGENT_PAYLOAD_READ_SRC);
+
 const RULES: Rule[] = [
     {
         ...STORAGE_ROOT_RULE,
@@ -283,6 +380,160 @@ const RULES: Rule[] = [
         test: (text) => namesTranscriptFormat(text),
         allowedIn: TRANSCRIPT_FORMAT_ALLOWED,
         allowedFiles: TRANSCRIPT_FORMAT_RATCHET,
+    },
+    {
+        name: "no-hand-built-claude-home",
+        severity: "error",
+        kinds: LITERAL_KINDS,
+        message:
+            "A path built by hand into Claude's home (~/.claude, CLAUDE_CONFIG_DIR, ~/.claude.json, the sessions " +
+            "registry). Use nativeHome('claude') or nativeSessionRoots('claude') from " +
+            "@genesiscz/utils/providers/session-paths (they honour CLAUDE_CONFIG_DIR), claudeSessionsDir() from " +
+            "@genesiscz/utils/claude/peer-message, or getClaudeJsonAccount() from @genesiscz/utils/claude/auth. " +
+            "scripts/ci/native-home-ratchet.ts lists the files not migrated yet.",
+        test: buildsClaudeHome,
+        allowedIn: new RegExp(
+            `(?:^|/)(?:src/utils/claude/(?:projects|auth|executable|peer-message)\\.ts|src/utils/providers/session-paths\\.ts|src/utils/env/[^/]+\\.ts|src/agents/lib/hooks/(?:install|mods)\\.ts|src/mcp-manager/utils/harnesses\\.ts|src/ai-spend/lib/drivers/test-env\\.ts)$|${NATIVE_HOME_TESTS.source}`
+        ),
+        allowedFiles: NATIVE_HOME_CLAUDE_RATCHET,
+    },
+    {
+        name: "no-hand-built-codex-grok-home",
+        severity: "error",
+        kinds: LITERAL_KINDS,
+        message:
+            "A path built by hand into the Codex or Grok home (~/.codex, ~/.grok, CODEX_HOME, GROK_HOME, their " +
+            "sessions). Use nativeHome('codex' | 'grok') or nativeSessionRoots(kind) from " +
+            "@genesiscz/utils/providers/session-paths (they honour the overrides and CODEX_HOME's comma list). " +
+            "scripts/ci/native-home-ratchet.ts lists the files not migrated yet.",
+        test: buildsCodexGrokHome,
+        allowedIn: new RegExp(
+            `(?:^|/)(?:src/utils/providers/session-paths\\.ts|src/utils/env/[^/]+\\.ts|src/utils/grok/worker-paths\\.ts|src/utils/codex/worker-paths\\.ts|src/utils/agent-sessions/grok-sessions\\.ts|src/utils/agent-sessions/readers/[^/]+\\.ts|src/utils/ai/grok/paths\\.ts|src/agents/lib/hooks/codex\\.ts|src/mcp-manager/utils/harnesses\\.ts|src/ai-spend/lib/drivers/test-env\\.ts)$|${NATIVE_HOME_TESTS.source}`
+        ),
+        allowedFiles: NATIVE_HOME_CODEX_GROK_RATCHET,
+    },
+    {
+        name: "no-model-id-literal-outside-catalog",
+        severity: "error",
+        kinds: LITERAL_KINDS,
+        message:
+            "A model id written into code goes stale at the next release. Take it from the catalog: byId(id, provider) " +
+            "from @genesiscz/utils/ai/catalog, or a family alias through resolveAnthropicSubModel() " +
+            "(.claude/rules/models.md). scripts/ci/model-facts-ratchet.ts lists the files not migrated yet.",
+        test: namesModelId,
+        allowedIn: MODEL_FACT_OWNERS,
+        allowedFiles: MODEL_ID_LITERAL_RATCHET,
+    },
+    {
+        name: "no-model-price-table",
+        severity: "error",
+        kinds: ["pair"],
+        matcher: { rule: { kind: "pair" } },
+        message:
+            "A price per model is a catalog fact, not a table here. Read it with effectivePricing() or pricingFor() " +
+            "from @genesiscz/utils/ai/catalog (.claude/rules/models.md). scripts/ci/model-facts-ratchet.ts lists the " +
+            "files not migrated yet.",
+        test: (text) => isFamilyPriceEntry(text),
+        allowedIn: /(^|\/)(src\/utils\/ai\/catalog\/|src\/ai-proxy\/lib\/billing\/)|\.test\.tsx?$/,
+        allowedFiles: MODEL_PRICE_TABLE_RATCHET,
+    },
+    {
+        name: "no-effort-vocabulary-list",
+        severity: "error",
+        kinds: ["array", "union_type"],
+        matcher: { rule: { any: [{ kind: "array" }, { kind: "union_type" }] } },
+        message:
+            "A list of reasoning-effort values is a model fact. Use REASONING_EFFORTS or effortRange(from, to) from " +
+            "@genesiscz/utils/ai/catalog/efforts and filter it per provider. scripts/ci/model-facts-ratchet.ts lists " +
+            "the files not migrated yet.",
+        test: (text) => isEffortList(text),
+        // `union_type` exists only in the TypeScript grammars; the JavaScript scan would refuse the matcher.
+        onlyIn: /\.tsx?$/,
+        allowedIn:
+            /(^|\/)(src\/utils\/ai\/catalog\/|src\/utils\/ai\/anthropic\/models|src\/ai-proxy\/lib\/reasoning-effort-vocab)|\.test\.tsx?$/,
+        allowedFiles: EFFORT_LIST_RATCHET,
+    },
+    {
+        name: "no-harness-name-branch",
+        severity: "error",
+        kinds: LITERAL_KINDS,
+        message: "PROBE harness branch",
+        onlyIn: /^(?:src|scripts)\//,
+        allowedIn: AGENT_HARNESS_OWNERS,
+        allowedFiles: HARNESS_BRANCH_RATCHET,
+        test: (text, node) => {
+            if (!AGENT_HARNESS_LITERAL.test(text)) {
+                return false;
+            }
+
+            const parent = node.parent();
+
+            if (parent?.kind() === "switch_case") {
+                return AGENT_OPERAND.test(parent.parent()?.parent()?.field("value")?.text() ?? "");
+            }
+
+            if (
+                parent?.kind() !== "binary_expression" ||
+                !AGENT_COMPARE_OPS.has(parent.field("operator")?.text() ?? "")
+            ) {
+                return false;
+            }
+
+            const other = parent.field("right")?.text() === text ? parent.field("left") : parent.field("right");
+
+            return AGENT_OPERAND.test(other?.text() ?? "");
+        },
+    },
+    {
+        name: "no-hook-payload-read",
+        severity: "error",
+        kinds: ["member_expression"],
+        matcher: { rule: { kind: "member_expression", regex: AGENT_PAYLOAD_READ_SRC } },
+        message: "PROBE payload read",
+        onlyIn: /^(?:src|scripts)\//,
+        allowedIn: /(?:^|\/)src\/agents\/lib\/hooks\/payload\.ts$/,
+        allowedFiles: HOOK_PAYLOAD_READ_RATCHET,
+        test: (text) => AGENT_PAYLOAD_READ.test(text),
+    },
+    {
+        name: "no-agent-name-in-command-match",
+        severity: "error",
+        kinds: ["call_expression"],
+        matcher: {
+            rule: {
+                kind: "call_expression",
+                has: { field: "function", regex: "\\.(?:test|match|search|includes|startsWith|endsWith)$" },
+            },
+        },
+        message: "PROBE process match",
+        onlyIn: /^(?:src|scripts)\//,
+        allowedIn: AGENT_SESSION_OWNERS,
+        allowedFiles: AGENT_PROCESS_MATCH_RATCHET,
+        test: (_text, node) => {
+            const fn = node.field("function");
+
+            if (fn?.kind() !== "member_expression") {
+                return false;
+            }
+
+            const method = fn.field("property")?.text() ?? "";
+            const object = fn.field("object");
+            const args = (node.field("arguments")?.children() ?? []).filter((child) => child.isNamed());
+
+            if (method === "test" || method === "match" || method === "search") {
+                if (object?.kind() !== "regex" || !AGENT_HARNESS_WORD.test(object.text())) {
+                    return false;
+                }
+
+                return AGENT_SUBJECT.test(args[0]?.text() ?? "");
+            }
+
+            if (!AGENT_HARNESS_LITERAL.test(args[0]?.text() ?? "")) {
+                return false;
+            }
+
+            return AGENT_SUBJECT.test(object?.text() ?? "");
+        },
     },
 ];
 
@@ -850,7 +1101,11 @@ export function pluginsDisabledFor(file: string): boolean {
     return /\.test\.tsx?$/.test(file) || /(^|\/)__tests__\//.test(file) || /\.data\.ts$/.test(file);
 }
 
-export function checkSource(file: string, source: string): Finding[] {
+/**
+ * `ratchets: false` reports a file a ratchet still lets through: the test that keeps each ratchet list honest asks it
+ * whether a listed file still offends.
+ */
+export function checkSource(file: string, source: string, { ratchets = true }: { ratchets?: boolean } = {}): Finding[] {
     if (file.endsWith(".swift")) {
         return checkSwiftSource(file, source);
     }
@@ -911,14 +1166,14 @@ export function checkSource(file: string, source: string): Finding[] {
         const text = node.text();
 
         for (const rule of RULES) {
-            if (!rule.matcher && ruleApplies(rule, file) && rule.test(text, node)) {
+            if (!rule.matcher && ruleApplies(rule, file, ratchets) && rule.test(text, node)) {
                 record(node, rule);
             }
         }
     }
 
     for (const rule of RULES) {
-        if (!rule.matcher || !ruleApplies(rule, file)) {
+        if (!rule.matcher || !ruleApplies(rule, file, ratchets)) {
             continue;
         }
 
@@ -1293,7 +1548,7 @@ if (import.meta.main) {
     const timing = `boot ${boot}ms, list ${listed - started}ms, scan ${scanned - listed}ms`;
 
     if (findings.length === 0) {
-        console.log(`lint-rules: OK (${files.length} files, 15 repo rules) [${timing}]`);
+        console.log(`lint-rules: OK (${files.length} files, 23 repo rules) [${timing}]`);
     } else {
         console.log(`\nlint-rules: ${errors} error(s), ${warnings} warning(s) across ${files.length} files`);
     }

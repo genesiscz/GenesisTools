@@ -35,6 +35,23 @@ export function primaryCodexHome(): string | undefined {
 export type NativeSessionProvider = AccountProviderAlias;
 
 /**
+ * A coding agent's own home folder: `CLAUDE_CONFIG_DIR` or `~/.claude`, the primary `CODEX_HOME` or `~/.codex`,
+ * `GROK_HOME` or `~/.grok`. The one place that builds these roots; lint-rules `no-hand-built-claude-home` and
+ * `no-hand-built-codex-grok-home` point here.
+ */
+export function nativeHome(kind: NativeSessionProvider, home = homedir()): string {
+    if (kind === "claude") {
+        return env.paths.getClaudeConfigDir() ?? join(home, ".claude");
+    }
+
+    if (kind === "codex") {
+        return primaryCodexHome() ?? join(home, ".codex");
+    }
+
+    return env.grok.getHomeOverride() ?? join(home, ".grok");
+}
+
+/**
  * On-disk CLI session stores. Claude: `~/.claude/projects`. Grok:
  * `~/.grok/sessions`. Codex: `~/.codex/sessions` plus `archived_sessions`.
  * `CLAUDE_CONFIG_DIR`, `GROK_HOME`, and `CODEX_HOME` (comma list) override.
