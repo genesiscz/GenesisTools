@@ -1601,14 +1601,21 @@ struct PRListView: View {
                                 .accessibilityElement(children: .ignore)
                                 .accessibilityLabel("Loading PRs and MRs")
                         } else if prs.prs.isEmpty, !prs.loading, prs.lastLoad != nil, prs.errors.isEmpty {
+                            // A filter the server found nothing for: reloading repeats the same query, so the way
+                            // out is clearing it.
+                            let filtered = !prs.mineOnly && !model.filter.trimmed.isEmpty
                             EmptyState(
                                 symbol: "arrow.triangle.pull",
                                 text: prs.mineOnly ? "None of your PRs/MRs match." : "No PRs/MRs match.",
-                                detail: prs.mineOnly ? "Turn off Mine to see everyone's." : "Try another state, or reload.",
-                                actionTitle: prs.mineOnly ? "Show everyone's" : "Reload",
+                                detail: prs.mineOnly ? "Turn off Mine to see everyone's."
+                                    : filtered ? "Nothing matches “\(model.filter)”." : "Try another state, or reload.",
+                                actionTitle: prs.mineOnly ? "Show everyone's" : filtered ? "Clear filter" : "Reload",
                                 action: {
                                     if prs.mineOnly {
                                         prs.mineOnly = false
+                                    } else if filtered {
+                                        model.filter = ""
+                                        return
                                     }
                                     prs.reload()
                                 }
@@ -1968,7 +1975,7 @@ struct CIBadge: View {
                 case "failed": return "Some checks failed"
                 case "running": return "Checks are running"
                 case "pending": return "Checks are waiting to start"
-                default: return "The checks have no clear state"
+                default: return "The checks report “\(ci)”"
                 }
             }()
             let icon = Image(systemName: symbol).font(.system(size: 11)).foregroundColor(color)

@@ -133,20 +133,26 @@ final class ApprovalReminder {
         content.threadIdentifier = "approval.\(model.identifier)"
         content.userInfo = [ApprovalNotificationRelay.tokenKey: token]
         let id = "approval.\(model.identifier).\(token)"
+        // No authorization prompt here: a prompt in the middle of an approval is the wrong moment, and the first grant
+        // is `tools notify authorize` (macos.md). Without it the add fails, the log says so, and the panel still waits.
+        let identifier = model.identifier
         center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { [weak self] error in
             if let error {
                 KitHost.log("approval reminder failed id=\(id): \(error.localizedDescription)")
                 return
             }
-            // The add is asynchronous: a request answered while it ran must not leave its card behind.
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    if self?.stopped ?? true { center.removeDeliveredNotifications(withIdentifiers: [id]) }
+                    // The add is asynchronous: a request answered while it ran must not leave its card behind.
+                    guard let self, !self.stopped else {
+                        center.removeDeliveredNotifications(withIdentifiers: [id])
+                        return
+                    }
+                    self.postedID = id
+                    KitHost.log("approval \(identifier) reminder posted id=\(id)")
                 }
             }
         }
-        postedID = id
-        KitHost.log("approval \(model.identifier) reminder posted id=\(id)")
     }
 
     /// Cancels a reminder not posted yet, takes a posted one out of Notification Center, and gives the click handling

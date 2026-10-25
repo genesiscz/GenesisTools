@@ -43,6 +43,14 @@ struct WidgetInboxOverview: View {
                     handle(key.kind, rows: drawnOrder(items), proxy: proxy)
                 }
                 .onChange(of: focusID) { _, id in model.inboxOverviewHasFocus = id != nil }
+                // A row that left the list (a filter, the grouping or a snapshot) cannot keep the keys' highlight, or
+                // Return would still answer it.
+                .onChange(of: drawnOrder(items).map(\.id)) { _, ids in
+                    if let id = focusID, !ids.contains(id) {
+                        focusID = nil
+                        focusedOption = nil
+                    }
+                }
                 .onDisappear { model.inboxOverviewHasFocus = false }
         }
     }

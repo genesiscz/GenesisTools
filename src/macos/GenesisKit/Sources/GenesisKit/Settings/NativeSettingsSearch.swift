@@ -24,8 +24,9 @@ public struct NativeSettingsSearchEntry: Equatable, Sendable {
         self.card = card
     }
 
-    /// The entry's name on its page; titles are unique on a page in practice, and a repeat finds the first.
-    var key: String { "\(kind.rawValue):\(title)" }
+    /// The entry's name on its page. A row's names its card too: one row title can repeat in several cards (every
+    /// background task has a Schedule row), and each must be its own result and jump target.
+    var key: String { "\(kind.rawValue):\(card.map { "\($0)/" } ?? "")\(title)" }
 }
 
 /// A settings page as the search sees it: its words, without its views.
@@ -123,6 +124,8 @@ struct NativeSettingsSearchKey: PreferenceKey {
 extension EnvironmentValues {
     /// The settings page a card or row is drawn on; nil outside the settings window.
     @Entry var nativeSettingsPageID: String? = nil
+    /// The title of the titled card a row is drawn in, so the row's search key and its jump target name the card.
+    @Entry var nativeSettingsSearchCard: String? = nil
     /// True in the hidden copy of the pages the search reads: nothing there flashes, and a page's own code must not
     /// speak (`GenAnnounce`) or ask for anything, since nobody sees it.
     @Entry public var nativeSettingsIndexing = false

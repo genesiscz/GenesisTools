@@ -511,7 +511,18 @@ final class SettingsControlsTests: XCTestCase {
         XCTAssertEqual(NativeSettingsHighlightCenter.split(target).page, "notifications.prActivity")
         XCTAssertEqual(
             NativeSettingsHighlightCenter.split(target).anchor,
-            NativeSettingsSearch.anchor(page: "notifications.prActivity", key: "row:Cadence"))
+            NativeSettingsSearch.anchor(page: "notifications.prActivity", key: "row:Defaults/Cadence"))
+
+        // One row title in two cards (a Schedule row per background task): two results, each with its own target.
+        let tasks = ["general": [
+            NativeSettingsSearchEntry(kind: .card, title: "Backup"),
+            NativeSettingsSearchEntry(kind: .row, title: "Schedule", card: "Backup"),
+            NativeSettingsSearchEntry(kind: .card, title: "Cleanup"),
+            NativeSettingsSearchEntry(kind: .row, title: "Schedule", card: "Cleanup"),
+        ]]
+        let schedules = NativeSettingsSearch.results("schedule", pages: pages, entries: tasks)
+        XCTAssertEqual(schedules.map(\.context), ["General · Backup", "General · Cleanup"])
+        XCTAssertEqual(Set(schedules.map(\.target)).count, 2)
 
         // A detail match and a case- and accent-blind match; every word must be found somewhere.
         XCTAssertEqual(NativeSettingsSearch.results("SILENT", pages: pages, entries: entries).map(\.title), ["Only my PRs"])

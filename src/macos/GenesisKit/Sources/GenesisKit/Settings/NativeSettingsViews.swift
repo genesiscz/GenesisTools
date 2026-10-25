@@ -1,6 +1,7 @@
 import SwiftUI
 
 public struct NativeSettingsCard<Content: View>: View {
+    @Environment(\.nativeSettingsSearchCard) private var searchCard
     private let title: String?
     private let subtitle: String?
     private let content: Content
@@ -19,7 +20,7 @@ public struct NativeSettingsCard<Content: View>: View {
                     if let subtitle { Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary) }
                 }
             }
-            content
+            content.environment(\.nativeSettingsSearchCard, title ?? searchCard)
         }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
             .nativeGlassSurface()
         // A titled card is a place the settings search finds and flashes (NativeSettingsSearch.swift).
@@ -33,6 +34,7 @@ public struct NativeSettingsCard<Content: View>: View {
 
 public struct NativeSettingsRow<Accessory: View>: View {
     @Environment(\.isEnabled) private var isEnabled
+    @Environment(\.nativeSettingsSearchCard) private var searchCard
     private let title: String
     private let detail: String?
     private let accessory: Accessory
@@ -61,7 +63,8 @@ public struct NativeSettingsRow<Accessory: View>: View {
             Spacer(minLength: 0)
             accessory
         }
-        .nativeSettingsSearchable(NativeSettingsSearchEntry(kind: .row, title: title, detail: detail), cornerRadius: 10, outset: 8)
+        .nativeSettingsSearchable(NativeSettingsSearchEntry(kind: .row, title: title, detail: detail, card: searchCard),
+                                  cornerRadius: 10, outset: 8)
     }
 }
 

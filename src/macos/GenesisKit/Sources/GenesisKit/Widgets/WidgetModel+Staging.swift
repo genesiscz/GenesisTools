@@ -139,6 +139,8 @@ extension WidgetModel {
         let staged = action == "send-staged"
         let opened = openedAt
         if thenClose { postNote("Sending " + Plural.count(items.count, "decision") + "…") }
+        // The "Sending…" note this send put up; a failure takes it down, unless another note replaced it meanwhile.
+        let sendingNote = thenClose || action == "resend-answers" ? notice : nil
         var targets: [String: WidgetJSON] = [:]
         var titles: [String: String] = [:]
         for item in items {
@@ -170,6 +172,7 @@ extension WidgetModel {
                     return
                 }
                 if outcome.failed > 0 {
+                    if let sendingNote, notice == sendingNote { notice = nil }
                     fail(text, detail: outcome.details)
                     if staged { keptStaged.subtract(items.map(\.sourceId)) }
                 } else {
@@ -178,7 +181,7 @@ extension WidgetModel {
                 }
                 flashUnsent(waiting.isEmpty ? items : waiting)
             } catch {
-                if action == "resend-answers" { self.notice = nil }
+                if let sendingNote, self.notice == sendingNote { self.notice = nil }
                 PerfLog.mark("widget.decision-send \(action) failed: \(error.localizedDescription)")
                 fail(staged ? "The decisions could not be sent. They stay staged, so you can send them again."
                          : "The answers could not be sent again. They still wait for the session's next prompt.",

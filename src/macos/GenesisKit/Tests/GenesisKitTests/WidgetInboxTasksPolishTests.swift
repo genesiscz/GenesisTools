@@ -1259,6 +1259,7 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertEqual(model.expanded, .right)
         XCTAssertEqual(model.error, "The decisions could not be sent. They stay staged, so you can send them again.")
         XCTAssertEqual(model.errorDetail, "hub call exited 1: fixture stderr")
+        XCTAssertNil(model.notice, "the Sending note does not stay beside the error")
 
         model.requestCollapse()
         XCTAssertTrue(model.stagedLeavePrompt, "still staged, so the next close asks again")

@@ -495,6 +495,26 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
         XCTAssertNil(store.error, "a filed note reports no failure")
     }
 
+    /// A delete the CLI refuses brings the note back with the transcript edits it had.
+    func testARefusedDiscardKeepsTheEditedTranscript() async throws {
+        let store = make(request: { args in
+            if args.first == "discard" { throw ToolsBridgeError.refused("the note changed") }
+            return try self.data(["revision": 0, "notes": [self.note()], "statePath": "/fixture/widget/voice-notes/notes.json"])
+        }, undoSeconds: 0)
+        defer { store.stop() }
+        store.refresh()
+        await store.waitForRefresh()
+        store.text = "Edited words"
+
+        store.discard()
+        store.confirmDiscard()
+        await store.waitForDiscard()
+        await store.waitForRefresh()
+        XCTAssertEqual(store.notes.map(\.id), [noteID], "the refused delete brings the note back")
+        store.selectedID = noteID
+        XCTAssertEqual(store.text, "Edited words")
+    }
+
     func testOpeningVoiceNotesDoesNotBuildHundredsOfRecipientMenuItems() async throws {
         _ = NSApplication.shared
         let recipients = (0..<800).map { index in

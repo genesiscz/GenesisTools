@@ -140,7 +140,9 @@ public final class WidgetVoiceNotesStore: ObservableObject {
                 let snapshot = try JSONDecoder().decode(WidgetVoiceNoteSnapshot.self, from: data)
                 // A discarded note is still on disk during its Undo; it stays out of the list.
                 notes = snapshot.notes.filter { $0.id != discarded?.id && !deletingIDs.contains($0.id) }
-                drafts = drafts.filter { id, _ in self.notes.contains { $0.id == id } || id == self.discarded?.id }
+                drafts = drafts.filter { id, _ in
+                    self.notes.contains { $0.id == id } || id == self.discarded?.id || self.deletingIDs.contains(id)
+                }
                 if selected == nil { selectedID = notes.first?.id }
                 cached = true
                 watch(snapshot.statePath)
@@ -355,7 +357,6 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         discardTimer?.cancel()
         discardTimer = nil
         discarded = nil
-        drafts[note.id] = nil
         let previous = discardDelete
         // The request is held, not the store: a delete that runs at teardown still reaches the CLI.
         let request = request
@@ -365,6 +366,8 @@ public final class WidgetVoiceNotesStore: ObservableObject {
             do {
                 _ = try await request(["discard", note.id, "--revision", String(note.revision)])
                 self?.deletingIDs.remove(note.id)
+                // The edits go only once the note is gone: a refused delete brings the note back with them.
+                self?.drafts[note.id] = nil
             } catch {
                 // The recording is still on disk: show why and read the list again, so it comes back.
                 self?.deletingIDs.remove(note.id)
