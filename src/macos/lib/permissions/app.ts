@@ -46,8 +46,11 @@ import {
     unpackClickyLibrary,
 } from "../clicky-library";
 import {
+    ALL_PART_IDS,
+    APP_PARTS,
     bundleStepsFor,
     installedParts,
+    isFullBuild,
     type PartsChoice,
     partForFace,
     partsEnvValue,
@@ -79,6 +82,47 @@ const SOURCE_ROOTS = [
     "../GenesisKit/Package.swift",
     "../GenesisKit/Sources",
 ];
+/**
+ * What the host alone compiles: its own folders and GenesisKitBase (`GENESIS_KIT_BASE_ONLY`). A permissions-only
+ * install must not count as stale when a part it does not link changes, or every routine update rebuilt it.
+ */
+const HOST_SOURCE_ROOTS = [
+    "Package.swift",
+    "Info.plist",
+    "Sources/Host",
+    "Sources/GenesisTools",
+    "scripts/AppIcon.icns",
+    "../GenesisKit/Package.swift",
+    "../GenesisKit/Sources/GenesisKitBase",
+];
+
+/**
+ * The inputs of a build with these parts. Every part links the whole GenesisKit; `web` and the Clicky pin are
+ * bundle inputs. A full build keeps `SOURCE_ROOTS` exactly, so its hash matches the manifests written before this.
+ */
+export function sourceRootsFor(parts: readonly string[]): readonly string[] {
+    if (isFullBuild(parts)) {
+        return SOURCE_ROOTS;
+    }
+
+    if (parts.length === 0) {
+        return HOST_SOURCE_ROOTS;
+    }
+
+    const partFolders = APP_PARTS.filter((part) => parts.includes(part.id)).map(
+        (part) => `Sources/Parts/${part.id.charAt(0).toUpperCase()}${part.id.slice(1)}`
+    );
+    const clicky = bundleStepsFor(parts).has("clicky-library") ? ["ClickyLibrary.json"] : [];
+
+    return [
+        ...HOST_SOURCE_ROOTS.filter((root) => root !== "../GenesisKit/Sources/GenesisKitBase"),
+        ...partFolders,
+        "web",
+        ...clicky,
+        "../GenesisKit/Sources",
+    ];
+}
+
 /** Browser half of the diff renderer (PierreWebDiffRenderer.swift): bundled into Contents/Resources/diff-viewer. */
 const DIFF_VIEWER_SOURCE = "web/diff-viewer";
 /** Which GitHub release asset holds Clicky's sound library (10 MB, kept out of the repository; clicky-library.ts). */
@@ -311,10 +355,10 @@ export function swiftFileListHash(sourceDir = APP_SOURCE_DIR): string {
 }
 
 /** Every file under the source roots, so a new Swift file or a re-rendered icon marks the build stale. */
-export function sourceHash(sourceDir = APP_SOURCE_DIR): string {
+export function sourceHash(sourceDir = APP_SOURCE_DIR, parts: readonly string[] = ALL_PART_IDS): string {
     const hash = createHash("sha256");
 
-    for (const root of SOURCE_ROOTS) {
+    for (const root of sourceRootsFor(parts)) {
         const full = join(sourceDir, root);
 
         if (!existsSync(full)) {
@@ -431,10 +475,11 @@ export function appStatus(): AppStatus {
     const built = existsSync(launcherPath);
     const manifest = built ? readManifest() : undefined;
     const signature = built ? readSignature(bundlePath) : undefined;
+    const parts = installedParts(manifest);
     const stale =
         built &&
         manifest !== undefined &&
-        (manifest.sourceHash !== sourceHash() ||
+        (manifest.sourceHash !== sourceHash(APP_SOURCE_DIR, parts) ||
             (manifest.sourceToolsPath !== undefined && manifest.sourceToolsPath !== APP_TOOLS_PATH));
 
     return {
@@ -444,7 +489,7 @@ export function appStatus(): AppStatus {
         manifest,
         signature,
         stale,
-        parts: installedParts(manifest),
+        parts,
         identityStable: signature !== undefined && !signature.adhoc,
     };
 }
@@ -1271,7 +1316,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     const signature = readSignature(stagedBundle) ?? { authority: "adhoc", adhoc: true };
     const manifest: AppManifest = {
         builtAt: new Date().toISOString(),
-        sourceHash: sourceHash(),
+        sourceHash: sourceHash(APP_SOURCE_DIR, parts),
         ...(await readSourceInfo()),
         sourceToolsPath: APP_TOOLS_PATH,
         signedWith: signature.authority,

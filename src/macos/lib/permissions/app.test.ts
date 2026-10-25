@@ -28,6 +28,8 @@ import {
     readRunningExecutableInodes,
     runningExecutableInodes,
     runStreaming,
+    sourceHash,
+    sourceRootsFor,
     stampAppToolsPath,
 } from "./app";
 import {
@@ -1151,5 +1153,55 @@ describe("swift build progress", () => {
         expect(seen.map((entry) => entry.line)).toEqual(["[1/2] Compiling A a.swift", "[2/2] Linking App"]);
         // The first line came before the process ended, not in one batch after it.
         expect(exitedAt - (seen[0]?.at ?? exitedAt)).toBeGreaterThan(250);
+    });
+});
+
+describe("an install is stale only when the code it links changed", () => {
+    function sourceTree(): string {
+        const root = mkdtempSync(join(tmpdir(), "app-source-roots-"));
+        const app = join(root, "GenesisTools");
+        const files = [
+            "GenesisTools/Package.swift",
+            "GenesisTools/Sources/Host/Host.swift",
+            "GenesisTools/Sources/GenesisTools/main.swift",
+            "GenesisTools/Sources/Parts/Hub/Hub.swift",
+            "GenesisTools/web/diff-viewer/index.ts",
+            "GenesisKit/Sources/GenesisKitBase/Base.swift",
+            "GenesisKit/Sources/GenesisKit/Kit.swift",
+        ];
+
+        for (const file of files) {
+            mkdirSync(dirname(join(root, file)), { recursive: true });
+            writeFileSync(join(root, file), `// ${file}\n`);
+        }
+
+        return app;
+    }
+
+    it("a host-only install ignores the parts, but sees its own sources and GenesisKitBase", () => {
+        const app = sourceTree();
+
+        try {
+            const host = sourceHash(app, []);
+            const hub = sourceHash(app, ["features", "hub"]);
+            writeFileSync(join(app, "Sources/Parts/Hub/Hub.swift"), "// changed\n");
+            writeFileSync(join(app, "../GenesisKit/Sources/GenesisKit/Kit.swift"), "// changed\n");
+
+            expect(sourceHash(app, [])).toBe(host);
+            expect(sourceHash(app, ["features", "hub"])).not.toBe(hub);
+
+            writeFileSync(join(app, "../GenesisKit/Sources/GenesisKitBase/Base.swift"), "// changed\n");
+            expect(sourceHash(app, [])).not.toBe(host);
+        } finally {
+            rmSync(dirname(app), { recursive: true, force: true });
+        }
+    });
+
+    it("a full build keeps the inputs it always had, so existing installs are not rebuilt", () => {
+        const all = sourceRootsFor(["clicky", "features", "hub", "markdown", "widget"]);
+
+        expect(all).toContain("../GenesisKit/Sources");
+        expect(all).toContain("ClickyLibrary.json");
+        expect(sourceRootsFor([])).not.toContain("web");
     });
 });
