@@ -1,7 +1,7 @@
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
 import { committedChanges, type FileChange, uncommittedChanges } from "@app/git/lib/changes";
-import { createGit } from "@genesiscz/utils/git";
+import { createGit, pairStatusRenames } from "@genesiscz/utils/git";
 import { logger } from "@genesiscz/utils/logger";
 
 const log = logger.scoped("git-changes").log;
@@ -21,8 +21,10 @@ export async function readUncommittedChanges({ cwd, now }: { cwd?: string; now: 
     const git = createGit({ cwd });
     const [root, status] = await Promise.all([git.getRepoRoot(), git.status({ untracked: "all" })]);
     log.debug({ root, entries: status.entries.length }, "read uncommitted status");
+    // A folder moved outside git: its deleted files and their untracked twins become renames, dated by the new file.
+    const entries = await pairStatusRenames(root, status.entries);
 
-    return uncommittedChanges(status.entries, mtimeUnder(root), now);
+    return uncommittedChanges(entries, mtimeUnder(root), now);
 }
 
 export async function readCommittedChanges({ cwd, commits }: { cwd?: string; commits: number }): Promise<FileChange[]> {

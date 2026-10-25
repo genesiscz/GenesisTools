@@ -201,6 +201,10 @@ export function describeUncommitted(status: string): string {
         return "copied (staged)";
     }
 
+    if (unstaged === "R") {
+        return "moved (unstaged)";
+    }
+
     return status;
 }
 
