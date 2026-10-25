@@ -14,6 +14,7 @@
  */
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { DETACHED_ENV } from "@genesiscz/utils/cli/detached";
 import {
     installLaunchd,
     isLaunchdInstalled,
@@ -73,11 +74,25 @@ function gatewayCommand(): string[] {
     return ["bun", join(gatewayRepoRoot(), "tools"), "mcp-manager", "gateway", "start", "--supervised"];
 }
 
+/**
+ * The agent's environment marks the run as detached on purpose (`DETACHED_ENV`).
+ *
+ * The command goes through the `tools` wrapper, and launchd is that wrapper's parent, so its
+ * ppid is 1 from the first moment. Without the marker the wrapper takes that for "the shell
+ * that started me died" and its orphan watchdog stops the gateway about 2 s after it starts
+ * listening. The gateway exits 0, KeepAlive brings it back 10 s later, and `/health` is down
+ * nearly all the time: every harness sees ConnectionRefused. Observed 2026-10-25 (#565).
+ */
+export function gatewayServiceEnv(): Record<string, string> {
+    return { [DETACHED_ENV]: "1" };
+}
+
 export async function installGatewayService(): Promise<void> {
     await installLaunchd({
         label: GATEWAY_LAUNCHD_LABEL,
         command: gatewayCommand(),
         cwd: gatewayRepoRoot(),
+        env: gatewayServiceEnv(),
         logFile: gatewayLogFile(),
     });
 }
