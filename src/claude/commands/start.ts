@@ -50,6 +50,7 @@ interface StartOptions {
     pick?: boolean;
     autopick?: boolean;
     model?: string;
+    effort?: string;
     resume?: string | boolean;
     continue?: boolean;
     keychain?: boolean;
@@ -1228,6 +1229,10 @@ export function registerStartCommand(program: Command): void {
         .option("--pick", "Pick the account from a usage-ranked list (best first, with reasoning)")
         .option("-a, --autopick", "Auto-pick the best account by usage headroom heuristic")
         .option("-m, --model <spec>", "Model to launch: alias or substring filter (fable, opus, 4.8 1m, ...)")
+        .option(
+            "-e, --effort <level>",
+            "Reasoning effort: claude's own --effort, or the :<effort> suffix for an ai-proxy target (account/provider)"
+        )
         .option("-r, --resume [query]", "Resume a session: bare uses claude's own picker, query searches locally")
         .option("-c, --continue", "Continue the most recent session")
         .option(
@@ -1268,14 +1273,24 @@ export function registerStartCommand(program: Command): void {
                 return;
             }
 
-            const passthrough = resolved.args;
+            const effortGiven = resolved.args.some((arg) => arg === "--effort" || arg.startsWith("--effort="));
+
+            if (opts.effort && effortGiven) {
+                out.error("Pass the effort once: -e, or --effort after --, not both.");
+                process.exitCode = 2;
+                await out.flush();
+                return;
+            }
+
+            const passthrough =
+                opts.effort && !nameArg?.includes("/") ? [...resolved.args, "--effort", opts.effort] : resolved.args;
 
             // No Anthropic account name contains a slash, but every ai-proxy target
             // does (`martin/grok`, `work/xai/grok-4.6`). That makes the split
             // unambiguous, so `claude run martin/grok -m 4.6` reaches the proxy
             // launcher without a second command name to remember.
             if (nameArg?.includes("/")) {
-                await runProxySession(nameArg, { model: opts.model }, passthrough);
+                await runProxySession(nameArg, { model: opts.model, effort: opts.effort }, passthrough);
                 return;
             }
 

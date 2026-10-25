@@ -115,7 +115,42 @@ environment — either one would outrank the proxy token and silently bill the r
 account.
 
 `tools claude start` (alias `run`) is unchanged for Anthropic accounts. The split is the slash: no
-Anthropic account name has one, every ai-proxy target does.
+Anthropic account name has one, every ai-proxy target does. `-e/--effort` works on both: Claude
+Code's own `--effort` for an account, the `:<effort>` suffix for a proxy target.
+
+## `codex`: Claude Code with its main loop on a Codex model
+
+```bash
+tools claude codex                            # auto Codex login, auto Claude login, sol at high
+tools claude codex cdx-work -m astra -e xhigh # a named Codex login, another model and effort
+tools claude codex --claude none              # no Claude account: Claude models are refused
+tools claude codex --grok auto                # grok/<model> ids work in the session too
+tools claude codex --resume "the parser bug"  # resume: same session id, same subagents, a fresh key
+tools claude codex -- -p "one turn"           # args after -- go to claude
+```
+
+The main loop runs on `codex/<model>` through ai-proxy; titles and the Claude-side calls run on
+the Claude account; one subagent per Codex model (`sol`, `sol-xhigh`, `sol6`, `astra`, `luna`),
+`opus` (and `fable` when the Claude account has it) on the Claude account, and `codex-worker`,
+which hands a task to `tools codex spawn`. Each launch writes a session record
+(`~/.genesis-tools/ai-proxy/sessions/<Claude Code session id>.json`) and gives Claude Code its
+own `gts_` key; the proxy then routes `codex/<id>`, `grok/<id>` and bare `claude-*` ids to that
+session's accounts only.
+
+- **Accounts.** `[account]`, `--claude` and `--grok` take a login (a `tools codex` / `tools claude`
+  / `tools grok` account) or a configured ai-proxy account; a login gets an account the proxy
+  builds in memory, nothing is written to the proxy config. A configured account named on the
+  command line keeps its own settings, so the legacy Codex account that reads `~/.codex/auth.json`
+  still works. `auto` (the default) ranks the logins by usage and prints the runner-up.
+- **Billed accounts.** Subscriptions only by default. An account billed per token needs
+  `--allow-metered <account>` or a yes at a prompt (no default yes); a non-interactive launch
+  without the flag stops before anything starts.
+- **Window.** `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and the compact window are the model's usable
+  tokens from the Codex catalog, passed in `--settings` too, because the `env` of
+  `~/.claude/settings.json` would otherwise win. `-c <percent>` changes the compact percent.
+- **`--isolated`** uses its own Claude Code config folder under
+  `~/.genesis-tools/claude-codex/config/<session id>/` and writes the subagents there as files.
+- **`--port`** aims at another ai-proxy (a second one for tests); it is never started for you.
 
 ---
 

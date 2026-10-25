@@ -57,7 +57,9 @@ export function registerAgentRunCommand(program: Command, spec: AgentToolSpec): 
     const run = program
         .command("run [account] [args...]")
         .alias("start")
-        .description(`Open the ${spec.alias} terminal as an account (picker when omitted); args after -- pass through`)
+        .description(
+            `Open the ${spec.alias} terminal as an account (picker when omitted; auto ranks by the cached usage); args after -- pass through`
+        )
         .option("-r, --resume [query]", "Resume a session: bare uses the native picker, a query searches the index")
         .option("-c, --continue", "Continue the most recent session in this directory")
         .option("-m, --model <model>", "Model id or alias")

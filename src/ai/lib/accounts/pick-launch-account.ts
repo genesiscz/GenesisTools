@@ -4,8 +4,10 @@ import type { AccountEntry } from "@genesiscz/utils/ai/config/schema";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
 import type { AccountProviderAlias } from "@genesiscz/utils/ai/providers/aliases";
 import { PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/aliases";
+import { pickRanked, rankAccounts } from "@genesiscz/utils/ai/usage/account-rank";
 import { readSnapshotsCache } from "@genesiscz/utils/ai/usage-poll/legacy-cache";
-import { logger } from "@genesiscz/utils/logger";
+import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { logger, out } from "@genesiscz/utils/logger";
 import { resolveAccountName } from "./select-account";
 
 /**
@@ -55,6 +57,44 @@ function hintFrom(snapshot: AccountUsageSnapshot): string | undefined {
     return windows.length > 0 ? windows.join(" · ") : undefined;
 }
 
+/** Cached snapshots per account id. */
+async function cachedSnapshots(provider: string): Promise<AccountUsageSnapshot[]> {
+    try {
+        return (await readSnapshotsCache())?.providers[provider]?.accounts ?? [];
+    } catch (error) {
+        logger.debug({ error, provider }, "[ai] usage cache unreadable; auto has nothing to rank");
+        return [];
+    }
+}
+
+/**
+ * `run auto`: the shared ranking (`rankAccounts`, the same one `tools claude codex` uses) over the cached usage, with the
+ * pick and the runner-up printed. Never an account without data, never a blocked one.
+ */
+async function autoLaunchAccount(input: LaunchAccountInput, provider: string, accounts: AccountEntry[]) {
+    const ids = new Set(accounts.map((account) => account.id));
+    const snapshots = (await cachedSnapshots(provider)).filter((snapshot) => ids.has(snapshot.accountId));
+    const picked = pickRanked(rankAccounts(snapshots));
+    // A snapshot's accountName is its account's name.
+    const account = picked && accounts.find((item) => item.name === picked.pick.accountName);
+
+    if (!picked || !account) {
+        out.error(
+            `auto found no ${input.alias} account with headroom in the usage cache. Name one, or refresh the cache with ${toolCommand(`${input.alias} usage`)}.`
+        );
+        process.exitCode = 1;
+        return null;
+    }
+
+    out.printlnErr(`▸ ${input.alias} auto → ${account.name} (${picked.pick.why})`);
+
+    if (picked.runnerUp) {
+        out.printlnErr(`    runner-up: ${picked.runnerUp.accountName} (${picked.runnerUp.why})`);
+    }
+
+    return account;
+}
+
 export interface LaunchAccountInput {
     alias: AccountProviderAlias;
     /** Command name for the non-interactive hint, e.g. `tools codex run`. */
@@ -73,6 +113,14 @@ export interface LaunchAccountInput {
 export async function pickLaunchAccount(input: LaunchAccountInput): Promise<AccountEntry | null> {
     const provider = PROVIDER_ALIASES[input.alias];
     const accounts = (await AiConfigStore.load()).accounts({ provider, enabled: true });
+
+    if (
+        input.requested?.toLowerCase() === "auto" &&
+        !accounts.some((account) => account.name.toLowerCase() === "auto")
+    ) {
+        return autoLaunchAccount(input, provider, accounts);
+    }
+
     // Only for the prompt: a named account skips the picker, so the cache read would be waste.
     const hints = input.requested ? new Map<string, string>() : await usageHints(provider);
     const picked = await resolveAccountName({

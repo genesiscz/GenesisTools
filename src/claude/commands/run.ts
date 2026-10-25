@@ -174,7 +174,36 @@ async function pickModel(candidates: ProxyModelMeta[], hint: string): Promise<Pr
     return picked;
 }
 
-async function ensureProxyUp(config: AiProxyConfig, autoStart: boolean): Promise<void> {
+/** Claude Code appends /v1/messages itself, so the base URL is the proxy's origin. */
+export function proxyBaseUrl(config: AiProxyConfig): string {
+    return `http://${config.listen.host}:${config.listen.port}`;
+}
+
+/**
+ * Run the user's `claude` (their alias or function, through an interactive shell) with these arguments and this
+ * environment; resolves with its exit code. `onStart` gets the pid, which is claude's own after the shell's `exec`.
+ */
+export async function spawnClaude(
+    args: string[],
+    launchEnv: Record<string, string | undefined>,
+    onStart?: (pid: number) => void
+): Promise<number> {
+    const shell = env.paths.getShell("/bin/sh");
+    const cmd = await findClaudeCommand();
+    const suffix = args.length > 0 ? ` ${args.map(shellQuote).join(" ")}` : "";
+    logger.info({ cmd, args: args.length }, "[run] spawning claude");
+
+    const proc = Bun.spawn({
+        cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
+        stdio: ["inherit", "inherit", "inherit"],
+        env: launchEnv,
+    });
+    onStart?.(proc.pid);
+
+    return proc.exited;
+}
+
+export async function ensureProxyUp(config: AiProxyConfig, autoStart: boolean): Promise<void> {
     const healthUrl = `http://${config.listen.host}:${config.listen.port}/health`;
 
     try {
@@ -283,8 +312,7 @@ export async function runProxySession(
     await ensureProxyUp(config, opts.start !== false);
     await ensureOnboardingSkippedForOAuthToken();
 
-    // Claude Code appends /v1/messages itself, so the base URL is the origin.
-    const baseUrl = `http://${config.listen.host}:${config.listen.port}`;
+    const baseUrl = proxyBaseUrl(config);
 
     const launchEnv: Record<string, string | undefined> = {
         ...process.env,
@@ -317,10 +345,6 @@ export async function runProxySession(
     delete launchEnv.CLAUDE_CODE_SUBSCRIPTION_TYPE;
     delete launchEnv.ANTHROPIC_DEFAULT_FABLE_MODEL;
 
-    const shell = env.paths.getShell("/bin/sh");
-    const cmd = await findClaudeCommand();
-    const suffix = passthrough.length > 0 ? ` ${passthrough.map(shellQuote).join(" ")}` : "";
-
     // A session silently running at the model's default effort looks identical to
     // one running at the effort you asked for, so say which it is.
     const effortNote = opts.effort ? `effort ${opts.effort}` : "effort: model default";
@@ -328,15 +352,9 @@ export async function runProxySession(
     out.printlnErr(
         pc.dim(`Starting Claude Code on ${pc.magenta(model.proxyId)} (${effortNote}${ctxNote}) via ${baseUrl}...`)
     );
-    logger.info({ cmd, model: model.proxyId, baseUrl, passthrough }, "[run] spawning claude against ai-proxy");
+    logger.info({ model: model.proxyId, baseUrl, passthrough }, "[run] spawning claude against ai-proxy");
 
-    const proc = Bun.spawn({
-        cmd: [shell, "-ic", `exec ${cmd}${suffix}`],
-        stdio: ["inherit", "inherit", "inherit"],
-        env: launchEnv,
-    });
-
-    process.exit(await proc.exited);
+    process.exit(await spawnClaude(passthrough, launchEnv));
 }
 
 export function registerRunCommand(program: Command): void {

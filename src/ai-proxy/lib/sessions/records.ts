@@ -65,6 +65,7 @@ export interface AiProxySessionRecord {
     claudeProxyAccount?: string;
     claudeAccount?: string;
     grokProxyAccount?: string;
+    grokAccount?: string;
     model?: string;
     effort?: string;
     window?: number;
@@ -87,11 +88,45 @@ export function sessionTagId(record: AiProxySessionRecord): string {
     return record.claudeSessionId ?? record.id;
 }
 
-/** Proxy accounts this session may route to. */
+/** The record field that names each agent's configured proxy account. */
+export const SESSION_ACCOUNT_FIELD = {
+    codex: "codexProxyAccount",
+    claude: "claudeProxyAccount",
+    grok: "grokProxyAccount",
+} as const satisfies Record<SessionAgent, keyof AiProxySessionRecord>;
+
+/** The record field that names each agent's login (a `tools codex` / `tools claude` / `tools grok` account). */
+export const SESSION_LOGIN_FIELD = {
+    codex: "codexAccount",
+    claude: "claudeAccount",
+    grok: "grokAccount",
+} as const satisfies Record<SessionAgent, keyof AiProxySessionRecord>;
+
+/** The name of the account the proxy builds in memory for a login (❓ DECISION 1 a): never written to the config. */
+export function loginAccountName(login: string): string {
+    return `login:${login}`;
+}
+
+/**
+ * The account a session uses for an agent: the configured proxy account the record names (the legacy Codex account
+ * that reads ~/.codex/auth.json among them), else the in-memory account of the record's login.
+ */
+export function sessionAccountName(record: AiProxySessionRecord, agent: SessionAgent): string | undefined {
+    const proxy = record[SESSION_ACCOUNT_FIELD[agent]];
+
+    if (proxy) {
+        return proxy;
+    }
+
+    const login = record[SESSION_LOGIN_FIELD[agent]];
+    return login ? loginAccountName(login) : undefined;
+}
+
+/** Accounts this session may route to. */
 export function sessionProxyAccounts(record: AiProxySessionRecord): string[] {
-    return [record.codexProxyAccount, record.claudeProxyAccount, record.grokProxyAccount].filter(
-        (name): name is string => typeof name === "string" && name.length > 0
-    );
+    return (Object.keys(SESSION_ACCOUNT_FIELD) as SessionAgent[])
+        .map((agent) => sessionAccountName(record, agent))
+        .filter((name): name is string => typeof name === "string" && name.length > 0);
 }
 
 export function sessionsDir(): string {
@@ -218,6 +253,43 @@ export function createSessionRecord(input: NewSessionRecord): { record: AiProxyS
     writeSessionRecord(record);
     sessionKeyIndex.remember(record);
     return { record, key };
+}
+
+/**
+ * A launch's record: a new one, or, on `--resume` (Claude Code keeps the session id), the same record reopened with a
+ * fresh key and this launch's accounts and settings. The old key stops working. `createdAt`, `moves` and earlier
+ * metered confirmations stay.
+ */
+export function openSessionRecord(input: NewSessionRecord): {
+    record: AiProxySessionRecord;
+    key: string;
+    reopened: boolean;
+} {
+    const existing = readSessionRecord(input.id);
+
+    if (!existing) {
+        return { ...createSessionRecord(input), reopened: false };
+    }
+
+    const key = newSessionKey();
+    const confirmed = [...existing.meteredConfirmed, ...(input.meteredConfirmed ?? [])];
+    const record: AiProxySessionRecord = {
+        ...existing,
+        ...input,
+        version: 1,
+        keyHash: hashSessionKey(key),
+        createdAt: existing.createdAt,
+        closedAt: undefined,
+        closeReason: undefined,
+        moves: existing.moves,
+        meteredConfirmed: confirmed.filter(
+            (entry, index) => confirmed.findIndex((other) => other.account === entry.account) === index
+        ),
+    };
+
+    writeSessionRecord(record);
+    sessionKeyIndex.remember(record);
+    return { record, key, reopened: true };
 }
 
 /** Read, change and write one record; undefined when it does not exist. */

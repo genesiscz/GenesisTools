@@ -48,6 +48,7 @@ export const CLAUDE_REGISTRARS: LazyRegistrar[] = [
     { names: ["spending"], load: async () => (await import("./commands/spending")).registerSpendingCommand },
     { names: ["start", "run"], load: async () => (await import("./commands/start")).registerStartCommand },
     { names: ["proxy"], load: async () => (await import("./commands/run")).registerRunCommand },
+    { names: ["codex"], load: async () => (await import("./commands/codex")).registerCodexCommand },
     { names: ["teams"], load: async () => (await import("./commands/teams")).registerTeamsCommand },
     { names: ["cmux"], load: async () => (await import("./commands/cmux")).registerCmuxCommand },
     {

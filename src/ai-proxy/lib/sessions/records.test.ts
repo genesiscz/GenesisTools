@@ -18,6 +18,7 @@ import {
     hashSessionKey,
     newSessionKey,
     noteSessionRequest,
+    openSessionRecord,
     readSessionRecord,
     resolveSessionKey,
     sessionsDir,
@@ -121,6 +122,27 @@ describe("session records", () => {
         expect(resolveSessionKey(newSessionKey()).state).toBe("unknown");
         closeSessionRecord(SESSION);
         expect(resolveSessionKey(key).state).toBe("closed");
+    });
+
+    it("reopens the same record on --resume with a fresh key, keeping its history and earlier confirmations", () => {
+        const first = openSessionRecord({
+            id: SESSION,
+            codexAccount: "work",
+            meteredConfirmed: [{ account: "billed", confirmedAt: "2026-10-25T20:00:00.000Z", how: "flag" }],
+        });
+        closeSessionRecord(SESSION);
+        const second = openSessionRecord({ id: SESSION, codexAccount: "side", claudeAccount: "personal" });
+
+        expect([first.reopened, second.reopened]).toEqual([false, true]);
+        expect(resolveSessionKey(first.key).state).toBe("unknown");
+        expect(resolveSessionKey(second.key).state).toBe("open");
+        expect(second.record).toMatchObject({
+            createdAt: first.record.createdAt,
+            codexAccount: "side",
+            claudeAccount: "personal",
+            meteredConfirmed: [{ account: "billed", how: "flag" }],
+        });
+        expect(second.record.closedAt).toBeUndefined();
     });
 });
 

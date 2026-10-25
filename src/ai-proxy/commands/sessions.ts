@@ -226,7 +226,7 @@ export function runSessionCommand(id: string, options: { follow?: boolean; json?
     out.println(
         [
             `started ${formatLocalDateTimeStamp(record.createdAt)} · cwd ${record.cwd ?? "—"}`,
-            `codex ${record.codexAccount ?? record.codexProxyAccount ?? "—"} · claude ${record.claudeAccount ?? record.claudeProxyAccount ?? "—"}${record.grokProxyAccount ? ` · grok ${record.grokProxyAccount}` : ""}`,
+            `codex ${record.codexAccount ?? record.codexProxyAccount ?? "—"} · claude ${record.claudeAccount ?? record.claudeProxyAccount ?? "—"}${record.grokAccount || record.grokProxyAccount ? ` · grok ${record.grokAccount ?? record.grokProxyAccount}` : ""}`,
             `model ${record.model ?? "—"} · effort ${record.effort ?? "—"} · cache key ${record.cacheKeyPolicy ?? "claude-session"}${record.claudeSessionId ? ` · forked as ${record.claudeSessionId}` : ""}`,
             ...(record.moves.length > 0
                 ? [`moves ${record.moves.map((move) => `${move.agent} ${move.from}→${move.to}`).join(", ")}`]

@@ -1,18 +1,16 @@
 import { splitReasoningEffortSuffix } from "@app/ai-proxy/lib/resolve-model";
-import type { AiProxySessionRecord } from "@app/ai-proxy/lib/sessions/records";
-import { agentOf, type ProxyAgent } from "@app/ai-proxy/lib/sessions/view";
+import {
+    type AiProxySessionRecord,
+    loginAccountName,
+    SESSION_ACCOUNT_FIELD,
+    SESSION_LOGIN_FIELD,
+    type SessionAgent,
+} from "@app/ai-proxy/lib/sessions/records";
+import { agentOf } from "@app/ai-proxy/lib/sessions/view";
 import type { AiProxyAccountConfig, ResolvedRoute } from "@app/ai-proxy/lib/types";
-
-export type SessionAgent = Exclude<ProxyAgent, "other">;
 
 /** The agents a session names by a prefix (`codex/<id>`, `grok/<id>`); a Claude model is named by its bare id. */
 const PREFIXED_AGENTS: readonly SessionAgent[] = ["codex", "grok"];
-
-const ACCOUNT_FIELD = {
-    codex: "codexProxyAccount",
-    claude: "claudeProxyAccount",
-    grok: "grokProxyAccount",
-} as const satisfies Record<SessionAgent, keyof AiProxySessionRecord>;
 
 /** Claude Code strips its `[1m]` window suffix before it sends a request; another client may not. */
 const ONE_M_SUFFIX = /\[1m\]$/i;
@@ -45,7 +43,9 @@ export type SessionRouteResult = { route: ResolvedRoute } | { refusal: string };
  * Claude account, `grok/<id>` to its Grok account. Undefined for an id that is not a session form. The account
  * check that follows (`sessionRouteDenial`) still applies to every route.
  *
- * The record names proxy accounts (`ai-proxy/config.json`); ❓ DECISION 1 may add accounts built from a login.
+ * The account is the configured proxy account the record names (the legacy Codex account that reads
+ * ~/.codex/auth.json among them), else an account built in memory for the record's login (❓ DECISION 1 a, Martin
+ * 2026-10-25): never written to `ai-proxy/config.json`, and with no failover list, so a session route never moves.
  */
 export function resolveSessionRoute(
     proxyModelId: string,
@@ -59,13 +59,14 @@ export function resolveSessionRoute(
         return undefined;
     }
 
-    const name = record[ACCOUNT_FIELD[form.agent]];
+    const name = record[SESSION_ACCOUNT_FIELD[form.agent]];
+    const login = record[SESSION_LOGIN_FIELD[form.agent]];
 
-    if (!name) {
+    if (!name && !login) {
         return { refusal: `session ${record.id} has no ${form.agent} account, so it cannot run '${proxyModelId}'` };
     }
 
-    const account = accounts.find((item) => item.name === name);
+    const account = name ? accounts.find((item) => item.name === name) : loginAccount(form.agent, login ?? "");
 
     if (!account?.enabled) {
         return {
@@ -88,4 +89,21 @@ export function resolveSessionRoute(
             ...(reasoningEffort ? { reasoningEffort, effortSource: "suffix" as const } : {}),
         },
     };
+}
+
+/** The account the proxy builds for a login: the same shape a configured subscription account of that agent has. */
+export function loginAccount(agent: SessionAgent, login: string): AiProxyAccountConfig {
+    const base = { name: loginAccountName(login), enabled: true };
+    const shapes: Record<SessionAgent, AiProxyAccountConfig> = {
+        codex: { ...base, provider: "openai-subscription", providerSlug: "codex", openaiSub: { accountName: login } },
+        claude: {
+            ...base,
+            provider: "anthropic-subscription",
+            providerSlug: "claude-sub",
+            anthropicSub: { accountName: login },
+        },
+        grok: { ...base, provider: "grok-subscription", providerSlug: "grok", grok: { accountName: login } },
+    };
+
+    return shapes[agent];
 }

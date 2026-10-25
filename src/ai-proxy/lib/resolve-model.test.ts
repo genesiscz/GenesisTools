@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { sessionRouteDenial } from "@app/ai-proxy/lib/clients";
 import { parseProxyModelId, resolveModel } from "@app/ai-proxy/lib/resolve-model";
-import type { AiProxySessionRecord } from "@app/ai-proxy/lib/sessions/records";
+import { type AiProxySessionRecord, sessionProxyAccounts } from "@app/ai-proxy/lib/sessions/records";
 import { resolveSessionRoute } from "@app/ai-proxy/lib/sessions/routing";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -295,6 +296,34 @@ describe("resolveSessionRoute", () => {
         ]) {
             expect(resolveSessionRoute(model, record(), accounts)).toBeUndefined();
         }
+    });
+
+    it("builds an account in memory for a login the record names (DECISION 1 a), and lets the session use it", () => {
+        const session = record({
+            codexProxyAccount: undefined,
+            codexAccount: "work",
+            claudeProxyAccount: undefined,
+            claudeAccount: "personal",
+        });
+        const codex = routeOf("codex/gpt-6.1-sol", session);
+        const claude = routeOf("claude-opus-5-5", session);
+
+        expect(codex.account).toEqual({
+            name: "login:work",
+            provider: "openai-subscription",
+            providerSlug: "codex",
+            enabled: true,
+            openaiSub: { accountName: "work" },
+        });
+        expect(claude.account).toMatchObject({ name: "login:personal", anthropicSub: { accountName: "personal" } });
+        expect(sessionRouteDenial(session, codex.account)).toBeNull();
+        expect(sessionProxyAccounts(session)).toEqual(["login:work", "login:personal"]);
+    });
+
+    it("prefers the configured proxy account the record names over its login (the legacy auth.json account keeps working)", () => {
+        const route = routeOf("codex/gpt-6.1-sol", record({ codexProxyAccount: "side-codex", codexAccount: "work" }));
+
+        expect(route.accountName).toBe("side-codex");
     });
 
     it("marks an effort suffix on the normal resolver too", () => {
