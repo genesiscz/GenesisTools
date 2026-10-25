@@ -126,9 +126,9 @@ final class MarkdownTreeTableTests: XCTestCase {
 
     /// Cached path keys agree for identical UTF-8 paths and distinguish neighboring names.
     func testAnEqualPathIsAnEqualKeyAndANearOneIsNot() {
-        XCTAssertEqual(FileTreeRowKey("/v/ČEZ/a.md"), FileTreeRowKey(String(decoding: Array("/v/ČEZ/a.md".utf8), as: UTF8.self)))
-        XCTAssertNotEqual(FileTreeRowKey("/v/ČEZ/a.md"), FileTreeRowKey("/v/ČEZ/b.md"))
-        XCTAssertEqual(Set([FileTreeRowKey("/v/ČEZ"), FileTreeRowKey("/v/ČEZ")]).count, 1)
+        XCTAssertEqual(FileTreeRowKey("/v/Účty/a.md"), FileTreeRowKey(String(decoding: Array("/v/Účty/a.md".utf8), as: UTF8.self)))
+        XCTAssertNotEqual(FileTreeRowKey("/v/Účty/a.md"), FileTreeRowKey("/v/Účty/b.md"))
+        XCTAssertEqual(Set([FileTreeRowKey("/v/Účty"), FileTreeRowKey("/v/Účty")]).count, 1)
     }
 
     /// A note opened as a precomposed name ("Čtení.md", NFC) against a listing that stored the decomposed name (NFD).

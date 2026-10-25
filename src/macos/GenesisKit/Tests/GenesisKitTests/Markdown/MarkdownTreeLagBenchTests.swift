@@ -17,7 +17,7 @@ final class MarkdownTreeLagBenchTests: XCTestCase {
     func testTreeCostForUnrelatedChangesAndScrolling() throws {
         let env = ProcessInfo.processInfo.environment
         guard let rootPath = env["MARKDOWN_TREE_BENCH"] else {
-            throw XCTSkip("set MARKDOWN_TREE_BENCH to a folder (the vault's ČEZ folder reproduces the report)")
+            throw XCTSkip("set MARKDOWN_TREE_BENCH to a folder (a large vault folder reproduces the report)")
         }
         let root = URL(fileURLWithPath: rootPath)
         let tabs = Int(env["MARKDOWN_TREE_BENCH_TABS"] ?? "") ?? 24
