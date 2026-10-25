@@ -1492,6 +1492,7 @@ final class PRsModel: ObservableObject {
     /// Back from one commit to the whole PR.
     func showWholePR() {
         pendingCommit = nil
+        rangeLookup = nil
         guard let pr = selected else { return }
         review?.setScope(Self.scope(pr, detail: details[pr.id], fetch: fetchedHead(pr)))
     }
