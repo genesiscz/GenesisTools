@@ -544,3 +544,19 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   in flight, the next after it) and cache what is per folder. GenesisKit's launchers count starts (`SpawnMeter`), so
   the next one shows up as `spawn.storm` in the perf log.
 - **Second correction (2026-10-24 20:29): the widget's hover list closed because its window passed transparent pixels through.** The edge panel (clear background) never set `ignoresMouseEvents`, so the window server sent every alpha-0 point to the window below. While the list grew and laid out, the point under a resting pointer was blank for a moment: SwiftUI's `.onHover` and an `NSTrackingArea` both reported "left" while AppKit's hit test still found the hosting view, and the list shrank and grew about once a second (20:25 to 20:27). `panel.ignoresMouseEvents = false`, set explicitly, fixed it (3e80832422): the list stayed open under the pointer. Rule: when two independent hover trackers say "left" at once and a hit test finds your view, look at the window server's routing (alpha passthrough), not at the views.
+
+## git from a deleted folder, a flashing empty state, a ring the scroll view cut — 2026-10-25 21:52
+
+- **git cannot start in a folder that no longer exists.** `git rev-parse --show-toplevel` with a deleted file's
+  folder as its working directory fails, so a lookup by "the open document's folder" said "not in a git repository"
+  for every deleted file. Walk up to the nearest existing ancestor first (`GitQueries.existingFolder`).
+- **A model that resets to `.loading` on every reload makes its empty state flash.** The Changes pane showed "No
+  unstaged changes in this file." and blanked it on each status refresh (every 3 s on a busy repository). Show
+  loading only when nothing is on screen for a NEW request; a reload of the same request keeps the shown answer until
+  the new one arrives (`GitFileDiffModel.shownRequest`). Test it with a plant that records every state the view saw.
+- **A system focus ring on a row inside a scroll view is clipped and drawn off the row.** Use
+  `.focusEffectDisabled()` and draw the keyed row's own ring (`strokeBorder` in the row's shape) while the list has
+  focus.
+- **A file view that follows the selection must keep its last answer.** When the open tab is a file outside any
+  repository, the repository list kept showing the previous repository (`lastRepo`) instead of "not in a git
+  repository".

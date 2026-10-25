@@ -418,3 +418,52 @@ select-phase mark file for `sample`).
 ### Check the build configuration first
 - The installed Genesis app at 04:01 was a DEBUG build (`start:debug` in the Genesis repo; same size as the worktree's debug product, no release
   product there). Before profiling a user's lag, compare the installed binary with the build products.
+
+## Fifth pass on the markdown viewer: the git sidebar's repository list (2026-10-25 21:52)
+
+Bench: `MarkdownRepoPanelBenchTests` (`MARKDOWN_REPO_BENCH=<repo>`, phases and sampling in its header), the vault
+with 5,650 status entries, a hosted window, debug build, main-thread CPU medians of 4 interleaved rounds. Before the
+work, the real release viewer spent 6.86 s of CPU on 360 scroll events (19 ms each, load 24 to 28), 4,609 of 7,421
+samples in `MarkdownRootHostingView.layout`. Report: the notes vault's `2026-10-25-RepositoryPanel/` folder.
+
+### A long list in a sidebar is an AppKit table of hosted cells
+- A `LazyVStack` of 5,650 rows inside the window's SwiftUI root lays out through the root hosting view on every scroll
+  step, and its estimated document height swung from 18,218 to 977,538 pt between steps. An `NSTableView` of
+  `NSHostingView` cells over the sidebar (`MarkdownOverlaySlot`, `GitRepoTable`, the file tree's pattern) builds only
+  the visible rows. **Measured:** scroll step 9.4 → 5.8 ms, with a folder open 12.2 → 4.0 ms. Pages ("Show more") go.
+- Give the table ONE row height, measured once from a real row. A height per row made every refill ask each cell to
+  measure itself.
+
+### Never `reloadData()` a hosted-cell table for a content change
+- `reloadData` re-runs the window's key-view loop for every row view (`_updateKeyViewLoopForRowView`, 1,159 samples)
+  and moves every host into the window again (`NSHostingView.viewDidMoveToWindow`, 892). Insert and remove the changed
+  rows (`noteNumberOfRowsChanged`, a set diff for small changes) and refill the visible row views in place
+  (`enumerateAvailableRowViews`, set the cell's root view). **Measured:** sort 68 ms before the table, 195 ms with
+  `reloadData`, 33 to 48 ms with refills. The diff algorithm was the first suspect and changed nothing: sample first.
+- Keep what changes often (the open file's highlight) out of the value every cell reads. With the open file in the
+  table's revision, a tab switch rebuilt every visible cell (+51 ms); refreshing only the two rows it moved between
+  brought the switch to 74 ms (150 before, 142 before the table).
+
+### Closures make a view unequal, focus modifiers rebuild the key-view loop
+- A view that takes closures never compares equal, so it runs again on every parent publish. Make the heavy child
+  `Equatable` on what it shows (closures left out of `==`), apply `.equatable()`, and stop observing the window model
+  in its parent (`MarkdownGitSidebar`, `GitRepoPanel`). **Measured:** an unrelated publish 22.9 → 8.6 ms.
+- `.focusable()` on a container of many controls makes every render rebuild the window's key-view loop
+  (`FocusBridge.updateDefaultKeyViewLoop`), even with keyboard navigation off. The table takes keys itself
+  (`MarkdownTreeKeyTarget`); the container needs no focus modifier.
+
+### A counter that wakes every follower
+- `GitRepoModel.generation` bumped on every status read, every 3 s on a busy repository, so every follower re-read
+  dates and re-derived its lists with nothing changed. Bump on a change; keep a separate `reads` counter for the one
+  consumer that needs every read (file dates). **Measured:** refresh 134 → 28 to 43 ms.
+- Index a value that a body looks up by key once, when the value is built off the main thread (`GitRepoStatus.byPath`),
+  never with a linear search per row.
+
+### Widget lessons from the same day (gt-native-ux, commit 574fc167ab)
+- A `LazyVStack` in a `ScrollView` whose rows have very different heights (one open card among folded ones) can loop
+  forever: the estimated document height changes (2646 → 2053 → 1406 pt on 11 cards) and the scroll offset chases it,
+  99% CPU with no body evaluated. A bounded list (tens of rows) uses `VStack`; lazy is for long lists. Reproduce with
+  `WidgetScrollReplayTests`, `GENESIS_WIDGET_REPLAY_FILTER` and `GENESIS_WIDGET_REPLAY_VISIBLE=1` (an occluded window
+  skips display passes and hides the loop).
+- `HangWatch.onSpin` recovers only a spin that returns to the run loop. A wedge inside one SwiftUI transaction (log
+  line `main-thread WEDGED`) never reaches it, so the fix must be the root cause.

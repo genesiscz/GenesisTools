@@ -338,5 +338,13 @@ Sections: [Affordance](#affordance) · [Windows and overlays](#windows-and-overl
 - A control that sits inside a scrolling list (a pill, a "Latest" button) is not the reader's own input: it must not
   trip the list's "the reader is scrolling or clicking" guards. Test it with a real posted click, not a direct call.
 - Dense rows carry no instant tooltip each; the row's own text says it, and `.help` covers a cut-off path.
+- A list of changes shows a file moved outside git (a folder moved by hand) as ONE rename, "old → new", in every view
+  that lists changes (the sidebar, the hub review, the status bar's "Moved from"), never as a deletion plus a new file.
+- "Last update" is one newest-first list across tracked edits and untracked files. Split sections each sorted on their
+  own hid every new note under a five-hour-old edit (Martin, 2026-10-25).
+- A list with more than one section lets the user fold each section (a chevron on the heading, Return/Left/Right on
+  the keyed heading, Expanded/Collapsed for VoiceOver), and the fold survives a restart.
+- A panel that follows the open tab keeps its last useful content when the new tab has none (a file outside any
+  repository), instead of replacing it with "not in a git repository".
 - A list of hosted projects quietly leaves out what is not hosted (a clone of a local folder, no remote); an error
   banner is for a project that should work and does not.

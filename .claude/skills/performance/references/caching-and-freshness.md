@@ -82,6 +82,13 @@ it differs (the old code kept the old file's count for a replaced rollout; fixed
 in-place rewrite that keeps the inode and grows is still not caught; if that can happen, also keep a few bytes
 before the offset and compare them.
 
+## 7a. Change events must cover every writer (2026-10-25)
+
+A model refreshed by change events is only as fresh as its event source. GenesisKit's `GitRepoModel` listened to the
+`.git` folder and to saves in the viewer, so edits by other programs never refreshed the status or the file dates:
+"Last update" showed a note 5 h old while files changed minutes ago. It now also watches the working tree (`.git`
+excluded, throttled to 3 s). Ask of every event-driven model: "which writer does not produce this event?"
+
 ## 8. Rejected
 
 - **Skip the daemon's rebuild when no session file changed.** The rows also depend on the pin journal, cmux
