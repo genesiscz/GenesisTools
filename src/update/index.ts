@@ -107,7 +107,7 @@ const program = new Command()
 program
     .command("dev")
     .description(
-        "Switch to the newest feat/<date>-enhancements-unified branch; the next plain `tools update` switches back"
+        `Switch to the newest feat/<date>-enhancements-unified branch; the next plain ${toolCommand("update")} switches back`
     )
     .option("--no-plugins", PLUGINS_FLAG_HELP)
     .action(async (opts: UpdateOptions) => {
