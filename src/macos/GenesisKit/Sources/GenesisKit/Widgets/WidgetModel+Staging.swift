@@ -119,7 +119,10 @@ extension WidgetModel {
     public func sendStaged(_ ids: [String], thenClose: Bool = false) {
         let chosen = stagedItems.filter { ids.contains($0.sourceId) }
         guard !chosen.isEmpty else {
-            if thenClose { collapse() }
+            // Nothing to send used to close the panel without a word, which read as a send that did nothing.
+            PerfLog.mark("widget.send-staged nothing to send: \(ids.count) ids picked, \(stagedItems.count) staged")
+            postNote(ids.isEmpty ? "No decision is checked, so nothing was sent."
+                                 : "These decisions are no longer staged, so nothing was sent.")
             return
         }
         deliverDecisions(chosen, action: "send-staged", thenClose: thenClose)
@@ -152,6 +155,8 @@ extension WidgetModel {
             targets[target.sessionId] = .object(fields)
             titles[target.sessionId] = session.title
         }
+        PerfLog.mark("widget.decision-send \(action) start: \(items.count) to "
+            + titles.values.sorted().joined(separator: ", "))
         afterMutations { [weak self] in
             guard let self else { return }
             do {
@@ -165,10 +170,19 @@ extension WidgetModel {
                 let waiting = items.filter { item in
                     self.session(forKey: item.key).map { outcome.queuedSessions.contains($0.target.sessionId) } ?? false
                 }
+                PerfLog.mark("widget.decision-send \(action) result: \(text)")
                 if outcome.delivered {
                     postNote(text)
-                    // Only the panel this send left from: one the user opened again meanwhile stays open.
-                    if thenClose, expanded != nil, openedAt == opened { collapse() }
+                    // Only the panel this send left from: one the user opened again meanwhile stays open. It folds
+                    // after the note was readable: closing at once hid "delivered" and read as "Send did nothing"
+                    // (Martin, 2026-10-25).
+                    if thenClose, expanded != nil, openedAt == opened {
+                        Task { [weak self] in
+                            try? await Task.sleep(for: .milliseconds(2500))
+                            guard let self, self.expanded != nil, self.openedAt == opened else { return }
+                            self.collapse()
+                        }
+                    }
                     return
                 }
                 if outcome.failed > 0 {
@@ -213,17 +227,17 @@ extension WidgetModel {
 
     /// A close the user asked for (Esc, the close button, a click outside, the idle timer): with staged decisions it
     /// asks first, as `stagedOnLeave` says ("ask" by default; "keep" closes, "send" sends them and closes).
-    public func requestCollapse() {
+    public func requestCollapse(file: StaticString = #fileID, line: UInt = #line) {
         // Staged decisions answered at an earlier leave (kept, or already on their way) do not ask again, so a
         // second Esc while a send runs closes the panel.
         let fresh = Set(stagedItems.map(\.sourceId)).subtracting(keptStaged)
         guard expanded != nil, !fresh.isEmpty else {
-            collapse()
+            collapse(file: file, line: line)
             return
         }
         switch snapshot?.state.preferences.stagedOnLeave ?? "ask" {
         case "keep":
-            collapse()
+            collapse(file: file, line: line)
         case "send":
             keptStaged.formUnion(fresh)
             sendStaged(Array(fresh), thenClose: true)

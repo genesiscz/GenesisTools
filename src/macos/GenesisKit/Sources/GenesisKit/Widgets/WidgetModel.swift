@@ -266,6 +266,23 @@ public final class WidgetModel: ObservableObject {
     public private(set) var openedAt: TimeInterval = 0
     public let bridge: ToolsBridge
     public let appearance: NativeSettingsAppearance
+
+    /// The theme the widget panel and its media window draw with: the widget's own Panel background setting, so the
+    /// hub's View > Look or the General theme no longer turns the widget from dark to glass (Martin, 2026-10-25: "most
+    /// of the time it shows like this"). Reduce Transparency still turns glass solid.
+    public var panelTheme: NativeSettingsTheme {
+        switch snapshot?.state.preferences.panelBackground ?? "dark" {
+        case "glass":
+            return NativeSettingsTheme.glass.effective(reduceTransparency: appearance.reduceTransparency,
+                                                       systemReduceTransparency: false)
+        case "theme":
+            return snapshot?.state.preferences.glassEffect == false
+                ? appearance.theme.effective(reduceTransparency: true, systemReduceTransparency: false)
+                : appearance.theme
+        default:
+            return .graphite
+        }
+    }
     private let defaults: UserDefaults
     private var appearanceSubscription: AnyCancellable?
     private var settingsOnly = false
@@ -1288,7 +1305,12 @@ public final class WidgetModel: ObservableObject {
         })
     }
 
-    public func collapse() {
+    /// Every fold logs its caller, so "the widget folded" is found in app-perf.log (18 fold paths logged nothing,
+    /// 2026-10-25 hover hunt).
+    public func collapse(file: StaticString = #fileID, line: UInt = #line) {
+        if expanded != nil {
+            PerfLog.mark("widget.collapse \(expanded?.rawValue ?? "") from \(file):\(line)")
+        }
         cancelHoverPrewarm()
         agentFitFloor = nil
         openingInbox = nil
@@ -2471,8 +2493,19 @@ public final class WidgetModel: ObservableObject {
         let delay = max(5, snapshot?.state.preferences.quietSeconds ?? 15)
         quietTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            guard let self else { return }
+            // A pointer over the panel, or a decision waiting in it, is someone reading: the quiet timer folded a
+            // session with open decisions under the reader's pointer (Martin, 2026-10-25). It tries again later.
+            // `pointerInside` and not `hoveredSurface`: opening a module clears the hover, not the pointer.
+            if !self.pointerInside.isEmpty || self.cards.contains(where: \.needsAnswer) {
+                PerfLog.mark("widget.quiet-collapse skipped: "
+                    + (!self.pointerInside.isEmpty ? "pointer over the panel" : "a decision waits"))
+                self.quietSignature = ""
+                return
+            }
+            PerfLog.mark("widget.quiet-collapse after \(delay)s quiet in \(self.selectedKey)")
             // With staged decisions this asks first and the panel stays open (Martin, 2026-10-23).
-            self?.requestCollapse()
+            self.requestCollapse()
         }
     }
 

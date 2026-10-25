@@ -108,7 +108,7 @@ public struct LiveWidgetView: View {
             cutoutWidth: cutout, compactHeight: compactHeight,
             draft: Binding(get: { model.draft.text }, set: model.setText),
             actions: AgentWidgetActions(
-                expand: { model.open(edge) }, collapse: model.collapse,
+                expand: { model.open(edge) }, collapse: { model.collapse() },
                 select: { model.select($0, edge: edge) }, choose: { model.choose(option: $0) },
                 submit: { model.submit() }, settings: { model.showSettings?() }, next: { model.next() }),
             liveContent: AnyView(content)
@@ -378,7 +378,7 @@ public struct LiveWidgetView: View {
                 model.showSettings?()
             }
             .accessibilityLabel("Widget settings")
-            IconButton(systemName: "xmark", tooltip: WidgetKeymap.hint("Collapse", WidgetKeymap.collapse), action: model.requestCollapse)
+            IconButton(systemName: "xmark", tooltip: WidgetKeymap.hint("Collapse", WidgetKeymap.collapse), action: { model.requestCollapse() })
                 .accessibilityLabel("Collapse widget")
         }
     }

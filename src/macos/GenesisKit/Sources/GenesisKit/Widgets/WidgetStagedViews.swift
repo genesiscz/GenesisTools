@@ -90,6 +90,9 @@ struct WidgetStagedList: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                 HStack(spacing: 8) {
                     Button("Send \(chosen.count) now") {
+                        // The pane keeps its height while the staged list closes, so the panel does not shrink
+                        // away from the pointer (hover hunt H2, 2026-10-25).
+                        model.holdAgentFit()
                         model.sendStaged(chosen.map(\.sourceId))
                         model.stagedView = nil
                     }

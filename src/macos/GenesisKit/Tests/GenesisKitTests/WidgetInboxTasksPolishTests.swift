@@ -1163,6 +1163,8 @@ final class WidgetStagingTests: XCTestCase {
         model.resolveStagedLeave("send")
         XCTAssertEqual(model.expanded, .right, "the panel stays open until the hub answers")
         try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.expanded, .right, "the delivered note stays readable before the panel folds")
+        try await Task.sleep(for: .milliseconds(2600))
         XCTAssertNil(model.expanded, "and closes once every answer was delivered")
         XCTAssertEqual(names(actions).last, "send-staged")
         XCTAssertEqual(WidgetModel.stagedSummary(model.stagedItems), "1 decision will be sent to 1 session")

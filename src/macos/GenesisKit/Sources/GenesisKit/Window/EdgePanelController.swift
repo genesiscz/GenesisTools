@@ -67,7 +67,25 @@ private final class EdgePanelRootView: NSView {
     override var isFlipped: Bool { false }
 
     override func mouseEntered(with event: NSEvent) { pointerChanged?(true) }
-    override func mouseExited(with event: NSEvent) { pointerChanged?(false) }
+    /// AppKit reports an exit when the window reshapes under a still pointer (5 of 17 such exits folded the preview,
+    /// app-perf.log 2026-10-25): an exit with the pointer still inside the window waits and checks again, and only a
+    /// pointer that really left reports false. Every ignored exit is logged.
+    override func mouseExited(with event: NSEvent) {
+        guard let window, window.frame.contains(NSEvent.mouseLocation) else {
+            pointerChanged?(false)
+            return
+        }
+        PerfLog.mark("edge.hover exit ignored: pointer still inside \(window.title)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, let window = self.window else { return }
+                if !window.frame.contains(NSEvent.mouseLocation) {
+                    PerfLog.mark("edge.hover left after a reshape: \(window.title)")
+                    self.pointerChanged?(false)
+                }
+            }
+        }
+    }
 
     var clipping = false {
         didSet {

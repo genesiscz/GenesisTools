@@ -4,6 +4,7 @@ import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
 import { type DecisionRecord, kindOf, readDecisions, updateDecisions } from "@app/question/lib/decisions/store";
 import { answerInboxDecisions, type InboxAnswerResult } from "@app/question/lib/inbox/answer";
 import { waitingBlock } from "@app/question/lib/inbox/load";
+import { logger } from "@genesiscz/utils/logger";
 
 /** Where a session's answers go: the widget's target for it (the decision row alone has no source home). */
 export interface StagedTarget {
@@ -54,6 +55,8 @@ export async function sendStagedDecisions({
         const row = staged.find((entry) => entry.id === id);
 
         if (!row) {
+            // Sent, discarded or answered meanwhile: nothing to send for it, and the reply must not read as a send.
+            logger.warn({ id }, "widget send-staged: decision is no longer staged");
             continue;
         }
 
@@ -85,13 +88,17 @@ export async function sendStagedDecisions({
                 { ...files, block: waitingBlock, deliver }
             );
             result.sessions.push({ session, numbers, result: sent });
-
+            logger.info(
+                { session, numbers, delivered: sent.delivered, provider },
+                sent.delivered ? "widget send-staged: delivered" : "widget send-staged: queued for the next prompt"
+            );
             if (sent.delivered) {
                 result.sent += rows.length;
             } else {
                 result.queued += rows.length;
             }
         } catch (error) {
+            logger.warn({ session, numbers, error }, "widget send-staged: failed");
             result.sessions.push({ session, numbers, error: error instanceof Error ? error.message : String(error) });
             result.failed += rows.length;
         }
