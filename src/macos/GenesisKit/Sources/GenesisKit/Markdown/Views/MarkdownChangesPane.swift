@@ -161,13 +161,15 @@ struct MarkdownChangesPane: View {
     private var content: some View {
         switch diff.phase {
         case .idle, .loading:
-            ProgressView()
-                .controlSize(.small)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            MarkdownDelayedLoading(text: "Reading the changes", color: model.theme.textSecondary)
         case .empty(let reason):
             message(reason, systemImage: "checkmark.circle")
         case .failed(let error):
-            message(error, systemImage: "exclamationmark.triangle")
+            // One sentence, Try again, and git's own words behind Details (`GitFailureNotice`).
+            GitFailureNotice(diff.failure ?? GitFailure(message: error)) { diff.retry() }
+                .padding(16)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onAppear { GenAnnounce.post(error) }
         case .ready:
             if let file = diff.file {
                 if isNote && rendered {
@@ -227,5 +229,30 @@ struct MarkdownChangesPane: View {
                 .buttonStyle(.genHoverPlain())
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+/// A spinner that waits 200 ms before it shows, then names the work: a diff that takes 50 ms never flashes one.
+struct MarkdownDelayedLoading: View {
+    let text: String
+    let color: Color
+    @State private var shown = false
+
+    var body: some View {
+        ZStack {
+            if shown {
+                VStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(text).font(.system(size: 11)).foregroundColor(color)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(text)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task {
+            try? await Task.sleep(for: .milliseconds(200))
+            if !Task.isCancelled { shown = true }
+        }
     }
 }
