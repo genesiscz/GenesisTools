@@ -194,6 +194,31 @@ final class GitReposTests: XCTestCase {
         XCTAssertNil(marks.count(for: tree), "the tree's root sums nothing")
     }
 
+    /// Martin, 2026-10-25: a moved data folder left its files listed as deleted, and opening one said "This file is not
+    /// in a git repository": git ran in the deleted file's folder, which no longer exists.
+    func testAFolderThatNoLongerExistsFindsTheRepositoryAroundIt() async throws {
+        let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gitmoved-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: repo.appendingPathComponent("data/run"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: repo) }
+        try git(["init", "-q", "-b", "main"], in: repo)
+        try "export {}\n".write(to: repo.appendingPathComponent("data/run/compiler.ts"), atomically: true, encoding: .utf8)
+        try git(["add", "."], in: repo)
+        try git(["commit", "-q", "-m", "First"], in: repo)
+        try FileManager.default.moveItem(at: repo.appendingPathComponent("data"), to: repo.appendingPathComponent("moved"))
+        let gone = repo.appendingPathComponent("data/run")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: gone.path))
+
+        XCTAssertEqual(GitQueries(provider: GenesisKitGTCLIProvider()).root(of: gone).map { GitWorkingTreeSource.realPath($0.path) },
+                       GitWorkingTreeSource.realPath(repo.path))
+        _ = GitRepos.shared.lookup(for: gone)
+        await wait("the repository of a folder that is gone") { GitRepos.shared.model(for: gone) != nil }
+
+        let sides = try GitFileDiffModel.sides(gone.appendingPathComponent("compiler.ts"), text: nil, scope: .uncommitted,
+                                               pick: nil, provider: GenesisKitGTCLIProvider())
+        XCTAssertEqual(sides.old, "export {}\n", "the deleted file's last committed text is the old side")
+        XCTAssertNil(sides.new)
+    }
+
     func testAFolderOutsideARepositoryHasNoModel() async throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("norepo-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

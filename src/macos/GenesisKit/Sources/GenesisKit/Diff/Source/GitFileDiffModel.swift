@@ -43,9 +43,10 @@ public final class GitFileDiffModel: ObservableObject {
         load(url, workingText: text, scope: scope, commit: pick)
     }
 
-    /// nil is a deleted working file; an empty String is a present empty file.
-    func load(_ url: URL, workingText text: String?, scope: GitFileScope, commit pick: String? = nil) {
-        lastLoad = { [weak self] in self?.load(url, workingText: text, scope: scope, commit: pick) }
+    /// nil is a deleted working file; an empty String is a present empty file. `renamedFrom` is the old path of a file
+    /// moved outside git (the repository status pairs it): its old side is read there.
+    func load(_ url: URL, workingText text: String?, scope: GitFileScope, commit pick: String? = nil, renamedFrom: String? = nil) {
+        lastLoad = { [weak self] in self?.load(url, workingText: text, scope: scope, commit: pick, renamedFrom: renamedFrom) }
         ticket += 1
         let ticket = self.ticket
         if file == nil { phase = .loading }
@@ -54,8 +55,14 @@ public final class GitFileDiffModel: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let span = PerfSpans.begin("git.fileDiff", "\(scope.rawValue) \(url.lastPathComponent)")
             let result = Result { () throws -> (Sides, DiffFile?) in
-                let sides = try Self.sides(url, text: text, scope: scope, pick: pick, provider: provider)
-                return (sides, sides.old == sides.new ? nil : makeDiff(sides.path, sides.old, sides.new))
+                let sides = try Self.sides(url, text: text, scope: scope, pick: pick, provider: provider, renamedFrom: renamedFrom)
+                guard sides.old != sides.new else { return (sides, nil) }
+                var file = makeDiff(sides.path, sides.old, sides.new)
+                if let oldPath = sides.oldPath, file.status == .modified {
+                    file.oldPath = oldPath
+                    file.status = .renamed
+                }
+                return (sides, file)
             }
             span.end()
             DispatchQueue.main.async { [weak self] in
@@ -150,9 +157,12 @@ public final class GitFileDiffModel: ObservableObject {
         var history: [GitCommit]
         var commit: GitCommit?
         var emptyReason: String
+        /// The path the old side was read at, when it differs from `path` (a move outside git).
+        var oldPath: String? = nil
     }
 
-    nonisolated static func sides(_ url: URL, text: String?, scope: GitFileScope, pick: String?, provider: GenesisKitGTProvider) throws -> Sides {
+    nonisolated static func sides(_ url: URL, text: String?, scope: GitFileScope, pick: String?, provider: GenesisKitGTProvider,
+                                  renamedFrom: String? = nil) throws -> Sides {
         let queries = GitQueries(provider: provider)
         guard let root = queries.root(of: url.deletingLastPathComponent()), let path = GitQueries.relative(url, to: root) else {
             throw ReviewError.notRepository(url.deletingLastPathComponent().path)
@@ -163,14 +173,21 @@ public final class GitFileDiffModel: ObservableObject {
         func at(_ revision: GitRevision, path: String = path) throws -> String? {
             try queries.contents(path: path, in: root, at: revision)
         }
+        /// The working file's old side: at its own path, or for a file moved outside git at the path it came from.
+        func before(_ revision: GitRevision) throws -> String? {
+            if let text = try at(revision) { return text }
+            return try renamedFrom.flatMap { try at(revision, path: $0) }
+        }
+        let moved = renamedFrom.map { "Moved from \($0) without changes." }
         switch scope {
         case .unstaged:
-            let index = try at(.index)
-            return Sides(path: path, old: index, new: text, history: history, commit: nil, emptyReason: "No unstaged changes in this file.")
+            return Sides(path: path, old: try before(.index), new: text, history: history, commit: nil,
+                         emptyReason: moved ?? "No unstaged changes in this file.", oldPath: renamedFrom)
         case .staged:
             return Sides(path: path, old: try at(.head), new: try at(.index), history: history, commit: nil, emptyReason: "Nothing of this file is staged.")
         case .uncommitted:
-            return Sides(path: path, old: try at(.head), new: text, history: history, commit: nil, emptyReason: "No changes since the last commit.")
+            return Sides(path: path, old: try before(.head), new: text, history: history, commit: nil,
+                         emptyReason: moved ?? "No changes since the last commit.", oldPath: renamedFrom)
         case .lastCommit:
             let picked = try pick.map { try queries.pickedCommit($0, of: url, in: root) }
             if picked == nil, case .failure(let error) = historyRead {
@@ -191,14 +208,15 @@ public final class GitFileDiffModel: ObservableObject {
                 throw ReviewError.git("no merge base with \(base)")
             }
             let sha = String(decoding: mergeBase.stdout, as: UTF8.self).trimmed
-            return Sides(path: path, old: try at(.commit(sha)), new: text, history: history, commit: nil, emptyReason: "This branch has not changed this file since \(base).")
+            return Sides(path: path, old: try before(.commit(sha)), new: text, history: history, commit: nil,
+                         emptyReason: moved ?? "This branch has not changed this file since \(base).", oldPath: renamedFrom)
         }
     }
 
-    nonisolated static func diffFile(path: String, old: String?, new: String?) -> DiffFile {
+    nonisolated static func diffFile(path: String, old: String?, new: String?, oldPath: String? = nil) -> DiffFile {
         let counts = GitWorkingTreeSource.lineCounts(old: old ?? "", new: new ?? "")
-        let status: DiffFile.Status = old == nil ? .added : (new == nil ? .deleted : .modified)
-        return DiffFile(id: path, path: path, oldPath: nil, status: status, additions: counts.additions, deletions: counts.deletions,
+        let status: DiffFile.Status = old == nil ? .added : (new == nil ? .deleted : (oldPath == nil ? .modified : .renamed))
+        return DiffFile(id: path, path: path, oldPath: oldPath, status: status, additions: counts.additions, deletions: counts.deletions,
                         oldContents: old, newContents: new, skipped: nil)
     }
 }

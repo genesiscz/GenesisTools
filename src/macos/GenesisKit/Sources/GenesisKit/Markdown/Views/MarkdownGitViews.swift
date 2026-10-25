@@ -16,6 +16,9 @@ struct MarkdownGitSidebar: View {
     @StateObject private var fileHistory = GitHistoryModel()
     @StateObject private var repoLog = GitHistoryModel(limit: 15)
     @AppStorage("markdown.config.gitSidebarTab") private var tab = "file"
+    /// The last repository the Repository tab showed: a tab outside any repository keeps it on screen rather than
+    /// blanking the panel (Martin, 2026-10-25).
+    @State private var lastRepo: GitRepoModel?
 
     var body: some View {
         let _ = RenderProbe.hit("md.gitSidebar")
@@ -29,23 +32,29 @@ struct MarkdownGitSidebar: View {
                 Group {
                     switch repos.lookup(for: doc.folder) {
                     case .pending:
-                        EmptyView()
+                        if tab == "repo", let lastRepo {
+                            repoPanel(lastRepo, revealPath: nil)
+                        }
                     case .repo(let repo):
                         if tab == "file" {
                             fileTab
                         } else {
-                            GitRepoPanel(
-                                repo: repo,
-                                log: repoLog,
-                                revealPath: GitQueries.relative(doc.url, to: repo.root),
-                                onOpenFile: { entry, staged in model.openChanges(entry, staged: staged, root: repo.root) },
-                                onOpenCommit: { model.openCommit($0, root: repo.root) }
-                            )
+                            repoPanel(repo, revealPath: GitQueries.relative(doc.url, to: repo.root))
+                                .onAppear { lastRepo = repo }
+                                .onChange(of: repo.root) { _, _ in lastRepo = repo }
                         }
                     case .none:
-                        Text("This file is not in a git repository.")
-                            .font(.system(size: 11))
-                            .foregroundColor(model.theme.textSecondary)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("This file is not in a git repository.")
+                                .font(.system(size: 11))
+                                .foregroundColor(model.theme.textSecondary)
+                            if tab == "repo", let lastRepo {
+                                Text(verbatim: "Showing \(lastRepo.root.lastPathComponent), the last repository.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(model.theme.textSecondary)
+                                repoPanel(lastRepo, revealPath: nil)
+                            }
+                        }
                     }
                 }
                 .padding(8)
@@ -54,6 +63,16 @@ struct MarkdownGitSidebar: View {
         .background(model.theme.page.opacity(0.6))
         .onAppear { follow() }
         .onChange(of: doc.url) { _, _ in follow() }
+    }
+
+    private func repoPanel(_ repo: GitRepoModel, revealPath: String?) -> some View {
+        GitRepoPanel(
+            repo: repo,
+            log: repoLog,
+            revealPath: revealPath,
+            onOpenFile: { entry, staged in model.openChanges(entry, staged: staged, root: repo.root) },
+            onOpenCommit: { model.openCommit($0, root: repo.root) }
+        )
     }
 
     private func follow() {

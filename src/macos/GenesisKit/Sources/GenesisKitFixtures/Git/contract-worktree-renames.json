@@ -1,0 +1,66 @@
+{
+    "about": "Moves git does not report: a deleted file paired with an untracked file of the same blob. GenesisKit GitWorktreeRenames.pair and src/utils/git/worktree-renames.ts pairWorktreeRenames must both turn every case's deleted and untracked lists into its pairs, in this order.",
+    "cases": [
+        {
+            "name": "a moved folder pairs each file with its new place",
+            "deleted": [
+                { "path": "Poznámky/úkol-1234/data/perf-deep/agent-rerender/compiler.ts", "oid": "1111111111111111111111111111111111111111" },
+                { "path": "Poznámky/úkol-1234/data/perf-deep/agent-rerender/out/compiler/web__src__App.tsx.txt", "oid": "2222222222222222222222222222222222222222" }
+            ],
+            "untracked": [
+                { "path": "Poznámky/WebPerformance/data/perf-deep/agent-rerender/out/compiler/web__src__App.tsx.txt", "oid": "2222222222222222222222222222222222222222" },
+                { "path": "Poznámky/WebPerformance/data/perf-deep/agent-rerender/compiler.ts", "oid": "1111111111111111111111111111111111111111" }
+            ],
+            "pairs": [
+                ["Poznámky/úkol-1234/data/perf-deep/agent-rerender/compiler.ts", "Poznámky/WebPerformance/data/perf-deep/agent-rerender/compiler.ts"],
+                ["Poznámky/úkol-1234/data/perf-deep/agent-rerender/out/compiler/web__src__App.tsx.txt", "Poznámky/WebPerformance/data/perf-deep/agent-rerender/out/compiler/web__src__App.tsx.txt"]
+            ]
+        },
+        {
+            "name": "among copies of the same content the same file name wins, then the most equal trailing folders",
+            "deleted": [{ "path": "old/run1/run.log", "oid": "3333333333333333333333333333333333333333" }],
+            "untracked": [
+                { "path": "a/other.log", "oid": "3333333333333333333333333333333333333333" },
+                { "path": "b/run2/run.log", "oid": "3333333333333333333333333333333333333333" },
+                { "path": "c/run1/run.log", "oid": "3333333333333333333333333333333333333333" }
+            ],
+            "pairs": [["old/run1/run.log", "c/run1/run.log"]]
+        },
+        {
+            "name": "an untracked file pairs once; the deleted file that sorts first by bytes takes it",
+            "deleted": [
+                { "path": "z/notes.md", "oid": "4444444444444444444444444444444444444444" },
+                { "path": "a/notes.md", "oid": "4444444444444444444444444444444444444444" }
+            ],
+            "untracked": [{ "path": "moved/notes.md", "oid": "4444444444444444444444444444444444444444" }],
+            "pairs": [["a/notes.md", "moved/notes.md"]]
+        },
+        {
+            "name": "equal scores fall back to the untracked path's byte order",
+            "deleted": [{ "path": "x/a.txt", "oid": "5555555555555555555555555555555555555555" }],
+            "untracked": [
+                { "path": "q/a.txt", "oid": "5555555555555555555555555555555555555555" },
+                { "path": "p/a.txt", "oid": "5555555555555555555555555555555555555555" }
+            ],
+            "pairs": [["x/a.txt", "p/a.txt"]]
+        },
+        {
+            "name": "empty files prove no move, in SHA-1 and SHA-256 repositories",
+            "deleted": [
+                { "path": "runs/load-resolved.err", "oid": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391" },
+                { "path": "runs/other.err", "oid": "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813" }
+            ],
+            "untracked": [
+                { "path": "Monitoring/state/run.lock", "oid": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391" },
+                { "path": "Monitoring/state/other.err", "oid": "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813" }
+            ],
+            "pairs": []
+        },
+        {
+            "name": "a deleted file with no untracked twin stays deleted",
+            "deleted": [{ "path": "gone.md", "oid": "6666666666666666666666666666666666666666" }],
+            "untracked": [{ "path": "new.md", "oid": "7777777777777777777777777777777777777777" }],
+            "pairs": []
+        }
+    ]
+}

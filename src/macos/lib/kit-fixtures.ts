@@ -9,16 +9,19 @@ import { SafeJSON } from "@genesiscz/utils/json";
  */
 export const KIT_FIXTURES_DIR = join(import.meta.dir, "..", "GenesisKit", "Sources", "GenesisKitFixtures", "Disk");
 
-export function kitFixturePath(name: string): string {
-    return join(KIT_FIXTURES_DIR, name);
+/** `Disk/` holds the Disk Manager contracts; `Git/` the git rules both languages implement (worktree renames). */
+export type KitFixtureFolder = "Disk" | "Git";
+
+export function kitFixturePath(name: string, folder: KitFixtureFolder = "Disk"): string {
+    return join(KIT_FIXTURES_DIR, "..", folder, name);
 }
 
-export function readKitFixture(name: string): string {
-    return readFileSync(kitFixturePath(name), "utf8");
+export function readKitFixture(name: string, folder: KitFixtureFolder = "Disk"): string {
+    return readFileSync(kitFixturePath(name, folder), "utf8");
 }
 
-export function readKitFixtureJson(name: string): unknown {
-    return SafeJSON.parse(readKitFixture(name), { strict: true });
+export function readKitFixtureJson(name: string, folder: KitFixtureFolder = "Disk"): unknown {
+    return SafeJSON.parse(readKitFixture(name, folder), { strict: true });
 }
 
 /** The lines of a `contract-*.ndjson` fixture, parsed. */

@@ -307,9 +307,21 @@ public struct GitWorkingTreeSource {
         if plan.untracked {
             let untracked = (try? gitData(["ls-files", "--full-name", "--others", "--exclude-standard", "-z"])) ?? Data()
             let known = Set(entries.map(\.path))
-            entries += untracked.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }
-                .filter { !known.contains($0) }
-                .map { StatusEntry(path: $0, oldPath: nil, status: .added) }
+            let added = untracked.split(separator: 0).map { String(decoding: $0, as: UTF8.self) }.filter { !known.contains($0) }
+            entries += added.map { StatusEntry(path: $0, oldPath: nil, status: .added) }
+            // A folder moved outside git: its deleted files and their untracked twins become renames, the same pairs the
+            // repository panel shows (GitWorktreeRenames).
+            let pairs = GitWorktreeRenames.find(in: repo, deleted: entries.filter { $0.status == .deleted }.map(\.path),
+                                                untracked: added, revision: plan.old, provider: GenesisKitGT.provider)
+            if !pairs.isEmpty {
+                let newByOld = Dictionary(pairs.map { ($0.old, $0.new) }, uniquingKeysWith: { first, _ in first })
+                let news = Set(pairs.map(\.new))
+                entries = entries.compactMap { entry in
+                    if entry.status == .added, news.contains(entry.path) { return nil }
+                    guard entry.status == .deleted, let new = newByOld[entry.path] else { return entry }
+                    return StatusEntry(path: new, oldPath: entry.path, status: .renamed)
+                }
+            }
         }
 
         let counts = parseNumstat((try? gitData(["diff", "--numstat", "-z", "--find-renames"] + plan.diffArgs)) ?? Data())

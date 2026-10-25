@@ -110,7 +110,10 @@ struct MarkdownChangesPane: View {
         if let compare {
             diff.loadCompare(doc.url, workingText: model.workingText(for: doc), old: compare.old, new: compare.new)
         } else {
-            diff.load(doc.url, workingText: model.workingText(for: doc), scope: currentScope, commit: currentScope == .lastCommit ? model.changesCommit : nil)
+            // A file moved outside git reads its old side at the path it came from (GitWorktreeRenames).
+            let movedFrom = repos.model(for: doc.folder)?.status?.entry(for: doc.url).flatMap { $0.unstaged == .renamed ? $0.oldPath : nil }
+            diff.load(doc.url, workingText: model.workingText(for: doc), scope: currentScope,
+                      commit: currentScope == .lastCommit ? model.changesCommit : nil, renamedFrom: movedFrom)
         }
     }
 

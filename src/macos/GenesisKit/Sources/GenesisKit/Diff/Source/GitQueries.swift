@@ -14,10 +14,24 @@ struct GitQueries {
 
     /// The repository root holding `folder`, or nil outside a repository.
     func root(of folder: URL) -> URL? {
-        guard let result = try? provider.git(["rev-parse", "--show-toplevel"], in: folder, input: nil, gitDirectory: nil, environment: nil),
+        guard let result = try? provider.git(["rev-parse", "--show-toplevel"], in: Self.existingFolder(folder), input: nil, gitDirectory: nil, environment: nil),
               result.status == 0 else { return nil }
         let path = String(decoding: result.stdout, as: UTF8.self).trimmed
         return path.isEmpty ? nil : URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL
+    }
+
+    /// `folder`, or its nearest parent that exists. A deleted file's folder can be gone too (a folder moved away),
+    /// and git cannot start in it: "This file is not in a git repository" for every file of a moved folder (Martin,
+    /// 2026-10-25).
+    static func existingFolder(_ folder: URL) -> URL {
+        var current = folder.standardizedFileURL
+        var isFolder: ObjCBool = false
+        while !(FileManager.default.fileExists(atPath: current.path, isDirectory: &isFolder) && isFolder.boolValue) {
+            let parent = current.deletingLastPathComponent()
+            guard parent.path != current.path else { break }
+            current = parent
+        }
+        return current
     }
 
     /// `file` relative to `root`, through real paths (`/var` is `/private/var`).
@@ -96,7 +110,7 @@ struct GitQueries {
             log = ""
         }
         return GitRepoStatus(root: root, branch: status.branch, upstream: status.upstream, ahead: status.ahead, behind: status.behind,
-                             entries: status.entries, commits: Self.parseLog(log))
+                             entries: GitWorktreeRenames.paired(status.entries, in: root, provider: provider), commits: Self.parseLog(log))
     }
 
     // MARK: Parsing
