@@ -7,7 +7,7 @@ public struct ClickyPerformanceView: View {
     @State private var range = "7 days"
     @State private var start = Calendar.current.startOfDay(for: Date())
     @State private var end = Date()
-    @State private var grouping: ClickyPerformanceGrouping = .fifteenMinutes
+    @State private var grouping: ClickyPerformanceGrouping = ClickyPerformanceView.grouping(for: "7 days")
     @State private var weekdays = Set(0..<7)
     @State private var fromHour = 0
     @State private var untilHour = 24
@@ -34,12 +34,35 @@ public struct ClickyPerformanceView: View {
         switch range {
         case "Today": first = calendar.startOfDay(for: now)
         case "30 days": first = calendar.date(byAdding: .day, value: -29, to: calendar.startOfDay(for: now)) ?? now
+        case "90 days": first = calendar.date(byAdding: .day, value: -89, to: calendar.startOfDay(for: now)) ?? now
+        case "1 year": first = calendar.date(byAdding: .year, value: -1, to: calendar.startOfDay(for: now)) ?? now
+        case "All time": first = calendar.startOfDay(for: earliest)
         case "Custom": first = calendar.startOfDay(for: start)
         default: first = calendar.date(byAdding: .day, value: -6, to: calendar.startOfDay(for: now)) ?? now
         }
         let last = range == "Custom"
             ? calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: end)) ?? now : now
         return ClickyPerformanceFilter(start: first, end: last, weekdays: weekdays, fromHour: fromHour, untilHour: untilHour)
+    }
+
+    /// The oldest timed activity: the first hourly roll-up, else the first kept minute.
+    private var earliest: Date {
+        let hour = data.performanceHours.keys.min().map { Date(timeIntervalSince1970: Double($0) * 3600) }
+        let minute = data.performanceMinutes.keys.min().map { Date(timeIntervalSince1970: Double($0) * 60) }
+        return [hour, minute, data.performanceStartedAt].compactMap { $0 }.min() ?? now
+    }
+
+    nonisolated static let ranges = ["Today", "7 days", "30 days", "90 days", "1 year", "All time", "Custom"]
+
+    /// The timeline grouping a range opens with: about 50 to 400 bars, never one bar per minute over a year.
+    nonisolated static func grouping(for range: String) -> ClickyPerformanceGrouping {
+        switch range {
+        case "Today": return .fifteenMinutes
+        case "7 days": return .hour
+        case "30 days", "90 days": return .day
+        case "1 year", "All time": return .week
+        default: return .day
+        }
     }
 
     private struct Query: Equatable {
@@ -109,7 +132,7 @@ public struct ClickyPerformanceView: View {
             NativeSettingsCard("How the estimates work") {
                 Text("Only intervals between text-like key presses of 5 seconds or less count as active typing. Longer gaps add no time; isolated presses have no measurable duration. Key releases, modifiers and Command/Control shortcuts add no words. Navigation and shortcuts end a typing burst.")
                 Text("Words are a keystroke convention, not captured text. Code, pasted text, autocomplete, non-Latin input and editing can change the result. Correction share counts delete keys; it is not an error-rate score. No text, key sequence or application history is retained.")
-                Text("Performance retains 30 days of minute aggregates. Filters use your current local calendar; rates divide combined words by combined active seconds, rather than averaging bucket speeds. Date and hour filters have minute precision.")
+                Text("Performance keeps minute detail for 30 days and hourly totals for 2 years, so ranges past 30 days count whole hours. Filters use your current local calendar; rates divide combined words by combined active seconds, rather than averaging bucket speeds. Date and hour filters have minute precision.")
                 if let since = data.performanceStartedAt {
                     Text("Timing history since \(since.formatted(date: .abbreviated, time: .shortened))")
                 }
@@ -130,9 +153,10 @@ public struct ClickyPerformanceView: View {
         NativeSettingsCard("Time and filters") {
             NativeSettingsRow("Date range") {
                 Picker("Date range", selection: $range) {
-                    ForEach(["Today", "7 days", "30 days", "Custom"], id: \.self) { Text($0).tag($0) }
+                    ForEach(Self.ranges, id: \.self) { Text($0).tag($0) }
                 }.labelsHidden().frame(width: 150, alignment: .trailing)
                     .accessibilityIdentifier("clicky.performance.range")
+                    .onChange(of: range) { _, next in grouping = Self.grouping(for: next) }
             }
             if range == "Custom" {
                 HStack {
@@ -192,7 +216,7 @@ public struct ClickyPerformanceView: View {
     }
 
     private func dictation(_ totals: ClickyPerformanceBucket) -> some View {
-        let estimate = ClickyDictationEstimate(totals: totals, wordsPerMinute: spokenWPM, setupPerBurst: setupSeconds)
+        let estimate = ClickyDictationEstimate(totals: totals, wordsPerMinute: spokenWPM, setupPerSession: setupSeconds)
         return NativeSettingsCard("Estimated time lost by writing instead of dictating",
             subtitle: "A configurable what-if comparison, not a measurement of actual dictation.") {
             HStack(alignment: .firstTextBaseline) {
@@ -217,11 +241,11 @@ public struct ClickyPerformanceView: View {
                 HStack { NativeSettingsNumberPicker("Spoken words per minute", range: 60..<241,
                     identifier: "clicky.performance.speech", value: $spokenWPM); Text("WPM").font(.caption) }
             }
-            NativeSettingsRow("Setup per burst", detail: "One dictation activation for every typing burst") {
-                HStack { NativeSettingsNumberPicker("Setup seconds per burst", range: 0..<16,
+            NativeSettingsRow("Setup per session", detail: "One dictation activation per typing session; a minute or more without text starts a new session") {
+                HStack { NativeSettingsNumberPicker("Setup seconds per session", range: 0..<16,
                     identifier: "clicky.performance.setup", value: $setupSeconds); Text("sec").font(.caption) }
             }
-            Text("\(totals.bursts.formatted()) bursts × \(setupSeconds)s setup + \(duration(estimate.speakingSeconds)) speaking. Retained-word estimate: max(0, text-like presses − delete presses) ÷ 5; deleting a selection or undoing cannot be inferred. It excludes thinking time, transcription delay and review/corrections after dictation; it cannot tell prose from code.")
+            Text("\(totals.sessions.formatted()) sessions × \(setupSeconds)s setup + \(duration(estimate.speakingSeconds)) speaking. Retained-word estimate: max(0, text-like presses − delete presses) ÷ 5; deleting a selection or undoing cannot be inferred. It excludes thinking time, transcription delay and review/corrections after dictation; it cannot tell prose from code.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

@@ -16,7 +16,26 @@ public struct ClickyPerformanceBucket: Codable, Equatable, Sendable {
     public var activeSeconds = 0.0
     public var bursts = 0
     public var carriedBurst = false
+    /// Typing sessions that start in this bucket: text after a minute or more without text. Kept only in the hourly
+    /// roll-up; a minute's session is worked out from its neighbour when the report is built.
+    public var sessions = 0
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case presses, characters, corrections, activeSeconds, bursts, carriedBurst, sessions
+    }
+
+    /// Every key is optional, so buckets saved before `sessions` existed still load.
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        presses = try values.decodeIfPresent(Int.self, forKey: .presses) ?? 0
+        characters = try values.decodeIfPresent(Int.self, forKey: .characters) ?? 0
+        corrections = try values.decodeIfPresent(Int.self, forKey: .corrections) ?? 0
+        activeSeconds = try values.decodeIfPresent(Double.self, forKey: .activeSeconds) ?? 0
+        bursts = try values.decodeIfPresent(Int.self, forKey: .bursts) ?? 0
+        carriedBurst = try values.decodeIfPresent(Bool.self, forKey: .carriedBurst) ?? false
+        sessions = try values.decodeIfPresent(Int.self, forKey: .sessions) ?? 0
+    }
 
     mutating func add(_ other: Self) {
         presses += other.presses
@@ -24,6 +43,7 @@ public struct ClickyPerformanceBucket: Codable, Equatable, Sendable {
         corrections += other.corrections
         activeSeconds += other.activeSeconds
         bursts += other.bursts
+        sessions += other.sessions
     }
     var estimatedWords: Double { Double(characters) / 5 }
     var estimatedRetainedWords: Double { Double(max(0, characters - corrections)) / 5 }
@@ -41,6 +61,31 @@ extension ClickyStatistics {
     ])
 
     public mutating func breakTypingBurst() { lastTypingAt = nil }
+
+    /// Minute detail is kept for this long; older minutes are rolled into `performanceHours`.
+    static let performanceMinuteDays = 30
+    /// The hourly roll-up is kept for this long.
+    static let performanceHourDays = 730
+
+    /// Whether `minute` starts a typing session: it has text and the minute before it has none.
+    static func startsSession(_ minute: Int, in minutes: [Int: ClickyPerformanceBucket]) -> Bool {
+        (minutes[minute]?.characters ?? 0) > 0 && (minutes[minute - 1]?.characters ?? 0) == 0
+    }
+
+    /// Rolls the minutes older than `horizon` into hourly buckets, then drops them and hours past their retention.
+    mutating func rollUpPerformance(olderThan horizon: Int) {
+        let old = performanceMinutes.filter { $0.key < horizon }
+        guard !old.isEmpty else { return }
+        for (minute, source) in old {
+            var bucket = source
+            bucket.carriedBurst = false
+            bucket.sessions = Self.startsSession(minute, in: performanceMinutes) ? 1 : 0
+            performanceHours[Int(floor(Double(minute) / 60)), default: ClickyPerformanceBucket()].add(bucket)
+        }
+        performanceMinutes = performanceMinutes.filter { $0.key >= horizon }
+        let oldestHour = horizon / 60 - Self.performanceHourDays * 24
+        performanceHours = performanceHours.filter { $0.key >= oldestHour }
+    }
 
     mutating func recordPerformance(keyCode: UInt16, shortcut: Bool, at date: Date) {
         let minute = Int(floor(date.timeIntervalSince1970 / 60))
@@ -100,7 +145,7 @@ struct ClickyPerformanceFilter: Equatable, Sendable {
 }
 
 enum ClickyPerformanceGrouping: Int, CaseIterable, Identifiable, Sendable {
-    case minute = 60, fiveMinutes = 300, fifteenMinutes = 900, hour = 3600, day = 86400
+    case minute = 60, fiveMinutes = 300, fifteenMinutes = 900, hour = 3600, day = 86400, week = 604800
     var id: Self { self }
     var label: String {
         switch self {
@@ -109,6 +154,7 @@ enum ClickyPerformanceGrouping: Int, CaseIterable, Identifiable, Sendable {
         case .fifteenMinutes: return "15 minutes"
         case .hour: return "Hour"
         case .day: return "Day"
+        case .week: return "Week"
         }
     }
 }
@@ -149,8 +195,14 @@ struct ClickyPerformanceReport: Sendable {
     init(statistics: ClickyStatistics, filter: ClickyPerformanceFilter,
         grouping: ClickyPerformanceGrouping, calendar: Calendar = .current) {
         var groups: [Date: ClickyPerformanceBucket] = [:]
-        for (minute, source) in statistics.performanceMinutes {
-            let date = Date(timeIntervalSince1970: Double(minute) * 60)
+        let minuteBuckets = statistics.performanceMinutes.map { minute, source -> (Date, ClickyPerformanceBucket) in
+            var bucket = source
+            bucket.sessions = ClickyStatistics.startsSession(minute, in: statistics.performanceMinutes) ? 1 : 0
+            return (Date(timeIntervalSince1970: Double(minute) * 60), bucket)
+        }
+        // Rolled-up hours hold only minutes that are no longer kept, so the two never count the same press twice.
+        let hourBuckets = statistics.performanceHours.map { (Date(timeIntervalSince1970: Double($0.key) * 3600), $0.value) }
+        for (date, source) in minuteBuckets + hourBuckets {
             guard filter.includes(date, calendar: calendar) else { continue }
             var bucket = source
             if bucket.carriedBurst && !filter.includes(date.addingTimeInterval(-60), calendar: calendar) {
@@ -159,7 +211,8 @@ struct ClickyPerformanceReport: Sendable {
             total.add(bucket)
             hours[calendar.component(.hour, from: date)].add(bucket)
             weekdays[(calendar.component(.weekday, from: date) + 5) % 7].add(bucket)
-            let key = grouping == .day ? calendar.startOfDay(for: date)
+            let key = grouping == .week ? (calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? calendar.startOfDay(for: date))
+                : grouping == .day ? calendar.startOfDay(for: date)
                 : Date(timeIntervalSince1970: floor(date.timeIntervalSince1970 / Double(grouping.rawValue)) * Double(grouping.rawValue))
             groups[key, default: ClickyPerformanceBucket()].add(bucket)
         }
@@ -174,9 +227,12 @@ struct ClickyDictationEstimate {
     var dictationSeconds: Double { speakingSeconds + setupSeconds }
     var differenceSeconds: Double { typingSeconds - dictationSeconds }
 
-    init(totals: ClickyPerformanceBucket, wordsPerMinute: Int, setupPerBurst: Int) {
+    /// One dictation covers a whole typing session, so its setup counts once per session, not per 5-second burst:
+    /// with setup per burst, 8,042 bursts in a week cost 6.7 h of setup and the estimate said dictation saved nothing
+    /// (Martin's data, 2026-10-25: 718 sessions in the same week).
+    init(totals: ClickyPerformanceBucket, wordsPerMinute: Int, setupPerSession: Int) {
         typingSeconds = totals.activeSeconds
         speakingSeconds = totals.estimatedRetainedWords * 60 / Double(max(1, wordsPerMinute))
-        setupSeconds = Double(totals.bursts * max(0, setupPerBurst))
+        setupSeconds = Double(totals.sessions * max(0, setupPerSession))
     }
 }

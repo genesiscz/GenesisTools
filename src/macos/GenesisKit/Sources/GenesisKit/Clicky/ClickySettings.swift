@@ -142,6 +142,8 @@ public struct ClickyStatistics: Codable, Equatable, Sendable {
     public var days: [Int: ClickyActivityBucket] = [:]
     public var keys: [Int: Int] = [:]
     public var performanceMinutes: [Int: ClickyPerformanceBucket] = [:]
+    /// Hourly totals of the minutes older than `performanceMinuteDays`, kept for `performanceHourDays`.
+    public var performanceHours: [Int: ClickyPerformanceBucket] = [:]
     public var performanceStartedAt: Date?
     var lastTypingAt: Date?
     private var latestMinute = 0
@@ -150,7 +152,7 @@ public struct ClickyStatistics: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case presses, releases, sessions, startedAt, historyStartedAt, minutes, hours, days, keys
-        case performanceMinutes, performanceStartedAt
+        case performanceMinutes, performanceHours, performanceStartedAt
     }
 
     public init(from decoder: Decoder) throws {
@@ -165,6 +167,7 @@ public struct ClickyStatistics: Codable, Equatable, Sendable {
         days = try values.decodeIfPresent([Int: ClickyActivityBucket].self, forKey: .days) ?? [:]
         keys = try values.decodeIfPresent([Int: Int].self, forKey: .keys) ?? [:]
         performanceMinutes = try values.decodeIfPresent([Int: ClickyPerformanceBucket].self, forKey: .performanceMinutes) ?? [:]
+        performanceHours = try values.decodeIfPresent([Int: ClickyPerformanceBucket].self, forKey: .performanceHours) ?? [:]
         performanceStartedAt = try values.decodeIfPresent(Date.self, forKey: .performanceStartedAt)
         latestMinute = minutes.keys.max() ?? 0
     }
@@ -173,7 +176,8 @@ public struct ClickyStatistics: Codable, Equatable, Sendable {
         lhs.presses == rhs.presses && lhs.releases == rhs.releases && lhs.sessions == rhs.sessions
             && lhs.startedAt == rhs.startedAt && lhs.historyStartedAt == rhs.historyStartedAt
             && lhs.minutes == rhs.minutes && lhs.hours == rhs.hours && lhs.days == rhs.days && lhs.keys == rhs.keys
-            && lhs.performanceMinutes == rhs.performanceMinutes && lhs.performanceStartedAt == rhs.performanceStartedAt
+            && lhs.performanceMinutes == rhs.performanceMinutes && lhs.performanceHours == rhs.performanceHours
+            && lhs.performanceStartedAt == rhs.performanceStartedAt
     }
 
     public mutating func record(keyCode: UInt16, release: Bool, at date: Date = Date(), calendar: Calendar = .current,
@@ -191,7 +195,7 @@ public struct ClickyStatistics: Codable, Equatable, Sendable {
         let retentionHour = latestMinute / 60
         if prunedHour != retentionHour {
             minutes = minutes.filter { $0.key >= latestMinute - 30 * 24 * 60 }
-            performanceMinutes = performanceMinutes.filter { $0.key >= latestMinute - 30 * 24 * 60 }
+            rollUpPerformance(olderThan: latestMinute - Self.performanceMinuteDays * 24 * 60)
             hours = hours.filter { $0.key >= retentionHour - 366 * 24 }
             let oldestDay = calendar.date(byAdding: .day, value: -730, to: date) ?? date
             days = days.filter { $0.key >= Int(oldestDay.timeIntervalSince1970) }

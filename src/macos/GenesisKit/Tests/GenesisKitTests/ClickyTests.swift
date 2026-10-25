@@ -2376,15 +2376,57 @@ extension ClickyTests {
 
     func testDictationEstimateUsesRetainedWordConventionAndCanFavorTyping() {
         var totals = ClickyPerformanceBucket()
-        totals.characters = 750; totals.corrections = 50; totals.activeSeconds = 180; totals.bursts = 2
-        let estimate = ClickyDictationEstimate(totals: totals, wordsPerMinute: 140, setupPerBurst: 3)
+        totals.characters = 750; totals.corrections = 50; totals.activeSeconds = 180; totals.bursts = 9; totals.sessions = 2
+        let estimate = ClickyDictationEstimate(totals: totals, wordsPerMinute: 140, setupPerSession: 3)
         XCTAssertEqual(totals.estimatedWords, 150)
         XCTAssertEqual(totals.estimatedRetainedWords, 140)
         XCTAssertEqual(estimate.speakingSeconds, 60)
         XCTAssertEqual(estimate.setupSeconds, 6)
         XCTAssertEqual(estimate.differenceSeconds, 114)
         totals.activeSeconds = 20
-        XCTAssertEqual(ClickyDictationEstimate(totals: totals, wordsPerMinute: 140, setupPerBurst: 3).differenceSeconds, -46)
+        XCTAssertEqual(ClickyDictationEstimate(totals: totals, wordsPerMinute: 140, setupPerSession: 3).differenceSeconds, -46)
+    }
+
+    /// A session starts after a minute without text; minutes past 30 days roll into hours that the long ranges still count.
+    func testOldMinutesRollIntoHoursAndLongRangesCountThemOnce() {
+        var stats = ClickyStatistics()
+        func put(_ minute: Int, characters: Int, seconds: Double) {
+            var bucket = ClickyPerformanceBucket()
+            bucket.presses = characters; bucket.characters = characters; bucket.activeSeconds = seconds; bucket.bursts = 1
+            stats.performanceMinutes[minute] = bucket
+        }
+        let base = 29_000_000 // a whole hour: 483,333 h 20 min, so use an hour-aligned start below
+        let hourStart = (base / 60) * 60
+        put(hourStart, characters: 50, seconds: 20)      // starts a session
+        put(hourStart + 1, characters: 40, seconds: 15)  // same session
+        put(hourStart + 5, characters: 30, seconds: 10)  // a new session after 3 empty minutes
+        let recent = hourStart + 40 * 24 * 60
+        put(recent, characters: 25, seconds: 9)
+        stats.rollUpPerformance(olderThan: recent - 30 * 24 * 60)
+        XCTAssertEqual(stats.performanceMinutes.keys.sorted(), [recent], "only minutes inside 30 days stay")
+        let hour = stats.performanceHours[hourStart / 60]
+        XCTAssertEqual(hour?.characters, 120)
+        XCTAssertEqual(hour?.sessions, 2)
+        let all = ClickyPerformanceFilter(start: Date(timeIntervalSince1970: 0), end: Date(timeIntervalSince1970: Double(recent + 60) * 60))
+        let report = ClickyPerformanceReport(statistics: stats, filter: all, grouping: .week, calendar: calendar)
+        XCTAssertEqual(report.total.characters, 145, "hours and minutes are disjoint")
+        XCTAssertEqual(report.total.sessions, 3, "two rolled-up sessions and the recent minute's own")
+        XCTAssertEqual(report.total.activeSeconds, 54, accuracy: 0.001)
+    }
+
+    func testEachRangeOpensWithAGroupingThatKeepsTheTimelineReadable() {
+        XCTAssertEqual(ClickyPerformanceView.grouping(for: "Today"), .fifteenMinutes)
+        XCTAssertEqual(ClickyPerformanceView.grouping(for: "7 days"), .hour)
+        XCTAssertEqual(ClickyPerformanceView.grouping(for: "90 days"), .day)
+        XCTAssertEqual(ClickyPerformanceView.grouping(for: "All time"), .week)
+        XCTAssertTrue(ClickyPerformanceView.ranges.contains("1 year"))
+    }
+
+    func testABucketSavedBeforeSessionsLoads() throws {
+        let old = #"{"presses":3,"characters":2,"corrections":0,"activeSeconds":1.5,"bursts":1,"carriedBurst":false}"#
+        let bucket = try JSONDecoder().decode(ClickyPerformanceBucket.self, from: Data(old.utf8))
+        XCTAssertEqual(bucket.characters, 2)
+        XCTAssertEqual(bucket.sessions, 0)
     }
 
     func testPreparedPerformanceReportPreservesTotalsAndRejectsCancellation() async {
