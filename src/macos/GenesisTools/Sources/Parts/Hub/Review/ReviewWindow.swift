@@ -2878,7 +2878,8 @@ struct ScopeMenu: View {
         let onCommit: Bool = {
             switch model.scope {
             case .commit: return true
-            case .range(_, let head, _, _): return model.commits.contains { $0.sha == head }
+            // The PR's own range has its head among the commits too; the PR item checks that one.
+            case .range(_, let head, _, _): return model.scope != model.prScope && model.commits.contains { $0.sha == head }
             default: return false
             }
         }()
