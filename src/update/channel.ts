@@ -34,6 +34,10 @@ export function postPullInvocation(opts: { plugins: boolean }): { args: string[]
     };
 }
 
+function isUnifiedBranch(branch: string): boolean {
+    return UNIFIED_REF.test(`origin/${branch}`);
+}
+
 export function devChannelPath(): string {
     return toolDataDir("update", "dev-channel.json");
 }
@@ -164,7 +168,9 @@ export async function switchChannel(
     }
 
     const current = (await git(["branch", "--show-current"], cwd)).output;
-    const returnTo = state?.returnTo ?? (current || "master");
+    // A checkout switched to a unified branch by hand (the first switch from code that predates
+    // `tools update dev`) has no record yet; returning to that same branch would never leave it.
+    const returnTo = state?.returnTo ?? (current && !isUnifiedBranch(current) ? current : "master");
     const switched = await git(["switch", "--no-track", "-C", branch, `origin/${branch}`], cwd);
 
     if (switched.code !== 0) {

@@ -259,6 +259,23 @@ describe("tools update dev", () => {
         expect((await git(["branch", "--show-current"], local)).output).toBe("master");
     });
 
+    it("a checkout already switched to a unified branch by hand returns to master", async () => {
+        const { local, statePath } = await withUnifiedBranches();
+        await git(
+            [
+                "switch",
+                "-c",
+                "feat/2026-10-13-enhancements-unified",
+                "--track",
+                "origin/feat/2026-10-13-enhancements-unified",
+            ],
+            local
+        );
+
+        expect(await switchChannel(local, "dev", statePath)).toBe("at-tip");
+        expect(readDevChannel(statePath)?.returnTo).toBe("master");
+    });
+
     it("refuses to reset a local dev branch that has commits origin does not have", async () => {
         const { local, statePath } = await withUnifiedBranches();
         expect(await switchChannel(local, "dev", statePath)).toBe("at-tip");
