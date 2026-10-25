@@ -36,6 +36,7 @@ import { join } from "node:path";
 import { findInFiles, Lang, type NapiConfig, parse, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
+import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 
 export type Severity = "error" | "warn";
 
@@ -176,6 +177,20 @@ export const BARE_REQUIRE_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/utils/tokens.ts",
 ]);
 
+/**
+ * A literal that names a coding agent's transcript format: a Claude, Codex or Grok record type or field, or a raw-line
+ * probe such as `'"type":"user"'`. That knowledge belongs to the provider readers (.claude/rules/agent-transcripts.md).
+ */
+const TRANSCRIPT_FORMAT =
+    /^["'`](?:continued-in|continuedInSessionId|response_item|event_msg|session_meta|turn_context|compact_boundary|isCompactSummary|isSidechain|chat_history\.jsonl)["'`]$|\\?"(?:type|subtype)\\?"\s*:\s*\\?"(?:user|assistant|continued-in|response_item|event_msg|session_meta|turn_context|compact_boundary)\\?"/;
+/** The readers own the format; the Claude SDK message types describe it; plugins are standalone; benchmarks replay it. */
+const TRANSCRIPT_FORMAT_ALLOWED =
+    /^(?:src\/utils\/agent-sessions\/|src\/utils\/claude\/types\.ts$|plugins\/|scripts\/benchmarks\/)/;
+
+export function namesTranscriptFormat(text: string): boolean {
+    return TRANSCRIPT_FORMAT.test(text);
+}
+
 const RULES: Rule[] = [
     {
         ...STORAGE_ROOT_RULE,
@@ -255,6 +270,19 @@ const RULES: Rule[] = [
         onlyIn: /(?:^|\/)src\/utils\//,
         allowedIn: /\.test\.tsx?$|(?:^|\/)src\/utils\/test\//,
         allowedFiles: BARE_REQUIRE_RATCHET,
+    },
+    {
+        name: "no-transcript-format-outside-readers",
+        severity: "error",
+        kinds: LITERAL_KINDS,
+        message:
+            "A transcript record type or field (Claude, Codex or Grok) outside the provider readers. Read the fact " +
+            "through a NativeSessionReader member (src/utils/agent-sessions/types.ts), and add a required member for " +
+            "all three readers when none exists (.claude/rules/agent-transcripts.md). " +
+            "scripts/ci/transcript-format-ratchet.ts lists the files not migrated yet.",
+        test: (text) => namesTranscriptFormat(text),
+        allowedIn: TRANSCRIPT_FORMAT_ALLOWED,
+        allowedFiles: TRANSCRIPT_FORMAT_RATCHET,
     },
 ];
 
@@ -1265,7 +1293,7 @@ if (import.meta.main) {
     const timing = `boot ${boot}ms, list ${listed - started}ms, scan ${scanned - listed}ms`;
 
     if (findings.length === 0) {
-        console.log(`lint-rules: OK (${files.length} files, 14 repo rules) [${timing}]`);
+        console.log(`lint-rules: OK (${files.length} files, 15 repo rules) [${timing}]`);
     } else {
         console.log(`\nlint-rules: ${errors} error(s), ${warnings} warning(s) across ${files.length} files`);
     }

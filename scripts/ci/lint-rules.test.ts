@@ -5,8 +5,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Lang, parse } from "@ast-grep/napi";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
-import { BARE_REQUIRE_RATCHET, checkSource, namesToolCommand, pluginsDisabledFor } from "./lint-rules";
+import {
+    BARE_REQUIRE_RATCHET,
+    checkSource,
+    namesToolCommand,
+    namesTranscriptFormat,
+    pluginsDisabledFor,
+} from "./lint-rules";
 import { TOOL_COMMAND_RATCHET } from "./tool-command-ratchet";
+import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 
 /**
  * These pin the behaviour of the six GritQL plugins this checker replaced.
@@ -477,6 +484,37 @@ describe("no-bare-require-in-utils", () => {
             });
 
             if (calls.length === 0) {
+                stale.push(file);
+            }
+        }
+
+        expect(stale).toEqual([]);
+    });
+});
+
+describe("no-transcript-format-outside-readers", () => {
+    const rule = "no-transcript-format-outside-readers";
+
+    test("flags a record type or a raw-line probe outside the readers, and passes the readers and other chat formats", () => {
+        expect(rules('if (row.type === "continued-in") {}', "src/claude/lib/x.ts")).toContain(rule);
+        expect(rules('const at = text.indexOf(\'"type":"turn_context"\');', "src/hub/lib/x.ts")).toContain(rule);
+        expect(rules('if (line.includes(\'"type":"user"\')) {}', "src/agents/lib/hooks/x.ts")).toContain(rule);
+        expect(
+            rules('if (row.type === "continued-in") {}', "src/utils/agent-sessions/readers/claude.ts")
+        ).not.toContain(rule);
+        // An LLM chat message is not a transcript record, and a bare role names nothing provider-specific.
+        expect(rules('const m = \'{"role":"user","content":"hi"}\';', "src/jev/lib/x.ts")).not.toContain(rule);
+        expect(rules('const role = "assistant";', "src/ask/lib/x.ts")).not.toContain(rule);
+    });
+
+    test("every ratchet entry still names the transcript format, so a migrated file leaves the list", async () => {
+        const stale: string[] = [];
+
+        for (const file of TRANSCRIPT_FORMAT_RATCHET) {
+            const root = parse(file.endsWith(".tsx") ? Lang.Tsx : Lang.TypeScript, await Bun.file(file).text()).root();
+            const literals = root.findAll({ rule: { any: [{ kind: "string" }, { kind: "template_string" }] } });
+
+            if (!literals.some((node) => namesTranscriptFormat(node.text()))) {
                 stale.push(file);
             }
         }

@@ -43,6 +43,9 @@ provider, so a new provider is a list of members to fill in and no feature parse
 - **Legacy parsers still exist** (about 20 folders read transcript rows directly:
   `src/claude/lib/usage/session-rows.ts` for `continued-in`, `src/utils/ai/transcripts/`). Do not copy them. When a
   change touches one, move the fact it reads into a reader member first.
+- **Lint enforces it**: `no-transcript-format-outside-readers` in `scripts/ci/lint-rules.ts` fails a transcript record
+  type or field literal (`"continued-in"`, `"turn_context"`, `'"type":"user"'`, …) outside the readers. The files that
+  still do it are listed in `scripts/ci/transcript-format-ratchet.ts`; a file only ever leaves that list.
 - **A reader that caps or skips records says so in the log.** A byte cap, a timeout or a skipped row that hides
   newer records logs the path, the cap and what was missed, so a frozen age or a missing prompt is found from
   `~/.genesis-tools/logs/` and not by a user.
