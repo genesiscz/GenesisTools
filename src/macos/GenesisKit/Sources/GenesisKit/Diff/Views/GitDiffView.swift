@@ -26,9 +26,22 @@ public struct GitDiffView: View {
         self.onBlameOpen = onBlameOpen
     }
 
+    /// The renderer's last failure sentence, shown over the page until a render succeeds or Reload is pressed.
+    @State private var failure: String?
+    @State private var reloads = 0
+
     public var body: some View {
         if PierreWebDiffRenderer.isBundled {
-            Renderer(files: files, options: options, blame: blame, onBlameOpen: onBlameOpen)
+            Renderer(files: files, options: options, blame: blame, onBlameOpen: onBlameOpen, reloads: reloads) { failure = $0 }
+                .overlay {
+                    if let failure {
+                        GitFailureNotice(GitFailure(message: failure), retryLabel: "Reload the diff") {
+                            self.failure = nil
+                            reloads += 1
+                        }
+                        .padding(16)
+                    }
+                }
         } else {
             Text("This app does not bundle the diff viewer page.")
                 .font(.system(size: 12))
@@ -42,6 +55,10 @@ public struct GitDiffView: View {
         let options: DiffViewOptions
         let blame: AgentBlamePayload?
         let onBlameOpen: ((Int) -> Void)?
+        /// Bumped by Reload: the page loads again and gets the files again.
+        let reloads: Int
+        /// The renderer failed (its one sentence), or rendered again (nil).
+        let onFailure: (String?) -> Void
 
         func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -52,8 +69,16 @@ public struct GitDiffView: View {
             c.options = options
             c.files = files
             c.onBlameOpen = onBlameOpen
+            c.onFailure = onFailure
+            c.reloads = reloads
             renderer.onEvent = { [weak c] event in
-                if case .blameOpen(let index) = event { c?.onBlameOpen?(index) }
+                switch event {
+                case .blameOpen(let index): c?.onBlameOpen?(index)
+                // On the next turn: the event can arrive inside a SwiftUI update.
+                case .failed(let shown): DispatchQueue.main.async { c?.onFailure?(shown) }
+                case .rendered: DispatchQueue.main.async { c?.onFailure?(nil) }
+                default: break
+                }
             }
             renderer.apply(options)
             renderer.show(files, fresh: true)
@@ -77,6 +102,11 @@ public struct GitDiffView: View {
                 c.renderer?.show(files, fresh: fresh)
             }
             c.onBlameOpen = onBlameOpen
+            c.onFailure = onFailure
+            if c.reloads != reloads {
+                c.reloads = reloads
+                c.renderer?.reload()
+            }
             if c.blame != blame {
                 c.blame = blame
                 c.renderer?.setBlame(blame ?? AgentBlamePayload(sources: [], files: [:], loaded: files.map(\.id)))
@@ -89,6 +119,8 @@ public struct GitDiffView: View {
             var options = DiffViewOptions()
             var blame: AgentBlamePayload?
             var onBlameOpen: ((Int) -> Void)?
+            var onFailure: ((String?) -> Void)?
+            var reloads = 0
         }
     }
 }
@@ -186,7 +218,10 @@ public struct GitScopePicker: View {
             .accessibilityIdentifier("git-scope-picker")
             if scope == .lastCommit, !history.isEmpty {
                 GitCommitPicker(choices: history.map { GitCommitChoice($0) }, selection: (shown ?? history.first)?.sha,
-                                title: "Commits that changed this file", details: details) { commit = $0.sha }
+                                // The history is read up to a limit: a full list says so, so its count is not taken for the total.
+                                title: history.count >= GitFileDiffModel.historyLimit
+                                    ? "The newest \(history.count) commits that changed this file" : "Commits that changed this file",
+                                details: details) { commit = $0.sha }
                     .instantTooltip("Any commit that changed this file")
                     .accessibilityIdentifier("git-commit-picker")
             }
@@ -204,6 +239,9 @@ struct GitScopeList: View {
     let shown: GitCommit?
     let pick: (GitFileScope) -> Void
     @State private var highlighted: GitFileScope?
+    /// When a key last moved the highlight: a pointer that only bumps the mouse right after does not take it back,
+    /// so Return picks the row the keys chose (the commit chooser's rule).
+    @State private var keyMovedAt = Date.distantPast
     @FocusState private var focused: Bool
 
     static let width: CGFloat = 360
@@ -288,7 +326,8 @@ struct GitScopeList: View {
         .buttonStyle(GitChooserRowStyle())
         .background(GitChooserRowBackground(highlighted: highlighted == scope))
         .onHover { inside in
-            if inside, highlighted != scope { highlighted = scope }
+            guard inside, highlighted != scope, Date().timeIntervalSince(keyMovedAt) > 0.4 else { return }
+            highlighted = scope
         }
         .accessibilityLabel(Text(verbatim: "\(scope.title), \(scope.summary(base: base, shown: shown))\(counts[scope].map { ", \(Self.spoken($0))" } ?? "")"))
         .accessibilityAddTraits(current ? .isSelected : [])
@@ -319,6 +358,7 @@ struct GitScopeList: View {
         let all = GitFileScope.allCases
         let index = all.firstIndex(of: highlighted ?? selection) ?? 0
         highlighted = all[min(max(index + step, 0), all.count - 1)]
+        keyMovedAt = Date()
         return .handled
     }
 

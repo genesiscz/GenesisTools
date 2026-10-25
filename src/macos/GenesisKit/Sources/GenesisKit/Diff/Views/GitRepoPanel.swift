@@ -221,6 +221,8 @@ final class GitRepoPanelLists: ObservableObject {
 
     @Published private(set) var lists = Lists()
     private var inputs: Inputs?
+    /// The inputs `lists` were derived from; an empty state waits for them, or a stale list would flash "no match".
+    private(set) var settled: Inputs?
     private var ticket = 0
 
     func lists(for root: URL) -> Lists {
@@ -235,12 +237,13 @@ final class GitRepoPanelLists: ObservableObject {
         let ticket = ticket
         Task.detached(priority: .userInitiated) { [weak self] in
             let lists = Self.derive(entries, dates: dates, inputs: inputs)
-            await self?.apply(lists, ticket: ticket)
+            await self?.apply(lists, inputs: inputs, ticket: ticket)
         }
     }
 
-    private func apply(_ lists: Lists, ticket: Int) {
+    private func apply(_ lists: Lists, inputs: Inputs, ticket: Int) {
         guard ticket == self.ticket else { return }
+        settled = inputs
         self.lists = lists
     }
 
@@ -285,6 +288,9 @@ public struct GitRepoPanel: View {
     @State private var shown: [String: Int] = [:]
     /// The row "Show the open file" picked, lit for a moment.
     @State private var flash: String?
+    /// The row the keys move (a file row's id or a folder row's `folderRowID`); Return opens it.
+    @State private var keyed: String?
+    @FocusState private var listFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// The open file, relative to the repository's root: the reveal button scrolls to its row.
     var revealPath: String?
@@ -316,6 +322,10 @@ public struct GitRepoPanel: View {
 
     private func panel(_ proxy: ScrollViewProxy) -> some View {
         LazyVStack(alignment: .leading, spacing: 1) {
+            if let failure = repo.failure {
+                GitFailureNotice(failure) { repo.retry() }
+                    .padding(.vertical, 4)
+            }
             if let status = repo.status {
                 branch(status)
                 controls(proxy)
@@ -326,11 +336,14 @@ public struct GitRepoPanel: View {
                 if showUntracked {
                     untracked(lists)
                 }
-                if status.entries.isEmpty {
-                    Text("No uncommitted changes.")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
+                emptyState(status, lists)
+            } else if repo.failure == nil {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Reading the repository")
                 }
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
             }
             if !log.commits.isEmpty {
                 Text("Recent commits")
@@ -338,6 +351,19 @@ public struct GitRepoPanel: View {
                     .padding(.top, 10)
                 GitCommitList(commits: log.commits, onOpen: onOpenCommit)
             }
+        }
+        .focusable()
+        .focused($listFocused)
+        .focusEffectDisabled()
+        .onKeyPress(.upArrow, phases: [.down, .repeat]) { _ in moveKeyed(-1, proxy) }
+        .onKeyPress(.downArrow, phases: [.down, .repeat]) { _ in moveKeyed(1, proxy) }
+        .onKeyPress(.return) { activateKeyed(open: nil) }
+        .onKeyPress(.rightArrow) { activateKeyed(open: true) }
+        .onKeyPress(.leftArrow) { activateKeyed(open: false) }
+        .onKeyPress(.escape) {
+            guard keyed != nil else { return .ignored }
+            keyed = nil
+            return .handled
         }
         .task(id: GitChangeDates.Key(root: repo.root, generation: repo.generation)) {
             dates.load(root: repo.root, entries: repo.status?.entries ?? [], generation: repo.generation)
@@ -348,18 +374,66 @@ public struct GitRepoPanel: View {
     }
 
     private func branch(_ status: GitRepoStatus) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: "arrow.triangle.branch")
-            Text(verbatim: status.branch)
-                .font(.system(size: 12, weight: .semibold))
-                .lineLimit(1)
-            if status.ahead > 0 { Text(verbatim: "↑\(status.ahead)").foregroundStyle(.secondary) }
-            if status.behind > 0 { Text(verbatim: "↓\(status.behind)").foregroundStyle(.secondary) }
+        let tracking = Self.trackingText(status)
+        return HStack(spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.triangle.branch")
+                Text(verbatim: status.branch)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                if status.ahead > 0 { Text(verbatim: "↑\(status.ahead)").foregroundStyle(.secondary) }
+                if status.behind > 0 { Text(verbatim: "↓\(status.behind)").foregroundStyle(.secondary) }
+            }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text(verbatim: "Branch \(status.branch), \(tracking)"))
+            .instantTooltip(tracking)
             Spacer(minLength: 0)
             IconButton(systemName: "arrow.clockwise", tooltip: "Read the repository's status again", size: 11) { repo.refresh() }
         }
         .font(.system(size: 11))
-        .instantTooltip(status.upstream.map { "Tracks \($0)" } ?? "No upstream branch")
+    }
+
+    /// The branch's upstream and its ahead and behind counts, in words.
+    static func trackingText(_ status: GitRepoStatus) -> String {
+        guard let upstream = status.upstream else { return "No upstream branch" }
+        var counts: [String] = []
+        if status.ahead > 0 { counts.append("\(Plural.count(status.ahead, "commit")) ahead") }
+        if status.behind > 0 { counts.append("\(Plural.count(status.behind, "commit")) behind") }
+        return "Tracks \(upstream)" + (counts.isEmpty ? ", up to date" : ": " + counts.joined(separator: ", "))
+    }
+
+    /// Why the lists are empty: a clean repository, a filter that matches nothing, or untracked files hidden.
+    @ViewBuilder
+    private func emptyState(_ status: GitRepoStatus, _ lists: GitRepoPanelLists.Lists) -> some View {
+        let shownCount = lists.staged.count + lists.changed.count + (showUntracked ? lists.untrackedTotal : 0)
+        if status.entries.isEmpty {
+            emptyText("No uncommitted changes.")
+        } else if shownCount == 0, derived.settled == inputs {
+            if !filter.isEmpty {
+                emptyRow("No file matches “\(filter)”.", action: "Clear filter") { filter = "" }
+            } else if !showUntracked {
+                let hidden = status.entries.filter { $0.unstaged == .untracked }.count
+                emptyRow("\(Plural.count(hidden, "untracked file")) \(hidden == 1 ? "is" : "are") hidden.", action: "Show") { showUntracked = true }
+            }
+        }
+    }
+
+    private func emptyText(_ text: String) -> some View {
+        Text(verbatim: text)
+            .font(.system(size: 11))
+            .foregroundStyle(.secondary)
+            .padding(.vertical, 4)
+    }
+
+    private func emptyRow(_ text: String, action: String, perform: @escaping () -> Void) -> some View {
+        HStack(spacing: 8) {
+            emptyText(text)
+            Button(action, action: perform)
+                .buttonStyle(.genHoverPlain())
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+        }
+        .accessibilityIdentifier("git-repo-empty")
     }
 
     /// The sort button (a click takes the next order, a right-click lists them all), the filter, the untracked switch.
@@ -394,6 +468,11 @@ public struct GitRepoPanel: View {
                 .textFieldStyle(.roundedBorder)
                 .controlSize(.small)
                 .font(.system(size: 11))
+                .onExitCommand { filter = "" }
+                .accessibilityLabel("Filter files")
+            if !filter.isEmpty {
+                IconButton(systemName: "xmark.circle.fill", tooltip: "Clear the filter (Esc)", size: 11, tint: .secondary) { filter = "" }
+            }
             let listed = revealTarget(in: derived.lists(for: repo.root)) != nil
             IconButton(systemName: "scope", tooltip: listed ? "Show the open file in the list" : "The open file has no changes here", size: 11) {
                 reveal(proxy)
@@ -511,13 +590,13 @@ public struct GitRepoPanel: View {
                     .font(.system(size: 11.5))
                     .lineLimit(1)
                 Text(verbatim: (group.folder as NSString).deletingLastPathComponent)
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.head)
                 Spacer(minLength: 0)
-                Text(verbatim: "\(group.files.count) files")
-                    .font(.system(size: 10))
+                Text(verbatim: Plural.count(group.files.count, "file"))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .fixedSize()
                 if order == .lastUpdate, let newest {
@@ -532,10 +611,80 @@ public struct GitRepoPanel: View {
         // The system tooltip, not `instantTooltip`: that one puts an AppKit hover view on every row, and scrolling the
         // list made and dropped one per row (Martin, 2026-10-13: the panel lagged while scrolling).
         .help(group.folder + "/")
+        .overlay(keyedRing(Self.folderRowID(group.folder)))
+        .accessibilityValue(open ? "Expanded" : "Collapsed")
+        .id(Self.folderRowID(group.folder))
+    }
+
+    static func folderRowID(_ folder: String) -> String { "folder-row:" + folder }
+
+    private func keyedRing(_ id: String) -> some View {
+        RoundedRectangle(cornerRadius: 5)
+            .strokeBorder(Color.accentColor.opacity(listFocused && keyed == id ? 0.8 : 0), lineWidth: 1.5)
+            .allowsHitTesting(false)
+    }
+
+    /// The rows the keys walk, in the order the panel draws them.
+    enum KeyRow: Equatable {
+        case file(GitStatusEntry, staged: Bool, id: String)
+        case folder(String)
+
+        var id: String {
+            switch self {
+            case .file(_, _, let id): return id
+            case .folder(let folder): return GitRepoPanel.folderRowID(folder)
+            }
+        }
+    }
+
+    static func keyRows(_ lists: GitRepoPanelLists.Lists, untracked: Bool, isOpen: (String) -> Bool, limit: (String) -> Int) -> [KeyRow] {
+        var rows: [KeyRow] = []
+        rows += lists.staged.prefix(limit("staged")).map { .file($0, staged: true, id: "staged:" + $0.path) }
+        rows += lists.changed.prefix(limit("changes")).map { .file($0, staged: false, id: "changes:" + $0.path) }
+        guard untracked else { return rows }
+        for group in lists.groups {
+            rows.append(.folder(group.folder))
+            if isOpen(group.folder) {
+                let key = "folder:" + group.folder
+                rows += group.files.prefix(limit(key)).map { .file($0, staged: false, id: key + ":" + $0.path) }
+            }
+        }
+        rows += lists.loose.prefix(limit("untracked")).map { .file($0, staged: false, id: "untracked:" + $0.path) }
+        return rows
+    }
+
+    private var keyRows: [KeyRow] {
+        Self.keyRows(derived.lists(for: repo.root), untracked: showUntracked,
+                     isOpen: { openFolders.contains($0) || !filter.isEmpty }, limit: { shown[$0] ?? Self.page })
+    }
+
+    private func moveKeyed(_ step: Int, _ proxy: ScrollViewProxy) -> KeyPress.Result {
+        let rows = keyRows
+        guard !rows.isEmpty else { return .ignored }
+        let index = rows.firstIndex { $0.id == keyed }.map { min(max($0 + step, 0), rows.count - 1) } ?? (step > 0 ? 0 : rows.count - 1)
+        let id = rows[index].id
+        keyed = id
+        proxy.scrollTo(id)
+        return .handled
+    }
+
+    /// Return opens the keyed file or flips its folder; Right and Left open and close a folder.
+    private func activateKeyed(open: Bool?) -> KeyPress.Result {
+        guard let row = keyRows.first(where: { $0.id == keyed }) else { return .ignored }
+        switch row {
+        case .file(let entry, let staged, _):
+            guard open == nil else { return .ignored }
+            onOpenFile(entry, staged)
+        case .folder(let folder):
+            let isOpen = openFolders.contains(folder)
+            if open ?? !isOpen { openFolders.insert(folder) } else { openFolders.remove(folder) }
+        }
+        return .handled
     }
 
     private func row(_ entry: GitStatusEntry, staged: Bool, indent: CGFloat, id: String) -> some View {
         Button {
+            keyed = id
             onOpenFile(entry, staged)
         } label: {
             HStack(spacing: 6) {
@@ -546,7 +695,7 @@ public struct GitRepoPanel: View {
                     .font(.system(size: 11.5))
                     .lineLimit(1)
                 Text(verbatim: (entry.path as NSString).deletingLastPathComponent)
-                    .font(.system(size: 10))
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.head)
@@ -562,13 +711,15 @@ public struct GitRepoPanel: View {
         }
         .buttonStyle(RowButtonStyle(cornerRadius: 5))
         .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(flash == id ? 0.3 : 0)))
+        .overlay(keyedRing(id))
         .help(entry.path)
+        .accessibilityAddTraits(entry.path == revealPath ? .isSelected : [])
         .id(id)
     }
 
     private func age(_ date: Date) -> some View {
         Text(verbatim: LiveTimeFormat.text(.compact, date, now: Date()) ?? "")
-            .font(.system(size: 10))
+            .font(.system(size: 11))
             .monospacedDigit()
             .foregroundStyle(.secondary)
             .fixedSize()

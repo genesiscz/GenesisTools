@@ -82,6 +82,8 @@ public final class GitRepos: ObservableObject {
 public final class GitRepoModel: ObservableObject {
     public let root: URL
     @Published public private(set) var status: GitRepoStatus?
+    /// The last status read failed: `status` keeps the last good answer, and the panel says the refresh failed.
+    @Published public private(set) var failure: GitFailure?
     /// Every completed refresh invalidates followers, even when HEAD or index changes leave status equal.
     @Published public private(set) var generation = 0
     private var watch: DispatchSourceFileSystemObject?
@@ -106,6 +108,12 @@ public final class GitRepoModel: ObservableObject {
         watch?.cancel()
     }
 
+    /// Reads the status now: the Try again of a failed read.
+    public func retry() {
+        pending?.cancel()
+        load()
+    }
+
     /// A refresh a quarter second after the last call: a commit writes the index several times.
     public func refresh() {
         pending?.cancel()
@@ -124,13 +132,21 @@ public final class GitRepoModel: ObservableObject {
         let root = self.root
         DispatchQueue.global(qos: .utility).async {
             let span = PerfSpans.begin("git.repoStatus", root.lastPathComponent)
-            let status = try? provider.repoStatus(root, commits: 0)
+            let read = Result { try provider.repoStatus(root, commits: 0) }
             span.end()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 self.loading = false
-                if self.status != status {
-                    self.status = status
+                switch read {
+                case .success(let status):
+                    if self.failure != nil { self.failure = nil }
+                    if self.status != status {
+                        self.status = status
+                    }
+                case .failure(let error):
+                    // The last good list stays: a locked index or a slow disk must not blank the panel.
+                    GenesisKit.log("git: status of \(root.lastPathComponent) failed: \(error)")
+                    self.failure = GitFailure(error, fallback: "Could not read this repository's status. Try again.")
                 }
                 self.generation += 1
                 if self.again {

@@ -9,13 +9,19 @@
 
 import SwiftUI
 
-/// Commits newest first: short id, subject, author and age. A click opens one; the context menu compares.
+/// Commits newest first: short id, subject, author and age. A click opens one; the context menu, a button on the
+/// hovered or keyed row and the C key compare. With the keyboard in the list, Up and Down move, Return opens, C
+/// compares with the current text and Esc clears.
 public struct GitCommitList: View {
     let commits: [GitCommit]
     var selected: String?
     var onOpen: (GitCommit) -> Void
     var onCompare: ((GitCommit) -> Void)?
     var onCompareWithSelected: ((GitCommit) -> Void)?
+    /// The row the keys move, apart from the open commit (`selected`).
+    @State private var keyed: String?
+    @State private var hovered: String?
+    @FocusState private var focused: Bool
 
     public init(commits: [GitCommit], selected: String? = nil, onOpen: @escaping (GitCommit) -> Void,
                 onCompare: ((GitCommit) -> Void)? = nil, onCompareWithSelected: ((GitCommit) -> Void)? = nil) {
@@ -29,24 +35,93 @@ public struct GitCommitList: View {
     public var body: some View {
         LazyVStack(alignment: .leading, spacing: 1) {
             ForEach(commits) { commit in
-                Button {
-                    onOpen(commit)
-                } label: {
-                    GitCommitRow(commit: commit, selected: commit.sha == selected)
-                }
-                .buttonStyle(RowButtonStyle(cornerRadius: 5))
-                .contextMenu {
-                    if let onCompare {
-                        Button("Compare with the current text") { onCompare(commit) }
-                    }
-                    if let onCompareWithSelected, let selected, selected != commit.sha {
-                        Button("Compare with the selected commit") { onCompareWithSelected(commit) }
-                    }
-                    Button("Copy commit id") { Clipboard.copy(commit.sha) }
-                }
-                .accessibilityIdentifier("git-commit-\(commit.short)")
+                row(commit)
             }
         }
+        .focusable()
+        .focused($focused)
+        .focusEffectDisabled()
+        .onKeyPress(.upArrow, phases: [.down, .repeat]) { _ in move(-1) }
+        .onKeyPress(.downArrow, phases: [.down, .repeat]) { _ in move(1) }
+        .onKeyPress(.return) {
+            guard let commit = keyedCommit else { return .ignored }
+            onOpen(commit)
+            return .handled
+        }
+        .onKeyPress(characters: CharacterSet(charactersIn: "c")) { press in
+            guard press.modifiers.isEmpty, let onCompare, let commit = keyedCommit else { return .ignored }
+            onCompare(commit)
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            guard keyed != nil else { return .ignored }
+            keyed = nil
+            return .handled
+        }
+    }
+
+    private var keyedCommit: GitCommit? {
+        keyed.flatMap { sha in commits.first { $0.sha == sha } }
+    }
+
+    private func move(_ step: Int) -> KeyPress.Result {
+        guard !commits.isEmpty else { return .ignored }
+        let start = commits.firstIndex { $0.sha == (keyed ?? selected) }
+        let index = start.map { min(max($0 + step, 0), commits.count - 1) } ?? (step > 0 ? 0 : commits.count - 1)
+        keyed = commits[index].sha
+        return .handled
+    }
+
+    private func row(_ commit: GitCommit) -> some View {
+        let open = commit.sha == selected
+        let showsCompare = onCompare != nil && (hovered == commit.sha || (focused && keyed == commit.sha))
+        return HStack(spacing: 0) {
+            Button {
+                keyed = commit.sha
+                onOpen(commit)
+            } label: {
+                GitCommitRow(commit: commit, selected: open)
+            }
+            .buttonStyle(RowButtonStyle(cornerRadius: 5))
+            .accessibilityAddTraits(open ? .isSelected : [])
+            .accessibilityAction(named: "Copy commit id") { Clipboard.copy(commit.sha, what: "commit id") }
+            .accessibilityActions {
+                if let onCompare {
+                    Button("Compare with the current text") { onCompare(commit) }
+                }
+                if let onCompareWithSelected, let selected, selected != commit.sha {
+                    Button("Compare with the selected commit") { onCompareWithSelected(commit) }
+                }
+            }
+            if let onCompare {
+                // Space kept while hidden, so the row's text does not reflow under the pointer.
+                IconButton(systemName: "arrow.left.arrow.right", tooltip: "Compare with the current text (C)", size: 10.5, tint: .secondary) {
+                    onCompare(commit)
+                }
+                .opacity(showsCompare ? 1 : 0)
+                .allowsHitTesting(showsCompare)
+                .accessibilityHidden(true)
+                .frame(width: 24)
+            }
+        }
+        .overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .strokeBorder(Color.accentColor.opacity(focused && keyed == commit.sha ? 0.8 : 0), lineWidth: 1.5)
+                .allowsHitTesting(false)
+        )
+        .onHover { inside in
+            if inside { hovered = commit.sha } else if hovered == commit.sha { hovered = nil }
+        }
+        .contextMenu {
+            if let onCompare {
+                Button("Compare with the current text") { onCompare(commit) }
+            }
+            if let onCompareWithSelected, let selected, selected != commit.sha {
+                Button("Compare with the selected commit") { onCompareWithSelected(commit) }
+            }
+            Button("Copy commit id") { Clipboard.copy(commit.sha, what: "commit id") }
+        }
+        .accessibilityIdentifier("git-commit-\(commit.short)")
     }
 }
 
@@ -61,13 +136,13 @@ struct GitCommitRow: View {
                 .lineLimit(2)
             HStack(spacing: 6) {
                 Text(verbatim: commit.short)
-                    .font(.system(size: 10, design: .monospaced))
+                    .font(.system(size: 11, design: .monospaced))
                 Text(verbatim: commit.author)
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 LiveAgo(date: commit.date, style: .brief)
             }
-            .font(.system(size: 10))
+            .font(.system(size: 11))
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 8)
@@ -86,8 +161,10 @@ public struct GitCommitView: View {
     var rendered: ((DiffFile) -> AnyView?)?
     @State private var files: [DiffFile] = []
     @State private var picked: String?
-    @State private var error: String?
+    @State private var failure: GitFailure?
     @State private var loaded = false
+    @State private var attempt = 0
+    @FocusState private var filesFocused: Bool
 
     public init(root: URL, commit: GitCommit, rendered: ((DiffFile) -> AnyView?)? = nil) {
         self.root = root
@@ -102,6 +179,7 @@ public struct GitCommitView: View {
                     ForEach(files) { file in
                         Button {
                             picked = file.id
+                            filesFocused = true
                         } label: {
                             HStack(spacing: 6) {
                                 GitChangeMark(Self.kind(file.status))
@@ -109,23 +187,35 @@ public struct GitCommitView: View {
                                     .font(.system(size: 11.5, weight: picked == file.id ? .semibold : .regular))
                                     .lineLimit(1)
                                 Spacer(minLength: 4)
-                                GitLineCounts(additions: file.additions, deletions: file.deletions, size: 10)
+                                GitLineCounts(additions: file.additions, deletions: file.deletions, size: 11)
                             }
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(picked == file.id ? 0.14 : 0)))
                         }
                         .buttonStyle(RowButtonStyle(cornerRadius: 5))
                         .instantTooltip(file.path, monospaced: true)
+                        .accessibilityAddTraits(picked == file.id ? .isSelected : [])
                     }
                 }
                 .padding(6)
+                // Up and Down pick the file before or after: the diff beside follows.
+                .focusable()
+                .focused($filesFocused)
+                .onKeyPress(.upArrow, phases: [.down, .repeat]) { _ in step(-1) }
+                .onKeyPress(.downArrow, phases: [.down, .repeat]) { _ in step(1) }
             }
             .frame(width: 240)
             Divider()
             Group {
-                if let error {
-                    Text(verbatim: error).foregroundStyle(.secondary)
+                if let failure {
+                    GitFailureNotice(failure) {
+                        self.failure = nil
+                        loaded = false
+                        attempt += 1
+                    }
+                    .padding(16)
                 } else if let file = files.first(where: { $0.id == picked }) {
                     if let custom = rendered?(file) {
                         custom
@@ -135,12 +225,24 @@ public struct GitCommitView: View {
                 } else if loaded {
                     Text("This commit changed no files.").foregroundStyle(.secondary)
                 } else {
-                    ProgressView().controlSize(.small)
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Reading the commit")
+                    }
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task(id: commit.sha) { await load() }
+        .task(id: "\(commit.sha) \(attempt)") { await load() }
+    }
+
+    private func step(_ by: Int) -> KeyPress.Result {
+        guard !files.isEmpty else { return .ignored }
+        let index = files.firstIndex { $0.id == picked }.map { min(max($0 + by, 0), files.count - 1) } ?? 0
+        picked = files[index].id
+        return .handled
     }
 
     private func load() async {
@@ -154,8 +256,8 @@ public struct GitCommitView: View {
         case .success(let files):
             self.files = files
             picked = files.first?.id
-        case .failure(let failure):
-            error = "\(failure)"
+        case .failure(let error):
+            failure = GitFailure(error, fallback: "Git could not read this commit. Try again.")
         }
         loaded = true
     }

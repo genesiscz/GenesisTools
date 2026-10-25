@@ -152,6 +152,15 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
         webView.evaluateJavaScript("(() => { const host = document.getElementById('review'); if (host) host.scrollTop += \(delta); })()")
     }
 
+    /// Loads the page again, after a failure the user saw: the next `ready` replays the latest calls and the files.
+    /// A reload by hand also lifts the limit on reloads after the page's process died.
+    public func reload() {
+        GenesisKit.log("diff renderer: reload by hand")
+        recentTerminations = []
+        ready = false
+        webView.reload()
+    }
+
     public func show(_ files: [DiffFile], fresh: Bool) {
         self.files = files
         filesFresh = fresh

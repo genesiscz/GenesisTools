@@ -27,7 +27,13 @@ public final class GitFileDiffModel: ObservableObject {
     @Published public private(set) var history: [GitCommit] = []
     /// The commit `lastCommit` shows: the one picked, else the newest.
     @Published public private(set) var commit: GitCommit?
+    /// The last failure in full: `phase` holds its sentence, this adds the raw text for Details.
+    @Published public private(set) var failure: GitFailure?
     private var ticket = 0
+    /// The last load, for `retry`.
+    private var lastLoad: (() -> Void)?
+    /// How many commits of a file's history the chooser lists.
+    public nonisolated static let historyLimit = 30
     var makeDiff: @Sendable (String, String?, String?) -> DiffFile = { GitFileDiffModel.diffFile(path: $0, old: $1, new: $2) }
 
     public init() {}
@@ -39,6 +45,7 @@ public final class GitFileDiffModel: ObservableObject {
 
     /// nil is a deleted working file; an empty String is a present empty file.
     func load(_ url: URL, workingText text: String?, scope: GitFileScope, commit pick: String? = nil) {
+        lastLoad = { [weak self] in self?.load(url, workingText: text, scope: scope, commit: pick) }
         ticket += 1
         let ticket = self.ticket
         if file == nil { phase = .loading }
@@ -55,10 +62,9 @@ public final class GitFileDiffModel: ObservableObject {
                 guard let self, self.ticket == ticket else { return }
                 switch result {
                 case .failure(let error):
-                    self.file = nil
-                    self.oldText = nil
-                    self.phase = .failed("\(error)")
+                    self.fail(error)
                 case .success(let (sides, file)):
+                    self.failure = nil
                     self.history = sides.history
                     self.commit = sides.commit
                     self.oldText = sides.old
@@ -80,6 +86,7 @@ public final class GitFileDiffModel: ObservableObject {
     }
 
     func loadCompare(_ url: URL, workingText text: String?, old: GitCommit, new: GitCommit?) {
+        lastLoad = { [weak self] in self?.loadCompare(url, workingText: text, old: old, new: new) }
         ticket += 1
         let ticket = self.ticket
         if file == nil { phase = .loading }
@@ -105,10 +112,9 @@ public final class GitFileDiffModel: ObservableObject {
                 guard let self, self.ticket == ticket else { return }
                 switch result {
                 case .failure(let error):
-                    self.file = nil
-                    self.oldText = nil
-                    self.phase = .failed("\(error)")
+                    self.fail(error)
                 case .success(let (sides, file)):
+                    self.failure = nil
                     self.oldText = sides.old
                     if sides.old == sides.new {
                         self.file = nil
@@ -120,6 +126,21 @@ public final class GitFileDiffModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Runs the last load again: the Try again of a failed diff.
+    public func retry() {
+        if file == nil { phase = .loading }
+        lastLoad?()
+    }
+
+    private func fail(_ error: Error) {
+        let failure = (error as? GitFailure.Thrown)?.failure
+            ?? GitFailure(error, fallback: "Git could not read this file's versions. Try again.")
+        file = nil
+        oldText = nil
+        self.failure = failure
+        phase = .failed(failure.message)
     }
 
     struct Sides {
@@ -136,7 +157,9 @@ public final class GitFileDiffModel: ObservableObject {
         guard let root = queries.root(of: url.deletingLastPathComponent()), let path = GitQueries.relative(url, to: root) else {
             throw ReviewError.notRepository(url.deletingLastPathComponent().path)
         }
-        let history = (try? provider.history(of: url, limit: 30)) ?? []
+        // A failed history read is not "no commits": it only fails the scope that needs the history.
+        let historyRead = Result { try provider.history(of: url, limit: Self.historyLimit) }
+        let history = (try? historyRead.get()) ?? []
         func at(_ revision: GitRevision, path: String = path) throws -> String? {
             try queries.contents(path: path, in: root, at: revision)
         }
@@ -150,6 +173,9 @@ public final class GitFileDiffModel: ObservableObject {
             return Sides(path: path, old: try at(.head), new: text, history: history, commit: nil, emptyReason: "No changes since the last commit.")
         case .lastCommit:
             let picked = try pick.map { try queries.pickedCommit($0, of: url, in: root) }
+            if picked == nil, case .failure(let error) = historyRead {
+                throw GitFailure.Thrown(failure: GitFailure(message: "Could not read this file's history. Try again.", detail: "\(error)"))
+            }
             guard let commit = picked ?? history.first else {
                 return Sides(path: path, old: nil, new: nil, history: history, commit: nil, emptyReason: "This file has no commits yet.")
             }
