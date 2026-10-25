@@ -115,8 +115,11 @@ final class MarkdownDocument: ObservableObject, Identifiable {
         do {
             try draft.write(to: url, atomically: true, encoding: .utf8)
         } catch {
-            saveError = error.localizedDescription
-            return .failed(error.localizedDescription)
+            // One plain sentence for the reader; the system's own wording goes to the log.
+            GenesisKit.log("markdown: save of \(url.path) failed: \(error.localizedDescription)")
+            let message = "The note could not be saved. Check that the file can be written and the disk has room, then save again."
+            saveError = message
+            return .failed(message)
         }
         saveError = nil
         missing = false

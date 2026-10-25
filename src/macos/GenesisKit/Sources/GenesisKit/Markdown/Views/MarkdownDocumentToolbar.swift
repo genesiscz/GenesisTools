@@ -81,6 +81,7 @@ struct MarkdownDocumentToolbar: View {
     @ObservedObject private var repos = GitRepos.shared
     /// Observed so a key changed in Keyboard Shortcuts redraws these tooltips.
     @ObservedObject private var keymap = MarkdownKeymap.shared
+    @GenReduceMotion private var reduceMotion
 
     /// Read, Split, Source, and Changes while git is on and the file is in a repository (or Changes is open).
     private var modes: [MarkdownViewMode] {
@@ -166,7 +167,7 @@ struct MarkdownDocumentToolbar: View {
                         "arrow.triangle.branch", label: "Git",
                         tint: model.showGit ? model.theme.accent : nil,
                         tooltip: "Git: this file's history and the repository", id: "markdown-git-toggle", labels: labels,
-                        action: { withAnimation(GenAnimation.quick) { model.showGit.toggle() } }
+                        action: { GenMotion.perform(expanding: !model.showGit, reduceMotion: reduceMotion) { model.showGit.toggle() } }
                     )
                 }
             }
@@ -286,11 +287,11 @@ struct MarkdownDocumentToolbar: View {
     }
 
     private func toggleFiles() {
-        withAnimation(GenAnimation.quick) { model.showFiles.toggle() }
+        GenMotion.perform(expanding: !model.showFiles, reduceMotion: reduceMotion) { model.showFiles.toggle() }
     }
 
     private func toggleOutline() {
-        withAnimation(GenAnimation.quick) { model.showOutline.toggle() }
+        GenMotion.perform(expanding: !model.showOutline, reduceMotion: reduceMotion) { model.showOutline.toggle() }
     }
 
     private func revealInFinder() {

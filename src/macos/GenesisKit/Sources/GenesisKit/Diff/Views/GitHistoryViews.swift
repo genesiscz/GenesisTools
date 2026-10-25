@@ -116,7 +116,7 @@ public struct GitCommitView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .buttonStyle(RowButtonStyle(cornerRadius: 5))
-                        .help(file.path)
+                        .instantTooltip(file.path, monospaced: true)
                     }
                 }
                 .padding(6)

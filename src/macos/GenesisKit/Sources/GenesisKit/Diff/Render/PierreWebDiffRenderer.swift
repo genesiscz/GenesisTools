@@ -62,6 +62,12 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
     public var view: NSView { webView }
     public var onEvent: ((DiffRendererEvent) -> Void)?
 
+    /// The window shows `shown`, one plain sentence. The method name and the raw error go to the log only.
+    private func fail(_ detail: String, shown: String = "The diff could not be drawn. Reload it to try again.") {
+        GenesisKit.log("diff renderer: \(detail)")
+        onEvent?(.failed(shown))
+    }
+
     private var ready = false
     /// The latest call per method, replayed on every `ready`: the first load, and the reload after the
     /// web content process dies (memory pressure), which would otherwise leave the pane blank. One
@@ -178,7 +184,7 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
                 files: files[batches[index]].map(BridgeFile.init)
             )
             guard let data = try? JSONEncoder().encode(batch), let json = String(data: data, encoding: .utf8) else {
-                DispatchQueue.main.async { self?.onEvent?(.failed("could not encode a batch of \(batch.files.count) files")) }
+                DispatchQueue.main.async { self?.fail("could not encode a batch of \(batch.files.count) files") }
                 return
             }
 
@@ -191,7 +197,7 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
 
                 self.webView.evaluateJavaScript(script) { [weak self] _, error in
                     if let error {
-                        self?.onEvent?(.failed("addFiles: \(error.localizedDescription)"))
+                        self?.fail("addFiles: \(error.localizedDescription)")
                     }
                     if index + 1 < batches.count {
                         self?.sendBatch(index + 1, batches, files: files, fresh: fresh, generation: generation, span: span)
@@ -254,7 +260,7 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
         guard ready, let data = try? JSONEncoder().encode(argument), let json = String(data: data, encoding: .utf8) else { return }
         webView.evaluateJavaScript("window.genesisDiff.\(method)(\(json));") { [weak self] _, error in
             if let error {
-                self?.onEvent?(.failed("\(method): \(error.localizedDescription)"))
+                self?.fail("\(method): \(error.localizedDescription)")
             }
         }
     }
@@ -262,7 +268,7 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
     /// The page may still be loading or reloading; its next `ready` message replays the latest calls.
     private func call<T: Encodable>(_ method: String, _ argument: T) {
         guard let data = try? JSONEncoder().encode(argument), let json = String(data: data, encoding: .utf8) else {
-            onEvent?(.failed("could not encode \(method) payload"))
+            fail("could not encode \(method) payload")
             return
         }
 
@@ -272,7 +278,7 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
         if ready {
             webView.evaluateJavaScript(script) { [weak self] _, error in
                 if let error {
-                    self?.onEvent?(.failed("\(method): \(error.localizedDescription)"))
+                    self?.fail("\(method): \(error.localizedDescription)")
                 }
             }
         }
@@ -303,7 +309,10 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
         default:
             // Every other message decodes without renderer state (DiffModel.swift), so tests pin
             // the page's literal shapes against the same code.
-            if let event = DiffRendererEvent(pageMessage: body) {
+            if case .failed(let detail)? = DiffRendererEvent(pageMessage: body) {
+                // The page's own error text is for the log; the user reads one plain sentence.
+                fail("page: \(detail)")
+            } else if let event = DiffRendererEvent(pageMessage: body) {
                 onEvent?(event)
             } else {
                 PerfSpans.log("review.page message dropped: \(type) lacks a field its receiver needs")
@@ -318,7 +327,7 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
         recentTerminations = recentTerminations.filter { now.timeIntervalSince($0) < 60 } + [now]
         guard recentTerminations.count <= 3 else {
             FileHandle.standardError.write(Data("review renderer: web content process ended \(recentTerminations.count) times in 60 s, not reloading\n".utf8))
-            onEvent?(.failed("diff viewer crashed repeatedly; the diff may be too large"))
+            fail("diff viewer crashed repeatedly", shown: "The diff viewer stopped several times in a row. The diff may be too large to show.")
             return
         }
 
@@ -334,11 +343,11 @@ public final class PierreWebDiffRenderer: NSObject, DiffRenderer, WKScriptMessag
     }
 
     public func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        onEvent?(.failed("viewer navigation failed: \(error.localizedDescription)"))
+        fail("viewer navigation failed: \(error.localizedDescription)")
     }
 
     public func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        onEvent?(.failed("viewer did not load: \(error.localizedDescription)"))
+        fail("viewer did not load: \(error.localizedDescription)")
     }
 }
 

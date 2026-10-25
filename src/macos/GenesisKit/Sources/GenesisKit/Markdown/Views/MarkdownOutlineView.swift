@@ -66,6 +66,7 @@ struct MarkdownOutlineView: View {
     /// The model's heading on screen, observed here and nowhere else in the window.
     @ObservedObject var section: MarkdownSectionSpy
     @Namespace private var barNS
+    @GenReduceMotion private var reduceMotion
     @State private var outline = MarkdownOutlineCache()
 
     init(doc: MarkdownDocument, model: MarkdownDocumentsModel) {
@@ -99,7 +100,7 @@ struct MarkdownOutlineView: View {
                 }
             }
             .padding(.bottom, 10)
-            .animation(.easeOut(duration: 0.22), value: section.slug)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: section.slug)
         }
         .background(model.theme.chrome)
         .accessibilityIdentifier("markdown-outline")

@@ -244,6 +244,15 @@ final class MarkdownDefaultAppDialog: NSObject {
         return title
     }
 
+    /// One plain sentence per refusal; the raw error stays in the log.
+    private static func plainReason(_ error: Error?) -> String {
+        switch error {
+        case nil: "macOS kept the previous app"
+        case is MarkdownDefaultApp.DefaultAppError: "macOS does not know this file type"
+        default: "macOS refused the change, so the previous app stays"
+        }
+    }
+
     private func showResult(chosen: [String], failures: [String: Error]) {
         let after = currentStatuses()
         let set = chosen.filter { ext in after.first { $0.ext == ext }?.isDefault == true }
@@ -256,9 +265,10 @@ final class MarkdownDefaultAppDialog: NSObject {
             alert.alertStyle = .warning
             alert.messageText = "Some file types still open in another app"
             let lines = notSet.map { ext in
-                ".\(ext): " + (failures[ext]?.localizedDescription ?? "macOS kept the previous app")
+                ".\(ext): " + Self.plainReason(failures[ext])
             }
-            alert.informativeText = lines.joined(separator: "\n")
+            // The system's own error text is in the log (`viewer: default app refused for …`), not in the dialog.
+            alert.informativeText = lines.joined(separator: "\n") + "\n\nYou can change it in Finder with Get Info, Open with, Change All."
         }
         alert.addButton(withTitle: "OK")
         alert.runModal()

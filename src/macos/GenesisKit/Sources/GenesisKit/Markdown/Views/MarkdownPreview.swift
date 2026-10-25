@@ -400,6 +400,7 @@ public struct MarkdownPreviewView: View {
     @ObservedObject private var config = GenesisKitMarkdownConfiguration.shared
     @State private var flashBlockId: String?
     @State private var flashOn = false
+    @GenReduceMotion private var reduceMotion
     @State private var lastHandledToken = -1
 
     public var body: some View {
@@ -464,12 +465,12 @@ public struct MarkdownPreviewView: View {
         let slug = MarkdownBlocks.slugify(target)
         for block in blocks {
             if case .heading(_, _, let s, _) = block, s == slug {
-                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(block.id, anchor: .top) }
+                GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { proxy.scrollTo(block.id, anchor: .top) }
                 return
             }
             // Block refs: find the paragraph containing "^block"
             if target.hasPrefix("^"), case .paragraph(let text, _) = block, text.contains(target) {
-                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(block.id, anchor: .top) }
+                GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { proxy.scrollTo(block.id, anchor: .top) }
                 return
             }
         }
@@ -487,7 +488,7 @@ public struct MarkdownPreviewView: View {
             ?? blocks.first { b in terms.contains { blockText(b).lowercased().contains($0) } }
         guard let target else { return } // doc not loaded yet — wait for markdown change
         lastHandledToken = highlightToken
-        withAnimation(.easeInOut(duration: 0.35)) {
+        GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
             proxy.scrollTo(target.id, anchor: .center)
         }
         flashBlockId = target.id
@@ -497,9 +498,9 @@ public struct MarkdownPreviewView: View {
     /// Two flash pulses on the matched block.
     private func blink(_ remaining: Int) {
         guard remaining > 0 else { flashBlockId = nil; return }
-        withAnimation(.easeInOut(duration: 0.22)) { flashOn = true }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) { flashOn = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.24) {
-            withAnimation(.easeInOut(duration: 0.22)) { flashOn = false }
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) { flashOn = false }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.26) { blink(remaining - 1) }
         }
     }

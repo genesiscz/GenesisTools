@@ -753,7 +753,7 @@ final class MarkdownDocumentsModel: ObservableObject {
         guard let doc = selected else { return }
         switch doc.save() {
         case .saved, .nothingToSave, .blockedByDiskChange: break
-        case .failed(let message): exportError = "Save failed: \(message)"
+        case .failed(let message): exportError = message
         }
     }
 
