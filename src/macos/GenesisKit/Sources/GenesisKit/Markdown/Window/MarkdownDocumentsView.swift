@@ -1246,7 +1246,9 @@ private struct MarkdownDocumentPane: View {
                 onWikilink: { model.follow($0, from: doc) },
                 highlightQuery: nil,
                 highlightToken: 0,
-                rich: model.renderer == .nativeRich
+                rich: model.renderer == .nativeRich,
+                zoom: model.zoom,
+                theme: model.theme
             )
         }
     }

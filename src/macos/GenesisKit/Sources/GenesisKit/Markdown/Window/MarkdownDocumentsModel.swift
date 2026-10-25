@@ -1154,7 +1154,10 @@ final class MarkdownDocumentsModel: ObservableObject {
         switch route {
         case let .note(note, heading, lines)?:
             open([note])
-            if let lines { reveal(lines) } else if let heading { scrollTarget = heading }
+            // The same heading twice in a row still jumps: the repeat mark makes the target a new value.
+            if let lines { reveal(lines) } else if let heading {
+                scrollTarget = scrollTarget == heading ? heading + MarkdownOutline.repeatMark : heading
+            }
         case let .viewer(file, lines)?:
             open([file])
             if let lines { reveal(lines) }
