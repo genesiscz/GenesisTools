@@ -1,7 +1,9 @@
 // The model a subagent runs on, put in front of its description, so the agents panel row reads
 // `general-purpose  sonnet · Pair one`: the model right after the agent's type, which no hook can rename (a
-// `subagentType` rewrite starts another agent) and the panel draws itself. Two hooks, because the places that draw a description
-// read it at two different moments (live probes, 2026-10-22):
+// `subagentType` rewrite starts another agent). The row itself is Claude Code's `subagentStatusLine` setting, which
+// `mods.agentRow` uses to put the model beside the type (`agent-row.ts`); the engine also replaces a working agent's
+// description there with what it does now. Two hooks, because the places that draw a description read it at two
+// different moments (live probes, 2026-10-22):
 // - The `N background agents launched` block (`├ sonnet · Pair one`) and the Agent row draw the arguments the
 //   model's response recorded. A `tool.call` or `agent.spawn` rewrite comes too late for them, so `turn.step`
 //   rewrites the Agent call's argument JSON as it streams: what leaves the outermost hook is shown and recorded.
