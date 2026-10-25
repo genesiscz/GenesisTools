@@ -969,8 +969,8 @@ private enum StagingFixture {
 final class WidgetStagingTests: XCTestCase {
     private let key = StagingFixture.key
 
-    private func snapshot(draftOption: String?, decisionClick: String = "stage") throws -> String {
-        try StagingFixture.snapshot(draftOption: draftOption, decisionClick: decisionClick)
+    private func snapshot(draftOption: String?, decisionClick: String = "stage", stagedOnly: Bool = false) throws -> String {
+        try StagingFixture.snapshot(draftOption: draftOption, decisionClick: decisionClick, stagedOnly: stagedOnly)
     }
 
     private func names(_ actions: [WidgetJSON]) -> [String] {
