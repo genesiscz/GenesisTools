@@ -427,7 +427,8 @@ private struct MarkdownTabGroupChip: View {
     let model: MarkdownDocumentsModel
     @State private var renaming = false
     @State private var name = ""
-    @State private var targeted = false
+    @State private var dropSide: MarkdownTabDropSide?
+    @State private var width: CGFloat = 0
 
     private var color: Color { MarkdownTabGroupChip.color(for: group.id) }
 
@@ -444,8 +445,8 @@ private struct MarkdownTabGroupChip: View {
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .background(Capsule().fill(color.opacity(targeted ? 0.32 : 0.16)))
-            .overlay(Capsule().strokeBorder(color.opacity(targeted ? 0.9 : 0.4), lineWidth: 1))
+            .background(Capsule().fill(color.opacity(dropSide == .into ? 0.32 : 0.16)))
+            .overlay(Capsule().strokeBorder(color.opacity(dropSide == .into ? 0.9 : 0.4), lineWidth: 1))
             .foregroundStyle(color)
             .contentShape(Capsule())
         }
@@ -455,17 +456,11 @@ private struct MarkdownTabGroupChip: View {
         .accessibilityLabel("\(group.title) group, \(group.tabIDs.count) tabs, \(collapsed ? "folded" : "open")")
         .accessibilityAddTraits(.isHeader)
         .accessibilityIdentifier("markdown-tab-group-" + group.id)
-        .draggable(MarkdownTabDrag.group(group.id))
-        .dropDestination(for: String.self) { items, _ in
-            for item in items {
-                switch MarkdownTabDrag.parse(item) {
-                case .tab(let id): model.dropTab(id, onGroup: group.id)
-                case .group(let id): model.moveGroup(id, before: group.id)
-                case nil: return false
-                }
-            }
-            return true
-        } isTargeted: { targeted = $0 }
+        .draggable(MarkdownTabDrag.begin(.group(group.id)))
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .onDrop(of: [.utf8PlainText, .plainText], delegate: MarkdownTabDropDelegate(
+            width: width, chip: true, side: $dropSide, perform: drop))
+        .markdownTabDropLine(dropSide)
         .contextMenu { menu }
         .popover(isPresented: $renaming, arrowEdge: .bottom) {
             TextField("Group name", text: $name)
@@ -485,6 +480,14 @@ private struct MarkdownTabGroupChip: View {
             "Double-click renames it",
             "Drag a tab onto it to move the tab in; drag the group to reorder",
         ])
+    }
+
+    /// A tab on the chip goes into the group; a group lands before or after this one.
+    private func drop(_ drag: MarkdownTabDrag, _ side: MarkdownTabDropSide) {
+        switch drag {
+        case .tab(let id): model.dropTab(id, onGroup: group.id)
+        case .group(let id): model.moveGroup(id, beside: group.id, after: side == .after)
+        }
     }
 
     private func click() {
@@ -619,6 +622,8 @@ private struct MarkdownDocumentTab: View, Equatable {
     let preview: Bool
     let fill: Color
     @ObservedObject private var configuration = GenesisKitMarkdownConfiguration.shared
+    @State private var dropSide: MarkdownTabDropSide?
+    @State private var width: CGFloat = 0
 
     static func == (left: MarkdownDocumentTab, right: MarkdownDocumentTab) -> Bool {
         left.doc === right.doc && left.model === right.model && left.active == right.active
@@ -689,14 +694,13 @@ private struct MarkdownDocumentTab: View, Equatable {
             MarkdownTabGroupingMenu(configuration: model.configuration)
             MarkdownWrapTabsToggle(configuration: model.configuration)
         }
-        .draggable(MarkdownTabDrag.tab(doc.id)) {
+        .draggable(MarkdownTabDrag.begin(.tab(doc.id))) {
             Text(doc.title).font(.system(size: 12, weight: .medium)).padding(.horizontal, 12).padding(.vertical, 7)
         }
-        .dropDestination(for: String.self) { items, _ in
-            guard case .tab(let dragged) = items.first.flatMap(MarkdownTabDrag.parse) else { return false }
-            model.dropTab(dragged, before: doc.id)
-            return true
-        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+        .onDrop(of: [.utf8PlainText, .plainText], delegate: MarkdownTabDropDelegate(
+            width: width, chip: false, side: $dropSide, perform: drop))
+        .markdownTabDropLine(dropSide)
         .instantTooltip(previews ? "" : doc.url.path)
         .markdownHoverPreview(active ? nil : doc.url, model: model)
         .frameProbe("md.tab." + doc.id)
@@ -706,6 +710,17 @@ private struct MarkdownDocumentTab: View, Equatable {
     /// a separate double-tap gesture would hold every single click back by the double-click interval.
     private var tabIndex: Int {
         model.docs.firstIndex { $0.id == doc.id } ?? 0
+    }
+
+    /// A tab lands before or after this one, in its group; a group moves before or after this tab's group.
+    private func drop(_ drag: MarkdownTabDrag, _ side: MarkdownTabDropSide) {
+        switch drag {
+        case .tab(let id):
+            model.dropTab(id, beside: doc.id, after: side == .after)
+        case .group(let id):
+            guard let target = model.group(of: doc.id)?.id else { return }
+            model.moveGroup(id, beside: target, after: side == .after)
+        }
     }
 
     private func selectOrKeep(via gesture: String) {

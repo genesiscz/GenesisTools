@@ -124,13 +124,34 @@ extension MarkdownDocumentsModel {
         return id
     }
 
-    /// A tab dropped on another tab: it goes before that tab, into that tab's group.
-    func dropTab(_ dragged: String, before target: String) {
+    /// A tab dropped on another tab: before or after it (the half of the tab under the pointer), into that tab's
+    /// group.
+    func dropTab(_ dragged: String, beside target: String, after: Bool) {
         guard dragged != target else { return }
         if groupsTabs, let destination = group(of: target), group(of: dragged)?.id != destination.id {
             assign(dragged, to: destination.id)
         }
-        moveTab(dragged, before: target)
+        guard after else {
+            moveTab(dragged, before: target)
+            return
+        }
+        // After the target is before whatever follows it; the target's group keeps the dragged tab beside it.
+        let next = docs.firstIndex { $0.id == target }.flatMap { index in
+            docs[(index + 1)...].first { $0.id != dragged }?.id
+        }
+        moveTab(dragged, before: next)
+    }
+
+    /// A group dropped on a chip or on one of another group's tabs: before or after that group.
+    func moveGroup(_ id: String, beside target: String, after: Bool) {
+        guard id != target else { return }
+        guard after else {
+            moveGroup(id, before: target)
+            return
+        }
+        let ids = tabGroups.map(\.id).filter { $0 != id }
+        let next = ids.firstIndex(of: target).flatMap { ids.indices.contains($0 + 1) ? ids[$0 + 1] : nil }
+        moveGroup(id, before: next)
     }
 
     /// A tab dropped on a group's chip: it joins the group at its end and the group opens.

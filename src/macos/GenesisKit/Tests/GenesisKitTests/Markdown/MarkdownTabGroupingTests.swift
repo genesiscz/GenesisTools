@@ -79,9 +79,18 @@ final class MarkdownTabGroupingTests: XCTestCase {
         let ids = model.docs.map(\.id)
         XCTAssertEqual(model.tabGroups.map(\.title), ["A", "B"])
 
-        model.dropTab(ids[0], before: ids[3])
+        model.dropTab(ids[0], beside: ids[3], after: false)
         XCTAssertEqual(model.group(of: ids[0])?.title, "B", "a tab dropped on a tab joins that tab's group")
         XCTAssertEqual(model.docs.map(\.id), [ids[1], ids[2], ids[0], ids[3]], "and sits before it")
+
+        model.dropTab(ids[0], beside: ids[3], after: true)
+        XCTAssertEqual(model.docs.map(\.id), [ids[1], ids[2], ids[3], ids[0]], "a drop on a tab's right half lands after it")
+        let groups = model.tabGroups.map(\.id)
+        let titles = model.tabGroups.map(\.title)
+        model.moveGroup(groups[0], beside: groups[1], after: true)
+        XCTAssertEqual(model.tabGroups.map(\.title), [titles[1], titles[0]], "a group dropped on another's right half goes after it")
+        model.moveGroup(groups[0], beside: groups[1], after: false)
+        XCTAssertEqual(model.tabGroups.map(\.title), titles, "and on its left half before it")
 
         model.moveGroup("dir:" + folder.appendingPathComponent("B").path, before: nil)
         XCTAssertEqual(model.tabGroups.map(\.title).last, "B", "a group dragged to the end stays there")
