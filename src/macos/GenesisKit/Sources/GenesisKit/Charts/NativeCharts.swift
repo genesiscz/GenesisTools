@@ -33,29 +33,74 @@ public enum NativeChartSampling {
         return .dateTime.hour().minute()
     }
 
+    /// How a bin combines the points that fall into it: counts add up, rates and shares average.
+    public enum Combine: Sendable { case sum, average }
+
+    /// A calendar bin (a day or a week) follows the calendar: weeks start on the user's first weekday and a day
+    /// can be 23 or 25 hours long. Every other step is a fixed grid.
+    static func calendarComponent(for step: TimeInterval) -> Calendar.Component? {
+        step == 86400 ? .day : step == 604800 ? .weekOfYear : nil
+    }
+
+    /// The width of one drawn bin: `step`, or a multiple of it when the span would need more than 1,200 bins.
+    public static func binInterval(start: Date, end: Date, step: TimeInterval) -> TimeInterval {
+        if calendarComponent(for: step) != nil { return step }
+        return max(step, ceil(end.timeIntervalSince(start) / (step * 1200)) * step)
+    }
+
+    /// The span a bin covers, as a reader names it: "Mon, Oct 19 to Sun, Oct 25", "Mon, Oct 19, 2026",
+    /// "Oct 19, 14:00 to 15:00".
+    public static func spanText(_ date: Date, step: TimeInterval, calendar: Calendar = .current) -> String {
+        let day = Date.FormatStyle.dateTime.weekday(.abbreviated).month(.abbreviated).day()
+        if step >= 604800 {
+            let days = max(1, Int((step / 86400).rounded()))
+            let last = calendar.date(byAdding: .day, value: days - 1, to: date) ?? date
+            return "\(date.formatted(day)) to \(last.formatted(day))"
+        }
+        if step >= 86400 { return date.formatted(day.year()) }
+        let end = date.addingTimeInterval(step)
+        return "\(date.formatted(.dateTime.month(.abbreviated).day().hour().minute())) to \(end.formatted(.dateTime.hour().minute()))"
+    }
+
     public static func bins(points: [NativeTimePoint], start: Date, end: Date, step: TimeInterval,
-        calendar: Calendar = .current) -> [NativeTimePoint] {
+        calendar: Calendar = .current, combine: Combine = .sum) -> [NativeTimePoint] {
         guard let first = points.first, end > start, step > 0 else { return [] }
-        if step == 86400 {
-            var day = calendar.startOfDay(for: max(first.date, start))
-            let values = Dictionary(points.filter { $0.date >= day && $0.date < end }.map {
-                (calendar.startOfDay(for: $0.date), $0.value)
-            }, uniquingKeysWith: +)
+        if let component = calendarComponent(for: step) {
+            func key(_ date: Date) -> Date {
+                component == .day ? calendar.startOfDay(for: date)
+                    : calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? calendar.startOfDay(for: date)
+            }
+            var cursor = key(max(first.date, start))
+            var sums: [Date: Double] = [:]
+            var counts: [Date: Int] = [:]
+            for point in points where point.date >= cursor && point.date < end {
+                let bin = key(point.date)
+                sums[bin, default: 0] += point.value
+                counts[bin, default: 0] += 1
+            }
             var result: [NativeTimePoint] = []
-            while day < end && result.count < 1201 {
-                result.append(NativeTimePoint(date: day, value: values[day, default: 0]))
-                guard let next = calendar.date(byAdding: .day, value: 1, to: day), next > day else { break }
-                day = next
+            var visited = 0
+            while cursor < end && visited < 1201 {
+                visited += 1
+                if let count = counts[cursor] {
+                    let sum = sums[cursor, default: 0]
+                    result.append(NativeTimePoint(date: cursor, value: combine == .sum ? sum : sum / Double(count)))
+                } else if combine == .sum {
+                    result.append(NativeTimePoint(date: cursor, value: 0))
+                }
+                guard let next = calendar.date(byAdding: component, value: 1, to: cursor), next > cursor else { break }
+                cursor = next
             }
             return result
         }
-        let interval = max(step, ceil(end.timeIntervalSince(start) / (step * 1200)) * step)
+        let interval = binInterval(start: start, end: end, step: step)
         // Both bounds on the same interval grid, so a bin's time and count do not depend on where the view starts.
         let lower = max(floor(first.date.timeIntervalSince1970 / interval), floor(start.timeIntervalSince1970 / interval)) * interval
         let upper = end.timeIntervalSince1970
         guard lower < upper else { return [] }
         let count = min(1201, Int(ceil((upper - lower) / interval)))
         var values = Array(repeating: 0.0, count: count)
+        var counts = Array(repeating: 0, count: count)
         var low = 0
         var high = points.count
         while low < high {
@@ -66,15 +111,28 @@ public enum NativeChartSampling {
             let time = point.date.timeIntervalSince1970
             if time >= upper { break }
             let index = Int((time - lower) / interval)
-            if values.indices.contains(index) { values[index] += point.value }
+            if values.indices.contains(index) {
+                values[index] += point.value
+                counts[index] += 1
+            }
         }
-        return values.enumerated().map { NativeTimePoint(
-            date: Date(timeIntervalSince1970: lower + Double($0.offset) * interval), value: $0.element) }
+        return values.indices.compactMap { index in
+            let date = Date(timeIntervalSince1970: lower + Double(index) * interval)
+            switch combine {
+            case .sum: return NativeTimePoint(date: date, value: values[index])
+            case .average:
+                return counts[index] > 0 ? NativeTimePoint(date: date, value: values[index] / Double(counts[index])) : nil
+            }
+        }
     }
 }
 
+/// A pannable, zoomable time series. Two ways to open:
+/// - `rangeStart: nil`: on the latest `initialWindow`, zoomable from a quarter to 8 times that window.
+/// - `rangeStart` set: fitted to the whole `rangeStart...end`; zoom goes from that whole range down to 5 bins, and
+///   "Whole range" returns to it.
 public struct NativeTimeSeriesChart: View {
-    public enum Style: String, CaseIterable, Identifiable {
+    public enum Style: String, CaseIterable, Identifiable, Sendable {
         case line = "Line", area = "Area", bars = "Bars"
         public var id: Self { self }
     }
@@ -83,7 +141,11 @@ public struct NativeTimeSeriesChart: View {
     private let initialWindow: TimeInterval
     private let valueLabel: String
     private let end: Date
-    @State private var style: Style = .area
+    private let rangeStart: Date?
+    private let combine: NativeChartSampling.Combine
+    private let valueFormat: ((Double) -> String)?
+    private let styleBinding: Binding<Style>?
+    @State private var ownStyle: Style = .area
     @State private var zoom = 1.0
     @State private var position: Date
     @State private var selected: Date?
@@ -91,49 +153,108 @@ public struct NativeTimeSeriesChart: View {
     @State private var plotWidth: CGFloat = 1
     @GestureState private var dragging = false
 
+    /// - Parameters:
+    ///   - rangeStart: the start of the period the page shows; the chart opens fitted to `rangeStart...end`.
+    ///   - combine: how wide views merge bins; `.average` for rates and shares, which must not add up.
+    ///   - valueFormat: how a value reads in the hover text and on the Y axis ("1h 5m", "12.5%").
+    ///   - style: where the Line, Area or Bars choice is kept; without it the choice lives as long as the view.
     public init(points: [NativeTimePoint], interval: TimeInterval, initialWindow: TimeInterval,
-        end: Date = Date(), valueLabel: String = "Events") {
+        end: Date = Date(), valueLabel: String = "Events", rangeStart: Date? = nil,
+        combine: NativeChartSampling.Combine = .sum, valueFormat: ((Double) -> String)? = nil,
+        style: Binding<Style>? = nil) {
         self.points = points
         self.interval = interval
         self.initialWindow = initialWindow
         self.valueLabel = valueLabel
         self.end = end
-        _position = State(initialValue: end.addingTimeInterval(-initialWindow))
+        self.rangeStart = rangeStart
+        self.combine = combine
+        self.valueFormat = valueFormat
+        styleBinding = style
+        let start = rangeStart.map { min($0, end.addingTimeInterval(-interval * 5)) }
+        _position = State(initialValue: start ?? end.addingTimeInterval(-initialWindow))
     }
-    private var window: TimeInterval { max(interval * 5, initialWindow / zoom) }
+
+    private var style: Binding<Style> { styleBinding ?? $ownStyle }
+    private var fitted: Bool { rangeStart != nil }
+    private var minimumWindow: TimeInterval { interval * 5 }
+    /// The whole range in fitted mode.
+    private var span: TimeInterval {
+        guard let rangeStart else { return initialWindow }
+        return max(minimumWindow, end.timeIntervalSince(rangeStart))
+    }
+    private var maxZoom: Double { fitted ? max(1, span / minimumWindow) : 8 }
+    private var minZoom: Double { fitted ? 1 : 0.25 }
+    private var window: TimeInterval {
+        fitted ? min(span, max(minimumWindow, span / zoom)) : max(minimumWindow, initialWindow / zoom)
+    }
     private var domain: ClosedRange<Date> {
+        if fitted { return end.addingTimeInterval(-span)...end }
         let first = points.first?.date ?? end.addingTimeInterval(-initialWindow)
         return min(first, end.addingTimeInterval(-window))...end
     }
+    private var visibleStart: Date { max(domain.lowerBound, position.addingTimeInterval(-window / 4)) }
+    private var visibleEnd: Date { min(end, position.addingTimeInterval(window * 1.25)) }
     private var visible: [NativeTimePoint] {
-        NativeChartSampling.bins(points: points, start: position.addingTimeInterval(-window / 4),
-            end: min(end, position.addingTimeInterval(window * 1.25)), step: interval)
+        NativeChartSampling.bins(points: points, start: visibleStart, end: visibleEnd, step: interval, combine: combine)
+    }
+    private var binWidth: TimeInterval {
+        NativeChartSampling.binInterval(start: visibleStart, end: visibleEnd, step: interval)
     }
     private var selectedPoint: NativeTimePoint? {
         guard let selected else { return nil }
         return visible.min { abs($0.date.timeIntervalSince(selected)) < abs($1.date.timeIntervalSince(selected)) }
     }
+    private func format(_ value: Double) -> String { valueFormat?(value) ?? NativeChartSampling.valueText(value) }
+    /// The zoom on a log scale, so one slider spans "whole two years" to "five bins" evenly.
+    private var zoomSlider: Binding<Double> {
+        Binding(get: { log(max(1, zoom / minZoom)) / log(maxZoom / minZoom) },
+            set: { zoom = minZoom * pow(maxZoom / minZoom, $0) })
+    }
+    private func pan(by fraction: Double) {
+        position = NativeChartSampling.clampedPosition(position.addingTimeInterval(window * fraction), window: window, domain: domain)
+        selected = nil
+    }
+    private var shownSpan: String {
+        let last = min(end, position.addingTimeInterval(window))
+        let days = window >= 86400 * 2
+        let first: Date.FormatStyle = days ? .dateTime.year().month(.abbreviated).day()
+            : .dateTime.year().month(.abbreviated).day().hour().minute()
+        let second: Date.FormatStyle = days ? .dateTime.year().month(.abbreviated).day()
+            : .dateTime.month(.abbreviated).day().hour().minute()
+        return "\(position.formatted(first)) to \(last.formatted(second))"
+    }
+
     public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Picker("Chart style", selection: $style) {
+            HStack(spacing: 6) {
+                Picker("Chart style", selection: style) {
                     ForEach(Style.allCases) { Text($0.rawValue).tag($0) }
                 }.pickerStyle(.segmented).labelsHidden().frame(width: 210, alignment: .leading)
                 Spacer()
-                Button { zoom = max(0.25, zoom / 2) } label: { Image(systemName: "minus.magnifyingglass").frame(width: 26, height: 26).contentShape(Rectangle()) }
-                    .accessibilityLabel("Zoom out chart")
-                Slider(value: $zoom, in: 0.25...8).frame(width: 90).accessibilityLabel("Chart zoom")
-                Button { zoom = min(8, zoom * 2) } label: { Image(systemName: "plus.magnifyingglass").frame(width: 26, height: 26).contentShape(Rectangle()) }
-                    .accessibilityLabel("Zoom in chart")
+                IconButton(systemName: "chevron.left", tooltip: "Earlier (Left Arrow)") { pan(by: -0.5) }
+                IconButton(systemName: "chevron.right", tooltip: "Later (Right Arrow)") { pan(by: 0.5) }
+                IconButton(systemName: "minus.magnifyingglass", tooltip: "Zoom out chart") { zoom = max(minZoom, zoom / 2) }
+                Slider(value: zoomSlider, in: 0...1).frame(width: 90).accessibilityLabel("Chart zoom")
+                    .help("Chart zoom")
+                IconButton(systemName: "plus.magnifyingglass", tooltip: "Zoom in chart") { zoom = min(maxZoom, zoom * 2) }
+                if fitted {
+                    Button("Whole range") {
+                        zoom = 1
+                        position = domain.lowerBound
+                    }.buttonStyle(.genHover()).help("Show the whole selected range")
+                        .disabled(zoom <= 1.0001)
+                }
                 Button("Latest") { position = max(domain.lowerBound, end.addingTimeInterval(-window)) }
-            }.buttonStyle(.borderless)
+                    .buttonStyle(.genHover()).help("Show the most recent part")
+            }
             plot.frame(height: 235)
             HStack {
                 if let point = selectedPoint {
-                    Text("\(point.date.formatted(date: .abbreviated, time: .shortened)) · \(NativeChartSampling.valueText(point.value)) \(valueLabel.lowercased())")
-                } else { Text("Drag or scroll to explore. Hover to inspect a value.") }
+                    Text("\(NativeChartSampling.spanText(point.date, step: binWidth)): \(format(point.value)) \(valueLabel.lowercased())")
+                } else { Text("Drag, scroll or use the arrow keys to explore. Hover to inspect a value.") }
                 Spacer()
-                Text(position.formatted(date: .abbreviated, time: .shortened)).monospacedDigit()
+                Text(shownSpan).monospacedDigit()
             }.font(.caption).foregroundStyle(.secondary)
         }
         // A new period (custom dates, a refreshed report) or zoom keeps the view on data: a position left over from
@@ -141,10 +262,13 @@ public struct NativeTimeSeriesChart: View {
         .onChange(of: zoom) { _, _ in position = NativeChartSampling.clampedPosition(position, window: window, domain: domain) }
         .onChange(of: domain) { _, value in position = NativeChartSampling.clampedPosition(position, window: window, domain: value) }
     }
+
     private var plot: some View {
-        Chart {
-            ForEach(visible) { point in
-                switch style {
+        let shown = visible
+        let peak = shown.map(\.value).max() ?? 0
+        return Chart {
+            ForEach(shown) { point in
+                switch style.wrappedValue {
                 case .line:
                     LineMark(x: .value("Time", point.date), y: .value(valueLabel, point.value))
                         .foregroundStyle(.mint).interpolationMethod(.linear)
@@ -157,16 +281,22 @@ public struct NativeTimeSeriesChart: View {
                     BarMark(x: .value("Time", point.date), y: .value(valueLabel, point.value)).foregroundStyle(.mint)
                 }
             }
-            if visible.count == 1, let point = visible.first {
+            if shown.count == 1, let point = shown.first {
                 PointMark(x: .value("Time", point.date), y: .value(valueLabel, point.value))
                     .foregroundStyle(.mint).symbolSize(36)
             }
             if let point = selectedPoint {
                 RuleMark(x: .value("Selected time", point.date)).foregroundStyle(.secondary).lineStyle(StrokeStyle(dash: [3]))
+                    .annotation(position: .top, spacing: 0,
+                        overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))) {
+                        Text(format(point.value)).font(.caption.weight(.semibold)).monospacedDigit()
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+                    }
             }
         }
         .chartXScale(domain: domain)
-        .chartYScale(domain: 0...max(1, (visible.map(\.value).max() ?? 0) * 1.12))
+        .chartYScale(domain: 0...max(1, peak * 1.12))
         .chartScrollableAxes(.horizontal)
         .chartXVisibleDomain(length: window)
         .chartScrollPosition(x: $position)
@@ -188,7 +318,17 @@ public struct NativeTimeSeriesChart: View {
                 selected = nil
             })
         .onChange(of: dragging) { _, active in if !active { panOrigin = nil } }
-        .chartYAxis { AxisMarks(position: .leading) }
+        .chartYAxis {
+            AxisMarks(position: .leading) { value in
+                AxisGridLine()
+                AxisTick()
+                if let valueFormat {
+                    AxisValueLabel { if let number = value.as(Double.self) { Text(valueFormat(number)) } }
+                } else {
+                    AxisValueLabel()
+                }
+            }
+        }
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 4)) {
                 AxisGridLine()
@@ -196,7 +336,11 @@ public struct NativeTimeSeriesChart: View {
                 AxisValueLabel(format: NativeChartSampling.axisLabelFormat(interval: interval, window: window))
             }
         }
-        .accessibilityLabel("\(valueLabel) timeline. Scroll horizontally to pan; use the zoom controls to change the visible range.")
+        .focusable()
+        .onKeyPress(.leftArrow) { pan(by: -0.25); return .handled }
+        .onKeyPress(.rightArrow) { pan(by: 0.25); return .handled }
+        .accessibilityLabel("\(valueLabel) timeline")
+        .accessibilityValue("\(shownSpan). \(shown.count) bars, highest \(format(peak)). Use the arrow keys to move earlier or later.")
     }
 }
 
