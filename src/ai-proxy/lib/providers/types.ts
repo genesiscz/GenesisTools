@@ -24,6 +24,8 @@ export interface ProviderInspectionOptions {
 export interface ProviderRequestContext {
     /** The conversation's cache key (`@genesiscz/utils/ai/prompt-cache-key`), when one was resolved. */
     promptCacheKey?: PromptCacheKey;
+    /** The subagents the session defined with their own model: an Agent call's `model` never overrides theirs. */
+    sessionAgents?: readonly string[];
 }
 
 export interface ProxyProvider {

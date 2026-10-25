@@ -1,6 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { parseProxyModelId, resolveModel } from "@app/ai-proxy/lib/resolve-model";
+import type { AiProxySessionRecord } from "@app/ai-proxy/lib/sessions/records";
+import { resolveSessionRoute } from "@app/ai-proxy/lib/sessions/routing";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 function grokAccount(name: string): AiProxyAccountConfig {
     return { name, provider: "grok-subscription", providerSlug: "grok", enabled: true };
@@ -193,5 +196,111 @@ describe("resolve-model with openrouter accounts", () => {
         expect(() => resolveModel("anthropic/claude-sonnet-5", [grokAccount("martin")])).toThrow(
             "No enabled account for model"
         );
+    });
+});
+
+describe("resolveSessionRoute", () => {
+    const accounts: AiProxyAccountConfig[] = [
+        { name: "work-codex", provider: "openai-subscription", providerSlug: "codex", enabled: true },
+        { name: "side-codex", provider: "openai-subscription", providerSlug: "codex", enabled: true },
+        { name: "work-claude", provider: "anthropic-subscription", providerSlug: "claude-sub", enabled: true },
+        { name: "work-grok", provider: "grok-subscription", providerSlug: "grok", enabled: true },
+        { name: "off-claude", provider: "anthropic-subscription", providerSlug: "claude-sub", enabled: false },
+    ];
+
+    function record(overrides: Partial<AiProxySessionRecord> = {}): AiProxySessionRecord {
+        return {
+            version: 1,
+            id: "0f8a495a-0000-4000-8000-000000000001",
+            keyHash: "0".repeat(64),
+            createdAt: "2026-10-25T20:00:00.000Z",
+            codexProxyAccount: "side-codex",
+            claudeProxyAccount: "work-claude",
+            moves: [],
+            meteredConfirmed: [],
+            ...overrides,
+        };
+    }
+
+    function routeOf(model: string, session = record()) {
+        const result = resolveSessionRoute(model, session, accounts);
+
+        if (!result || "refusal" in result) {
+            throw new Error(`expected a route for ${model}, got ${SafeJSON.stringify(result)}`);
+        }
+
+        return result.route;
+    }
+
+    it("routes codex/<id> to the record's Codex account, even with two Codex accounts enabled", () => {
+        const route = routeOf("codex/gpt-6.1-sol");
+
+        expect(route.accountName).toBe("side-codex");
+        expect(route.upstreamId).toBe("gpt-6.1-sol");
+        expect(route.reasoningEffort).toBeUndefined();
+        expect(route.effortSource).toBeUndefined();
+    });
+
+    it("keeps an :effort suffix and marks it as the effort's source", () => {
+        const route = routeOf("codex/gpt-6-astra:xhigh");
+
+        expect(route.upstreamId).toBe("gpt-6-astra");
+        expect(route.reasoningEffort).toBe("xhigh");
+        expect(route.effortSource).toBe("suffix");
+    });
+
+    it("routes a bare claude-* id, with or without [1m], to the record's Claude account", () => {
+        expect(routeOf("claude-opus-5-5").accountName).toBe("work-claude");
+
+        const oneM = routeOf("claude-opus-5-5[1m]");
+        expect(oneM.accountName).toBe("work-claude");
+        expect(oneM.upstreamId).toBe("claude-opus-5-5");
+    });
+
+    it("routes grok/<id> only when the record has a Grok account", () => {
+        expect(routeOf("grok/grok-4.6", record({ grokProxyAccount: "work-grok" })).accountName).toBe("work-grok");
+        expect(resolveSessionRoute("grok/grok-4.6", record(), accounts)).toEqual({
+            refusal:
+                "session 0f8a495a-0000-4000-8000-000000000001 has no grok account, so it cannot run 'grok/grok-4.6'",
+        });
+    });
+
+    it("refuses a Claude id in a session without a Claude account, and a disabled or wrong-kind account", () => {
+        const noClaude = resolveSessionRoute("claude-haiku-5-5", record({ claudeProxyAccount: undefined }), accounts);
+        expect(noClaude && "refusal" in noClaude ? noClaude.refusal : "").toContain("has no claude account");
+
+        const disabled = resolveSessionRoute(
+            "claude-haiku-5-5",
+            record({ claudeProxyAccount: "off-claude" }),
+            accounts
+        );
+        expect(disabled && "refusal" in disabled ? disabled.refusal : "").toContain("is disabled");
+
+        const wrongKind = resolveSessionRoute(
+            "codex/gpt-6-luna",
+            record({ codexProxyAccount: "work-claude" }),
+            accounts
+        );
+        expect(wrongKind && "refusal" in wrongKind ? wrongKind.refusal : "").toContain(
+            "is a anthropic-subscription account"
+        );
+    });
+
+    it("leaves full account/provider/model ids, @account refs and other bare ids to the normal resolver", () => {
+        for (const model of [
+            "work-codex/codex/gpt-6.1-sol:high",
+            "@account/abc:gpt-6.1-sol",
+            "grok-4.6",
+            "openai/gpt-6",
+        ]) {
+            expect(resolveSessionRoute(model, record(), accounts)).toBeUndefined();
+        }
+    });
+
+    it("marks an effort suffix on the normal resolver too", () => {
+        const route = resolveModel("work-grok/grok/grok-4.6:high", accounts);
+
+        expect(route.reasoningEffort).toBe("high");
+        expect(route.effortSource).toBe("suffix");
     });
 });

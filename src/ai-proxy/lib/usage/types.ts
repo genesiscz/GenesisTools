@@ -1,4 +1,4 @@
-import type { GrokUsageDetails, SubscriptionUsageDetails } from "@app/ai-proxy/lib/types";
+import type { EffortSource, GrokUsageDetails, SubscriptionUsageDetails } from "@app/ai-proxy/lib/types";
 import type { CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
 
 export interface TokenUsage {
@@ -84,6 +84,9 @@ export interface UsageRequestRecord {
     cacheKey?: string;
     /** Claude Code's compaction turn: the request after it starts a new cache prefix. */
     compaction?: boolean;
+    /** The effort the request asked for (`/v1/messages`), before the Codex catalog maps it. */
+    effort?: string;
+    effortSource?: EffortSource;
 }
 
 export interface AccountBillingSnapshot {

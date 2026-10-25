@@ -4,8 +4,14 @@ import {
     unpackReasoningSignature,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
 import {
+    CLAUDE_CODE_AGENT_TOOL,
+    sessionAgentModelWins,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
+import {
     grokResponsesSseToAnthropic,
     grokResponsesToAnthropicMessage,
+    responsesSseToAnthropic,
+    responsesToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -393,5 +399,84 @@ describe("a message never ends on a thinking block (Claude Code drops it, and th
         );
 
         expect((message.content as Array<{ type: string }>).map((block) => block.type)).toEqual(["thinking", "text"]);
+    });
+});
+
+describe("a session's own subagents run on their own model", () => {
+    const toolInput = (name: string) =>
+        name === CLAUDE_CODE_AGENT_TOOL ? sessionAgentModelWins(new Set(["sol", "opus"])) : undefined;
+
+    function agentCall(id: string, outputIndex: number, name: string, args: Record<string, unknown>) {
+        const json = SafeJSON.stringify(args);
+        const item = { type: "function_call", id, call_id: `call_${id}`, name, arguments: "" };
+
+        return [
+            { type: "response.output_item.added", output_index: outputIndex, item },
+            { type: "response.function_call_arguments.delta", output_index: outputIndex, delta: json.slice(0, 20) },
+            { type: "response.function_call_arguments.delta", output_index: outputIndex, delta: json.slice(20) },
+            { type: "response.output_item.done", output_index: outputIndex, item: { ...item, arguments: json } },
+        ];
+    }
+
+    function inputs(frames: Frame[]): Record<string, unknown>[] {
+        const byIndex = new Map<number, string>();
+
+        for (const frame of frames) {
+            const delta = frame.data.delta as Record<string, unknown> | undefined;
+
+            if (frame.event === "content_block_delta" && delta?.type === "input_json_delta") {
+                const index = Number(frame.data.index);
+                byIndex.set(index, (byIndex.get(index) ?? "") + String(delta.partial_json));
+            }
+        }
+
+        return [...byIndex.values()].map((json) => SafeJSON.parse(json, { strict: true }) as Record<string, unknown>);
+    }
+
+    it("streaming: drops the Agent call's model for a session subagent, keeps it for others and leaves other tools alone", async () => {
+        const { frames } = await collect(
+            responsesSseToAnthropic(
+                sse([
+                    { type: "response.created", response: { id: "resp_1" } },
+                    ...agentCall("a", 0, "Agent", { prompt: "go", subagent_type: "sol", model: "sonnet" }),
+                    ...agentCall("b", 1, "Agent", { prompt: "go", subagent_type: "Explore", model: "haiku" }),
+                    ...agentCall("c", 2, "Bash", { command: "echo ok", model: "kept" }),
+                    {
+                        type: "response.completed",
+                        response: { id: "resp_1", usage: { input_tokens: 1, output_tokens: 1 } },
+                    },
+                ]),
+                { model: "gpt-6.1-sol", label: "codex", toolInput }
+            )
+        );
+
+        expect(inputs(frames)).toEqual([
+            { prompt: "go", subagent_type: "sol" },
+            { prompt: "go", subagent_type: "Explore", model: "haiku" },
+            { command: "echo ok", model: "kept" },
+        ]);
+    });
+
+    it("non-streaming: the same", () => {
+        const message = responsesToAnthropicMessage(
+            {
+                id: "resp_1",
+                status: "completed",
+                output: [
+                    {
+                        type: "function_call",
+                        call_id: "call_a",
+                        name: "Agent",
+                        arguments: SafeJSON.stringify({ prompt: "go", subagent_type: "opus", model: "opus" }),
+                    },
+                ],
+            },
+            { model: "gpt-6.1-sol", label: "codex", toolInput }
+        );
+
+        expect((message.content as Array<Record<string, unknown>>)[0]?.input).toEqual({
+            prompt: "go",
+            subagent_type: "opus",
+        });
     });
 });

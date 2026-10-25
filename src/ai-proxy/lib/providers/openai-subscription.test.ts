@@ -3,7 +3,11 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
-import { CLAUDE_CODE_COMPACTION_MARK } from "@app/ai-proxy/lib/translators/formats/anthropic/compaction";
+import {
+    CLAUDE_CODE_COMPACTION_MARK,
+    isClaudeCodeModelProbe,
+    modelProbeReply,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import {
     accountHash8,
     isReasoningReplayRejection,
@@ -135,7 +139,7 @@ describe("buildWhamResponsesBody", () => {
         expect(dropped).toContain("max_tokens");
     });
 
-    it("maps chat function tools to flat Responses tools", async () => {
+    it("maps chat function tools to flat Responses tools, not strict unless the client says so", async () => {
         const { buildWhamResponsesBody } = await import("./openai-subscription");
         const { body } = buildWhamResponsesBody(
             {
@@ -145,6 +149,7 @@ describe("buildWhamResponsesBody", () => {
                         type: "function",
                         function: { name: "search", description: "d", parameters: { type: "object" } },
                     },
+                    { type: "function", function: { name: "exact", parameters: { type: "object" }, strict: true } },
                 ],
             },
             "gpt-5.5",
@@ -152,7 +157,8 @@ describe("buildWhamResponsesBody", () => {
         );
 
         expect(body.tools).toEqual([
-            { type: "function", name: "search", description: "d", parameters: { type: "object" } },
+            { type: "function", name: "search", description: "d", parameters: { type: "object" }, strict: false },
+            { type: "function", name: "exact", description: undefined, parameters: { type: "object" }, strict: true },
         ]);
     });
 
@@ -172,7 +178,9 @@ describe("buildWhamResponsesBody", () => {
         expect(dropped).toContain("temperature");
         expect(dropped).toContain("top_p");
         expect(dropped).toContain("tools[type=web_search]");
-        expect(body.tools).toEqual([{ type: "function", name: "f", description: undefined, parameters: {} }]);
+        expect(body.tools).toEqual([
+            { type: "function", name: "f", description: undefined, parameters: {}, strict: false },
+        ]);
     });
 
     it("passes client reasoning through and clamps unknown efforts", async () => {
@@ -1053,7 +1061,9 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(input.filter((item) => item.type === "reasoning")).toEqual([
             expect.objectContaining({ type: "reasoning", encrypted_content: "REDACTED-ENCRYPTED-2" }),
         ]);
-        expect((input.find((item) => item.type === "reasoning")?.summary as unknown[]).length).toBeGreaterThan(0);
+        expect(((input.find((item) => item.type === "reasoning")?.summary ?? []) as unknown[]).length).toBeGreaterThan(
+            0
+        );
         expect(sent[0]?.prompt_cache_key).toBe(session);
         expect(sent[0]?.reasoning).toMatchObject({ summary: "auto" });
     });
@@ -1106,7 +1116,8 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect((await call())?.status).toBe(200);
         expect(sent).toHaveLength(2);
         const reasoningIn = (index: number) =>
-            (sent[index]?.input as Array<Record<string, unknown>>).filter((item) => item.type === "reasoning").length;
+            ((sent[index]?.input ?? []) as Array<Record<string, unknown>>).filter((item) => item.type === "reasoning")
+                .length;
         expect(reasoningIn(0)).toBe(1);
         expect(reasoningIn(1)).toBe(0);
 
@@ -1131,6 +1142,56 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         ).text();
 
         expect(sent[0]?.tool_choice).toBe("none");
+        // WHAM treats a tool without `strict` as strict, and the model then fills every optional field.
+        expect(sent[0]?.tools).toEqual([expect.objectContaining({ type: "function", name: "Read", strict: false })]);
+    });
+
+    it("Claude Code's /effort applies without an :effort suffix, and the suffix wins over it", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+        const turn = { model: "gpt-6.1-sol", stream: true, messages: [{ role: "user", content: "x" }] };
+
+        await (await send({ ...turn, output_config: { effort: "xhigh" } })).text();
+        // The server stamps a `:medium` suffix as `reasoning_effort` before the provider sees the body.
+        await (await send({ ...turn, output_config: { effort: "xhigh" }, reasoning_effort: "medium" })).text();
+        await (await send(turn)).text();
+
+        const efforts = sent.map((body) => (body.reasoning as Record<string, unknown> | undefined)?.effort);
+        expect(efforts.slice(0, 2)).toEqual(["xhigh", "medium"]);
+        expect(efforts[2]).not.toBe("xhigh");
+    });
+});
+
+describe("Claude Code's model_validation probe", () => {
+    const probe = {
+        model: "codex/gpt-6.1-sol",
+        max_tokens: 1,
+        system: [{ type: "text", text: "x-anthropic-billing-header: cc_version=2.1.296" }],
+        messages: [{ role: "user", content: [{ type: "text", text: "Hi", cache_control: { type: "ephemeral" } }] }],
+    };
+
+    it("is the one-token Hi request and nothing else", () => {
+        expect(isClaudeCodeModelProbe(probe)).toBe(true);
+        expect(isClaudeCodeModelProbe({ ...probe, max_tokens: 2 })).toBe(false);
+        expect(isClaudeCodeModelProbe({ ...probe, tools: [] })).toBe(false);
+        expect(isClaudeCodeModelProbe({ ...probe, messages: [{ role: "user", content: "Hi there" }] })).toBe(false);
+        expect(
+            isClaudeCodeModelProbe({ ...probe, messages: [...probe.messages, { role: "assistant", content: "Hi" }] })
+        ).toBe(false);
+    });
+
+    it("is answered with a one-token message under the requested model", () => {
+        expect(modelProbeReply(probe.model)).toMatchObject({
+            type: "message",
+            role: "assistant",
+            model: "codex/gpt-6.1-sol",
+            content: [{ type: "text", text: "Hi" }],
+            stop_reason: "max_tokens",
+            usage: { input_tokens: 0, output_tokens: 1 },
+        });
     });
 });
 

@@ -85,9 +85,19 @@ export interface ResponsesToAnthropicOptions {
     signReasoning?: (item: JsonRecord) => string;
     /** Names the upstream in log lines. */
     label?: string;
+    /**
+     * A rewrite of one tool's input, chosen by tool name. That call's arguments are held until it is complete and
+     * then sent once, rewritten; every other call streams as it arrives.
+     */
+    toolInput?: (name: string) => ((input: unknown) => unknown) | undefined;
 }
 
 const warnedItemTypes = new Set<string>();
+
+function rewriteToolInput(options: ResponsesToAnthropicOptions, name: unknown, input: unknown): unknown {
+    const rewrite = typeof name === "string" ? options.toolInput?.(name) : undefined;
+    return rewrite ? rewrite(input) : input;
+}
 
 /** An output item no content block exists for (agent items, new types): logged once per type, the turn goes on. */
 function warnUnknownItem(item: JsonRecord, label: string): void {
@@ -160,7 +170,7 @@ export function responsesToAnthropicMessage(response: JsonRecord, options: Respo
                 type: "tool_use",
                 id: typeof item.call_id === "string" ? item.call_id : `toolu_${crypto.randomUUID()}`,
                 name: typeof item.name === "string" ? item.name : "unknown",
-                input: parsedToolInput(item.arguments),
+                input: rewriteToolInput(options, item.name, parsedToolInput(item.arguments)),
             });
             continue;
         }
@@ -195,6 +205,9 @@ interface ItemState {
     streamedChars: number;
     summaryParts: number;
     closed: boolean;
+    /** Set for a tool call whose input is rewritten: its arguments are held in `heldArgs`. */
+    rewrite?: (input: unknown) => unknown;
+    heldArgs: string;
 }
 
 interface StreamState {
@@ -208,6 +221,7 @@ interface StreamState {
     nextBlockIndex: number;
     /** Responses output_index → block state. Ignored item types are absent. */
     items: Map<number, ItemState>;
+    toolInput: ResponsesToAnthropicOptions["toolInput"];
     sawFunctionCall: boolean;
     usage: AnthropicUsage | null;
     outputChars: number;
@@ -275,6 +289,11 @@ function openItem(state: StreamState, outputIndex: number, item: JsonRecord): st
         streamedChars: 0,
         summaryParts: 0,
         closed: false,
+        rewrite:
+            mapped.kind === "tool_use" && typeof mapped.block.name === "string"
+                ? state.toolInput?.(mapped.block.name)
+                : undefined,
+        heldArgs: "",
     });
 
     if (mapped.kind === "tool_use") {
@@ -307,6 +326,15 @@ function closeItem(state: StreamState, outputIndex: number, doneItem: JsonRecord
     }
 
     let out = "";
+
+    if (item.rewrite) {
+        const raw =
+            typeof doneItem?.arguments === "string" && doneItem.arguments.length > 0
+                ? doneItem.arguments
+                : item.heldArgs;
+        const json = SafeJSON.stringify(item.rewrite(parsedToolInput(raw)));
+        out += deltaFrame(state, outputIndex, { type: "input_json_delta", partial_json: json }, json.length);
+    }
 
     if (doneItem !== undefined) {
         // The done frame carries the complete item; anything the stream never
@@ -445,6 +473,13 @@ function handleEvent(state: StreamState, event: JsonRecord): string {
     }
 
     if (type === "response.function_call_arguments.delta" && typeof event.delta === "string") {
+        const held = state.items.get(outputIndex);
+
+        if (held?.rewrite) {
+            held.heldArgs += event.delta;
+            return "";
+        }
+
         return deltaFrame(
             state,
             outputIndex,
@@ -494,6 +529,7 @@ export function responsesSseToAnthropic(
         started: false,
         nextBlockIndex: 0,
         items: new Map(),
+        toolInput: options.toolInput,
         sawFunctionCall: false,
         usage: null,
         outputChars: 0,

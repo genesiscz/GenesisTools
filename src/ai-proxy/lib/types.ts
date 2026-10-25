@@ -289,6 +289,12 @@ export interface AiProxyConfig {
 /** `ultra` is a Codex UI level: the Codex agent resolves it per model (codex-rs `resolve_reasoning_effort`). */
 export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "minimal" | "max" | "ultra";
 
+/**
+ * Where a request's effort came from: the model id's `:effort` suffix (it wins), the client's own setting (Claude
+ * Code's `/effort`, sent as `output_config.effort`), or neither, so the model's default applies.
+ */
+export type EffortSource = "suffix" | "client" | "default";
+
 export interface ResolvedRoute {
     accountName: string;
     providerSlug: string;
@@ -296,6 +302,8 @@ export interface ResolvedRoute {
     account: AiProxyAccountConfig;
     /** Set when the proxy model id ends with `:<effort>` (e.g. grok-4.6:xhigh). */
     reasoningEffort?: ReasoningEffort;
+    /** `suffix` when `reasoningEffort` came from the id. */
+    effortSource?: EffortSource;
 }
 
 export interface ProxyModelMeta {

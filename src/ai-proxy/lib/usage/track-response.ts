@@ -1,5 +1,5 @@
 import { proxyAccountRefOf } from "@app/ai-proxy/lib/account-refs";
-import type { ResolvedRoute } from "@app/ai-proxy/lib/types";
+import type { EffortSource, ResolvedRoute } from "@app/ai-proxy/lib/types";
 import type { CallTimeline } from "@app/ai-proxy/lib/usage/call-timeline";
 import { recordClientUsage } from "@app/ai-proxy/lib/usage/client-ledger";
 import {
@@ -36,6 +36,8 @@ export function trackCompletedRequest(input: {
     failure?: string;
     cacheKey?: string;
     compaction?: boolean;
+    effort?: string;
+    effortSource?: EffortSource;
 }): void {
     const stream = input.stream ?? bodyWantsStream(input.bodyText);
     let usage = stream ? extractLatestUsageFromSse(input.responseBody) : extractUsageFromJsonBody(input.responseBody);
@@ -109,6 +111,8 @@ export function trackCompletedRequest(input: {
         timeline: input.timeline,
         ...(input.cacheKey ? { cacheKey: input.cacheKey } : {}),
         ...(input.compaction ? { compaction: true } : {}),
+        ...(input.effort ? { effort: input.effort } : {}),
+        ...(input.effortSource ? { effortSource: input.effortSource } : {}),
     };
 
     recordUsageRequest(record);
@@ -156,6 +160,8 @@ export function scheduleUsageTracking(input: {
     tags?: RequestTags;
     cacheKey?: string;
     compaction?: boolean;
+    effort?: string;
+    effortSource?: EffortSource;
 }): void {
     void input.responseBody
         .then(async (responseBody) => {

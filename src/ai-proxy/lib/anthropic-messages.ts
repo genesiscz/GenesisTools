@@ -592,6 +592,7 @@ export async function anthropicMessagesPipeline({
     startedAt,
     cacheKeyPolicy,
     recordId,
+    sessionAgents,
 }: {
     provider: ProxyProvider;
     upstreamModel: string;
@@ -604,6 +605,8 @@ export async function anthropicMessagesPipeline({
     cacheKeyPolicy?: PromptCacheKeyPolicy;
     /** The session record id, the fallback key when the body names no Claude Code session. */
     recordId?: string;
+    /** The subagents the session defined with their own model (`ProviderRequestContext.sessionAgents`). */
+    sessionAgents?: readonly string[];
 }): Promise<AnthropicMessagesResult> {
     const prof = profiler.scope("ai-proxy");
     const parsed = SafeJSON.parse(bodyText, { strict: true });
@@ -634,7 +637,7 @@ export async function anthropicMessagesPipeline({
             bodyText,
             prof,
             startedAt,
-            context: { promptCacheKey },
+            context: { promptCacheKey, sessionAgents },
         });
     }
 

@@ -70,6 +70,8 @@ export interface AiProxySessionRecord {
     window?: number;
     compactPercent?: number;
     cacheKeyPolicy?: PromptCacheKeyPolicy;
+    /** The subagents the launcher defined with their own model (`--agents`); an Agent call's `model` cannot override them. */
+    agents?: string[];
     moves: SessionMove[];
     meteredConfirmed: MeteredConfirmation[];
 }

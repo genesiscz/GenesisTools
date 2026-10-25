@@ -114,7 +114,7 @@ export function requestRow(record: UsageRequestRecord, fromTranscript?: TokenUsa
         agent: agentOf(record.provider),
         model: record.upstreamModel,
         proxyModel: record.proxyModel,
-        effort: reasoningEffort,
+        effort: record.effort ?? reasoningEffort,
         status: record.status,
         failure: record.failure,
         ttfbMs: record.timeline?.firstByteMs,

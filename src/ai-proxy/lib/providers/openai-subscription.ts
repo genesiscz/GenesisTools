@@ -24,14 +24,17 @@ import {
     anthropicToResponses,
     stripReasoningInput,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
-import { isClaudeCodeCompactionTurn } from "@app/ai-proxy/lib/translators/formats/anthropic/compaction";
+import {
+    CLAUDE_CODE_AGENT_TOOL,
+    isClaudeCodeCompactionTurn,
+    sessionAgentModelWins,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { ensureToolRequiredArrays } from "@app/ai-proxy/lib/translators/formats/anthropic/ensure-tool-required";
 import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
 import {
     responsesSseToAnthropic,
     responsesToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
-import { hoistSystemMessages } from "@app/ai-proxy/lib/translators/formats/anthropic/hoist-system-messages";
 import {
     accountHash8,
     type EnvelopeRejection,
@@ -280,24 +283,25 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             compHash: catalog?.compHash ?? "0",
         };
         const replay = { kept: [] as string[], dropped: {} as Partial<Record<EnvelopeRejection | "dead", number>> };
-        const responsesBody = anthropicToResponses(
-            hoistSystemMessages(ensureToolRequiredArrays(parsed)),
-            concreteModel,
-            {
-                reasoningItem: (thinking) => {
-                    const opened = openReasoningEnvelope(thinking.signature, stamp);
+        // System messages stay in place (`appendDeveloperMessage`): hoisted, they broke the prompt cache.
+        const responsesBody = anthropicToResponses(ensureToolRequiredArrays(parsed), concreteModel, {
+            reasoningItem: (thinking) => {
+                const opened = openReasoningEnvelope(thinking.signature, stamp);
 
-                    if (!opened.ok || this.deadReasoning.has(opened.item.id)) {
-                        const reason = opened.ok ? "dead" : opened.reason;
-                        replay.dropped[reason] = (replay.dropped[reason] ?? 0) + 1;
-                        return undefined;
-                    }
+                if (!opened.ok || this.deadReasoning.has(opened.item.id)) {
+                    const reason = opened.ok ? "dead" : opened.reason;
+                    replay.dropped[reason] = (replay.dropped[reason] ?? 0) + 1;
+                    return undefined;
+                }
 
-                    replay.kept.push(contentHash(opened.item.encrypted_content));
-                    return { type: "reasoning", ...opened.item };
-                },
-            }
-        );
+                replay.kept.push(contentHash(opened.item.encrypted_content));
+                return { type: "reasoning", ...opened.item };
+            },
+        });
+
+        if (Array.isArray(responsesBody.tools)) {
+            responsesBody.tools = responsesBody.tools.map((tool) => (isObject(tool) ? nonStrictByDefault(tool) : tool));
+        }
 
         // Claude Code forbids tools in its compaction prompt in words only; a Codex model may still call one, which
         // Claude Code refuses, and three refused compactions end the session.
@@ -309,7 +313,20 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             responsesBody.prompt_cache_key = context.promptCacheKey.key;
         }
 
-        responsesBody.reasoning = reasoningOptions(catalog, this.account.openaiSub?.reasoningSummary);
+        // The effort rides inside `reasoning`, which every body builder branch reads (a top-level `reasoning_effort`
+        // is read only when no `reasoning` object exists). An `:effort` suffix, stamped as `reasoning_effort`, wins
+        // over Claude Code's `/effort` (`output_config.effort`); the catalog check refuses an effort the model lacks.
+        const clientEffort =
+            isObject(parsed.output_config) && typeof parsed.output_config.effort === "string"
+                ? parsed.output_config.effort.trim()
+                : "";
+        const effort =
+            typeof responsesBody.reasoning_effort === "string" ? responsesBody.reasoning_effort : clientEffort;
+        delete responsesBody.reasoning_effort;
+        responsesBody.reasoning = {
+            ...reasoningOptions(catalog, this.account.openaiSub?.reasoningSummary),
+            ...(effort ? { effort } : {}),
+        };
 
         logger.debug(
             {
@@ -365,11 +382,21 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             });
         };
 
+        const sessionAgents = new Set(context?.sessionAgents ?? []);
+        const keepAgentModel = sessionAgentModelWins(sessionAgents);
+        const toolInput =
+            sessionAgents.size > 0
+                ? (name: string) => (name === CLAUDE_CODE_AGENT_TOOL ? keepAgentModel : undefined)
+                : undefined;
+
         if (parsed.stream === true && response.body) {
-            return new Response(responsesSseToAnthropic(response.body, { model, signReasoning, label: "codex" }), {
-                status: response.status,
-                headers: relayHeaders(response),
-            });
+            return new Response(
+                responsesSseToAnthropic(response.body, { model, signReasoning, label: "codex", toolInput }),
+                {
+                    status: response.status,
+                    headers: relayHeaders(response),
+                }
+            );
         }
 
         const envelope = SafeJSON.parse(await response.text(), { strict: true });
@@ -379,6 +406,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     model,
                     signReasoning,
                     label: "codex",
+                    toolInput,
                 })
             ),
             { status: 200, headers: { "Content-Type": "application/json" } }
@@ -738,6 +766,17 @@ function extractText(content: unknown): string {
     return "";
 }
 
+/**
+ * A function tool the proxy built from a non-strict shape (a chat tool, an Anthropic tool), with `strict: false` unless
+ * the client chose. WHAM treats a function tool without `strict` as strict, and the model then fills every optional
+ * field: Claude Code's Agent tool came back with `isolation: "worktree"` and a `team_name` in 3 of 3 trials, against
+ * `prompt` only with `strict: false` (2026-10-25). codex-rs sends `strict: false` on every function tool. A
+ * `/v1/responses` client's tools pass as sent: its own API has the same default.
+ */
+function nonStrictByDefault(tool: Record<string, unknown>): Record<string, unknown> {
+    return typeof tool.strict === "boolean" ? tool : { ...tool, strict: false };
+}
+
 function mapChatToolsToResponses(tools: unknown, dropped?: string[]): unknown[] | undefined {
     if (!Array.isArray(tools)) {
         return undefined;
@@ -752,19 +791,22 @@ function mapChatToolsToResponses(tools: unknown, dropped?: string[]): unknown[] 
 
         // Already Responses-shaped (flat function tool).
         if (tool.type === "function" && typeof tool.name === "string") {
-            mapped.push(tool);
+            mapped.push(nonStrictByDefault(tool));
             continue;
         }
 
         const fn = isObject(tool.function) ? tool.function : undefined;
 
         if (fn && typeof fn.name === "string") {
-            mapped.push({
-                type: "function",
-                name: fn.name,
-                description: typeof fn.description === "string" ? fn.description : undefined,
-                parameters: fn.parameters ?? { type: "object", properties: {} },
-            });
+            mapped.push(
+                nonStrictByDefault({
+                    type: "function",
+                    name: fn.name,
+                    description: typeof fn.description === "string" ? fn.description : undefined,
+                    parameters: fn.parameters ?? { type: "object", properties: {} },
+                    ...(typeof fn.strict === "boolean" ? { strict: fn.strict } : {}),
+                })
+            );
             continue;
         }
 

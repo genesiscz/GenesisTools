@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
     anthropicToGrokResponses,
+    anthropicToResponses,
     packReasoningSignature,
     REASONING_SIGNATURE_PREFIX,
     stripReasoningInput,
@@ -199,5 +200,38 @@ describe("stripReasoningInput", () => {
         ]);
         // The original body is untouched — the retry needs both variants.
         expect(body.input).toHaveLength(3);
+    });
+});
+
+describe("anthropicToResponses: system messages between turns", () => {
+    const noReplay = { reasoningItem: () => undefined };
+    const turn = (messages: unknown[]) =>
+        anthropicToResponses({ system: [{ type: "text", text: "base prompt" }], messages }, "gpt-6.1-sol", noReplay);
+
+    it("keeps each one at its place as a developer message, so instructions and every earlier item stay the same", () => {
+        const first = [
+            { role: "user", content: "hello" },
+            { role: "system", content: [{ type: "text", text: "SessionStart hook output" }] },
+        ];
+        const second = [
+            ...first,
+            { role: "assistant", content: [{ type: "text", text: "hi" }] },
+            { role: "user", content: "next" },
+            { role: "system", content: "UserPromptSubmit hook output" },
+        ];
+        const one = turn(first);
+        const two = turn(second);
+
+        expect(one.instructions).toBe("base prompt");
+        expect(two.instructions).toBe("base prompt");
+        expect((one.input as unknown[])[1]).toEqual({
+            role: "developer",
+            content: [{ type: "input_text", text: "SessionStart hook output" }],
+        });
+        expect((two.input as unknown[]).slice(0, 2)).toEqual(one.input as unknown[]);
+        expect((two.input as unknown[]).at(-1)).toEqual({
+            role: "developer",
+            content: [{ type: "input_text", text: "UserPromptSubmit hook output" }],
+        });
     });
 });

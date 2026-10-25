@@ -331,6 +331,26 @@ export function anthropicToGrokResponses(body: JsonRecord, model: string): JsonR
     return anthropicToResponses(body, model, GROK_RESPONSES_HOOKS);
 }
 
+/**
+ * A `role: "system"` message in `messages[]`, kept at its place as a developer message (codex-rs sends instructions
+ * that arrive mid-conversation the same way). Claude Code 2.1.296 sends hook output this way: SessionStart output
+ * after the first prompt, UserPromptSubmit and tool hook output later. Hoisted into `instructions`, each new one
+ * changed the instructions, and WHAM's prompt cache (tools, then instructions, then input) kept only the tools.
+ * The Grok agent still hoists before it translates.
+ */
+function appendDeveloperMessage(input: JsonRecord[], content: unknown): void {
+    const parts =
+        typeof content === "string"
+            ? [content]
+            : Array.isArray(content)
+              ? content.flatMap((block) => (isObject(block) && typeof block.text === "string" ? [block.text] : []))
+              : [];
+
+    if (parts.length > 0) {
+        input.push({ role: "developer", content: parts.map((text) => ({ type: "input_text", text })) });
+    }
+}
+
 /** Anthropic Messages request → Responses request, shared by the Grok and Codex agents (hooks: what differs). */
 export function anthropicToResponses(body: JsonRecord, model: string, hooks: ResponsesTranslationHooks): JsonRecord {
     const input: JsonRecord[] = [];
@@ -344,6 +364,8 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
 
             if (message.role === "assistant") {
                 appendAssistantMessage(input, message.content, dropped, hooks);
+            } else if (message.role === "system") {
+                appendDeveloperMessage(input, message.content);
             } else {
                 appendUserMessage(input, message.content);
             }

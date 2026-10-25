@@ -155,7 +155,7 @@ export function resolveModel(proxyModelId: string, accounts: AiProxyAccountConfi
         return route;
     }
 
-    return { ...route, reasoningEffort };
+    return { ...route, reasoningEffort, effortSource: "suffix" };
 }
 
 function resolveModelWithoutEffort(proxyModelId: string, accounts: AiProxyAccountConfig[]): ResolvedRoute {

@@ -16,14 +16,20 @@ import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "
 import type { ProxyProvider } from "@app/ai-proxy/lib/providers/types";
 import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket } from "@app/ai-proxy/lib/realtime";
 import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
+import { messageToAnthropicSse } from "@app/ai-proxy/lib/server-tools/web-search";
 import { noteSessionRequest, sweepSessionRecords } from "@app/ai-proxy/lib/sessions/records";
+import { resolveSessionRoute } from "@app/ai-proxy/lib/sessions/routing";
 import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import { handleChatCompletions } from "@app/ai-proxy/lib/translators";
-import { isClaudeCodeCompactionTurn } from "@app/ai-proxy/lib/translators/formats/anthropic/compaction";
+import {
+    isClaudeCodeCompactionTurn,
+    isClaudeCodeModelProbe,
+    modelProbeReply,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/claude-code-turns";
 import { identityPipeline } from "@app/ai-proxy/lib/translators/identity-pipeline";
-import type { AiProxyConfig, ResolvedRoute, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
+import type { AiProxyConfig, EffortSource, ResolvedRoute, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { scheduleBillingSync } from "@app/ai-proxy/lib/usage/billing-sync";
 import type { CallTimeline } from "@app/ai-proxy/lib/usage/call-timeline";
 import { checkClientQuota } from "@app/ai-proxy/lib/usage/client-ledger";
@@ -34,6 +40,7 @@ import { GrokAuthExpiredError } from "@genesiscz/utils/ai/grok";
 import { claudeSessionIdFromMetadata } from "@genesiscz/utils/ai/prompt-cache-key";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isObject } from "@genesiscz/utils/object";
 
 const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
@@ -108,6 +115,8 @@ function trackProxyRequest(input: {
     tags?: RequestTags;
     cacheKey?: string;
     compaction?: boolean;
+    effort?: string;
+    effortSource?: EffortSource;
 }): void {
     scheduleUsageTracking({
         route: input.route,
@@ -127,6 +136,8 @@ function trackProxyRequest(input: {
         tags: input.tags,
         cacheKey: input.cacheKey,
         compaction: input.compaction,
+        effort: input.effort,
+        effortSource: input.effortSource,
     });
     scheduleBillingSync(input.route.account, input.runtime.providers);
 }
@@ -142,8 +153,14 @@ function jsonError(status: number, error: Record<string, unknown>): Response {
  * A refusal in the client's own error shape. Claude Code reads `type: "error"` first and showed an OpenAI-shaped
  * body as a blank failure, so `/v1/messages` gets Anthropic's envelope; the OpenAI endpoints keep theirs.
  */
+const ANTHROPIC_ERROR_TYPES = {
+    400: "invalid_request_error",
+    403: "permission_error",
+    429: "rate_limit_error",
+} as const;
+
 function refusal(
-    status: 403 | 429,
+    status: keyof typeof ANTHROPIC_ERROR_TYPES,
     message: string,
     openAi: { type: string; code: string },
     anthropic: boolean
@@ -152,7 +169,7 @@ function refusal(
         return jsonError(status, { message, ...openAi });
     }
 
-    const type = status === 429 ? "rate_limit_error" : "permission_error";
+    const type = ANTHROPIC_ERROR_TYPES[status];
     return new Response(SafeJSON.stringify({ type: "error", error: { type, message } }), {
         status,
         headers: { "Content-Type": "application/json" },
@@ -173,6 +190,11 @@ interface ModelBody {
     conversationId?: string;
     /** Claude Code's compaction turn (`/v1/messages`). */
     compaction: boolean;
+    /** Claude Code's one-token `model_validation` probe (`/v1/messages`). */
+    probe: boolean;
+    stream: boolean;
+    /** The effort the client set itself: Claude Code's `/effort`, sent as `output_config.effort`. */
+    clientEffort?: string;
 }
 
 async function readModelBody(req: Request): Promise<ModelBody | { error: Response }> {
@@ -192,7 +214,16 @@ async function readModelBody(req: Request): Promise<ModelBody | { error: Respons
         return { error: jsonError(413, { message: "Request body too large" }) };
     }
 
-    let parsed: { model?: string; metadata?: unknown; prompt_cache_key?: unknown; messages?: unknown };
+    let parsed: {
+        model?: string;
+        metadata?: unknown;
+        prompt_cache_key?: unknown;
+        messages?: unknown;
+        max_tokens?: unknown;
+        tools?: unknown;
+        stream?: unknown;
+        output_config?: unknown;
+    };
 
     try {
         parsed = SafeJSON.parse(bodyText, { strict: true }) as typeof parsed;
@@ -234,7 +265,22 @@ async function readModelBody(req: Request): Promise<ModelBody | { error: Respons
         claudeSessionId,
         conversationId: claudeSessionId ?? (cacheKey || undefined),
         compaction: isClaudeCodeCompactionTurn(parsed),
+        probe: isClaudeCodeModelProbe(parsed),
+        stream: parsed.stream === true,
+        clientEffort:
+            isObject(parsed.output_config) && typeof parsed.output_config.effort === "string"
+                ? parsed.output_config.effort.trim() || undefined
+                : undefined,
     };
+}
+
+/** The effort a `/v1/messages` request asked for, and from where: the id's suffix wins over the client's setting. */
+function requestEffort(route: ResolvedRoute, body: ModelBody): { effort?: string; effortSource: EffortSource } {
+    if (route.reasoningEffort) {
+        return { effort: route.reasoningEffort, effortSource: "suffix" };
+    }
+
+    return body.clientEffort ? { effort: body.clientEffort, effortSource: "client" } : { effortSource: "default" };
 }
 
 /** Model → account route plus a live provider, with the per-client denial and quota gates. */
@@ -252,7 +298,21 @@ async function authorizeModelRoute({
     model: string;
     providers: Map<string, ProxyProvider>;
 }): Promise<{ route: ResolvedRoute; provider: ProxyProvider } | { error: Response }> {
-    const route = await resolveProxyRoute(model, config.accounts);
+    const sessionRoute = client.session ? resolveSessionRoute(model, client.session, config.accounts) : undefined;
+
+    if (sessionRoute && "refusal" in sessionRoute) {
+        logger.warn({ client: client.name, model, refusal: sessionRoute.refusal }, "ai-proxy: session route refused");
+        return {
+            error: refusal(
+                400,
+                sessionRoute.refusal,
+                { type: "invalid_request_error", code: "model_not_in_session" },
+                anthropic
+            ),
+        };
+    }
+
+    const route = sessionRoute?.route ?? (await resolveProxyRoute(model, config.accounts));
     const denial = routeDenial(client, route.account);
 
     if (denial) {
@@ -417,6 +477,26 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
 
                     const { route, provider } = routed;
 
+                    // Answered here once the route and its account check passed: forwarding it would run a whole
+                    // Codex turn (WHAM ignores the one-token cap) inside the probe's 15 s, for an answer nobody reads.
+                    if (client.session && body.probe) {
+                        logger.info(
+                            { model, account: route.accountName, session: session?.id },
+                            "ai-proxy: answered Claude Code's model_validation probe"
+                        );
+                        const reply = modelProbeReply(model);
+
+                        return body.stream
+                            ? new Response(messageToAnthropicSse(reply), {
+                                  headers: { "Content-Type": "text/event-stream" },
+                              })
+                            : new Response(SafeJSON.stringify(reply), {
+                                  headers: { "Content-Type": "application/json" },
+                              });
+                    }
+
+                    const effort = requestEffort(route, body);
+
                     // Stamped on the Anthropic body: normalizeAnthropicToOpenAI keeps
                     // reasoning_effort, so it rides through to the OpenAI body the
                     // provider forwards. Without this, an
@@ -460,6 +540,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         bodyText: routedBody,
                         cacheKeyPolicy: session?.cacheKeyPolicy,
                         recordId: session?.id,
+                        sessionAgents: session?.agents,
                     });
                     const elapsedMs = Math.round(performance.now() - requestStarted);
 
@@ -487,6 +568,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         tags,
                         cacheKey: promptCacheKey?.key,
                         compaction: body.compaction,
+                        ...effort,
                     });
 
                     logger.info(
