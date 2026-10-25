@@ -102,7 +102,7 @@ function tilde(path: string, home: string | undefined): string {
     return home && path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }
 
-/** A checkout's folder name: `col-fe-marketplace-2.0-poc`. */
+/** A checkout's folder name: `shop-web-marketplace-2.0-poc`. */
 export function checkoutName(root: string): string {
     return root.slice(root.lastIndexOf("/") + 1) || root;
 }

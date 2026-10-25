@@ -347,7 +347,7 @@ test("git band: the checkouts a command or an edit works in", async () => {
         "/work/wt-a",
     ]);
     expect(pickRoots([], "/work/main", { checkouts: 3, cwd: "touched" })).toEqual(["/work/main"]);
-    expect(fitLabels("col-tools", "main", 40)).toEqual({ name: "col-tools", branch: "main" });
+    expect(fitLabels("shop-tools", "main", 40)).toEqual({ name: "shop-tools", branch: "main" });
     // A linked worktree is named with its main checkout; a main checkout or a separate clone by its folder.
     const worktree = { root: "/tmp/cc/shop/s1/worktrees/enhancements", repo: "/work/shop" };
     expect(labelOf(worktree, "repo-folder")).toBe("shop/enhancements");
