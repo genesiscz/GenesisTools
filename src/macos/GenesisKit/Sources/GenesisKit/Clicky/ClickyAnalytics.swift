@@ -112,6 +112,40 @@ extension ClickyStatistics {
             result.presses += presses
             result.releases += presses
         }
+        // Before the minute detail: two years of hourly and daily totals, as the retention keeps them, so the long
+        // ranges have something to show.
+        let oldest = calendar.date(byAdding: .day, value: -730, to: start) ?? start
+        let hourlyKeysFrom = calendar.date(byAdding: .day, value: -366, to: now) ?? start
+        result.startedAt = oldest
+        result.historyStartedAt = oldest
+        result.performanceStartedAt = oldest
+        var hourDate = oldest
+        var index = 0
+        while hourDate < start {
+            let hourOfDay = calendar.component(.hour, from: hourDate)
+            let weekday = calendar.component(.weekday, from: hourDate)
+            let season = 0.75 + 0.25 * sin(Double(index) / 900)
+            let factor = (weekday == 1 || weekday == 7 ? 0.3 : 1.0) * ((8..<22).contains(hourOfDay) ? 1.0 : 0.05) * season
+            let presses = Int((900 + 2400 * abs(sin(Double(index) / 29))) * factor)
+            index += 1
+            defer { hourDate = hourDate.addingTimeInterval(3600) }
+            guard presses > 0 else { continue }
+            let hour = Int(hourDate.timeIntervalSince1970 / 3600)
+            let day = Int(calendar.startOfDay(for: hourDate).timeIntervalSince1970)
+            if hourDate >= hourlyKeysFrom { result.hours[hour] = ClickyActivityBucket(presses: presses, releases: presses) }
+            result.days[day, default: ClickyActivityBucket()].presses += presses
+            result.days[day, default: ClickyActivityBucket()].releases += presses
+            var performance = ClickyPerformanceBucket()
+            performance.presses = presses
+            performance.characters = Int(Double(presses) * 0.8)
+            performance.corrections = Int(Double(presses) * (0.04 + 0.02 * season))
+            performance.activeSeconds = Double(performance.characters) / (3.6 + 0.6 * season)
+            performance.bursts = max(1, presses / 40)
+            performance.sessions = max(1, presses / 300)
+            result.performanceHours[hour] = performance
+            result.presses += presses
+            result.releases += presses
+        }
         let positions = ClickyKeyLayout.rows.flatMap { $0 }
         let weights = positions.enumerated().map { ($0.element.code, 1 + ($0.offset * 13) % 31) }
         let total = weights.reduce(0) { $0 + $1.1 }
@@ -133,5 +167,112 @@ public enum ClickyKeyLayout {
     ].map { $0.map { Key(code: $0.0, label: $0.1) } }
     public static func label(_ code: Int) -> String {
         rows.lazy.flatMap { $0 }.first { $0.code == code }?.label ?? "Key \(code)"
+    }
+}
+
+/// Everything the Stats page shows for one range, built off the main thread once per refresh instead of in the view
+/// body on every published second.
+struct ClickyStatsReport: Sendable {
+    var interval = DateInterval()
+    var total = 0
+    var previousTotal: Int?
+    var totalDays = 0
+    var coveredDays = 0
+    var activeDays = 0
+    var records = ClickyRecords(days: [:], today: Date())
+    var busiestHour: Date?
+    var busiestHourValue = 0
+    var peakMinute: Date?
+    var peakMinuteValue = 0
+    var timeline: [NativeTimePoint] = []
+    var dayTimeline: [NativeTimePoint] = []
+    /// Hour-of-day by weekday, rows in the calendar's weekday order.
+    var heatmap: [NativeHeatmapCell] = []
+    /// Average presses per occurrence of each weekday in the range, Monday-based.
+    var weekdayAverages = Array(repeating: 0.0, count: 7)
+    var loaded = false
+
+    init() {}
+
+    var dailyAverage: Double { coveredDays > 0 ? Double(total) / Double(coveredDays) : 0 }
+
+    init(statistics: ClickyStatistics, interval: DateInterval, previous: DateInterval?,
+        resolution: ClickyTimeResolution, releases: Bool, now: Date, calendar: Calendar = .current) {
+        self.interval = interval
+        loaded = true
+        let earliest = statistics.historyStartedAt
+            ?? statistics.days.keys.min().map { Date(timeIntervalSince1970: Double($0)) }
+        totalDays = ClickyRanges.dayCount(interval, calendar: calendar)
+        coveredDays = ClickyRanges.coveredDays(interval, earliest: earliest, calendar: calendar)
+        let oldestHour = statistics.hours.keys.min().map { Date(timeIntervalSince1970: Double($0) * 3600) }
+        func presses(in range: DateInterval) -> Int {
+            // Hours give the exact span (Today against yesterday until the same time); past the hourly retention,
+            // whole days.
+            if let oldestHour, range.start >= oldestHour {
+                let first = Int(floor(range.start.timeIntervalSince1970 / 3600))
+                let last = Int(ceil(range.end.timeIntervalSince1970 / 3600))
+                return statistics.hours.reduce(0) { $1.key >= first && $1.key < last ? $0 + $1.value.presses : $0 }
+            }
+            return statistics.days.reduce(0) { sum, entry in
+                let day = Date(timeIntervalSince1970: Double(entry.key))
+                return day >= calendar.startOfDay(for: range.start) && day < range.end ? sum + entry.value.presses : sum
+            }
+        }
+        total = presses(in: interval)
+        if let previous, let earliest, earliest < previous.end { previousTotal = presses(in: previous) }
+
+        var daily: [Date: Double] = [:]
+        for (key, bucket) in statistics.days {
+            let day = Date(timeIntervalSince1970: Double(key))
+            guard day >= calendar.startOfDay(for: interval.start), day < interval.end else { continue }
+            daily[day] = Double(releases ? bucket.releases : bucket.presses)
+        }
+        activeDays = daily.values.filter { $0 > 0 }.count
+        records = ClickyRecords(days: daily, today: now, calendar: calendar)
+        dayTimeline = daily.map { NativeTimePoint(date: $0.key, value: $0.value) }.sorted { $0.date < $1.date }
+
+        var cells: [Int: Double] = [:]
+        for (key, bucket) in statistics.hours {
+            let date = Date(timeIntervalSince1970: Double(key) * 3600)
+            guard interval.contains(date), date < interval.end else { continue }
+            if bucket.presses > busiestHourValue { busiestHourValue = bucket.presses; busiestHour = date }
+            cells[ClickyWeekdays.index(of: date, calendar: calendar) * 24 + calendar.component(.hour, from: date),
+                default: 0] += Double(bucket.presses)
+        }
+        let order = ClickyWeekdays.order(calendar)
+        heatmap = order.enumerated().flatMap { row, weekday in
+            (0..<24).map { NativeHeatmapCell(row: row, column: $0, value: cells[weekday * 24 + $0, default: 0]) }
+        }
+        var occurrences = Array(repeating: 0, count: 7)
+        if let earliest, coveredDays > 0 {
+            var day = max(calendar.startOfDay(for: interval.start), calendar.startOfDay(for: earliest))
+            while day < interval.end {
+                occurrences[ClickyWeekdays.index(of: day, calendar: calendar)] += 1
+                guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+                day = next
+            }
+        }
+        var weekdayTotals = Array(repeating: 0.0, count: 7)
+        for (day, value) in daily { weekdayTotals[ClickyWeekdays.index(of: day, calendar: calendar)] += value }
+        weekdayAverages = (0..<7).map { occurrences[$0] > 0 ? weekdayTotals[$0] / Double(occurrences[$0]) : 0 }
+
+        let firstMinute = Int(floor(interval.start.timeIntervalSince1970 / 60))
+        for (minute, bucket) in statistics.minutes where minute >= firstMinute && bucket.presses > peakMinuteValue {
+            peakMinuteValue = bucket.presses
+            peakMinute = Date(timeIntervalSince1970: Double(minute) * 60)
+        }
+        timeline = statistics.timeline(resolution, releases: releases).filter { $0.date >= interval.start }
+    }
+
+    static func prepare(statistics: ClickyStatistics, interval: DateInterval, previous: DateInterval?,
+        resolution: ClickyTimeResolution, releases: Bool, now: Date) async -> Self? {
+        let worker = Task.detached(priority: .userInitiated) {
+            PerfLog.span("clicky.stats.report", over: PerfLog.frameMs) {
+                Self(statistics: statistics, interval: interval, previous: previous, resolution: resolution,
+                    releases: releases, now: now)
+            }
+        }
+        let report = await withTaskCancellationHandler { await worker.value } onCancel: { worker.cancel() }
+        return Task.isCancelled ? nil : report
     }
 }

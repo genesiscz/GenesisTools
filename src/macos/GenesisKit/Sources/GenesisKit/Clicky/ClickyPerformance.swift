@@ -170,8 +170,13 @@ struct ClickyPerformanceReport: Sendable {
     var timeline: [ClickyPerformancePoint] = []
     var hours = Array(repeating: ClickyPerformanceBucket(), count: 24)
     var weekdays = Array(repeating: ClickyPerformanceBucket(), count: 7)
+    /// Totals per local calendar day, for active days, records and per-day averages.
+    var days: [Date: ClickyPerformanceBucket] = [:]
 
     init() {}
+
+    /// Days with any timed typing.
+    var activeDays: Int { days.values.filter { $0.activeSeconds > 0 || $0.characters > 0 }.count }
 
     /// `beforeBuild` runs on the worker before the report is built; tests use it to cancel while the worker runs.
     static func prepare(statistics: ClickyStatistics, filter: ClickyPerformanceFilter,
@@ -211,8 +216,10 @@ struct ClickyPerformanceReport: Sendable {
             total.add(bucket)
             hours[calendar.component(.hour, from: date)].add(bucket)
             weekdays[(calendar.component(.weekday, from: date) + 5) % 7].add(bucket)
-            let key = grouping == .week ? (calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? calendar.startOfDay(for: date))
-                : grouping == .day ? calendar.startOfDay(for: date)
+            let day = calendar.startOfDay(for: date)
+            days[day, default: ClickyPerformanceBucket()].add(bucket)
+            let key = grouping == .week ? (calendar.dateInterval(of: .weekOfYear, for: date)?.start ?? day)
+                : grouping == .day ? day
                 : Date(timeIntervalSince1970: floor(date.timeIntervalSince1970 / Double(grouping.rawValue)) * Double(grouping.rawValue))
             groups[key, default: ClickyPerformanceBucket()].add(bucket)
         }
@@ -224,15 +231,25 @@ struct ClickyDictationEstimate {
     let typingSeconds: Double
     let speakingSeconds: Double
     let setupSeconds: Double
-    var dictationSeconds: Double { speakingSeconds + setupSeconds }
+    let reviewSeconds: Double
+    let retainedWords: Double
+    var dictationSeconds: Double { speakingSeconds + setupSeconds + reviewSeconds }
     var differenceSeconds: Double { typingSeconds - dictationSeconds }
 
     /// One dictation covers a whole typing session, so its setup counts once per session, not per 5-second burst:
     /// with setup per burst, 8,042 bursts in a week cost 6.7 h of setup and the estimate said dictation saved nothing
     /// (Martin's data, 2026-10-25: 718 sessions in the same week).
-    init(totals: ClickyPerformanceBucket, wordsPerMinute: Int, setupPerSession: Int) {
-        typingSeconds = totals.activeSeconds
-        speakingSeconds = totals.estimatedRetainedWords * 60 / Double(max(1, wordsPerMinute))
-        setupSeconds = Double(totals.sessions * max(0, setupPerSession))
+    ///
+    /// `dictatedShare` (0...1) is the part of the typing the user would dictate at all: code, commands and passwords
+    /// stay typed, and Clicky cannot tell them apart without reading text. It scales both sides and the sessions
+    /// alike. `reviewShare` adds reading and fixing the transcript, as a share of the speaking time.
+    init(totals: ClickyPerformanceBucket, wordsPerMinute: Int, setupPerSession: Int,
+        dictatedShare: Double = 1, reviewShare: Double = 0) {
+        let share = min(1, max(0, dictatedShare))
+        retainedWords = totals.estimatedRetainedWords * share
+        typingSeconds = totals.activeSeconds * share
+        speakingSeconds = retainedWords * 60 / Double(max(1, wordsPerMinute))
+        setupSeconds = Double(totals.sessions * max(0, setupPerSession)) * share
+        reviewSeconds = speakingSeconds * max(0, reviewShare)
     }
 }

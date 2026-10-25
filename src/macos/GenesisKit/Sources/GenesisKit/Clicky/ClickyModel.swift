@@ -164,6 +164,23 @@ public final class ClickyModel: ObservableObject {
     }
 
     public var hasInputPermission: Bool { inputMonitor.hasPermission }
+
+    /// Whether key counts are recorded now, and if not, the first reason to fix.
+    public var recordingStatus: ClickyRecordingStatus {
+        if !preferences.collectStats { return .statisticsOff }
+        if enabled { return .recording }
+        return inputMonitor.hasPermission ? .clickyOff : .inputMonitoringMissing
+    }
+
+    /// The fix the statistics pages offer for `recordingStatus`: turn statistics on, or turn Clicky on (which asks
+    /// for Input Monitoring through the permission dialog when it is missing).
+    public func fixRecording() {
+        switch recordingStatus {
+        case .recording: break
+        case .statisticsOff: preferences.collectStats = true
+        case .clickyOff, .inputMonitoringMissing: activate()
+        }
+    }
     public var isPaused: Bool {
         systemSleeping || preferences.isQuiet(at: Date()) || excluded || (sleepingUntil.map { $0 > Date() } ?? false)
     }
