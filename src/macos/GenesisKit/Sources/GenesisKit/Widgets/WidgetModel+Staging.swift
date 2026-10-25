@@ -98,7 +98,8 @@ extension WidgetModel {
         if staged != stagedItems { stagedItems = staged }
         guard !pendingStage.isEmpty else { return }
         let shown = Dictionary(items.map { ($0.sourceId, $0.draftOption ?? "") }, uniquingKeysWith: { first, _ in first })
-        for (id, option) in pendingStage where shown[id] == option {
+        // A decision the list no longer holds shows no pick, so a pending unstage ("") is done.
+        for (id, option) in pendingStage where (shown[id] ?? "") == option {
             pendingStage[id] = nil
         }
     }
@@ -154,7 +155,10 @@ extension WidgetModel {
                 if !waiting.isEmpty {
                     self.noticeAction = WidgetNoticeAction(title: "Send again") { [weak self] in self?.resendAnswers(waiting) }
                 }
-            } catch { self.report(error) }
+            } catch {
+                if action == "resend-answers" { self.notice = nil }
+                self.report(error)
+            }
         }
     }
 

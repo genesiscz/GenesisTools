@@ -547,7 +547,9 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         let marker = root.appendingPathComponent("voice-invoked")
         let snapshot = #"{"version":1,"state":{"version":1,"revision":0,"preferences":{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"both","side":"right","quietSeconds":15,"voiceProvider":"fixture","voiceLanguage":"en"},"assets":{},"drafts":{},"outgoing":[]},"sessions":[],"cards":[],"manifests":{},"errors":[]}"#
         let complete = #"{"kind":"complete","text":"Fixture words"}"#
-        try "#!/bin/sh\nif [ \"$1\" = voice ]; then echo \"$*\" > '\(marker.path)'; printf '%s\\n' '\(complete)'; exit 0; fi\nprintf '%s\\n' '\(snapshot)'\n".write(to: binary, atomically: true, encoding: .utf8)
+        let clip = root.appendingPathComponent("incoming.pcm").path
+        // The real listener prints "complete" before it closes the audio file; the fixture flushes it a moment later.
+        try "#!/bin/sh\nif [ \"$1\" = voice ]; then echo \"$*\" > '\(marker.path)'; printf '%s\\n' '\(complete)'; sleep 0.3; printf flushed > '\(clip)'; exit 0; fi\nprintf '%s\\n' '\(snapshot)'\n".write(to: binary, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
         let defaults = UserDefaults(suiteName: "voice-routing-\(UUID())")!
         let model = WidgetModel(binaryPath: binary.path, stateRoot: root.path, defaults: defaults)
@@ -557,10 +559,13 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         model.startSettings()
         await fulfillment(of: [loaded], timeout: 3)
         model.selectedKey = "pinned-recipient"
-        let clip = root.appendingPathComponent("incoming.pcm").path
         var filed: [(String, String, WidgetVoiceNoteContext)] = []
+        var filedAudio: [String?] = []
         model.voiceNoteClip = { clip }
-        model.fileVoiceNote = { filed.append(($0, $1, $2)) }
+        model.fileVoiceNote = { path, text, context in
+            filed.append((path, text, context))
+            filedAudio.append(try? String(contentsOfFile: path, encoding: .utf8))
+        }
         XCTAssertEqual(model.composerVoiceChoice, "ask", "the microphone asks by default")
 
         func run(_ mode: WidgetVoiceMode) async {
@@ -578,6 +583,7 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         XCTAssertTrue(noteArgs.contains("voice listen"), noteArgs)
         XCTAssertTrue(noteArgs.contains("--save-audio \(clip)"), "a voice note keeps its audio: \(noteArgs)")
         XCTAssertEqual(filed.map(\.0), [clip])
+        XCTAssertEqual(filedAudio, ["flushed"], "the note is filed after the listener closed its audio")
         XCTAssertEqual(filed.map(\.1), ["Fixture words"])
         XCTAssertEqual(filed.first?.2.sessionKey, "pinned-recipient")
         XCTAssertNil(filed.first?.2.decisionNumber, "a follow-up names no decision")

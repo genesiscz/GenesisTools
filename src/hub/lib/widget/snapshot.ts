@@ -1068,7 +1068,12 @@ export async function widgetSnapshot({
             entry[target] = item;
         }
 
-        entry.items = [...(entry.items ?? []), count > 1 ? { ...item, count } : item];
+        const listed = count > 1 ? { ...item, count } : item;
+        if (entry.items) {
+            entry.items.push(listed);
+        } else {
+            entry.items = [listed];
+        }
         inboxSessions.set(session.key, entry);
     };
     // Counted per item: each SQL group carries its session's newest item and how many of its items fall after the
@@ -1128,10 +1133,9 @@ export async function widgetSnapshot({
             continue;
         }
         const session = findSession(row.sessionId, row.provider);
-        if (!session || !inboxCounted(session, timeOf(row.updatedTs))) {
+        if (!session) {
             continue;
         }
-        pendingDecisions += 1;
         const item: WidgetInboxItem = {
             id: `decision:${row.id}`,
             sourceId: row.id,
@@ -1146,9 +1150,13 @@ export async function widgetSnapshot({
             revision: row.revision ?? 1,
             ...stagedOf(row),
         };
-        putInbox(session, item, 1);
+        // A staged pick is unsent input: it stays in `staged` after "Mark all read" and in a quiet session.
         if (item.draftOption || item.draft) {
             staged.push(item);
+        }
+        if (inboxCounted(session, timeOf(row.updatedTs))) {
+            pendingDecisions += 1;
+            putInbox(session, item, 1);
         }
     }
     let unreadResults = 0;

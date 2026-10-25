@@ -1806,6 +1806,12 @@ test("decision cards carry recorded answers and supersede links; only open decis
     expect(drafted.cards.find((entry) => entry.sourceId === replacement.id)?.at).toBe(askedAt);
     // The staged list is its own, uncapped: the widget sends from it, not from a session's eight listed items.
     expect(drafted.notifications?.staged.map((entry) => entry.sourceId)).toEqual([replacement.id]);
+    // "Mark all read" stops the badge counting it, but the staged pick is unsent input and stays.
+    await Bun.sleep(5);
+    await performWidgetAction({ root: directory, input: { action: "inbox-clear", at: Date.now() } });
+    const cleared = await widgetSnapshot({ root: directory, sources });
+    expect(cleared.notifications?.sessions.find((entry) => entry.key === sessionKey)?.needsAnswer ?? 0).toBe(0);
+    expect(cleared.notifications?.staged.map((entry) => entry.sourceId)).toEqual([replacement.id]);
     expect(readDecisions(file).find((row) => row.id === replacement.id)?.updatedTs).not.toBe(replacement.createdTs);
 
     await updateDecisions(file, events, {

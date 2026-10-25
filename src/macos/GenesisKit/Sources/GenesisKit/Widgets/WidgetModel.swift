@@ -1960,7 +1960,8 @@ public final class WidgetModel: ObservableObject {
                     onLines: { [weak self] lines in self?.receiveVoice(lines) },
                     onExit: { [weak self] exit in
                         guard let self else { return }
-                        self.finishVoice()
+                        // Only a clean exit proves the audio writer closed the clip.
+                        self.finishVoice(fileClip: exit.status == 0)
                         if exit.status != 0 && !exit.stopped { self.error = String(exit.stderr.suffix(600)) }
                     })
             } catch {
@@ -1991,11 +1992,11 @@ public final class WidgetModel: ObservableObject {
                         voiceText = ""
                     }
                 case "complete":
+                    // The listener still flushes the audio after this line; the exit finishes the note.
                     if let text = event.text {
                         voiceFinals = [text]
                         voiceText = ""
                     }
-                    finishVoice()
                 case "error": error = event.error ?? event.text
                 default: break
                 }
@@ -2003,7 +2004,8 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    private func finishVoice() {
+    /// `fileClip` false: the recording may be incomplete, so it is removed instead of filed as a voice note.
+    private func finishVoice(fileClip: Bool = true) {
         guard voiceActive else { return }
         voiceActive = false
         voiceMode = nil
@@ -2011,7 +2013,7 @@ public final class WidgetModel: ObservableObject {
         let text = (voiceFinals + [voiceText]).filter { !$0.isEmpty }.joined(separator: " ")
         if let plan = voiceNotePlan {
             voiceNotePlan = nil
-            if !text.isEmpty, let fileVoiceNote {
+            if fileClip, !text.isEmpty, let fileVoiceNote {
                 fileVoiceNote(plan.clip, text, plan.context)
             } else {
                 do { try FileManager.default.removeItem(atPath: plan.clip) } catch {
