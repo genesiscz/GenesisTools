@@ -56,6 +56,8 @@ struct MarkdownFindBar: View {
     @ObservedObject var keymap = MarkdownKeymap.shared
     @FocusState private var focused: Bool
     @State private var allTabsOpen = false
+    /// The counter is spoken once it settles, not at every keystroke.
+    @State private var counterAnnounce: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -92,10 +94,11 @@ struct MarkdownFindBar: View {
                     Image(systemName: model.replaceOpen ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundColor(model.theme.textMuted)
-                        .frame(width: 16, height: 22)
+                        .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.genHoverPlain())
+                .hoverHighlight(color: model.theme.accent, cornerRadius: 5, fillOpacity: 0.12)
                 .instantTooltip(keymap.hint("Replace", "markdown.find.replace"))
                 .accessibilityLabel(model.replaceOpen ? "Hide replace" : "Show replace")
                 .keymapAction("markdown.find.replace", in: MarkdownKeymap.shared) { model.replaceOpen.toggle() }
@@ -106,12 +109,14 @@ struct MarkdownFindBar: View {
 
             if model.supportsFind {
                 Text(counter)
-                    .font(GenTypography.mono(9.5))
+                    .font(GenTypography.mono(11))
+                    .monospacedDigit()
                     .foregroundColor(counterIsWarning ? model.theme.accent : model.theme.textMuted)
                     .lineLimit(1)
                     .fixedSize()
                     .frame(minWidth: 46, alignment: .center)
                     .accessibilityIdentifier("markdown-find-counter")
+                    .onChange(of: counter) { _, now in announceCounter(now) }
 
                 stepButton("chevron.up", tooltip: stepTooltip("Previous match", "⇧↩", "markdown.find.previous"),
                            id: "markdown-find-prev") {
@@ -144,11 +149,23 @@ struct MarkdownFindBar: View {
                     allTabsButton
                 }
             } else {
-                Text("Web renderer only")
-                    .font(GenTypography.mono(9.5))
-                    .foregroundColor(model.theme.accent)
-                    .fixedSize()
-                    .instantTooltip("The native renderers draw no marks. Switch to the Web renderer to search the page")
+                // The native renderers draw no marks, so the way out is a button, not a tooltip.
+                Button {
+                    model.rendererRaw = MarkdownRenderer.web.rawValue
+                    model.search()
+                } label: {
+                    Text("Use the web renderer")
+                        .font(GenTypography.mono(11, weight: .medium))
+                        .foregroundColor(model.theme.accent)
+                        .padding(.horizontal, 6)
+                        .frame(minHeight: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverPlain())
+                .hoverHighlight(color: model.theme.accent, cornerRadius: 5, fillOpacity: 0.12)
+                .fixedSize()
+                .instantTooltip("Find marks matches only in the web renderer. This switches the reading view to it")
+                .accessibilityIdentifier("markdown-find-use-web")
             }
 
             stepButton("xmark", tooltip: "Close (Esc)", id: "markdown-find-done", enabled: true) {
@@ -177,6 +194,10 @@ struct MarkdownFindBar: View {
                 .onChange(of: model.findQuery) { _, _ in model.search() }
                 .accessibilityLabel("Find")
                 .accessibilityIdentifier("markdown-find-field")
+
+            if !model.findQuery.isEmpty {
+                clearButton { model.findQuery = "" }
+            }
 
             optionToggle(
                 Text("Aa"),
@@ -218,7 +239,7 @@ struct MarkdownFindBar: View {
     /// Replace works on the source, which is the text the file actually holds.
     private var replaceRow: some View {
         HStack(spacing: 3) {
-            Spacer().frame(width: 16)
+            Spacer().frame(width: 22)
             TextField(model.findOptions.regex ? "Replace ($1 = group 1)" : "Replace", text: $model.replaceText)
                 .textFieldStyle(.plain)
                 .font(GenTypography.mono(11))
@@ -239,7 +260,7 @@ struct MarkdownFindBar: View {
                 model.replaceCurrent()
             }
             textButton(
-                "All",
+                "Replace all",
                 tooltip: model.activeSourceScope == nil ? "Replace every match" : "Replace every match in the selection",
                 id: "markdown-replace-all"
             ) {
@@ -256,7 +277,7 @@ struct MarkdownFindBar: View {
             Image(systemName: "rectangle.stack")
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundColor(allTabsOpen ? model.theme.accent : model.theme.textSecondary)
-                .frame(width: 22, height: 20)
+                .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverPlain())
@@ -321,7 +342,7 @@ struct MarkdownFindBar: View {
             label
                 .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
                 .foregroundColor(isOn ? model.theme.accent : model.theme.textMuted)
-                .frame(width: 20, height: 18)
+                .frame(width: 22, height: 22)
                 .background(RoundedRectangle(cornerRadius: 4).fill(isOn ? model.theme.accent.opacity(0.16) : Color.clear))
                 .overlay(
                     RoundedRectangle(cornerRadius: 4)
@@ -349,7 +370,7 @@ struct MarkdownFindBar: View {
             Image(systemName: symbol)
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundColor(isOn ? model.theme.accent : model.theme.textSecondary)
-                .frame(width: 22, height: 20)
+                .frame(width: 22, height: 22)
                 .background(RoundedRectangle(cornerRadius: 5).fill(isOn ? model.theme.accent.opacity(0.16) : Color.clear))
                 .overlay(
                     RoundedRectangle(cornerRadius: 5)
@@ -377,7 +398,7 @@ struct MarkdownFindBar: View {
             Image(systemName: symbol)
                 .font(.system(size: 10, weight: .semibold))
                 .foregroundColor(model.theme.textSecondary)
-                .frame(width: 22, height: 20)
+                .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverPlain())
@@ -388,15 +409,51 @@ struct MarkdownFindBar: View {
         .accessibilityIdentifier(id)
     }
 
+    /// Empties the find field; shown only while it holds text.
+    private func clearButton(_ clear: @escaping () -> Void) -> some View {
+        Button(action: clear) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 10.5))
+                .foregroundColor(model.theme.textMuted)
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.genHoverPlain())
+        .instantTooltip("Clear")
+        .accessibilityLabel("Clear the search")
+        .accessibilityIdentifier("markdown-find-clear")
+    }
+
+    /// "3 of 12", "No match" or the pattern error, spoken 0.6 s after the last change of the counter.
+    private func announceCounter(_ text: String) {
+        counterAnnounce?.cancel()
+        guard !text.isEmpty else { return }
+        counterAnnounce = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            GenAnnounce.post(Self.spokenCounter(text), priority: .low)
+        }
+    }
+
+    /// The counter in words: "3/12" reads as "Match 3 of 12".
+    static func spokenCounter(_ text: String) -> String {
+        let parts = text.split(separator: "/")
+        if parts.count == 2, let index = Int(parts[0]), let count = Int(parts[1]) {
+            return "Match \(index) of \(count)"
+        }
+        return text.prefix(1).uppercased() + text.dropFirst()
+    }
+
     private func textButton(_ title: String, tooltip: String, id: String, action: @escaping () -> Void) -> some View {
         Button(title, action: action)
             .buttonStyle(.genHoverPlain())
-            .font(GenTypography.mono(10))
+            .font(GenTypography.mono(11))
             .foregroundColor(model.findCount > 0 ? model.theme.accent : model.theme.textMuted)
             .padding(.horizontal, 5)
             .frame(height: 22)
             .disabled(model.findCount == 0)
             .instantTooltip(tooltip)
+            .accessibilityLabel(MarkdownDocumentActions.spokenLabel(tooltip))
             .accessibilityIdentifier(id)
     }
 }

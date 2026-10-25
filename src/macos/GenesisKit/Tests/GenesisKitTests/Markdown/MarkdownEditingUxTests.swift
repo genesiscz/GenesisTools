@@ -100,4 +100,12 @@ final class MarkdownEditingUxTests: XCTestCase {
         func find(_ v: NSView) -> NSTextView? { (v as? NSTextView) ?? v.subviews.lazy.compactMap(find).first }
         XCTAssertEqual(find(host)?.accessibilityLabel(), "Markdown source")
     }
+
+    // MARK: Find bar
+
+    func testTheFindCounterIsSpokenInWords() {
+        XCTAssertEqual(MarkdownFindBar.spokenCounter("3/12"), "Match 3 of 12")
+        XCTAssertEqual(MarkdownFindBar.spokenCounter("no match"), "No match")
+        XCTAssertEqual(MarkdownFindBar.spokenCounter("invalid regex"), "Invalid regex")
+    }
 }

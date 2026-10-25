@@ -69,9 +69,10 @@ struct MarkdownGitSidebar: View {
                 .foregroundColor(model.theme.textSecondary)
         } else {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Click a commit to read that version. Right-click to compare.")
-                    .font(.system(size: 10))
-                    .foregroundColor(model.theme.textMuted)
+                Text("Click a commit to read that version. Right-click it, or press C, to compare.")
+                    .font(.system(size: 11))
+                    .foregroundColor(model.theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 GitCommitList(
                     commits: fileHistory.commits,
                     selected: model.revisionView.flatMap { $0.docID == doc.id ? $0.commit.sha : nil },

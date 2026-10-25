@@ -92,12 +92,17 @@ struct MarkdownGoToSheet: View {
                     return .handled
                 }
                 .onChange(of: text) { _, _ in problem = nil }
+                .onChange(of: problem) { _, now in if let now { GenAnnounce.post(now) } }
                 .accessibilityIdentifier("markdown-goto-field")
             if let problem {
-                Text(problem)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
+                Label {
+                    Text(problem).fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").accessibilityHidden(true)
+                }
+                .font(.system(size: 11.5))
+                .foregroundStyle(Color.genError)
+                .accessibilityIdentifier("markdown-goto-problem")
             }
             HStack {
                 Spacer()

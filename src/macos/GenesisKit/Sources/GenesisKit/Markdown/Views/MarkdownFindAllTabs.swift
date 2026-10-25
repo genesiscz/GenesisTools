@@ -118,7 +118,8 @@ struct MarkdownFindAllTabs: View {
         }
         .buttonStyle(.genHoverPlain())
         .hoverHighlight(color: model.theme.accent, cornerRadius: 6, fillOpacity: 0.1, borderOpacity: 0)
-        .instantTooltip(hit.path)
+        // `.help`, not an instant tooltip: one AppKit hover view per row of a long list lagged it (2026-10-13).
+        .help(hit.path)
         .accessibilityLabel("\(hit.title), \(hit.count == 1 ? "1 match" : "\(hit.count) matches"): \(hit.snippet)")
         .accessibilityHint("Shows this tab and its matches")
         .accessibilityIdentifier("markdown-find-all-tabs-row")
