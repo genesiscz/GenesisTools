@@ -75,10 +75,12 @@ final class MarkdownRecentMenu: NSObject, NSMenuDelegate {
             item.isEnabled = exists
             item.toolTip = entry.path
             let note = exists ? MarkdownRecents.note(for: entry, isOpen: isOpen, now: now) : "missing"
+            // The folder tells two `index.md` apart; orange only for a file that is gone (UX audit W25).
+            let folder = ((entry.path as NSString).deletingLastPathComponent as NSString).lastPathComponent
             let title = NSMutableAttributedString(string: name, attributes: [.font: NSFont.menuFont(ofSize: 0)])
-            title.append(NSAttributedString(string: "   \(note)", attributes: [
+            title.append(NSAttributedString(string: "   \(folder) · \(note)", attributes: [
                 .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
-                .foregroundColor: isOpen ? NSColor.secondaryLabelColor : NSColor.systemOrange,
+                .foregroundColor: exists ? NSColor.secondaryLabelColor : NSColor.systemOrange,
             ]))
             item.attributedTitle = title
             if !isOpen, exists {
@@ -87,7 +89,7 @@ final class MarkdownRecentMenu: NSObject, NSMenuDelegate {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        let clear = menu.addItem(withTitle: "Clear Closed", action: #selector(clearClosed(_:)), keyEquivalent: "")
+        let clear = menu.addItem(withTitle: "Clear Closed Files", action: #selector(clearClosed(_:)), keyEquivalent: "")
         clear.target = self
     }
 
