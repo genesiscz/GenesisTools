@@ -89,6 +89,13 @@ public enum MarkdownKeymap {
                       scope: sourceScope),
         KeymapCommand("markdown.edit.task", "Task On or Off", group: "Source Editing",
                       keys: [.character("x", [.shift, .command])], scope: sourceScope),
+        // The gutter's bars from the keyboard (UX audit E13): by position, the two keys right of P, as Back and
+        // Forward and the tab keys are; ⌥⌘ is free on both.
+        KeymapCommand("markdown.edit.nextChange", "Next Change", group: "Source Editing",
+                      detail: "Moves to the next changed lines and opens their card.",
+                      keys: [.code(30, [.option, .command])], scope: sourceScope),
+        KeymapCommand("markdown.edit.previousChange", "Previous Change", group: "Source Editing",
+                      keys: [.code(33, [.option, .command])], scope: sourceScope),
         KeymapCommand("markdown.edit.indent", "Indent Lines", group: "Source Editing", keys: [.code(48)],
                       scope: sourceScope, configurable: false),
         KeymapCommand("markdown.edit.outdent", "Outdent Lines", group: "Source Editing", keys: [.code(48, .shift)],
@@ -193,14 +200,21 @@ public enum MarkdownKeymap {
         textView: NSTextView, window: NSWindow, keymap: Keymap = shared, dispatcher: KeymapDispatcher = .shared,
         perform: @escaping (String) -> Void
     ) -> [KeymapRegistration] {
-        ["markdown.edit.bold", "markdown.edit.italic", "markdown.edit.link", "markdown.edit.task"].map { id in
-            dispatcher.register(id, in: keymap, window: window, isEnabled: { [weak textView] in
-                guard let textView, let window = textView.window else { return false }
-                return window.firstResponder === textView
-            }) {
+        let focused: () -> Bool = { [weak textView] in
+            guard let textView, let window = textView.window else { return false }
+            return window.firstResponder === textView
+        }
+        let edits = ["markdown.edit.bold", "markdown.edit.italic", "markdown.edit.link", "markdown.edit.task"].map { id in
+            dispatcher.register(id, in: keymap, window: window, isEnabled: focused) {
                 perform(id)
             }
         }
+        let hunks = [("markdown.edit.nextChange", 1), ("markdown.edit.previousChange", -1)].map { id, step in
+            dispatcher.register(id, in: keymap, window: window, isEnabled: focused) { [weak textView] in
+                _ = (textView as? SourceTextView)?.openHunk(step: step)
+            }
+        }
+        return edits + hunks
     }
 
     /// "Save (⌘S)" with the key in force.

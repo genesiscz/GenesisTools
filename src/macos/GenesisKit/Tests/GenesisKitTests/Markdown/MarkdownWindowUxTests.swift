@@ -66,6 +66,34 @@ final class MarkdownWindowUxTests: XCTestCase {
         XCTAssertNil(model.exportError, "a replace count is not an error")
     }
 
+    func testReplaceAllOffersUndoThatPutsTheTextBack() throws {
+        model.open([url("a.md")])
+        model.setMode(.source)
+        model.openFind()
+        model.findQuery = "a"
+        model.replaceText = "z"
+        let doc = try XCTUnwrap(model.selected)
+        let before = doc.displayText
+        model.replaceAll()
+        XCTAssertNotEqual(doc.displayText, before)
+        let undo = try XCTUnwrap(model.notice?.actions.first)
+        XCTAssertEqual(undo.label, "Undo")
+        guard case .action(_, let perform) = undo.kind else { return XCTFail("no button") }
+        perform()
+        XCTAssertEqual(doc.displayText, before)
+        XCTAssertFalse(doc.isDirty)
+    }
+
+    func testNextAndPreviousChangeAreSourceKeysThatClashWithNothing() {
+        for layout in [TableKeyLayout.us] {
+            let keys = Keymap(library: MarkdownKeymap.library, store: nil, layout: layout)
+            XCTAssertEqual(keys.chord(for: "markdown.edit.nextChange"), .code(30, [.option, .command]))
+            XCTAssertEqual(keys.chord(for: "markdown.edit.previousChange"), .code(33, [.option, .command]))
+            XCTAssertEqual(keys.conflicts(), [])
+        }
+        XCTAssertEqual(MarkdownKeymap.library.command("markdown.edit.nextChange")?.scope, MarkdownKeymap.sourceScope)
+    }
+
     func testAShareFailureKeepsItsSentenceAndPutsTheCommandsWordsBehindDetails() {
         let notice = MarkdownDocumentToolbar.shareNotice("The dev dashboard could not share this note. Details say why.",
                                                          detail: "error: ECONNREFUSED\nExit code 1.")

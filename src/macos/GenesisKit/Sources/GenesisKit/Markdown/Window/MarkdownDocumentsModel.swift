@@ -722,12 +722,24 @@ final class MarkdownDocumentsModel: ObservableObject {
             in: doc.displayText, query: findQuery, options: findOptions, within: activeSourceScope, with: replaceText
         )
         guard result.count > 0 else { return }
+        let original = doc.displayText
         doc.edit(result.text)
         growFindScope(by: (result.text as NSString).length - before)
         findCount = 0
         findIndex = 0
         sourceSelection = nil
-        post(MarkdownNotice("Replaced \(result.count) \(result.count == 1 ? "match" : "matches")", tone: .success))
+        // Undo on the note as well as ⌘Z (UX audit E12): it puts the text back while nothing was typed since.
+        post(MarkdownNotice("Replaced \(result.count) \(result.count == 1 ? "match" : "matches")", tone: .success, actions: [
+            .button("Undo", symbol: "arrow.uturn.backward") { [weak self, weak doc] in
+                guard let self, let doc else { return }
+                self.dismissNotice()
+                guard doc.displayText == result.text else {
+                    self.post(MarkdownNotice("The text changed after the replace, so use Edit, Undo instead.", tone: .warning))
+                    return
+                }
+                doc.edit(original)
+            },
+        ]))
     }
 
     func show(_ range: NSRange) {
