@@ -377,6 +377,7 @@ package func runHub(_ args: [String]) -> Never {
         }
     }
     model.loadSessions()
+    MainActor.assumeIsolated { model.startSessionRefresh() }
     // The hub is a live monitor: transcripts stream in while it sits behind other windows. App Nap
     // throttled the whole process there (main-queue work ran 0.5–1 s late and even a dedicated
     // userInteractive sampler thread woke only at the end of each "stall"). Only this face opts out.
@@ -1223,9 +1224,35 @@ final class HubModel: ObservableObject {
         }
     }
 
+    /// Keeps the session list current while the hub is open: a refresh every minute while the window can be seen.
+    /// The list used to load once at launch, so a session that worked all afternoon still read "active 53m ago"
+    /// (Martin, 2026-10-25). A failed refresh logs and keeps the old list, with no error banner.
+    @MainActor
+    func startSessionRefresh(every seconds: Double = 60) {
+        sessionRefresh?.cancel()
+        sessionRefresh = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
+                await HubVisibility.shared.untilVisible()
+                guard let self, !self.loadingSessions else { continue }
+                let generation = self.sessionsGeneration
+                do {
+                    let rows = try await self.readSessions(Self.recentHours)
+                    guard generation == self.sessionsGeneration else { continue }
+                    self.applySessions(rows, flash: false)
+                    self.writeSessionCache(rows, Self.recentHours)
+                } catch {
+                    PerfLog.mark("hub.sessions.refresh failed: \(error)")
+                }
+            }
+        }
+    }
+
+    private var sessionRefresh: Task<Void, Never>?
+
     /// Shows `rows`, sliding new ones in; over a list already on screen, the new and moved ones flash.
     @MainActor
-    private func applySessions(_ rows: [HubSession]) {
+    private func applySessions(_ rows: [HubSession], flash: Bool = true) {
         var fresh = rows
             .filter { !($0.archived ?? false) }
             .sorted { $0.mtime > $1.mtime }
@@ -1238,6 +1265,11 @@ final class HubModel: ObservableObject {
         guard fresh != sessions else { return }
         let before = Dictionary(sessions.map { ($0.id, "\($0.mtime)") }, uniquingKeysWith: { first, _ in first })
         let moved = SWR.changed(before: before, after: fresh.map { ($0.id, "\($0.mtime)") })
+        // A periodic refresh moves rows without the change flash: a row whose only news is a later time is not news.
+        guard flash else {
+            withAnimation(SWR.animation) { sessions = fresh }
+            return
+        }
         withAnimation(SWR.animation) {
             sessions = fresh
             changedSessions = moved
