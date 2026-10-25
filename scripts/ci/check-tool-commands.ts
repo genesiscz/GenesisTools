@@ -330,10 +330,32 @@ function propertyKey(name: ts.PropertyName): string | undefined {
     return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
 }
 
+/** The string literals a value can be: a literal, or both arms of a `cond ? "a" : "b"` of literals. */
+function literalValues(node: ts.Expression | undefined): string[] {
+    const value = stringValue(node);
+
+    if (value !== undefined) {
+        return [value];
+    }
+
+    const inner = node ? unwrap(node) : undefined;
+
+    if (inner && ts.isConditionalExpression(inner)) {
+        const arms = [stringValue(inner.whenTrue), stringValue(inner.whenFalse)];
+
+        return arms.every((arm) => arm !== undefined) ? (arms as string[]) : [];
+    }
+
+    return [];
+}
+
 /** Records the command words a source file registers; returns the modules it imports, static and dynamic. */
 function scanSourceFile(path: string, into: Registrations): string[] {
     const { source } = parseSource(path, readFileSync(path, "utf8"));
     const modules: string[] = [];
+    // `const verb = on ? "enable" : "disable"; mods.command(verb)` registers both words. A name whose value is
+    // not a literal stays unknown, as before.
+    const constants = new Map<string, string[]>();
 
     const add = (declared: string | undefined): void => {
         const word = declared?.split(/\s+/)[0];
@@ -348,6 +370,14 @@ function scanSourceFile(path: string, into: Registrations): string[] {
     };
 
     walk(source, (node) => {
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+            const values = literalValues(node.initializer);
+
+            if (values.length > 0) {
+                constants.set(node.name.text, values);
+            }
+        }
+
         if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
             const specifier = stringValue(node.moduleSpecifier);
 
@@ -373,7 +403,11 @@ function scanSourceFile(path: string, into: Registrations): string[] {
             const [first] = node.arguments;
 
             if (name && REGISTERING_CALLS.has(name)) {
-                add(stringValue(first));
+                const named = first && ts.isIdentifier(first) ? constants.get(first.text) : undefined;
+
+                for (const value of named ?? [stringValue(first)]) {
+                    add(value);
+                }
             } else if (name === "aliases" && first && ts.isArrayLiteralExpression(first)) {
                 for (const element of first.elements) {
                     add(stringValue(element));

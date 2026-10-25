@@ -147,6 +147,21 @@ describe("checkTree", () => {
         expect(errors[0]).toContain("src/other/index.ts:2");
     });
 
+    // `tools agents hooks mods enable|disable` registers both words in one loop.
+    test("accepts the words of a const that is a choice of two literals, and still rejects others", () => {
+        const root = tree({
+            tools: "const TOOL_ALIASES = new Map([]);",
+            "src/foo/index.ts":
+                'for (const on of [true, false]) {\n    const verb = on ? "enable" : "disable";\n    program.command(verb);\n}',
+            "src/other/index.ts": 'toolCommand("foo enable");\ntoolCommand("foo disable");\ntoolCommand("foo toggle");',
+        });
+
+        const errors = checkTree(root, ["src/foo/index.ts", "src/other/index.ts"]);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain("src/other/index.ts:3");
+    });
+
     test("accepts a command registered in a @genesiscz/utils module the tool imports", () => {
         const root = tree({
             tools: "const TOOL_ALIASES = new Map([]);",
