@@ -202,6 +202,25 @@ describe("focusCommand", () => {
         expect(events).toEqual(["--id-format both identify"]);
     });
 
+    test("--exact refuses a pane that only shows the id on screen, and focuses one proven to run it", async () => {
+        // 2026-10-25: a cache chip pressed with --first focused `ncdu /tmp`, whose listing names a session folder.
+        setSnapshot([pane({ id: "pane:33", title: "ncdu /tmp", preview: `/tmp/cc/GenesisTools/${SESSION_A}/` })]);
+
+        const weak = await runFocus(SESSION_A, { json: true, first: true, exact: true });
+
+        expect(weak.exitCode).toBe(1);
+        expect(weak.result).toContain(`"focused": null`);
+        expect(events).toEqual(["--id-format both identify"]);
+
+        process.exitCode = 0;
+        setSnapshot([pane({ id: "pane:34", preview: resumeScreen(SESSION_A) })]);
+
+        const proven = await runFocus(SESSION_A, { json: true, first: true, exact: true, dryRun: true });
+
+        expect(proven.exitCode).toBe(0);
+        expect(proven.result).toContain(`"paneId": "pane:34"`);
+    });
+
     test("--dry-run resolves a target but performs no cmux mutation", async () => {
         setSnapshot([pane({ id: "pane:33", preview: resumeScreen(SESSION_A) })]);
 

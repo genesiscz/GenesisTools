@@ -201,12 +201,14 @@ export function cacheTone(left: number, warnMs: number, cautionMs: number): "red
 /** Focuses the cmux pane the row's session runs in (`tools claude cmux focus`); says so when no pane has it. */
 async function focusSession(host: Host, row: CacheRow): Promise<void> {
     try {
-        const run = await host.run(["tools", "claude", "cmux", "focus", row.sessionId, "--first"], {
+        // `--exact`: a pane that only shows the id on screen (ncdu listing /tmp, an agent that discussed it) is not
+        // the session's; without it a press once focused `ncdu /tmp` (2026-10-25).
+        const run = await host.run(["tools", "claude", "cmux", "focus", row.sessionId, "--first", "--exact"], {
             timeoutMs: 15_000,
         });
 
         if (run.exitCode !== 0) {
-            host.toast(`No cmux pane runs ${row.label}`);
+            host.toast(`No cmux pane is known to run ${row.label}; it may have continued as another session`);
         }
     } catch {
         host.toast(`Could not focus ${row.label}: tools claude cmux focus did not run`);

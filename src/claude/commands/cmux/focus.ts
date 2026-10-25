@@ -1,5 +1,11 @@
 import { describeMatch, type FocusTarget, isUnambiguous } from "@app/claude/lib/cmux/focus";
-import { findSessionTargets, type ResolveDeps, retryAfterStaleRefs, tmuxMissHint } from "@app/claude/lib/cmux/resolve";
+import {
+    findSessionTargets,
+    identifiesExactSession,
+    type ResolveDeps,
+    retryAfterStaleRefs,
+    tmuxMissHint,
+} from "@app/claude/lib/cmux/resolve";
 import * as p from "@clack/prompts";
 import { isInteractive, suggestCommand } from "@genesiscz/utils/cli";
 import { runCmuxOk } from "@genesiscz/utils/cmux/lib/cli";
@@ -19,6 +25,12 @@ export interface FocusOptions {
     dryRun?: boolean;
     first?: boolean;
     includeSelf?: boolean;
+    /**
+     * Focus only a pane proven to run the session (the hook journal, its resume command, its id in the tab title).
+     * A full id printed on some screen is not proof: `ncdu /tmp` lists folders named after session ids, and an agent
+     * pane that discussed the session prints it too (2026-10-25, a cache chip focused `ncdu /tmp`).
+     */
+    exact?: boolean;
 }
 
 export type FocusCommandDeps = ResolveDeps;
@@ -241,6 +253,27 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
             )
         );
         process.exit(1);
+    }
+
+    if (opts.exact && !identifiesExactSession(result)) {
+        process.exitCode = 1;
+
+        if (opts.json) {
+            out.result(SafeJSON.stringify({ query, focused: null, exact: false, matches: targets }, null, 2));
+            return;
+        }
+
+        const [best] = targets;
+        out.error(pc.red(`No cmux pane is proven to run ${query.slice(0, 8)}; nothing was focused.`));
+        out.printlnErr(
+            pc.dim(
+                `  ${targets.length} pane(s) only show its id on screen${best ? ` (best: ${describeMatch(best)})` : ""}.`
+            )
+        );
+        out.printlnErr(
+            pc.dim(`  Pick one anyway: ${suggestCommand("tools claude", { replaceCommand: ["cmux", "focus", query] })}`)
+        );
+        return;
     }
 
     let target = await chooseTarget(targets, query, opts);

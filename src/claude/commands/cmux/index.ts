@@ -43,6 +43,10 @@ export function registerCmuxCommand(program: Command): void {
         .option("--no-activate", "Focus the pane without bringing the cmux app to the front")
         .option("--first", "Take the best match instead of asking when several panes match")
         .option("--include-self", "Also consider the pane this command runs in (excluded by default)")
+        .option(
+            "--exact",
+            "Focus only a pane proven to run the session (hook journal, resume command, id in the tab title), never one that only shows its id on screen"
+        )
         .option("--dry-run", "Print what would be focused and stop")
         .option("--json", "Emit the match as JSON instead of a status line")
         .action(focusCommand);
