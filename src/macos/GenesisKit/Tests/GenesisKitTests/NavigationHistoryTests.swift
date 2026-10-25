@@ -159,6 +159,47 @@ final class NavigationHistoryTests: XCTestCase {
         XCTAssertEqual(launched.backEntry?.target, "b")
     }
 
+    func testRetargetMakesTheShownPlaceEqualToItsEntry() throws {
+        var history = walk(["a"])
+        history.visit("pr=563", title: "PR #563", actor: .agent, note: "why")
+        let id = try XCTUnwrap(history.currentID)
+        XCTAssertEqual(history.retarget(id, to: "prs:github.com/acme/app/pull/563", title: "#563 Fix it")?.title, "#563 Fix it")
+        XCTAssertNil(history.visit("prs:github.com/acme/app/pull/563", title: "#563 Fix it"), "the shown place is the entry")
+        XCTAssertEqual(history.current?.note, "why")
+        XCTAssertNil(history.retarget(id, to: "prs:github.com/acme/app/pull/563"))
+    }
+
+    func testAnOlderLogGoesBehindWhatTheWindowDidSinceItOpened() {
+        let now = Date()
+        var history = History()
+        history.visit("launch", title: "launch", at: now)
+        history.adoptOlder([
+            NavigationEntry(id: "o2", at: now.addingTimeInterval(-10), target: "older2", title: "older2"),
+            NavigationEntry(id: "o1", at: now.addingTimeInterval(-20), target: "older1", title: "older1"),
+        ])
+        XCTAssertEqual(history.current?.target, "launch")
+        XCTAssertEqual(history.goBack()?.target, "older2")
+        XCTAssertEqual(history.goBack()?.target, "older1")
+        // A relaunch on the place the log ended with: one entry, the log's, with its who and note.
+        var relaunched = History()
+        relaunched.visit("pr1", title: "pr1", id: "window-id", at: now)
+        relaunched.visit("pr2", title: "pr2", at: now.addingTimeInterval(1))
+        let merged = relaunched.adoptOlder([
+            NavigationEntry(id: "log-a", at: now.addingTimeInterval(-30), target: "a", title: "a"),
+            NavigationEntry(id: "log-pr1", at: now.addingTimeInterval(-20), target: "pr1", title: "pr1", actor: .agent, note: "n"),
+        ])
+        XCTAssertEqual(merged, ["window-id"])
+        XCTAssertEqual(relaunched.entries.map(\.id).prefix(2), ["log-a", "log-pr1"])
+        XCTAssertEqual(relaunched.entries.count, 3)
+        XCTAssertEqual(relaunched.goBack()?.note, "n")
+        XCTAssertEqual(relaunched.goBack()?.target, "a")
+        // Nothing on screen yet: the newest adopted entry is the current place.
+        var empty = History()
+        empty.adoptOlder([NavigationEntry(id: "x", at: now, target: "x", title: "x")])
+        XCTAssertEqual(empty.current?.target, "x")
+        XCTAssertFalse(empty.canGoBack)
+    }
+
     func testRetitleChangesOnlyTheNamedEntry() throws {
         var history = walk(["a", "b"])
         let a = try XCTUnwrap(history.entries.first)

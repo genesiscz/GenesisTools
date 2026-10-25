@@ -49,6 +49,8 @@ public struct NavigationEntry<Target: Codable & Hashable>: Identifiable, Codable
     }
 }
 
+extension NavigationEntry: Sendable where Target: Sendable {}
+
 /// Where a host keeps the log. `load` runs once at start, `record` after each new or changed entry; both may be
 /// slow (a `tools` call), so the host runs them off the main thread.
 public protocol NavigationHistoryStore<Target>: AnyObject {
@@ -242,6 +244,46 @@ public struct NavigationHistory<Target: Codable & Hashable>: Equatable {
         else { return nil }
         entries[index].title = title
         return entries[index]
+    }
+
+    /// Gives an entry the place its target turned out to be once shown (an agent's `pr=563` becomes the hub's own
+    /// form of that PR), so the place on screen and its entry stay equal and the next look at it adds nothing.
+    public mutating func retarget(_ id: String, to target: Target, title: String? = nil) -> Entry? {
+        guard let index = entries.lastIndex(where: { $0.id == id }) else { return nil }
+        let unchanged = entries[index].target == target && (title.map { $0.isEmpty || $0 == entries[index].title } ?? true)
+        guard !unchanged else { return nil }
+        entries[index].target = target
+        if let title, !title.isEmpty { entries[index].title = title }
+        if id == currentID { currentTarget = target }
+        return entries[index]
+    }
+
+    /// Puts a log read back from the store behind what this window already did since it opened: entries it does
+    /// not hold yet, oldest first, become the oldest places Back reaches. When the log ends on the place this window
+    /// opened on (a relaunch on the place it left), the two are one entry, the log's: its id, who and note. Returns
+    /// the ids of this window's entries that merged away, which the host must not store.
+    @discardableResult
+    public mutating func adoptOlder(_ older: [Entry]) -> [String] {
+        let known = Set(entries.map(\.id))
+        var fresh = older.filter { !known.contains($0.id) }.sorted { $0.at < $1.at }
+        guard !fresh.isEmpty else { return [] }
+        var merged: [String] = []
+        if let newest = fresh.last, let oldest = entries.first, newest.target == oldest.target {
+            fresh.removeLast()
+            merged.append(oldest.id)
+            entries[0] = newest
+            backIDs = backIDs.map { $0 == oldest.id ? newest.id : $0 }
+            forwardIDs = forwardIDs.map { $0 == oldest.id ? newest.id : $0 }
+            if currentID == oldest.id { currentID = newest.id }
+        }
+        entries = fresh + entries
+        backIDs = fresh.map(\.id) + backIDs
+        if currentID == nil, currentTarget == nil, let last = backIDs.popLast() {
+            currentID = last
+            currentTarget = entry(last)?.target
+        }
+        trim()
+        return merged
     }
 
     private mutating func move(to id: String) -> Entry? {

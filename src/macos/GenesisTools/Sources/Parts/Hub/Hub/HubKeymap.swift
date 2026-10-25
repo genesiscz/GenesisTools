@@ -125,6 +125,9 @@ enum HubKeymap {
         // The two keys right of P: "[" and "]" on US, "ú" and ")" on Czech. The position is the shortcut.
         KeymapCommand("hub.go.back", "Back", group: "Go", keys: [.code(33, .command)]),
         KeymapCommand("hub.go.forward", "Forward", group: "Go", keys: [.code(30, .command)]),
+        KeymapCommand("hub.go.history", "History", group: "Go",
+                      detail: "Every place the hub showed, who opened it (you, an agent, a link) and why.",
+                      keys: [.character("y", .command)]),
         KeymapCommand("hub.go.session", "Session", group: "Go", keys: []),
         KeymapCommand("hub.go.worktree", "Worktree", group: "Go", keys: []),
         KeymapCommand("hub.go.pr", "Pull Request", group: "Go", keys: []),

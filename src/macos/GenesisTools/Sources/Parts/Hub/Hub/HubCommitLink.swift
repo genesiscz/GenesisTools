@@ -272,7 +272,7 @@ extension HubModel {
         guard commitLinkRequest == request else { return }
         switch outcome {
         case .found(let found):
-            showCommit(repo: found.root, sha: found.sha, title: found.title, base: found.base)
+            showCommit(repo: found.root, sha: found.sha, title: found.title, base: found.base, link: commitLinkRaw)
         case .failed(let message):
             HubPerf.log("hub.commitLink \(message)")
             notice = message
@@ -293,6 +293,7 @@ extension HubModel {
             notice = "Commit \(span.label) needs its PR (pr=) or its project (repo=) to open"
             return
         }
+        commitLinkRaw = span.to.map { "\(span.from)..\($0)" } ?? span.from
         cancelSessionNavigation()
         let known = prs.allProjects
         Task {

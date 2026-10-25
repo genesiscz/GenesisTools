@@ -163,75 +163,63 @@ final class HubNavigationTests: XCTestCase {
         }
     }
 
-    private func place(_ mode: HubMode, _ selection: String?) -> HubNavEntry {
-        HubNavEntry(mode: mode, selection: selection)
+    private func place(_ mode: HubMode, _ selection: String?) -> HubNavTarget {
+        HubNavTarget(place: HubNavEntry(mode: mode, selection: selection))
     }
 
-    // MARK: History
+    // MARK: History (the engine's own rules are GenesisKit's NavigationHistoryTests)
 
-    func testBackAndForwardWalkThePlacesInOrder() {
-        var history = HubNavHistory()
-        history.visit(place(.sessions, "a"))
-        history.visit(place(.prs, "pr1"))
-        history.visit(place(.sessions, "b"))
-        XCTAssertTrue(history.canGoBack)
-        XCTAssertFalse(history.canGoForward)
+    func testAPlaceKeepsItsSelectionAndCommitAndALinkPlaceOpensAsItsFlags() throws {
+        let shown = HubNavTarget(place: HubNavEntry(mode: .worktrees, selection: "/src/app"), commit: "0751d8a971", repo: "/src/app")
+        XCTAssertEqual(shown.place, HubNavEntry(mode: .worktrees, selection: "/src/app"))
+        XCTAssertEqual(shown["commit"], "0751d8a971")
+        let data = try JSONEncoder().encode(shown)
+        XCTAssertEqual(try JSONSerialization.jsonObject(with: data) as? [String: String],
+                       ["mode": "worktrees", "selection": "/src/app", "commit": "0751d8a971", "repo": "/src/app"],
+                       "a flat object, the target of tools hub nav")
+        XCTAssertEqual(try JSONDecoder().decode(HubNavTarget.self, from: data), shown)
 
-        XCTAssertEqual(history.goBack(), place(.prs, "pr1"))
-        XCTAssertEqual(history.goBack(), place(.sessions, "a"))
-        XCTAssertNil(history.goBack(), "nothing before the first place")
-        XCTAssertEqual(history.current, place(.sessions, "a"))
-
-        XCTAssertEqual(history.goForward(), place(.prs, "pr1"))
-        XCTAssertEqual(history.goForward(), place(.sessions, "b"))
-        XCTAssertNil(history.goForward())
+        let named = try JSONDecoder().decode(HubNavTarget.self, from: Data(##"{"pr":"#563","commit":"abcdef0","snapshot":"/tmp/x.png"}"##.utf8))
+        XCTAssertNil(named.place, "an agent's place has no selection of the hub's own")
+        XCTAssertEqual(named.arguments, ["--pr", "#563", "--commit", "abcdef0"], "unknown keys never become flags")
     }
 
-    func testANewPlaceAfterGoingBackDropsTheForwardOnes() {
-        var history = HubNavHistory()
-        history.visit(place(.sessions, "a"))
-        history.visit(place(.sessions, "b"))
-        _ = history.goBack()
-        history.visit(place(.worktrees, "/repo"))
-        XCTAssertFalse(history.canGoForward)
-        XCTAssertEqual(history.back, [place(.sessions, "a")])
+    /// The wire to `tools hub nav` (src/hub/commands/nav.ts): what `list --json` prints, and `record`'s flags.
+    func testTheStoreReadsTheListAndWritesFreeTextAsFlagEqualsValue() throws {
+        let listed = Data(##"{"entries":[{"id":"x2","at":1792949067131,"actor":"agent","title":"PR #563","target":{"pr":"563"},"note":"why","from":"s-1"},{"id":"x1","at":1792949066674,"actor":"robot","title":"s","target":{"mode":"sessions","selection":"claude:a"}}],"keep":50,"path":"/x/navigation.db"}"##.utf8)
+        let entries = try HubNavStore.decode(listed)
+        XCTAssertEqual(entries.map(\.id), ["x2", "x1"])
+        XCTAssertEqual(entries[0].actor, .agent)
+        XCTAssertEqual(entries[0].note, "why")
+        XCTAssertEqual(entries[0].agentSession, "s-1")
+        XCTAssertEqual(entries[0].at.timeIntervalSince1970, 1_792_949_067.131, accuracy: 0.001)
+        XCTAssertEqual(entries[1].actor, .user, "an unknown actor reads as the person's")
+        XCTAssertEqual(entries[1].target.place, HubNavEntry(mode: .sessions, selection: "claude:a"))
+
+        let args = try HubNavStore.recordArguments(
+            NavigationEntry(id: "e", at: Date(timeIntervalSince1970: 2), target: place(.prs, "p"), title: "-x title",
+                            actor: .agent, agentSession: "s", note: "--why"), keep: 20)
+        XCTAssertEqual(Array(args.prefix(3)), ["hub", "nav", "record"])
+        XCTAssertTrue(args.contains("--title=-x title"))
+        XCTAssertTrue(args.contains("--note=--why"))
+        XCTAssertTrue(args.contains("--at=2000"))
+        XCTAssertTrue(args.contains("--keep=20"))
+        XCTAssertTrue(args.contains("--from=s"))
     }
 
-    func testTheSamePlaceTwiceIsOneEntry() {
-        var history = HubNavHistory()
-        history.visit(place(.sessions, "a"))
-        history.visit(place(.sessions, "a"))
-        XCTAssertFalse(history.canGoBack)
-    }
-
-    func testAPlaceWithNothingPickedIsReplacedByWhatFollows() {
-        var history = HubNavHistory()
-        history.visit(place(.sessions, nil))
-        history.visit(place(.prs, nil))
-        XCTAssertFalse(history.canGoBack, "the launch's empty Sessions mode is no place to go back to")
-
-        history.visit(place(.prs, "pr1"))
-        history.visit(place(.worktrees, nil))
-        history.visit(place(.sessions, "a"))
-        XCTAssertEqual(history.back, [place(.prs, "pr1")], "a mode left while its list loaded is not a stop")
-
-        // Out to a loading mode and straight back is the place before it, not a second copy of it.
-        history.visit(place(.worktrees, nil))
-        history.visit(place(.sessions, "a"))
-        XCTAssertEqual(history.back, [place(.prs, "pr1")])
-        XCTAssertEqual(history.current, place(.sessions, "a"))
-
-        _ = history.goBack()
-        XCTAssertEqual(history.forward, [place(.sessions, "a")])
-    }
-
-    func testTheHistoryKeepsOnlyTheNewestPlaces() {
-        var history = HubNavHistory()
-        for index in 0...(HubNavHistory.limit + 20) {
-            history.visit(place(.sessions, "s\(index)"))
-        }
-        XCTAssertEqual(history.back.count, HubNavHistory.limit)
-        XCTAssertEqual(history.back.first, place(.sessions, "s20"))
+    func testARequestCarriesWhoAndWhyAndALinkWithoutAnActorIsALink() throws {
+        let request = HubRequest(["--pr", "acme/app#563", "--commit", "0751d8a971", "--actor", "agent", "--note", "why",
+                                  "--from", "session-1", "--nav", "entry-1"])
+        let asked = try XCTUnwrap(HubNavRequest(request))
+        XCTAssertEqual(asked.actor, .agent)
+        XCTAssertEqual(asked.note, "why")
+        XCTAssertEqual(asked.from, "session-1")
+        XCTAssertEqual(asked.id, "entry-1")
+        XCTAssertEqual(asked.title, "PR acme/app#563 · commit 0751d8a971")
+        XCTAssertEqual(HubNavRequest(HubRequest(["--session", "abc"]))?.actor, .link)
+        XCTAssertNil(HubNavRequest(HubRequest(["--palette", "gt pr"])), "an overlay is no place")
+        XCTAssertEqual(HubLink.arguments(fromLink: "genesis-tools://hub?pr=1&actor=agent&note=a%20b&from=s&nav=n&menu=Go"),
+                       ["--pr", "1", "--actor", "agent", "--note", "a b", "--from", "s", "--nav", "n"])
     }
 
     func testTheModelRecordsEachPickAndWalksBackAndForward() {
@@ -241,18 +229,100 @@ final class HubNavigationTests: XCTestCase {
         XCTAssertFalse(model.history.canGoBack, "the launch's empty selection is not a place")
         model.selectedID = "claude:two"
         drainMainQueue()
-        XCTAssertEqual(model.history.back, [place(.sessions, "claude:one")])
+        XCTAssertEqual(model.history.backEntry?.target, place(.sessions, "claude:one"))
+        XCTAssertEqual(model.history.current?.actor, .user)
 
         MainActor.assumeIsolated { model.goBack() }
         drainMainQueue()
         XCTAssertEqual(model.selectedID, "claude:one")
-        XCTAssertEqual(model.history.forward, [place(.sessions, "claude:two")])
-        XCTAssertEqual(model.history.current, place(.sessions, "claude:one"), "the restore itself is not recorded")
+        XCTAssertEqual(model.history.forwardEntry?.target, place(.sessions, "claude:two"))
+        XCTAssertEqual(model.history.current?.target, place(.sessions, "claude:one"), "the restore itself is not recorded")
+        XCTAssertEqual(model.history.entries.count, 2)
 
         MainActor.assumeIsolated { model.goForward() }
         drainMainQueue()
         XCTAssertEqual(model.selectedID, "claude:two")
         XCTAssertFalse(model.history.canGoForward)
+    }
+
+    /// Martin, 2026-10-25: what an agent opened replaced the place he was on, and he could not get back.
+    @MainActor
+    func testAnAgentsPlaceIsAddedWithItsNoteAndBackReturns() async throws {
+        let a = HubSession(sessionId: "fixture-a"), b = HubSession(sessionId: "fixture-b"), c = HubSession(sessionId: "fixture-c")
+        let model = isolatedModel(wanted: a.sessionId)
+        let initial = expectation(description: "initial list")
+        model.readSessions = { _ in [a, b, c] }
+        model.writeSessionCache = { _, _ in initial.fulfill() }
+        model.loadSessions()
+        await fulfillment(of: [initial], timeout: 2)
+        await drain()
+        model.select(b.id)
+        await drain()
+        XCTAssertEqual(model.history.current?.target, place(.sessions, b.id))
+
+        XCTAssertTrue(model.apply(HubRequest(["--session", "fixture-c", "--actor", "agent", "--note", "the failing run",
+                                              "--from", "agent-session", "--nav", "cli-id"])))
+        await drain()
+        XCTAssertEqual(model.selectedID, c.id)
+        let current = try XCTUnwrap(model.history.current)
+        XCTAssertEqual(current.id, "cli-id", "the entry tools hub nav open stored, not a second one")
+        XCTAssertEqual(current.target, place(.sessions, c.id))
+        XCTAssertEqual(current.actor, .agent)
+        XCTAssertEqual(current.note, "the failing run")
+        XCTAssertEqual(current.agentSession, "agent-session")
+        XCTAssertEqual(model.history.entries.map(\.target), [place(.sessions, a.id), place(.sessions, b.id), place(.sessions, c.id)],
+                       "nothing was replaced")
+
+        model.goBack()
+        await drain()
+        XCTAssertEqual(model.selectedID, b.id)
+        // The same place again from an agent: its note, no new entry.
+        XCTAssertTrue(model.apply(HubRequest(["--session", "fixture-b", "--actor", "agent", "--note", "look again"])))
+        await drain()
+        XCTAssertEqual(model.history.current?.note, "look again")
+        XCTAssertEqual(model.history.entries.count, 3)
+    }
+
+    private func drain() async {
+        for _ in 0..<3 {
+            await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        }
+    }
+
+    func testWhileAgentsOnlyAddToHistoryTheViewStays() throws {
+        let preferences = MainActor.assumeIsolated { HubDefaults.preferences }
+        MainActor.assumeIsolated { preferences.agentNavigation = .listOnly }
+        defer { MainActor.assumeIsolated { preferences.agentNavigation = .navigate } }
+        let model = HubModel(wantedSession: nil, tab: .transcript)
+        model.selectedID = "claude:one"
+        drainMainQueue()
+        let shown = model.apply(HubRequest(["--pr", "acme/app#9", "--actor", "agent", "--note", "later", "--nav", "cli-id"]))
+        drainMainQueue()
+        XCTAssertFalse(shown)
+        XCTAssertEqual(model.mode, .sessions)
+        XCTAssertEqual(model.selectedID, "claude:one")
+        XCTAssertEqual(model.history.current?.target, place(.sessions, "claude:one"))
+        let added = try XCTUnwrap(model.history.entry("cli-id"))
+        XCTAssertEqual(added.note, "later")
+        XCTAssertEqual(added.target["pr"], "acme/app#9")
+        XCTAssertNil(model.history.offset(of: "cli-id"), "in the list, not on the back or forward stack")
+        // A person's own request still navigates.
+        XCTAssertTrue(model.apply(HubRequest(["--mode", "prs", "--actor", "user"])))
+        XCTAssertEqual(model.mode, .prs)
+    }
+
+    func testAHopShowsAnyPlaceAndBackReturns() throws {
+        let model = HubModel(wantedSession: nil, tab: .transcript)
+        for id in ["claude:one", "claude:two", "claude:three"] {
+            model.selectedID = id
+            drainMainQueue()
+        }
+        let first = try XCTUnwrap(model.history.entries.first)
+        MainActor.assumeIsolated { model.hop(to: first.id) }
+        drainMainQueue()
+        XCTAssertEqual(model.selectedID, "claude:one")
+        XCTAssertEqual(model.history.forwardEntry?.target, place(.sessions, "claude:two"))
+        XCTAssertEqual(model.history.entries.count, 3)
     }
 
     // Martin, 2026-10-06: Agents at parent X, child Y; a banner opens PR 123; back must land on X / Y again.
@@ -269,14 +339,14 @@ final class HubNavigationTests: XCTestCase {
             model.prs.selectedID = "github.com/acme/app#123"
         }
         drainMainQueue()
-        XCTAssertEqual(model.history.back.last, place(.agents, child))
+        XCTAssertEqual(model.history.backEntry?.target, place(.agents, child))
 
         MainActor.assumeIsolated { model.goBack() }
         drainMainQueue()
         XCTAssertEqual(model.mode, .agents)
         let selected = MainActor.assumeIsolated { model.agents.selectedID }
         XCTAssertEqual(selected, child)
-        XCTAssertEqual(model.history.forward, [place(.prs, "github.com/acme/app#123")])
+        XCTAssertEqual(model.history.forwardEntry?.target, place(.prs, "github.com/acme/app#123"))
     }
 
     private func drainMainQueue() {

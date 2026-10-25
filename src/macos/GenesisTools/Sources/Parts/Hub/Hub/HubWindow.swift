@@ -92,6 +92,12 @@ struct HubRequest {
     /// (`--menu "Go/Pull Request…"` opens the palette with "pr " typed). Verifies the menu in a snapshot.
     var menu: String?
     var activate = true
+    /// Who asked for the place, for the history (`--actor user|agent|link`; a request without it counts as a link),
+    /// why (`--note`), the agent's session (`--from`) and the entry `tools hub nav open` stored (`--nav`).
+    var actor: String?
+    var note: String?
+    var from: String?
+    var nav: String?
 
     /// The file `--reveal` names, in the PR `--pr` names.
     var prReveal: PRReveal? {
@@ -162,6 +168,10 @@ struct HubRequest {
                 }
                 index += 1
             case "--menu": menu = value; index += 1
+            case "--actor": actor = value; index += 1
+            case "--note": note = value; index += 1
+            case "--from": from = value; index += 1
+            case "--nav": nav = value; index += 1
             case "--no-activate": activate = false
             default: break
             }
@@ -187,6 +197,8 @@ struct HubRequest {
 
 package func runHub(_ args: [String]) -> Never {
     PerfLog.phase("hub.launch")
+    // A relaunch's place is the one the person left, not a link's.
+    let resuming = args.contains(HubPlace.resumeFlag)
     // `--resume` (a rebuild's relaunch) opens the place the hub last showed (Hub/HubPlace.swift).
     let args = HubPlace.expand(args)
     let request = HubRequest(args)
@@ -229,6 +241,11 @@ package func runHub(_ args: [String]) -> Never {
         AppMainMenu.install(hub: model)
     }
     model.initialMode = mode
+    if !request.isScripted {
+        // Who asked for the launch's place: the first time the hub shows it, the history entry carries it.
+        model.pendingNav = resuming ? nil : HubNavRequest(request)
+        MainActor.assumeIsolated { model.connectNavLog() }
+    }
     if let panes = request.panes { model.panes = panes }
     if let worktree = request.worktree {
         model.selectedWorktree = WorktreeCleanup.selection(for: worktree)
@@ -339,7 +356,8 @@ package func runHub(_ args: [String]) -> Never {
         MainActor.assumeIsolated { HubVisibility.shared.watch(window) }
         HubSingleInstance.serve { args in
             let later = HubRequest(args)
-            model.apply(later)
+            // An agent's place while agents only add to History: the view and the focus stay where they are.
+            guard model.apply(later) else { return }
             if let path = later.menu {
                 MainActor.assumeIsolated { AppMainMenu.perform(path) }
             }
@@ -682,9 +700,24 @@ final class HubModel: ObservableObject {
     /// PRs mode state (`tools hub pr list/show`). Main-actor: created on the main thread in `runHub`.
     let prs: PRsModel
 
-    /// Back and forward (Hub/HubNavigation.swift). Taken from the published selection itself, so
-    /// every path that changes it (rows, the palette, a handed-over `--session`, "Open") is recorded.
+    /// Back, forward and the History list (Hub/HubNavigation.swift). Taken from the published selection itself, so
+    /// every path that changes it (rows, the palette, a handed-over `--session`, "Open", a link) is recorded.
     @Published private(set) var history = HubNavHistory()
+    /// The History popover (⌘Y, the clock beside the arrows).
+    @Published var historyOpen = false
+    /// The commit a link or an Activity row shows in the Worktrees diff: part of that place in the history.
+    @Published private(set) var shownCommit: HubShownCommit?
+    /// The commit a link selected in a PR's review: part of that PR's place while it stays selected.
+    private var prLinkedCommit: (prID: String, commit: String)?
+    /// The place an agent or a link asked for, with who and why, until the hub shows it.
+    var pendingNav: HubNavRequest?
+    /// A `repo=…&commit=…` link's commit as written (one sha or `<from>..<to>`), for the place `showCommit` shows.
+    var commitLinkRaw: String?
+    /// `tools hub nav`; nil in a scripted run, which never reads or writes the log.
+    private var navStore: HubNavStore?
+    /// Entries made before the log was read back: written once it is, unless they merged into its last entry.
+    private var navUnsaved: [String]?
+    private var navLimitWatch: AnyCancellable?
     private var navRecorder: AnyCancellable?
     private var navRecordPending = false
     private var navRestoring = false
@@ -706,7 +739,10 @@ final class HubModel: ObservableObject {
         if !panes.contains(tab) {
             panes = HubTab.allCases.filter { panes.contains($0) || $0 == tab }
         }
-        MainActor.assumeIsolated { startNavRecorder() }
+        MainActor.assumeIsolated {
+            startNavRecorder()
+            startNavLog()
+        }
         // A scripted run with the transcript pane settles on that pane's first page (see `select`).
         firstPageObserver = NotificationCenter.default.addObserver(forName: HubSessionDetailHost.firstPageDone, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -727,6 +763,7 @@ final class HubModel: ObservableObject {
             prs.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             inbox.$selectedID.map { _ in () }.eraseToAnyPublisher(),
             agents.$selectedID.map { _ in () }.eraseToAnyPublisher(),
+            $shownCommit.map { _ in () }.eraseToAnyPublisher(),
         ]
         navRecorder = Publishers.MergeMany(changes).sink { [weak self] in
             if self?.settlingLaunch == false {
@@ -744,9 +781,164 @@ final class HubModel: ObservableObject {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.navRecordPending = false
-            MainActor.assumeIsolated { HubPlace.record(self.navEntry, tab: self.tab) }
-            guard !self.navRestoring else { return }
-            MainActor.assumeIsolated { self.history.visit(self.navEntry) }
+            MainActor.assumeIsolated { self.recordPlace() }
+        }
+    }
+
+    /// The History setting's cap, followed at once.
+    @MainActor
+    private func startNavLog() {
+        let preferences = HubDefaults.preferences
+        history.setLimit(preferences.navigationLimit)
+        navLimitWatch = preferences.$navigationLimit.dropFirst().sink { [weak self] limit in
+            self?.history.setLimit(limit)
+        }
+    }
+
+    /// The log (`tools hub nav`): read back once, off the main thread, and put behind what this window did since it
+    /// opened; every later entry is written to it. Only the live hub connects: a scripted run and a test model
+    /// neither read nor write the person's log.
+    @MainActor
+    func connectNavLog() {
+        guard navStore == nil, !HubDefaults.isolated else { return }
+        let store = HubNavStore(limit: HubDefaults.preferences.navigationLimit)
+        navStore = store
+        navUnsaved = []
+        HubNavStore.queue.async { [weak self] in
+            let span = HubPerf.begin("nav.load")
+            var older: [NavigationEntry<HubNavTarget>] = []
+            do {
+                older = try store.load()
+                span.end("\(older.count) entries")
+            } catch {
+                span.end("failed")
+                PerfLog.mark("hub.nav load failed: \(error)")
+            }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.adoptNavLog(older) }
+            }
+        }
+    }
+
+    @MainActor
+    private func adoptNavLog(_ older: [NavigationEntry<HubNavTarget>]) {
+        let merged = Set(history.adoptOlder(older))
+        let unsaved = navUnsaved ?? []
+        navUnsaved = nil
+        for id in unsaved where !merged.contains(id) {
+            if let entry = history.entry(id) {
+                writeNav(entry)
+            }
+        }
+    }
+
+    /// Takes the place on screen into the history: a place with nothing picked is provisional, a place an agent or a
+    /// link asked for carries who and why, anything else is the person's.
+    @MainActor
+    private func recordPlace() {
+        let place = navEntry
+        HubPlace.record(place, tab: tab)
+        guard !navRestoring else { return }
+        if let linked = prLinkedCommit, place.mode == .prs, place.selection != linked.prID {
+            prLinkedCommit = nil
+        }
+        guard place.selection != nil else {
+            history.visit(navTarget(place), title: navTitle(place), provisional: true)
+            return
+        }
+        if let asked = pendingNav {
+            let age = Date().timeIntervalSince(asked.asked)
+            if navRequestMatches(asked) {
+                pendingNav = nil
+                if asked.pr != nil, let commit = asked.commit, place.mode == .prs, let id = place.selection {
+                    prLinkedCommit = (id, commit)
+                }
+                let target = navTarget(place)
+                let title = navTitle(target)
+                if asked.restoring, let id = asked.id {
+                    persistNav(history.retarget(id, to: target, title: title))
+                } else {
+                    persistNav(history.visit(target, title: title, actor: asked.actor, agentSession: asked.from,
+                                             note: asked.note, id: asked.id))
+                }
+                return
+            }
+            if age > HubNavRequest.patience {
+                pendingNav = nil
+                HubPerf.log("nav.request expired: \(asked.title) never showed")
+            } else if age < HubNavRequest.settle {
+                // The hub's own steps toward the asked place (a mode switch, the old row still selected).
+                return
+            }
+        }
+        persistNav(history.visit(navTarget(place), title: navTitle(navTarget(place))))
+    }
+
+    /// The place on screen with the commit shown in it.
+    @MainActor
+    func navTarget(_ place: HubNavEntry) -> HubNavTarget {
+        switch place.mode {
+        case .prs:
+            if let linked = prLinkedCommit, linked.prID == place.selection {
+                return HubNavTarget(place: place, commit: linked.commit)
+            }
+        case .worktrees:
+            if let shown = shownCommit, shown.repo == place.selection {
+                return HubNavTarget(place: place, commit: shown.commit, repo: shown.repo)
+            }
+        default:
+            break
+        }
+        return HubNavTarget(place: place)
+    }
+
+    /// Whether the hub now shows the place a request asked for.
+    @MainActor
+    func navRequestMatches(_ asked: HubNavRequest) -> Bool {
+        if let pr = asked.pr {
+            return mode == .prs && prs.selected.map(pr.matches) == true
+        }
+        if let commit = asked.commit {
+            let from = HubCommitSpan(commit)?.from ?? commit.lowercased()
+            return mode == .worktrees && shownCommit.map { $0.commit.lowercased().hasPrefix(from) && selectedWorktree == $0.repo } == true
+        }
+        if let worktree = asked.worktree {
+            return mode == .worktrees && selectedWorktree == WorktreeCleanup.selection(for: worktree)
+        }
+        if asked.agent != nil || asked.mode == .agents, asked.session != nil || asked.agent != nil {
+            return mode == .agents && agents.selectedID != nil
+        }
+        if let session = asked.session {
+            return mode == .sessions && (selectedID == session || selected?.sessionId.hasPrefix(session) == true)
+        }
+        if let wanted = asked.mode {
+            return mode == wanted
+        }
+        return false
+    }
+
+    /// Writes a new or changed entry to the log, off the main thread, and one line to app-perf.log.
+    @MainActor
+    private func persistNav(_ entry: NavigationEntry<HubNavTarget>?) {
+        guard let entry else { return }
+        HubPerf.log("nav \(entry.actor.rawValue) \(entry.title)\(entry.note.map { " (\($0))" } ?? "")")
+        writeNav(entry)
+    }
+
+    @MainActor
+    private func writeNav(_ entry: NavigationEntry<HubNavTarget>) {
+        guard let store = navStore else { return }
+        if navUnsaved != nil {
+            if navUnsaved?.contains(entry.id) == false { navUnsaved?.append(entry.id) }
+            return
+        }
+        let keep = history.limit
+        HubNavStore.queue.async {
+            do {
+                try store.record(entry, keep: keep)
+            } catch {
+                PerfLog.mark("hub.nav record failed: \(error)")
+            }
         }
     }
 
@@ -774,55 +966,100 @@ final class HubModel: ObservableObject {
     @MainActor
     func goBack() {
         if let entry = history.goBack() {
-            restore(entry)
+            restore(entry, how: "back")
         }
     }
 
     @MainActor
     func goForward() {
         if let entry = history.goForward() {
-            restore(entry)
+            restore(entry, how: "forward")
         }
     }
 
-    /// Shows a place from the history with the same methods the rows use; the changes it makes are
-    /// not recorded again.
+    /// Any entry of the History list.
     @MainActor
-    private func restore(_ entry: HubNavEntry) {
+    func hop(to id: String) {
+        if let entry = history.hop(to: id) {
+            restore(entry, how: "hop")
+        }
+    }
+
+    /// Shows a place from the history with the same methods the rows use; the changes it makes are not recorded
+    /// again. A place an agent named (link keys only) opens as its link would, and its entry takes the form of
+    /// the place the hub shows once it is there.
+    @MainActor
+    private func restore(_ entry: NavigationEntry<HubNavTarget>, how: String) {
         navRestoring = true
-        HubPerf.log("nav.restore \(entry.mode.rawValue) \(entry.selection ?? "-")")
-        setMode(entry.mode)
-        if let id = entry.selection {
-            switch entry.mode {
-            case .sessions:
-                select(id)
-            case .worktrees:
-                if let worktree = worktrees.first(where: { $0.path == id }) {
-                    selectWorktree(worktree)
-                } else {
-                    selectedWorktree = id
-                }
-            case .prs:
-                if let pr = prs.prs.first(where: { $0.id == id }) {
-                    prs.select(pr)
-                } else {
-                    prs.showUnavailable(id)
-                    post(prs.state == "all"
-                        ? "That PR is not in the PR list any more."
-                        : "That PR is not in the \(prs.state) list any more; pick All to find it.", .warning)
-                }
-            case .inbox:
-                inbox.selectedID = id == Self.wholeList ? nil : id
-            case .timeline:
-                break
-            case .agents:
-                if id != Self.wholeList, let key = AgentTree.split(id) {
-                    agents.select(parent: key.parent, child: key.child)
-                }
-            }
+        let target = entry.target
+        HubPerf.log("nav.\(how) \(entry.actor.rawValue) \(entry.title)")
+        if let place = target.place {
+            restorePlace(place, commit: target["commit"], repo: target["repo"])
+        } else {
+            var asked = HubNavRequest(HubRequest(target.arguments))
+            asked?.actor = entry.actor
+            asked?.id = entry.id
+            asked?.restoring = true
+            pendingNav = asked
+            navigate(HubRequest(target.arguments))
         }
         // The recorder's turn for these changes is already queued, so it runs first and skips them.
         DispatchQueue.main.async { [weak self] in self?.navRestoring = false }
+    }
+
+    @MainActor
+    private func restorePlace(_ entry: HubNavEntry, commit: String?, repo: String?) {
+        setMode(entry.mode)
+        guard let id = entry.selection else { return }
+        switch entry.mode {
+        case .sessions:
+            select(id)
+        case .worktrees:
+            if let worktree = worktrees.first(where: { $0.path == id }) {
+                selectWorktree(worktree)
+            } else {
+                selectedWorktree = id
+                shownCommit = nil
+            }
+            if let commit, let repo {
+                // Said at once, so the place on screen is the entry while the commit is looked up again.
+                shownCommit = HubShownCommit(repo: id, commit: commit)
+                openCommitLink(commit, repo: repo)
+            }
+        case .prs:
+            if let commit {
+                prLinkedCommit = (id, commit)
+            }
+            if let pr = prs.prs.first(where: { $0.id == id }) {
+                if let commit, let ref = HubPRRef(id) {
+                    prs.request(ref, commit: commit)
+                } else {
+                    prs.select(pr)
+                }
+            } else {
+                prs.showUnavailable(id)
+                post(prs.state == "all"
+                    ? "That PR is not in the PR list any more."
+                    : "That PR is not in the \(prs.state) list any more; pick All to find it.", .warning)
+            }
+        case .inbox:
+            inbox.selectedID = id == Self.wholeList ? nil : id
+        case .timeline:
+            break
+        case .agents:
+            if id != Self.wholeList, let key = AgentTree.split(id) {
+                agents.select(parent: key.parent, child: key.child)
+            }
+        }
+    }
+
+    /// A place's title with the commit shown in it: "PR #563 Fix it · commit 0751d8a971".
+    @MainActor
+    func navTitle(_ target: HubNavTarget) -> String {
+        guard let place = target.place else { return HubNavRequest(HubRequest(target.arguments))?.title ?? "Hub" }
+        let name = navTitle(place)
+        guard let commit = target["commit"] else { return name }
+        return "\(name) · commit \(commit.split(separator: ".").filter { !$0.isEmpty }.map { String($0.prefix(10)) }.joined(separator: ".."))"
     }
 
     /// What a history entry shows, for the arrows' tooltips.
@@ -980,6 +1217,7 @@ final class HubModel: ObservableObject {
 
     func selectWorktree(_ worktree: HubWorktree) {
         selectedWorktree = worktree.path
+        shownCommit = nil
         notice = nil
         if review?.home.path != worktree.path {
             let next = ReviewModel(repo: URL(fileURLWithPath: worktree.path), options: DiffViewOptions.remembered(), session: sessions(for: worktree).first?.sessionId)
@@ -994,10 +1232,11 @@ final class HubModel: ObservableObject {
     /// `--repo` + `--commit` link. The checkout is selected before the mode opens, so a first walk of
     /// the worktrees includes it; a launch that has not settled yet opens the mode when it settles.
     @MainActor
-    func showCommit(repo: String, sha: String, title: String, base: String? = nil) {
+    func showCommit(repo: String, sha: String, title: String, base: String? = nil, link: String? = nil) {
         cancelSessionNavigation()
         commitLinkRequest = UUID()
         selectedWorktree = repo
+        shownCommit = HubShownCommit(repo: repo, commit: link ?? String(sha.prefix(12)))
         notice = nil
         if didSettleLaunch || initialMode != .worktrees {
             setMode(.worktrees)
@@ -1565,8 +1804,33 @@ final class HubModel: ObservableObject {
         }
     }
 
-    /// A later `GenesisTools --hub …` handed to this hub: the same flags as a first launch.
-    func apply(_ request: HubRequest) {
+    /// A later `GenesisTools --hub …` handed to this hub: the same flags as a first launch. A place an agent or a
+    /// link asked for is recorded with who and why; while agents only add to History (Settings → Hub → History),
+    /// it goes into the list and the view stays. Returns false when the hub did not move, so the window stays back.
+    @discardableResult
+    func apply(_ request: HubRequest) -> Bool {
+        guard let asked = HubNavRequest(request) else {
+            navigate(request)
+            return true
+        }
+        if asked.actor != .user, MainActor.assumeIsolated({ HubDefaults.preferences.agentNavigation }) == .listOnly {
+            MainActor.assumeIsolated {
+                let entry = history.record(asked.target, title: asked.title, actor: asked.actor, agentSession: asked.from,
+                                           note: asked.note, id: asked.id)
+                persistNav(entry)
+                post("\(asked.actor == .agent ? "An agent" : "A link") added \(entry.title) to History (\(HubKeymap.label("hub.go.history")))", .success)
+            }
+            return false
+        }
+        pendingNav = asked
+        navigate(request)
+        // The same place again (another commit of the PR on screen) changes no selection: record it anyway.
+        DispatchQueue.main.async { [weak self] in self?.scheduleNavRecord() }
+        return true
+    }
+
+    /// Shows the place a request names.
+    func navigate(_ request: HubRequest) {
         if request.session != nil || request.mode != nil || request.agent != nil || request.worktree != nil
             || request.pr != nil || request.commit != nil {
             commitLinkRequest = UUID()

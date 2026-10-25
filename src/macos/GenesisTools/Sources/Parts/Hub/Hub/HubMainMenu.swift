@@ -245,6 +245,7 @@ enum HubMenuCommands {
     static let go: [HubMenuCommand] = [
         HubMenuCommand(title: "Back", id: "hub.go.back", run: { $0.goBack() }, enabled: { $0.history.canGoBack }),
         HubMenuCommand(title: "Forward", id: "hub.go.forward", run: { $0.goForward() }, enabled: { $0.history.canGoForward }),
+        HubMenuCommand(title: "History…", id: "hub.go.history", run: { $0.historyOpen.toggle() }),
         HubMenuCommand(title: "Session…", id: "hub.go.session", run: { palette($0, "session ") }, separated: true),
         HubMenuCommand(title: "Worktree…", id: "hub.go.worktree", run: { palette($0, "worktree ") }),
         HubMenuCommand(title: "Pull Request…", id: "hub.go.pr", run: { palette($0, "pr ") }),

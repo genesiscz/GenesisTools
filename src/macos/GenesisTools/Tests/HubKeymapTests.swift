@@ -84,8 +84,10 @@ final class HubKeymapTests: XCTestCase {
 
         func seed() {
             var history = HubNavHistory()
-            history.visit(HubNavEntry(mode: .sessions, selection: "fixture-a"))
-            history.visit(HubNavEntry(mode: .sessions, selection: "fixture-b"))
+            for id in ["fixture-a", "fixture-b"] {
+                let target = HubNavTarget(place: HubNavEntry(mode: .sessions, selection: id))
+                history.visit(target, title: id)
+            }
             model.replaceHistory(history)
         }
         func press(_ code: UInt16, _ character: String, _ flags: NSEvent.ModifierFlags = .command) -> Bool {
@@ -98,11 +100,11 @@ final class HubKeymapTests: XCTestCase {
         for character in ["ú", "[", "x", ")"] {
             seed()
             XCTAssertTrue(press(33, character), "⌘ on key 33 types \(character)")
-            XCTAssertEqual(model.history.current?.selection, "fixture-a", character)
+            XCTAssertEqual(model.history.current?.target.place?.selection, "fixture-a", character)
         }
         seed()
         XCTAssertFalse(press(33, "ú", [.command, .option]), "another modifier set is not Back")
-        XCTAssertEqual(model.history.current?.selection, "fixture-b")
+        XCTAssertEqual(model.history.current?.target.place?.selection, "fixture-b")
         XCTAssertFalse(press(0, "a"), "⌘A is Select All, not a hub-window command")
     }
 

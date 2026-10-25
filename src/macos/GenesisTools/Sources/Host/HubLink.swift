@@ -7,6 +7,8 @@ package enum HubLink {
     /// show, not a file to write or a command to run.
     package static let linkKeys: Set<String> = [
         "mode", "session", "agent", "pr", "reveal", "commit", "repo", "tab", "filter", "worktree", "decision", "question",
+        // Who asked and why, for the hub's history (`tools hub nav open`): never a command, only words on an entry.
+        "actor", "note", "from", "nav",
     ]
 
     /// `genesis-tools://hub?session=<parent>&agent=<child>` (any of `linkKeys`) as `--hub` arguments, the
