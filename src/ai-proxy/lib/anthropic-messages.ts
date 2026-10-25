@@ -637,7 +637,7 @@ export async function anthropicMessagesPipeline({
             bodyText,
             prof,
             startedAt,
-            context: { promptCacheKey, sessionAgents },
+            context: { promptCacheKey, sessionAgents, ...(recordId ? { sessionId: recordId } : {}) },
         });
     }
 

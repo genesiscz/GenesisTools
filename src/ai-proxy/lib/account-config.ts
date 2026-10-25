@@ -91,6 +91,8 @@ export function accountConfigFingerprint(account: AiProxyAccountConfig): string 
 
     return SafeJSON.stringify({
         provider: account.provider,
+        // A provider built with failover off must be rebuilt when it is turned on.
+        failover: account.failover,
         baseUrl: account.baseUrl,
         realtimeBaseUrl: account.realtimeBaseUrl,
         grok: account.grok,

@@ -6,11 +6,14 @@ import {
     codexAccountAuthStatus,
     runAccountsAllowEnv,
     runAccountsBind,
+    runAccountsFailover,
     runAccountsSetKey,
     runAccountsSetRouting,
 } from "@app/ai-proxy/commands/accounts";
+import { runSessionUse } from "@app/ai-proxy/commands/session-use";
 import { loadConfig, saveConfig } from "@app/ai-proxy/lib/config";
 import { resetAiProxyConfigStore } from "@app/ai-proxy/lib/config-store";
+import { closeSessionRecord, createSessionRecord, readSessionRecord } from "@app/ai-proxy/lib/sessions/records";
 import { resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { AiConfigStore } from "@genesiscz/utils/ai/config/AiConfigStore";
@@ -422,6 +425,60 @@ describe("codex accounts: one auth engine", () => {
         await runAccountsBind("work", { codex: "personal" });
 
         expect((await readAccount("work"))?.openaiSub).toBeUndefined();
+    });
+
+    it("failover is off by default; on and off set and clear it; a non-codex account is refused", async () => {
+        await seed({ ...legacy, openaiSub: { failoverAccountNames: ["work"] } }, account());
+
+        await runAccountsFailover("codex", "on");
+        const on = (await readAccount("codex"))?.failover;
+        await runAccountsFailover("codex", "off");
+        const off = (await readAccount("codex"))?.failover;
+        await runAccountsFailover("work", "on");
+
+        expect([on, off]).toEqual([true, undefined]);
+        expect(process.exitCode).toBe(1);
+        expect((await readAccount("work"))?.failover).toBeUndefined();
+    });
+
+    it("session use moves an agent to another login and records the move; the next request reads it", async () => {
+        seedCodexLogins("personal", "work");
+        await seed(legacy);
+        createSessionRecord({ id: "s-use", codexAccount: "personal" });
+
+        await runSessionUse("s-use", { codex: "work" });
+
+        const record = readSessionRecord("s-use");
+        expect(process.exitCode).toBe(0);
+        expect([record?.codexAccount, record?.codexProxyAccount]).toEqual(["work", undefined]);
+        expect(record?.moves).toEqual([{ agent: "codex", from: "personal", to: "work", at: expect.any(String) }]);
+
+        // A configured proxy account (the legacy auth.json one) works too, and replaces the login.
+        await runSessionUse("s-use", { codex: "codex" });
+        expect([readSessionRecord("s-use")?.codexProxyAccount, readSessionRecord("s-use")?.codexAccount]).toEqual([
+            "codex",
+            undefined,
+        ]);
+    });
+
+    it("session use refuses a per-token account without --allow-metered, and a closed session", async () => {
+        seedCodexLogins("personal");
+        await seed(account({ name: "billed" }));
+        createSessionRecord({ id: "s-metered", codexAccount: "personal" });
+
+        await runSessionUse("s-metered", { grok: "billed" });
+        const refused = readSessionRecord("s-metered");
+        process.exitCode = 0;
+        await runSessionUse("s-metered", { grok: "billed", allowMetered: ["billed"] });
+        const allowed = readSessionRecord("s-metered");
+        closeSessionRecord("s-metered");
+        await runSessionUse("s-metered", { codex: "personal" });
+
+        expect(refused?.grokProxyAccount).toBeUndefined();
+        expect(allowed?.grokProxyAccount).toBe("billed");
+        expect(allowed?.meteredConfirmed.map((item) => [item.account, item.how])).toEqual([["billed", "flag"]]);
+        expect(process.exitCode).toBe(1);
+        expect(readSessionRecord("s-metered")?.moves).toHaveLength(1);
     });
 
     it("status names the legacy read of the Codex CLI login, and never refreshes", async () => {

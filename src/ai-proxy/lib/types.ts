@@ -117,7 +117,8 @@ export interface AiProxyOpenAiSubAccountConfig {
     codexAuthPath?: string;
     /**
      * Additional `openai-sub` AI-config account names tried in order when the
-     * primary is rate-limited (429) or its auth dies (401 after refresh).
+     * primary is rate-limited (429) or its auth dies (401 after refresh). Used
+     * only while the account's `failover` is on; always subscription logins.
      */
     failoverAccountNames?: string[];
     /**
@@ -208,6 +209,12 @@ export interface AiProxyAccountConfig {
     providerSlug: string;
     enabled: boolean;
     /**
+     * Move to another account by itself when this one fails: a 429 cools the account down and the next name in
+     * `openaiSub.failoverAccountNames` takes the request. Off by default for every client (❓ DECISION 10 c, Martin
+     * 2026-10-25): the error, 429 and 401 included, reaches the client with the command that switches.
+     */
+    failover?: boolean;
+    /**
      * The AI-config account this entry bills, as `@account/<immutable id>`.
      * Supersedes the name-based `*.accountName` links: renaming an account no
      * longer breaks the proxy, and `referrersOf` can see the link (account-refs.ts).
@@ -232,6 +239,7 @@ export interface AiProxyAccountConfig {
      */
     allowEnvApiKey?: boolean;
     apiKeyEnv?: string;
+    /** The upstream's base URL. For a Codex account, a WHAM-compatible endpoint (default chatgpt.com's). */
     baseUrl?: string;
     /**
      * Override for the realtime WebSocket base (e.g. wss://api.x.ai/v1).

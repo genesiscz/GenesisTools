@@ -13,6 +13,14 @@ import type {
     ProviderRequestContext,
     ProxyProvider,
 } from "@app/ai-proxy/lib/providers/types";
+import {
+    anthropicClientStatus,
+    classifyUpstreamFailure,
+    failureResponse,
+    failureText,
+    readStreamHead,
+    type UpstreamFailure,
+} from "@app/ai-proxy/lib/providers/upstream-failure";
 import { mapWhamError, parseRetryAfterSeconds } from "@app/ai-proxy/lib/providers/wham-errors";
 import {
     createWhamItemHarvestTransform,
@@ -20,6 +28,7 @@ import {
     resolveWhamItemReferences,
     whamItemScope,
 } from "@app/ai-proxy/lib/providers/wham-item-store";
+import { loginAccountName } from "@app/ai-proxy/lib/sessions/records";
 import {
     anthropicToResponses,
     stripReasoningInput,
@@ -64,8 +73,6 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 
-const WHAM_RESPONSES_URL = `${WHAM_BASE_URL}/responses`;
-
 /**
  * Bills the owner's ChatGPT/Codex subscription. The ChatGPT WHAM backend speaks
  * the OpenAI Responses API (streaming-only), so `responses()` converts an
@@ -75,6 +82,13 @@ const WHAM_RESPONSES_URL = `${WHAM_BASE_URL}/responses`;
  * chat.completion / chat.completion.chunk).
  */
 const MODALITY_CACHE_TTL_MS = 10 * 60_000;
+
+/** Who gets an account failure: the Anthropic route's client (Claude Code) gets the status it acts on. */
+interface FailureClient {
+    anthropic: boolean;
+    /** The session record the request came from, for the switch command. */
+    sessionId?: string;
+}
 
 export class OpenAiSubscriptionProvider implements ProxyProvider {
     readonly id = "openai-subscription";
@@ -104,9 +118,49 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         return new OpenAiSubscriptionProvider(account);
     }
 
+    /** Cooldowns and the failover list apply only when the account turns this on (❓ DECISION 10 c). */
+    private get failover(): boolean {
+        return this.account.failover === true;
+    }
+
+    /** An account-level failure as the client sees it: the readable text, at the status its kind calls for. */
+    private failureResponse(
+        failure: UpstreamFailure,
+        model: string,
+        client: FailureClient | undefined,
+        tried: string[]
+    ): Response {
+        const login = this.account.openaiSub?.accountName;
+        const text = failureText(failure, {
+            agent: "codex",
+            proxyAccount: this.account.name,
+            // A session's in-memory account (`login:<name>`) is known by its login.
+            account: login && this.account.name === loginAccountName(login) ? login : this.account.name,
+            ...(login ? { login } : {}),
+            model,
+            ...(client?.sessionId ? { sessionId: client.sessionId } : {}),
+            failover: this.failover,
+            tried,
+        });
+        const status = client?.anthropic ? anthropicClientStatus(failure) : failure.status;
+
+        logger.warn(
+            {
+                account: this.account.name,
+                model,
+                kind: failure.kind,
+                upstreamStatus: failure.status,
+                status,
+                code: failure.code,
+            },
+            "ai-proxy: codex account failure, shown to the client"
+        );
+        return failureResponse(failure, text, status);
+    }
+
     async listModels(options?: ProviderInspectionOptions): Promise<OpenAiModel[]> {
         const { token, accountId } = await resolveOpenAiSubToken(this.account, { noRefresh: options?.probe });
-        const records = await fetchWhamModels(token, accountId);
+        const records = await fetchWhamModels(token, accountId, this.account.baseUrl);
         this.liveRecords = records;
         this.liveFetchedAt = Date.now();
 
@@ -142,26 +196,30 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
     }
 
     /**
-     * Token candidates tried in order: the primary account source, then any
-     * `openaiSub.failoverAccountNames`. Each has its own cooldown key.
+     * Token candidates tried in order: the primary account source, then, only while the account's `failover` is on,
+     * any `openaiSub.failoverAccountNames`. Each has its own cooldown key.
      */
     private tokenCandidates(): Array<{
         key: string;
+        label: string;
         resolve: (options?: { forceRefresh?: boolean }) => Promise<{ token: string; accountId?: string }>;
     }> {
         const candidates: Array<{
             key: string;
+            label: string;
             resolve: (options?: { forceRefresh?: boolean }) => Promise<{ token: string; accountId?: string }>;
         }> = [
             {
                 key: this.account.name,
+                label: this.account.name,
                 resolve: (options) => resolveOpenAiSubToken(this.account, options),
             },
         ];
 
-        for (const failoverName of this.account.openaiSub?.failoverAccountNames ?? []) {
+        for (const failoverName of this.failover ? (this.account.openaiSub?.failoverAccountNames ?? []) : []) {
             candidates.push({
                 key: `${this.account.name}:${failoverName}`,
+                label: failoverName,
                 resolve: (options) => resolveOpenAiSubFailoverToken(failoverName, options),
             });
         }
@@ -179,7 +237,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         if (!this.liveRecords || Date.now() - this.liveFetchedAt > MODALITY_CACHE_TTL_MS) {
             try {
                 const { token, accountId } = await resolveOpenAiSubToken(this.account);
-                this.liveRecords = await tryFetchWhamModels(token, accountId);
+                this.liveRecords = await tryFetchWhamModels(token, accountId, this.account.baseUrl);
                 this.liveFetchedAt = Date.now();
             } catch (err) {
                 logger.debug({ err, account: this.account.name }, "ai-proxy: modality lookup failed — skipping guard");
@@ -209,7 +267,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         sessionId: string;
         signal: AbortSignal;
     }): Promise<Response> {
-        return fetch(WHAM_RESPONSES_URL, {
+        // `baseUrl` points an account at a WHAM-compatible endpoint, e.g. the fake upstream of an error test.
+        return fetch(`${(this.account.baseUrl ?? WHAM_BASE_URL).replace(/\/$/, "")}/responses`, {
             method: "POST",
             headers: {
                 Authorization: `Bearer ${token}`,
@@ -339,7 +398,12 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             "ai-proxy: codex /v1/messages reasoning replay"
         );
 
-        let response = await this.respond(req, model, responsesBody);
+        // A Claude Code client gets an account failure at the status it acts on, with this session's switch command.
+        const client: FailureClient = {
+            anthropic: true,
+            ...(context?.sessionId ? { sessionId: context.sessionId } : {}),
+        };
+        let response = await this.respond(req, model, responsesBody, client);
 
         if (!response.ok) {
             const errorText = await response.text();
@@ -363,7 +427,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 { model: concreteModel, items: replayed.length, status: response.status },
                 "ai-proxy: WHAM refused replayed reasoning; retrying once without it, those items stay dropped"
             );
-            response = await this.respond(req, model, stripReasoningInput(responsesBody));
+            response = await this.respond(req, model, stripReasoningInput(responsesBody), client);
 
             if (!response.ok) {
                 return toAnthropicErrorResponse(response);
@@ -390,8 +454,15 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 : undefined;
 
         if (parsed.stream === true && response.body) {
+            // A model at capacity answers 200 and fails before its first output; as a 529, Claude Code retries it.
+            const head = await readStreamHead(response.body);
+
+            if ("failure" in head) {
+                return toAnthropicErrorResponse(this.failureResponse(head.failure, concreteModel, client, []));
+            }
+
             return new Response(
-                responsesSseToAnthropic(response.body, { model, signReasoning, label: "codex", toolInput }),
+                responsesSseToAnthropic(head.body, { model, signReasoning, label: "codex", toolInput }),
                 {
                     status: response.status,
                     headers: relayHeaders(response),
@@ -413,8 +484,16 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         );
     }
 
-    /** One Responses-shaped request to WHAM, with the account pool, the 401 refresh, 429 cooling and the error map. */
-    private async respond(req: Request, model: string, parsed: Record<string, unknown>): Promise<Response> {
+    /**
+     * One Responses-shaped request to WHAM, with the 401 refresh and the error map; with `failover` on, also the
+     * account pool and the 429 cooling.
+     */
+    private async respond(
+        req: Request,
+        model: string,
+        parsed: Record<string, unknown>,
+        client?: FailureClient
+    ): Promise<Response> {
         const concreteModel = resolveOpenAiSubModel(model, this.account.openaiSub?.aliases);
 
         if (bodyContainsImageInput(parsed)) {
@@ -480,9 +559,10 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         let upstream: Response | undefined;
         let servedBy: string | undefined;
         let lastFailure: Response | undefined;
+        const tried: string[] = [];
 
         for (const candidate of this.tokenCandidates()) {
-            const coolingMs = cooldownRemainingMs(candidate.key);
+            const coolingMs = this.failover ? cooldownRemainingMs(candidate.key) : 0;
             if (coolingMs > 0) {
                 logger.debug(
                     { key: candidate.key, coolingMs, model: concreteModel },
@@ -505,6 +585,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             }
 
             let attempt: Response;
+            tried.push(candidate.label);
             try {
                 attempt = await this.fetchWham({ token, accountId, whamBodyText, sessionId, signal: req.signal });
             } catch (err) {
@@ -522,8 +603,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             }
 
             if (attempt.status === 401) {
-                // One forced refresh, then one retry. A second 401 means the
-                // grant is dead — cool the account and move to the next one.
+                // One forced refresh, then one retry, on the same login: token upkeep, not a move. A second 401
+                // means the grant is dead: shown, or with failover on, the account cools and the next one runs.
                 void attempt.body?.cancel();
                 try {
                     ({ token, accountId } = await candidate.resolve({ forceRefresh: true }));
@@ -550,8 +631,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                         continue;
                     }
 
-                    markUnhealthy(candidate.key);
-                    lastFailure = whamErrorResponse({ status: 401, bodyText: "" });
+                    if (this.failover) {
+                        markUnhealthy(candidate.key);
+                    }
+
+                    lastFailure = this.failureResponse({ kind: "auth", status: 401 }, concreteModel, client, tried);
                     continue;
                 }
 
@@ -559,23 +643,36 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     const errorText = await attempt.text();
                     logger.warn(
                         { key: candidate.key, body: errorText.slice(0, 300) },
-                        "ai-proxy: codex account still 401 after refresh — marking unhealthy"
+                        "ai-proxy: codex account still 401 after refresh"
                     );
-                    markUnhealthy(candidate.key);
-                    lastFailure = whamErrorResponse({ status: 401, bodyText: errorText });
+
+                    if (this.failover) {
+                        markUnhealthy(candidate.key);
+                    }
+
+                    lastFailure = this.failureResponse(
+                        classifyUpstreamFailure({ status: 401, bodyText: errorText }) ?? { kind: "auth", status: 401 },
+                        concreteModel,
+                        client,
+                        tried
+                    );
                     continue;
                 }
             }
 
             if (attempt.status === 429) {
-                const retryAfterSec = parseRetryAfterSeconds(attempt.headers);
                 const errorText = await attempt.text();
-                const backoffMs = markRateLimited(candidate.key, retryAfterSec);
-                lastFailure = whamErrorResponse({
+                const backoffMs = this.failover
+                    ? markRateLimited(candidate.key, parseRetryAfterSeconds(attempt.headers))
+                    : undefined;
+                const retryAfterSec =
+                    parseRetryAfterSeconds(attempt.headers) ??
+                    (backoffMs === undefined ? undefined : Math.ceil(backoffMs / 1000));
+                const failure = classifyUpstreamFailure({ status: 429, bodyText: errorText, retryAfterSec }) ?? {
+                    kind: "rate-limit",
                     status: 429,
-                    bodyText: errorText,
-                    retryAfterSec: retryAfterSec ?? Math.ceil(backoffMs / 1000),
-                });
+                };
+                lastFailure = this.failureResponse(failure, concreteModel, client, tried);
                 continue;
             }
 
@@ -599,7 +696,10 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                     responseBody: errorText,
                 });
 
-                return whamErrorResponse({ status: attempt.status, bodyText: errorText });
+                const failure = classifyUpstreamFailure({ status: attempt.status, bodyText: errorText });
+                return failure
+                    ? this.failureResponse(failure, concreteModel, client, tried)
+                    : whamErrorResponse({ status: attempt.status, bodyText: errorText });
             }
 
             markSuccess(candidate.key);
@@ -1300,22 +1400,10 @@ function jsonError(status: number, message: string): Response {
     });
 }
 
-/** OpenAI-shaped error response for a failed WHAM request, with Retry-After on 429. */
-function whamErrorResponse({
-    status,
-    bodyText,
-    retryAfterSec,
-}: {
-    status: number;
-    bodyText: string;
-    retryAfterSec?: number;
-}): Response {
-    const envelope = mapWhamError({ status, bodyText, retryAfterSec });
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-
-    if (status === 429 && retryAfterSec != null) {
-        headers["Retry-After"] = String(retryAfterSec);
-    }
-
-    return new Response(SafeJSON.stringify(envelope), { status, headers });
+/** OpenAI-shaped error response for a failed WHAM request that is not about the account. */
+function whamErrorResponse({ status, bodyText }: { status: number; bodyText: string }): Response {
+    return new Response(SafeJSON.stringify(mapWhamError({ status, bodyText })), {
+        status,
+        headers: { "Content-Type": "application/json" },
+    });
 }

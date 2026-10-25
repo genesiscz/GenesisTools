@@ -1,4 +1,3 @@
-import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
@@ -34,41 +33,11 @@ function parseUpstreamError(bodyText: string): { message?: string; type?: string
 }
 
 /**
- * Map a non-OK WHAM response to an OpenAI-shaped error envelope. 401 and 429
- * get actionable copy; everything else keeps the upstream message when parseable.
+ * Map a non-OK WHAM response that is not about the account to an OpenAI-shaped error envelope, keeping the upstream
+ * message when parseable. Account failures (401, 429, a plan refusal, an overload) are `upstream-failure.ts`.
  */
-export function mapWhamError({
-    status,
-    bodyText,
-    retryAfterSec,
-}: {
-    status: number;
-    bodyText: string;
-    retryAfterSec?: number;
-}): OpenAiErrorEnvelope {
+export function mapWhamError({ status, bodyText }: { status: number; bodyText: string }): OpenAiErrorEnvelope {
     const upstream = parseUpstreamError(bodyText);
-
-    if (status === 401) {
-        return {
-            error: {
-                message: `Codex auth expired or invalid — run \`${toolCommand("ai-proxy accounts login")} codex\` (or \`codex login\` when using the CLI cache).`,
-                type: "authentication_error",
-                code: upstream.code ?? "codex_auth_expired",
-            },
-        };
-    }
-
-    if (status === 429) {
-        const hint = retryAfterSec != null ? ` Retry after ${retryAfterSec}s.` : " Retry later.";
-
-        return {
-            error: {
-                message: `${upstream.message ?? "ChatGPT subscription rate limit hit."}${hint}`,
-                type: "rate_limit_error",
-                code: upstream.code ?? "rate_limit_exceeded",
-            },
-        };
-    }
 
     return {
         error: {

@@ -98,6 +98,10 @@ function whamStreamResponse(): Response {
 
 const realFetch = globalThis.fetch;
 
+/** WHAM's usage limit, in the shape codex-rs parses. */
+const USAGE_LIMIT_BODY =
+    '{"error":{"type":"usage_limit_reached","message":"The usage limit has been reached","resets_in_seconds":5400}}';
+
 beforeEach(() => {
     resetCooldowns();
     primaryResolver = async () => ({ token: TEST_TOKEN, accountId: TEST_ACCOUNT_ID });
@@ -608,7 +612,7 @@ describe("OpenAiSubscriptionProvider", () => {
         expect(res.headers.get("x-ai-proxy-dropped")).toBe("max_tokens,temperature");
     });
 
-    it("fails over to the next account on 429 within one request", async () => {
+    it("with failover on, fails over to the next account on 429 within one request", async () => {
         const authHeaders: Array<string | null> = [];
         let call = 0;
 
@@ -629,6 +633,7 @@ describe("OpenAiSubscriptionProvider", () => {
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
         const provider = await OpenAiSubscriptionProvider.create({
             ...account,
+            failover: true,
             openaiSub: { failoverAccountNames: ["backup"] },
         });
 
@@ -641,6 +646,76 @@ describe("OpenAiSubscriptionProvider", () => {
 
         expect(res.status).toBe(200);
         expect(authHeaders).toEqual([`Bearer ${TEST_TOKEN}`, "Bearer backup-token"]);
+    });
+
+    it("with failover off (the default), a usage limit reaches the client in words and no other account runs", async () => {
+        const authHeaders: Array<string | null> = [];
+
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            authHeaders.push(new Headers(init?.headers).get("authorization"));
+            return new Response(USAGE_LIMIT_BODY, { status: 429 });
+        }) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create({
+            ...account,
+            openaiSub: { failoverAccountNames: ["backup"] },
+        });
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [{ role: "user", content: "hi" }],
+        });
+        const call = () =>
+            provider.responses(
+                new Request("http://localhost/v1/responses", { method: "POST", body: bodyText }),
+                "gpt-5.5",
+                bodyText
+            );
+
+        const first = await call();
+        const body = (await first.json()) as { error: { type: string; code: string; message: string } };
+        // No cooldown either: the next request asks the upstream again instead of answering "cooling down".
+        const second = await call();
+
+        expect(first.status).toBe(429);
+        expect(body.error).toMatchObject({ type: "rate_limit_error", code: "usage_limit_reached" });
+        expect(body.error.message).toContain(
+            "Codex account codex hit its usage limit (gpt-5.5, upstream 429 usage_limit_reached)"
+        );
+        expect(body.error.message).toContain("tools ai-proxy accounts failover codex on");
+        expect(second.status).toBe(429);
+        expect(authHeaders).toEqual([`Bearer ${TEST_TOKEN}`, `Bearer ${TEST_TOKEN}`]);
+    });
+
+    it("with failover on, a failover name that is not a subscription login is never billed", async () => {
+        const authHeaders: Array<string | null> = [];
+        // What CodexAccountBinding.create answers for a name with no openai-sub account (account-binding.ts:57-63).
+        failoverResolver = async (name) => {
+            throw new Error(`No Codex account matches "${name}". Enabled OpenAI subscription accounts: work`);
+        };
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            authHeaders.push(new Headers(init?.headers).get("authorization"));
+            return new Response(USAGE_LIMIT_BODY, { status: 429 });
+        }) as typeof fetch;
+
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create({
+            ...account,
+            failover: true,
+            openaiSub: { failoverAccountNames: ["billed"] },
+        });
+        const bodyText = SafeJSON.stringify({
+            model: "codex/codex/gpt-5.5",
+            messages: [{ role: "user", content: "hi" }],
+        });
+        const res = await provider.responses(
+            new Request("http://localhost/v1/responses", { method: "POST", body: bodyText }),
+            "gpt-5.5",
+            bodyText
+        );
+
+        expect(res.status).toBe(502);
+        expect(authHeaders).toEqual([`Bearer ${TEST_TOKEN}`]);
     });
 
     it("returns a rate_limit_error envelope with Retry-After when every account is limited", async () => {
@@ -666,7 +741,7 @@ describe("OpenAiSubscriptionProvider", () => {
         expect(body.error.type).toBe("rate_limit_error");
     });
 
-    it("skips a cooling account on the next request instead of hitting upstream", async () => {
+    it("with failover on, skips a cooling account on the next request instead of hitting upstream", async () => {
         let upstreamCalls = 0;
 
         globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) => {
@@ -678,7 +753,7 @@ describe("OpenAiSubscriptionProvider", () => {
         }) as typeof fetch;
 
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-        const provider = await OpenAiSubscriptionProvider.create(account);
+        const provider = await OpenAiSubscriptionProvider.create({ ...account, failover: true });
 
         const bodyText = SafeJSON.stringify({
             model: "codex/codex/gpt-5.5",
@@ -817,12 +892,12 @@ describe("OpenAiSubscriptionProvider", () => {
         expect(res.status).toBe(200);
     });
 
-    it("marks the account unhealthy after a second 401 and returns authentication_error", async () => {
+    it("with failover on, marks the account unhealthy after a second 401 and returns authentication_error", async () => {
         globalThis.fetch = (async (_url: RequestInfo | URL, _init?: RequestInit) =>
             new Response('{"detail":"Unauthorized"}', { status: 401 })) as typeof fetch;
 
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-        const provider = await OpenAiSubscriptionProvider.create(account);
+        const provider = await OpenAiSubscriptionProvider.create({ ...account, failover: true });
 
         const bodyText = SafeJSON.stringify({
             model: "codex/codex/gpt-5.5",
@@ -837,7 +912,8 @@ describe("OpenAiSubscriptionProvider", () => {
         expect(res.status).toBe(401);
         const body = (await res.json()) as { error: { type: string; message: string } };
         expect(body.error.type).toBe("authentication_error");
-        expect(body.error.message).toContain("accounts login codex");
+        expect(body.error.message).toContain("was refused after a token refresh");
+        expect(body.error.message).toContain("Log in again with `codex login`");
 
         // Account is now cooling — next request short-circuits without upstream.
         let upstreamCalled = false;
@@ -874,7 +950,7 @@ describe("OpenAiSubscriptionProvider", () => {
             new Response('{"detail":"Unauthorized"}', { status: 401 })) as typeof fetch;
 
         const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
-        const provider = await OpenAiSubscriptionProvider.create(account);
+        const provider = await OpenAiSubscriptionProvider.create({ ...account, failover: true });
 
         const bodyText = SafeJSON.stringify({
             model: "codex/codex/gpt-5.5",
@@ -1162,6 +1238,71 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         const efforts = sent.map((body) => (body.reasoning as Record<string, unknown> | undefined)?.effort);
         expect(efforts.slice(0, 2)).toEqual(["xhigh", "medium"]);
         expect(efforts[2]).not.toBe("xhigh");
+    });
+});
+
+describe("account failures on the Anthropic route (Claude Code)", () => {
+    const body = {
+        model: "codex/gpt-6.1-sol",
+        stream: true,
+        max_tokens: 64,
+        messages: [{ role: "user", content: "hi" }],
+    };
+
+    async function send(upstream: () => Response, sessionId?: string) {
+        globalThis.fetch = (async () => upstream()) as unknown as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify(body);
+        const res = await provider.messages?.(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6.1-sol",
+            bodyText,
+            sessionId ? { sessionId } : undefined
+        );
+
+        if (!res) {
+            throw new Error("the native messages route is off");
+        }
+
+        return { res, json: (await res.json()) as { type: string; error: { type: string; message: string } } };
+    }
+
+    it("a usage limit is a 400 with this session's switch command, so Claude Code shows it at once", async () => {
+        const { res, json } = await send(() => new Response(USAGE_LIMIT_BODY, { status: 429 }), "s-1");
+
+        expect(res.status).toBe(400);
+        expect(json.type).toBe("error");
+        expect(json.error.message).toContain("hit its usage limit");
+        expect(json.error.message).toContain("tools ai-proxy session s-1 use --codex <account>");
+    });
+
+    it("a short rate limit stays a 429 with its Retry-After, for Claude Code's own backoff", async () => {
+        const { res, json } = await send(
+            () =>
+                new Response('{"error":{"message":"Rate limit reached","code":"rate_limit_exceeded"}}', {
+                    status: 429,
+                    headers: { "retry-after": "7" },
+                })
+        );
+
+        expect(res.status).toBe(429);
+        expect(res.headers.get("retry-after")).toBe("7");
+        expect(json.error.type).toBe("rate_limit_error");
+        expect(json.error.message).toContain("Retry after 7s.");
+    });
+
+    it("an overload before the first output is a 529, which Claude Code retries", async () => {
+        const sse =
+            'event: response.created\ndata: {"type":"response.created","response":{"id":"r1"}}\n\n' +
+            'event: response.failed\ndata: {"type":"response.failed","response":{"error":{"code":"server_is_overloaded","message":"busy"}}}\n\n';
+        const { res, json } = await send(
+            () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } })
+        );
+
+        expect(res.status).toBe(529);
+        expect(json.error.type).toBe("overloaded_error");
+        expect(json.error.message).toContain("answered that the model is overloaded");
     });
 });
 

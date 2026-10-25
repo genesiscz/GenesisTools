@@ -329,7 +329,7 @@ export async function listOpenAiSubProxyModels(
 
     try {
         const { token, accountId } = await resolveOpenAiSubToken(account, { noRefresh: options?.probe });
-        const live = await tryFetchWhamModels(token, accountId);
+        const live = await tryFetchWhamModels(token, accountId, account.baseUrl);
 
         if (live && live.length > 0) {
             records = live.filter((record) => record.visibility === "list");

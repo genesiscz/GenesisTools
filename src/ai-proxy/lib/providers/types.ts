@@ -26,6 +26,8 @@ export interface ProviderRequestContext {
     promptCacheKey?: PromptCacheKey;
     /** The subagents the session defined with their own model: an Agent call's `model` never overrides theirs. */
     sessionAgents?: readonly string[];
+    /** The session record the request came from: an account failure names its switch command. */
+    sessionId?: string;
 }
 
 export interface ProxyProvider {

@@ -4,11 +4,20 @@ import { join } from "node:path";
 import { resolveProxyAccountEntry } from "@app/ai-proxy/lib/account-refs";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import {
+    agentAccounts,
+    agentLogins,
+    choiceLogin,
+    isError,
+    namedAccount,
+    type Resolved,
+    recordFields,
+    type SessionAccountChoice,
+} from "@app/ai-proxy/lib/sessions/accounts";
+import {
     closeSessionRecord,
     listSessionRecords,
     type MeteredConfirmation,
     openSessionRecord,
-    SESSION_ACCOUNT_FIELD,
     SESSION_LOGIN_FIELD,
     type SessionAgent,
     updateSessionRecord,
@@ -21,18 +30,12 @@ import {
     writeAgentFiles,
 } from "@app/claude/lib/codex-session/agents";
 import {
-    agentAccounts,
     autoAccount,
     claudeModelByAlias,
-    isError,
-    namedAccount,
     passthroughSets,
-    type Resolved,
     resolveSessionEffort,
     resolveSessionModel,
     SESSION_MODEL_ALIASES,
-    type SessionAccountChoice,
-    type SessionLogin,
     sessionArgs,
     sessionEnv,
 } from "@app/claude/lib/codex-session/launch";
@@ -67,22 +70,10 @@ interface CodexSessionOptions {
 }
 
 /** The AI-config provider of each agent's logins. */
-const LOGIN_PROVIDER: Record<SessionAgent, string> = {
-    codex: "openai-sub",
-    claude: "anthropic-sub",
-    grok: "grok-sub",
-};
-
 async function fail(message: string): Promise<never> {
     out.error(pc.red(message));
     await out.flush();
     process.exit(1);
-}
-
-function agentLogins(store: AiConfigStore, agent: SessionAgent): SessionLogin[] {
-    return store
-        .accounts({ provider: LOGIN_PROVIDER[agent], enabled: true })
-        .map((account) => ({ id: account.id, name: account.name }));
 }
 
 /** Open sessions per login, so `auto` spreads parallel sessions. */
@@ -98,13 +89,6 @@ function sessionsPerLogin(agent: SessionAgent): Record<string, number> {
     }
 
     return counts;
-}
-
-/** The login a choice bills: its own, or the one its configured proxy account is linked to. */
-function choiceLogin(choice: SessionAccountChoice, store: AiConfigStore): string | undefined {
-    return (
-        choice.login ?? (choice.proxyAccount ? resolveProxyAccountEntry(choice.proxyAccount, store)?.name : undefined)
-    );
 }
 
 async function codexOrGrokAccount(
@@ -180,19 +164,6 @@ function describeChoice(agent: string, choice: SessionAccountChoice): string {
     const kind = choice.proxyAccount ? pc.dim(" (configured proxy account)") : "";
     const runnerUp = choice.runnerUp ? `\n    ${pc.dim(`runner-up: ${choice.runnerUp}`)}` : "";
     return `${pc.cyan("▸")} ${agent} → ${pc.bold(choice.label)}${kind}${how}${runnerUp}`;
-}
-
-/** The record fields for one agent: the configured proxy account and the login, whichever the choice has. */
-function recordFields(agent: SessionAgent, choice: SessionAccountChoice | undefined, store: AiConfigStore) {
-    if (!choice) {
-        return {};
-    }
-
-    const login = choiceLogin(choice, store);
-    return {
-        ...(choice.proxyAccount ? { [SESSION_ACCOUNT_FIELD[agent]]: choice.proxyAccount.name } : {}),
-        ...(login ? { [SESSION_LOGIN_FIELD[agent]]: login } : {}),
-    };
 }
 
 /** P6: a metered account needs `--allow-metered <account>` or a yes, and a non-interactive launch without the flag fails. */

@@ -145,6 +145,11 @@ session's accounts only.
 - **Billed accounts.** Subscriptions only by default. An account billed per token needs
   `--allow-metered <account>` or a yes at a prompt (no default yes); a non-interactive launch
   without the flag stops before anything starts.
+- **Errors, not failover.** The session never moves to another account by itself. A usage limit,
+  a dead login or a rate limit shows in Claude Code with the account, the reset time and the
+  command that switches: `tools ai-proxy session <id> use --codex <account>` (also `--claude`,
+  `--grok`; without a flag it lists the accounts). The next turn runs on the new account, with
+  no restart; the status line keeps the launch's names.
 - **Window.** `CLAUDE_CODE_MAX_CONTEXT_TOKENS` and the compact window are the model's usable
   tokens from the Codex catalog, passed in `--settings` too, because the `env` of
   `~/.claude/settings.json` would otherwise win. `-c <percent>` changes the compact percent.

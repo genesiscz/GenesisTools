@@ -176,9 +176,24 @@ describe("displayAccountsTable", () => {
     it("prints a row per account with its slug, provider, enabled state and model count", () => {
         const text = captureOut(() => displayAccountsTable([row()]));
 
-        expect(text).toMatch(/work\s+│\s+xai\s+│\s+xai-api-key\s+│\s+● yes\s+│\s+4\s+│\s+—/);
+        expect(text).toMatch(/work\s+│\s+xai\s+│\s+xai-api-key\s+│\s+● yes\s+│\s+—\s+│\s+4\s+│\s+—/);
         expect(text).toContain("1 account  ·  1 enabled");
         expect(text).not.toContain("1 accounts");
+    });
+
+    it("shows a Codex account's failover: off by default, with any list it would use", () => {
+        const codex = { provider: "openai-subscription", providerSlug: "codex" } as const;
+        const text = captureOut(() =>
+            displayAccountsTable([
+                row({ ...codex, name: "plain" }),
+                row({ ...codex, name: "listed", openaiSub: { failoverAccountNames: ["backup"] } }),
+                row({ ...codex, name: "moving", failover: true, openaiSub: { failoverAccountNames: ["backup"] } }),
+            ])
+        );
+
+        expect(text).toMatch(/plain\s+│.*│\s+off\s+│/);
+        expect(text).toMatch(/listed\s+│.*│\s+off \(list: backup\)\s+│/);
+        expect(text).toMatch(/moving\s+│.*│\s+on → backup\s+│/);
     });
 
     it("explains why an account lists no models", () => {
@@ -190,9 +205,9 @@ describe("displayAccountsTable", () => {
             ])
         );
 
-        expect(text).toMatch(/off\s+│.*● no\s+│\s+3\s+│\s+disabled in config/);
-        expect(text).toMatch(/keyless\s+│.*● yes\s+│\s+0\s+│\s+no models \(check API key \/ GET \/models\)/);
-        expect(text).toMatch(/claude\s+│.*● yes\s+│\s+0\s+│\s+enabled but catalog empty/);
+        expect(text).toMatch(/off\s+│.*● no\s+│\s+—\s+│\s+3\s+│\s+disabled in config/);
+        expect(text).toMatch(/keyless\s+│.*● yes\s+│\s+—\s+│\s+0\s+│\s+no models \(check API key \/ GET \/models\)/);
+        expect(text).toMatch(/claude\s+│.*● yes\s+│\s+—\s+│\s+0\s+│\s+enabled but catalog empty/);
     });
 
     it("counts the enabled accounts and the ones with no models, and adds a tip only for the latter", () => {

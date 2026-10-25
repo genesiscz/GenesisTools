@@ -85,7 +85,13 @@ export async function runConfigInit(options?: { append?: boolean }): Promise<voi
 
 export async function runConfigShow(): Promise<void> {
     const config = await loadConfig();
-    out.result(redactConfig(config));
+    // The effective failover setting, also where the file leaves it to the default (off).
+    out.result(
+        redactConfig({
+            ...config,
+            accounts: config.accounts.map((account) => ({ ...account, failover: account.failover === true })),
+        })
+    );
 }
 
 export async function runConfigSet(options: {

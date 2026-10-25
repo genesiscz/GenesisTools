@@ -190,7 +190,12 @@ export function whamModelRecordFromApi(m: WhamApiModel): WhamModelRecord {
  * Live WHAM `/models` list (no fallback). Returns null on failure so callers
  * can mark availability honestly (live ok vs static skip).
  */
-export async function tryFetchWhamModels(accessToken: string, accountId?: string): Promise<WhamModelRecord[] | null> {
+/** `baseUrl`: a WHAM-compatible endpoint a proxy account points at (its `baseUrl`), else chatgpt.com's. */
+export async function tryFetchWhamModels(
+    accessToken: string,
+    accountId?: string,
+    baseUrl: string = WHAM_BASE_URL
+): Promise<WhamModelRecord[] | null> {
     try {
         const headers: Record<string, string> = {
             Authorization: `Bearer ${accessToken}`,
@@ -200,7 +205,7 @@ export async function tryFetchWhamModels(accessToken: string, accountId?: string
             headers["ChatGPT-Account-Id"] = accountId;
         }
 
-        const res = await fetchDirect(`${WHAM_BASE_URL}/models?client_version=${WHAM_CLIENT_VERSION}`, {
+        const res = await fetchDirect(`${baseUrl.replace(/\/$/, "")}/models?client_version=${WHAM_CLIENT_VERSION}`, {
             headers,
             signal: AbortSignal.timeout(5_000),
         });
@@ -223,8 +228,12 @@ export async function tryFetchWhamModels(accessToken: string, accountId?: string
  * Falls back to the static catalog on any failure so callers always get a
  * usable list.
  */
-export async function fetchWhamModels(accessToken: string, accountId?: string): Promise<WhamModelRecord[]> {
-    const live = await tryFetchWhamModels(accessToken, accountId);
+export async function fetchWhamModels(
+    accessToken: string,
+    accountId?: string,
+    baseUrl?: string
+): Promise<WhamModelRecord[]> {
+    const live = await tryFetchWhamModels(accessToken, accountId, baseUrl);
 
     if (live && live.length > 0) {
         return live;

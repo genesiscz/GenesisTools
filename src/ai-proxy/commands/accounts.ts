@@ -236,6 +236,59 @@ export async function runAccountsBind(name: string, options: { codex?: string })
     out.log.info(`Restart the proxy to apply: ${toolCommand("ai-proxy down")} && ${toolCommand("ai-proxy up")}`);
 }
 
+/**
+ * `accounts failover <name> [on|off]`: whether the account moves to its failover list by itself (❓ DECISION 10 c:
+ * off by default, the error reaches the client). Without a state it prints the current one.
+ */
+export async function runAccountsFailover(name: string, state: string | undefined): Promise<void> {
+    const config = await loadConfig();
+    const account = config.accounts.find((item) => item.name === name);
+
+    if (!account) {
+        out.log.warn(`Account not found: ${name}`);
+        out.log.info(cmd(["accounts", "list"]));
+        process.exitCode = 1;
+        return;
+    }
+
+    const list = account.openaiSub?.failoverAccountNames ?? [];
+    const listText = list.length > 0 ? `failover list: ${list.join(", ")}` : "no failover list";
+
+    if (state === undefined) {
+        out.log.info(`${name}: failover ${account.failover ? "on" : "off"} (${listText})`);
+        return;
+    }
+
+    if (state !== "on" && state !== "off") {
+        out.log.error(`Expected on or off, got "${state}".`);
+        process.exitCode = 1;
+        return;
+    }
+
+    if (account.provider !== "openai-subscription") {
+        out.log.error(`Only openai-subscription accounts fail over; "${name}" is ${account.provider}.`);
+        process.exitCode = 1;
+        return;
+    }
+
+    if (state === "on") {
+        account.failover = true;
+    } else {
+        delete account.failover;
+    }
+
+    await saveConfig(config);
+    out.log.success(`Failover ${state} for ${name} (${listText}).`);
+
+    if (state === "on" && list.length === 0) {
+        out.log.info(
+            "With no list, on only adds the 429 cooldown. Add subscription logins under openaiSub.failoverAccountNames."
+        );
+    }
+
+    out.log.info(HOT_RELOAD_HINT);
+}
+
 export async function runAccountsSetEnabled(name: string, enabled: boolean): Promise<void> {
     const config = await loadConfig();
     const account = config.accounts.find((item) => item.name === name);

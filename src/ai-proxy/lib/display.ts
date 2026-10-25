@@ -104,6 +104,21 @@ export interface AccountListRow {
     modelCount: number;
 }
 
+/** Codex accounts only: `on → backup`, `off`, or `off (list: backup)` when a list waits unused. */
+function formatFailover(account: AiProxyAccountConfig): string {
+    if (account.provider !== "openai-subscription") {
+        return pc.dim("—");
+    }
+
+    const list = account.openaiSub?.failoverAccountNames ?? [];
+
+    if (account.failover) {
+        return pc.green(list.length > 0 ? `on → ${list.join(", ")}` : "on");
+    }
+
+    return pc.dim(list.length > 0 ? `off (list: ${list.join(", ")})` : "off");
+}
+
 function accountNote(account: AiProxyAccountConfig, modelCount: number): string {
     if (!account.enabled) {
         return "disabled in config";
@@ -236,7 +251,7 @@ export function displayAccountsTable(rows: AccountListRow[]): void {
         return;
     }
 
-    const table = createBoxTable(["NAME", "SLUG", "PROVIDER", "ENABLED", "MODELS", "NOTE"]);
+    const table = createBoxTable(["NAME", "SLUG", "PROVIDER", "ENABLED", "FAILOVER", "MODELS", "NOTE"]);
 
     for (const { account, modelCount } of rows) {
         const note = accountNote(account, modelCount);
@@ -247,6 +262,7 @@ export function displayAccountsTable(rows: AccountListRow[]): void {
             pc.cyan(account.providerSlug),
             pc.dim(truncateDisplay(account.provider, 28)),
             formatEnabled(account.enabled),
+            formatFailover(account),
             modelsCell,
             note === "—" ? pc.dim("—") : pc.yellow(note),
         ]);
@@ -260,6 +276,10 @@ export function displayAccountsTable(rows: AccountListRow[]): void {
     renderCliKeyRow("SLUG", "provider slug (second segment of proxy id)");
     renderCliKeyRow("PROVIDER", "backend type (subscription vs api-key)");
     renderCliKeyRow("ENABLED", "whether this account is used at runtime");
+    renderCliKeyRow(
+        "FAILOVER",
+        "on: moves to its failover list by itself; off (default): the error reaches the client"
+    );
     renderCliKeyRow("MODELS", "count from proxy catalog (0 = not listed / not wired)");
     renderCliKeyRow("NOTE", "why models may be empty or account skipped");
     out.println();

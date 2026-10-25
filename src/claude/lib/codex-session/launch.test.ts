@@ -1,9 +1,8 @@
 import { describe, expect, it } from "bun:test";
+import { isError, namedAccount } from "@app/ai-proxy/lib/sessions/accounts";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import {
     autoAccount,
-    isError,
-    namedAccount,
     resolveSessionEffort,
     resolveSessionModel,
     sessionArgs,
