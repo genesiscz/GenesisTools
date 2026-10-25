@@ -2267,6 +2267,27 @@ describe("decision hub hooks", () => {
             expect(await runDecisionStop(stop(asks), nudgeOn(), deps)).toBeNull();
         });
 
+        it("passes a question about a decision logged in an earlier turn, found in the log, not the transcript", async () => {
+            const { deps, post } = nudgeHarness();
+
+            // Logged an hour before this turn's prompt: the log, not the turn, says it reached the inbox.
+            await post("2026-10-23T08:00:00.000Z");
+            const linked =
+                "❓ [DECISION 1](https://genesis.tools/claude/find/sess-1/decision/1) is still open: should each tool " +
+                "folder get its own `tsconfig.json`? I recommend a).";
+
+            expect(await runDecisionStop(stop(linked), nudgeOn(), deps)).toBeNull();
+            expect(
+                await runDecisionStop(stop("D1 is still open.\nShould I keep the cache, decide?"), nudgeOn(), deps)
+            ).toBeNull();
+            // A question about a number nobody logged still blocks.
+            expect(
+                await runDecisionStop(stop("D7 is new.\nShould I keep the cache, decide?"), nudgeOn(), deps)
+            ).toMatchObject({
+                decision: "block",
+            });
+        });
+
         it("does not count a decision logged before the turn's prompt", async () => {
             const { deps, post } = nudgeHarness();
 

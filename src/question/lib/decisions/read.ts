@@ -310,7 +310,8 @@ export interface StopHookConfig {
     blocksUsed?: number;
 }
 
-const DECISION_MARKER = /❓\s*\**\s*DECISION\s+(\d+)/g;
+/** `❓ DECISION 21`, `❓ **DECISION 21**`, and the linked form a later mention uses, `❓ [DECISION 21](…)`. */
+const DECISION_MARKER = /❓\s*\**\s*\[?\s*\**\s*DECISION\s+(\d+)/g;
 
 /** The `❓ DECISION N` numbers a reply mentions, in order, each once. */
 export function mentionedDecisions(reply: string): number[] {
@@ -358,6 +359,11 @@ const INLINE_CODE = /`[^`\n]*`/g;
 const QUOTED_TEXT = /"[^"\n]*"|“[^”\n]*”/g;
 const QUESTION_LINE_MAX = 200;
 
+/** A decision named any way a reply names one: `DECISION 21`, `D21`, or a link to `…/decision/21`. */
+const DECISION_REF = /\bDECISION\s*#?(\d+)\b|\bD(\d+)\b|\/decision\/(\d+)\b/g;
+/** How many prose lines above a question still belong to it (a `❓ DECISION N — title` line, then the question). */
+const QUESTION_LEAD_LINES = 3;
+
 /** The reply's own prose, line by line: fenced code blocks, `>` quoted lines and inline code are left out. */
 function proseLines(reply: string): string[] {
     const lines: string[] = [];
@@ -394,6 +400,50 @@ function proseLines(reply: string): string[] {
  * question that carries the cue, else the first question.
  */
 export function decisionQuestion(reply: string): string | null {
+    const found = questionLine(reply);
+
+    if (!found) {
+        return null;
+    }
+
+    const trimmed = found.lines[found.index]?.trim() ?? "";
+
+    return trimmed.length > QUESTION_LINE_MAX ? `${trimmed.slice(0, QUESTION_LINE_MAX - 1)}…` : trimmed;
+}
+
+/**
+ * The decision numbers the reply's question names (`decisionQuestion`): on its line, or on the lines just above it in
+ * the same paragraph. The question nudge checks them against the decision log, so a question about a decision posted
+ * in an earlier turn is known as logged.
+ */
+export function decisionQuestionRefs(reply: string): number[] {
+    const found = questionLine(reply);
+
+    if (!found) {
+        return [];
+    }
+
+    const near: string[] = [];
+
+    for (let index = found.index; index >= 0 && index >= found.index - QUESTION_LEAD_LINES; index--) {
+        const line = found.lines[index] ?? "";
+
+        if (index < found.index && !line.trim()) {
+            break;
+        }
+
+        near.push(line);
+    }
+
+    const numbers = [...near.join("\n").matchAll(DECISION_REF)].map((match) =>
+        Number(match[1] ?? match[2] ?? match[3])
+    );
+
+    return [...new Set(numbers)];
+}
+
+/** The prose lines of a reply and the index of the line that asks the user to decide, or null. */
+function questionLine(reply: string): { lines: string[]; index: number } | null {
     const lines = proseLines(reply);
     const own = (line: string) => line.replace(QUOTED_TEXT, "");
 
@@ -401,16 +451,11 @@ export function decisionQuestion(reply: string): string | null {
         return null;
     }
 
-    const questions = lines.filter((line) => QUESTION_END.test(own(line)));
-    const line = questions.find((question) => DECISION_CUE.test(own(question))) ?? questions[0];
+    const asks = (line: string) => QUESTION_END.test(own(line));
+    const cued = lines.findIndex((line) => asks(line) && DECISION_CUE.test(own(line)));
+    const index = cued >= 0 ? cued : lines.findIndex(asks);
 
-    if (!line) {
-        return null;
-    }
-
-    const trimmed = line.trim();
-
-    return trimmed.length > QUESTION_LINE_MAX ? `${trimmed.slice(0, QUESTION_LINE_MAX - 1)}…` : trimmed;
+    return index >= 0 ? { lines, index } : null;
 }
 
 export interface QuestionNudgeConfig {
@@ -421,7 +466,8 @@ export interface QuestionNudgeConfig {
 
 /**
  * The question nudge for a reply whose `question` asks the user to decide (`decisionQuestion`). `loggedThisTurn`:
- * the session posted a decision after the turn's prompt. Past `maxBlocksPerSession` blocks it only warns.
+ * the session posted a decision after the turn's prompt, or the question names a decision already in the session's
+ * log, from any turn (`decisionQuestionRefs`). Past `maxBlocksPerSession` blocks it only warns.
  */
 export function questionNudgeVerdict(
     config: QuestionNudgeConfig,

@@ -2,6 +2,7 @@ import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { type AmbiguousAnswer, type ChatAnswer, chatAnswers } from "@app/question/lib/decisions/chat-answers";
 import {
     decisionQuestion,
+    decisionQuestionRefs,
     mentionedDecisions,
     parseDecisionBlocks,
     questionNudgeVerdict,
@@ -481,6 +482,20 @@ function runQuestionNudge({
     const state = deps.nudge ?? fileNudgeState;
 
     if (state.lastTurn(session) === turn) {
+        return null;
+    }
+
+    // The log, not the turn, says whether a decision reached the inbox: a question about `D21` posted an hour ago
+    // is logged even though nothing was posted this turn (2026-10-25).
+    const refs = decisionQuestionRefs(reply);
+    const logged =
+        refs.length > 0
+            ? readDecisions(deps.log.file).filter(
+                  (row) => row.sessionId === session && kindOf(row) === "decision" && refs.includes(row.number)
+              )
+            : [];
+
+    if (logged.length > 0) {
         return null;
     }
 
