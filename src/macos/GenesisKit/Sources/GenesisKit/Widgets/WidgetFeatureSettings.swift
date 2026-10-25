@@ -208,9 +208,13 @@ private struct WidgetGeneralSettings: View {
                     isOn: boolean("joinedEdges", prefs?.joinedEdges ?? true))
             }
             NativeSettingsCard("Appearance") {
-                NativeSettingsToggle(
-                    "Glass effect", detail: "Use your selected theme for widget surfaces.",
-                    isOn: boolean("glassEffect", prefs?.glassEffect ?? true))
+                NativeSettingsSegmented(
+                    "Panel background",
+                    detail: "Dark is a solid near-black panel. Glass shows the desktop through it. Same as the app follows the theme in General, which other windows can change.",
+                    identifier: "widget.panelBackground",
+                    options: [NativeSettingsOption("dark", "Dark"), NativeSettingsOption("glass", "Glass"),
+                              NativeSettingsOption("theme", "Same as the app")],
+                    selection: string("panelBackground", prefs?.panelBackground ?? "dark"))
                 Divider()
                 NativeSettingsToggle(
                     "Reduce motion", detail: "Shared with General: keeps every native window and widget still.",
@@ -996,4 +1000,13 @@ enum WidgetPreviewChoices {
     ]
 
     static func title(sort: String) -> String { sorts.first { $0.value == sort }?.title ?? sort }
+    /// The one-word name the inbox header shows beside the sort button.
+    static func shortTitle(sort: String) -> String {
+        switch sort {
+        case "attention": return "Waiting"
+        case "recent": return "Newest"
+        case "project": return "Project"
+        default: return title(sort: sort)
+        }
+    }
 }

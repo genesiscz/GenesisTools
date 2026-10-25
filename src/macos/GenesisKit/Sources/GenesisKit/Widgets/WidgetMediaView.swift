@@ -109,10 +109,7 @@ struct WidgetMediaView: View {
         .padding(22)
         .titlebarBackground(NativeSettingsBackdrop())
         .titlebarZone()
-        .environment(\.nativeSettingsTheme,
-            model.snapshot?.state.preferences.glassEffect == false
-                ? model.appearance.theme.effective(reduceTransparency: true, systemReduceTransparency: false)
-                : model.appearance.theme)
+        .environment(\.nativeSettingsTheme, model.panelTheme)
         .nativeSettingsAppearance(model.appearance)
         .preferredColorScheme(.dark)
         .onAppear {

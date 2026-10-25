@@ -52,6 +52,8 @@ export const widgetPreferencesSchema = z.object({
     sidePosition: z.number().min(0).max(1).default(0.5),
     hoverPreviews: z.boolean().default(true),
     glassEffect: z.boolean().default(true),
+    /** The widget panel's own background: "dark" (solid near-black), "glass", or "theme" (the app-wide theme). */
+    panelBackground: z.enum(["dark", "glass", "theme"]).default("dark"),
     display: z.string().default(""),
     providers: z.array(z.enum(["claude", "codex", "grok", "unknown"])).default([]),
     quietSeconds: z.number().int().min(3).max(300).default(15),

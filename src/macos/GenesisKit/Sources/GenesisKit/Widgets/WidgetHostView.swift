@@ -86,11 +86,7 @@ struct WidgetHostView: View {
         .foregroundStyle(.white)
         .preferredColorScheme(.dark)
         .environment(
-            \.nativeSettingsTheme,
-            // Glass effect off: the theme's opaque form (Solid for the light themes, as before).
-            model.snapshot?.state.preferences.glassEffect == false
-                ? model.appearance.theme.effective(reduceTransparency: true, systemReduceTransparency: false)
-                : model.appearance.theme
+            \.nativeSettingsTheme, model.panelTheme
         )
         .nativeSettingsAppearance(model.appearance)
         .widgetAccessibility(reduceMotion: model.reduceMotion, reduceTransparency: model.reduceTransparency)

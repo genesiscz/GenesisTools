@@ -283,6 +283,8 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var sideStyle: String?
     public var joinedEdges: Bool?
     public var glassEffect: Bool?
+    /// "dark", "glass" or "theme"; nil reads as "dark".
+    public var panelBackground: String?
     public var display: String?
     public var providers: [String]?
     /// Widget alerts for new items: a chime (`alertSound`, a system sound name or "none") and a popup.

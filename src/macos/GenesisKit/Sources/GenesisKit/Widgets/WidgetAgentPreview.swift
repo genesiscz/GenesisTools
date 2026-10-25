@@ -108,11 +108,24 @@ struct AgentWidgetPreview: View {
                     selection: Binding(get: { model.previewFilter }, set: { model.setPreview(filter: $0) }),
                     minSegmentWidth: 70, identifier: "widget.preview.filter")
                 Spacer(minLength: 4)
-                IconButton(systemName: "arrow.up.arrow.down", tooltip: sortTooltip, size: 10.5) {
+                // The order is named beside its icon, so reading it needs no hover (Martin, 2026-10-25).
+                Button {
                     let sorts = WidgetPreviewChoices.sorts.map(\.value)
                     let index = sorts.firstIndex(of: model.previewSort) ?? 0
                     model.setPreview(sort: sorts[(index + 1) % sorts.count])
-                }.accessibilityLabel("Order: " + WidgetPreviewChoices.title(sort: model.previewSort))
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.up.arrow.down").font(.system(size: 10.5))
+                        Text(WidgetPreviewChoices.shortTitle(sort: model.previewSort)).font(.system(size: 11))
+                    }
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 5).frame(minHeight: 22)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.genHoverPlain())
+                .instantTooltip(sortTooltip)
+                .accessibilityLabel("Order: " + WidgetPreviewChoices.title(sort: model.previewSort))
+                .accessibilityHint("Click for the next order")
                 IconButton(systemName: "slider.horizontal.3", tooltip: "Choose what this list shows and its order",
                            size: 10.5) {
                     model.showSettingsPage?("widgets.sessions#inbox-preview")
