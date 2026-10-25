@@ -485,6 +485,29 @@ test("a registry file without a messaging socket is not a target", () => {
     expect(parseRegistryEntry("not json", "f")).toBeNull();
 });
 
+test("a parked registry entry is no message receiver: its conversation moved to a background job", () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-registry-parked-"));
+    try {
+        writeFileSync(
+            join(dir, "11.json"),
+            SafeJSON.stringify({ pid: 11, sessionId: "live", messagingSocketPath: "/a.sock" })
+        );
+        writeFileSync(
+            join(dir, "12.json"),
+            SafeJSON.stringify({
+                pid: 12,
+                sessionId: "parked",
+                messagingSocketPath: "/b.sock",
+                parkedJobId: "68f2bba6",
+            })
+        );
+        const sessions = listClaudeLiveSessions(dir, (pids) => new Set(pids));
+        expect(sessions.map((session) => session.sessionId)).toEqual(["live"]);
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test("--cross-messages puts the accept setting first and refuses a caller's own --settings", () => {
     expect(withCrossMessages(["--", "fix it"])).toEqual([
         "--settings",

@@ -37,6 +37,8 @@ export interface ClaudeLiveSession {
     file: string;
     /** When the process last wrote its registry entry (epoch ms): its last turn or status change. */
     updatedAt?: number;
+    /** Set when the conversation moved to a background job under a new id: the socket answers, nothing reads it. */
+    parkedJobId?: string;
 }
 
 function claudeDir(): string {
@@ -110,6 +112,8 @@ export function parseRegistryEntry(raw: string, file: string): ClaudeLiveSession
         return null;
     }
 
+    const parkedJobId = text(entry.parkedJobId);
+
     return {
         pid,
         sessionId,
@@ -120,6 +124,7 @@ export function parseRegistryEntry(raw: string, file: string): ClaudeLiveSession
         socketPath,
         file,
         ...(typeof entry.updatedAt === "number" ? { updatedAt: entry.updatedAt } : {}),
+        ...(parkedJobId ? { parkedJobId } : {}),
     };
 }
 
@@ -213,7 +218,13 @@ export function listClaudeLiveSessions(
 
         const entry = parseRegistryEntry(raw, file);
 
-        if (entry) {
+        // A parked entry is no receiver: a decision "delivered" to its socket was lost (Kalendora, 2026-10-25 18:03).
+        if (entry?.parkedJobId) {
+            log.info(
+                { pid: entry.pid, sessionId: entry.sessionId, parkedJobId: entry.parkedJobId },
+                "Claude session is parked in a background job; not a message receiver"
+            );
+        } else if (entry) {
             entries.push(entry);
         }
     }
