@@ -37,9 +37,9 @@ public enum MarkdownRenderer: String, CaseIterable, Identifiable, Sendable {
 
     public var detail: String {
         switch self {
-        case .web: "WKWebView — mermaid + hljs (offline)"
-        case .native: "Native Swift — flat code, no diagrams"
-        case .nativeRich: "Native — BeautifulMermaid + hljs"
+        case .web: "Web: diagrams and highlighted code, works offline"
+        case .native: "Native: plain code, no diagrams"
+        case .nativeRich: "Native+: diagrams and highlighted code, drawn natively"
         }
     }
 

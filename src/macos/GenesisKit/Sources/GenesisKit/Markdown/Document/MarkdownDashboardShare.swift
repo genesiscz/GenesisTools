@@ -64,6 +64,20 @@ final class MarkdownShareModel: ObservableObject {
     @Published private(set) var available = false
     @Published private(set) var busy = false
     @Published var error: String?
+    /// The running share, for `cancel`.
+    private var running: Task<Void, Never>?
+
+    /// Starts a share that `cancel` can stop (it ends the `tools` process).
+    func start(note: URL) {
+        guard !busy else { return }
+        running = Task { await share(note: note) }
+    }
+
+    /// Stops a running share without an error: the person chose to.
+    func cancel() {
+        running?.cancel()
+        running = nil
+    }
 
     func refresh() async {
         let up = await Self.probe()
@@ -98,33 +112,38 @@ final class MarkdownShareModel: ObservableObject {
                 return
             }
 
-            copyToClipboard(url)
-            openInBrave(url)
+            // The confirmation: "Copied share link" beside the pointer, whichever browser opens it.
+            Clipboard.copy(url.absoluteString, what: "share link")
+            open(url, in: GenesisKitMarkdownConfiguration.shared.shareOpensIn)
+        } catch is CancellationError {
+            GenesisKit.log("viewer: share cancelled")
         } catch {
             self.error = error.localizedDescription
         }
     }
 
-    private func copyToClipboard(_ url: URL) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(url.absoluteString, forType: .string)
-    }
-
-    private func openInBrave(_ url: URL) {
-        let app = URL(fileURLWithPath: MarkdownDashboardShare.braveAppPath)
-
-        guard FileManager.default.fileExists(atPath: app.path) else {
-            error = "Brave Browser is not installed. The share URL is on the clipboard."
-            NSWorkspace.shared.open(url)
+    private func open(_ url: URL, in browser: MarkdownShareBrowser) {
+        switch browser {
+        case .none:
             return
-        }
-
-        let config = NSWorkspace.OpenConfiguration()
-        config.activates = true
-        NSWorkspace.shared.open([url], withApplicationAt: app, configuration: config) { _, openError in
-            guard let openError else { return }
-            Task { @MainActor in
-                self.error = openError.localizedDescription
+        case .system:
+            NSWorkspace.shared.open(url)
+        case .brave:
+            let app = URL(fileURLWithPath: MarkdownDashboardShare.braveAppPath)
+            // No Brave: the system browser opens the link, which is a working share, not an error.
+            guard FileManager.default.fileExists(atPath: app.path) else {
+                GenesisKit.log("viewer: share opens in the system browser, Brave is not installed")
+                NSWorkspace.shared.open(url)
+                return
+            }
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.open([url], withApplicationAt: app, configuration: config) { _, openError in
+                guard let openError else { return }
+                Task { @MainActor in
+                    GenesisKit.log("viewer: Brave did not open the share link: \(openError)")
+                    self.error = "Brave did not open the share link. It is on the clipboard."
+                }
             }
         }
     }

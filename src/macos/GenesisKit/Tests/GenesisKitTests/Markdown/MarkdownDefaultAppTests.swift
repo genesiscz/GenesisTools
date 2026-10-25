@@ -73,7 +73,7 @@ final class MarkdownDefaultAppTests: XCTestCase {
         XCTAssertEqual(MarkdownDefaultApp.sharesType("yml", in: statuses), ["yaml"])
         XCTAssertEqual(MarkdownDefaultApp.sharesType("json", in: statuses), [])
         let yml = statuses.first { $0.ext == "yml" }!
-        XCTAssertEqual(MarkdownDefaultAppDialog.rowTitle(yml, statuses: statuses), ".yml  (now opens in no app), same type as .yaml")
+        XCTAssertEqual(MarkdownDefaultAppDialog.rowTitle(yml, statuses: statuses), ".yml  (no app opens it yet), same type as .yaml")
     }
 
     func testApplySetsEachContentTypeOnceAndReportsARefusalForEverySiblingExtension() async {

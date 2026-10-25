@@ -112,8 +112,10 @@ enum MarkdownExport {
                 proxy.exportPDF(to: target) { error in
                     if let error {
                         onError(error.localizedDescription)
-                    } else {
+                    } else if GenesisKitMarkdownConfiguration.shared.revealSavedPDF {
                         NSWorkspace.shared.activateFileViewerSelecting([target])
+                    } else {
+                        CopyToast.post(title: "Saved the PDF", detail: PathDisplay.tilde(target.path), style: .copied)
                     }
                 }
             }

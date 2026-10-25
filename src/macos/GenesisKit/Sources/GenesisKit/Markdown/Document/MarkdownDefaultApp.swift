@@ -170,13 +170,16 @@ final class MarkdownDefaultAppDialog: NSObject {
             You can change this later with Genesis Markdown → Set as Default App….
             """
         alert.addButton(withTitle: "Make Default…")
-        alert.addButton(withTitle: "Not Now")
+        // It never asks again, so the button says so ("Not Now" promised a later reminder).
+        alert.addButton(withTitle: "Don't Ask Again")
+        // It came by itself: Quit and an update do not wait for an answer.
+        alert.window.preventsApplicationTerminationWhenModal = false
         // Recorded before the answer, so a crash or a force quit in the
         // middle cannot bring the question back.
         defaults.set(true, forKey: MarkdownDefaultApp.promptAnsweredKey)
         GenesisKit.log("viewer: default-app prompt shown (not default for \(missing))")
         let response = alert.runModal()
-        GenesisKit.log("viewer: default-app prompt answered: \(response == .alertFirstButtonReturn ? "make default" : "not now")")
+        GenesisKit.log("viewer: default-app prompt answered: \(response == .alertFirstButtonReturn ? "make default" : "don't ask again")")
         if response == .alertFirstButtonReturn {
             showChooser(nil)
         }
@@ -212,11 +215,18 @@ final class MarkdownDefaultAppDialog: NSObject {
         alert.accessoryView = stack
         alert.addButton(withTitle: "Set as Default")
         alert.addButton(withTitle: "Cancel")
+        alert.window.preventsApplicationTerminationWhenModal = false
+        // "Set as Default" works only while a box is ticked: with none it would close and do nothing.
+        let ticks = ChooserTicks(button: alert.buttons.first, boxes: boxes.map(\.box))
         if statuses.allSatisfy(\.isDefault) {
             alert.informativeText = "Genesis Markdown already opens every one of these file types."
             alert.buttons.first?.isEnabled = false
+        } else {
+            ticks.changed(nil)
         }
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let response = alert.runModal()
+        withExtendedLifetime(ticks) {}
+        guard response == .alertFirstButtonReturn else { return }
 
         let chosen = boxes.filter { $0.box.isEnabled && $0.box.state == .on }.map(\.ext)
         guard !chosen.isEmpty else { return }
@@ -235,7 +245,7 @@ final class MarkdownDefaultAppDialog: NSObject {
         } else if status.isDefault {
             title += "  (default already)"
         } else {
-            title += "  (now opens in \(status.handlerName ?? "no app"))"
+            title += status.handlerName.map { "  (now opens in \($0))" } ?? "  (no app opens it yet)"
         }
         let siblings = MarkdownDefaultApp.sharesType(status.ext, in: statuses)
         if !siblings.isEmpty {
@@ -257,20 +267,44 @@ final class MarkdownDefaultAppDialog: NSObject {
         let after = currentStatuses()
         let set = chosen.filter { ext in after.first { $0.ext == ext }?.isDefault == true }
         let notSet = chosen.filter { !set.contains($0) }
-        let alert = NSAlert()
-        if notSet.isEmpty {
-            alert.messageText = "Genesis Markdown is now the default app"
-            alert.informativeText = "It opens " + set.map { ".\($0)" }.joined(separator: ", ") + " files."
-        } else {
-            alert.alertStyle = .warning
-            alert.messageText = "Some file types still open in another app"
-            let lines = notSet.map { ext in
-                ".\(ext): " + Self.plainReason(failures[ext])
-            }
-            // The system's own error text is in the log (`viewer: default app refused for …`), not in the dialog.
-            alert.informativeText = lines.joined(separator: "\n") + "\n\nYou can change it in Finder with Get Info, Open with, Change All."
+        // A success is a note that fades, never a dialog to dismiss.
+        guard !notSet.isEmpty else {
+            let opens = "It opens " + set.map { ".\($0)" }.joined(separator: ", ") + " files."
+            CopyToast.post(title: "Genesis Markdown is now the default app", detail: opens, style: .copied)
+            GenAnnounce.post("Genesis Markdown is now the default app. \(opens)")
+            return
         }
-        alert.addButton(withTitle: "OK")
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Some file types still open in another app"
+        let lines = notSet.map { ext in
+            ".\(ext): " + Self.plainReason(failures[ext])
+        }
+        // The system's own error text is in the log (`viewer: default app refused for …`), not in the dialog.
+        alert.informativeText = lines.joined(separator: "\n") + "\n\nYou can change it in Finder with Get Info, Open with, Change All."
+        alert.addButton(withTitle: "Close")
+        alert.window.preventsApplicationTerminationWhenModal = false
         alert.runModal()
+    }
+}
+
+/// Keeps the chooser's "Set as Default" enabled only while an enabled box is ticked.
+@MainActor
+private final class ChooserTicks: NSObject {
+    weak var button: NSButton?
+    let boxes: [NSButton]
+
+    init(button: NSButton?, boxes: [NSButton]) {
+        self.button = button
+        self.boxes = boxes
+        super.init()
+        for box in boxes where box.isEnabled {
+            box.target = self
+            box.action = #selector(changed(_:))
+        }
+    }
+
+    @objc func changed(_ sender: Any?) {
+        button?.isEnabled = boxes.contains { $0.isEnabled && $0.state == .on }
     }
 }

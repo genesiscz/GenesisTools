@@ -26,6 +26,24 @@ public enum MarkdownToolbarLabels: String, CaseIterable, Sendable {
     case always
 }
 
+/// Where a dashboard share link opens once it is on the clipboard.
+public enum MarkdownShareBrowser: String, CaseIterable, Sendable {
+    /// Brave, or the system browser when Brave is not installed. The default.
+    case brave
+    /// The system's default browser.
+    case system
+    /// Nowhere: the link is only copied.
+    case none
+
+    public var title: String {
+        switch self {
+        case .brave: return "Brave"
+        case .system: return "Default browser"
+        case .none: return "Do not open"
+        }
+    }
+}
+
 @MainActor
 public final class GenesisKitMarkdownConfiguration: ObservableObject {
     public static let shared = GenesisKitMarkdownConfiguration()
@@ -118,6 +136,13 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
         git && self[keyPath: part]
     }
 
+    // MARK: Sharing and export
+
+    /// Where a dashboard share link opens.
+    @Published public var shareOpensIn: MarkdownShareBrowser { didSet { store(shareOpensIn.rawValue, "shareOpensIn") } }
+    /// A saved PDF is shown in Finder, which comes to the front. Off: a note says it was saved.
+    @Published public var revealSavedPDF: Bool { didSet { store(revealSavedPDF, "revealSavedPDF") } }
+
     // MARK: Path actions
 
     /// What a folder offers (a path segment, a tree folder), in menu order.
@@ -162,6 +187,8 @@ public final class GenesisKitMarkdownConfiguration: ObservableObject {
         gitTreeDecorations = bool("gitTreeDecorations", true)
         gitAgentAttribution = bool("gitAgentAttribution", true)
         gitDefaultScope = string("gitDefaultScope").flatMap(GitFileScope.init(rawValue:)) ?? .uncommitted
+        shareOpensIn = string("shareOpensIn").flatMap(MarkdownShareBrowser.init(rawValue:)) ?? .brave
+        revealSavedPDF = bool("revealSavedPDF", true)
     }
 
     private func store(_ value: Any, _ key: String) {

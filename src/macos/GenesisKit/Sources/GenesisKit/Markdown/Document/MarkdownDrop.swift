@@ -62,9 +62,26 @@ final class MarkdownDropWebView: WKWebView {
     var onDropFiles: (([URL]) -> Void)?
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        MarkdownDrop.urls(from: sender.draggingPasteboard).isEmpty
-            ? super.draggingEntered(sender)
-            : .copy
+        guard !MarkdownDrop.urls(from: sender.draggingPasteboard).isEmpty else { return super.draggingEntered(sender) }
+        showsDropTarget(true)
+        return .copy
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        showsDropTarget(false)
+        super.draggingExited(sender)
+    }
+
+    override func draggingEnded(_ sender: NSDraggingInfo) {
+        showsDropTarget(false)
+        super.draggingEnded(sender)
+    }
+
+    /// An accent outline while files are dragged over the page, so the window says it takes them.
+    private func showsDropTarget(_ on: Bool) {
+        wantsLayer = true
+        layer?.borderColor = NSColor.controlAccentColor.cgColor
+        layer?.borderWidth = on ? 2 : 0
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -76,6 +93,7 @@ final class MarkdownDropWebView: WKWebView {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let urls = MarkdownDrop.urls(from: sender.draggingPasteboard)
         guard !urls.isEmpty else { return super.performDragOperation(sender) }
+        showsDropTarget(false)
         onDropFiles?(urls)
         return true
     }
