@@ -11,6 +11,7 @@ import {
     usageStorePaths,
 } from "@app/ai-proxy/lib/usage/store";
 import type { AccountBillingSnapshot, UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
+import { hitPercent } from "@genesiscz/utils/ai/usage/cache-stats";
 import { formatTokens } from "@genesiscz/utils/format";
 import { logger, out } from "@genesiscz/utils/logger";
 import { formatDotStatus } from "@genesiscz/utils/table";
@@ -244,8 +245,21 @@ export async function runUsageCommand(options: UsageCommandOptions): Promise<voi
             for (const [model, stats] of entries) {
                 const shortModel = model.split("/").slice(2).join("/") || model;
                 const rateLimits = stats.rate_limits > 0 ? `, ${stats.rate_limits} rate limits` : "";
+                // Cache columns exist only for requests booked since 2026-10-25; older days show none.
+                const hit =
+                    stats.cache_read_tokens === undefined
+                        ? undefined
+                        : hitPercent({
+                              uncached: stats.uncached_input_tokens ?? 0,
+                              cacheRead: stats.cache_read_tokens,
+                              cacheWrite: stats.cache_write_tokens ?? 0,
+                          });
+                const cache =
+                    hit === undefined
+                        ? ""
+                        : `, read ${formatTokens(stats.cache_read_tokens ?? 0)}, write ${formatTokens(stats.cache_write_tokens ?? 0)}, hit ${hit.toFixed(1)}%`;
                 out.log.info(
-                    `  30d ${shortModel}: ${stats.requests} req, ${formatTokens(stats.total_tokens)} tok${rateLimits}`
+                    `  30d ${shortModel}: ${stats.requests} req, ${formatTokens(stats.total_tokens)} tok${cache}${rateLimits}`
                 );
             }
         }

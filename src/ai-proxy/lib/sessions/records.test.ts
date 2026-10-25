@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { sinceToMs } from "@app/ai-proxy/commands/sessions";
 import {
     clientProviderDenial,
     type ResolvedClient,
@@ -25,9 +26,13 @@ import {
     writeSessionRecord,
 } from "@app/ai-proxy/lib/sessions/records";
 import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
+import { requestRow, requestRows, statsByAgent } from "@app/ai-proxy/lib/sessions/view";
 import { resetAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { AiProxyAccountConfig, AiProxyConfig } from "@app/ai-proxy/lib/types";
+import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
+import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
 
 const SESSION = "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b";
 const originalHome = env.get("GENESIS_TOOLS_HOME");
@@ -251,5 +256,93 @@ describe("one session id per session", () => {
             session: "codex-thread",
         });
         expect(requestTagsFor(new Headers(), undefined, undefined)).toBeUndefined();
+    });
+});
+
+describe("session view rows and stats", () => {
+    const base: UsageRequestRecord = {
+        ts: "2026-10-25T20:00:00.000Z",
+        account: "codex",
+        provider: "openai-subscription",
+        proxyModel: "codex/codex/gpt-x:high",
+        upstreamModel: "gpt-x",
+        path: "/v1/messages",
+        status: 200,
+        elapsedMs: 1000,
+        stream: true,
+        tags: { session: SESSION },
+    };
+
+    it("splits each convention once: OpenAI cached tokens inside the prompt, Anthropic cache fields outside", () => {
+        const codexRow = requestRow({
+            ...base,
+            usage: { prompt_tokens: 1000, completion_tokens: 10, total_tokens: 1010, cached_prompt_tokens: 900 },
+        });
+        const claudeRow = requestRow({
+            ...base,
+            provider: "anthropic-subscription",
+            usage: { prompt_tokens: 100, completion_tokens: 5, total_tokens: 105, cache_read_input_tokens: 900 },
+        });
+        const oldRow = requestRow({
+            ...base,
+            usage: { prompt_tokens: 1000, completion_tokens: 10, total_tokens: 1010 },
+        });
+
+        expect(codexRow).toMatchObject({ agent: "codex", effort: "high", input: 100, cacheRead: 900, hit: 90 });
+        expect(claudeRow).toMatchObject({ agent: "claude", input: 100, cacheRead: 900, hit: 90 });
+        expect(oldRow.cacheKnown).toBe(false);
+    });
+
+    it("takes the cache numbers of an old row from its transcript, also once the day was compressed to .zst", () => {
+        const day = join(sessionsDir(), "..", "transcripts", "2026-10-24");
+        mkdirSync(day, { recursive: true });
+        const file = join(day, `${SESSION}.jsonl`);
+        const entry = {
+            uuid: "u-1",
+            type: "assistant",
+            message: { usage: { prompt_tokens: 2000, prompt_tokens_details: { cached_tokens: 1500 } } },
+        };
+        writeFileSync(
+            `${file}.zst`,
+            compressBytes(`${SafeJSON.stringify({ uuid: "u-0", type: "user" })}\n${SafeJSON.stringify(entry)}\n`)
+        );
+
+        const [row] = requestRows([
+            {
+                ...base,
+                usage: { prompt_tokens: 2000, completion_tokens: 1, total_tokens: 2001 },
+                transcript: { file, uuid: "u-1" },
+            },
+        ]);
+
+        expect(row).toMatchObject({ cacheKnown: true, input: 500, cacheRead: 1500, hit: 75 });
+    });
+
+    it("stats per agent: hit over the known rows, losses inside each session by cause, rows without numbers counted apart", () => {
+        const row = (minute: number, read: number, extra: Partial<UsageRequestRecord> = {}) =>
+            requestRow({
+                ...base,
+                ts: new Date(Date.parse(base.ts) + minute * 60_000).toISOString(),
+                usage: {
+                    prompt_tokens: read + 100,
+                    completion_tokens: 1,
+                    total_tokens: read + 101,
+                    cached_prompt_tokens: read,
+                },
+                ...extra,
+            });
+        const rows = [
+            row(0, 50_000, { cacheKey: "a" }),
+            row(1, 1_000, { cacheKey: "b" }),
+            row(2, 1_000, { tags: { session: "other" } }),
+            requestRow({ ...base, usage: { prompt_tokens: 10, completion_tokens: 1, total_tokens: 11 } }),
+        ];
+        const [codex] = statsByAgent(rows);
+
+        expect(codex).toMatchObject({ agent: "codex", requests: 4, unknownCache: 1, sessions: 2, losses: 1 });
+        expect(codex.lossesByCause["key changed"]).toBe(1);
+        expect(codex.hitPercent).toBeCloseTo((52_000 / 52_300) * 100, 6);
+        expect(sinceToMs("7d", 1_000_000_000_000)).toBe(1_000_000_000_000 - 7 * 86_400_000);
+        expect(() => sinceToMs("soon")).toThrow("--since");
     });
 });

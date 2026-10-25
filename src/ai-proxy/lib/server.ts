@@ -21,6 +21,7 @@ import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
 import { handleChatCompletions } from "@app/ai-proxy/lib/translators";
+import { isClaudeCodeCompactionTurn } from "@app/ai-proxy/lib/translators/formats/anthropic/compaction";
 import { identityPipeline } from "@app/ai-proxy/lib/translators/identity-pipeline";
 import type { AiProxyConfig, ResolvedRoute, ThinkingPresentationMode } from "@app/ai-proxy/lib/types";
 import { scheduleBillingSync } from "@app/ai-proxy/lib/usage/billing-sync";
@@ -105,6 +106,8 @@ function trackProxyRequest(input: {
     translate?: string;
     thinking?: string;
     tags?: RequestTags;
+    cacheKey?: string;
+    compaction?: boolean;
 }): void {
     scheduleUsageTracking({
         route: input.route,
@@ -122,6 +125,8 @@ function trackProxyRequest(input: {
         translate: input.translate,
         thinking: input.thinking,
         tags: input.tags,
+        cacheKey: input.cacheKey,
+        compaction: input.compaction,
     });
     scheduleBillingSync(input.route.account, input.runtime.providers);
 }
@@ -166,6 +171,8 @@ interface ModelBody {
     claudeSessionId?: string;
     /** The conversation id the client sent on its own: Claude Code's session id, else a body `prompt_cache_key`. */
     conversationId?: string;
+    /** Claude Code's compaction turn (`/v1/messages`). */
+    compaction: boolean;
 }
 
 async function readModelBody(req: Request): Promise<ModelBody | { error: Response }> {
@@ -185,7 +192,7 @@ async function readModelBody(req: Request): Promise<ModelBody | { error: Respons
         return { error: jsonError(413, { message: "Request body too large" }) };
     }
 
-    let parsed: { model?: string; metadata?: unknown; prompt_cache_key?: unknown };
+    let parsed: { model?: string; metadata?: unknown; prompt_cache_key?: unknown; messages?: unknown };
 
     try {
         parsed = SafeJSON.parse(bodyText, { strict: true }) as typeof parsed;
@@ -226,6 +233,7 @@ async function readModelBody(req: Request): Promise<ModelBody | { error: Respons
         model: parsed.model,
         claudeSessionId,
         conversationId: claudeSessionId ?? (cacheKey || undefined),
+        compaction: isClaudeCodeCompactionTurn(parsed),
     };
 }
 
@@ -477,6 +485,8 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
                         // success; the other two routes already forward this.
                         captureFailure,
                         tags,
+                        cacheKey: promptCacheKey?.key,
+                        compaction: body.compaction,
                     });
 
                     logger.info(

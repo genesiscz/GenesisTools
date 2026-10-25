@@ -34,6 +34,8 @@ export function trackCompletedRequest(input: {
     timeline?: CallTimeline;
     /** Set when the exchange never completed — the row is recorded anyway. */
     failure?: string;
+    cacheKey?: string;
+    compaction?: boolean;
 }): void {
     const stream = input.stream ?? bodyWantsStream(input.bodyText);
     let usage = stream ? extractLatestUsageFromSse(input.responseBody) : extractUsageFromJsonBody(input.responseBody);
@@ -105,6 +107,8 @@ export function trackCompletedRequest(input: {
         tags: input.tags,
         transcript,
         timeline: input.timeline,
+        ...(input.cacheKey ? { cacheKey: input.cacheKey } : {}),
+        ...(input.compaction ? { compaction: true } : {}),
     };
 
     recordUsageRequest(record);
@@ -150,6 +154,8 @@ export function scheduleUsageTracking(input: {
     translate?: string;
     thinking?: string;
     tags?: RequestTags;
+    cacheKey?: string;
+    compaction?: boolean;
 }): void {
     void input.responseBody
         .then(async (responseBody) => {

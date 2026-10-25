@@ -5,7 +5,7 @@ import { isObject } from "@genesiscz/utils/object";
 
 type JsonObject = Record<string, unknown>;
 
-function normalizeUsage(raw: unknown): TokenUsage | undefined {
+export function normalizeUsage(raw: unknown): TokenUsage | undefined {
     if (!isObject(raw)) {
         return undefined;
     }

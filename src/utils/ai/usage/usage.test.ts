@@ -7,6 +7,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { openRouterPricingSync, resetOpenRouterCatalogCache } from "../catalog/openrouter";
 import { createEvaluatorWithProviderFactory } from "../evaluation/service";
 import { JEV_USAGE_APP, jevCalls, jevSpend, UNLABELED_JEV_USE } from "../evaluation/spend";
+import { type CacheCall, cacheTtlOf, findCacheLosses, findMisses, missReason, summarizeCache } from "./cache-stats";
 import { dayFilePath, usageDir, utcDayOf } from "./paths";
 import { queryUsage } from "./query";
 import { recordUsage } from "./record";
@@ -570,5 +571,89 @@ describe("Jev spend", () => {
             ["__proto__", { calls: 1, inputTokens: 1_000, costUsd: expect.any(Number), unpricedCalls: 0 }],
         ]);
         expect(Object.hasOwn(Object.prototype, "calls")).toBe(false);
+    });
+});
+
+describe("cache stats (the session-analyzer fixtures, same answers)", () => {
+    const MIN = 60_000;
+    const call = (t: number, over: Partial<CacheCall> = {}): CacheCall => ({
+        t,
+        model: "m1",
+        input: 10,
+        cacheRead: 400_000,
+        cacheWrite: 2_000,
+        output: 500,
+        ...over,
+    });
+
+    test("missReason names the cause from the gap, the TTL, a compaction and a model change", () => {
+        const prev = call(0);
+
+        expect(missReason(call(MIN), undefined, false)).toContain("first call");
+        expect(missReason(call(MIN), prev, true)).toContain("compaction");
+        expect(missReason(call(MIN, { model: "m2" }), prev, false)).toContain("model changed");
+        expect(missReason(call(10 * MIN), prev, false)).toContain("5 min");
+        expect(missReason(call(10 * MIN, { ttl: "1h" }), prev, false)).toContain("prefix changed");
+        expect(missReason(call(90 * MIN, { ttl: "1h" }), prev, false)).toContain("1 h");
+    });
+
+    test("findMisses keeps only big rewrites and counts uncached input as missed (Codex has no cache writes)", () => {
+        const misses = findMisses([
+            call(0, { cacheRead: 0, cacheWrite: 300_000 }),
+            call(MIN),
+            call(2 * MIN, { cacheRead: 100_000, cacheWrite: 0, input: 200_000 }),
+            call(30 * MIN, { cacheRead: 0, cacheWrite: 410_000 }),
+        ]);
+
+        expect(misses.map((miss) => miss.call)).toEqual([0, 2, 3]);
+        expect(misses[1].written).toBe(200_000);
+        expect(misses[2].reason).toContain("idle 28 min");
+        expect(misses[2].gapMin).toBe(28);
+        expect(
+            findMisses([call(0, { compaction: true }), call(2 * MIN, { cacheRead: 0, cacheWrite: 90_000 })])[0]?.reason
+        ).toContain("compaction");
+    });
+
+    test("findCacheLosses flags a fall of over half and at least 2,048 tokens, with its cause", () => {
+        const losses = findCacheLosses([
+            call(0, { key: "a" }),
+            call(MIN, { key: "b", cacheRead: 1_000 }),
+            call(2 * MIN, { key: "b", cacheRead: 300_000 }),
+            call(3 * MIN, { key: "b", cacheRead: 200_000 }),
+            call(4 * MIN, { key: "b", compaction: true }),
+            call(5 * MIN, { key: "b", cacheRead: 5_000 }),
+            call(6 * MIN, { key: "b", cacheRead: 4_000 }),
+            call(20 * MIN, { key: "b", cacheRead: 0 }),
+        ]);
+
+        // 300,000 to 200,000 fell by a third: not a loss. 5,000 to 4,000 fell under 2,048 tokens: not a loss.
+        expect(losses.map((loss) => [loss.call, loss.cause])).toEqual([
+            [1, "key changed"],
+            [5, "compaction"],
+            [7, "idle"],
+        ]);
+        expect(losses[0]).toMatchObject({ before: 400_000, after: 1_000 });
+        // 4,000 to 0 is all of it, but under 2,048 tokens fell: not a loss.
+        expect(findCacheLosses([call(0, { cacheRead: 4_000 }), call(20 * MIN, { cacheRead: 0 })], 0.5, 5_000)).toEqual(
+            []
+        );
+        expect(findCacheLosses([call(0), call(20 * MIN, { cacheRead: 0 })])[0]?.cause).toBe("idle");
+    });
+
+    test("summarizeCache: one hit % over the whole list, and the per-request spread", () => {
+        const summary = summarizeCache([
+            call(0, { input: 1_000, cacheRead: 0, cacheWrite: 0 }),
+            call(MIN, { input: 100, cacheRead: 900, cacheWrite: 0 }),
+            call(2 * MIN, { input: 0, cacheRead: 1_000, cacheWrite: 0 }),
+        ]);
+
+        expect(summary).toMatchObject({ requests: 3, uncached: 1_100, cacheRead: 1_900, cacheWrite: 0, output: 1_500 });
+        expect(summary.hitPercent).toBeCloseTo((1_900 / 3_000) * 100, 6);
+        expect(summary.median).toBe(90);
+        expect(summary.p10).toBeCloseTo(18, 6);
+        expect(summary.p90).toBeCloseTo(98, 6);
+        expect(cacheTtlOf({ cache_creation: { ephemeral_1h_input_tokens: 5, ephemeral_5m_input_tokens: 1 } })).toBe(
+            "mixed"
+        );
     });
 });

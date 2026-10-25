@@ -10,9 +10,11 @@
 import { closeSync, existsSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { splitReasoningEffortSuffix } from "@app/ai-proxy/lib/resolve-model";
+import { requestRows, transcriptOnDisk } from "@app/ai-proxy/lib/sessions/view";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import { formatTimeline } from "@app/ai-proxy/lib/usage/call-timeline";
 import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -147,15 +149,6 @@ interface TranscriptEntry {
     };
 }
 
-/** The transcript file on disk: the recorded path, or `<path>.zst` once the daily pass compressed an older day. */
-function transcriptOnDisk(file: string): string | undefined {
-    if (existsSync(file)) {
-        return file;
-    }
-
-    return existsSync(`${file}.zst`) ? `${file}.zst` : undefined;
-}
-
 /** Pull one call's entries out of its session JSONL and print prompt, thinking, answer. */
 function printTranscript(record: UsageRequestRecord): void {
     const ref = record.transcript;
@@ -203,6 +196,11 @@ function printTranscript(record: UsageRequestRecord): void {
     out.println("");
 }
 
+/** HH:MM:SS of a row in local time (the index stores UTC). */
+function localClock(ts: string): string {
+    return formatLocalDateTimeStamp(ts).slice(11);
+}
+
 export function runCallsCommand(options: CallsOptions): void {
     const cutoff = options.sinceMinutes ? Date.now() - options.sinceMinutes * 60_000 : undefined;
     const matched = collectRecords(options, cutoff);
@@ -232,7 +230,7 @@ export function runCallsCommand(options: CallsOptions): void {
         for (const record of matched) {
             const t = record.timeline;
             phases.push([
-                record.ts.slice(11, 19),
+                localClock(record.ts),
                 truncateDisplay(record.tags?.label, 28),
                 (record.elapsedMs / 1000).toFixed(1),
                 t?.upstreamHeadersMs !== undefined ? `${t.upstreamHeadersMs}ms` : "—",
@@ -252,20 +250,35 @@ export function runCallsCommand(options: CallsOptions): void {
         return;
     }
 
-    const table = createBoxTable(["TIME", "STAGE", "LABEL", "MODEL", "EFFORT", "TTFB", "SECS", "IN", "OUT", "STATUS"]);
-    const today = new Date().toISOString().slice(0, 10);
+    const table = createBoxTable([
+        "TIME",
+        "STAGE",
+        "LABEL",
+        "MODEL",
+        "EFFORT",
+        "TTFB",
+        "SECS",
+        "IN",
+        "READ",
+        "HIT",
+        "OUT",
+        "STATUS",
+    ]);
+    const today = formatLocalDateTimeStamp(Date.now()).slice(0, 10);
+    const rows = requestRows(matched);
     let lastDay = "";
 
-    for (const record of matched) {
+    for (const [index, record] of matched.entries()) {
+        const row = rows[index];
         const secs = record.elapsedMs / 1000;
-        const day = record.ts.slice(0, 10);
+        const day = formatLocalDateTimeStamp(record.ts).slice(0, 10);
 
         // A bare HH:MM:SS silently reads as "today". Older rows get their date on
         // its own line rather than a repeated column — and once any banner has
         // printed, the transition back to today needs its own banner too, or
         // today's rows read as belonging to the previous day.
         if (day !== lastDay && (day !== today || lastDay !== "")) {
-            table.push([{ colSpan: 10, content: pc.dim(`── ${day} ──`) }]);
+            table.push([{ colSpan: 12, content: pc.dim(`── ${day} ──`) }]);
         }
 
         lastDay = day;
@@ -281,14 +294,17 @@ export function runCallsCommand(options: CallsOptions): void {
         const ttfb = ttfbMs === undefined ? "—" : (ttfbMs / 1000).toFixed(1);
 
         table.push([
-            record.ts.slice(11, 19),
+            localClock(record.ts),
             truncateDisplay(record.tags?.stage, 12),
             truncateDisplay(record.tags?.label, 28),
             truncateDisplay(record.proxyModel, 34),
             reasoningEffort ?? "—",
             ttfbMs !== undefined && ttfbMs >= 10_000 ? pc.yellow(ttfb) : ttfb,
             secs >= 30 ? pc.red(secs.toFixed(1)) : secs.toFixed(1),
-            String(record.usage?.prompt_tokens ?? "—"),
+            // IN is the uncached input; READ comes on top of it (session-analyzer's split).
+            String(row?.input ?? "—"),
+            row?.cacheKnown ? String(row.cacheRead) : "?",
+            row?.cacheKnown && row.hit !== undefined ? `${row.hit.toFixed(0)}%` : "?",
             String(record.usage?.completion_tokens ?? "—"),
             // A dropped stream answers 200 at the header and then dies, so status
             // alone would show it as a success.

@@ -80,6 +80,10 @@ export interface UsageRequestRecord {
     transcript?: { file: string; uuid: string };
     /** Phase timings (dispatch, TTFB, thinking span, text span) for this call. */
     timeline?: CallTimeline;
+    /** The prompt cache key the request carried upstream (a session id or a content hash; never a secret). */
+    cacheKey?: string;
+    /** Claude Code's compaction turn: the request after it starts a new cache prefix. */
+    compaction?: boolean;
 }
 
 export interface AccountBillingSnapshot {

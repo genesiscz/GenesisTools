@@ -24,6 +24,7 @@ import { runIntrospectCommand } from "@app/ai-proxy/commands/introspect";
 import { runLinkCommand } from "@app/ai-proxy/commands/link";
 import { runModelsCommand } from "@app/ai-proxy/commands/models";
 import { runServeCommand } from "@app/ai-proxy/commands/serve";
+import { runSessionCommand, runSessionsCommand, runStatsCommand } from "@app/ai-proxy/commands/sessions";
 import { runStatusCommand } from "@app/ai-proxy/commands/status";
 import { runUpCommand } from "@app/ai-proxy/commands/up";
 import { runUsageCommand } from "@app/ai-proxy/commands/usage";
@@ -134,6 +135,42 @@ program
     .action(async (options) => {
         await runModelsCommand(options);
     });
+
+program
+    .command("sessions")
+    .description("One row per session record: accounts, model, requests, tokens, cache hit %, losses, last error")
+    .option("--open", "Only sessions that are still open")
+    .option("--since <when>", "Sessions active since a duration (1d, 7d) or a local date", "7d")
+    .option("--json", "Machine-readable output")
+    .action((options: { open?: boolean; since?: string; json?: boolean }) => {
+        runSessionsCommand(options);
+    });
+
+program
+    .command("session <id>")
+    .description("One session: its record, then one row per request with cache read, write, hit % and losses")
+    .option("-f, --follow", "Keep printing the session's new requests as they come")
+    .option("--json", "Machine-readable output")
+    .action((id: string, options: { follow?: boolean; json?: boolean }) => {
+        runSessionCommand(id, options);
+    });
+
+program
+    .command("stats")
+    .description("Cache totals per agent: hit %, its spread per request and per session, losses by cause")
+    .option("--session <id>", "One session only")
+    .option("--agent <agent>", "codex, claude (or anthropic), grok, other")
+    .option("--since <when>", "A duration (1d, 7d) or a local date", "7d")
+    .option(
+        "--from-transcripts",
+        "Read Claude Code's own transcripts instead of the proxy ledger (the agent comes from the model id)"
+    )
+    .option("--json", "Machine-readable output")
+    .action(
+        (options: { session?: string; agent?: string; since?: string; json?: boolean; fromTranscripts?: boolean }) => {
+            runStatsCommand(options);
+        }
+    );
 
 program
     .command("calls")
