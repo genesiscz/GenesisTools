@@ -1445,6 +1445,7 @@ final class WidgetLedgerUndo: ObservableObject {
         moves[id] = move
         // Folded, the card is no longer the decision the number keys and the composer answer.
         GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.insert(id) }
+        model.heldCardIDs.insert(id)
         model.postNote(note, action: WidgetNoticeAction(title: "Undo") { [weak self] in
             self?.undo(id, reduceMotion: reduceMotion)
         })
@@ -1480,13 +1481,19 @@ final class WidgetLedgerUndo: ObservableObject {
             self?.sending[id] = nil
             // The log refused it (the item changed elsewhere): the card shows its real state again, and the error
             // line says why.
-            if self?.moves[id] == hold.move { self?.moves[id] = nil }
+            if self?.moves[id] == hold.move {
+                self?.moves[id] = nil
+                model.heldCardIDs.remove(id)
+            }
         }, completed: { [weak self] in
             self?.sending[id] = nil
             // The card keeps its new look until a snapshot carries the newer revision; then the entry is inert.
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(30))
-                if self?.moves[id] == hold.move { self?.moves[id] = nil }
+                if self?.moves[id] == hold.move {
+                    self?.moves[id] = nil
+                    model.heldCardIDs.remove(id)
+                }
             }
         })
     }
@@ -1497,6 +1504,7 @@ final class WidgetLedgerUndo: ObservableObject {
         hold.deadline?.cancel()
         moves[id] = nil
         let model = hold.model
+        model.heldCardIDs.remove(id)
         GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.remove(id) }
         model.postNote("Undone.")
     }

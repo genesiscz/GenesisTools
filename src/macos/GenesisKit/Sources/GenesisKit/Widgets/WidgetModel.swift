@@ -465,9 +465,13 @@ public final class WidgetModel: ObservableObject {
     }
     /// Inbox rows the user folded. A folded decision stays selected, but nothing answers it until it opens again.
     @Published public var foldedCardIDs: Set<String> = []
-    /// The decision the composer and the number keys answer: the selected one, unanswered and not folded.
+    /// Inbox rows shown as dismissed or done while their Undo runs or their change is on its way
+    /// (`WidgetLedgerUndo`). Opened again, such a row is still not answered.
+    @Published public var heldCardIDs: Set<String> = []
+    /// The decision the composer and the number keys answer: the selected one, unanswered, not folded and not held.
     public var answerCard: WidgetCard? {
-        guard let card, card.kind == "decision", card.needsAnswer, !foldedCardIDs.contains(card.id) else { return nil }
+        guard let card, card.kind == "decision", card.needsAnswer, !foldedCardIDs.contains(card.id),
+              !heldCardIDs.contains(card.id) else { return nil }
         return card
     }
     /// The decision whose card shows the composer for the user's own answer instead of the options.

@@ -265,6 +265,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         if let shutdownTask { await shutdownTask.value; return }
         let task = Task { [self] in
             stop()
+            // A shelf item removed during its Undo is removed before the app quits, or it is back on the next launch.
+            await shelf?.waitForRemoval()
             await voiceNotes?.shutdown()
             await runtimeStart?.value
             await flowRuntime.stop()

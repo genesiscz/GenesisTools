@@ -80,6 +80,7 @@ final class ApprovalReminder {
     private var pending: DispatchWorkItem?
     private var expiry: DispatchWorkItem?
     private var postedID: String?
+    private var stopped = false
 
     init(model: ApprovalDialogModel, onClick: @escaping () -> Void) {
         self.model = model
@@ -132,8 +133,17 @@ final class ApprovalReminder {
         content.threadIdentifier = "approval.\(model.identifier)"
         content.userInfo = [ApprovalNotificationRelay.tokenKey: token]
         let id = "approval.\(model.identifier).\(token)"
-        center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { error in
-            if let error { KitHost.log("approval reminder failed id=\(id): \(error.localizedDescription)") }
+        center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { [weak self] error in
+            if let error {
+                KitHost.log("approval reminder failed id=\(id): \(error.localizedDescription)")
+                return
+            }
+            // The add is asynchronous: a request answered while it ran must not leave its card behind.
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    if self?.stopped ?? true { center.removeDeliveredNotifications(withIdentifiers: [id]) }
+                }
+            }
         }
         postedID = id
         KitHost.log("approval \(model.identifier) reminder posted id=\(id)")
@@ -142,12 +152,14 @@ final class ApprovalReminder {
     /// Cancels a reminder not posted yet, takes a posted one out of Notification Center, and gives the click handling
     /// back to the host. Safe to call twice.
     func stop() {
+        stopped = true
         pending?.cancel()
         pending = nil
         expiry?.cancel()
         expiry = nil
         guard let center = Self.center else { return }
         if let id = postedID {
+            center.removePendingNotificationRequests(withIdentifiers: [id])
             center.removeDeliveredNotifications(withIdentifiers: [id])
             postedID = nil
         }

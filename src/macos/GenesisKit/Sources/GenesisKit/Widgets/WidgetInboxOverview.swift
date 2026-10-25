@@ -56,7 +56,8 @@ struct WidgetInboxOverview: View {
     static func letter(_ index: Int) -> String { String(UnicodeScalar(97 + index).map(Character.init) ?? "?") }
 
     /// Up and Down move the highlight, and inside an open decision walk its options first; Return opens or folds the
-    /// highlighted row, or stages the highlighted option as a click does. No motion: keys repeat.
+    /// highlighted row, or stages the highlighted option as a click does; with "Send at once" Return does not send,
+    /// as in a session's inbox. No motion: keys repeat.
     private func handle(_ kind: WidgetListKey.Kind, rows: [WidgetInboxItem], proxy: ScrollViewProxy) {
         let current = focusID.flatMap { id in rows.firstIndex { $0.id == id } }
         let options = current.map { openOptions(rows[$0]) } ?? []
@@ -66,6 +67,10 @@ struct WidgetInboxOverview: View {
             guard let current else { return }
             let item = rows[current]
             if let option {
+                guard model.decisionClickStages else {
+                    model.postNote("Return does not send an answer. Click the option to send it.")
+                    return
+                }
                 model.choose(item, option: options[option])
                 return
             }
@@ -290,19 +295,20 @@ struct WidgetInboxOverview: View {
         .contentShape(shape)
     }
 
-    /// One option of an open decision as a button. A pick here always stages (`WidgetModel.choose(_:option:)` for an
-    /// inbox item), whatever the decision click setting says, so its words say Stage too.
+    /// One option of an open decision as a button. It stages, or with "Send at once" sends, as the decision click
+    /// setting says (`WidgetModel.choose(_:option:)` for an inbox item), and its words follow that setting.
     private func optionButton(_ item: WidgetInboxItem, letter: String, title: String, picked: Bool) -> some View {
         let focused = focusID == item.id && focusedOption == letter
         let recommended = item.recommended == letter
+        let stages = model.decisionClickStages
         let tooltip = LiveWidgetView.choiceTooltip(WidgetChoice(id: letter, title: title, recommended: recommended),
-                                                   index: 10, stages: true, picked: picked)
+                                                   index: 10, stages: stages, picked: picked)
         return Button { model.choose(item, option: letter) } label: {
             optionLabel(letter, title: title, picked: picked, focused: focused, recommended: recommended)
         }
         .buttonStyle(RowButtonStyle(cornerRadius: 8))
         .instantTooltip(tooltip)
-        .accessibilityLabel("Stage " + letter + ": " + title)
+        .accessibilityLabel((stages ? "Stage " : "Answer ") + letter + ": " + title)
         .accessibilityValue(picked ? "Staged" : "")
         .accessibilityAddTraits(focused ? .isSelected : [])
         .id(item.id + "#" + letter)

@@ -316,15 +316,16 @@ public struct RecordingTargetPicker: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverPlain())
-            .onHover { inside in
-                guard inside else { return }
+            // Every move, not only entry: a pointer that moves inside the row it rested on takes the highlight back.
+            .onContinuousHover { phase in
+                guard case .active = phase else { return }
                 if let rested = keyboardMouse {
                     let now = NSEvent.mouseLocation
                     // The list scrolled under a resting pointer: keep the keyboard's row until the pointer moves.
                     if hypot(now.x - rested.x, now.y - rested.y) < 3 { return }
                     keyboardMouse = nil
                 }
-                highlighted = row.id
+                if highlighted != row.id { highlighted = row.id }
             }
             .accessibilityLabel(accessibilityLabel(row))
             .accessibilityIdentifier("recording.picker.\(row.id)")
