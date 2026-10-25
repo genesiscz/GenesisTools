@@ -87,6 +87,10 @@ export const widgetPreferencesSchema = z.object({
     stagedOnLeave: z.enum(["ask", "keep", "send"]).default("ask"),
     /** The inbox of every session: entries grouped under their session ("session"), or one list. */
     inboxGrouping: z.enum(["session", "list"]).default("session"),
+    /** The filter a session's inbox opens with: every entry ("all"), the inbox entries, or the decisions. */
+    inboxFilter: z.enum(["all", "inbox", "decisions"]).default("all"),
+    /** The filter the inbox of every session opens with: every entry ("all"), the ones that need you, or unread. */
+    overviewFilter: z.enum(["all", "needs", "unread"]).default("all"),
     /** The composer's microphone: records a voice note and puts its transcript in the field ("note"), or live dictation. */
     composerVoice: z.enum(["ask", "note", "live"]).default("ask"),
 });

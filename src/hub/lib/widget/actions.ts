@@ -20,7 +20,7 @@ import {
 } from "./screenshot";
 import { readShelfAttachment } from "./shelf";
 import { type WidgetSources, widgetProvider, widgetResultNode } from "./snapshot";
-import { sendStagedDecisions, unstageDecisions } from "./staged";
+import { resendAnsweredDecisions, sendStagedDecisions, unstageDecisions } from "./staged";
 import { acknowledgeWidgetInbox, mutateWidgetState, readWidgetState, widgetRoot } from "./storage";
 import {
     parseWidgetSessionKey,
@@ -30,6 +30,18 @@ import {
     widgetPreferencesSchema,
     widgetTargetSchema,
 } from "./types";
+
+/** Where each session's answers go, by session id: the widget's own target for it. */
+const decisionTargetsSchema = z
+    .record(
+        z.string(),
+        z.object({
+            provider: z.string().optional(),
+            sourceHome: z.string().optional(),
+            cwd: z.string().optional(),
+        })
+    )
+    .optional();
 
 export const widgetActionSchema = z.discriminatedUnion("action", [
     z.object({ action: z.literal("selection"), key: z.string().nullable() }),
@@ -44,20 +56,8 @@ export const widgetActionSchema = z.discriminatedUnion("action", [
         draft: z.string().optional(),
         draftOption: z.string().optional(),
     }),
-    z.object({
-        action: z.literal("send-staged"),
-        ids: z.array(z.string()).min(1),
-        targets: z
-            .record(
-                z.string(),
-                z.object({
-                    provider: z.string().optional(),
-                    sourceHome: z.string().optional(),
-                    cwd: z.string().optional(),
-                })
-            )
-            .optional(),
-    }),
+    z.object({ action: z.literal("send-staged"), ids: z.array(z.string()).min(1), targets: decisionTargetsSchema }),
+    z.object({ action: z.literal("resend-answers"), ids: z.array(z.string()).min(1), targets: decisionTargetsSchema }),
     z.object({ action: z.literal("unstage"), ids: z.array(z.string()).min(1) }),
     z.object({ action: z.literal("preferences"), patch: widgetPreferencesPatchSchema }),
     z.object({ action: z.literal("visibility"), key: z.string(), pinned: z.boolean() }),
@@ -130,6 +130,12 @@ export async function performWidgetAction({
         }
         case "send-staged":
             return sendStagedDecisions({
+                ids: request.ids,
+                targets: request.targets,
+                deliver: widgetDeliverDeps(signal),
+            });
+        case "resend-answers":
+            return resendAnsweredDecisions({
                 ids: request.ids,
                 targets: request.targets,
                 deliver: widgetDeliverDeps(signal),

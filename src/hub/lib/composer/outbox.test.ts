@@ -42,7 +42,7 @@ import { readDataVersion } from "@genesiscz/utils/workers/sqlite-wake";
 import { createCanvas } from "@napi-rs/canvas";
 import { z } from "zod";
 import type { AgentNode } from "../agents/types";
-import { performWidgetAction } from "../widget/actions";
+import { performWidgetAction, widgetActionSchema } from "../widget/actions";
 import {
     IMAGE_PENDING_LIMIT,
     type ImageFiles,
@@ -90,7 +90,7 @@ import {
     widgetSnapshot,
     widgetTitle,
 } from "../widget/snapshot";
-import { isStaged, sendStagedDecisions, unstageDecisions } from "../widget/staged";
+import { isStaged, resendAnsweredDecisions, sendStagedDecisions, unstageDecisions } from "../widget/staged";
 import { MAX_WIDGET_STATE_BYTES, mutateWidgetState, readWidgetState } from "../widget/storage";
 import {
     parseWidgetSessionKey,
@@ -661,7 +661,7 @@ describe("widget source and delivery contracts", () => {
                 },
             },
         });
-        expect(result).toMatchObject({ sent: 3, failed: 0 });
+        expect(result).toMatchObject({ sent: 3, queued: 0, failed: 0 });
         expect(result.sessions.map((entry) => [entry.session, entry.numbers])).toEqual([
             ["staged-a", [1, 2]],
             ["staged-b", [1]],
@@ -680,6 +680,53 @@ describe("widget source and delivery contracts", () => {
         expect(after?.state).toBe("drafted");
         expect(after?.draftOption ?? "").toBe("");
         expect(after && isStaged(after)).toBe(false);
+    });
+
+    test("a staged answer no receiver took counts as queued, and Send again delivers it", async () => {
+        const directory = await root();
+        const files = { file: join(directory, "decisions.jsonl"), events: join(directory, "events.jsonl") };
+        const [row] = await postDecisions(
+            files.file,
+            files.events,
+            { sessionId: "resend-a", provider: "codex", decisions: [{ prompt: "Ship?", options: ["yes", "no"] }] },
+            { env: {} }
+        );
+        await updateDecisions(files.file, files.events, {
+            updates: [{ id: row.id, state: "drafted", draftOption: "a" }],
+        });
+        const nowhere = await sendStagedDecisions({
+            ids: [row.id],
+            files,
+            deliver: {
+                codexWorkerFor: () => null,
+                runTool: async () => {
+                    throw new Error("No transport may run");
+                },
+            },
+        });
+        expect(nowhere).toMatchObject({ sent: 0, queued: 1, failed: 0 });
+        expect(nowhere.sessions[0]?.result?.delivered).toBe(false);
+        expect(readDecisions(files.file).find((entry) => entry.id === row.id)?.state).toBe("answered");
+
+        expect(widgetActionSchema.parse({ action: "resend-answers", ids: [row.id] })).toMatchObject({
+            action: "resend-answers",
+        });
+        const sent: string[] = [];
+        const again = await resendAnsweredDecisions({
+            ids: [row.id],
+            files,
+            deliver: {
+                codexWorkerFor: () => "fixture-worker",
+                runTool: async (args: string[]) => {
+                    sent.push(args.join(" "));
+                    return { success: true, stdout: '{"queued":false,"turnId":"fixture-turn"}', stderr: "" };
+                },
+            },
+        });
+        expect(again).toMatchObject({ sent: 1, queued: 0, failed: 0 });
+        expect(again.sessions[0]?.result?.delivered).toBe(true);
+        expect(sent).toHaveLength(1);
+        expect(readDecisions(files.file).find((entry) => entry.id === row.id)?.state).toBe("sent");
     });
 
     test("a media-only reply keeps the original session and card title in one literal message", async () => {
@@ -1757,6 +1804,8 @@ test("decision cards carry recorded answers and supersede links; only open decis
     const drafted = await widgetSnapshot({ root: directory, sources });
     expect(drafted.notifications?.sessions.find((entry) => entry.key === sessionKey)?.pendingItem?.at).toBe(askedAt);
     expect(drafted.cards.find((entry) => entry.sourceId === replacement.id)?.at).toBe(askedAt);
+    // The staged list is its own, uncapped: the widget sends from it, not from a session's eight listed items.
+    expect(drafted.notifications?.staged.map((entry) => entry.sourceId)).toEqual([replacement.id]);
     expect(readDecisions(file).find((row) => row.id === replacement.id)?.updatedTs).not.toBe(replacement.createdTs);
 
     await updateDecisions(file, events, {
@@ -1770,6 +1819,7 @@ test("decision cards carry recorded answers and supersede links; only open decis
         title: "Other",
     });
     expect(moved.notifications?.sessions.find((entry) => entry.key === sessionKey)?.needsAnswer ?? 0).toBe(0);
+    expect(moved.notifications?.staged).toEqual([]);
 });
 
 test("a session lists its waiting entries first, then the newest, at most eight", () => {

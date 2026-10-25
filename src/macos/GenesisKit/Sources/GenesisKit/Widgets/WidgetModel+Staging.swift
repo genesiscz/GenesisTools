@@ -38,23 +38,39 @@ extension WidgetModel {
         choose(card, option: option)
     }
 
-    /// A click on a decision option in the inbox of every session.
+    /// A click on a decision option in the inbox of every session. With "Send at once" the pick is staged on the
+    /// item's own session and sent once the hub has it.
     public func choose(_ item: WidgetInboxItem, option: String) {
         guard let session = session(forKey: item.key), let revision = item.revision else { return }
+        guard decisionClickStages else {
+            stage(id: item.sourceId, sessionId: session.target.sessionId, revision: revision, option: option,
+                  completed: { [weak self] in
+                      self?.pendingStage[item.sourceId] = nil
+                      self?.deliverDecisions([item], action: "send-staged")
+                  })
+            return
+        }
         let current = stagedOption(item.sourceId, stored: item.draftOption)
         stage(id: item.sourceId, sessionId: session.target.sessionId, revision: revision,
               option: current == option ? nil : option)
     }
 
-    /// Save draft on a decision card: the composer's text becomes that decision's note, staged with the others, and
-    /// the composer is cleared, so another decision's own answer does not open with this text.
+    /// Save draft on a decision card: the composer's text becomes that decision's note, staged with the others. Once
+    /// the hub has it, the composer is cleared, so another decision's own answer does not open with this text; a
+    /// refused save keeps the text.
     public func saveDraft(_ card: WidgetCard) {
         guard let selected, let revision = card.revision else { return }
-        let text = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = selectedKey
+        let typed = draft.text
+        let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
         stage(id: card.sourceId, sessionId: selected.target.sessionId, revision: revision,
-              option: stagedOption(card.sourceId, stored: card.draftOption), note: text)
-        draftSavedAt[card.id] = Date()
-        if !text.isEmpty { setText("") }
+              option: stagedOption(card.sourceId, stored: card.draftOption), note: text,
+              completed: { [weak self] in
+                  guard let self else { return }
+                  self.draftSavedAt[card.id] = Date()
+                  // Only the text that was saved: a session switch or new typing keeps the composer as it is.
+                  if !text.isEmpty, self.selectedKey == key, self.draft.text == typed { self.setText("") }
+              })
     }
 
     /// The own answer composer of a decision with a saved note opens with that note.
@@ -63,14 +79,17 @@ extension WidgetModel {
         if draft.text.isEmpty, let note = card.draft, !note.isEmpty { setText(note) }
     }
 
-    private func stage(id: String, sessionId: String, revision: Int, option: String?, note: String? = nil) {
+    private func stage(
+        id: String, sessionId: String, revision: Int, option: String?, note: String? = nil,
+        completed: (() -> Void)? = nil
+    ) {
         pendingStage[id] = option ?? ""
         var fields: [String: WidgetJSON] = [
             "action": "ledger", "id": .string(id), "sessionId": .string(sessionId),
             "expectedRevision": .number(Double(revision)), "state": "drafted", "draftOption": .string(option ?? ""),
         ]
         if let note { fields["draft"] = .string(note) }
-        action(.object(fields), failed: { [weak self] in self?.pendingStage[id] = nil })
+        action(.object(fields), failed: { [weak self] in self?.pendingStage[id] = nil }, completed: completed)
     }
 
     /// The staged items as the snapshot shows them, and the picks staged here that it now shows.
@@ -106,7 +125,8 @@ extension WidgetModel {
     }
 
     /// One message per session through the hub, then a notice that says what really happened: delivered, waiting
-    /// for the session's next prompt (with why, and Send again), or not sent at all.
+    /// for the session's next prompt (with why, and Send again), or not sent at all. It waits for the hub writes
+    /// queued before it, so a pick changed a moment ago is the one that goes.
     private func deliverDecisions(_ items: [WidgetInboxItem], action: String) {
         var targets: [String: WidgetJSON] = [:]
         var titles: [String: String] = [:]
@@ -119,21 +139,22 @@ extension WidgetModel {
             targets[target.sessionId] = .object(fields)
             titles[target.sessionId] = session.title
         }
-        Task {
+        afterMutations { [weak self] in
+            guard let self else { return }
             do {
-                let result = try await call([
+                let result = try await self.call([
                     "action": .string(action), "ids": .array(items.map { .string($0.sourceId) }),
                     "targets": .object(targets),
                 ])
                 let outcome = WidgetDecisionSendOutcome(result, titles: titles)
-                notice = outcome.notice(items: items, staged: action == "send-staged")
+                self.notice = outcome.notice(items: items, staged: action == "send-staged")
                 let waiting = items.filter { item in
-                    session(forKey: item.key).map { outcome.queuedSessions.contains($0.target.sessionId) } ?? false
+                    self.session(forKey: item.key).map { outcome.queuedSessions.contains($0.target.sessionId) } ?? false
                 }
                 if !waiting.isEmpty {
-                    noticeAction = WidgetNoticeAction(title: "Send again") { [weak self] in self?.resendAnswers(waiting) }
+                    self.noticeAction = WidgetNoticeAction(title: "Send again") { [weak self] in self?.resendAnswers(waiting) }
                 }
-            } catch { report(error) }
+            } catch { self.report(error) }
         }
     }
 

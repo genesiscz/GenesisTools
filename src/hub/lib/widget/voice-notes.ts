@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, realpathSync, unlinkSync } from "node:fs";
-import { mkdir, rename, unlink } from "node:fs/promises";
+import { mkdir, rename, stat, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseSttProvider } from "@genesiscz/utils/ai/stt/resolve";
 import type { LiveTranscriptEvent } from "@genesiscz/utils/ai/stt/types";
@@ -14,10 +14,12 @@ import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { z } from "zod";
 import { widgetRoot } from "./storage";
 
+const MAX_CLIP_BYTES = 9_600_000;
+
 const clipSchema = z.object({
     path: z.string(),
     // A recorded note stops at 30 s; one kept from live dictation may run up to five minutes.
-    bytes: z.number().int().positive().max(9_600_000),
+    bytes: z.number().int().positive().max(MAX_CLIP_BYTES),
     sampleRateHz: z.literal(16000),
     channels: z.literal(1),
     encoding: z.literal("s16le"),
@@ -281,6 +283,11 @@ export async function addLiveVoiceNote({
         throw new Error("A live dictation clip must be in the voice notes incoming folder");
     }
 
+    const clipStat = await stat(clip);
+    if (!clipStat.isFile() || clipStat.size > MAX_CLIP_BYTES) {
+        throw new Error("The dictation clip is not a file within the voice note size limit");
+    }
+
     const audio = new Uint8Array(await Bun.file(clip).arrayBuffer());
     if (audio.byteLength < 2 || audio.byteLength % 2 !== 0) {
         throw new Error("The dictation recorded no audio");
@@ -294,7 +301,6 @@ export async function addLiveVoiceNote({
     const id = randomUUID();
     const output = join(voiceNotesDirectory(root), "clips", `${id}.pcm`);
     await mkdir(join(voiceNotesDirectory(root), "clips"), { recursive: true });
-    await rename(clip, output);
     const note = voiceNoteSchema.parse({
         id,
         revision: 1,
@@ -319,6 +325,7 @@ export async function addLiveVoiceNote({
         ...(context ? { context } : {}),
     });
     try {
+        await rename(clip, output);
         return await mutate({
             root,
             signal,

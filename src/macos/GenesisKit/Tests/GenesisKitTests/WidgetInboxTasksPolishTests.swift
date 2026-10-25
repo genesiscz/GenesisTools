@@ -927,7 +927,8 @@ final class WarmPaneVisibilityTests: XCTestCase {
 private enum StagingFixture {
     static let key = "local:codex:fixture-staged:"
 
-    static func snapshot(draftOption: String?, decisionClick: String = "stage") throws -> String {
+    /// `stagedOnly`: the decision is not among the session's listed items (past its eight), only in the staged list.
+    static func snapshot(draftOption: String?, decisionClick: String = "stage", stagedOnly: Bool = false) throws -> String {
         var item: [String: Any] = ["id": "decision:d1", "sourceId": "d1", "kind": "decision", "key": key, "at": 1,
                                    "needsAnswer": true, "title": "Keep it?", "number": 7, "options": ["keep", "drop"],
                                    "revision": 1]
@@ -941,8 +942,10 @@ private enum StagingFixture {
         let session: [String: Any] = ["key": key, "target": ["hostId": "local", "provider": "codex",
             "sessionId": "fixture-staged", "sourceHome": "", "cwd": "/fixture"], "title": "Staged fixture",
             "project": "Fixture", "activityAt": 0, "status": "waiting", "pinned": true, "visible": true, "hiddenByFilter": false]
-        let notifications: [String: Any] = ["unread": 0, "needsAnswer": 1, "complete": true, "truncated": false,
-            "sessions": [["key": key, "unread": 0, "needsAnswer": 1, "pendingItem": item, "items": [item]]]]
+        var notifications: [String: Any] = ["unread": 0, "needsAnswer": 1, "complete": true, "truncated": false,
+            "sessions": [["key": key, "unread": 0, "needsAnswer": 1, "pendingItem": item,
+                          "items": stagedOnly ? [] : [item]]]]
+        if stagedOnly { notifications["staged"] = [item] }
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
             "selectedKey": key, "preferences": ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
                 "placement": "both", "side": "right", "quietSeconds": 15, "voiceProvider": "openai", "voiceLanguage": "en",
@@ -1053,6 +1056,11 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertNil(model.noticeAction, "a delivered send leaves no button")
     }
 
+    /// The decision writes and sends among `actions`, without the selection and read marks around them.
+    private func decisionActions(_ actions: [WidgetJSON]) -> [String] {
+        names(actions).filter { ["ledger", "send-staged"].contains($0) }
+    }
+
     func testKeepingStagedDecisionsDoesNotAskAgainForTheSameOnes() throws {
         let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
         let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
@@ -1086,6 +1094,79 @@ final class WidgetStagingTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertFalse(names(actions).contains("ledger"), "the send setting does not stage")
         XCTAssertNil(model.pendingStage["d1"])
+    }
+
+    func testTheSendSettingAnswersAtOnceFromTheInboxOfEverySession() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var actions: [WidgetJSON] = []
+        model.actionRunner = { value in actions.append(value); return ["sent": 1, "queued": 0, "failed": 0] }
+        model.receive([try snapshot(draftOption: nil, decisionClick: "send")])
+        let item = try XCTUnwrap(model.inboxOverviewItems.first)
+        model.choose(item, option: "b")
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(decisionActions(actions), ["ledger", "send-staged"], "the pick is written, then sent")
+        guard case .object(let send) = try XCTUnwrap(actions.last) else { return XCTFail("not an object") }
+        XCTAssertEqual(send["ids"], .array(["d1"]))
+    }
+
+    func testAStagedDecisionPastTheListedEightIsStillSent() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var actions: [WidgetJSON] = []
+        model.actionRunner = { value in actions.append(value); return ["sent": 1, "queued": 0, "failed": 0] }
+        model.receive([try snapshot(draftOption: "a", stagedOnly: true)])
+        XCTAssertTrue(model.inboxOverviewItems.isEmpty, "the session lists other items")
+        XCTAssertEqual(model.stagedItems.map(\.sourceId), ["d1"])
+        model.sendStaged(["d1"])
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(decisionActions(actions), ["send-staged"])
+    }
+
+    func testASendWaitsForTheLedgerWriteBeforeIt() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var events: [String] = []
+        model.actionRunner = { value in
+            guard case .object(let fields) = value, case .string(let name) = fields["action"],
+                  ["ledger", "send-staged"].contains(name) else { return ["ok": true] }
+            events.append(name + " start")
+            if name == "ledger" { try await Task.sleep(for: .milliseconds(100)) }
+            events.append(name + " end")
+            return ["sent": 1, "queued": 0, "failed": 0]
+        }
+        model.receive([try snapshot(draftOption: "b")])
+        model.select(key)
+        model.choose(try XCTUnwrap(model.cards.first), option: "a")
+        model.sendStaged(["d1"])
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(events, ["ledger start", "ledger end", "send-staged start", "send-staged end"])
+    }
+
+    func testSaveDraftClearsTheComposerOnlyOnceTheNoteIsSaved() async throws {
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var refuse = true
+        model.actionRunner = { value in
+            if refuse, case .object(let fields) = value, fields["action"] == .string("ledger") {
+                throw ToolsBridgeError.refused("revision changed")
+            }
+            return ["ok": true]
+        }
+        model.receive([try snapshot(draftOption: nil)])
+        model.select(key)
+        let card = try XCTUnwrap(model.cards.first)
+        model.setText("only if it is cheap")
+        model.saveDraft(card)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.draft.text, "only if it is cheap", "a refused save keeps the note in the composer")
+        XCTAssertNil(model.draftSavedAt[card.id])
+
+        refuse = false
+        model.saveDraft(card)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(model.draft.text, "")
+        XCTAssertNotNil(model.draftSavedAt[card.id])
     }
 }
 

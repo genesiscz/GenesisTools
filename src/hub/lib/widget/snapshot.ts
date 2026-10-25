@@ -51,10 +51,6 @@ function timeOf(value: string | null | undefined): number {
     return Number.isFinite(at) ? at : 0;
 }
 
-/**
- * When a decision was asked: its last post (a supersede revises it), not its last update. A saved draft or a staged
- * pick updates the row, and the widget treats a newer item time as a new arrival that chimes and flashes.
- */
 /** The unsent pick and note of a `drafted` decision, each only when present. */
 function stagedOf(row: { state: string; draftOption?: string; draft?: string }): {
     draftOption?: string;
@@ -70,6 +66,10 @@ function stagedOf(row: { state: string; draftOption?: string; draft?: string }):
     };
 }
 
+/**
+ * When a decision was asked: its last post (a supersede revises it), not its last update. A saved draft or a staged
+ * pick updates the row, and the widget treats a newer item time as a new arrival that chimes and flashes.
+ */
 function askedTimeOf(row: { revisedTs?: string; createdTs?: string; updatedTs: string }): number {
     return timeOf(row.revisedTs ?? row.createdTs ?? row.updatedTs);
 }
@@ -267,6 +267,8 @@ export interface WidgetInboxSummary {
     complete: boolean;
     truncated: boolean;
     sessions: WidgetInboxSession[];
+    /** Every staged decision, uncapped: the widget sends from this list, not from a session's capped `items`. */
+    staged: WidgetInboxItem[];
     profile?: { hostId: "local" };
 }
 
@@ -1120,6 +1122,7 @@ export async function widgetSnapshot({
     const inboxCount = (kind: "answer" | "form", groups: WidgetInboxGroup[]) =>
         counted[kind] + Math.max(0, (groups[0]?.recentAfterClearTotal ?? 0) - listedRecent[kind]);
     let pendingDecisions = 0;
+    const staged: WidgetInboxItem[] = [];
     for (const row of decisions) {
         if (kindOf(row) !== "decision" || !["open", "drafted"].includes(row.state) || row.delivery?.uncertain) {
             continue;
@@ -1129,24 +1132,24 @@ export async function widgetSnapshot({
             continue;
         }
         pendingDecisions += 1;
-        putInbox(
-            session,
-            {
-                id: `decision:${row.id}`,
-                sourceId: row.id,
-                kind: "decision",
-                key: session.key,
-                at: askedTimeOf(row),
-                needsAnswer: true,
-                number: row.number,
-                ...decisionTitle(row),
-                options: row.options,
-                ...(row.recommended ? { recommended: row.recommended } : {}),
-                revision: row.revision ?? 1,
-                ...stagedOf(row),
-            },
-            1
-        );
+        const item: WidgetInboxItem = {
+            id: `decision:${row.id}`,
+            sourceId: row.id,
+            kind: "decision",
+            key: session.key,
+            at: askedTimeOf(row),
+            needsAnswer: true,
+            number: row.number,
+            ...decisionTitle(row),
+            options: row.options,
+            ...(row.recommended ? { recommended: row.recommended } : {}),
+            revision: row.revision ?? 1,
+            ...stagedOf(row),
+        };
+        putInbox(session, item, 1);
+        if (item.draftOption || item.draft) {
+            staged.push(item);
+        }
     }
     let unreadResults = 0;
     const resultNodes = new Map<string, AgentNode>();
@@ -1198,6 +1201,7 @@ export async function widgetSnapshot({
             .sort((a, b) => b.needsAnswer - a.needsAnswer || b.unread - a.unread)
             .slice(0, 512)
             .map((entry) => ({ ...entry, items: listedInboxItems(entry.items ?? []) })),
+        staged,
         ...(prof.enabled ? { profile: { hostId: "local" as const } } : {}),
     };
     const inboxMetadata: { notifications?: WidgetInboxSummary } = { notifications };

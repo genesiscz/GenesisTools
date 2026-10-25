@@ -4,9 +4,12 @@ import SwiftUI
 /// to show its session and the way to that session's whole inbox (with the entry open) and its cmux pane.
 struct WidgetInboxOverview: View {
     @ObservedObject var model: WidgetModel
-    @State private var filter = "all"
+    /// The filter picked here; until then the one the `overviewFilter` setting opens with.
+    @State private var filterPick: String?
     @State private var openID: String?
     @GenReduceMotion private var reduceMotion
+
+    private var filter: String { filterPick ?? model.snapshot?.state.preferences.overviewFilter ?? "all" }
 
     private var items: [WidgetInboxItem] {
         let all = model.inboxOverviewItems
@@ -30,7 +33,7 @@ struct WidgetInboxOverview: View {
                     items: [.init("all", "All"), .init("needs", "Needs you"), .init("unread", "Unread")],
                     selection: Binding(get: { filter }, set: { value in
                         model.holdAgentFit()
-                        filter = value
+                        filterPick = value
                     }), minSegmentWidth: 70, identifier: "widget.overview.filter")
                 Spacer(minLength: 4)
                 IconButton(systemName: grouped ? "list.bullet" : "rectangle.3.group",

@@ -15,6 +15,7 @@ enum WidgetStagedText {
 /// The row under a session inbox's filter that says what is staged and opens the staged view.
 struct WidgetStagedChip: View {
     @ObservedObject var model: WidgetModel
+    @GenReduceMotion private var reduceMotion
 
     var body: some View {
         let here = model.sessionStaged.count
@@ -27,7 +28,7 @@ struct WidgetStagedChip: View {
                     .font(.system(size: 11, weight: .medium))
                 Spacer(minLength: 4)
                 Button("Review and send") {
-                    GenMotion.perform(expanding: true, reduceMotion: false) {
+                    GenMotion.perform(expanding: true, reduceMotion: reduceMotion) {
                         model.stagedView = here > 0 ? "session" : "all"
                     }
                 }
@@ -46,6 +47,7 @@ struct WidgetStagedChip: View {
 /// them not just the filtered by that specific session").
 struct WidgetStagedList: View {
     @ObservedObject var model: WidgetModel
+    @GenReduceMotion private var reduceMotion
     /// Unchecked decision ids; everything else is checked, so a newly staged one goes by default.
     @State private var skipped: Set<String> = []
 
@@ -59,7 +61,7 @@ struct WidgetStagedList: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 IconButton(systemName: "chevron.left", tooltip: "Back to the inbox") {
-                    GenMotion.perform(expanding: false, reduceMotion: false) { model.stagedView = nil }
+                    GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { model.stagedView = nil }
                 }.accessibilityLabel("Back to the inbox")
                 Text("Staged decisions").font(.system(size: 13, weight: .semibold))
                 Spacer(minLength: 4)
@@ -98,7 +100,7 @@ struct WidgetStagedList: View {
                         .instantTooltip("Clears the picks and notes; the decisions still wait for an answer.")
                     Spacer(minLength: 0)
                     Button("Keep staged") {
-                        GenMotion.perform(expanding: false, reduceMotion: false) { model.stagedView = nil }
+                        GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { model.stagedView = nil }
                     }.buttonStyle(.genHover())
                 }.font(.caption)
             }

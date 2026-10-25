@@ -906,7 +906,7 @@ public final class WidgetModel: ObservableObject {
         railActivitySessions = snapshot?.state.preferences.railOrder == "stable"
             ? railActive : railActive.sorted(by: Self.previewOrder(inbox: inboxSessions, sort: previewSort))
         inboxOverviewItems = Self.overviewItems(value.sessions)
-        reconcileStaged(value.sessions.flatMap { $0.items ?? [] })
+        reconcileStaged(value.staged ?? value.sessions.flatMap { $0.items ?? [] })
         previewList = Self.previewRows(
             sessions: snapshot?.sessions ?? [], inbox: inboxSessions,
             filter: previewFilter, sort: previewSort)
@@ -1470,6 +1470,15 @@ public final class WidgetModel: ObservableObject {
                 failed?()
                 self.report(error)
             }
+        }
+    }
+
+    /// Runs `work` after every hub write queued before it, and holds the later ones until it is done.
+    func afterMutations(_ work: @escaping @MainActor () async -> Void) {
+        let previous = mutationTask
+        mutationTask = Task {
+            await previous?.value
+            await work()
         }
     }
 

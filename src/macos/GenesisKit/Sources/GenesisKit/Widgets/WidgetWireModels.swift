@@ -310,6 +310,10 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var stagedOnLeave: String?
     /// The inbox of every session: "session" (default, grouped under each session) or "list".
     public var inboxGrouping: String?
+    /// The filter a session's inbox opens with: "all" (default), "inbox" or "decisions".
+    public var inboxFilter: String?
+    /// The filter the inbox of every session opens with: "all" (default), "needs" or "unread".
+    public var overviewFilter: String?
     /// The composer's microphone: "note" (default, a voice note whose transcript fills the field) or "live".
     public var composerVoice: String?
 
@@ -429,6 +433,8 @@ public struct WidgetInboxSummary: Codable, Equatable, Sendable {
     public var complete: Bool
     public var truncated: Bool
     public var sessions: [WidgetInboxSession]
+    /// Every staged decision, uncapped (a session's `items` stop at eight); nil from an older hub.
+    public var staged: [WidgetInboxItem]? = nil
     public var profile: Profile?
     public static let empty = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: false, truncated: false, sessions: [])
 }

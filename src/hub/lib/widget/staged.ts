@@ -1,5 +1,6 @@
 import type { DeliverDeps } from "@app/question/lib/decisions/deliver";
 import { decisionFiles } from "@app/question/lib/decisions/read";
+import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
 import { type DecisionRecord, kindOf, readDecisions, updateDecisions } from "@app/question/lib/decisions/store";
 import { answerInboxDecisions, type InboxAnswerResult } from "@app/question/lib/inbox/answer";
 import { waitingBlock } from "@app/question/lib/inbox/load";
@@ -14,7 +15,10 @@ export interface StagedTarget {
 export interface StagedSendResult {
     /** One entry per session, in the order the sessions first appear in `ids`. */
     sessions: Array<{ session: string; numbers: number[]; result?: InboxAnswerResult; error?: string }>;
+    /** Answers a receiver took. */
     sent: number;
+    /** Answers stored and waiting for the session's next prompt: no receiver took them. */
+    queued: number;
     failed: number;
 }
 
@@ -56,7 +60,7 @@ export async function sendStagedDecisions({
         bySession.set(row.sessionId, [...(bySession.get(row.sessionId) ?? []), row]);
     }
 
-    const result: StagedSendResult = { sessions: [], sent: 0, failed: 0 };
+    const result: StagedSendResult = { sessions: [], sent: 0, queued: 0, failed: 0 };
 
     for (const [session, rows] of bySession) {
         const target = targets[session] ?? {};
@@ -81,10 +85,98 @@ export async function sendStagedDecisions({
                 { ...files, block: waitingBlock, deliver }
             );
             result.sessions.push({ session, numbers, result: sent });
-            result.sent += rows.length;
+
+            if (sent.delivered) {
+                result.sent += rows.length;
+            } else {
+                result.queued += rows.length;
+            }
         } catch (error) {
             result.sessions.push({ session, numbers, error: error instanceof Error ? error.message : String(error) });
             result.failed += rows.length;
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Sends again the answered decisions `ids` that no receiver took (the widget's Send again): one message per session,
+ * through `sendAnsweredDecisions`. An answer already reserved by a session queue stays queued; its next prompt takes it.
+ */
+export async function resendAnsweredDecisions({
+    ids,
+    targets = {},
+    files = decisionFiles(),
+    deliver = {},
+}: {
+    ids: readonly string[];
+    targets?: Record<string, StagedTarget>;
+    files?: { file: string; events: string };
+    deliver?: DeliverDeps;
+}): Promise<StagedSendResult> {
+    const wanted = new Set(ids);
+    const bySession = new Map<string, DecisionRecord[]>();
+
+    for (const row of readDecisions(files.file)) {
+        if (wanted.has(row.id) && kindOf(row) === "decision" && row.state === "answered") {
+            bySession.set(row.sessionId, [...(bySession.get(row.sessionId) ?? []), row]);
+        }
+    }
+
+    const result: StagedSendResult = { sessions: [], sent: 0, queued: 0, failed: 0 };
+
+    for (const [session, rows] of bySession) {
+        const target = targets[session] ?? {};
+        const numbers = rows.map((row) => row.number);
+        const free = rows.filter((row) => !row.delivery?.queueId);
+
+        if (free.length === 0) {
+            const detail = "They are in the session's queue already.";
+            result.sessions.push({
+                session,
+                numbers,
+                result: { session, text: "", channel: "queued", delivered: false, detail },
+            });
+            result.queued += rows.length;
+            continue;
+        }
+
+        result.queued += rows.length - free.length;
+
+        try {
+            const sent = await sendAnsweredDecisions({
+                session,
+                ids: free.map((row) => row.id),
+                ...(target.provider ? { provider: target.provider } : {}),
+                ...(target.sourceHome ? { sourceHome: target.sourceHome } : {}),
+                files,
+                deps: deliver,
+            });
+            const delivered = sent.delivered === true;
+            const detail = sent.target ?? sent.error;
+            result.sessions.push({
+                session,
+                numbers,
+                result: {
+                    session,
+                    text: sent.text,
+                    channel: sent.channel ?? "queued",
+                    delivered,
+                    ...(detail ? { detail } : {}),
+                    ...(sent.target ? { target: sent.target } : {}),
+                    ...(sent.error ? { error: sent.error } : {}),
+                },
+            });
+
+            if (delivered) {
+                result.sent += free.length;
+            } else {
+                result.queued += free.length;
+            }
+        } catch (error) {
+            result.sessions.push({ session, numbers, error: error instanceof Error ? error.message : String(error) });
+            result.failed += free.length;
         }
     }
 

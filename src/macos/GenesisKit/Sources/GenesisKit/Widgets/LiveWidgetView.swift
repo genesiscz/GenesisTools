@@ -25,8 +25,8 @@ public struct LiveWidgetView: View {
     }
 
     @State private var retry: WidgetOutgoing?
-    /// The session inbox's filter: every entry, the inbox entries (answers, results, questions) or the decisions.
-    @State private var inboxFilter = "all"
+    /// The session inbox's filter picked here; until then the one the `inboxFilter` setting opens with.
+    @State private var inboxFilterPick: String?
     @State private var choosingSession = false
     @State private var sourcesExpanded = false
     @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
@@ -426,6 +426,9 @@ public struct LiveWidgetView: View {
 
     /// Every item of the session as a row; the open row carries the whole card in place. Several answers from one
     /// session read as a list, not as one card behind a drop-down.
+    /// The session inbox's filter: every entry, the inbox entries (answers, results, questions) or the decisions.
+    private var inboxFilter: String { inboxFilterPick ?? model.snapshot?.state.preferences.inboxFilter ?? "all" }
+
     private var inboxFilterBar: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -434,7 +437,7 @@ public struct LiveWidgetView: View {
                     items: [.init("all", "All"), .init("inbox", "Inbox entries"), .init("decisions", "Decisions")],
                     selection: Binding(get: { inboxFilter }, set: { value in
                         model.holdAgentFit()
-                        inboxFilter = value
+                        inboxFilterPick = value
                     }), minSegmentWidth: 64, identifier: "widget.inbox.filter")
                 Spacer()
                 markAllReadButton

@@ -269,6 +269,7 @@ private struct WidgetGeneralSettings: View {
                         Text("One list").tag("list")
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
+                openingFilters
                 Divider()
                 NativeSettingsRow("Reply box microphone", detail: "Both put the words in the reply box as you talk; a voice note also keeps the recording in Voice Notes.") {
                     Picker("Reply box microphone", selection: string("composerVoice", prefs?.composerVoice ?? "ask")) {
@@ -332,6 +333,26 @@ private struct WidgetGeneralSettings: View {
             IconButton(systemName: "speaker.wave.2", tooltip: "Play this sound") {
                 WidgetAlerts.preview(played)
             }.disabled(played == "none")
+        }
+    }
+
+    /// The filter each inbox list opens with.
+    @ViewBuilder private var openingFilters: some View {
+        Divider()
+        NativeSettingsRow("Inbox of every session opens with", detail: "The filter the inbox button's list shows first.") {
+            Picker("Inbox of every session opens with", selection: string("overviewFilter", prefs?.overviewFilter ?? "all")) {
+                Text("All").tag("all")
+                Text("Needs you").tag("needs")
+                Text("Unread").tag("unread")
+            }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+        }
+        Divider()
+        NativeSettingsRow("Session inbox opens with", detail: "The filter a session's inbox shows first.") {
+            Picker("Session inbox opens with", selection: string("inboxFilter", prefs?.inboxFilter ?? "all")) {
+                Text("All").tag("all")
+                Text("Inbox entries").tag("inbox")
+                Text("Decisions").tag("decisions")
+            }.labelsHidden().pickerStyle(.segmented).frame(width: 300, alignment: .trailing)
         }
     }
 
