@@ -20,6 +20,13 @@ export const HUB_LINK_KEYS = [
     "tab",
     "filter",
     "worktree",
+    // Who asked for the place, for the hub's navigation history (`tools hub nav open`): `actor` is user, agent or
+    // link (a link without it counts as link), `note` says why, `from` is the agent's session id, `nav` the id the
+    // CLI already stored the entry under, so the hub updates that entry instead of adding a second one.
+    "actor",
+    "note",
+    "from",
+    "nav",
 ] as const;
 
 export type HubLinkQuery = Partial<Record<(typeof HUB_LINK_KEYS)[number], string>>;

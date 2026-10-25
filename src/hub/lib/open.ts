@@ -52,6 +52,14 @@ export interface OpenHubOptions {
     prompts?: boolean;
     /** Opens the handoff composer for `session` (or the selected session). */
     handoff?: boolean;
+    /** Who asked for this place, for the hub's history: `user`, `agent` or `link` (the hub's default). */
+    actor?: string;
+    /** Why the place was opened; the history list shows it under the place. */
+    note?: string;
+    /** The agent session that asked for it. */
+    from?: string;
+    /** The history entry `tools hub nav open` already stored, so the hub updates it instead of adding one. */
+    nav?: string;
     /** false keeps the window behind whatever is in front (`--no-activate`). */
     activate?: boolean;
     /** false never builds; a missing or stale app is then an error. */
@@ -139,6 +147,17 @@ export function hubArgs(options: OpenHubOptions): string[] {
 
     if (options.handoff) {
         args.push("--handoff");
+    }
+
+    for (const [flag, value] of [
+        ["--actor", options.actor],
+        ["--note", options.note],
+        ["--from", options.from],
+        ["--nav", options.nav],
+    ] as const) {
+        if (value) {
+            args.push(flag, value);
+        }
     }
 
     if (options.activate === false) {

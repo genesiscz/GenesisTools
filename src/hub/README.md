@@ -29,6 +29,19 @@ A missing PR commit does not trigger a project-diff lookup. To open that commit 
 
 Other `open` flags: `--agent`, `--filter`, `--palette [text]`, `--find [text]`, `--session-search [text]`, `--digest`, `--rules`, `--prompts`, `--handoff`, `--no-build` (`tools hub open --help`).
 
+## History: Back, Forward and who went where
+
+The hub keeps a log of every place it showed, with who took it there: `user` (a click, a key or a menu in the hub), `agent`, or `link` (a link or `tools hub open` that named nobody). An agent adds why. The top-left arrows (⌘[ and ⌘]) walk it, and the clock button beside them (⌘Y) lists it, newest first; a click hops to any entry. A new place never replaces the old one: Back always returns.
+
+**Agents open things with `nav open`, not `open`**, so the person sees why and can go back:
+
+    tools hub nav open '#563' --note "the PR whose Swift suite fails"
+    tools hub nav open --repo /path/to/checkout --commit 4e7a3bc --note "the commit that moved the focus"
+    tools hub nav open 'genesis-tools://hub?pr=owner%2Frepo%2342&commit=4e7a3bc' --note "why"
+    tools hub nav list [--json] [--limit 20]
+
+`nav open` takes a hub link, a PR ref or page, a commit sha (with `--pr` or `--repo`), a checkout folder, or the `open` flags. It records the entry (`~/.genesis-tools/hub/navigation.db`), then opens the hub on it. `--actor` defaults to `agent` inside an agent session (its id goes in as `--from`), else `link`. Settings → Hub → History sets how many places are kept (200) and whether an agent's place is shown at once (the default) or only added to History. Every entry writes one `hub nav:` line to the day log.
+
 ## Links
 
 `--print-url` prints the link for the same flags instead of opening:
@@ -36,7 +49,7 @@ Other `open` flags: `--agent`, `--filter`, `--palette [text]`, `--find [text]`, 
     tools hub open --print-url --pr 'owner/repo#42' --commit 4e7a3bc
     # genesis-tools://hub?pr=owner%2Frepo%2342&commit=4e7a3bc
 
-A `genesis-tools://hub?…` link opens the hub where it points, with or without the browser router. Its keys are the `open` flags without dashes: `mode`, `session`, `agent`, `pr`, `reveal`, `commit`, `repo`, `tab`, `filter`, `worktree`, `decision`, `question` (`HubRequest.linkKeys` in `src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubWindow.swift`). Every other key is dropped: a link shows a place, it never runs a command. The `#` of a PR ref must be written `%23`.
+A `genesis-tools://hub?…` link opens the hub where it points, with or without the browser router. Its keys are the `open` flags without dashes: `mode`, `session`, `agent`, `pr`, `reveal`, `commit`, `repo`, `tab`, `filter`, `worktree`, `decision`, `question`, and for the history `actor` (user, agent, link), `note`, `from` (the agent's session) and `nav` (an entry `nav open` stored) (`HubRequest.linkKeys` in `src/macos/GenesisTools/Sources/Parts/Hub/Hub/HubWindow.swift`). Every other key is dropped: a link shows a place, it never runs a command. The `#` of a PR ref must be written `%23`.
 
 Through the browser router, the same query on the link host opens the hub as well, so a terminal or a chat that only makes `https://` clickable works too:
 
