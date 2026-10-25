@@ -37,6 +37,7 @@ struct MarkdownSettingsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 MarkdownTabSettingsCard(configuration: configuration)
                 MarkdownPreviewSettingsCard(configuration: configuration)
+                MarkdownShareSettingsCard(configuration: configuration)
                 NativeSettingsCard("Editor", subtitle: "The source view, in Edit and Split.") {
                     NativeSettingsToggle("Suggest links and tags while typing",
                                          detail: "The list of notes opens after [[ and the list of tags after #. Off: press Esc to open it.",
@@ -147,6 +148,28 @@ struct MarkdownTabSettingsCard: View {
         .accessibilityLabel(title)
         .accessibilityValue("\(value.wrappedValue)")
         .accessibilityIdentifier(identifier)
+    }
+}
+
+/// Sharing and export: where a share link opens, and whether a saved PDF brings Finder forward (UX audit D11, D12).
+struct MarkdownShareSettingsCard: View {
+    @ObservedObject var configuration: GenesisKitMarkdownConfiguration
+
+    var body: some View {
+        NativeSettingsCard("Sharing and export", subtitle: "The Share and PDF buttons in the toolbar.") {
+            NativeSettingsRow("Open share links in",
+                              detail: "The link is always copied. Brave falls back to the system browser when it is not installed.") {
+                Picker("Open share links in", selection: $configuration.shareOpensIn) {
+                    ForEach(MarkdownShareBrowser.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .labelsHidden().fixedSize()
+                .accessibilityIdentifier("markdown.settings.shareOpensIn")
+            }
+            Divider()
+            NativeSettingsToggle("Show a saved PDF in Finder",
+                                 detail: "Finder comes to the front with the file selected. Off: a note says where it was saved.",
+                                 identifier: "markdown.settings.revealSavedPDF", isOn: $configuration.revealSavedPDF)
+        }
     }
 }
 

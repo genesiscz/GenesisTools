@@ -226,6 +226,7 @@ public enum MarkdownViewerMenu {
         file.addItem(submenu(recent, title: "Open Recent"))
         file.addItem(.separator())
         keyed(file, "Close Tab", #selector(MarkdownDocumentWindowController.closeSelectedTab(_:)), "markdown.tab.close", keymap: keymap)
+        command(file, "Close Other Tabs", "markdown.tab.closeOthers", keymap: keymap)
         keyed(file, "Close Window", #selector(NSWindow.performClose(_:)), "markdown.window.close", keymap: keymap)
         file.addItem(.separator())
         keyed(file, "Go to Location…", #selector(MarkdownDocumentWindowController.goToLocation(_:)), "markdown.file.goto", keymap: keymap)

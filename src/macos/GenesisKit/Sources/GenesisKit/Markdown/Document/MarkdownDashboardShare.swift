@@ -13,8 +13,14 @@ enum MarkdownDashboardShare {
 
     struct Outcome: Equatable {
         var url: URL?
+        /// One plain sentence for the reader: what went wrong and what to do.
         var message: String?
+        /// What the command itself said, for Details.
+        var detail: String?
     }
+
+    /// How long the share command may run before the viewer gives up and says so.
+    static let timeoutSeconds = 30
 
     static func isAvailable(httpStatus: Int?) -> Bool {
         guard let httpStatus else { return false }
@@ -36,25 +42,45 @@ enum MarkdownDashboardShare {
         return nil
     }
 
+    /// Each cause has its own sentence; the command's own output goes to `detail` (UX audit D1).
     static func outcome(exitCode: Int32, stdout: String, stderr: String) -> Outcome {
         if exitCode == 0, let url = shareURL(in: stdout) {
             return Outcome(url: url, message: nil)
         }
 
-        let detail = stderr
-            .split(whereSeparator: \.isNewline)
-            .map { String($0).trimmingCharacters(in: .whitespaces) }
-            .first { !$0.isEmpty }
-
-        if let detail {
-            return Outcome(url: nil, message: detail)
-        }
+        let errorText = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let outputText = stdout.trimmingCharacters(in: .whitespacesAndNewlines)
 
         if exitCode != 0 {
-            return Outcome(url: nil, message: "dev-dashboard share exited \(exitCode)")
+            let said = errorText.isEmpty ? outputText : errorText
+            return Outcome(
+                url: nil,
+                message: "The dev dashboard could not share this note. Details say why.",
+                detail: (said.isEmpty ? "" : said + "\n") + "Exit code \(exitCode)."
+            )
         }
 
-        return Outcome(url: nil, message: "dev-dashboard share did not print a URL")
+        let said = [outputText, errorText].filter { !$0.isEmpty }.joined(separator: "\n")
+        return Outcome(
+            url: nil,
+            message: "The dev dashboard answered without a share link. Try again in a moment.",
+            detail: said.isEmpty ? nil : said
+        )
+    }
+
+    /// A share that could not run at all: the sentence and the raw error.
+    static func failure(_ error: Error) -> Outcome {
+        switch error {
+        case ToolsBridgeError.timeout:
+            return Outcome(
+                url: nil,
+                message: "The dev dashboard did not answer within \(timeoutSeconds) seconds. Check that it is running, then share again."
+            )
+        case ToolsBridgeError.binaryNotFound:
+            return Outcome(url: nil, message: error.localizedDescription)
+        default:
+            return Outcome(url: nil, message: "The share could not start.", detail: error.localizedDescription)
+        }
     }
 }
 
@@ -63,7 +89,10 @@ enum MarkdownDashboardShare {
 final class MarkdownShareModel: ObservableObject {
     @Published private(set) var available = false
     @Published private(set) var busy = false
+    /// The failure's sentence. Set after `errorDetail`, so a view that reacts to it reads both.
     @Published var error: String?
+    /// What the command or the system said, for Details.
+    @Published private(set) var errorDetail: String?
     /// The running share, for `cancel`.
     private var running: Task<Void, Never>?
 
@@ -91,6 +120,7 @@ final class MarkdownShareModel: ObservableObject {
         guard !busy else { return }
         busy = true
         error = nil
+        errorDetail = nil
         defer { busy = false }
 
         let bridge = ToolsBridge(binaryPath: GenesisKit.host?.toolsBinaryPath ?? ToolsBridge.resolveBinaryPath(configured: nil))
@@ -99,7 +129,7 @@ final class MarkdownShareModel: ObservableObject {
             let result = try await bridge.run(
                 subcommand: "dev-dashboard",
                 args: ["share", note.path],
-                timeoutSeconds: 30
+                timeoutSeconds: MarkdownDashboardShare.timeoutSeconds
             )
             let outcome = MarkdownDashboardShare.outcome(
                 exitCode: result.exitCode,
@@ -107,8 +137,9 @@ final class MarkdownShareModel: ObservableObject {
                 stderr: result.stderr
             )
 
+            guard !Task.isCancelled else { return }
             guard let url = outcome.url else {
-                error = outcome.message
+                fail(outcome)
                 return
             }
 
@@ -118,8 +149,14 @@ final class MarkdownShareModel: ObservableObject {
         } catch is CancellationError {
             GenesisKit.log("viewer: share cancelled")
         } catch {
-            self.error = error.localizedDescription
+            if Task.isCancelled { return }
+            fail(MarkdownDashboardShare.failure(error))
         }
+    }
+
+    private func fail(_ outcome: MarkdownDashboardShare.Outcome) {
+        errorDetail = outcome.detail
+        error = outcome.message
     }
 
     private func open(_ url: URL, in browser: MarkdownShareBrowser) {
@@ -142,6 +179,7 @@ final class MarkdownShareModel: ObservableObject {
                 guard let openError else { return }
                 Task { @MainActor in
                     GenesisKit.log("viewer: Brave did not open the share link: \(openError)")
+                    self.errorDetail = openError.localizedDescription
                     self.error = "Brave did not open the share link. It is on the clipboard."
                 }
             }

@@ -61,13 +61,16 @@ extension MarkdownDocumentsModel {
         }
     }
 
-    /// Every tab but `keep`, each asking first when it has unsaved edits; stops at the first cancel.
-    func closeOthers(_ keep: MarkdownDocument) {
-        for doc in docs where doc.id != keep.id {
-            if !close(doc) {
-                return
-            }
-        }
+    /// Every tab but `keep`, each asking first when it has unsaved edits; stops at the first cancel. One action:
+    /// one note with Undo, and ⇧⌘T reopens them all (`closeTabs`, UX audit W3).
+    func closeOthers(_ keep: MarkdownDocument, confirm: @MainActor (MarkdownDocument) -> UnsavedChoice = MarkdownDocumentsModel.askUnsaved) {
+        closeTabs(docs.filter { $0.id != keep.id }, confirm: confirm)
+    }
+
+    /// "Close 5 Other Tabs": the menus name how many go.
+    var closeOthersTitle: String {
+        let others = max(docs.count - 1, 0)
+        return others == 1 ? "Close Other Tab" : "Close \(others) Other Tabs"
     }
 }
 
@@ -79,7 +82,8 @@ struct MarkdownTabMenu: View {
 
     var body: some View {
         Button("Close Tab") { model.close(doc) }
-        Button("Close Other Tabs") { model.closeOthers(doc) }
+        Button(model.closeOthersTitle) { model.closeOthers(doc) }
+            .disabled(model.docs.count < 2)
         Divider()
         PathActionsMenu(url: doc.url, kind: .file, actions: model.pathActions(for: .file), handlers: model.pathHandlers(for: doc.url, kind: .file))
     }

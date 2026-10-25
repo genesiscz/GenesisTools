@@ -112,30 +112,73 @@ final class MarkdownDocumentsModel: ObservableObject {
     func acceptDrop(_ urls: [URL]) {
         let (tabs, external) = MarkdownDrop.split(urls)
         if !tabs.isEmpty { open(tabs) }
-        for url in external { openDropped(url) }
-        if let folder = MarkdownDrop.firstFolder(urls) {
+        let folder = MarkdownDrop.firstFolder(urls)
+        if let folder {
             filesRoot = folder.standardizedFileURL.path
             showFiles = true
         }
-    }
-
-    /// A dropped file this viewer does not show. A document opens in its app and the note names the app; anything
-    /// that could run (an app, a script, an executable) waits for Open Anyway, since a stray drop must not start a
-    /// program (UX audit W14).
-    private func openDropped(_ url: URL) {
-        let name = url.lastPathComponent
-        if let app = defaultApp(url), MarkdownDocumentLinks.mayOpenWithDefaultApp(url, app: app) {
-            openExternally(url)
-            post(MarkdownNotice("Opened \u{201C}\(name)\u{201D} in \(app.name).", tone: .info))
+        // A document goes to its app; anything that could run (an app, a script, an executable) waits for Open
+        // Anyway, since a stray drop must not start a program (UX audit W14).
+        var sent: [(app: String, url: URL)] = []
+        var held: [URL] = []
+        for url in external {
+            if let app = defaultApp(url), MarkdownDocumentLinks.mayOpenWithDefaultApp(url, app: app) {
+                openExternally(url)
+                sent.append((app.name, url))
+            } else {
+                held.append(url)
+            }
+        }
+        let folders = urls.filter { url in
+            var isDirectory: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
+        }.count
+        let gone = urls.count - tabs.count - external.count - folders
+        // One note for the whole drop: what opened, what went where, what is gone, what waits (UX audit D7). Tabs
+        // alone need none: the tab is on screen.
+        guard let text = Self.dropSummary(opened: tabs, sent: sent, folder: folder, gone: gone, held: held) else { return }
+        guard !held.isEmpty else {
+            post(MarkdownNotice(text, tone: gone > 0 ? .warning : .info))
             return
         }
-        post(MarkdownNotice(
-            "\u{201C}\(name)\u{201D} is not a file this viewer shows, and opening it can start a program.",
-            tone: .warning,
-            actions: [.button("Open Anyway", symbol: "arrow.up.forward.app") { [weak self] in
+        let label = held.count == 1 ? "Open Anyway" : "Open \(held.count) Anyway"
+        post(MarkdownNotice(text, tone: .warning, actions: [
+            .button(label, symbol: "arrow.up.forward.app") { [weak self] in
                 self?.dismissNotice()
-                self?.openExternally(url)
-            }]))
+                held.forEach { self?.openExternally($0) }
+            },
+        ]))
+    }
+
+    /// The sentence after a drop, or nil when it only opened tabs. "Opened 2 notes, sent 1 file to Preview."
+    static func dropSummary(opened: [URL], sent: [(app: String, url: URL)], folder: URL?, gone: Int, held: [URL]) -> String? {
+        guard !sent.isEmpty || folder != nil || gone > 0 || !held.isEmpty else { return nil }
+        func count(_ n: Int, _ word: String) -> String { "\(n) \(word)\(n == 1 ? "" : "s")" }
+        var parts: [String] = []
+        if !opened.isEmpty {
+            let notes = opened.allSatisfy { $0.pathExtension.lowercased() == "md" }
+            parts.append("opened " + count(opened.count, notes ? "note" : "file"))
+        }
+        var apps: [String] = []
+        for item in sent where !apps.contains(item.app) { apps.append(item.app) }
+        for app in apps {
+            let files = sent.filter { $0.app == app }
+            let what = files.count == 1 ? "\u{201C}\(files[0].url.lastPathComponent)\u{201D}" : count(files.count, "file")
+            parts.append("sent \(what) to \(app)")
+        }
+        if let folder { parts.append("showed \(folder.lastPathComponent) in the sidebar") }
+        if gone > 0 { parts.append(count(gone, "file") + (gone == 1 ? " was" : " were") + " not found") }
+        var sentences: [String] = []
+        if !parts.isEmpty {
+            let joined = parts.count > 1 ? parts.dropLast().joined(separator: ", ") + " and " + parts.last! : parts[0]
+            sentences.append(joined.prefix(1).uppercased() + joined.dropFirst() + ".")
+        }
+        if held.count == 1 {
+            sentences.append("\u{201C}\(held[0].lastPathComponent)\u{201D} is not a file this viewer shows, and opening it can start a program.")
+        } else if held.count > 1 {
+            sentences.append("\(held.count) files are not files this viewer shows, and opening them can start a program.")
+        }
+        return sentences.joined(separator: " ")
     }
 
     /// "Go to Location…" (⇧⌘G): the sheet, and the folder (or a link's file) the file tree last revealed.

@@ -108,7 +108,7 @@ struct MarkdownDocumentToolbar: View {
         // command's own words behind Details, kept until it is closed.
         .onChange(of: share.error) { _, error in
             guard let error else { return }
-            model.post(Self.shareNotice(error))
+            model.post(Self.shareNotice(error, detail: share.errorDetail))
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
@@ -249,29 +249,49 @@ struct MarkdownDocumentToolbar: View {
                 toolButton(
                     "arrow.down.doc", label: "PDF",
                     tint: model.canExport ? nil : model.theme.textMuted,
-                    tooltip: keymap.hint("Save as PDF", "markdown.file.pdf"), id: "markdown-export-pdf", labels: labels,
+                    tooltip: Self.exportTooltip(keymap.hint("Save as PDF", "markdown.file.pdf"), canExport: model.canExport, what: "PDF"),
+                    id: "markdown-export-pdf", labels: labels,
                     action: exportPDF
                 )
                 groupDivider
                 toolButton(
                     "printer", label: "Print",
                     tint: model.canExport ? nil : model.theme.textMuted,
-                    tooltip: keymap.hint("Print", "markdown.file.print"), id: "markdown-print", labels: labels,
+                    tooltip: Self.exportTooltip(keymap.hint("Print", "markdown.file.print"), canExport: model.canExport, what: "Printing"),
+                    id: "markdown-print", labels: labels,
                     action: printDocument
                 )
-                if share.available {
+                if share.available || share.busy {
                     groupDivider
-                    toolButton(
-                        "square.and.arrow.up", label: "Share",
-                        tint: share.busy ? model.theme.textMuted : nil,
-                        tooltip: "Share on the dev dashboard", id: "markdown-share", labels: labels
-                    ) {
-                        let note = doc.url
-                        model.exportError = nil
-                        share.error = nil
-                        Task { await share.share(note: note) }
+                    if share.busy {
+                        // A share can take a while: say it is running and offer a way out (UX audit D3).
+                        HStack(spacing: 5) {
+                            ProgressView().controlSize(.mini)
+                            Text("Sharing").font(.system(size: 11, weight: .medium))
+                                .foregroundColor(model.theme.textSecondary)
+                                .fixedSize()
+                            Button("Cancel") { share.cancel() }
+                                .buttonStyle(.genHoverPlain())
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(model.theme.accent)
+                                .instantTooltip("Stop sharing this note")
+                                .accessibilityIdentifier("markdown-share-cancel")
+                        }
+                        .padding(.horizontal, 4)
+                        .accessibilityElement(children: .contain)
+                        .accessibilityLabel("Sharing")
+                        .accessibilityIdentifier("markdown-share-busy")
+                    } else {
+                        toolButton(
+                            "square.and.arrow.up", label: "Share",
+                            tint: nil,
+                            tooltip: "Share on the dev dashboard", id: "markdown-share", labels: labels
+                        ) {
+                            model.exportError = nil
+                            share.error = nil
+                            share.start(note: doc.url)
+                        }
                     }
-                    .disabled(share.busy)
                 }
             }
         }
@@ -291,15 +311,15 @@ struct MarkdownDocumentToolbar: View {
         NSWorkspace.shared.activateFileViewerSelecting([doc.url])
     }
 
-    /// A share failure for the slot. The share model's own sentences ("Brave did not open the share link. It is on
-    /// the clipboard.") show as they are; anything else (a command's stderr, a system error) goes behind Details
-    /// under one sentence.
-    static func shareNotice(_ error: String) -> MarkdownNotice {
-        let text = error.trimmingCharacters(in: .whitespacesAndNewlines)
-        let sentence = !text.contains("\n") && text.count <= 160 && text.hasSuffix(".") && text.first?.isUppercase == true
-        return sentence
-            ? MarkdownNotice(text, tone: .error)
-            : MarkdownNotice("The note could not be shared on the dev dashboard.", tone: .error, more: text)
+    /// A share failure for the slot: the share model's sentence for the cause, the command's own words behind
+    /// Details (`MarkdownDashboardShare.outcome`).
+    static func shareNotice(_ error: String, detail: String?) -> MarkdownNotice {
+        MarkdownNotice(error, tone: .error, more: detail)
+    }
+
+    /// Why PDF and Print are muted: they need the page the Web renderer draws (UX audit D6).
+    static func exportTooltip(_ hint: String, canExport: Bool, what: String) -> String {
+        canExport ? hint : hint + ". " + what + " needs the reading view with the Web renderer."
     }
 
     private func exportPDF() {
@@ -329,7 +349,7 @@ struct MarkdownDocumentToolbar: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverPlain())
-        .instantTooltip("Renderer: \(model.renderer.detail) — click to cycle")
+        .instantTooltip("\(model.renderer.detail). Click to switch.")
         .hoverHighlight(color: model.theme.accent, cornerRadius: 5, fillOpacity: 0.12)
         .accessibilityIdentifier("markdown-renderer-toggle")
     }

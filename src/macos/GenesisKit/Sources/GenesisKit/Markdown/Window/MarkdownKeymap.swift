@@ -29,6 +29,8 @@ public enum MarkdownKeymap {
         KeymapCommand("markdown.tab.reopen", "Reopen Closed Tab", group: "Tabs", keys: [.character("t", [.shift, .command])]),
         KeymapCommand("markdown.tab.next", "Next Tab", group: "Tabs", keys: [.code(30, [.shift, .command])]),
         KeymapCommand("markdown.tab.previous", "Previous Tab", group: "Tabs", keys: [.code(33, [.shift, .command])]),
+        KeymapCommand("markdown.tab.closeOthers", "Close Other Tabs", group: "Tabs",
+                      detail: "Every tab but the one on screen. Reopen Closed Tab brings them all back.", keys: []),
     ] + tabNumberCommands + [
         // History
         KeymapCommand("markdown.history.back", "Back", group: "History",
@@ -148,6 +150,7 @@ public enum MarkdownKeymap {
         }
         return tabs + [
             ("markdown.tab.close", closeTab),
+            ("markdown.tab.closeOthers", { if let doc = model.selected { model.closeOthers(doc) } }),
             ("markdown.tab.reopen", { model.reopenLastClosed() }),
             ("markdown.tab.next", { model.selectTab(offset: 1) }),
             ("markdown.tab.previous", { model.selectTab(offset: -1) }),

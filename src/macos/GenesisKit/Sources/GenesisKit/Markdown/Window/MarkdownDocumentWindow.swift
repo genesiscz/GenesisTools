@@ -206,7 +206,7 @@ public final class MarkdownDocumentWindowController: NSWindowController, NSWindo
         case "markdown.find.open":
             return model.selected != nil && model.supportsFind
         default:
-            if id.hasPrefix("markdown.tab.select") { return model.docs.count > 1 }
+            if id.hasPrefix("markdown.tab.select") || id == "markdown.tab.closeOthers" { return model.docs.count > 1 }
             return model.selected != nil
         }
     }
@@ -292,7 +292,9 @@ extension MarkdownDocumentWindowController: NSMenuItemValidation {
         case #selector(goForward(_:)): return model.canGoForward
         case #selector(nextTab(_:)), #selector(previousTab(_:)): return model.docs.count > 1
         case #selector(reopenClosedTab(_:)): return model.canReopenClosedTab
-        case #selector(performCommand(_:)): return (item.representedObject as? String).map(canPerform) ?? false
+        case #selector(performCommand(_:)):
+            if item.representedObject as? String == "markdown.tab.closeOthers" { item.title = model.closeOthersTitle }
+            return (item.representedObject as? String).map(canPerform) ?? false
         default: return true
         }
     }

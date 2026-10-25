@@ -66,14 +66,21 @@ final class MarkdownWindowUxTests: XCTestCase {
         XCTAssertNil(model.exportError, "a replace count is not an error")
     }
 
-    func testAShareFailureKeepsASentenceAndPutsRawOutputBehindDetails() {
-        let sentence = MarkdownDocumentToolbar.shareNotice("Brave did not open the share link. It is on the clipboard.")
-        XCTAssertEqual(sentence.text, "Brave did not open the share link. It is on the clipboard.")
-        XCTAssertNil(sentence.more)
-        let raw = MarkdownDocumentToolbar.shareNotice("error: ECONNREFUSED 127.0.0.1:3000\n    at TCPConnectWrap")
-        XCTAssertEqual(raw.text, "The note could not be shared on the dev dashboard.")
-        XCTAssertEqual(raw.more, "error: ECONNREFUSED 127.0.0.1:3000\n    at TCPConnectWrap")
-        XCTAssertEqual(raw.tone, .error)
+    func testAShareFailureKeepsItsSentenceAndPutsTheCommandsWordsBehindDetails() {
+        let notice = MarkdownDocumentToolbar.shareNotice("The dev dashboard could not share this note. Details say why.",
+                                                         detail: "error: ECONNREFUSED\nExit code 1.")
+        XCTAssertEqual(notice.text, "The dev dashboard could not share this note. Details say why.")
+        XCTAssertEqual(notice.more, "error: ECONNREFUSED\nExit code 1.")
+        XCTAssertEqual(notice.tone, .error)
+        XCTAssertNil(notice.lifetime)
+    }
+
+    func testMutedExportButtonsSayWhy() {
+        XCTAssertEqual(MarkdownDocumentToolbar.exportTooltip("Save as PDF (⇧⌘S)", canExport: true, what: "PDF"), "Save as PDF (⇧⌘S)")
+        let muted = MarkdownDocumentToolbar.exportTooltip("Save as PDF (⇧⌘S)", canExport: false, what: "PDF")
+        XCTAssertEqual(muted, "Save as PDF (⇧⌘S). PDF needs the reading view with the Web renderer.")
+        XCTAssertEqual(MarkdownDocumentActions.spokenLabel(muted), "Save as PDF", "VoiceOver still hears the action")
+        XCTAssertFalse(muted.contains("\u{2014}") || muted.contains("\u{2013}"))
     }
 
     // MARK: Save in the unsaved-changes prompt (W1)
@@ -120,6 +127,42 @@ final class MarkdownWindowUxTests: XCTestCase {
         model.reopenLastClosed()
         XCTAssertEqual(Set(model.docs.map(\.url)), Set([url("a.md"), url("b.md"), url("c.md"), url("d.md")]),
                        "⇧⌘T brings the whole batch back")
+    }
+
+    func testCloseOtherTabsIsOneUndoAndNamesTheCount() throws {
+        model.open([url("a.md"), url("b.md"), url("c.md")])
+        let keep = try XCTUnwrap(model.docs.first { $0.url == url("b.md") })
+        XCTAssertEqual(model.closeOthersTitle, "Close 2 Other Tabs")
+        model.closeOthers(keep) { _ in .discard }
+        XCTAssertEqual(model.docs.map(\.url), [url("b.md")])
+        XCTAssertEqual(model.notice?.actions.map(\.label), ["Reopen 2 Tabs"])
+        XCTAssertEqual(model.closeOthersTitle, "Close 0 Other Tabs")
+        model.reopenLastClosed()
+        XCTAssertEqual(model.docs.count, 3)
+        model.close(try XCTUnwrap(model.docs.first { $0.url == url("c.md") }))
+        XCTAssertEqual(model.closeOthersTitle, "Close Other Tab")
+    }
+
+    func testTheFileMenuOffersCloseOtherTabs() throws {
+        let keys = Keymap(library: MarkdownKeymap.library, store: nil, layout: TableKeyLayout.us)
+        let file = try XCTUnwrap(MarkdownViewerMenu.submenu("File", in: MarkdownViewerMenu.build(appName: "Viewer", keymap: keys)))
+        let titles = file.items.map(\.title)
+        let close = try XCTUnwrap(titles.firstIndex(of: "Close Tab"))
+        XCTAssertEqual(titles[close + 1], "Close Other Tabs")
+    }
+
+    func testADropSaysWhatHappenedInOneSentence() {
+        let notes = [url("a.md"), url("b.md")]
+        let pdf = url("paper.pdf")
+        XCTAssertNil(MarkdownDocumentsModel.dropSummary(opened: notes, sent: [], folder: nil, gone: 0, held: []),
+                     "tabs alone need no note")
+        XCTAssertEqual(MarkdownDocumentsModel.dropSummary(opened: notes, sent: [("Preview", pdf)], folder: nil, gone: 0, held: []),
+                       "Opened 2 notes and sent \u{201C}paper.pdf\u{201D} to Preview.")
+        XCTAssertEqual(MarkdownDocumentsModel.dropSummary(opened: [url("a.md")], sent: [("Preview", pdf), ("Preview", url("b.pdf"))],
+                                                          folder: url("locked"), gone: 1, held: []),
+                       "Opened 1 note, sent 2 files to Preview, showed locked in the sidebar and 1 file was not found.")
+        XCTAssertEqual(MarkdownDocumentsModel.dropSummary(opened: [], sent: [], folder: nil, gone: 0, held: [url("run.command")]),
+                       "\u{201C}run.command\u{201D} is not a file this viewer shows, and opening it can start a program.")
     }
 
     func testASingleCloseAfterABatchReopensOnlyThatTab() throws {
