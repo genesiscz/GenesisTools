@@ -32,6 +32,23 @@ public enum MarkdownBlocks {
         }
     }
 
+    /// Heading ids the way the web page writes them: the second "Examples" is `examples-1`, the third
+    /// `examples-2`, and a suffix already taken moves on. The outline and both renderers use it, so a row
+    /// scrolls to the heading it names and only that row shows as current.
+    public static func uniqueSlugs(_ slugs: [String]) -> [String] {
+        var used = Set<String>()
+        return slugs.map { slug in
+            var candidate = slug
+            var n = 0
+            while used.contains(candidate) {
+                n += 1
+                candidate = "\(slug)-\(n)"
+            }
+            used.insert(candidate)
+            return candidate
+        }
+    }
+
     public static func slugify(_ heading: String) -> String {
         heading.lowercased()
             .replacingOccurrences(of: #"[^a-z0-9\s-]"#, with: "", options: .regularExpression)
@@ -379,6 +396,27 @@ public struct MarkdownPreviewView: View {
     /// Engine 3: render code/mermaid natively-rich (hljs + BeautifulMermaid)
     /// instead of the flat MarkdownBlockView code renderer.
     var rich: Bool = false
+    /// The window's text size, 1 = the style's own sizes (⌘+ and ⌘- reach the native panes too).
+    var zoom: Double = 1
+    /// The window's palette; nil = the vault look.
+    var theme: MarkdownTheme? = nil
+
+    /// The markdown window's pane: its text size and its palette.
+    init(
+        markdown: String,
+        scrollTarget: String?,
+        onWikilink: @escaping (String) -> Void,
+        highlightQuery: String?,
+        highlightToken: Int = 0,
+        rich: Bool = false,
+        zoom: Double,
+        theme: MarkdownTheme?
+    ) {
+        self.init(markdown: markdown, scrollTarget: scrollTarget, onWikilink: onWikilink, highlightQuery: highlightQuery,
+                  highlightToken: highlightToken, rich: rich)
+        self.zoom = zoom
+        self.theme = theme
+    }
 
     public init(
         markdown: String,
@@ -408,6 +446,11 @@ public struct MarkdownPreviewView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 10) {
+                    if blocks.isEmpty {
+                        Text("This note is empty.")
+                            .font(.system(size: 13 * CGFloat(zoom)).italic())
+                            .foregroundColor(blockStyle.mutedColor)
+                    }
                     ForEach(blocks) { block in
                         Group {
                             if rich {
@@ -432,7 +475,7 @@ public struct MarkdownPreviewView: View {
             .onChange(of: highlightToken) { _, _ in tryHighlightJump(proxy: proxy, blocks: blocks) }
             .onChange(of: markdown) { _, _ in tryHighlightJump(proxy: proxy, blocks: blocks) }
         }
-        .background(Color.vaultReadingBg)
+        .background(theme?.nativePage ?? Color.vaultReadingBg)
         .environment(\.openURL, linkAction)
         .axMarker("knowledge-preview")
     }
@@ -457,17 +500,34 @@ public struct MarkdownPreviewView: View {
     }
 
     private var blockStyle: MarkdownStyle {
-        MarkdownStyle.vault.with { $0.codeCopyButton = config.codeBlockBar }
+        let base = theme?.native(.vault) ?? .vault
+        return base.with {
+            $0.codeCopyButton = config.codeBlockBar
+            // A reading pane is where people copy from: every block selects, not only code.
+            $0.selection = .all
+            let scale = CGFloat(zoom)
+            if abs(scale - 1) > 0.001 {
+                $0.bodySize *= scale
+                $0.headingScale *= scale
+                $0.codeFontSize = ($0.codeFontSize ?? $0.bodySize / scale - 1.5) * scale
+            }
+        }
     }
 
     private func scrollIfNeeded(proxy: ScrollViewProxy, blocks: [MarkdownBlocks.Block]) {
         guard let target = scrollTarget, !target.isEmpty else { return }
         let slug = MarkdownBlocks.slugify(target)
+        // Unique like the page's ids: `examples-1` is the second "Examples"; plain text finds the first.
+        let headings = blocks.filter { if case .heading = $0 { return true } else { return false } }
+        let unique = MarkdownBlocks.uniqueSlugs(headings.map { block in
+            if case .heading(_, _, let s, _) = block { return s } else { return "" }
+        })
+        if let at = unique.firstIndex(of: slug) {
+            let block = headings[at]
+            GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { proxy.scrollTo(block.id, anchor: .top) }
+            return
+        }
         for block in blocks {
-            if case .heading(_, _, let s, _) = block, s == slug {
-                GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { proxy.scrollTo(block.id, anchor: .top) }
-                return
-            }
             // Block refs: find the paragraph containing "^block"
             if target.hasPrefix("^"), case .paragraph(let text, _) = block, text.contains(target) {
                 GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { proxy.scrollTo(block.id, anchor: .top) }

@@ -176,7 +176,7 @@ struct MarkdownHoverPicturePane: View {
                 .accessibilityLabel(Text(verbatim: "Picture of \(name), \(caption)"))
                 .accessibilityIdentifier("markdown-hover-picture")
             Text(verbatim: caption)
-                .font(GenTypography.mono(10))
+                .font(GenTypography.mono(11))
                 .foregroundStyle(theme.textMuted)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -249,6 +249,9 @@ struct MarkdownHoverSourceToggle: View {
                 .foregroundStyle(theme.textSecondary)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2.5)
+                // 22 pt tall to aim at; the drawn pill stays the header's size.
+                .frame(minHeight: 22)
+                .contentShape(Rectangle())
                 // At rest too: a control, not more of the header's text.
                 .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(theme.fill))
         }

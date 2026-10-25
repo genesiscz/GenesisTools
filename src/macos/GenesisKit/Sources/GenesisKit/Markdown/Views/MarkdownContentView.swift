@@ -397,8 +397,16 @@ struct MarkdownBlockView: View {
                     Image(systemName: "list.bullet.rectangle")
                         .font(.system(size: 9))
                         .foregroundColor(style.mutedColor)
+                        .accessibilityLabel("Properties")
                     ForEach(keys.prefix(8), id: \.self) { k in
                         TagPill(text: k, color: .neonPurple)
+                    }
+                    // Nothing is dropped without a word: the keys past the eighth are counted.
+                    if keys.count > 8 {
+                        Text("+\(keys.count - 8) more")
+                            .font(.system(size: 11))
+                            .foregroundColor(style.mutedColor)
+                            .instantTooltip(keys.dropFirst(8).joined(separator: ", "))
                     }
                 }
             }
@@ -416,7 +424,7 @@ struct MarkdownBlockView: View {
                 ForEach(0..<columns, id: \.self) { col in
                     let unit = firstUnit + col
                     Text(found(MarkdownRenderCache.headerCell(cell(header, col), wikilinks: style.wikilinks), unit))
-                        .font(GenTypography.mono(10, weight: .medium))
+                        .font(GenTypography.mono(11, weight: .medium))
                         .foregroundColor(style.mutedColor)
                         .tracking(0.6)
                         .frame(maxWidth: .infinity, alignment: frameAlignment(align(col, aligns)))
@@ -534,7 +542,8 @@ struct MarkdownCodeBlock: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(style.codePadding)
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
+                // The indicator is the cue that a long line goes on past the edge.
+                ScrollView(.horizontal, showsIndicators: true) {
                     codeView.padding(style.codePadding)
                 }
             }
@@ -574,7 +583,7 @@ struct MarkdownCopyButton: View {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
                     .font(.system(size: 9.5, weight: .semibold))
                 Text(copied ? "Copied" : "Copy")
-                    .font(.system(size: 10.5, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
             }
             .foregroundColor(copied ? doneTint : tint)
             .padding(.horizontal, 6)
@@ -598,6 +607,8 @@ struct MarkdownCopyButton: View {
         board.clearContents()
         board.setString(text, forType: .string)
         withAnimation(reduceMotion ? nil : KitTheme.quick) { copied = true }
+        // A label change on the focused button is not spoken; the result is.
+        AccessibilityNotification.Announcement("Copied").post()
     }
 }
 

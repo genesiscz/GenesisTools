@@ -19,8 +19,18 @@ struct MarkdownOutline {
         var id: Int { index }
     }
 
+    /// Appended to a target the pane already has, so a second click on the same row is a new value and the
+    /// pane jumps again (the reader may have scrolled away). `slugify` drops it, so it names the same heading.
+    static let repeatMark = "\u{2060}"
+
+    /// The scroll target for a click on `item`: its slug, marked when the pane was already sent there.
+    static func target(for item: Item, current: String?) -> String {
+        current == item.slug ? item.slug + repeatMark : item.slug
+    }
+
     /// Headings of a document, in file order. Levels are normalised so a note
-    /// that starts at `##` still indents from the left edge.
+    /// that starts at `##` still indents from the left edge. Slugs are unique
+    /// (`examples`, `examples-1`), the ids the page gives its headings.
     static func items(of markdown: String) -> [Item] {
         var raw: [Item] = []
         for (i, block) in MarkdownBlocks.parse(markdown).enumerated() {
@@ -28,6 +38,8 @@ struct MarkdownOutline {
                 raw.append(Item(level: level, text: text, slug: slug, index: i))
             }
         }
+        let unique = MarkdownBlocks.uniqueSlugs(raw.map(\.slug))
+        raw = zip(raw, unique).map { Item(level: $0.level, text: $0.text, slug: $1, index: $0.index) }
         guard let top = raw.map(\.level).min(), top > 1 else { return raw }
         return raw.map { Item(level: $0.level - top + 1, text: $0.text, slug: $0.slug, index: $0.index) }
     }
@@ -90,7 +102,7 @@ struct MarkdownOutlineView: View {
 
                 if items.isEmpty {
                     Text("No headings")
-                        .font(GenTypography.mono(9.5))
+                        .font(GenTypography.mono(11))
                         .foregroundColor(model.theme.textMuted)
                         .padding(.horizontal, 14)
                 } else {
@@ -110,11 +122,11 @@ struct MarkdownOutlineView: View {
         let active = section.slug == item.slug
         return Button {
             model.activeSectionSlug = item.slug
-            model.scrollTarget = item.text
+            model.scrollTarget = MarkdownOutline.target(for: item, current: model.scrollTarget)
         } label: {
             HStack(spacing: 0) {
                 Text(item.text)
-                    .font(GenTypography.mono(item.level <= 2 ? 10.5 : 10,
+                    .font(GenTypography.mono(11,
                                              weight: item.level <= 2 ? .semibold : .regular))
                     .foregroundColor(active ? model.theme.accent : model.theme.textSecondary)
                     .lineLimit(1)
@@ -138,6 +150,7 @@ struct MarkdownOutlineView: View {
         }
         .buttonStyle(.genHoverPlain())
         .instantTooltip(item.text)
+        .accessibilityAddTraits(active ? .isSelected : [])
         .accessibilityIdentifier("markdown-outline-\(item.slug)")
     }
 }

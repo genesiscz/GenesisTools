@@ -226,6 +226,8 @@ final class MarkdownHoverPreviewController {
     private var resignObserver: NSObjectProtocol?
     /// While the panel is up: a click anywhere else in the app takes it down at once.
     private var clickMonitor: Any?
+    /// While the panel is up: Esc takes it down (it appears by itself, so it must close without acting).
+    private var keyMonitor: Any?
 
     var isShowing: Bool { panel?.isVisible == true && shown != nil }
 
@@ -282,6 +284,10 @@ final class MarkdownHoverPreviewController {
         if let clickMonitor {
             NSEvent.removeMonitor(clickMonitor)
             self.clickMonitor = nil
+        }
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
         }
     }
 
@@ -514,6 +520,22 @@ final class MarkdownHoverPreviewController {
                 return event
             }
         }
+        if keyMonitor == nil {
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                // Esc (53) with no modifier: the preview goes and the key is used up; anything else passes.
+                guard event.keyCode == 53,
+                      event.modifierFlags.intersection(.deviceIndependentFlagsMask).subtracting(.capsLock).isEmpty else {
+                    return event
+                }
+                let closed = MainActor.assumeIsolated {
+                    let controller = MarkdownHoverPreviewController.shared
+                    guard controller.isShowing else { return false }
+                    controller.hide()
+                    return true
+                }
+                return closed ? nil : event
+            }
+        }
     }
 
     private func makePanel() -> MarkdownHoverPanel {
@@ -663,7 +685,7 @@ struct MarkdownHoverCard: View {
                 .foregroundStyle(theme.text)
                 .lineLimit(1)
             Text((content.url.deletingLastPathComponent().path as NSString).abbreviatingWithTildeInPath)
-                .font(GenTypography.mono(9.5))
+                .font(GenTypography.mono(11))
                 .foregroundStyle(theme.textMuted)
                 .lineLimit(1)
                 .truncationMode(.head)
@@ -673,7 +695,7 @@ struct MarkdownHoverCard: View {
             }
             // A text file opens as a tab; a picture that is no text file opens in the image viewer.
             Text(FileTree.isReadable(content.url) ? "Click to open" : "Click to view")
-                .font(.system(size: 10))
+                .font(.system(size: 11))
                 .foregroundStyle(theme.textMuted)
                 .fixedSize()
         }
@@ -710,7 +732,9 @@ struct MarkdownHoverCard: View {
                 onWikilink: { _ in },
                 highlightQuery: nil,
                 highlightToken: 0,
-                rich: renderer == .nativeRich
+                rich: renderer == .nativeRich,
+                zoom: zoom,
+                theme: theme
             )
             .id(content.url)
         }

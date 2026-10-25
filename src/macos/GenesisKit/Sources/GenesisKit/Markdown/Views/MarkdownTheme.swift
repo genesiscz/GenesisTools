@@ -319,6 +319,26 @@ struct MarkdownTheme: Hashable, Identifiable {
         isDark ? Color.white.opacity(0.08) : Color.black.opacity(0.06)
     }
 
+    // MARK: - Native renderers
+
+    /// The Native and Native+ panes in this palette. The Genesis palette keeps the vault look they always had;
+    /// Obsidian and Light take their page, text and accent colours, so the pane follows the theme cycle.
+    func native(_ style: MarkdownStyle) -> MarkdownStyle {
+        guard palette != .genesis else { return style }
+        return style.with {
+            $0.textColor = text
+            $0.secondaryColor = textSecondary
+            $0.mutedColor = textMuted
+            $0.accentColor = accent
+            $0.linkColor = accent
+            $0.codeColor = text
+            $0.codeBackground = isDark ? Color.black.opacity(0.3) : Color.black.opacity(0.05)
+        }
+    }
+
+    /// Behind a native pane: the vault's near-black for Genesis, the palette's page otherwise.
+    var nativePage: Color { palette == .genesis ? .vaultReadingBg : page }
+
     // MARK: - Page (web renderer)
 
     /// The `--dd-*` variables the renderer's stylesheet reads, plus
