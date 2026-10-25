@@ -1215,6 +1215,7 @@ final class EdgePanelControllerTests: XCTestCase {
         _ = NSApplication.shared
         let screen = try XCTUnwrap(NSScreen.screens.first)
         let box = Box()
+        let liveBefore = EdgeFrameTicker.live
         let value = EdgePanelController<AnyView>(
             placement: .right, screen: screen, compactSize: CGSize(width: 40, height: 100),
             expandedSize: CGSize(width: 340, height: 400), title: "Hidden reentrancy test") {
@@ -1240,7 +1241,7 @@ final class EdgePanelControllerTests: XCTestCase {
         }
         XCTAssertTrue(box.asked, "the content asked for its height while the panel opened")
         XCTAssertEqual(value.panel.frame.height, 360, accuracy: 0.5, "the height asked during the opening wins")
-        XCTAssertEqual(EdgeFrameTicker.live, 0, "no frame ticker keeps firing once the panel has settled")
+        XCTAssertEqual(EdgeFrameTicker.live, liveBefore, "no frame ticker keeps firing once the panel has settled")
     }
 
     func testContentReplacementRetainsWindowAndAnimatesNewCompactSize() async throws {

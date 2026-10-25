@@ -67,8 +67,12 @@ public struct ApprovalCommandText: View {
 
     static func styled(_ command: String) -> AttributedString {
         var text = AttributedString()
-        for (index, word) in words(command).enumerated() {
-            if index > 0 { text += AttributedString(" ") }
+        var cursor = command.startIndex
+        for word in words(command) {
+            // Every word is a substring of the command and only spaces lie between them: keep those spaces as typed.
+            guard let range = command.range(of: word.text, range: cursor..<command.endIndex) else { continue }
+            text += AttributedString(String(command[cursor..<range.lowerBound]))
+            cursor = range.upperBound
             var part = AttributedString(word.text)
             switch word.role {
             case .program:
@@ -80,6 +84,7 @@ public struct ApprovalCommandText: View {
             }
             text += part
         }
+        text += AttributedString(String(command[cursor...]))
         return text
     }
 }

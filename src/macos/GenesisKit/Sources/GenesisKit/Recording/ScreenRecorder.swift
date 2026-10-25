@@ -140,6 +140,8 @@ public final class ScreenRecorder: ObservableObject {
     }
 
     private func refreshTargets(preferredPid: Int32?) async {
+        let previousLoad = pickerLoad
+        let previousInitial = pickerInitial
         do {
             let own = ProcessInfo.processInfo.processIdentifier
             let loaded = try await loadTargets().excluding(pids: [own])
@@ -150,7 +152,8 @@ public final class ScreenRecorder: ObservableObject {
             PerfLog.mark("recording.targets failed \(error.localizedDescription)")
             pickerLoad = .failed("Could not list what to record: \(error.localizedDescription)")
         }
-        guard picker.isVisible else { return }
+        // A new picker view resets the person's query, tab and arrow selection: skip it when nothing changed.
+        guard picker.isVisible, pickerLoad != previousLoad || pickerInitial != previousInitial else { return }
         presentPicker()
     }
 
@@ -253,7 +256,7 @@ public final class ScreenRecorder: ObservableObject {
 
     /// Pauses (so the picker never shows in the movie), lets the person choose, then switches or resumes.
     private func switchTarget() {
-        guard let controller, let controls else { return }
+        guard let controller, let controls, !picker.isVisible else { return }
         let wasRecording = controller.phase == .recording || controller.phase == .starting
         if wasRecording { controller.pause() }
         let frame = controls.window.frame

@@ -353,7 +353,12 @@ public enum HangWatch {
         let now = CFAbsoluteTimeGetCurrent()
         guard let cpu = cpuTime(of: mainThread) else { return }
         defer { lastCPU = (now, cpu) }
-        guard let last = lastCPU, now - last.wall > 0.05, now - last.wall < sleepGap else { return }
+        guard let last = lastCPU, now - last.wall > 0.05 else { return }
+        guard now - last.wall < sleepGap else {
+            // A sleep or a long stall: a busy streak is not continuous across it, so it must not count as spin time.
+            spin = SpinTracker()
+            return
+        }
         let share = (cpu - last.cpu) / (now - last.wall)
         switch spin.step(share: share, now: now) {
         case let .began(seconds)?:

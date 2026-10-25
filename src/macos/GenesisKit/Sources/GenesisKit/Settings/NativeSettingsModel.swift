@@ -64,10 +64,19 @@ public final class NativeSettingsHighlightCenter: ObservableObject {
     @Published public private(set) var anchor: String?
     /// Bumped on every request, so the same card asked for twice pulses twice.
     @Published public private(set) var token = 0
+    /// The last request a card pulsed for, so going back to the page does not replay an old one.
+    private var deliveredToken = 0
 
     public func request(_ anchor: String) {
         self.anchor = anchor
         token += 1
+    }
+
+    /// True once per request, for the card that carries `anchor`.
+    func consume(_ anchor: String) -> Bool {
+        guard self.anchor == anchor, deliveredToken != token else { return false }
+        deliveredToken = token
+        return true
     }
 
     /// "page#anchor" into its page id and the anchor; a plain page id has no anchor.
@@ -87,8 +96,8 @@ private struct NativeSettingsAnchor: ViewModifier {
         content
             .attentionPulse(trigger: pulses)
             // A window that opens on the page asks before the card exists: the card pulses once it is on screen.
-            .onAppear { if center.anchor == id { pulseSoon() } }
-            .onChange(of: center.token) { _, _ in if center.anchor == id { pulseSoon() } }
+            .onAppear { if center.consume(id) { pulseSoon() } }
+            .onChange(of: center.token) { _, _ in if center.consume(id) { pulseSoon() } }
     }
 
     private func pulseSoon() {

@@ -62,10 +62,14 @@ final class SpinTrackerTests: XCTestCase {
     func testTheThreadCPUClockAdvancesWithWork() throws {
         let thread = mach_thread_self()
         let before = try XCTUnwrap(HangWatch.cpuTime(of: thread))
-        let deadline = Date().addingTimeInterval(0.08)
+        // Spin until the CPU clock itself passes the bar: a loaded machine preempts the thread, so wall time proves nothing.
+        let deadline = Date().addingTimeInterval(2)
         var spins = 0
-        while Date() < deadline { spins &+= 1 }
-        let after = try XCTUnwrap(HangWatch.cpuTime(of: thread))
-        XCTAssertGreaterThan(after - before, 0.05, "80 ms of busy work shows as CPU time (\(spins) spins)")
+        var after = before
+        while Date() < deadline, after - before <= 0.05 {
+            for _ in 0..<10_000 { spins &+= 1 }
+            after = try XCTUnwrap(HangWatch.cpuTime(of: thread))
+        }
+        XCTAssertGreaterThan(after - before, 0.05, "busy work shows as CPU time (\(spins) spins)")
     }
 }

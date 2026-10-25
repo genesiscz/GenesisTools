@@ -29,8 +29,8 @@ public final class PermissionSettingsGuide {
 
     /// Shows the helper for `kind` (when the preference is on and the grant has a System Settings list).
     public func show(for kind: PermissionKind, appURL: URL = Bundle.main.bundleURL) {
-        guard Self.isEnabled else { return }
         close()
+        guard Self.isEnabled else { return }
         self.kind = kind
         shownAt = Date()
         let panel = makePanel(kind: kind, appURL: appURL)

@@ -1,4 +1,5 @@
 import Foundation
+import GenesisKitBase
 
 /// The cmux CLI for every part that opens a session or a command in a pane: the hub's `CmuxHost` and the widget's cmux
 /// button. One binary lookup, the new workspace / pane / tab / type-into-a-tab moves, and the reading of

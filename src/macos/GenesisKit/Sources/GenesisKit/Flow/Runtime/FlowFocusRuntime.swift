@@ -782,6 +782,11 @@ public final class FlowFocusRuntime: ObservableObject {
                                      confirm: .init("Stop \(name) (pid \(process.pid))?",
                                                     consequence: "That recording ends now; what it captured may not be saved.",
                                                     confirmLabel: "Stop it")) {
+                    // The notice can outlive the recorder; the kernel start time catches a reused pid.
+                    guard process.isAlive else {
+                        PerfLog.mark("flow-focus.audio stop pid=\(process.pid) skipped=exited")
+                        return
+                    }
                     let sent = kill(process.pid, SIGTERM) == 0
                     PerfLog.mark("flow-focus.audio stop pid=\(process.pid) sent=\(sent)")
                 })

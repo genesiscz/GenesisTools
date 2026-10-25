@@ -149,6 +149,13 @@ final class ClickyAudio {
             }
         }
         engine.prepare()
+        // A hardware change stops the engine without telling `running`; the next click must start it again.
+        NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, !self.starting else { return }
+                self.running = false
+            }
+        }
     }
 
     func play(profile: ClickySwitch, release: Bool, preferences: ClickyPreferences, pan: Float) throws {
@@ -176,9 +183,10 @@ final class ClickyAudio {
     }
 
     private func startEngine() {
+        // A click after a stop request cancels the stop, also while a start is already in flight.
+        stopAfterStart = false
         guard !starting else { return }
         starting = true
-        stopAfterStart = false
         let box = EngineBox(engine)
         startQueue.async {
             let begun = Date()

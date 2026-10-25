@@ -19,28 +19,38 @@ final class WidgetScrollReplayTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("widget-replay-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let snapshot = directory.appendingPathComponent("snapshot.json")
+        // The fake `tools` is made once and kept: macOS checks a new executable in syspolicyd after it starts, and a check
+        // that finds the file gone crashed it (2026-10-14). It reads the snapshot beside it; only that copy is replaced.
+        let fixtures = try XCTUnwrap(FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first)
+            .appendingPathComponent("GenesisKitTests/widget-replay-v1")
+        try FileManager.default.createDirectory(at: fixtures, withIntermediateDirectories: true)
+        let snapshot = fixtures.appendingPathComponent("snapshot.json")
+        try? FileManager.default.removeItem(at: snapshot)
         try FileManager.default.copyItem(atPath: snapshotPath, toPath: snapshot.path)
-        let script = directory.appendingPathComponent("tools")
-        try """
-        #!/bin/sh
-        case "$*" in
-          *watch*) cat '\(snapshot.path)'; printf '\\n'; cat > /dev/null; exit 0 ;;
-          *snapshot*) cat '\(snapshot.path)'; exit 0 ;;
-          *"voice listen"*)
-            text=""; i=0
-            for word in Ship the composer waves. While I talk the words appear here; do
-              i=$((i + 1)); text="$text $word"
-              printf '{"kind":"level","rms":0.0%d}\n' $(( (i * 37) % 8 + 2 ))
-              printf '{"kind":"partial","text":"%s"}\n' "${text# }"
-              case "$word" in *.) printf '{"kind":"final","text":"%s"}\n' "${text# }"; text="" ;; esac
-              sleep 0.05
-            done
-            sleep 4; exit 0 ;;
-        esac
-        printf '{}'
-        """.write(to: script, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        defer { try? FileManager.default.removeItem(at: snapshot) }
+        let script = fixtures.appendingPathComponent("tools")
+        if !FileManager.default.isExecutableFile(atPath: script.path) {
+            try """
+            #!/bin/sh
+            snapshot="$(dirname "$0")/snapshot.json"
+            case "$*" in
+              *watch*) cat "$snapshot"; printf '\\n'; cat > /dev/null; exit 0 ;;
+              *snapshot*) cat "$snapshot"; exit 0 ;;
+              *"voice listen"*)
+                text=""; i=0
+                for word in Ship the composer waves. While I talk the words appear here; do
+                  i=$((i + 1)); text="$text $word"
+                  printf '{"kind":"level","rms":0.0%d}\\n' $(( (i * 37) % 8 + 2 ))
+                  printf '{"kind":"partial","text":"%s"}\\n' "${text# }"
+                  case "$word" in *.) printf '{"kind":"final","text":"%s"}\\n' "${text# }"; text="" ;; esac
+                  sleep 0.05
+                done
+                sleep 4; exit 0 ;;
+            esac
+            printf '{}'
+            """.write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        }
         let domain = "widget-replay." + UUID().uuidString
         let defaults = try XCTUnwrap(UserDefaults(suiteName: domain))
         defer { UserDefaults(suiteName: domain)?.removePersistentDomain(forName: domain) }
