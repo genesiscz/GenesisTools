@@ -55,13 +55,13 @@ final class GitReposTests: XCTestCase {
         let file = GitFileStateModel()
         file.follow(note)
         await wait("the file state") { file.state?.unstagedAdditions == 1 }
-        XCTAssertEqual(file.state?.summary, "M · 1 line unstaged")
+        XCTAssertEqual(file.state?.summary, "Modified · 1 line unstaged")
 
         // A stage is a change to the index: git's folder event refreshes both, nobody calls refresh.
         try git(["add", "plan.md"], in: repo)
         await wait("the staged state") { file.state?.hasStaged == true && file.state?.hasUnstaged == false }
         XCTAssertEqual(model.status?.entry(for: note)?.staged, .modified)
-        XCTAssertEqual(file.state?.summary, "M · 1 line staged")
+        XCTAssertEqual(file.state?.summary, "Modified · 1 line staged")
 
         file.follow(nil)
         XCTAssertNil(file.state)

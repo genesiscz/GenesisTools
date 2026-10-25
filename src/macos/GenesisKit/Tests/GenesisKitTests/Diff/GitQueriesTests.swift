@@ -82,7 +82,7 @@ final class GitQueriesTests: XCTestCase {
         XCTAssertEqual(state.entry?.unstaged, .modified)
         XCTAssertEqual(state.unstagedAdditions, 1)
         XCTAssertEqual(state.stagedAdditions + state.stagedDeletions, 3)
-        XCTAssertEqual(state.summary, "M · 1 line unstaged · 3 lines staged")
+        XCTAssertEqual(state.summary, "Modified · 1 line unstaged · 3 lines staged")
 
         XCTAssertEqual(try provider.contents(of: note, at: .head), "one\ntwo\nthree\n")
         XCTAssertEqual(try provider.contents(of: note, at: .index), "one\n2\nthree\nfour\n")

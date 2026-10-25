@@ -41,11 +41,11 @@ public struct GitHunk: Equatable, Sendable, Identifiable {
     /// The new text's lines this hunk covers, as a closed range (a deletion covers the line it stands before).
     public var newLines: ClosedRange<Int> { newStart ... max(newStart, newStart + newCount - 1) }
 
-    /// "Lines 12–14 changed", "Line 3 added", "2 lines removed before line 8", 1-based for a reader.
+    /// "Lines 12 to 14 changed", "Line 3 added", "2 lines removed before line 8", 1-based for a reader.
     public var title: String {
         let first = newStart + 1
         let last = newStart + newCount
-        let span = newCount == 1 ? "Line \(first)" : "Lines \(first)–\(last)"
+        let span = newCount == 1 ? "Line \(first)" : "Lines \(first) to \(last)"
         switch kind {
         case .added: return "\(span) added"
         case .modified: return "\(span) changed"

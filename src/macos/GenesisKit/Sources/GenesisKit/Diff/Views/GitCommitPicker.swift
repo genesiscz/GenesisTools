@@ -542,6 +542,8 @@ struct GitCommitPickerRow: View {
             .buttonStyle(GitChooserRowStyle())
             .accessibilityLabel(Text(verbatim: spoken))
             .accessibilityAddTraits(current ? .isSelected : [])
+            // The copy button shows only on the highlighted row; VoiceOver reaches it on every row.
+            .accessibilityAction(named: "Copy commit id") { Clipboard.copy(choice.sha, what: "commit id") }
             .accessibilityIdentifier("git-commit-choice-\(choice.short)")
             ZStack {
                 if highlighted {

@@ -153,8 +153,10 @@ open class GenesisKitGTCLIProvider: GenesisKitGTProvider {
             : NSWorkspace.shared.urlForApplication(withBundleIdentifier: Self.genesisToolsBundleID)
                 .flatMap { Bundle(url: $0)?.executablePath }
         PerfSpans.log("blame open \(source.session.prefix(8)) turn \(source.turn.prefix(8))")
+        // A click that opens nothing says why beside the pointer, rather than leaving the card as it was.
         guard let executable else {
             PerfSpans.log("blame open: GenesisTools.app is not installed")
+            CopyToast.post(title: "The session cannot open", detail: "GenesisTools.app is not installed", style: .problem)
             return
         }
         let process = Process()
@@ -164,6 +166,7 @@ open class GenesisKitGTCLIProvider: GenesisKitGTProvider {
             try process.run()
         } catch {
             PerfSpans.log("blame open failed: \(error)")
+            CopyToast.post(title: "Could not start GenesisTools", detail: "The session did not open. Try again.", style: .problem)
         }
     }
 

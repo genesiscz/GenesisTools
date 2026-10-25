@@ -122,7 +122,7 @@ public struct GitFileMark: View {
         var body: some View {
             if let kind = model.status?.entry(for: file)?.shown {
                 GitChangeMark(kind, size: size)
-                    .instantTooltip("Git: \(kind.word)")
+                    .instantTooltip(kind == .untracked ? "Not tracked by git" : "Git: \(kind.word)")
             }
         }
     }

@@ -104,12 +104,13 @@ public struct GitFileState: Equatable, Sendable {
     public var hasStaged: Bool { entry?.staged != nil && entry?.staged != .untracked }
     public var hasUnstaged: Bool { entry?.unstaged != nil }
 
-    /// "M · 3 unstaged · 1 staged", "new file", "" when clean.
+    /// "Modified · 3 lines unstaged · 1 line staged", "new file, not in git", "" when clean.
     public var summary: String {
         guard let entry else { return "" }
         if isUntracked { return "new file, not in git" }
-        if entry.shown == .conflicted { return "C · conflict" }
-        var parts = [entry.shown?.letter ?? "M"]
+        if entry.shown == .conflicted { return "In conflict" }
+        let word = (entry.shown ?? .modified).word
+        var parts = [word.prefix(1).uppercased() + word.dropFirst()]
         let unstaged = unstagedAdditions + unstagedDeletions
         let staged = stagedAdditions + stagedDeletions
         if hasUnstaged { parts.append(unstaged > 0 ? "\(Plural.count(unstaged, "line")) unstaged" : "unstaged") }
