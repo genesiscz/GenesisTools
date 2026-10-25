@@ -1,5 +1,6 @@
 /**
- * SwiftPM prints one `[done/total] Action subject` line per build step when its output is not a terminal. The app
+ * SwiftPM prints one `[done/total] Action subject` line per build step when its output is not a terminal; the Swift
+ * Build system (the default from Swift 6.4) prints `[done / total] Subject`, often with no subject at all. The app
  * build used to read all of it after the build ended (`Bun.spawnSync`), so `tools hub` sat silent for the whole
  * minute of a cold build and looked stuck. These helpers turn those lines into a short, throttled message.
  */
@@ -10,7 +11,7 @@ export interface SwiftBuildProgress {
     subject: string;
 }
 
-const PROGRESS_LINE = /^\[(\d+)\/(\d+)]\s+(\S+)(?:\s+(.+))?$/;
+const PROGRESS_LINE = /^\[(\d+)\s*\/\s*(\d+)](?:\s+(\S+)(?:\s+(.+))?)?$/;
 
 export function parseSwiftBuildProgress(line: string): SwiftBuildProgress | null {
     const match = PROGRESS_LINE.exec(line.trim());
@@ -22,7 +23,7 @@ export function parseSwiftBuildProgress(line: string): SwiftBuildProgress | null
     const [, done, total, action, rest] = match;
     // `Compiling GenesisKit Foo.swift` names the module and then the file: the last word is the useful one.
     const subject = rest?.trim().split(/\s+/).at(-1) ?? "";
-    return { done: Number(done), total: Number(total), action, subject };
+    return { done: Number(done), total: Number(total), action: action ?? "", subject };
 }
 
 /**
@@ -32,7 +33,8 @@ export function parseSwiftBuildProgress(line: string): SwiftBuildProgress | null
 export function formatSwiftBuildProgress(progress: SwiftBuildProgress, elapsedMs: number): string {
     const seconds = Math.floor(elapsedMs / 1000);
     const subject = progress.subject ? ` ${progress.subject}` : "";
-    return `swift build step ${progress.done} of ${progress.total}: ${progress.action}${subject}, ${seconds} s`;
+    const what = progress.action ? `: ${progress.action}${subject}` : "";
+    return `swift build step ${progress.done} of ${progress.total}${what}, ${seconds} s`;
 }
 
 /**

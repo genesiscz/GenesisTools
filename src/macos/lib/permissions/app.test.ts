@@ -43,6 +43,7 @@ import {
 import {
     createBuildProgressDisplay,
     createSwiftProgressReporter,
+    formatSwiftBuildProgress,
     PLAIN_PROGRESS_EVERY_MS,
     parseSwiftBuildProgress,
 } from "./swift-progress";
@@ -950,6 +951,17 @@ describe("swift build progress", () => {
             subject: "",
         });
         expect(parseSwiftBuildProgress("Building for debugging...")).toBeNull();
+        // Swift 6.4's default build system (Swift Build) spaces the counter and often names only a module, or nothing.
+        expect(parseSwiftBuildProgress("[2 / 10] GenesisKitBase")).toEqual({
+            done: 2,
+            total: 10,
+            action: "GenesisKitBase",
+            subject: "",
+        });
+        expect(parseSwiftBuildProgress("[14 / 150]")).toEqual({ done: 14, total: 150, action: "", subject: "" });
+        expect(formatSwiftBuildProgress({ done: 14, total: 150, action: "", subject: "" }, 3200)).toBe(
+            "swift build step 14 of 150, 3 s"
+        );
         expect(parseSwiftBuildProgress("/x/Foo.swift:3:1: warning: [1/2] is not progress")).toBeNull();
     });
 
