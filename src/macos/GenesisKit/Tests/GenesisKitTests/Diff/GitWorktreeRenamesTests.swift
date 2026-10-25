@@ -91,6 +91,24 @@ final class GitWorktreeRenamesTests: XCTestCase {
         XCTAssertEqual(unstaged.files.first { $0.path == "moved/run/compiler.ts" }?.status, .renamed)
     }
 
+    /// The hash cache keys on the ctime too: a rewrite that keeps the size and puts the mtime back is hashed again.
+    func testARewriteThatKeepsSizeAndMtimeIsHashedAgain() throws {
+        let repo = try movedFolderRepository()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let moved = repo.appendingPathComponent("moved/run/compiler.ts")
+        func pairs() -> [String] {
+            GitWorktreeRenames.find(in: repo, deleted: ["data/run/compiler.ts"], untracked: ["moved/run/compiler.ts"],
+                                    revision: "", provider: provider).map(\.new)
+        }
+        XCTAssertEqual(pairs(), ["moved/run/compiler.ts"])
+        let mtime = try XCTUnwrap(try FileManager.default.attributesOfItem(atPath: moved.path)[.modificationDate] as? Date)
+        let handle = try FileHandle(forWritingTo: moved)
+        try handle.write(contentsOf: Data("export const compiler = 2\n".utf8))
+        try handle.close()
+        try FileManager.default.setAttributes([.modificationDate: mtime], ofItemAtPath: moved.path)
+        XCTAssertEqual(pairs(), [], "the same size and mtime with new content is not the old blob")
+    }
+
     /// `GIT_RENAMES_REAL=<repository>`: the pairs and the cost on a real working tree, read only.
     func testARealRepositorysMovesAndTheirCost() throws {
         guard let path = ProcessInfo.processInfo.environment["GIT_RENAMES_REAL"] else { throw XCTSkip("GIT_RENAMES_REAL is not set") }

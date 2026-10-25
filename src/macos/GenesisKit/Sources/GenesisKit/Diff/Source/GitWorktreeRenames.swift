@@ -139,7 +139,8 @@ public enum GitWorktreeRenames {
         for path in untracked where !path.contains("\n") {
             guard lstat(base + path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, sizes.contains(Int(info.st_size)) else { continue }
             let identity = HashCache.Identity(inode: UInt64(info.st_ino), size: Int64(info.st_size),
-                                              mtime: Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec))
+                                              mtime: Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec),
+                                              ctime: Int64(info.st_ctimespec.tv_sec) * 1_000_000_000 + Int64(info.st_ctimespec.tv_nsec))
             if let oid = hashes.oid(base + path, identity) {
                 known.append(Side(path: path, oid: oid))
             } else {
@@ -160,8 +161,9 @@ public enum GitWorktreeRenames {
         return pair(deleted: deletedSides, untracked: known)
     }
 
-    /// Blob ids of untracked files by file identity (inode, size, mtime to the nanosecond): a file that did not
-    /// change is not hashed again on the next status read. Shared by every repository, bounded.
+    /// Blob ids of untracked files by file identity (inode, size, mtime and ctime to the nanosecond): a file that did
+    /// not change is not hashed again on the next status read. The ctime catches a rewrite that kept the size and put
+    /// the mtime back (performance skill, caching-and-freshness.md: the mtime alone is not enough). Shared by every repository, bounded.
     static let hashes = HashCache(limit: 50_000)
 
     final class HashCache: @unchecked Sendable {
@@ -169,6 +171,7 @@ public enum GitWorktreeRenames {
             let inode: UInt64
             let size: Int64
             let mtime: Int64
+            let ctime: Int64
         }
         private let lock = NSLock()
         private var entries: [String: (identity: Identity, oid: String)] = [:]
