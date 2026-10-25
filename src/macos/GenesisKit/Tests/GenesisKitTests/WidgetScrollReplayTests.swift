@@ -66,6 +66,8 @@ final class WidgetScrollReplayTests: XCTestCase {
         model.section = "Inbox"
         // `GENESIS_WIDGET_REPLAY_OVERVIEW=1`: the inbox of every session (the inbox button), not the one session.
         if environment["GENESIS_WIDGET_REPLAY_OVERVIEW"] == "1" { model.inboxOverview = true }
+        // `GENESIS_WIDGET_REPLAY_FILTER=decisions`: the inbox filter ("all", "inbox", "decisions").
+        if let filter = environment["GENESIS_WIDGET_REPLAY_FILTER"] { model.inboxFilter = filter }
         if let number = environment["GENESIS_WIDGET_REPLAY_OPEN"].flatMap(Int.init),
            let card = model.cards.first(where: { $0.number == number }) {
             model.openCard(card)

@@ -209,23 +209,14 @@ public struct LiveWidgetView: View {
                 if section == "Inbox", model.stagedView == nil { WidgetStagedChip(model: model) }
                 ScrollViewReader { reader in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14) {
-                            if model.stagedView != nil {
-                                WidgetStagedList(model: model)
-                            } else if section == "Inbox" {
-                                inbox
-                            } else if section == "Sessions" {
-                                // Only this list reports its drawn order for Up and Down; the chooser popover does not.
-                                WidgetSessionBrowser(model: model, reportsOrder: true)
-                            } else if section == "Changes" {
-                                changes
-                            } else {
-                                conversation
-                            }
+                        // The inbox is eager: a session holds tens of cards, and a lazy stack's estimated height
+                        // under an open card made the scroll offset and the document chase each other without end
+                        // (the widget hung at 99% CPU on a session's Decisions, Martin, 2026-10-25).
+                        Group {
                             if section == "Inbox" {
-                                ForEach(model.outgoing) { message in
-                                    outgoing(message).id("outgoing-" + message.id)
-                                }
+                                VStack(alignment: .leading, spacing: 14) { sectionList }
+                            } else {
+                                LazyVStack(alignment: .leading, spacing: 14) { sectionList }
                             }
                         }.frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 2)
                             .scrollOverflowContent()
@@ -283,6 +274,27 @@ public struct LiveWidgetView: View {
                 }
             }
             return !providers.isEmpty
+        }
+    }
+
+    /// The selected section's rows inside the pane's scroll view.
+    @ViewBuilder private var sectionList: some View {
+        if model.stagedView != nil {
+            WidgetStagedList(model: model)
+        } else if section == "Inbox" {
+            inbox
+        } else if section == "Sessions" {
+            // Only this list reports its drawn order for Up and Down; the chooser popover does not.
+            WidgetSessionBrowser(model: model, reportsOrder: true)
+        } else if section == "Changes" {
+            changes
+        } else {
+            conversation
+        }
+        if section == "Inbox" {
+            ForEach(model.outgoing) { message in
+                outgoing(message).id("outgoing-" + message.id)
+            }
         }
     }
 
