@@ -213,7 +213,7 @@ enum GitPanelRow: Equatable, Identifiable {
     }
 
     /// What a key does: Up and Down walk the selectable rows (they repeat while held), Return opens a file and opens or
-    /// closes a folder or a section, Right opens and Left closes a folder or a section, Esc lets the keyed row go and is ignored when
+    /// closes a folder or a section, Right opens a folder or a section, Left closes one or keys the row it belongs to, Esc lets the keyed row go and is ignored when
     /// nothing is keyed, so it still reaches the window or a sheet.
     enum KeyAction: Equatable {
         case none
@@ -238,14 +238,22 @@ enum GitPanelRow: Equatable, Identifiable {
         case .down: return .select(selectable.first { $0 > index } ?? index)
         case .up: return .select(selectable.last { $0 < index } ?? index)
         case .open: return .activate(index)
-        case .right, .left:
-            let open: Bool
+        case .right:
             switch rows[index] {
-            case .folder(_, _, _, let isOpen), .section(_, _, let isOpen): open = isOpen
+            case .folder(_, _, _, let open), .section(_, _, let open): return open ? .none : .setOpen(index, true)
             case .file: return .none
             }
-            let wanted = key == .right
-            return open == wanted ? .none : .setOpen(index, wanted)
+        case .left:
+            // The outline convention (NSOutlineView, Finder): Left folds an open row, and on anything else keys the
+            // row it belongs to: a folder's file keys its folder, every other row its section's heading.
+            switch rows[index] {
+            case .section(_, _, let open): return open ? .setOpen(index, false) : .none
+            case .folder(_, _, _, let open) where open: return .setOpen(index, false)
+            case .file(_, _, _, let indent, _) where indent:
+                return rows[..<index].lastIndex { $0.kind == .folder }.map(KeyAction.select) ?? .none
+            case .file, .folder:
+                return rows[..<index].lastIndex { $0.kind == .section }.map(KeyAction.select) ?? .none
+            }
         case .navigate, .parent, .escape: return .none
         }
     }

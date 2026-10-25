@@ -63,11 +63,19 @@ final class GitRepoPanelKeyboardTests: XCTestCase {
         XCTAssertEqual(GitPanelRow.action(for: .down, rows: rows, cursor: 3), .select(3), "the last row stays")
         XCTAssertEqual(GitPanelRow.action(for: .up, rows: rows, cursor: 1), .select(0), "a heading is keyed: it folds")
         XCTAssertEqual(GitPanelRow.action(for: .right, rows: rows, cursor: 2), .setOpen(2, true))
-        XCTAssertEqual(GitPanelRow.action(for: .left, rows: rows, cursor: 2), .none, "a closed folder does not close again")
+        XCTAssertEqual(GitPanelRow.action(for: .left, rows: rows, cursor: 2), .select(0), "Left on a closed folder keys its heading")
         XCTAssertEqual(GitPanelRow.action(for: .left, rows: rows, cursor: 0), .setOpen(0, false), "Left folds an open section")
         XCTAssertEqual(GitPanelRow.action(for: .left, rows: rows, cursor: 3), .none, "a folded section does not fold again")
         XCTAssertEqual(GitPanelRow.action(for: .right, rows: rows, cursor: 3), .setOpen(3, true))
-        XCTAssertEqual(GitPanelRow.action(for: .left, rows: rows, cursor: 1), .none, "a file has nothing to fold")
+        XCTAssertEqual(GitPanelRow.action(for: .left, rows: rows, cursor: 1), .select(0), "Left on a file keys its heading")
+        let inFolder: [GitPanelRow] = [
+            .section(key: "untracked", title: "Untracked · 2", open: true),
+            .folder(folder: "data", count: 2, newest: nil, open: true),
+            .file(entry: GitStatusEntry(path: "data/1.json", unstaged: .untracked), staged: false, id: "folder:data:data/1.json", indent: true, date: nil),
+        ]
+        XCTAssertEqual(GitPanelRow.action(for: .left, rows: inFolder, cursor: 2), .select(1), "a folder's file keys its folder")
+        XCTAssertEqual(GitPanelRow.action(for: .left, rows: inFolder, cursor: 1), .setOpen(1, false), "Left folds an open folder")
+        XCTAssertEqual(GitPanelRow.action(for: .right, rows: inFolder, cursor: 1), .none, "an open folder stays open")
         XCTAssertEqual(GitPanelRow.action(for: .open, rows: rows, cursor: 1), .activate(1))
         XCTAssertEqual(rows[3].spoken, "Untracked · 0, section, collapsed")
     }
