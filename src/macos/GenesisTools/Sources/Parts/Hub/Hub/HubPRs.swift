@@ -2105,8 +2105,8 @@ struct PRDetailView: View {
                 CIBadge(ci: pr.ci, url: detail?.webUrls?.checks.flatMap(URL.init(string:)))
                 PRReadinessHeaderChip(pr: pr)
                 Spacer()
-                if let notice = model.notice {
-                    NoticePill(text: notice, isError: notice.contains("failed") || notice.hasPrefix("cmux:")) { model.notice = nil }
+                if let notice = model.headerNotice {
+                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
                 }
                 if prs.review != nil {
                     IconButton(systemName: "arrow.up.right.square", tooltip: "Open this review in its own window: the same diff, threads and proposal") {
@@ -2130,7 +2130,7 @@ struct PRDetailView: View {
                     .popover(isPresented: $reviewing, arrowEdge: .bottom) {
                         LaunchPicker(mode: .new(cwd: path, name: "review \(pr.repo) \(pr.label)", prompt: Self.reviewPrompt(pr))) { outcome in
                             reviewing = false
-                            if let notice = outcome.notice { model.notice = notice }
+                            model.postLaunch(outcome)
                         }
                     }
                     // The palette's "review": the same popover, with the command shown before Start.
@@ -2150,7 +2150,7 @@ struct PRDetailView: View {
                     .popover(isPresented: $launching, arrowEdge: .bottom) {
                         LaunchPicker(mode: .new(cwd: path, name: "\(pr.repo) \(pr.label)")) { outcome in
                             launching = false
-                            if let notice = outcome.notice { model.notice = notice }
+                            model.postLaunch(outcome)
                         }
                     }
                 }
@@ -2333,7 +2333,7 @@ struct PRDetailView: View {
                             .tint(Color(red: 0.62, green: 0.78, blue: 1))
                             .environment(\.openURL, OpenURLAction { url in
                                 if let id = PRDescriptionLinker.prID(from: url) {
-                                    if !prs.open(id: id) { model.notice = "That PR is no longer in the list" }
+                                    if !prs.open(id: id) { model.post("That PR is no longer in the list", .warning) }
                                 } else {
                                     ExternalOpener.open(url)
                                 }
@@ -2756,5 +2756,16 @@ struct PRSessionsSection: View {
         if loading { return "Looking through the agent sessions…" }
         if pr.repoRoot == nil { return "No local checkout of this project, so no session can be matched." }
         return "No session worked on this branch, its commits or its files."
+    }
+}
+
+extension HubModel {
+    /// A launch outcome in the header with its tone: a start is success, a failure is an error, a cancel says nothing.
+    func postLaunch(_ outcome: LaunchOutcome) {
+        switch outcome {
+        case .cancelled: break
+        case .launched(let text): post(text, .success)
+        case .failed(let text): post(text, .error)
+        }
     }
 }

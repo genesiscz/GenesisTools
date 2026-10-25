@@ -285,6 +285,8 @@ final class HubNotifyStore: ObservableObject {
 /// failure, since it lands after the click that caused it.
 struct HubNotifyNoticeView: View {
     @ObservedObject var store: HubNotifyStore
+    /// The settings search draws the PR activity page hidden to learn its rows; a note there is nobody's to hear.
+    @Environment(\.nativeSettingsIndexing) private var hidden
 
     var body: some View {
         if let message = store.message {
@@ -298,7 +300,7 @@ struct HubNotifyNoticeView: View {
     }
 
     private func announce(_ message: HubNotifyNotice) {
-        if message.tone != .success { GenAnnounce.post(message.text) }
+        if !hidden, message.tone != .success { GenAnnounce.post(message.text) }
     }
 }
 
@@ -480,7 +482,7 @@ struct HubNotifySettings: View {
                 .disabled(store.busy)
                 .instantTooltip(HubNotifyWords.installDetail)
                 .contextMenu {
-                    Button("Copy the terminal command") { Clipboard.copy(HubNotifyWords.installCommand, what: "command") }
+                    Button("Copy Command") { Clipboard.copy(HubNotifyWords.installCommand, what: "command") }
                 }
                 .accessibilityIdentifier("notify.install")
         }

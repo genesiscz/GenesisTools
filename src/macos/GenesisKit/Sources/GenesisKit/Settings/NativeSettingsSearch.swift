@@ -123,8 +123,9 @@ struct NativeSettingsSearchKey: PreferenceKey {
 extension EnvironmentValues {
     /// The settings page a card or row is drawn on; nil outside the settings window.
     @Entry var nativeSettingsPageID: String? = nil
-    /// True in the hidden copy of the pages the search reads: nothing there flashes.
-    @Entry var nativeSettingsIndexing = false
+    /// True in the hidden copy of the pages the search reads: nothing there flashes, and a page's own code must not
+    /// speak (`GenAnnounce`) or ask for anything, since nobody sees it.
+    @Entry public var nativeSettingsIndexing = false
 }
 
 /// A card or row the search can jump to: when a jump names it, it flashes, and its marker is what the page scrolls to.
@@ -256,15 +257,10 @@ struct NativeSettingsSearchResults: View {
         let results = NativeSettingsSearch.results(query, pages: Self.pages(store), entries: search.entries)
         VStack(alignment: .leading, spacing: 1) {
             if results.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("No setting matches “\(query.trimmingCharacters(in: .whitespacesAndNewlines))”.")
-                        .font(.system(size: 12)).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Button("Clear the search", action: clear)
-                        .buttonStyle(.genHoverPlain())
-                        .font(.system(size: 12))
-                }
-                .padding(.horizontal, 10).padding(.top, 4)
+                EmptyState(
+                    symbol: "magnifyingglass",
+                    text: "No setting matches “\(query.trimmingCharacters(in: .whitespacesAndNewlines))”.",
+                    actionTitle: "Clear the search", action: clear)
             } else {
                 Text(Plural.count(results.count, "result"))
                     .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)

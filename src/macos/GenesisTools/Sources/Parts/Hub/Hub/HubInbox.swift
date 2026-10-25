@@ -1101,8 +1101,8 @@ struct InboxMain: View {
                 }
                 .titlebarLabel()
                 Spacer()
-                if let notice = model.notice {
-                    NoticePill(text: notice) { model.notice = nil }
+                if let notice = model.headerNotice {
+                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
                 }
                 if let missing = inbox.revealMissing {
                     NoticePill(text: missing, isError: true) { inbox.revealMissing = nil }
@@ -1203,7 +1203,7 @@ private struct InboxSessionSection: View {
             }
             if let provider = session.provider, ["claude", "codex", "grok"].contains(provider) {
                 IconButton(systemName: "terminal", tooltip: "Show this session's cmux pane") {
-                    inbox.focusPane(session) { model.notice = $0 }
+                    inbox.focusPane(session) { model.post($0, $0.hasPrefix("No cmux pane") ? .error : .success) }
                 }
             }
             IconButton(systemName: "text.bubble", tooltip: hubSession == nil ? "This session is older than the hub's list" : "Open this session's transcript in the hub") {

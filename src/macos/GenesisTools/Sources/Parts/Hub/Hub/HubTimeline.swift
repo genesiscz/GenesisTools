@@ -698,42 +698,17 @@ enum TimelinePrompts {
     }
 }
 
-/// The tone of each note the Activity pane posts, kept with its text by the code that knows what happened (H5): the
-/// colour never comes from words like "failed" in the text. `HubModel.notice` is one string every pane shares, so the
-/// tone cannot travel inside it yet; Activity records it here, keyed by the text.
-@MainActor
-enum TimelineNotice {
-    private static var tones: [String: NoticePill.Tone] = [:]
-
-    static func tone(of text: String) -> NoticePill.Tone? { tones[text] }
-
-    static func record(_ text: String, _ tone: NoticePill.Tone) {
-        if tones.count > 100 { tones.removeAll() }
-        tones[text] = tone
-    }
-
-    /// A note another pane posted (the command palette's "Starting a new Claude session…", say): the old reading of its
-    /// words, until `HubModel.notice` carries its own tone.
-    static func otherPaneTone(_ text: String) -> NoticePill.Tone {
-        text.contains("failed") || text.hasPrefix("No ") ? .error : .success
-    }
-}
+// Activity's notes go through `HubModel.post(_:_:)` with the tone the code that posts them knows (H5), so the same note
+// shows the same colour in every pane's header (`HubNotice`, Hub/HubWindow.swift).
 
 extension HubModel {
-    /// Shows an Activity note with its tone.
-    @MainActor
-    func postTimelineNotice(_ text: String, _ tone: NoticePill.Tone) {
-        TimelineNotice.record(text, tone)
-        notice = text
-    }
-
     /// A launch from an Activity row (resume, a new agent) as a note: started or refused.
     @MainActor
-    func postTimelineNotice(_ outcome: LaunchOutcome) {
+    func postLaunchNotice(_ outcome: LaunchOutcome) {
         switch outcome {
         case .cancelled: return
-        case .launched(let text): postTimelineNotice(text, .success)
-        case .failed(let text): postTimelineNotice(text, .error)
+        case .launched(let text): post(text, .success)
+        case .failed(let text): post(text, .error)
         }
     }
 
@@ -758,7 +733,7 @@ extension HubModel {
     @MainActor
     func showTimelineCommit(_ event: TimelineEvent, sha: String?, title: String) {
         guard let repo = event.repo, let sha, FileManager.default.fileExists(atPath: repo) else {
-            postTimelineNotice("This repository is not on this Mac.", .warning)
+            post("This repository is not on this Mac.", .warning)
             return
         }
         showCommit(repo: repo, sha: sha, title: title)
@@ -788,7 +763,7 @@ extension HubModel {
     @MainActor
     func openTimelineSession(_ event: TimelineEvent, transcriptQuery query: String? = nil) {
         guard let session = timelineSession(event) else {
-            postTimelineNotice("This row names no session.", .warning)
+            post("This row names no session.", .warning)
             return
         }
         if !sessions.contains(where: { $0.id == session.id }) {
@@ -827,7 +802,7 @@ extension HubModel {
     @MainActor
     func openTimelinePR(_ event: TimelineEvent, reveal path: String? = nil) {
         guard let ref = event.pr.flatMap({ pr in HubPRRef(pr.ref)?.withPage(pr.url) }) else {
-            postTimelineNotice("This row names no PR.", .warning)
+            post("This row names no PR.", .warning)
             return
         }
         setMode(.prs)
@@ -842,12 +817,10 @@ extension HubModel {
         DispatchQueue.global(qos: .userInitiated).async {
             let failure = TerminalHosts.current.focus(sessionId: id, provider: provider)
             DispatchQueue.main.async { [weak self] in
-                MainActor.assumeIsolated {
-                    if let failure {
-                        self?.postTimelineNotice("No cmux pane found for this session: \(failure.suffix(120))", .error)
-                    } else {
-                        self?.postTimelineNotice("Focused the session's cmux pane", .success)
-                    }
+                if let failure {
+                    self?.post("No cmux pane found for this session: \(failure.suffix(120))", .error)
+                } else {
+                    self?.post("Focused the session's cmux pane", .success)
                 }
             }
         }
@@ -901,7 +874,7 @@ extension HubModel {
                 if let url = self.timelineHostURL(event) {
                     ExternalOpener.open(url)
                 } else {
-                    self.postTimelineNotice("The repository's origin is not known yet; try again in a moment.", .warning)
+                    self.post("The repository's origin is not known yet; try again in a moment.", .warning)
                 }
             }
             add("copy", "number", "Copy the sha") { PathOpener.copy(event.sha ?? "") }
@@ -909,14 +882,14 @@ extension HubModel {
                 guard let self, let timeline else { return }
                 if case .commit(let detail)? = timeline.details[event.id] {
                     guard let first = detail.prs.first, let ref = HubPRRef(first.ref)?.withPage(first.url) else {
-                        self.postTimelineNotice("No PR of this repository contains \(event.shortSha ?? "this commit").", .warning)
+                        self.post("No PR of this repository contains \(event.shortSha ?? "this commit").", .warning)
                         return
                     }
                     self.setMode(.prs)
                     self.prs.request(ref)
                 } else {
                     if timeline.isExpanded(event) { timeline.loadDetail(event) } else { timeline.toggle(event) }
-                    self.postTimelineNotice("Reading the commit's PRs; open the row to pick one.", .success)
+                    self.post("Reading the commit's PRs; open the row to pick one.", .success)
                 }
             }
             if let repo = event.repo, let sha = event.sha {
@@ -928,7 +901,7 @@ extension HubModel {
                 if let url = self.timelineHostURL(event, compare: true) {
                     ExternalOpener.open(url)
                 } else {
-                    self.postTimelineNotice("No compare page: a new branch, or the origin is not known yet.", .warning)
+                    self.post("No compare page: a new branch, or the origin is not known yet.", .warning)
                 }
             }
             add("pr", "arrow.triangle.pull", "Open the PR in the hub", disabled: event.pr == nil) { [weak self] in self?.openTimelinePR(event) }
@@ -951,7 +924,7 @@ extension HubModel {
             add("resolve", resolved ? "checkmark.circle.fill" : "checkmark.circle", resolved ? "Reopen this thread" : "Resolve this thread") { [weak self, weak timeline] in
                 guard let timeline, let url = event.pr?.url, let thread = event.threadId else { return }
                 timeline.threadStore(for: url).resolve(thread: thread, resolved: !resolved)
-                self?.postTimelineNotice(resolved ? "Reopening the thread…" : "Resolving the thread…", .success)
+                self?.post(resolved ? "Reopening the thread…" : "Resolving the thread…", .success)
             }
             add("host", "arrow.up.right.square", "Open the comment on the host") { [weak self] in
                 if let url = self?.timelineHostURL(event) { ExternalOpener.open(url) }
@@ -1415,8 +1388,8 @@ struct TimelineMain: View {
                 }
                 .titlebarLabel()
                 Spacer()
-                if let notice = model.notice {
-                    NoticePill(text: notice, tone: TimelineNotice.tone(of: notice) ?? TimelineNotice.otherPaneTone(notice)) { model.notice = nil }
+                if let notice = model.headerNotice {
+                    NoticePill(text: notice.text, tone: notice.tone) { model.headerNotice = nil }
                 }
                 if !timeline.warnings.isEmpty {
                     Image(systemName: "exclamationmark.triangle.fill")
@@ -1668,7 +1641,7 @@ struct TimelineRowView: View {
                 if let url = model.timelineHostURL(event) {
                     ExternalOpener.open(url)
                 } else {
-                    model.postTimelineNotice("The repository's origin is not known yet; try again in a moment.", .warning)
+                    model.post("The repository's origin is not known yet; try again in a moment.", .warning)
                 }
             } label: {
                 text
@@ -1719,17 +1692,17 @@ struct TimelineRowView: View {
         case .resume(let session):
             LaunchPicker(mode: .resume(session)) { outcome in
                 popover = nil
-                model.postTimelineNotice(outcome)
+                model.postLaunchNotice(outcome)
             }
         case .newAgent(let cwd, let name, let prompt):
             LaunchPicker(mode: .new(cwd: cwd, name: name, prompt: prompt)) { outcome in
                 popover = nil
-                model.postTimelineNotice(outcome)
+                model.postLaunchNotice(outcome)
             }
         case .reply(let event):
             TimelineReplyForm(event: event, timeline: timeline) { notice in
                 popover = nil
-                if let notice { model.postTimelineNotice(notice.text, notice.tone) }
+                if let notice { model.post(notice.text, notice.tone) }
             }
         }
     }

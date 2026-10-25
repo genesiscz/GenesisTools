@@ -67,7 +67,7 @@ struct PRActivitySettingsView: View {
                         .buttonStyle(.bordered).nativeSettingsPointer()
                         .instantTooltip(HubNotifyWords.installDetail)
                         .contextMenu {
-                            Button("Copy the terminal command") { Clipboard.copy(HubNotifyWords.installCommand, what: "command") }
+                            Button("Copy Command") { Clipboard.copy(HubNotifyWords.installCommand, what: "command") }
                         }
                         .accessibilityIdentifier("prActivity.install")
                     }

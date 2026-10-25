@@ -413,8 +413,6 @@ private final class HubAppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// What the left column lists: agent sessions, the worktrees (branches) they worked in, PRs, the
-/// sessions waiting for an answer (Hub/HubInbox.swift), or today's activity (Hub/HubTimeline.swift).
 /// A note in a hub pane's header and its tone, stored together by the code that knows whether it failed: the headers
 /// used to guess a failure from words ("failed", "cmux:"), and a note without such a word showed a failure in green.
 struct HubNotice: Equatable {
@@ -434,6 +432,8 @@ struct HubNotice: Equatable {
     }
 }
 
+/// What the left column lists: agent sessions, the worktrees (branches) they worked in, PRs, the
+/// sessions waiting for an answer (Hub/HubInbox.swift), or today's activity (Hub/HubTimeline.swift).
 enum HubMode: String, CaseIterable {
     case sessions, worktrees, prs, inbox, timeline, agents
 
@@ -631,9 +631,11 @@ final class HubModel: ObservableObject {
         set { headerNotice = newValue.map(HubNotice.init(guessing:)) }
     }
 
+    /// Shows `text` in the panes' headers with `tone`; any hub file in this module posts through it (Activity included).
     func post(_ text: String, _ tone: NoticePill.Tone) {
         headerNotice = HubNotice(text, tone)
     }
+
     /// Only the latest commit lookup may navigate, and any later selection invalidates it.
     var commitLinkRequest = UUID()
     /// ⌘⇧F / palette "grep": the find-in-files panel is open with this query ("" = empty field).
