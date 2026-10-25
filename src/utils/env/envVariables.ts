@@ -134,6 +134,13 @@ export const env = {
          */
         getGrokMessagesRoute: (): "responses" | "shim" =>
             getTrimmed("AI_PROXY_GROK_MESSAGES_ROUTE")?.toLowerCase() === "shim" ? "shim" : "responses",
+        /**
+         * Which path serves Anthropic /v1/messages for the Codex agent. "responses" (default) translates straight to
+         * the WHAM Responses wire and carries encrypted reasoning across turns; "chat" restores the older hop through
+         * the OpenAI chat shape, which has no slot for reasoning.
+         */
+        getCodexMessagesRoute: (): "responses" | "chat" =>
+            getTrimmed("AI_PROXY_CODEX_MESSAGES_ROUTE")?.toLowerCase() === "chat" ? "chat" : "responses",
     },
 
     github: {

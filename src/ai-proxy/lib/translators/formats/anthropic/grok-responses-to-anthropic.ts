@@ -68,13 +68,38 @@ function reasoningSummaryText(item: JsonRecord): string {
         .join("\n\n");
 }
 
-function reasoningSignature(item: JsonRecord): string {
+/** Grok's signature: the item id and its encrypted content; empty when the item carries none. */
+function grokReasoningSignature(item: JsonRecord): string {
     if (typeof item.encrypted_content !== "string" || item.encrypted_content.length === 0) {
         return "";
     }
 
     const id = typeof item.id === "string" ? item.id : `rs_${crypto.randomUUID()}`;
     return packReasoningSignature(id, item.encrypted_content);
+}
+
+/** What differs per upstream when a Responses output becomes an Anthropic message. */
+export interface ResponsesToAnthropicOptions {
+    model: string;
+    /** The thinking block's signature for a reasoning item (default: Grok's `grokrs1:`). */
+    signReasoning?: (item: JsonRecord) => string;
+    /** Names the upstream in log lines. */
+    label?: string;
+}
+
+const warnedItemTypes = new Set<string>();
+
+/** An output item no content block exists for (agent items, new types): logged once per type, the turn goes on. */
+function warnUnknownItem(item: JsonRecord, label: string): void {
+    const type = typeof item.type === "string" ? item.type : "(none)";
+
+    if (!warnedItemTypes.has(type)) {
+        warnedItemTypes.add(type);
+        logger.warn(
+            { type, upstream: label },
+            "ai-proxy: skipped a Responses output item type with no Anthropic block"
+        );
+    }
 }
 
 function messageText(item: JsonRecord): string {
@@ -99,7 +124,15 @@ function stopReasonFor(response: JsonRecord, sawFunctionCall: boolean): Anthropi
 }
 
 /** Non-streaming: a Responses envelope → an Anthropic message object. */
-export function grokResponsesToAnthropicMessage(response: JsonRecord, options: { model: string }): JsonRecord {
+export function grokResponsesToAnthropicMessage(
+    response: JsonRecord,
+    options: ResponsesToAnthropicOptions
+): JsonRecord {
+    return responsesToAnthropicMessage(response, options);
+}
+
+export function responsesToAnthropicMessage(response: JsonRecord, options: ResponsesToAnthropicOptions): JsonRecord {
+    const sign = options.signReasoning ?? grokReasoningSignature;
     const output = Array.isArray(response.output) ? response.output : [];
     const content: JsonRecord[] = [];
 
@@ -112,7 +145,7 @@ export function grokResponsesToAnthropicMessage(response: JsonRecord, options: {
             content.push({
                 type: "thinking",
                 thinking: reasoningSummaryText(item),
-                signature: reasoningSignature(item),
+                signature: sign(item),
             });
             continue;
         }
@@ -129,10 +162,14 @@ export function grokResponsesToAnthropicMessage(response: JsonRecord, options: {
                 name: typeof item.name === "string" ? item.name : "unknown",
                 input: parsedToolInput(item.arguments),
             });
+            continue;
         }
+
+        warnUnknownItem(item, options.label ?? "grok");
     }
 
-    if (content.length === 0) {
+    // Claude Code drops a thinking block that ends a message, and with it the reasoning a next turn would replay.
+    if (content.length === 0 || content.at(-1)?.type === "thinking") {
         content.push({ type: "text", text: "" });
     }
 
@@ -162,6 +199,10 @@ interface ItemState {
 
 interface StreamState {
     model: string;
+    sign: (item: JsonRecord) => string;
+    label: string;
+    /** The kind of the last block opened, so a message never ends on a thinking block. */
+    lastKind: BlockKind | undefined;
     messageId: string;
     started: boolean;
     nextBlockIndex: number;
@@ -222,10 +263,12 @@ function openItem(state: StreamState, outputIndex: number, item: JsonRecord): st
     const mapped = contentBlockFor(item);
 
     if (mapped === null) {
+        warnUnknownItem(item, state.label);
         return "";
     }
 
     const blockIndex = state.nextBlockIndex++;
+    state.lastKind = mapped.kind;
     state.items.set(outputIndex, {
         blockIndex,
         kind: mapped.kind,
@@ -275,7 +318,7 @@ function closeItem(state: StreamState, outputIndex: number, doneItem: JsonRecord
                 out += deltaFrame(state, outputIndex, { type: "thinking_delta", thinking: summary }, summary.length);
             }
 
-            const signature = reasoningSignature(doneItem);
+            const signature = state.sign(doneItem);
 
             if (signature.length > 0) {
                 out += anthropicSseFrame("content_block_delta", {
@@ -340,6 +383,14 @@ function finishFrames(state: StreamState, response: JsonRecord | undefined): str
         if (!item.closed) {
             out += closeItem(state, outputIndex, undefined);
         }
+    }
+
+    // Claude Code drops a thinking block that ends a message, and with it the reasoning a next turn would replay.
+    if (state.lastKind === "thinking") {
+        const index = state.nextBlockIndex++;
+        state.lastKind = "text";
+        out += anthropicSseFrame("content_block_start", { index, content_block: { type: "text", text: "" } });
+        out += anthropicSseFrame("content_block_stop", { index });
     }
 
     if (response !== undefined) {
@@ -424,10 +475,21 @@ function handleEvent(state: StreamState, event: JsonRecord): string {
 /** Streaming: a Responses SSE body → an Anthropic SSE body. */
 export function grokResponsesSseToAnthropic(
     upstream: ReadableStream<Uint8Array>,
-    options: { model: string }
+    options: ResponsesToAnthropicOptions
 ): ReadableStream<Uint8Array> {
+    return responsesSseToAnthropic(upstream, options);
+}
+
+export function responsesSseToAnthropic(
+    upstream: ReadableStream<Uint8Array>,
+    options: ResponsesToAnthropicOptions
+): ReadableStream<Uint8Array> {
+    const label = options.label ?? "grok";
     const state: StreamState = {
         model: options.model,
+        sign: options.signReasoning ?? grokReasoningSignature,
+        label,
+        lastKind: undefined,
         messageId: `msg_${crypto.randomUUID()}`,
         started: false,
         nextBlockIndex: 0,
@@ -493,7 +555,7 @@ export function grokResponsesSseToAnthropic(
                         } catch (err) {
                             logger.debug(
                                 { err, payloadPreview: payload.slice(0, 120) },
-                                "ai-proxy: skipped grok /responses SSE event"
+                                `ai-proxy: skipped ${label} /responses SSE event`
                             );
                         }
                     }
@@ -504,7 +566,10 @@ export function grokResponsesSseToAnthropic(
                 emit(finishFrames(state, undefined));
                 streamSucceeded = true;
             } catch (err) {
-                logger.warn({ err, model: options.model }, "ai-proxy: grok /responses SSE translation failed");
+                logger.warn(
+                    { err, model: options.model, upstream: label },
+                    "ai-proxy: /responses SSE translation failed"
+                );
 
                 if (!safeStreamControllerError(controller, err, streamSucceeded)) {
                     logger.debug({ err }, "ai-proxy: skipped controller.error (client abort or detached)");

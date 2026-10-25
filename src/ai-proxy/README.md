@@ -84,6 +84,15 @@ How it works (`lib/anthropic-messages.ts`):
   call timeline stay on the one shape they parse.
 - Upstreams that report no streaming usage (Grok drops `stream_options`) get an estimate rather
   than `0`, so Claude Code's context meter and auto-compact still work.
+- **The Codex and Grok agents skip the chat hop.** Their `/v1/messages` goes straight to the Responses wire
+  (`translators/formats/anthropic/anthropic-to-responses.ts` and its mirror), so encrypted reasoning survives a
+  turn: it rides in the thinking block's `signature`, which Claude Code replays verbatim. Codex stamps it as
+  `gtr1.codex.<accountHash8>.<model>.<compHash>.<payload>` (`reasoning-envelope.ts`); a later turn replays only
+  envelopes of the same account and `comp_hash`, in their original order, and drops every other one silently.
+  A 400 about a replayed blob is retried once without reasoning, and that blob is not sent again. Claude Code's
+  compaction turn goes out with `tool_choice: "none"`. Reasoning summaries show as thinking text, never as visible
+  text (`openaiSub.reasoningSummary`: `auto` by default, `detailed`, `none`). `AI_PROXY_CODEX_MESSAGES_ROUTE=chat`
+  restores the older chat hop for Codex, as `AI_PROXY_GROK_MESSAGES_ROUTE=shim` does for Grok.
 
 Caveats: `count_tokens` is a ~4-chars-per-token estimate by choice (the anthropic-subscription
 upstream does expose a real counter; proxying to it would cost a round trip per turn and is
@@ -131,7 +140,8 @@ Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. E
   on the Responses door) takes precedence over the suffix, which is the fallback.
 - **Only on translated routes.** Providers that pass an Anthropic body through untouched
   (`anthropic-subscription`, `grok-subscription` on `/v1/messages`) do not carry an OpenAI
-  `reasoning_effort` field, so the suffix is dropped there and a debug line records it. Anthropic
+  `reasoning_effort` field, so the suffix is dropped there and a debug line records it. The Codex agent's
+  `/v1/messages` route takes it. Anthropic
   rejects the field outright (`reasoning_effort: Extra inputs are not permitted`).
 - **OpenRouter ids already contain a slash but no colon**, so the suffix stays unambiguous —
   it is split off the END of the id.

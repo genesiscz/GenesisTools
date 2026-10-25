@@ -43,6 +43,33 @@ export function unpackReasoningSignature(signature: unknown): { id: string; encr
     return { id: rest.slice(0, separator), encryptedContent: rest.slice(separator + 1) };
 }
 
+/** What differs per upstream when an Anthropic request becomes a Responses request. */
+export interface ResponsesTranslationHooks {
+    /**
+     * The Responses `reasoning` item a thinking block replays, or undefined to drop the block (another provider's
+     * history, a stale or foreign signature). Items are replayed whole and in their original order.
+     */
+    reasoningItem: (thinking: JsonRecord) => JsonRecord | undefined;
+}
+
+/** Grok: the signature carries the item id and its encrypted content; the thinking text is the summary. */
+export const GROK_RESPONSES_HOOKS: ResponsesTranslationHooks = {
+    reasoningItem: (thinking) => {
+        const packed = unpackReasoningSignature(thinking.signature);
+
+        if (packed === undefined) {
+            return undefined;
+        }
+
+        return {
+            type: "reasoning",
+            id: packed.id,
+            summary: [{ type: "summary_text", text: String(thinking.thinking ?? "") }],
+            encrypted_content: packed.encryptedContent,
+        };
+    },
+};
+
 function systemToInstructions(system: unknown): string | undefined {
     if (typeof system === "string" && system.length > 0) {
         return system;
@@ -180,7 +207,12 @@ function appendUserMessage(input: JsonRecord[], content: unknown): void {
     pushUserMessage(input, parts);
 }
 
-function appendAssistantMessage(input: JsonRecord[], content: unknown, dropped: { thinking: number }): void {
+function appendAssistantMessage(
+    input: JsonRecord[],
+    content: unknown,
+    dropped: { thinking: number },
+    hooks: ResponsesTranslationHooks
+): void {
     if (typeof content === "string") {
         if (content.length > 0) {
             input.push({ role: "assistant", content: [{ type: "output_text", text: content }] });
@@ -201,20 +233,15 @@ function appendAssistantMessage(input: JsonRecord[], content: unknown, dropped: 
         }
 
         if (part.type === "thinking") {
-            const packed = unpackReasoningSignature(part.signature);
+            const item = hooks.reasoningItem(part);
 
-            if (packed === undefined) {
+            if (item === undefined) {
                 dropped.thinking += 1;
                 continue;
             }
 
             pushAssistantText(input, textParts);
-            input.push({
-                type: "reasoning",
-                id: packed.id,
-                summary: [{ type: "summary_text", text: String(part.thinking ?? "") }],
-                encrypted_content: packed.encryptedContent,
-            });
+            input.push(item);
             continue;
         }
 
@@ -301,6 +328,11 @@ export function stripReasoningInput(body: JsonRecord): JsonRecord {
 }
 
 export function anthropicToGrokResponses(body: JsonRecord, model: string): JsonRecord {
+    return anthropicToResponses(body, model, GROK_RESPONSES_HOOKS);
+}
+
+/** Anthropic Messages request → Responses request, shared by the Grok and Codex agents (hooks: what differs). */
+export function anthropicToResponses(body: JsonRecord, model: string, hooks: ResponsesTranslationHooks): JsonRecord {
     const input: JsonRecord[] = [];
     const dropped = { thinking: 0 };
 
@@ -311,7 +343,7 @@ export function anthropicToGrokResponses(body: JsonRecord, model: string): JsonR
             }
 
             if (message.role === "assistant") {
-                appendAssistantMessage(input, message.content, dropped);
+                appendAssistantMessage(input, message.content, dropped, hooks);
             } else {
                 appendUserMessage(input, message.content);
             }
@@ -321,7 +353,7 @@ export function anthropicToGrokResponses(body: JsonRecord, model: string): JsonR
     if (dropped.thinking > 0) {
         logger.debug(
             { dropped: dropped.thinking, model },
-            "ai-proxy: dropped thinking blocks without a grok reasoning signature"
+            "ai-proxy: dropped thinking blocks without a replayable reasoning signature"
         );
     }
 

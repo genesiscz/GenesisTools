@@ -1,8 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
+import { CLAUDE_CODE_COMPACTION_MARK } from "@app/ai-proxy/lib/translators/formats/anthropic/compaction";
+import {
+    accountHash8,
+    isReasoningReplayRejection,
+    openReasoningEnvelope,
+    packReasoningEnvelope,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-envelope";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -890,5 +897,276 @@ describe("OpenAiSubscriptionProvider", () => {
 
         expect(second.status).toBe(200);
         expect(upstreamCalled).toBe(true);
+    });
+});
+
+describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () => {
+    const fixture = readFileSync(join(import.meta.dir, "fixtures", "wham-reasoning-parallel-tools.sse"), "utf8");
+    const sseResponse = (text: string) =>
+        new Response(text, { status: 200, headers: { "content-type": "text/event-stream" } });
+
+    interface Frame {
+        event: string;
+        data: Record<string, unknown>;
+    }
+
+    function frames(text: string): Frame[] {
+        return text
+            .split("\n\n")
+            .filter((chunk) => chunk.includes("data:"))
+            .map((chunk) => {
+                const event = chunk.match(/^event: (.+)$/m)?.[1] ?? "";
+                const data = SafeJSON.parse(chunk.slice(chunk.indexOf("data:") + 5).trim()) as Record<string, unknown>;
+                return { event, data };
+            });
+    }
+
+    async function send(
+        body: Record<string, unknown>,
+        context?: { promptCacheKey?: { key: string; source: "claude-session" } }
+    ): Promise<Response> {
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify(body);
+        const messages = provider.messages;
+
+        if (!messages) {
+            throw new Error("the native route is off");
+        }
+
+        return messages(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6.1-sol",
+            bodyText,
+            context
+        );
+    }
+
+    function turnOneThinking(text: string): { signature: string; thinking: string } {
+        let thinking = "";
+        let signature = "";
+
+        for (const frame of frames(text)) {
+            const delta = frame.data.delta as Record<string, unknown> | undefined;
+
+            if (delta?.type === "thinking_delta") {
+                thinking += String(delta.thinking);
+            }
+
+            if (delta?.type === "signature_delta") {
+                signature = String(delta.signature);
+            }
+        }
+
+        return { signature, thinking };
+    }
+
+    it("a recorded WHAM stream: thinking first with one gtr1 signature, text, four tool calls with .done-only arguments, never thinking last", async () => {
+        globalThis.fetch = (async () => sseResponse(fixture)) as unknown as typeof fetch;
+        const response = await send({
+            model: "gpt-6.1-sol",
+            stream: true,
+            messages: [{ role: "user", content: "which capital?" }],
+        });
+        const text = await response.text();
+        const all = frames(text);
+        const starts = all
+            .filter((frame) => frame.event === "content_block_start")
+            .map((frame) => (frame.data.content_block as Record<string, unknown>).type);
+        const signatures = all.filter(
+            (frame) => (frame.data.delta as Record<string, unknown> | undefined)?.type === "signature_delta"
+        );
+        const toolInputs = new Map<number, string>();
+
+        for (const frame of all) {
+            const delta = frame.data.delta as Record<string, unknown> | undefined;
+
+            if (delta?.type === "input_json_delta") {
+                const index = Number(frame.data.index);
+                toolInputs.set(index, (toolInputs.get(index) ?? "") + String(delta.partial_json));
+            }
+        }
+
+        expect(response.status).toBe(200);
+        expect(starts).toEqual(["thinking", "text", "tool_use", "tool_use", "tool_use", "tool_use"]);
+        expect(signatures).toHaveLength(1);
+
+        const { signature, thinking } = turnOneThinking(text);
+        expect(thinking.length).toBeGreaterThan(0);
+        expect(signature.startsWith(`gtr1.codex.${accountHash8("codex")}.gpt-6.1-sol.`)).toBe(true);
+        expect(
+            openReasoningEnvelope(signature, {
+                provider: "codex",
+                accountHash: accountHash8("codex"),
+                compHash: signature.split(".").at(-2) ?? "",
+            })
+        ).toMatchObject({
+            ok: true,
+            item: { encrypted_content: "REDACTED-ENCRYPTED-2" },
+        });
+        expect([...toolInputs.values()].map((input) => SafeJSON.parse(input))).toHaveLength(4);
+        expect(all.find((frame) => frame.event === "message_delta")?.data.usage).toMatchObject({
+            input_tokens: 129,
+            output_tokens: 312,
+        });
+    });
+
+    it("the next turn replays the item whole, before its tool call, with the conversation's cache key; foreign signatures go silently", async () => {
+        globalThis.fetch = (async () => sseResponse(fixture)) as unknown as typeof fetch;
+        const { signature, thinking } = turnOneThinking(
+            await (
+                await send({ model: "gpt-6.1-sol", stream: true, messages: [{ role: "user", content: "q" }] })
+            ).text()
+        );
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+        const session = "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b";
+
+        const response = await send(
+            {
+                model: "gpt-6.1-sol",
+                stream: true,
+                messages: [
+                    { role: "user", content: "q" },
+                    {
+                        role: "assistant",
+                        content: [
+                            { type: "thinking", thinking: "old grok thought", signature: "grokrs1:rs_x:blob" },
+                            { type: "thinking", thinking, signature },
+                            { type: "tool_use", id: "call_1", name: "get_time", input: { timezone: "Europe/Prague" } },
+                        ],
+                    },
+                    { role: "user", content: [{ type: "tool_result", tool_use_id: "call_1", content: "12:00" }] },
+                ],
+            },
+            { promptCacheKey: { key: session, source: "claude-session" } }
+        );
+        await response.text();
+
+        const input = sent[0]?.input as Array<Record<string, unknown>>;
+        const types = input.map((item) => item.type ?? item.role);
+        expect(response.status).toBe(200);
+        expect(types.indexOf("reasoning")).toBeLessThan(types.indexOf("function_call"));
+        expect(input.filter((item) => item.type === "reasoning")).toEqual([
+            expect.objectContaining({ type: "reasoning", encrypted_content: "REDACTED-ENCRYPTED-2" }),
+        ]);
+        expect((input.find((item) => item.type === "reasoning")?.summary as unknown[]).length).toBeGreaterThan(0);
+        expect(sent[0]?.prompt_cache_key).toBe(session);
+        expect(sent[0]?.reasoning).toMatchObject({ summary: "auto" });
+    });
+
+    it("a 400 about the replayed blob retries once without reasoning, and that blob is never replayed again", async () => {
+        const envelope = packReasoningEnvelope(
+            { provider: "codex", accountHash: accountHash8("codex"), model: "gpt-6.1-sol", compHash: "0" },
+            { id: "rs_dead", encrypted_content: "stale-blob", summary: [] }
+        );
+        const body = {
+            model: "gpt-6.1-sol",
+            stream: true,
+            messages: [
+                { role: "user", content: "q" },
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "thinking", thinking: "", signature: envelope },
+                        { type: "text", text: "a" },
+                    ],
+                },
+                { role: "user", content: "again" },
+            ],
+        };
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return sent.length === 1
+                ? new Response(
+                      SafeJSON.stringify({
+                          error: { code: "invalid_encrypted_content", message: "could not be verified" },
+                      }),
+                      { status: 400, headers: { "content-type": "application/json" } }
+                  )
+                : whamStreamResponse();
+        }) as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const call = async () => {
+            const bodyText = SafeJSON.stringify(body);
+            const res = await provider.messages?.(
+                new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+                "gpt-6.1-sol",
+                bodyText
+            );
+            await res?.text();
+            return res;
+        };
+
+        expect((await call())?.status).toBe(200);
+        expect(sent).toHaveLength(2);
+        const reasoningIn = (index: number) =>
+            (sent[index]?.input as Array<Record<string, unknown>>).filter((item) => item.type === "reasoning").length;
+        expect(reasoningIn(0)).toBe(1);
+        expect(reasoningIn(1)).toBe(0);
+
+        expect((await call())?.status).toBe(200);
+        expect(sent).toHaveLength(3);
+        expect(reasoningIn(2)).toBe(0);
+    });
+
+    it("Claude Code's compaction turn goes out with tool_choice none", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return whamStreamResponse();
+        }) as typeof fetch;
+        await (
+            await send({
+                model: "gpt-6.1-sol",
+                stream: true,
+                tools: [{ name: "Read", description: "read", input_schema: { type: "object", properties: {} } }],
+                messages: [{ role: "user", content: `${CLAUDE_CODE_COMPACTION_MARK}\n\nSummarize the conversation.` }],
+            })
+        ).text();
+
+        expect(sent[0]?.tool_choice).toBe("none");
+    });
+});
+
+describe("reasoning envelope", () => {
+    const stamp = { provider: "codex", accountHash: accountHash8("work"), model: "gpt-6.1-sol", compHash: "3000" };
+    const item = { id: "rs_1", encrypted_content: "blob", summary: [{ type: "summary_text", text: "t" }] };
+
+    it("opens what it packed, the dotted model id included, and refuses another provider, account or comp_hash", () => {
+        const signature = packReasoningEnvelope(stamp, item);
+        const expect_ = { provider: "codex", accountHash: stamp.accountHash, compHash: "3000" };
+
+        expect(openReasoningEnvelope(signature, expect_)).toEqual({ ok: true, item, stamp });
+        expect(openReasoningEnvelope(signature, { ...expect_, provider: "grok" })).toEqual({
+            ok: false,
+            reason: "provider",
+        });
+        expect(openReasoningEnvelope(signature, { ...expect_, accountHash: accountHash8("personal") })).toEqual({
+            ok: false,
+            reason: "account",
+        });
+        expect(openReasoningEnvelope(signature, { ...expect_, compHash: "2000" })).toEqual({
+            ok: false,
+            reason: "comp-hash",
+        });
+        expect(openReasoningEnvelope(`${signature.slice(0, -4)}!!!!`, expect_)).toEqual({
+            ok: false,
+            reason: "malformed",
+        });
+        expect(openReasoningEnvelope("grokrs1:rs:blob", expect_)).toEqual({ ok: false, reason: "not-envelope" });
+        expect(openReasoningEnvelope(undefined, expect_)).toEqual({ ok: false, reason: "not-envelope" });
+    });
+
+    it("knows the 400s that reject replayed reasoning, and nothing else", () => {
+        expect(isReasoningReplayRejection(400, '{"error":{"code":"invalid_encrypted_content"}}')).toBe(true);
+        expect(isReasoningReplayRejection(400, "Encrypted content was not issued to this caller")).toBe(true);
+        expect(isReasoningReplayRejection(400, "Unsupported parameter: temperature")).toBe(false);
+        expect(isReasoningReplayRejection(500, "could not decrypt")).toBe(false);
     });
 });

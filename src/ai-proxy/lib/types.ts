@@ -127,6 +127,11 @@ export interface AiProxyOpenAiSubAccountConfig {
     defaultReasoningEffort?: "none" | "low" | "medium" | "high";
     /** Extra model aliases for this account, e.g. { "fast": "gpt-5.4-mini" }. */
     aliases?: Record<string, string>;
+    /**
+     * Reasoning summaries on the Anthropic route (`/v1/messages`), shown in Claude Code as thinking text. `auto`
+     * (default) when the model supports the parameter, `detailed` asks for more, `none` asks for none.
+     */
+    reasoningSummary?: "none" | "auto" | "detailed";
 }
 
 /** Provider-routing knobs, shared shape for both the account-level default and a per-model route. */

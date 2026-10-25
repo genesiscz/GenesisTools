@@ -1,12 +1,18 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { convertMessagesToInput } from "@app/ai-proxy/lib/chat-to-responses-body";
 import { codexModelInfo } from "@app/ai-proxy/lib/codex-catalog";
 import { captureUpstreamFailure } from "@app/ai-proxy/lib/debug-capture";
 import { clientAbortResponse } from "@app/ai-proxy/lib/providers/client-abort";
 import { cooldownRemainingMs, markRateLimited, markSuccess, markUnhealthy } from "@app/ai-proxy/lib/providers/cooldown";
+import { relayHeaders } from "@app/ai-proxy/lib/providers/http-relay";
 import { resolveOpenAiSubFailoverToken, resolveOpenAiSubToken } from "@app/ai-proxy/lib/providers/openai-sub-token";
-import type { OpenAiModel, ProviderInspectionOptions, ProxyProvider } from "@app/ai-proxy/lib/providers/types";
+import type {
+    OpenAiModel,
+    ProviderInspectionOptions,
+    ProviderRequestContext,
+    ProxyProvider,
+} from "@app/ai-proxy/lib/providers/types";
 import { mapWhamError, parseRetryAfterSeconds } from "@app/ai-proxy/lib/providers/wham-errors";
 import {
     createWhamItemHarvestTransform,
@@ -14,6 +20,26 @@ import {
     resolveWhamItemReferences,
     whamItemScope,
 } from "@app/ai-proxy/lib/providers/wham-item-store";
+import {
+    anthropicToResponses,
+    stripReasoningInput,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/anthropic-to-responses";
+import { isClaudeCodeCompactionTurn } from "@app/ai-proxy/lib/translators/formats/anthropic/compaction";
+import { ensureToolRequiredArrays } from "@app/ai-proxy/lib/translators/formats/anthropic/ensure-tool-required";
+import { toAnthropicErrorResponse } from "@app/ai-proxy/lib/translators/formats/anthropic/error-envelope";
+import {
+    responsesSseToAnthropic,
+    responsesToAnthropicMessage,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
+import { hoistSystemMessages } from "@app/ai-proxy/lib/translators/formats/anthropic/hoist-system-messages";
+import {
+    accountHash8,
+    type EnvelopeRejection,
+    isReasoningReplayRejection,
+    openReasoningEnvelope,
+    packReasoningEnvelope,
+    type ReasoningEnvelopeStamp,
+} from "@app/ai-proxy/lib/translators/formats/anthropic/reasoning-envelope";
 import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat";
 import type { AiProxyAccountConfig, ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
 import { getTodayUsageSummary, getUsageSummarySince } from "@app/ai-proxy/lib/usage/store";
@@ -29,6 +55,7 @@ import { type PromptCacheKey, resolvePromptCacheKey } from "@genesiscz/utils/ai/
 // The one predicate in the repo for "did this failure happen below HTTP?".
 // Duplicating it here is how the poll gate and the proxy would drift apart.
 import { isTransportFailure } from "@genesiscz/utils/ai/usage-poll/poll-gate";
+import { env } from "@genesiscz/utils/env";
 import { formatTokens } from "@genesiscz/utils/format";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -50,14 +77,24 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
     readonly id = "openai-subscription";
     readonly accountFingerprint: string;
     readonly acceptsPromptCacheKey = true;
+    /** The `:effort` suffix rides in the Anthropic body as `reasoning_effort`, which the Responses body reads. */
+    readonly messagesAcceptsReasoningEffort = true;
+    /** Native `/v1/messages`: set unless `AI_PROXY_CODEX_MESSAGES_ROUTE=chat` restores the chat hop. */
+    readonly messages?: ProxyProvider["messages"];
     private readonly account: AiProxyAccountConfig;
     /** The live WHAM model list, when the image guard or `listModels` already fetched it (10 min). */
     private liveRecords: WhamModelRecord[] | null = null;
     private liveFetchedAt = 0;
+    /** Reasoning item ids the upstream refused to decrypt: never replayed again by this process. */
+    private readonly deadReasoning = new Set<string>();
 
     constructor(account: AiProxyAccountConfig) {
         this.account = account;
         this.accountFingerprint = accountConfigFingerprint(account);
+
+        if (env.aiProxy.getCodexMessagesRoute() === "responses") {
+            this.messages = (req, model, bodyText, context) => this.nativeMessages(req, model, bodyText, context);
+        }
     }
 
     static async create(account: AiProxyAccountConfig): Promise<OpenAiSubscriptionProvider> {
@@ -188,8 +225,6 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
     }
 
     async responses(req: Request, model: string, bodyText: string): Promise<Response> {
-        const concreteModel = resolveOpenAiSubModel(model, this.account.openaiSub?.aliases);
-
         let parsed: Record<string, unknown>;
         try {
             const parsedBody = SafeJSON.parse(bodyText, { strict: true });
@@ -202,6 +237,157 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             logger.debug({ err }, "ai-proxy: openai-subscription got invalid JSON body");
             return jsonError(400, "Invalid JSON body");
         }
+
+        return this.respond(req, model, parsed);
+    }
+
+    /** The account identity a reasoning envelope is stamped with: the login, else the proxy account. */
+    private envelopeAccountHash(): string {
+        return accountHash8(this.account.openaiSub?.accountName ?? this.account.name);
+    }
+
+    /**
+     * Anthropic `/v1/messages` straight to the WHAM Responses wire. The chat hop had no slot for reasoning items;
+     * here each one rides in a thinking block's signature (a `gtr1.` envelope) and comes back whole next turn.
+     */
+    private async nativeMessages(
+        req: Request,
+        model: string,
+        bodyText: string,
+        context?: ProviderRequestContext
+    ): Promise<Response> {
+        let parsed: Record<string, unknown>;
+        try {
+            const parsedBody = SafeJSON.parse(bodyText, { strict: true });
+
+            if (!isObject(parsedBody)) {
+                return toAnthropicErrorResponse(jsonError(400, "Invalid JSON body"));
+            }
+
+            parsed = parsedBody;
+        } catch (err) {
+            logger.debug({ err }, "ai-proxy: openai-subscription got an invalid /v1/messages body");
+            return toAnthropicErrorResponse(jsonError(400, "Invalid JSON body"));
+        }
+
+        const concreteModel = resolveOpenAiSubModel(model, this.account.openaiSub?.aliases);
+        const fresh = Date.now() - this.liveFetchedAt <= MODALITY_CACHE_TTL_MS ? this.liveRecords : null;
+        const catalog = codexModelInfo(concreteModel, fresh);
+        const stamp: ReasoningEnvelopeStamp = {
+            provider: "codex",
+            accountHash: this.envelopeAccountHash(),
+            model: concreteModel,
+            compHash: catalog?.compHash ?? "0",
+        };
+        const replay = { kept: [] as string[], dropped: {} as Partial<Record<EnvelopeRejection | "dead", number>> };
+        const responsesBody = anthropicToResponses(
+            hoistSystemMessages(ensureToolRequiredArrays(parsed)),
+            concreteModel,
+            {
+                reasoningItem: (thinking) => {
+                    const opened = openReasoningEnvelope(thinking.signature, stamp);
+
+                    if (!opened.ok || this.deadReasoning.has(opened.item.id)) {
+                        const reason = opened.ok ? "dead" : opened.reason;
+                        replay.dropped[reason] = (replay.dropped[reason] ?? 0) + 1;
+                        return undefined;
+                    }
+
+                    replay.kept.push(contentHash(opened.item.encrypted_content));
+                    return { type: "reasoning", ...opened.item };
+                },
+            }
+        );
+
+        // Claude Code forbids tools in its compaction prompt in words only; a Codex model may still call one, which
+        // Claude Code refuses, and three refused compactions end the session.
+        if (isClaudeCodeCompactionTurn(parsed)) {
+            responsesBody.tool_choice = "none";
+        }
+
+        if (context?.promptCacheKey) {
+            responsesBody.prompt_cache_key = context.promptCacheKey.key;
+        }
+
+        responsesBody.reasoning = reasoningOptions(catalog, this.account.openaiSub?.reasoningSummary);
+
+        logger.debug(
+            {
+                model: concreteModel,
+                replayed: replay.kept.length,
+                replayedHashes: replay.kept,
+                dropped: Object.keys(replay.dropped).length > 0 ? replay.dropped : undefined,
+                compaction: responsesBody.tool_choice === "none" ? true : undefined,
+            },
+            "ai-proxy: codex /v1/messages reasoning replay"
+        );
+
+        let response = await this.respond(req, model, responsesBody);
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            const replayed = Array.isArray(responsesBody.input)
+                ? responsesBody.input.filter((item) => isObject(item) && item.type === "reasoning")
+                : [];
+
+            if (replayed.length === 0 || !isReasoningReplayRejection(response.status, errorText)) {
+                return toAnthropicErrorResponse(
+                    new Response(errorText, { status: response.status, headers: response.headers })
+                );
+            }
+
+            for (const item of replayed) {
+                if (isObject(item) && typeof item.id === "string") {
+                    this.deadReasoning.add(item.id);
+                }
+            }
+
+            logger.warn(
+                { model: concreteModel, items: replayed.length, status: response.status },
+                "ai-proxy: WHAM refused replayed reasoning; retrying once without it, those items stay dropped"
+            );
+            response = await this.respond(req, model, stripReasoningInput(responsesBody));
+
+            if (!response.ok) {
+                return toAnthropicErrorResponse(response);
+            }
+        }
+
+        const signReasoning = (item: Record<string, unknown>): string => {
+            if (typeof item.encrypted_content !== "string" || item.encrypted_content.length === 0) {
+                return "";
+            }
+
+            return packReasoningEnvelope(stamp, {
+                id: typeof item.id === "string" ? item.id : `rs_${randomUUID()}`,
+                encrypted_content: item.encrypted_content,
+                summary: Array.isArray(item.summary) ? item.summary : [],
+            });
+        };
+
+        if (parsed.stream === true && response.body) {
+            return new Response(responsesSseToAnthropic(response.body, { model, signReasoning, label: "codex" }), {
+                status: response.status,
+                headers: relayHeaders(response),
+            });
+        }
+
+        const envelope = SafeJSON.parse(await response.text(), { strict: true });
+        return new Response(
+            SafeJSON.stringify(
+                responsesToAnthropicMessage(isObject(envelope) ? envelope : {}, {
+                    model,
+                    signReasoning,
+                    label: "codex",
+                })
+            ),
+            { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+    }
+
+    /** One Responses-shaped request to WHAM, with the account pool, the 401 refresh, 429 cooling and the error map. */
+    private async respond(req: Request, model: string, parsed: Record<string, unknown>): Promise<Response> {
+        const concreteModel = resolveOpenAiSubModel(model, this.account.openaiSub?.aliases);
 
         if (bodyContainsImageInput(parsed)) {
             const modalities = await this.lookupInputModalities(concreteModel);
@@ -693,6 +879,16 @@ export function buildWhamResponsesBody(
         } else if (parsed.tools) {
             body.tools = parsed.tools;
         }
+
+        // Forwarded as sent. Dropping them ran every request as "auto": Claude Code's compaction turn needs "none",
+        // and a client that turned parallel calls off meant it.
+        if (parsed.tool_choice !== undefined) {
+            body.tool_choice = parsed.tool_choice;
+        }
+
+        if (typeof parsed.parallel_tool_calls === "boolean") {
+            body.parallel_tool_calls = parsed.parallel_tool_calls;
+        }
     } else {
         const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
         const instructions: string[] = [];
@@ -872,6 +1068,33 @@ function applyCatalogEffort({
 
     body.reasoning = { ...nested, effort: resolved.effort };
     return undefined;
+}
+
+/** The first 12 hex of a SHA-256: enough to match a blob across turns in a log, nothing of its content. */
+function contentHash(value: string): string {
+    return createHash("sha256").update(value).digest("hex").slice(0, 12);
+}
+
+/**
+ * The `reasoning` options of a `/v1/messages` request. A summary shows the model's reasoning as Claude Code
+ * thinking text (the default where the model takes the parameter). A Responses Lite model keeps the reasoning of every
+ * turn (`context: "all_turns"`), as codex-rs sends it; WHAM accepts it with classic tools (2026-10-25 probe b).
+ */
+function reasoningOptions(
+    catalog: CodexModelInfo | undefined,
+    summary: "none" | "auto" | "detailed" = "auto"
+): Record<string, unknown> {
+    const reasoning: Record<string, unknown> = {};
+
+    if (summary !== "none" && catalog?.supportsReasoningSummaryParameter !== false) {
+        reasoning.summary = summary;
+    }
+
+    if (catalog?.useResponsesLite) {
+        reasoning.context = "all_turns";
+    }
+
+    return reasoning;
 }
 
 const SSE_LINE_END = /\r\n|\r|\n/;

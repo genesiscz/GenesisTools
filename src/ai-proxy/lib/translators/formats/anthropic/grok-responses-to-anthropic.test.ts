@@ -359,3 +359,39 @@ describe("grokResponsesToAnthropicMessage", () => {
         expect(message.stop_reason).toBe("max_tokens");
     });
 });
+
+describe("a message never ends on a thinking block (Claude Code drops it, and the reasoning with it)", () => {
+    const reasoning = {
+        type: "reasoning",
+        id: "rs_only",
+        summary: [{ type: "summary_text", text: "cut off while thinking" }],
+        encrypted_content: "blob",
+    };
+
+    it("streaming: a reasoning-only answer gets an empty text block after the thinking block", async () => {
+        const { frames } = await collect(
+            grokResponsesSseToAnthropic(
+                sse([
+                    { type: "response.output_item.added", output_index: 0, item: { ...reasoning, summary: [] } },
+                    { type: "response.output_item.done", output_index: 0, item: reasoning },
+                    { type: "response.incomplete", response: { status: "incomplete", output: [reasoning] } },
+                ]),
+                { model: "grok-x" }
+            )
+        );
+        const starts = frames
+            .filter((frame) => frame.event === "content_block_start")
+            .map((frame) => (frame.data.content_block as Record<string, unknown>).type);
+
+        expect(starts).toEqual(["thinking", "text"]);
+    });
+
+    it("non-streaming: the same", () => {
+        const message = grokResponsesToAnthropicMessage(
+            { status: "incomplete", output: [reasoning] },
+            { model: "grok-x" }
+        );
+
+        expect((message.content as Array<{ type: string }>).map((block) => block.type)).toEqual(["thinking", "text"]);
+    });
+});

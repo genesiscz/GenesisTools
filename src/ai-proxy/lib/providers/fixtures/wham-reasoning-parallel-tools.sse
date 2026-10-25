@@ -1,0 +1,533 @@
+event: response.created
+data: {"type":"response.created","sequence_number":0,"safety_buffering":false,"response":{"id":"resp_0b859be91c473db4016ade78c3537881918295a15608676db4","object":"response","created_at":1792964803,"completed_at":null,"status":"in_progress","background":false,"frequency_penalty":0,"presence_penalty":0,"moderation":null,"model":"gpt-6.1-sol","access_programs":{"cyber":"standard"},"previous_response_id":null,"instructions":"You are a tool-using assistant. When the user asks for two lookups, call both tools in one turn.","output":[],"error":null,"incomplete_details":null,"tools":[{"type":"function","name":"get_time","description":"Current time in a time zone","parameters":{"type":"object","properties":{"timezone":{"type":"string"}},"required":["timezone"],"additionalProperties":false},"output_schema":null,"strict":true},{"type":"function","name":"get_weather","description":"Current weather in a city","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false},"output_schema":null,"strict":true}],"tool_choice":"auto","parallel_tool_calls":true,"prompt_cache_key":"7a04de2f-d096-796d-355c-0c55e687e96f","prompt_cache_retention":"24h","text":{"format":{"type":"text"},"verbosity":"medium"},"top_p":0.98,"top_logprobs":0,"temperature":1,"reasoning":{"effort":"high","summary":"detailed","context":"all_turns","mode":"standard"},"user":null,"usage":null,"tool_usage":{"image_gen":{"input_tokens":0,"output_tokens":0,"total_tokens":0,"input_tokens_details":{"text_tokens":0,"image_tokens":0},"output_tokens_details":{"image_tokens":0,"text_tokens":0}},"web_search":{"num_requests":0}},"safety_identifier":"user-fixture000000000000000","store":false,"metadata":{},"max_output_tokens":null,"max_tool_calls":null,"service_tier":"auto","truncation":"disabled"}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","sequence_number":1,"safety_buffering":false,"response":{"id":"resp_0b859be91c473db4016ade78c3537881918295a15608676db4","object":"response","created_at":1792964803,"completed_at":null,"status":"in_progress","background":false,"frequency_penalty":0,"presence_penalty":0,"moderation":null,"model":"gpt-6.1-sol","access_programs":{"cyber":"standard"},"previous_response_id":null,"instructions":"You are a tool-using assistant. When the user asks for two lookups, call both tools in one turn.","output":[],"error":null,"incomplete_details":null,"tools":[{"type":"function","name":"get_time","description":"Current time in a time zone","parameters":{"type":"object","properties":{"timezone":{"type":"string"}},"required":["timezone"],"additionalProperties":false},"output_schema":null,"strict":true},{"type":"function","name":"get_weather","description":"Current weather in a city","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false},"output_schema":null,"strict":true}],"tool_choice":"auto","parallel_tool_calls":true,"prompt_cache_key":"7a04de2f-d096-796d-355c-0c55e687e96f","prompt_cache_retention":"24h","text":{"format":{"type":"text"},"verbosity":"medium"},"top_p":0.98,"top_logprobs":0,"temperature":1,"reasoning":{"effort":"high","summary":"detailed","context":"all_turns","mode":"standard"},"user":null,"usage":null,"tool_usage":{"image_gen":{"input_tokens":0,"output_tokens":0,"total_tokens":0,"input_tokens_details":{"text_tokens":0,"image_tokens":0},"output_tokens_details":{"image_tokens":0,"text_tokens":0}},"web_search":{"num_requests":0}},"safety_identifier":"user-fixture000000000000000","store":false,"metadata":{},"max_output_tokens":null,"max_tool_calls":null,"service_tier":"auto","truncation":"disabled"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"type":"reasoning","id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","summary":[],"content":[],"encrypted_content":"REDACTED-ENCRYPTED-1"}}
+
+: keep-alive
+
+event: response.reasoning_summary_part.added
+data: {"type":"response.reasoning_summary_part.added","sequence_number":3,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":4,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":"**Evaluating border ambiguities**\n\nI","obfuscation":"ntSOcE1KHZ4H"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":5,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" need","obfuscation":"A7NqMj8oEDR"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":6,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" to","obfuscation":"DvRZEplTvCipO"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":7,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" clarify","obfuscation":"6fTNdbTi"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":8,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" that","obfuscation":"k1VRey7nvJG"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":9,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" both","obfuscation":"PXSTKbZhyz4"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":10,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Austria","obfuscation":"NQUuX37D"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":11,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" borders","obfuscation":"3IIrim8c"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":12,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Poland","obfuscation":"DVPCUNT36"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":13,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" and","obfuscation":"hve2T0XStHtw"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":14,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Czech","obfuscation":"nNjRhYuhZZ"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":15,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":"ia","obfuscation":"xX4nHq9Y15q6X3"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":16,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":",","obfuscation":"bVAMiSTx0CW9ouO"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":17,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" as","obfuscation":"4EsGDcVOzya4l"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":18,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" well","obfuscation":"6YRBYqGWHCY"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":19,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" as","obfuscation":"WhXcChQgxn9yj"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":20,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Slovakia","obfuscation":"yLSoL43"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":21,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":".","obfuscation":"mgytqKaMIvdCHk5"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":22,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" The","obfuscation":"JGdxtn3pGNgZ"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":23,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" user","obfuscation":"9nyFBsqh64F"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":24,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" likely","obfuscation":"Reusb4auS"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":25,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" refers","obfuscation":"OzLeePrHs"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":26,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" to","obfuscation":"zGFRlMq9i85Xe"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":27,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Prague","obfuscation":"YCqU09MbM"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":28,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" in","obfuscation":"RRtkeMvO638lI"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":29,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Czech","obfuscation":"kX6E7HGe5c"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":30,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":"ia","obfuscation":"A2kDyoB3ZIIPMD"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":31,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":",","obfuscation":"nGOBkrchH9w0n8q"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":32,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" but","obfuscation":"KuYdguKrJs69"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":33,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Bratis","obfuscation":"n6xUilfRJ"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":34,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":"lava","obfuscation":"O5h1PXGHs0OA"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":35,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" in","obfuscation":"KpZ8ezdnqMKzw"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":36,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Slovakia","obfuscation":"UnFuqDt"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":37,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" also","obfuscation":"PyQq9OiUV8V"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":38,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" fits","obfuscation":"heXHyI0eknm"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":39,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":".","obfuscation":"vhuve45fHJowSHA"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":40,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" I","obfuscation":"pPSLfchHiQomBe"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":41,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" could","obfuscation":"nu5YFtTQUR"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":42,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" ask","obfuscation":"S00MNOLKNMCm"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":43,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" for","obfuscation":"uCMsQf1gSN14"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":44,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" clarification","obfuscation":"yB"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":45,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":",","obfuscation":"JecBdIQOfO8RUIq"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":46,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" but","obfuscation":"U1xlBjWb3WwZ"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":47,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" it","obfuscation":"ePyVIYMMouOV5"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":48,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" seems","obfuscation":"EOu41id92x"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":49,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" like","obfuscation":"hqxrIOVrnlY"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":50,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" the","obfuscation":"btEP4IeJO7kX"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":51,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" user","obfuscation":"RARkmiZhjTT"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":52,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" expects","obfuscation":"pHeaplIH"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":53,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" me","obfuscation":"SqZOpzK0GIY2E"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":54,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" to","obfuscation":"0UKdmy38jwVK3"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":55,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" handle","obfuscation":"G8MpOlNif"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":56,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" this","obfuscation":"9srqGNaOK0H"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":57,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":".","obfuscation":"xubdE4c0d9NemnE"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":58,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" I'll","obfuscation":"MC8hqIBJWls"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":59,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" mention","obfuscation":"Y3qcbW4c"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":60,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" both","obfuscation":"ikJ5dogMJoA"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":61,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" capitals","obfuscation":"Ii14l3Y"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":62,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" to","obfuscation":"GODJCjGLLccBf"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":63,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" avoid","obfuscation":"MH2WdplkPA"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":64,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" any","obfuscation":"EsfTfRsRpWZ9"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":65,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" ambiguity","obfuscation":"fWK02e"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":66,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":",","obfuscation":"lENr3Eyrns3g5zx"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":67,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" saying","obfuscation":"LeTIFxshV"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":68,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" something","obfuscation":"iHXmjB"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":69,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" like","obfuscation":"8TIRhBdHpsn"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":70,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":":","obfuscation":"uQvqS5a7Qss2wmI"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":71,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" \"","obfuscation":"wfE5V9lFH5n6vH"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":72,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":"Both","obfuscation":"kHYUjGjl399R"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":73,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Czech","obfuscation":"2FBhEF0hO1"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":74,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":"ia","obfuscation":"8f53nipmcKLtAV"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":75,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" and","obfuscation":"blZZ2EzzHt44"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":76,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Slovakia","obfuscation":"Yyzvznu"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":77,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" border","obfuscation":"yLPEHDvBq"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":78,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Austria","obfuscation":"UlZNt8sB"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":79,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" and","obfuscation":"fVsFRn3nQIvL"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":80,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" Poland","obfuscation":"AlJszrRSQ"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":81,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":".\"","obfuscation":"3uYgIQuPKrkEHw"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":82,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" That","obfuscation":"hAnfASNT60E"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":83,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" way","obfuscation":"LUYS5c98h3o1"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":84,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":",","obfuscation":"giDgoXTd5uflIAg"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":85,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" I","obfuscation":"5ZyinjpP4KM4Rx"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":86,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":"’ll","obfuscation":"BOLKgP1XyWIuc"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":87,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" check","obfuscation":"3wKoltbSrl"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":88,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" the","obfuscation":"THXzm8wAMaJe"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":89,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" time","obfuscation":"fuYaHOTpxWx"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":90,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" and","obfuscation":"wZAygQFXFR5w"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":91,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" weather","obfuscation":"vM9UiqgW"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":92,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" for","obfuscation":"N7TqusoZ7WZl"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":93,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" both","obfuscation":"vN3mT1oqjvh"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":94,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" capitals","obfuscation":"AC2vIcC"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":95,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" in","obfuscation":"7v3AJZN9uvign"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":96,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" one","obfuscation":"gkPTMdWvE5ib"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":97,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":" go","obfuscation":"THR8e1FlF3J9z"}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":98,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"delta":".","obfuscation":"k0cJ9ajWZOt7rI8"}
+
+event: response.reasoning_summary_text.done
+data: {"type":"response.reasoning_summary_text.done","sequence_number":99,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"text":"**Evaluating border ambiguities**\n\nI need to clarify that both Austria borders Poland and Czechia, as well as Slovakia. The user likely refers to Prague in Czechia, but Bratislava in Slovakia also fits. I could ask for clarification, but it seems like the user expects me to handle this. I'll mention both capitals to avoid any ambiguity, saying something like: \"Both Czechia and Slovakia border Austria and Poland.\" That way, I’ll check the time and weather for both capitals in one go."}
+
+event: response.reasoning_summary_part.done
+data: {"type":"response.reasoning_summary_part.done","sequence_number":100,"item_id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":"**Evaluating border ambiguities**\n\nI need to clarify that both Austria borders Poland and Czechia, as well as Slovakia. The user likely refers to Prague in Czechia, but Bratislava in Slovakia also fits. I could ask for clarification, but it seems like the user expects me to handle this. I'll mention both capitals to avoid any ambiguity, saying something like: \"Both Czechia and Slovakia border Austria and Poland.\" That way, I’ll check the time and weather for both capitals in one go."}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":101,"output_index":0,"item":{"type":"reasoning","id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","summary":[{"type":"summary_text","text":"**Evaluating border ambiguities**\n\nI need to clarify that both Austria borders Poland and Czechia, as well as Slovakia. The user likely refers to Prague in Czechia, but Bratislava in Slovakia also fits. I could ask for clarification, but it seems like the user expects me to handle this. I'll mention both capitals to avoid any ambiguity, saying something like: \"Both Czechia and Slovakia border Austria and Poland.\" That way, I’ll check the time and weather for both capitals in one go."}],"content":[],"encrypted_content":"REDACTED-ENCRYPTED-2"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":102,"output_index":1,"item":{"type":"message","id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","role":"assistant","status":"in_progress","content":[],"phase":"commentary"}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","sequence_number":103,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"part":{"type":"output_text","text":"","annotations":[],"logprobs":[]}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":104,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"Two","logprobs":[],"safety_buffering":false,"obfuscation":"cgbQXO4KzTHN6"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":105,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" countries","logprobs":[],"safety_buffering":false,"obfuscation":"Zop2HN"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":106,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" border","logprobs":[],"safety_buffering":false,"obfuscation":"HoebWhfKJ"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":107,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" both","logprobs":[],"safety_buffering":false,"obfuscation":"zea6RFYoXv3"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":108,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" Austria","logprobs":[],"safety_buffering":false,"obfuscation":"LZnvRfuD"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":109,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" and","logprobs":[],"safety_buffering":false,"obfuscation":"qNifXWhLNxfl"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":110,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" Poland","logprobs":[],"safety_buffering":false,"obfuscation":"Uul0f2oX9"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":111,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":":","logprobs":[],"safety_buffering":false,"obfuscation":"1k8g5sMtNbD3Aoo"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":112,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" **","logprobs":[],"safety_buffering":false,"obfuscation":"whLvzIktNqWGV"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":113,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"C","logprobs":[],"safety_buffering":false,"obfuscation":"BsMaURvcAhwzBb7"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":114,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"zech","logprobs":[],"safety_buffering":false,"obfuscation":"HromeJavAtc0"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":115,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"ia","logprobs":[],"safety_buffering":false,"obfuscation":"OnK5qP2GBN6yZf"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":116,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"**,","logprobs":[],"safety_buffering":false,"obfuscation":"E7ndQUDHfG2vp"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":117,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" whose","logprobs":[],"safety_buffering":false,"obfuscation":"nWNoWdRENS"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":118,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" capital","logprobs":[],"safety_buffering":false,"obfuscation":"PIRDS39L"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":119,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" is","logprobs":[],"safety_buffering":false,"obfuscation":"uUxgEmu9lQi99"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":120,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" **","logprobs":[],"safety_buffering":false,"obfuscation":"4MYC3hN5FDEvW"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":121,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"Pr","logprobs":[],"safety_buffering":false,"obfuscation":"nFOqsrmkcsXf7w"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":122,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"ague","logprobs":[],"safety_buffering":false,"obfuscation":"VzJ8xQbWFNU8"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":123,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"**,","logprobs":[],"safety_buffering":false,"obfuscation":"eGEs3E1q7BLlm"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":124,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" and","logprobs":[],"safety_buffering":false,"obfuscation":"VFD2rvA1N1fh"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":125,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" **","logprobs":[],"safety_buffering":false,"obfuscation":"TJSCxyGXzvKtK"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":126,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"Sl","logprobs":[],"safety_buffering":false,"obfuscation":"OPNRYlLpG1Tlq1"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":127,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"ov","logprobs":[],"safety_buffering":false,"obfuscation":"iZk1i4ALYYs0i5"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":128,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"akia","logprobs":[],"safety_buffering":false,"obfuscation":"ke6ki8tOO0Uw"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":129,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"**,","logprobs":[],"safety_buffering":false,"obfuscation":"hmNc0YZXzkndX"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":130,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" whose","logprobs":[],"safety_buffering":false,"obfuscation":"U1YZc3oBrZ"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":131,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" capital","logprobs":[],"safety_buffering":false,"obfuscation":"ZopN0AVq"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":132,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" is","logprobs":[],"safety_buffering":false,"obfuscation":"duOyhDT9SDaCW"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":133,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" **","logprobs":[],"safety_buffering":false,"obfuscation":"Aogc9GuYWyBbX"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":134,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"Br","logprobs":[],"safety_buffering":false,"obfuscation":"YK8HOIazjfnhfK"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":135,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"atis","logprobs":[],"safety_buffering":false,"obfuscation":"IZFlG2ggnK97"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":136,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"lava","logprobs":[],"safety_buffering":false,"obfuscation":"2D3LZEkgYj9K"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":137,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"**","logprobs":[],"safety_buffering":false,"obfuscation":"5wbccYtounCSMt"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":138,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":".","logprobs":[],"safety_buffering":false,"obfuscation":"VThz0wkbjSLHDdP"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":139,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" Since","logprobs":[],"safety_buffering":false,"obfuscation":"eApCuUHypp"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":140,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" the","logprobs":[],"safety_buffering":false,"obfuscation":"iews1rqLbGmS"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":141,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" clue","logprobs":[],"safety_buffering":false,"obfuscation":"8gOp7LJv9W7"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":142,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" isn","logprobs":[],"safety_buffering":false,"obfuscation":"6ACyNukgBTV1"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":143,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"’t","logprobs":[],"safety_buffering":false,"obfuscation":"uY0WSJ6NLVuP7K"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":144,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" unique","logprobs":[],"safety_buffering":false,"obfuscation":"JOUC7Fg0t"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":145,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":",","logprobs":[],"safety_buffering":false,"obfuscation":"0hiqh3CvmPVQRcK"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":146,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" I","logprobs":[],"safety_buffering":false,"obfuscation":"Pmor2TYg3x8qhh"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":147,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":"’ll","logprobs":[],"safety_buffering":false,"obfuscation":"2T2feMfPh6CTE"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":148,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" look","logprobs":[],"safety_buffering":false,"obfuscation":"OyoByrzUrDE"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":149,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" up","logprobs":[],"safety_buffering":false,"obfuscation":"yOTyaL2VbHplz"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":150,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" the","logprobs":[],"safety_buffering":false,"obfuscation":"qoIFj3kzMiR4"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":151,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" time","logprobs":[],"safety_buffering":false,"obfuscation":"o1L9GJ0D5mo"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":152,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" and","logprobs":[],"safety_buffering":false,"obfuscation":"wza0CvjSpxri"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":153,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" weather","logprobs":[],"safety_buffering":false,"obfuscation":"vs5Ri5JX"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":154,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" for","logprobs":[],"safety_buffering":false,"obfuscation":"Ul8T5hy2JL4L"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":155,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" both","logprobs":[],"safety_buffering":false,"obfuscation":"lAQ7c51lKlM"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":156,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" capitals","logprobs":[],"safety_buffering":false,"obfuscation":"Rhqmcg2"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":157,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" at","logprobs":[],"safety_buffering":false,"obfuscation":"tkjWHRyiT0esS"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":158,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":" once","logprobs":[],"safety_buffering":false,"obfuscation":"s54uYAGWe3U"}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","sequence_number":159,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"delta":".","logprobs":[],"safety_buffering":false,"obfuscation":"AtpX81mDsCYAuWk"}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","sequence_number":160,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"text":"Two countries border both Austria and Poland: **Czechia**, whose capital is **Prague**, and **Slovakia**, whose capital is **Bratislava**. Since the clue isn’t unique, I’ll look up the time and weather for both capitals at once.","logprobs":[]}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","sequence_number":161,"item_id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","output_index":1,"content_index":0,"part":{"type":"output_text","text":"Two countries border both Austria and Poland: **Czechia**, whose capital is **Prague**, and **Slovakia**, whose capital is **Bratislava**. Since the clue isn’t unique, I’ll look up the time and weather for both capitals at once.","annotations":[],"logprobs":[]}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":162,"output_index":1,"item":{"type":"message","id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Two countries border both Austria and Poland: **Czechia**, whose capital is **Prague**, and **Slovakia**, whose capital is **Bratislava**. Since the clue isn’t unique, I’ll look up the time and weather for both capitals at once.","annotations":[],"logprobs":[]}],"phase":"commentary"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":163,"output_index":2,"item":{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd2c408191b4c58abaa55ee7cd","call_id":"call_90b4be1d6cca4063a55a2759839102c6","name":"get_time","arguments":"","status":"in_progress"}}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","sequence_number":164,"item_id":"fc_0b859be91c473db4016ade78cd2c408191b4c58abaa55ee7cd","output_index":2,"arguments":"{\"timezone\": \"Europe/Prague\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":165,"output_index":2,"item":{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd2c408191b4c58abaa55ee7cd","call_id":"call_90b4be1d6cca4063a55a2759839102c6","name":"get_time","arguments":"{\"timezone\": \"Europe/Prague\"}","status":"completed"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":166,"output_index":3,"item":{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd3cd08191ba6b4d44d1041082","call_id":"call_edd9adef26ff4c7884acfb110d504da2","name":"get_weather","arguments":"","status":"in_progress"}}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","sequence_number":167,"item_id":"fc_0b859be91c473db4016ade78cd3cd08191ba6b4d44d1041082","output_index":3,"arguments":"{\"city\": \"Prague\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":168,"output_index":3,"item":{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd3cd08191ba6b4d44d1041082","call_id":"call_edd9adef26ff4c7884acfb110d504da2","name":"get_weather","arguments":"{\"city\": \"Prague\"}","status":"completed"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":169,"output_index":4,"item":{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd3cd0819189b550edda00a93c","call_id":"call_75bb5278157b415b811e5dd8ddaa1665","name":"get_time","arguments":"","status":"in_progress"}}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","sequence_number":170,"item_id":"fc_0b859be91c473db4016ade78cd3cd0819189b550edda00a93c","output_index":4,"arguments":"{\"timezone\": \"Europe/Bratislava\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":171,"output_index":4,"item":{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd3cd0819189b550edda00a93c","call_id":"call_75bb5278157b415b811e5dd8ddaa1665","name":"get_time","arguments":"{\"timezone\": \"Europe/Bratislava\"}","status":"completed"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","sequence_number":172,"output_index":5,"item":{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd3cd08191a065875943af004d","call_id":"call_3c127638184f436eb77ff84cc103be2e","name":"get_weather","arguments":"","status":"in_progress"}}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","sequence_number":173,"item_id":"fc_0b859be91c473db4016ade78cd3cd08191a065875943af004d","output_index":5,"arguments":"{\"city\": \"Bratislava\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","sequence_number":174,"output_index":5,"item":{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd3cd08191a065875943af004d","call_id":"call_3c127638184f436eb77ff84cc103be2e","name":"get_weather","arguments":"{\"city\": \"Bratislava\"}","status":"completed"}}
+
+event: response.metadata
+data: {"type":"response.metadata","sequence_number":175,"response_id":"resp_0b859be91c473db4016ade78c3537881918295a15608676db4","metadata":{"openai_chatgpt_moderation_metadata":{"prompt":{"omnimod":{"protection_type":"omnimod","outputs":[{"results":[{"category_flags":{"A1":false,"A2":false,"A3":false,"C1":false,"C11":false,"C2":false,"E1":false,"E2":false,"E3":false,"H1":false,"H2":false,"H3":false,"JB1":false,"K1":false,"K2":false,"K3":false,"K4":false,"P1":false,"P2":false,"P3":false,"P4":false,"PD1":false,"PD4":false,"S1":false,"S3+":false,"S4":false,"SH":false,"TXT-C3":false,"TXT-C4":false,"V1":false,"V2+":false,"V4+":false,"REFUSED":false,"CBRN-B1+":false,"IMG-C1":false,"IMG-C11":false,"IMG-C2":false,"IMG-S1":false,"IMG-SH":false,"IMG-V1":false,"IMG-V2+":false,"IMG-V4+":false}}],"is_blocked":false}]}},"generation":{},"tool_call":{},"tool_response":{}}}}
+
+event: response.completed
+data: {"type":"response.completed","sequence_number":176,"safety_buffering":false,"response":{"id":"resp_0b859be91c473db4016ade78c3537881918295a15608676db4","object":"response","created_at":1792964803,"completed_at":1792964813,"status":"completed","background":false,"frequency_penalty":0,"presence_penalty":0,"moderation":null,"model":"gpt-6.1-sol","access_programs":{"cyber":"standard"},"previous_response_id":null,"instructions":"You are a tool-using assistant. When the user asks for two lookups, call both tools in one turn.","output":[{"type":"reasoning","id":"rs_0b859be91c473db4016ade78c53d948191905120917fd9aa2f","summary":[{"type":"summary_text","text":"**Evaluating border ambiguities**\n\nI need to clarify that both Austria borders Poland and Czechia, as well as Slovakia. The user likely refers to Prague in Czechia, but Bratislava in Slovakia also fits. I could ask for clarification, but it seems like the user expects me to handle this. I'll mention both capitals to avoid any ambiguity, saying something like: \"Both Czechia and Slovakia border Austria and Poland.\" That way, I’ll check the time and weather for both capitals in one go."}],"content":[],"encrypted_content":"REDACTED-ENCRYPTED-3"},{"type":"message","id":"msg_0b859be91c473db4016ade78cd1a3c8191b4eb7bd439d6e6c7","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Two countries border both Austria and Poland: **Czechia**, whose capital is **Prague**, and **Slovakia**, whose capital is **Bratislava**. Since the clue isn’t unique, I’ll look up the time and weather for both capitals at once.","annotations":[],"logprobs":[]}],"phase":"commentary"},{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd2c408191b4c58abaa55ee7cd","call_id":"call_90b4be1d6cca4063a55a2759839102c6","name":"get_time","arguments":"{\"timezone\": \"Europe/Prague\"}","status":"completed"},{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd3cd08191ba6b4d44d1041082","call_id":"call_edd9adef26ff4c7884acfb110d504da2","name":"get_weather","arguments":"{\"city\": \"Prague\"}","status":"completed"},{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd3cd0819189b550edda00a93c","call_id":"call_75bb5278157b415b811e5dd8ddaa1665","name":"get_time","arguments":"{\"timezone\": \"Europe/Bratislava\"}","status":"completed"},{"type":"function_call","id":"fc_0b859be91c473db4016ade78cd3cd08191a065875943af004d","call_id":"call_3c127638184f436eb77ff84cc103be2e","name":"get_weather","arguments":"{\"city\": \"Bratislava\"}","status":"completed"}],"error":null,"incomplete_details":null,"tools":[{"type":"function","name":"get_time","description":"Current time in a time zone","parameters":{"type":"object","properties":{"timezone":{"type":"string"}},"required":["timezone"],"additionalProperties":false},"output_schema":null,"strict":true},{"type":"function","name":"get_weather","description":"Current weather in a city","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false},"output_schema":null,"strict":true}],"tool_choice":"auto","parallel_tool_calls":true,"prompt_cache_key":"7a04de2f-d096-796d-355c-0c55e687e96f","prompt_cache_retention":"24h","text":{"format":{"type":"text"},"verbosity":"medium"},"top_p":0.98,"top_logprobs":0,"temperature":1,"reasoning":{"effort":"high","summary":"detailed","context":"all_turns","mode":"standard"},"user":null,"usage":{"input_tokens":129,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0},"output_tokens":312,"output_tokens_details":{"reasoning_tokens":161},"total_tokens":441},"tool_usage":{"image_gen":{"input_tokens":0,"output_tokens":0,"total_tokens":0,"input_tokens_details":{"text_tokens":0,"image_tokens":0},"output_tokens_details":{"image_tokens":0,"text_tokens":0}},"web_search":{"num_requests":0}},"safety_identifier":"user-fixture000000000000000","store":false,"metadata":{},"max_output_tokens":null,"max_tool_calls":null,"service_tier":"default","truncation":"disabled"}}
+
