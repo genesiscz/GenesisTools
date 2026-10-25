@@ -127,7 +127,8 @@ private struct ClickySettingsPageContent: View {
                 if model.statisticsLoadError == nil { stats } else { historyRecovery }
             case .performance:
                 if model.statisticsLoadError == nil {
-                    ClickyPerformanceView(store: model.analytics, defaults: model.settingsDefaults)
+                    ClickyPerformanceView(store: model.analytics, defaults: model.settingsDefaults,
+                        status: model.recordingStatus, fixRecording: model.fixRecording)
                 } else {
                     historyRecovery
                 }
@@ -376,13 +377,14 @@ private struct ClickySettingsPageContent: View {
 
     private var stats: some View {
         VStack(spacing: 18) {
-            ClickyAnalyticsView(store: model.analytics)
+            ClickyAnalyticsView(store: model.analytics, defaults: model.settingsDefaults,
+                status: model.recordingStatus, fixRecording: model.fixRecording)
             card("Privacy") {
                 setting(
                     "Keep local statistics",
                     detail: "Minute and hour totals, daily totals and aggregate physical-key counts. No typed text, key sequence or application history.",
                     value: $model.preferences.collectStats)
-                Text("Minute history: 30 days · Hourly: 1 year · Daily: 2 years. Earlier lifetime totals are preserved without inventing historical detail.")
+                Text(ClickyRetention.text)
                     .font(.caption).foregroundStyle(.secondary)
                 Text("Counts are recorded while Clicky is listening. Paused or muted applications and Secure Input are not counted.")
                     .font(.caption).foregroundStyle(.secondary)

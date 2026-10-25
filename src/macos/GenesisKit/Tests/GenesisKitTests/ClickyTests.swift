@@ -245,9 +245,11 @@ final class ClickyTests: XCTestCase {
     func testExampleStatisticsHaveConsistentTotalsAndRecentDataWithoutStorage() {
         let example = ClickyStatistics.example(now: date(23, 30), calendar: calendar)
         XCTAssertEqual(example.keys.values.reduce(0, +), example.presses)
-        XCTAssertEqual(example.minutes.values.reduce(0) { $0 + $1.presses }, example.presses)
-        XCTAssertEqual(example.hours.values.reduce(0) { $0 + $1.presses }, example.presses)
         XCTAssertEqual(example.days.values.reduce(0) { $0 + $1.presses }, example.presses)
+        let recentHours = example.hours.filter { $0.key >= example.minutes.keys.min()! / 60 }
+        XCTAssertEqual(example.minutes.values.reduce(0) { $0 + $1.presses }, recentHours.values.reduce(0) { $0 + $1.presses })
+        XCTAssertGreaterThan(example.days.count, 700, "the sample fills the long ranges")
+        XCTAssertGreaterThan(example.performanceHours.count, 5000)
         let recent = Int(date(23).timeIntervalSince1970 / 60)
         XCTAssertGreaterThan(example.minutes.filter { $0.key >= recent }.values.reduce(0) { $0 + $1.presses }, 0)
     }
@@ -2418,7 +2420,9 @@ extension ClickyTests {
         XCTAssertEqual(ClickyPerformanceView.grouping(for: "Today"), .fifteenMinutes)
         XCTAssertEqual(ClickyPerformanceView.grouping(for: "7 days"), .hour)
         XCTAssertEqual(ClickyPerformanceView.grouping(for: "90 days"), .day)
-        XCTAssertEqual(ClickyPerformanceView.grouping(for: "All time"), .week)
+        XCTAssertEqual(ClickyPerformanceView.grouping(for: "All kept data"), .week)
+        XCTAssertEqual(ClickyRanges.known("All time", allowed: ClickyPerformanceView.ranges), "All kept data",
+            "a range saved under the old name still opens")
         XCTAssertTrue(ClickyPerformanceView.ranges.contains("1 year"))
     }
 
