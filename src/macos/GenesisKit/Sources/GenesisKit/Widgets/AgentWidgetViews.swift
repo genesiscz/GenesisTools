@@ -48,7 +48,7 @@ struct WidgetInboxCount: View {
                     LinearKeyframe(0, duration: 0.33)
                 }
             }
-            .accessibilityLabel((complete ? "" : "At least ") + "\(count) inbox notifications")
+            .accessibilityLabel((complete ? "" : "At least ") + (needsAnswer ? Plural.count(count, "item waits", "items wait") + " for your answer" : Plural.count(count, "unread item")))
     }
 }
 

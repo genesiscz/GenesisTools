@@ -755,19 +755,19 @@ final class WidgetInboxPolishTests: XCTestCase {
         let delivered = WidgetActivityEvent(id: "e1", sourceId: "d_4_s", at: 1, title: "Decision delivery",
                                             body: "sent · cmux")
         XCTAssertEqual(LiveWidgetView.activityLine(delivered, number: 4, provider: "claude"),
-                       .init(title: "Answer delivered", detail: "DECISION 4 · Sent · through cmux"))
+                       .init(title: "Answer delivered", detail: "Decision 4 · Sent · through cmux"))
         XCTAssertEqual(LiveWidgetView.activityLine(delivered, number: nil, provider: "claude").detail,
                        "Claude · Sent · through cmux", "without the card, the provider's name, never d_4_s")
         let failed = WidgetActivityEvent(id: "e2", sourceId: "d_4_s", at: 1, title: "Decision send_failed",
                                          body: "answered · something-new")
         XCTAssertEqual(LiveWidgetView.activityLine(failed, number: 4, provider: "codex"),
-                       .init(title: "Answer not delivered", detail: "DECISION 4 · Waiting to send"),
+                       .init(title: "Answer not delivered", detail: "Decision 4 · Waiting to send"),
                        "a value the widget has no words for is left out")
 
         let decision = WidgetCard(id: "decision:d_4_s", kind: "decision", sessionKey: "k", sourceId: "d_4_s", at: 1,
                                   title: "T", body: "", status: "open", revision: 1, number: 4, choices: [],
                                   attachments: [], refs: [], read: true)
-        XCTAssertEqual(WidgetLedgerUndo.note(decision, state: "dismissed"), "DECISION 4 dismissed.")
+        XCTAssertEqual(WidgetLedgerUndo.note(decision, state: "dismissed"), "Decision 4 dismissed.")
         let task = WidgetCard(id: "decision:t_2_s", kind: "todo", sessionKey: "k", sourceId: "t_2_s", at: 1,
                               title: "T", body: "", status: "open", revision: 1, number: 2, choices: [],
                               attachments: [], refs: [], read: true)
@@ -973,7 +973,7 @@ final class WidgetAnswerTargetTests: XCTestCase {
         XCTAssertEqual(undo.applied(card).status, "dismissed", "the card shows the change at once")
         XCTAssertFalse(undo.applied(card).needsAnswer)
         XCTAssertNil(model.answerCard, "folded, the number keys no longer answer it")
-        XCTAssertEqual(model.notice, "DECISION 1 dismissed.")
+        XCTAssertEqual(model.notice, "Decision 1 dismissed.")
         XCTAssertEqual(model.noticeAction?.title, "Undo")
         model.noticeAction?.run()
         XCTAssertEqual(undo.applied(card).status, "open")
@@ -1259,6 +1259,24 @@ final class WidgetStagingTests: XCTestCase {
 
         model.requestCollapse()
         XCTAssertTrue(model.stagedLeavePrompt, "still staged, so the next close asks again")
+    }
+
+    /// Every Undo row (Remove from shelf, Discard of a voice note) lasts as long as a note with a button; notes that
+    /// stay until closed hold the item 60 s at most (judge round F4).
+    func testUndoRowsLastAsLongAsANoteWithAButton() throws {
+        func prefs(_ json: String) throws -> WidgetPreferences {
+            let base = #"{"excludedKeys":[],"projects":[],"sessions":[],"showChanges":true,"placement":"side","side":"right","quietSeconds":15,"voiceProvider":"xai","voiceLanguage":"","#
+            return try JSONDecoder().decode(WidgetPreferences.self, from: Data((base + json.dropFirst()).utf8))
+        }
+        XCTAssertEqual(WidgetModel.undoSeconds(nil), 10, "the default note time is 6 s, so a note with Undo stays 10 s")
+        XCTAssertEqual(WidgetModel.undoSeconds(try prefs(#"{"noteSeconds":3}"#)), 10)
+        XCTAssertEqual(WidgetModel.undoSeconds(try prefs(#"{"noteSeconds":20}"#)), 20)
+        XCTAssertEqual(WidgetModel.undoSeconds(try prefs(#"{"noteSeconds":0}"#)), 60, "until closed, at most 60 s")
+        for json in [#"{"noteSeconds":6}"#, #"{"noteSeconds":3}"#, #"{"noteSeconds":20}"#] {
+            let preferences = try prefs(json)
+            XCTAssertEqual(WidgetModel.undoSeconds(preferences), WidgetModel.noteSeconds(preferences, hasAction: true),
+                           "the same time as the note's own Undo or Send again")
+        }
     }
 
     /// The hub's reasons for a send no session took read as sentences; the raw text stays for Details (P24).

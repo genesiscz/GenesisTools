@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The inbox button's view: inbox entries from every session in one list, the waiting ones first. A row opens in place
+/// The inbox button's view: inbox items from every session in one list, the waiting ones first. A row opens in place
 /// to show its session and the way to that session's whole inbox (with the entry open) and its cmux pane.
 struct WidgetInboxOverview: View {
     @ObservedObject var model: WidgetModel
@@ -9,6 +9,8 @@ struct WidgetInboxOverview: View {
     @State private var openID: String?
     /// The row Up and Down chose (`WidgetModel.listKey`); Return opens or folds it. The pointer never moves it.
     @State private var focusID: String?
+    /// The option letter of the focused row's open decision that the keys chose; nil on the row itself.
+    @State private var focusedOption: String?
     @GenReduceMotion private var reduceMotion
 
     private var filter: String { filterPick ?? model.snapshot?.state.preferences.overviewFilter ?? "all" }
@@ -22,7 +24,7 @@ struct WidgetInboxOverview: View {
         }
     }
 
-    /// Entries under their session ("session", the default) or one list (Widgets → Inbox, and the header button).
+    /// Items under their session ("session", the default) or one list (Widgets → Inbox, and the header button).
     private var grouped: Bool { (model.snapshot?.state.preferences.inboxGrouping ?? "session") == "session" }
 
     /// The rows in the order they are drawn: grouped under their sessions, or the one list.
@@ -43,18 +45,50 @@ struct WidgetInboxOverview: View {
         }
     }
 
-    /// Up and Down move the highlight, Return opens or folds the highlighted row. No motion: keys repeat.
+    /// The option letters of `item` when it is an open decision that waits for an answer: "a", "b", ….
+    private func openOptions(_ item: WidgetInboxItem) -> [String] {
+        guard openID == item.id, item.kind == "decision", item.needsAnswer, let options = item.options else { return [] }
+        return options.indices.map(Self.letter)
+    }
+
+    static func letter(_ index: Int) -> String { String(UnicodeScalar(97 + index).map(Character.init) ?? "?") }
+
+    /// Up and Down move the highlight, and inside an open decision walk its options first; Return opens or folds the
+    /// highlighted row, or stages the highlighted option as a click does. No motion: keys repeat.
     private func handle(_ kind: WidgetListKey.Kind, rows: [WidgetInboxItem], proxy: ScrollViewProxy) {
         let current = focusID.flatMap { id in rows.firstIndex { $0.id == id } }
+        let options = current.map { openOptions(rows[$0]) } ?? []
+        let option = focusedOption.flatMap { options.firstIndex(of: $0) }
         switch kind {
         case .open:
             guard let current else { return }
-            let id = rows[current].id
+            let item = rows[current]
+            if let option {
+                model.choose(item, option: options[option])
+                return
+            }
             model.releaseAgentFit()
-            openID = openID == id ? nil : id
+            focusedOption = nil
+            openID = openID == item.id ? nil : item.id
         case .up, .down:
-            guard let target = WidgetModel.listTarget(current: current, step: kind == .up ? -1 : 1, count: rows.count)
-            else { return }
+            let step = kind == .up ? -1 : 1
+            if !options.isEmpty {
+                switch WidgetModel.optionMove(focused: option, step: step, count: options.count) {
+                case .option(let index):
+                    focusedOption = options[index]
+                    proxy.scrollTo(rows[current ?? 0].id + "#" + options[index])
+                    return
+                case .cardRow:
+                    focusedOption = nil
+                    proxy.scrollTo(rows[current ?? 0].id)
+                    return
+                case .leave:
+                    break
+                }
+            }
+            guard let target = WidgetModel.listTarget(current: current, step: step, count: rows.count),
+                  target != current else { return }
+            focusedOption = nil
             focusID = rows[target].id
             proxy.scrollTo(rows[target].id)
         }
@@ -64,7 +98,7 @@ struct WidgetInboxOverview: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 GenSegmentedTabs(
-                    "Inbox entries",
+                    "Inbox items",
                     items: [.init("all", "All"), .init("needs", "Needs you"), .init("unread", "Unread")],
                     selection: Binding(get: { filter }, set: { value in
                         model.holdAgentFit()
@@ -72,7 +106,7 @@ struct WidgetInboxOverview: View {
                     }), minSegmentWidth: 70, identifier: "widget.overview.filter")
                 Spacer(minLength: 4)
                 IconButton(systemName: grouped ? "list.bullet" : "rectangle.3.group",
-                           tooltip: grouped ? "Show one list" : "Group the entries by session") {
+                           tooltip: grouped ? "Show one list" : "Group the items by session") {
                     model.holdAgentFit()
                     model.updatePreferences(["inboxGrouping": .string(grouped ? "list" : "session")])
                 }.accessibilityLabel(grouped ? "Show one list" : "Group by session")
@@ -107,7 +141,7 @@ struct WidgetInboxOverview: View {
                     }
                 }
                 if model.inbox.truncated {
-                    Text("The newest entries are shown. Open a session for its whole inbox.")
+                    Text("The newest items are shown. Open a session for its whole inbox.")
                         .font(.caption2).foregroundStyle(.tertiary)
                 }
             }
@@ -133,7 +167,7 @@ struct WidgetInboxOverview: View {
                 AIProviderGlyph(meta: AIProviders.meta(for: session.target.provider), size: 14)
             }
             Text(session?.title ?? "Unknown session").font(.system(size: 11.5, weight: .semibold)).lineLimit(1)
-            Text([Plural.count(items.count, "entry", "entries"), waiting > 0 ? "\(waiting) need you" : nil]
+            Text([Plural.count(items.count, "item"), waiting > 0 ? "\(waiting) need you" : nil]
                 .compactMap { $0 }.joined(separator: " · "))
                 .font(.system(size: 10)).foregroundStyle(waiting > 0 ? Color.orange : .secondary)
             Spacer(minLength: 0)
@@ -151,7 +185,7 @@ struct WidgetInboxOverview: View {
     private static func summary(_ items: [WidgetInboxItem]) -> String {
         let waiting = items.filter(\.needsAnswer).count
         let sessions = Set(items.map(\.key)).count
-        return [Plural.count(items.count, "entry", "entries"), waiting > 0 ? "\(waiting) need your answer" : nil,
+        return [Plural.count(items.count, "item"), waiting > 0 ? "\(waiting) need your answer" : nil,
                 "from " + Plural.count(sessions, "session")].compactMap { $0 }.joined(separator: " · ")
     }
 
@@ -194,7 +228,7 @@ struct WidgetInboxOverview: View {
                     if let count = item.count, count > 1 {
                         Text(verbatim: "×\(count)").font(.system(size: 10, weight: .semibold)).monospacedDigit()
                             .foregroundStyle(.secondary).padding(.top, 3)
-                            .instantTooltip("\(count) entries like this one in this session")
+                            .instantTooltip("\(count) items like this one in this session")
                     }
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(.secondary).rotationEffect(.degrees(open ? 90 : 0)).padding(.top, 4)
@@ -229,39 +263,56 @@ struct WidgetInboxOverview: View {
         return WidgetStagedText.line(item, option: option)
     }
 
+    /// One option row of an open decision: the letter badge, the text, Staged, the recommended mark, the focus ring.
+    private func optionLabel(_ letter: String, title: String, picked: Bool, focused: Bool, recommended: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 8)
+        let fill: Color = picked ? SessionPalette.blue.opacity(0.16) : .white.opacity(0.06)
+        let border: Color = picked ? SessionPalette.blue.opacity(0.7) : .clear
+        let ring: Color = focused ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear
+        return HStack(alignment: .top, spacing: 8) {
+            Text(verbatim: letter).font(.system(size: 11, weight: .semibold, design: .rounded))
+                .frame(width: 20, height: 20).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+            Text(title).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).padding(.top, 2)
+            Spacer(minLength: 0)
+            if picked {
+                Text("Staged").font(.system(size: 10, weight: .semibold)).foregroundStyle(SessionPalette.blue)
+                    .padding(.top, 3)
+            }
+            if recommended { Image(systemName: "sparkle").foregroundStyle(.orange) }
+        }
+        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+        .background(fill, in: shape)
+        .overlay(shape.strokeBorder(border, lineWidth: 1))
+        // The keyboard's option: the same focus ring as the row's.
+        .overlay(shape.strokeBorder(ring, lineWidth: 2))
+        .contentShape(shape)
+    }
+
+    /// One option of an open decision as a button. A pick here always stages (`WidgetModel.choose(_:option:)` for an
+    /// inbox item), whatever the decision click setting says, so its words say Stage too.
+    private func optionButton(_ item: WidgetInboxItem, letter: String, title: String, picked: Bool) -> some View {
+        let focused = focusID == item.id && focusedOption == letter
+        let recommended = item.recommended == letter
+        let tooltip = LiveWidgetView.choiceTooltip(WidgetChoice(id: letter, title: title, recommended: recommended),
+                                                   index: 10, stages: true, picked: picked)
+        return Button { model.choose(item, option: letter) } label: {
+            optionLabel(letter, title: title, picked: picked, focused: focused, recommended: recommended)
+        }
+        .buttonStyle(RowButtonStyle(cornerRadius: 8))
+        .instantTooltip(tooltip)
+        .accessibilityLabel("Stage " + letter + ": " + title)
+        .accessibilityValue(picked ? "Staged" : "")
+        .accessibilityAddTraits(focused ? .isSelected : [])
+        .id(item.id + "#" + letter)
+    }
+
     /// An open decision's options, each staging (or sending, by the setting) that pick from here.
     @ViewBuilder private func choices(_ item: WidgetInboxItem) -> some View {
         if item.kind == "decision", item.needsAnswer, let options = item.options, !options.isEmpty {
             let staged = model.stagedOption(item.sourceId, stored: item.draftOption)
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(Array(options.enumerated()), id: \.offset) { index, title in
-                    let letter = String(UnicodeScalar(97 + index).map(Character.init) ?? "?")
-                    let picked = staged == letter
-                    Button { model.choose(item, option: letter) } label: {
-                        HStack(alignment: .top, spacing: 8) {
-                            Text(verbatim: letter).font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                                .frame(width: 20, height: 20).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
-                            Text(title).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).padding(.top, 2)
-                            Spacer(minLength: 0)
-                            if picked {
-                                Text("Staged").font(.system(size: 10, weight: .semibold)).foregroundStyle(SessionPalette.blue)
-                                    .padding(.top, 3)
-                            }
-                            if item.recommended == letter { Image(systemName: "sparkle").foregroundStyle(.orange) }
-                        }
-                        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(picked ? SessionPalette.blue.opacity(0.16) : .white.opacity(0.06),
-                                    in: RoundedRectangle(cornerRadius: 8))
-                        .overlay(RoundedRectangle(cornerRadius: 8)
-                            .strokeBorder(picked ? SessionPalette.blue.opacity(0.7) : .clear, lineWidth: 1))
-                        .contentShape(RoundedRectangle(cornerRadius: 8))
-                    }
-                    .buttonStyle(RowButtonStyle(cornerRadius: 8))
-                    .instantTooltip(LiveWidgetView.choiceTooltip(
-                        WidgetChoice(id: letter, title: title, recommended: item.recommended == letter),
-                        index: 10, stages: model.decisionClickStages, picked: picked))
-                    .accessibilityLabel((model.decisionClickStages ? "Stage " : "Answer ") + letter + ": " + title)
-                    .accessibilityValue(picked ? "Staged" : "")
+                    optionButton(item, letter: Self.letter(index), title: title, picked: staged == Self.letter(index))
                 }
             }
         }

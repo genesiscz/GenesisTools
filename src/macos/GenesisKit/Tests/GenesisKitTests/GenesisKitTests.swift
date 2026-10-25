@@ -450,7 +450,7 @@ final class WidgetShelfStoreTests: XCTestCase {
         let store = WidgetShelfStore(request: { args, _ in
             calls.append(args)
             return listed
-        }, announce: { text, _ in spoken.append(text) }, removalUndoDelay: .milliseconds(100))
+        }, announce: { text, _ in spoken.append(text) }, undoSeconds: { 0.1 })
         defer { store.stop() }
         store.refresh()
         guard try await pollUntil("the list is read", { store.items.count == 1 }) else { return }
@@ -1253,6 +1253,19 @@ final class WidgetInboxNotificationTests: XCTestCase {
         model.updateInbox(summary(item("older", at: now - 2000)))
         XCTAssertEqual(model.inboxPulse, 1)
         XCTAssertEqual(model.inboxCount, 1)
+    }
+
+    /// The rail badge counts only what waits for an answer, so a new unread answer must not pulse it (judge G7).
+    func testTheWaitingBadgePulsesOnlyForANewWaitingItem() {
+        let model = model()
+        defer { model.stop() }
+        let now = Date().timeIntervalSince1970 * 1000
+        model.updateInbox(summary(item("old", at: now - 1000)))
+        model.updateInbox(summary(item("answer", at: now + 100_000)))
+        XCTAssertEqual(model.inboxPulse, 1, "the hover list's unread count still pulses for the answer")
+        XCTAssertEqual(model.waitingPulse, 0, "the waiting badge does not")
+        model.updateInbox(summary(item("question", at: now + 200_000, pending: true)))
+        XCTAssertEqual(model.waitingPulse, 1, "a new question raises the waiting count and pulses the badge")
     }
 
     func testIncompleteSnapshotDoesNotSwallowTheArrivalItCannotRaise() {

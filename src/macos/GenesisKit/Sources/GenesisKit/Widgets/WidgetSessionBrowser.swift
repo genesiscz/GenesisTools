@@ -3,6 +3,9 @@ import SwiftUI
 public struct WidgetSessionBrowser: View {
     @ObservedObject private var model: WidgetModel
     private let onOpen: ((WidgetSession) -> Void)?
+    /// True only for the panel's Sessions tab: the session chooser popover and the settings page share the model's
+    /// `sessionListOrder` and must not overwrite or clear the order of the list still on screen.
+    private let reportsOrder: Bool
     @State private var query = ""
     @State private var onlyPinned = false
     @State private var limit = 40
@@ -10,8 +13,9 @@ public struct WidgetSessionBrowser: View {
     @State private var collapsed = Set<String>()
     @GenReduceMotion private var reduceMotion
 
-    public init(model: WidgetModel, onOpen: ((WidgetSession) -> Void)? = nil) {
+    public init(model: WidgetModel, reportsOrder: Bool = false, onOpen: ((WidgetSession) -> Void)? = nil) {
         self.model = model
+        self.reportsOrder = reportsOrder
         self.onOpen = onOpen
     }
 
@@ -78,8 +82,8 @@ public struct WidgetSessionBrowser: View {
         }
         .onChange(of: query) { _, _ in limit = 40 }
         .onChange(of: onlyPinned) { _, _ in limit = 40 }
-        .onChange(of: order, initial: true) { _, keys in model.sessionListOrder = keys }
-        .onDisappear { model.sessionListOrder = [] }
+        .onChange(of: order, initial: true) { _, keys in if reportsOrder { model.sessionListOrder = keys } }
+        .onDisappear { if reportsOrder { model.sessionListOrder = [] } }
     }
 
     private var projectFilter: some View {

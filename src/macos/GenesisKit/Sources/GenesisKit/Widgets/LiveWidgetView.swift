@@ -210,7 +210,8 @@ public struct LiveWidgetView: View {
                             } else if section == "Inbox" {
                                 inbox
                             } else if section == "Sessions" {
-                                WidgetSessionBrowser(model: model)
+                                // Only this list reports its drawn order for Up and Down; the chooser popover does not.
+                                WidgetSessionBrowser(model: model, reportsOrder: true)
                             } else if section == "Changes" {
                                 changes
                             } else {
@@ -237,7 +238,9 @@ public struct LiveWidgetView: View {
                         }
                         // Up and Down move the selection; the list brings the chosen row into view.
                         .onChange(of: model.listKey) { _, _ in
-                            if section == "Inbox", let id = model.card?.id {
+                            if section == "Inbox", let focus = model.choiceFocus {
+                                reader.scrollTo("choice-" + focus.cardID + "-" + focus.choiceID)
+                            } else if section == "Inbox", let id = model.card?.id {
                                 reader.scrollTo("card-" + id)
                             } else if section == "Sessions" {
                                 reader.scrollTo(model.selectedKey)
@@ -474,7 +477,7 @@ public struct LiveWidgetView: View {
             }
         } else if model.inboxLoading {
             ProgressView("Loading this session’s inbox…")
-                .controlSize(.small).padding(.vertical, 12)
+                .controlSize(.small).font(.system(size: 11)).padding(.vertical, 12)
                 .accessibilityIdentifier("widget.inbox.loading")
         } else {
             Text("No inbox items for this session.").foregroundStyle(.secondary).font(.callout)
@@ -569,6 +572,61 @@ public struct LiveWidgetView: View {
             && (model.stagedOption(card.sourceId, stored: card.draftOption) != nil || card.draft != nil)
     }
 
+    /// One option of a decision: the key badge, "a)" and the text, Staged, the recommended mark and the focus ring.
+    @ViewBuilder
+    private func optionRow(_ card: WidgetCard, choice: WidgetChoice, index: Int, key: String?, picked: Bool,
+                           focused: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 9)
+        let fill: Color = picked ? SessionPalette.blue.opacity(0.16) : .white.opacity(0.065)
+        let border: Color = picked ? SessionPalette.blue.opacity(0.7) : .clear
+        let ring: Color = focused ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear
+        let label = (model.decisionClickStages ? "Stage " : "Answer ") + "\(choice.id): " + Self.choiceText(choice)
+        Button {
+            model.choose(card, option: choice.id)
+        } label: {
+            optionLabel(choice, key: key, picked: picked)
+                .padding(9).frame(maxWidth: .infinity, alignment: .leading)
+                .background(fill, in: shape)
+                .overlay(shape.strokeBorder(border, lineWidth: 1))
+                // Up and Down move through the options; the chosen one wears the focus ring.
+                .overlay(shape.strokeBorder(ring, lineWidth: 2))
+                .contentShape(shape)
+        }
+        .buttonStyle(RowButtonStyle(cornerRadius: 9)).disabled(model.importing > 0)
+        .accessibilityAddTraits(focused ? .isSelected : [])
+        .id("choice-" + card.id + "-" + choice.id)
+        .instantTooltip(Self.choiceTooltip(choice, index: index, stages: model.decisionClickStages, picked: picked))
+        .accessibilityLabel(label)
+        .accessibilityValue(picked ? "Staged" : "")
+    }
+
+    private func optionLabel(_ choice: WidgetChoice, key: String?, picked: Bool) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            // The badge is the key that picks the option; the letter, which the agent and the hub name it by, leads
+            // its text.
+            Text(verbatim: key ?? choice.id).font(.system(size: 11, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 4)
+                .frame(minWidth: 20, minHeight: 20)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                if key != nil {
+                    Text(verbatim: choice.id + ")").foregroundStyle(SessionPalette.secondary)
+                }
+                Text(Self.choiceText(choice)).fixedSize(horizontal: false, vertical: true)
+            }
+            .font(.system(size: 12))
+            .padding(.top, 2)
+            Spacer(minLength: 0)
+            if picked {
+                Text("Staged").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(SessionPalette.blue).padding(.top, 3)
+            }
+            if choice.recommended {
+                Image(systemName: "sparkle").foregroundStyle(.orange)
+            }
+        }
+    }
+
     /// The key that picks the option at `index` (the open decision's number keys, as the keymap has them), or nil.
     static func choiceKey(_ index: Int) -> String? {
         guard index < 9 else { return nil }
@@ -628,45 +686,8 @@ public struct LiveWidgetView: View {
                     ForEach(Array(card.choices.enumerated()), id: \.element.id) { index, choice in
                         let picked = staged == choice.id
                         let key = Self.choiceKey(index)
-                        Button {
-                            model.choose(card, option: choice.id)
-                        } label: {
-                            HStack(alignment: .top, spacing: 8) {
-                                // The badge is the key that picks the option; the letter, which the agent and the
-                                // hub name it by, leads its text.
-                                Text(verbatim: key ?? choice.id).font(.system(size: 10.5, weight: .semibold, design: .rounded))
-                                    .padding(.horizontal, 4)
-                                    .frame(minWidth: 20, minHeight: 20).background(
-                                        .white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
-                                HStack(alignment: .firstTextBaseline, spacing: 5) {
-                                    if key != nil {
-                                        Text(verbatim: choice.id + ")").foregroundStyle(SessionPalette.secondary)
-                                    }
-                                    Text(Self.choiceText(choice)).fixedSize(horizontal: false, vertical: true)
-                                }
-                                .font(.system(size: 12))
-                                .padding(.top, 2)
-                                Spacer(minLength: 0)
-                                if picked {
-                                    Text("Staged").font(.system(size: 10, weight: .semibold))
-                                        .foregroundStyle(SessionPalette.blue).padding(.top, 3)
-                                }
-                                if choice.recommended {
-                                    Image(systemName: "sparkle").foregroundStyle(.orange)
-                                }
-                            }.padding(9).frame(maxWidth: .infinity, alignment: .leading)
-                                .background(picked ? SessionPalette.blue.opacity(0.16) : .white.opacity(0.065),
-                                            in: RoundedRectangle(cornerRadius: 9))
-                                .overlay(RoundedRectangle(cornerRadius: 9)
-                                    .strokeBorder(picked ? SessionPalette.blue.opacity(0.7) : .clear, lineWidth: 1))
-                                .contentShape(RoundedRectangle(cornerRadius: 9))
-                        }
-                        .buttonStyle(RowButtonStyle(cornerRadius: 9)).disabled(model.importing > 0)
-                        .instantTooltip(Self.choiceTooltip(choice, index: index, stages: model.decisionClickStages,
-                                                           picked: picked))
-                        .accessibilityLabel((model.decisionClickStages ? "Stage " : "Answer ") + "\(choice.id): "
-                                            + Self.choiceText(choice))
-                        .accessibilityValue(picked ? "Staged" : "")
+                        let focused = model.choiceFocus == WidgetChoiceFocus(cardID: card.id, choiceID: choice.id)
+                        optionRow(card, choice: choice, index: index, key: key, picked: picked, focused: focused)
                     }
                     ownAnswer(card)
                 }
@@ -914,7 +935,7 @@ public struct LiveWidgetView: View {
                     }
                 case .card(let card):
                     VStack(alignment: .leading, spacing: 6) {
-                        Text(Self.kindLabel(card)).font(.caption2).foregroundStyle(.secondary)
+                        Text(Self.kindLabel(card)).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
                         Text(card.numberedTitle).font(.system(size: 12, weight: .semibold)).textSelection(.enabled)
                         if !card.body.isEmpty {
                             WidgetMarkdown(text: card.body)
@@ -937,9 +958,9 @@ public struct LiveWidgetView: View {
                         Image(systemName: "clock.arrow.circlepath").foregroundStyle(.secondary)
                             .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(line.title).font(.caption)
+                            Text(line.title).font(.system(size: 11))
                             if !line.detail.isEmpty {
-                                Text(line.detail).font(.caption2).foregroundStyle(.secondary)
+                                Text(line.detail).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
                             }
                         }
                     }
@@ -1039,7 +1060,7 @@ public struct LiveWidgetView: View {
         case "send_failed": title = "Answer not delivered"
         default: title = sentenceCase(event.title)
         }
-        let decision = number.map { "DECISION \($0)" } ?? AIProviders.meta(for: provider).displayName
+        let decision = number.map { "Decision \($0)" } ?? AIProviders.meta(for: provider).displayName
         let facts = event.body.components(separatedBy: " · ").compactMap { part -> String? in
             routePhrase(part) ?? (decisionStates.contains(part) ? statusPhrase(part, kind: "decision") : nil)
         }
@@ -1105,7 +1126,7 @@ public struct LiveWidgetView: View {
                         systemName: message.state == "sent" ? "checkmark.circle.fill" : "exclamationmark.circle"
                     )
                 }
-                Text(receiptLabel(message)).font(.system(size: 10))
+                Text(receiptLabel(message)).font(.system(size: 11))
                     .accessibilityIdentifier("widget.receipt." + message.id)
                 Spacer(minLength: 0)
             }.foregroundStyle(message.state == "sent" ? .green : .secondary)
@@ -1355,13 +1376,15 @@ private struct DocumentHeight: ViewModifier {
 /// log has no move back from a dismissed decision, and the widget's `ledger` action cannot reopen a task, so the
 /// change is held here instead of undone there: the card shows its new state at once, Undo drops the change, and the
 /// change goes to the log when the note goes away (it faded after the note duration setting, was closed, or a newer
-/// note replaced it). Shared by every panel of the widget, and kept while a panel is closed.
+/// note replaced it). Shared by every panel of the widget, and kept while a panel is closed. What the user did still
+/// lands when the panel's model goes away (a hold keeps its model until it is sent) and when the app quits.
 @MainActor
 final class WidgetLedgerUndo: ObservableObject {
-    static let shared = WidgetLedgerUndo()
-    /// The longest a change waits, even under a note that stays until it is closed: a change still held when the app
-    /// quits is lost, so it is not held for long.
+    static let shared = WidgetLedgerUndo(sendsBeforeQuit: true)
+    /// The longest a change waits, even under a note that stays until it is closed.
     static let longestHold: Duration = .seconds(60)
+    /// How long a quit waits for the held changes to reach the hub.
+    static let quitWait: DispatchTimeInterval = .seconds(4)
 
     struct Move: Equatable {
         let state: String
@@ -1373,6 +1396,8 @@ final class WidgetLedgerUndo: ObservableObject {
         let move: Move
         let request: WidgetJSON
         let note: String
+        /// Kept until the change is sent, so a panel's model that goes away still sends it.
+        let model: WidgetModel
         var watch: AnyCancellable?
         var deadline: Task<Void, Never>?
     }
@@ -1380,6 +1405,20 @@ final class WidgetLedgerUndo: ObservableObject {
     /// Card id to the move the card shows.
     @Published private(set) var moves: [String: Move] = [:]
     private var holds: [String: Hold] = [:]
+    /// Changes handed to the model's queue and not answered yet: a quit sends them again, because that queue never
+    /// runs again. A second copy finds the item already moved and changes nothing.
+    private var sending: [String: (request: WidgetJSON, bridge: ToolsBridge)] = [:]
+    /// The quit observer of the shared instance, which lives as long as the app.
+    private var quitObserver: NSObjectProtocol?
+
+    init(sendsBeforeQuit: Bool = false) {
+        guard sendsBeforeQuit else { return }
+        quitObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sendBeforeQuit() }
+        }
+    }
 
     /// `card` with its held or just committed move applied.
     func applied(_ card: WidgetCard) -> WidgetCard {
@@ -1402,49 +1441,48 @@ final class WidgetLedgerUndo: ObservableObject {
                 "action": "ledger", "id": .string(card.sourceId), "sessionId": .string(session),
                 "expectedRevision": .number(Double(revision)), "state": .string(state),
             ]),
-            note: note)
+            note: note, model: model)
         moves[id] = move
         // Folded, the card is no longer the decision the number keys and the composer answer.
         GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.insert(id) }
-        model.postNote(note, action: WidgetNoticeAction(title: "Undo") { [weak self, weak model] in
-            guard let self, let model else { return }
-            self.undo(id, model: model, reduceMotion: reduceMotion)
+        model.postNote(note, action: WidgetNoticeAction(title: "Undo") { [weak self] in
+            self?.undo(id, reduceMotion: reduceMotion)
         })
         // The current value is this note; any later one (nil, or another note) means it went away.
-        hold.watch = model.$notice.dropFirst().sink { [weak self, weak model] text in
+        hold.watch = model.$notice.dropFirst().sink { [weak self] text in
             guard text != note else { return }
-            Task { @MainActor [weak self, weak model] in
-                guard let self, let model else { return }
-                self.commit(id, model: model)
-            }
+            Task { @MainActor [weak self] in self?.commit(id) }
         }
-        hold.deadline = Task { [weak self, weak model] in
+        hold.deadline = Task { [weak self] in
             do { try await Task.sleep(for: Self.longestHold) } catch { return }
-            guard let self, let model else { return }
-            self.commit(id, model: model)
+            self?.commit(id)
         }
         holds[id] = hold
     }
 
-    /// "DECISION 4 dismissed.", "Task 2 completed.": what changed, in the note that offers Undo.
+    /// "Decision 4 dismissed.", "Task 2 completed.": what changed, in the note that offers Undo.
     static func note(_ card: WidgetCard, state: String) -> String {
         let name = card.kind == "todo"
             ? card.number.map { "Task \($0)" } ?? "Task"
-            : card.number.map { "DECISION \($0)" } ?? "Decision"
+            : card.number.map { "Decision \($0)" } ?? "Decision"
         return name + (state == "implemented" ? " completed." : " dismissed.")
     }
 
-    private func commit(_ id: String, model: WidgetModel) {
+    private func commit(_ id: String) {
         guard let hold = holds.removeValue(forKey: id) else { return }
         hold.watch?.cancel()
         hold.deadline?.cancel()
+        let model = hold.model
         // Its Undo could not take the change back any more.
         if model.notice == hold.note { model.notice = nil }
+        sending[id] = (hold.request, model.bridge)
         model.action(hold.request, failed: { [weak self] in
+            self?.sending[id] = nil
             // The log refused it (the item changed elsewhere): the card shows its real state again, and the error
             // line says why.
             if self?.moves[id] == hold.move { self?.moves[id] = nil }
         }, completed: { [weak self] in
+            self?.sending[id] = nil
             // The card keeps its new look until a snapshot carries the newer revision; then the entry is inert.
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(30))
@@ -1453,13 +1491,50 @@ final class WidgetLedgerUndo: ObservableObject {
         })
     }
 
-    private func undo(_ id: String, model: WidgetModel, reduceMotion: Bool) {
+    private func undo(_ id: String, reduceMotion: Bool) {
         guard let hold = holds.removeValue(forKey: id) else { return }
         hold.watch?.cancel()
         hold.deadline?.cancel()
         moves[id] = nil
+        let model = hold.model
         GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.remove(id) }
         model.postNote("Undone.")
+    }
+
+    /// The app quits while changes still wait for their note, or wait in the model's queue. The main actor is busy
+    /// quitting, so that queue never runs again: each change goes to the hub straight through the bridge, off the
+    /// main thread, and the quit waits for them up to `quitWait`. The `ledger` action reads the decision log itself,
+    /// so it needs no widget state root.
+    private func sendBeforeQuit() {
+        let held = holds.values.map { (request: $0.request, bridge: $0.model.bridge) }
+        for hold in holds.values {
+            hold.watch?.cancel()
+            hold.deadline?.cancel()
+        }
+        holds.removeAll()
+        let work = held + Array(sending.values)
+        sending.removeAll()
+        guard !work.isEmpty else { return }
+        let done = DispatchSemaphore(value: 0)
+        Task.detached {
+            for item in work { await WidgetLedgerUndo.send(item.request, through: item.bridge) }
+            done.signal()
+        }
+        if done.wait(timeout: .now() + Self.quitWait) == .timedOut {
+            PerfLog.mark("widget.ledger quit: \(work.count) change(s) not confirmed before the app quit")
+        }
+    }
+
+    nonisolated private static func send(_ request: WidgetJSON, through bridge: ToolsBridge) async {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("widget-ledger-" + UUID().uuidString + ".json")
+        do {
+            try JSONEncoder().encode(request).write(to: file, options: .atomic)
+            defer { try? FileManager.default.removeItem(at: file) }
+            _ = try await bridge.run(subcommand: "hub", args: ["widget", "call", "--input", file.path], timeoutSeconds: 4)
+        } catch {
+            PerfLog.mark("widget.ledger quit send \(error.localizedDescription)")
+        }
     }
 }
 

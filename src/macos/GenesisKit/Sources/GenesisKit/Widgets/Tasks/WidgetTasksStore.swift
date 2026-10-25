@@ -477,7 +477,8 @@ public final class WidgetTasksStore: ObservableObject {
     }
 
     private func report(_ failure: Error) {
-        error = failure.localizedDescription
+        // A reply the list cannot decode is one sentence on screen; the decoder's own words go to the log only.
+        error = failure is DecodingError ? "The task list could not be read. Try again in a moment." : failure.localizedDescription
         PerfLog.mark("widget.tasks \(failure.localizedDescription)")
     }
 }

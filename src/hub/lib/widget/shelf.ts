@@ -359,7 +359,7 @@ export async function readShelfAttachment({ root, id, key }: { root?: string; id
 
     const item = (await listWidgetShelf(root)).items.find((entry) => entry.id === id);
     if (!item || !(await Bun.file(item.path).exists())) {
-        throw new Error("The staged item is unavailable; import it again");
+        throw new Error("This item is no longer on the shelf. Add it again.");
     }
 
     const state = await readWidgetState(root);
@@ -390,7 +390,7 @@ export async function attachShelfItem({
 
     const item = (await listWidgetShelf(root)).items.find((entry) => entry.id === id);
     if (!item || !(await Bun.file(item.path).exists())) {
-        throw new Error("The staged item is unavailable; import it again");
+        throw new Error("This item is no longer on the shelf. Add it again.");
     }
 
     return mutateWidgetState(root, (state) => {

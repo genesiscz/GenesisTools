@@ -67,7 +67,7 @@ public final class WidgetShelfStore: ObservableObject {
     @Published public private(set) var notice: String? {
         didSet { if let notice, notice != oldValue { announce(notice, .medium) } }
     }
-    /// The item the user just removed: gone from the list, still on the shelf until `removalUndoDelay` runs out, so
+    /// The item the user just removed: gone from the list, still on the shelf until `undoSeconds` run out, so
     /// the status line's Undo can bring it back (ux checklist "Undo and destructive actions").
     @Published public private(set) var removed: WidgetShelfItem?
     /// True once the first inventory read finished, so a view can tell a first load from an item arriving.
@@ -100,7 +100,8 @@ public final class WidgetShelfStore: ObservableObject {
     private var filePicker: NSOpenPanel?
     private var stopped = false
     private let announce: @MainActor (String, GenAnnounce.Priority) -> Void
-    private let removalUndoDelay: Duration
+    /// How long a removal waits behind Undo (`WidgetModel.undoSeconds`), read at each removal.
+    private let undoSeconds: @MainActor () -> Double
     /// Where the removed item stood, so Undo puts it back in place.
     private var removedIndex = 0
     private var removalTimer: Task<Void, Never>?
@@ -114,12 +115,13 @@ public final class WidgetShelfStore: ObservableObject {
         onCaptureWillBegin: @escaping () -> Void = {},
         onCaptureStaged: @escaping () -> Void = {},
         onDialogVisibilityChanged: @escaping (Bool) -> Void = { _ in },
-        attachToDraft: ((WidgetShelfItem, WidgetSession) async throws -> Void)? = nil
+        attachToDraft: ((WidgetShelfItem, WidgetSession) async throws -> Void)? = nil,
+        undoSeconds: @escaping @MainActor () -> Double = { WidgetModel.undoSeconds(nil) }
     ) {
         screenCaptureAccess = { PermissionAccess.live.isGranted(.screenRecording) }
         permissionGate = { await PermissionCenter.shared.ensure($0) }
         announce = { GenAnnounce.post($0, priority: $1) }
-        removalUndoDelay = .seconds(10)
+        self.undoSeconds = undoSeconds
         let bridge = ToolsBridge(binaryPath: binaryPath)
         self.request = { arguments, timeout in
             var prefix = ["widget"]
@@ -153,11 +155,11 @@ public final class WidgetShelfStore: ObservableObject {
         onDialogVisibilityChanged: @escaping (Bool) -> Void = { _ in },
         attachToDraft: ((WidgetShelfItem, WidgetSession) async throws -> Void)? = nil,
         announce: @escaping @MainActor (String, GenAnnounce.Priority) -> Void = { _, _ in },
-        removalUndoDelay: Duration = .seconds(10)
+        undoSeconds: @escaping @MainActor () -> Double = { 10 }
     ) {
         self.request = request
         self.announce = announce
-        self.removalUndoDelay = removalUndoDelay
+        self.undoSeconds = undoSeconds
         self.screenRecorder = screenRecorder
         self.screenCaptureAccess = screenCaptureAccess
         self.permissionGate = permissionGate
@@ -458,7 +460,7 @@ public final class WidgetShelfStore: ObservableObject {
         }
     }
 
-    /// Takes `item` off the list at once and removes it from the shelf after `removalUndoDelay`, unless Undo brings
+    /// Takes `item` off the list at once and removes it from the shelf after `undoSeconds`, unless Undo brings
     /// it back first. Removing another item removes the first one now.
     public func remove(_ item: WidgetShelfItem) {
         guard !stopped, !isBusy, let index = items.firstIndex(where: { $0.id == item.id }) else { return }
@@ -471,7 +473,7 @@ public final class WidgetShelfStore: ObservableObject {
         // A capture has no original elsewhere; a file does.
         notice = item.kind == .capture ? "Removed from Capture. Drafts that already use it keep it."
             : "Removed from the shelf. The original file and existing drafts are kept."
-        let delay = removalUndoDelay
+        let delay = Duration.seconds(undoSeconds())
         removalTimer = Task { [weak self] in
             do { try await Task.sleep(for: delay) } catch { return }
             self?.commitRemoval()
@@ -492,7 +494,10 @@ public final class WidgetShelfStore: ObservableObject {
         refresh()
     }
 
-    /// Removes the item for good: its Undo ran out, another item was removed, or the store stops.
+    /// The Undo row's close button: the removal happens now instead of when the Undo time runs out.
+    public func confirmRemoval() { commitRemoval() }
+
+    /// Removes the item for good: its Undo ran out or was closed, another item was removed, or the store stops.
     private func commitRemoval() {
         guard let item = removed else { return }
         removalTimer?.cancel()
@@ -565,7 +570,8 @@ public final class WidgetShelfStore: ObservableObject {
     }
 
     private func report(_ error: Error) {
-        self.error = error.localizedDescription
+        // A reply the shelf cannot decode is one sentence on screen; the decoder's own words go to the log only.
+        self.error = error is DecodingError ? "The shelf could not be read. Try again in a moment." : error.localizedDescription
         GenesisKit.log("widget shelf: \(error.localizedDescription)")
     }
 

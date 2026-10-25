@@ -40,6 +40,9 @@ public final class WidgetModel: ObservableObject {
     public private(set) var previewList: [WidgetSession] = []
     @Published public private(set) var inbox = WidgetInboxSummary.empty
     @Published public private(set) var inboxPulse = 0
+    /// Bumped only when an item that waits for an answer arrives: the rail badge counts those (`waitingCount`), so it
+    /// pulses only when its own number rises, never for an unread answer it does not count.
+    @Published public private(set) var waitingPulse = 0
     private var inboxSessions: [String: WidgetInboxSession] = [:]
     private var inboxObserved = false
     private var inboxStartedAt = 0.0
@@ -973,6 +976,7 @@ public final class WidgetModel: ObservableObject {
         }
         inboxObserved = inboxObserved || value.complete
         if arrived { inboxPulse += 1 }
+        if arrivals.contains(where: \.needsAnswer) { waitingPulse += 1 }
         if !arrivals.isEmpty { inboxArrived?(arrivals) }
         for key in arrivedKeys { inboxSessionPulses[key, default: 0] += 1 }
         if inboxWatermarks.count > 4096 {
@@ -1295,6 +1299,7 @@ public final class WidgetModel: ObservableObject {
         if openingInbox?.key != key { openingInbox = nil }
         inboxOverview = false
         selectedKey = key
+        choiceFocus = nil
         lastSelected = snapshot?.sessions.first { $0.key == key }
         if expanded != nil { refreshContext() }
         selectedCardID = nil
@@ -1342,6 +1347,9 @@ public final class WidgetModel: ObservableObject {
     @Published public var inboxFilter = "all"
     /// Set once the reader picks a filter; until then the filter follows the `inboxFilter` setting.
     public var inboxFilterPicked = false
+    /// The option of the open decision card that Up and Down chose; nil while the card row itself is chosen. Kept
+    /// with its card, because option ids ("a", "b") repeat across decisions.
+    @Published public var choiceFocus: WidgetChoiceFocus?
     /// The session list's rows in the order it draws them (its search, pins and open groups applied), written by
     /// the list as it changes. Empty: the list has not said, and the keys leave it alone.
     public var sessionListOrder: [String] = []
@@ -1378,24 +1386,63 @@ public final class WidgetModel: ObservableObject {
         return min(max(current + step, 0), count - 1)
     }
 
+    /// Where Up or Down goes among an open decision's options: to an option, back to the card row (Up from the first
+    /// option), or out of the card (Up from the card row, Down from the last option).
+    enum OptionMove: Equatable { case option(Int), cardRow, leave }
+
+    nonisolated static func optionMove(focused: Int?, step: Int, count: Int) -> OptionMove {
+        guard count > 0 else { return .leave }
+        guard let focused else { return step < 0 ? .leave : .option(0) }
+        let target = focused + step
+        if target < 0 { return .cardRow }
+        return target < count ? .option(target) : .leave
+    }
+
     /// A session's inbox, as drawn: the filter's rows, newest first. Up and Down open the row above or below (the
-    /// inbox shows one open row); Return folds or opens the current one. No motion: the keys repeat.
+    /// inbox shows one open row) and, in an open decision, walk its options first; Return folds or opens the current
+    /// row, or picks the chosen option the way a click does. No motion: the keys repeat.
     private func moveCard(_ kind: WidgetListKey.Kind) -> Bool {
         let shown = Array(LiveWidgetView.filtered(cards, by: inboxFilter).reversed())
         guard !shown.isEmpty else { return false }
         let current = card.flatMap { open in shown.firstIndex { $0.id == open.id } }
+        // The open decision's options, when the row the keys stand on is that decision.
+        let decision = current.flatMap { index in answerCard.flatMap { $0.id == shown[index].id ? $0 : nil } }
+        let focused = decision.flatMap { open in
+            choiceFocus?.cardID == open.id ? open.choices.firstIndex(where: { $0.id == choiceFocus?.choiceID }) : nil
+        }
         releaseAgentFit()
         switch kind {
         case .open:
             guard let current else { return false }
-            if foldedCardIDs.contains(shown[current].id) {
+            if let decision, let focused {
+                guard decisionClickStages else {
+                    // Return never sends (ux checklist, Keyboard); with "Send at once" the number key does.
+                    postNote("Return does not send an answer. Press \(focused + 1) to send this one.")
+                    return true
+                }
+                choose(decision, option: decision.choices[focused].id)
+            } else if foldedCardIDs.contains(shown[current].id) {
                 openCard(shown[current])
             } else {
                 foldedCardIDs.insert(shown[current].id)
             }
         case .up, .down:
-            guard let target = Self.listTarget(current: current, step: kind == .up ? -1 : 1, count: shown.count),
+            let step = kind == .up ? -1 : 1
+            if let decision {
+                switch Self.optionMove(focused: focused, step: step, count: decision.choices.count) {
+                case .option(let index):
+                    choiceFocus = WidgetChoiceFocus(cardID: decision.id, choiceID: decision.choices[index].id)
+                    return true
+                case .cardRow:
+                    choiceFocus = nil
+                    return true
+                case .leave:
+                    break
+                }
+            }
+            guard let target = Self.listTarget(current: current, step: step, count: shown.count),
                   target != current || foldedCardIDs.contains(shown[target].id) else { return true }
+            choiceFocus = nil
             openCard(shown[target])
         }
         return true
@@ -2517,4 +2564,10 @@ public struct WidgetListKey: Equatable, Sendable {
 public struct WidgetCmuxRequest: Equatable, Sendable {
     public let key: String
     public let scope: String?
+}
+
+/// The option of a decision card that the arrow keys chose (`WidgetModel.choiceFocus`).
+public struct WidgetChoiceFocus: Equatable, Sendable {
+    public let cardID: String
+    public let choiceID: String
 }

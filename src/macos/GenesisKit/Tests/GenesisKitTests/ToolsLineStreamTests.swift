@@ -429,13 +429,13 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
                       presentPermission: @escaping @MainActor (PermissionNeed) -> Void = { _ in },
                       recipients: [WidgetSession]? = nil, finish: @escaping () -> Void = {},
                       launcher: String = "/fixture/Preview.app/Contents/MacOS/launcher",
-                      discardDelay: Duration = .seconds(10)) -> WidgetVoiceNotesStore {
+                      undoSeconds: Double = 10) -> WidgetVoiceNotesStore {
         WidgetVoiceNotesStore(micLauncher: launcher, request: request,
             execute: execute, finishCapture: finish, cancelCommand: {}, acquireAudio: acquire,
             settings: { WidgetVoiceNoteSettings(provider: "fixture", model: "test-model", language: "en") },
             sessions: { recipients ?? [self.recipient] }, attachDraft: attach, readMicrophonePermission: permission,
             requestMicrophonePermission: prompt, activateForMicrophone: activate, presentMicrophonePermission: presentPermission,
-            discardUndoDelay: discardDelay)
+            undoSeconds: { undoSeconds })
     }
 
     /// Discard takes the note off the list at once and deletes it only after the Undo time; Undo brings it back
@@ -445,7 +445,7 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
         let store = make(request: { args in
             calls.append(args)
             return try self.data(["revision": 0, "notes": [self.note()], "statePath": "/fixture/widget/voice-notes/notes.json"])
-        }, discardDelay: .milliseconds(100))
+        }, undoSeconds: 0.1)
         defer { store.stop() }
         store.refresh()
         await store.waitForRefresh()

@@ -69,6 +69,28 @@ final class WidgetKeymapTests: XCTestCase {
         XCTAssertEqual(press(36, list: true, editingText: true), .pass, "Return in the composer is the composer's")
     }
 
+    /// With a decision card open, Up and Down still reach the list (which walks the card's options first), and the
+    /// digits still answer (judge round, R7).
+    func testArrowsWalkAnOpenDecisionsOptionsAndDigitsStillAnswer() {
+        let open = card()
+        let context = WidgetCoordinator.PanelKeyContext(previewOpen: false, agents: true, editingText: false,
+                                                        answering: open, list: true)
+        func press(_ keyCode: UInt16, _ characters: String = "") -> WidgetCoordinator.PanelKey {
+            WidgetCoordinator.panelKey(keyCode: keyCode, characters: characters, context: context, keymap: keys())
+        }
+        XCTAssertEqual(press(125), .list(.down), "Down goes to the model, which moves among the options")
+        XCTAssertEqual(press(126), .list(.up))
+        XCTAssertEqual(press(0x13, "ě"), .choose("drop"), "the number row still answers option 2")
+
+        // The model's step through three options: in from the card row, down to the last, then out of the card.
+        XCTAssertEqual(WidgetModel.optionMove(focused: nil, step: 1, count: 3), .option(0))
+        XCTAssertEqual(WidgetModel.optionMove(focused: 0, step: 1, count: 3), .option(1))
+        XCTAssertEqual(WidgetModel.optionMove(focused: 2, step: 1, count: 3), .leave, "past the last option: next row")
+        XCTAssertEqual(WidgetModel.optionMove(focused: 0, step: -1, count: 3), .cardRow, "up from the first: the card")
+        XCTAssertEqual(WidgetModel.optionMove(focused: nil, step: -1, count: 3), .leave, "up from the card: row above")
+        XCTAssertEqual(WidgetModel.optionMove(focused: nil, step: 1, count: 0), .leave, "no options: the rows move")
+    }
+
     /// ⌘H hides an app on every Mac; Open Hub moved to ⌘O, and J and K say what they move (R8, R9).
     func testOpenHubLeavesCommandHToHideAndJAndKNameTheSession() throws {
         let keys = Keymap(library: WidgetKeymap.library, store: nil, layout: TableKeyLayout.us)

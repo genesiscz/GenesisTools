@@ -56,7 +56,7 @@ struct WidgetSessionActivity: View {
             }
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(status.label + ", \(max(0, count)) inbox notifications")
+        .accessibilityLabel(status.label + ", " + Plural.count(max(0, count), "inbox item"))
     }
 }
 
@@ -78,10 +78,10 @@ struct AgentWidgetPreview: View {
                     Button { model.toggleInboxOverview(on: surface) } label: {
                         HStack(spacing: 4) {
                             WidgetInboxCount(count: model.inbox.needsAnswer, needsAnswer: true,
-                                pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
+                                pulse: model.waitingPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
                             Text("need you").font(.system(size: 10))
                         }
-                    }.buttonStyle(.genHoverPlain()).instantTooltip("Every inbox entry that waits for your answer")
+                    }.buttonStyle(.genHoverPlain()).instantTooltip("Every inbox item that waits for your answer")
                 }
                 if model.inbox.unread > 0 {
                     Button { model.toggleInboxOverview(on: surface) } label: {
@@ -90,7 +90,7 @@ struct AgentWidgetPreview: View {
                                 pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
                             Text("unread").font(.system(size: 10))
                         }
-                    }.buttonStyle(.genHoverPlain()).instantTooltip("Every unread inbox entry, from all sessions")
+                    }.buttonStyle(.genHoverPlain()).instantTooltip("Every unread inbox item, from all sessions")
                 }
                 if model.inboxCount == 0 {
                     Text(model.snapshot == nil ? "Loading inbox" : model.inbox.complete ? "All caught up" : "Inbox status unavailable")
@@ -150,7 +150,7 @@ struct AgentWidgetPreview: View {
             } label: {
                 HStack {
                     Image(systemName: "rectangle.stack").font(.system(size: 10))
-                    Text("Projects & sessions").font(.system(size: 10, weight: .medium))
+                    Text("Projects & sessions").font(.system(size: 11, weight: .medium))
                     Spacer()
                     Text(Plural.count(model.previewList.count, "session")).font(.system(size: 11)).monospacedDigit()
                     Image(systemName: "chevron.right").font(.system(size: 8, weight: .semibold))
@@ -169,6 +169,7 @@ struct AgentWidgetPreview: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         // Like the row button's own popover: while it is open the edge panel must not collapse.
         .onChange(of: cmuxPanelKey) { _, key in model.cmuxPopoverOpen = key != nil }
+        .onDisappear { if cmuxPanelKey != nil { model.cmuxPopoverOpen = false } }
     }
 
     private var sortTooltip: String {
@@ -263,7 +264,7 @@ struct WidgetSessionTimes: View {
         switch item.kind {
         case "answer": return ("answered", item.at, false)
         case "result": return ("finished", item.at, false)
-        default: return ("new entry", item.at, false)
+        default: return ("new item", item.at, false)
         }
     }
 }

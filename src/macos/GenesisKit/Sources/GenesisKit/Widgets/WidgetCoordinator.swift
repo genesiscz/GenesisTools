@@ -107,7 +107,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             attachToDraft: { [weak model] item, recipient in
                 guard let model else { throw CancellationError() }
                 try await model.attachShelfItem(item.id, to: recipient.key)
-            })
+            },
+            undoSeconds: { [weak model] in model?.undoSeconds ?? WidgetModel.undoSeconds(nil) })
         self.shelf = shelf
         let tasks = WidgetTasksStore(
             binaryPath: binaryPath,
@@ -129,7 +130,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                 try await model.attachVoiceNote(note, to: session.key)
                 self?.showShelfDraft(for: session)
                 return "Added to \(session.title)'s draft. Nothing has been sent."
-            })
+            },
+            undoSeconds: { [weak model] in model?.undoSeconds ?? WidgetModel.undoSeconds(nil) })
         voiceNotes.recipientPickerVisibilityChanged = { [weak self] visible in
             guard let self else { return }
             self.model.dialogOpen = visible || self.settings?.isVisible == true || self.mediaWindow?.isVisible == true

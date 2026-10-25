@@ -159,6 +159,7 @@ private struct WidgetVoiceNotesView: View {
                     .buttonStyle(.genHover()).font(.system(size: 11, weight: .medium))
                     .instantTooltip("Brings the recording back. It is deleted for good after a few seconds.")
                     .accessibilityIdentifier("voice-notes-undo-discard")
+                IconButton(systemName: "xmark", tooltip: "Close; the recording is deleted now", action: store.confirmDiscard)
             }
         } else if let receipt = store.receipt {
             Label(receipt, systemImage: "checkmark.circle").font(.system(size: 11)).foregroundStyle(.secondary)

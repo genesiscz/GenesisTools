@@ -23,7 +23,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     @Published public var selectedID: String?
     @Published public var recipientKey = ""
     @Published private var drafts: [String: String] = [:]
-    /// The note the user just discarded: gone from the list, still on disk until `discardUndoDelay` runs out, so
+    /// The note the user just discarded: gone from the list, still on disk until `undoSeconds` run out, so
     /// Undo can bring it back (ux checklist "Undo and destructive actions").
     @Published public private(set) var discarded: WidgetVoiceNote?
     public let meter = WidgetVoiceRecordingMeter()
@@ -44,7 +44,8 @@ public final class WidgetVoiceNotesStore: ObservableObject {
     private let presentMicrophonePermission: @MainActor (PermissionNeed) -> Void
     private var operation: Task<Void, Never>?
     private var refreshTask: Task<Void, Never>?
-    private let discardUndoDelay: Duration
+    /// How long a discard waits behind Undo (`WidgetModel.undoSeconds`), read at each discard.
+    private let undoSeconds: @MainActor () -> Double
     /// Where the discarded note stood in the list, so Undo puts it back in place.
     private var discardedIndex = 0
     private var discardTimer: Task<Void, Never>?
@@ -61,7 +62,8 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         acquireAudio: @escaping () async throws -> any VoiceRecordingLease,
         settings: @escaping () -> WidgetVoiceNoteSettings,
         sessions: @escaping () -> [WidgetSession],
-        attachDraft: @escaping (WidgetSession, WidgetVoiceNote) async throws -> String) {
+        attachDraft: @escaping (WidgetSession, WidgetVoiceNote) async throws -> String,
+        undoSeconds: @escaping @MainActor () -> Double = { WidgetModel.undoSeconds(nil) }) {
         let bridge = ToolsBridge(binaryPath: binaryPath)
         let transport = VoiceCommandTransport(binaryPath: binaryPath, stateRoot: stateRoot)
         let prefix = ["widget"] + (stateRoot.map { ["--state-root", $0] } ?? []) + ["voice-notes"]
@@ -74,7 +76,8 @@ public final class WidgetVoiceNotesStore: ObservableObject {
             return Data(result.stdout.utf8)
         }, execute: { args, lease, event in try await transport.run(args: args, lease: lease, onEvent: event) },
         finishCapture: { transport.finishRecording() }, cancelCommand: { transport.cancel() },
-        acquireAudio: acquireAudio, settings: settings, sessions: sessions, attachDraft: attachDraft)
+        acquireAudio: acquireAudio, settings: settings, sessions: sessions, attachDraft: attachDraft,
+        undoSeconds: undoSeconds)
     }
 
     init(micLauncher: String, request: @escaping ([String]) async throws -> Data,
@@ -87,9 +90,9 @@ public final class WidgetVoiceNotesStore: ObservableObject {
          requestMicrophonePermission: @escaping () async throws -> VoiceMicrophonePermission = { try await VoiceMicrophonePermission.request() },
          activateForMicrophone: @escaping () -> Void = { NSApp?.activate(ignoringOtherApps: true) },
          presentMicrophonePermission: @escaping @MainActor (PermissionNeed) -> Void = { PermissionCenter.shared.require($0) },
-         discardUndoDelay: Duration = .seconds(10)) {
+         undoSeconds: @escaping @MainActor () -> Double = { 10 }) {
         self.micLauncher = micLauncher
-        self.discardUndoDelay = discardUndoDelay
+        self.undoSeconds = undoSeconds
         self.readMicrophonePermission = readMicrophonePermission
         self.requestMicrophonePermission = requestMicrophonePermission
         self.activateForMicrophone = activateForMicrophone
@@ -309,7 +312,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         }
     }
 
-    /// Takes the selected note off the list at once and deletes it after `discardUndoDelay`, unless Undo brings it
+    /// Takes the selected note off the list at once and deletes it after `undoSeconds`, unless Undo brings it
     /// back first. A second discard deletes the first one now.
     public func discard() {
         guard !stopped, !isBusy, let note = selected, let index = notes.firstIndex(where: { $0.id == note.id }) else { return }
@@ -321,7 +324,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         selectedID = notes.first?.id
         error = nil
         receipt = "Recording discarded."
-        let delay = discardUndoDelay
+        let delay = Duration.seconds(undoSeconds())
         discardTimer = Task { [weak self] in
             do { try await Task.sleep(for: delay) } catch { return }
             self?.deleteDiscarded()
@@ -340,7 +343,11 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         receipt = "Recording restored."
     }
 
-    /// Deletes the discarded note for good: its Undo ran out, another note was discarded, or the store stops.
+    /// The Undo row's close button: the delete happens now instead of when the Undo time runs out.
+    public func confirmDiscard() { deleteDiscarded() }
+
+    /// Deletes the discarded note for good: its Undo ran out or was closed, another note was discarded, or the store
+    /// stops.
     private func deleteDiscarded() {
         guard let note = discarded else { return }
         discardTimer?.cancel()

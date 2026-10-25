@@ -245,6 +245,18 @@ extension WidgetModel {
     }
 }
 
+/// How long an Undo row holds a removed item back (Remove from shelf, Discard of a voice note): as long as a note with
+/// a button stays (`noteSeconds`, at least 10 s), so every Undo in the widget lasts the same. With notes set to stay
+/// until closed (`noteSeconds` 0), the row stays until it is closed, but 60 s at most, since the delete must happen.
+public extension WidgetModel {
+    nonisolated static func undoSeconds(_ preferences: WidgetPreferences?) -> Double {
+        noteSeconds(preferences, hasAction: true) ?? 60
+    }
+
+    /// `undoSeconds` for the current preferences; the coordinator hands this to the shelf and voice-notes stores.
+    var undoSeconds: Double { Self.undoSeconds(snapshot?.state.preferences) }
+}
+
 /// A button beside the widget's notice line.
 public struct WidgetNoticeAction {
     public let title: String

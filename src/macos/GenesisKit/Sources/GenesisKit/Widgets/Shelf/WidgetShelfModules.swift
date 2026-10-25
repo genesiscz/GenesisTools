@@ -133,6 +133,7 @@ struct WidgetShelfModuleView: View {
                     .keyboardShortcut("z", modifiers: .command)
                     .instantTooltip("Puts it back (⌘Z)")
                     .accessibilityIdentifier("shelf-undo-remove")
+                IconButton(systemName: "xmark", tooltip: "Close; the item is removed now", action: store.confirmRemoval)
             }
         } else if let notice = store.notice {
             Text(notice).font(.system(size: 11)).foregroundStyle(.secondary)

@@ -10,10 +10,19 @@ import SwiftUI
 ///     SWR.fade(moved, current: { changed }, clear: { changed = [] })
 ///     row.swrFlash(changed.contains(row.id)).transition(SWR.rowTransition)
 public enum SWR {
-    /// The refresh spring, or nil (an instant change) while the system's Reduce Motion is on. Read at each refresh,
-    /// so the setting takes effect without a restart.
+    /// The refresh spring, or nil (an instant change) while Reduce Motion is on: the system's or the app's own
+    /// (`NativeSettingsAppearance`, the hub's General → Reduce motion), the two `@GenReduceMotion` reads. Read at
+    /// each refresh, so a change takes effect without a restart.
     public static var animation: Animation? {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85)
+        reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.85)
+    }
+
+    /// `withAnimation` runs on the main thread, and so does every caller; off it the app's setting cannot be read and
+    /// only the system's counts.
+    private static var reduceMotion: Bool {
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { return true }
+        guard Thread.isMainThread else { return false }
+        return MainActor.assumeIsolated { NativeSettingsAppearance.shared.reduceMotion }
     }
 
     /// New rows slide in from the top; gone rows fade.
@@ -48,7 +57,7 @@ public enum SWR {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_600_000_000)
             guard current() == flashed else { return }
-            withAnimation(NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .easeOut(duration: 0.6)) { clear() }
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.6)) { clear() }
         }
     }
 }

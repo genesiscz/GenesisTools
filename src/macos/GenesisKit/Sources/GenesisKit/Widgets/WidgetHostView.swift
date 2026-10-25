@@ -154,7 +154,7 @@ struct WidgetHostView: View {
                     }
                     if selected?.id == "agents", model.waitingCount > 0 {
                         WidgetInboxCount(count: model.waitingCount, needsAnswer: true,
-                            pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
+                            pulse: model.waitingPulse, reduceMotion: model.effectiveReduceMotion, complete: model.inbox.complete)
                     }
                 }.fixedSize()
             }
@@ -427,7 +427,7 @@ struct WidgetHostView: View {
                     .foregroundStyle(classicSide ? Color.white : registry.module(id)?.tint ?? .secondary)
                 if id == "agents", model.waitingCount > 0 {
                     WidgetInboxCount(count: model.waitingCount, needsAnswer: true,
-                        pulse: model.inboxPulse, reduceMotion: model.effectiveReduceMotion,
+                        pulse: model.waitingPulse, reduceMotion: model.effectiveReduceMotion,
                         complete: model.inbox.complete, compact: true)
                 }
             }

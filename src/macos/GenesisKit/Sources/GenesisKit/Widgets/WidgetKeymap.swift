@@ -118,9 +118,9 @@ public enum WidgetKeymap {
 
     public static func label(_ id: String) -> String { shared.label(for: id) ?? "" }
 
-    /// "1–3 answer · ↑/↓ move · J/K session · ⎋ close", with the keys in force.
+    /// "1 to 3 answer · ↑/↓ move · J/K session · ⎋ close", with the keys in force. No dash in a visible string.
     public static var agentFooter: String {
-        "\(label(choiceID(1)))–\(label(choiceID(3))) answer · \(label(listUp))/\(label(listDown)) move · "
+        "\(label(choiceID(1))) to \(label(choiceID(3))) answer · \(label(listUp))/\(label(listDown)) move · "
             + "\(label(previous))/\(label(next)) session · \(label(collapse)) close"
     }
 }
