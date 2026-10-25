@@ -9,6 +9,7 @@ import {
     gatherHarnessPoster,
 } from "@genesiscz/utils/agent/runtime";
 import { createTranscriptAnchor, type TranscriptAnchor } from "@genesiscz/utils/agent/source-anchor";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
@@ -1076,7 +1077,10 @@ export async function recordChatAnswers({
     const recorded: DecisionRecord[] = [];
 
     for (const item of answers) {
-        const when = item.evidence.timestamp ? ` (${item.evidence.timestamp})` : "";
+        // The hub shows comments as written, so the time is local, never the transcript's UTC stamp.
+        const when = item.evidence.timestamp
+            ? ` (${formatLocalDateTimeStamp(item.evidence.timestamp, { seconds: false })})`
+            : "";
 
         try {
             const [row] = await applyUpdates({
