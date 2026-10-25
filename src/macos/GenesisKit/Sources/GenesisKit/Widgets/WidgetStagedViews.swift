@@ -50,7 +50,6 @@ struct WidgetStagedList: View {
     @GenReduceMotion private var reduceMotion
     /// Unchecked decision ids; everything else is checked, so a newly staged one goes by default.
     @State private var skipped: Set<String> = []
-    @GenReduceMotion private var reduceMotion
 
     private var scopeAll: Bool { model.stagedView == "all" || model.sessionStaged.isEmpty }
     private var items: [WidgetInboxItem] { scopeAll ? model.stagedItems : model.sessionStaged }

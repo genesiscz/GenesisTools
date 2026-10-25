@@ -2270,7 +2270,7 @@ describe("durable capture and file shelf", () => {
         const { item } = await importShelfFile({ root: directory, input });
         await unlink(item.path);
         await expect(attachShelfItem({ root: directory, id: item.id, key: widgetSessionKey(target) })).rejects.toThrow(
-            "unavailable"
+            "no longer on the shelf"
         );
         expect((await readWidgetState(directory)).drafts).toEqual({});
     });
@@ -2665,7 +2665,9 @@ test("shelf attachment descriptors inspect metadata and draft without creating o
     );
     expect(await stateFile.bytes()).toEqual(before);
     const absent = join(directory, "not-created");
-    await expect(readShelfAttachment({ root: absent, id: "missing", key: "chosen" })).rejects.toThrow("unavailable");
+    await expect(readShelfAttachment({ root: absent, id: "missing", key: "chosen" })).rejects.toThrow(
+        "no longer on the shelf"
+    );
     expect(await Bun.file(join(absent, "state.json")).exists()).toBe(false);
 });
 
