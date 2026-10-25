@@ -127,6 +127,12 @@ function gateSnapshot(options: { wt: string; sha: string; runDir: string }): str
                 continue;
             }
 
+            // A dangling link (a `.bin` entry whose package is gone) has nothing to pin, and realpath throws on it.
+            if (!existsSync(input)) {
+                console.log(`gates: skipped the dangling dependency link ${relative(workerRoot, input)}`);
+                continue;
+            }
+
             const target = realpathSync(input);
             const local = relative(workerRoot, target);
             const workspace =

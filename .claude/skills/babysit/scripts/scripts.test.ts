@@ -3116,6 +3116,9 @@ describe("round 15 review regressions", () => {
             fs.mkdirSync(installed);
             fs.writeFileSync(join(installed, "fixture.txt"), "trusted dependency");
             fs.symlinkSync(installed, join(modules, "fixture-dependency"));
+            // A `.bin` link whose package is gone must not stop the gate snapshot (it did: ENOENT from realpath).
+            fs.mkdirSync(join(modules, ".bin"));
+            fs.symlinkSync("../gone/bin/gone.mjs", join(modules, ".bin/gone"));
             fs.writeFileSync(join(dir, "run.json"), SafeJSON.stringify({ repo: "genesiscz/GenesisTools", main: wt }));
             const preload = join(dir, "preload.ts");
             const gateCwd = join(dir, "gate-cwd.txt");
