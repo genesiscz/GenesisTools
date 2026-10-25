@@ -18,7 +18,7 @@ day of review (PRs #499, #501).
   `open -g -n ~/Applications/GenesisTools.app --args --markdown <file> --no-focus`.
 - Genesis Markdown.app (GenesisPlayground) builds against this checkout's GenesisKit:
   `GENESIS_KIT_PATH=<GenesisTools>/src/macos/GenesisKit bun scripts/install.ts` in `GenesisPlayground/Genesis/apps/Genesis`.
-  It relaunches the viewer only when it was open. Its `swift build` needs `--disable-build-manifest-caching` too.
+  It starts the viewer after every install, in the background (`open -g`, with its saved tabs), open before or not. Its `swift build` needs `--disable-build-manifest-caching` too.
 - The diff page (`src/macos/GenesisTools/web/diff-viewer`) is bundled by `buildDiffViewer` in
   `src/macos/lib/permissions/app.ts`; both installs call it.
 
