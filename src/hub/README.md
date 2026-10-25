@@ -40,7 +40,7 @@ The hub keeps a log of every place it showed, with who took it there: `user` (a 
     tools hub nav open 'genesis-tools://hub?pr=owner%2Frepo%2342&commit=4e7a3bc' --note "why"
     tools hub nav list [--json] [--limit 20]
 
-`nav open` takes a hub link, a PR ref or page, a commit sha (with `--pr` or `--repo`), a checkout folder, or the `open` flags. It records the entry (`~/.genesis-tools/hub/navigation.db`), then opens the hub on it. `--actor` defaults to `agent` inside an agent session (its id goes in as `--from`), else `link`. Settings → Hub → History sets how many places are kept (200) and whether an agent's place is shown at once (the default) or only added to History. Every entry writes one `hub nav:` line to the day log.
+`nav open` takes a hub link, a PR ref or page, a commit sha (with `--pr` or `--repo`), a checkout folder, or the `open` flags. It records the entry in the hub's own database (`~/.genesis-tools/hub/data.db`, one file for every hub feature: a new one adds its migrations to `src/hub/lib/data-db.ts`), then opens the hub on it. `--actor` defaults to `agent` inside an agent session (its id goes in as `--from`), else `link`. Settings → Hub → History sets how many places are kept (200) and whether an agent's place is shown at once (the default) or only added to History. Every entry writes one `hub nav:` line to the day log.
 
 ## Links
 

@@ -1,52 +1,6 @@
-import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
+import type { Database } from "bun:sqlite";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { logger } from "@genesiscz/utils/logger";
-import { Storage } from "@genesiscz/utils/storage";
 import { isNavActor, NAV_DEFAULT_KEEP, type NavEntry, normalizeTarget } from "./types";
-
-const { log } = logger.scoped("hub:nav");
-
-export const NAV_MIGRATIONS: Migration[] = [
-    {
-        id: "001-hub-nav-entries",
-        description:
-            "one row per place the hub showed: when, who (user, agent, link), the place, its title and the note",
-        apply: (db) => {
-            db.exec(`CREATE TABLE IF NOT EXISTS nav_entries (
-                id TEXT PRIMARY KEY,
-                at INTEGER NOT NULL,
-                actor TEXT NOT NULL,
-                title TEXT NOT NULL,
-                target TEXT NOT NULL,
-                note TEXT,
-                from_session TEXT
-            );`);
-            db.exec("CREATE INDEX IF NOT EXISTS idx_nav_entries_at ON nav_entries(at);");
-            db.exec("CREATE TABLE IF NOT EXISTS nav_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);");
-        },
-    },
-];
-
-/** `~/.genesis-tools/hub/navigation.db`: one log per machine, shared by every hub and agent. */
-export function navDbPath(): string {
-    return join(new Storage("hub").getBaseDir(), "navigation.db");
-}
-
-export function openNavDb(dbPath: string = navDbPath()): Database {
-    if (dbPath !== ":memory:") {
-        mkdirSync(dirname(dbPath), { recursive: true });
-    }
-
-    const db = new Database(dbPath);
-    db.exec("PRAGMA journal_mode = WAL;");
-    db.exec("PRAGMA busy_timeout = 2000;");
-    runMigrations(db, NAV_MIGRATIONS, { tableName: "hub_nav" });
-    log.debug({ dbPath }, "hub nav: opened the log");
-    return db;
-}
 
 interface NavRow {
     id: string;

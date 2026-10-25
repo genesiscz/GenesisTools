@@ -140,7 +140,7 @@ private struct HubHistorySettings: View {
             }
             NativeSettingsCard("History") {
                 NativeSettingsRow(
-                    "Keep the last", detail: "Older places leave History, Back and Forward. The log is ~/.genesis-tools/hub/navigation.db."
+                    "Keep the last", detail: "Older places leave History, Back and Forward. The log is in ~/.genesis-tools/hub/data.db."
                 ) {
                     HStack(spacing: 8) {
                         NativeSettingsNumberPicker(

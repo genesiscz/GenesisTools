@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openHubDb } from "../data-db";
 import { hubArgs, hubUrl } from "../open";
-import { listNav, navKeep, openNavDb, recordNav } from "./store";
+import { listNav, navKeep, recordNav } from "./store";
 import { navTargetProblem, navTitle, parseNavInput } from "./target";
 import { type NavEntry, normalizeTarget } from "./types";
 
@@ -10,7 +14,7 @@ function entry(id: string, at: number, extra: Partial<NavEntry> = {}): NavEntry 
 
 describe("the navigation log", () => {
     it("lists newest first, replaces by id and keeps the agent's note and session", () => {
-        const db = openNavDb(":memory:");
+        const db = openHubDb(":memory:");
         recordNav(db, entry("a", 1));
         recordNav(
             db,
@@ -30,7 +34,7 @@ describe("the navigation log", () => {
     });
 
     it("keeps the newest entries, and a later writer without a cap uses the one the hub stored", () => {
-        const db = openNavDb(":memory:");
+        const db = openHubDb(":memory:");
         expect(navKeep(db)).toBe(200);
         for (let index = 0; index < 5; index++) {
             recordNav(db, entry(`p${index}`, index), 3);
@@ -46,7 +50,7 @@ describe("the navigation log", () => {
 
     it("drops unknown target keys and empty values, and reads an unknown actor as user", () => {
         expect(normalizeTarget({ pr: "1", snapshot: "/tmp/x.png", commit: " ", tab: 3 })).toEqual({ pr: "1" });
-        const db = openNavDb(":memory:");
+        const db = openHubDb(":memory:");
         recordNav(db, entry("x", 1));
         db.run(`UPDATE nav_entries SET actor = 'robot', target = '{"pr":"1","menu":"Go/Back"}'`);
         expect(listNav(db)[0]).toMatchObject({ actor: "user", target: { pr: "1" } });
@@ -118,5 +122,22 @@ describe("what tools hub nav open names", () => {
         expect(hubUrl({ pr: "563", actor: "agent", note: "a b" })).toBe(
             "genesis-tools://hub?pr=563&actor=agent&note=a%20b"
         );
+    });
+});
+
+describe("hub data.db", () => {
+    it("the first open copies an old navigation.db in and renames it aside", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-hub-data-"));
+        try {
+            const old = openHubDb(join(dir, "navigation.db"));
+            recordNav(old, { id: "n1", at: 1, actor: "agent", title: "PR #1", target: { pr: "1" }, note: "why" });
+            old.close();
+            const db = openHubDb(join(dir, "data.db"));
+            expect(listNav(db).map((entry) => entry.id)).toEqual(["n1"]);
+            expect(existsSync(join(dir, "navigation.db"))).toBe(false);
+            db.close();
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });

@@ -3,7 +3,7 @@ import SwiftUI
 
 // Back and forward through what the hub showed, and the log of it: every mode switch, session, worktree, PR and
 // commit, who took the hub there (a click here, an agent, a link) and why. The engine is GenesisKit's
-// `NavigationHistory`; the log lives in `tools hub nav` (`~/.genesis-tools/hub/navigation.db`), so an agent's
+// `NavigationHistory`; the log lives in `tools hub nav` (`~/.genesis-tools/hub/data.db`), so an agent's
 // `tools hub nav open` and the hub write one list. ⌘[ and ⌘], the arrows above the mode switch, the mouse's side
 // buttons and a trackpad swipe walk it (`HubModel.goBack`); ⌘Y and the clock button list it (`HubHistoryButton`).
 

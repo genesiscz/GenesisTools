@@ -11,7 +11,8 @@ import { logger, out } from "@genesiscz/utils/logger";
 import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/utils/table";
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
-import { listNav, navDbPath, navKeep, openNavDb, recordNav } from "../lib/navigation/store";
+import { hubDbPath, openHubDb } from "../lib/data-db";
+import { listNav, navKeep, recordNav } from "../lib/navigation/store";
 import { navTargetProblem, navTitle, parseNavInput } from "../lib/navigation/target";
 import {
     isNavActor,
@@ -175,7 +176,7 @@ async function navOpen(input: string | undefined, flags: NavOpenFlags): Promise<
         entry.from = from;
     }
 
-    const db = openNavDb();
+    const db = openHubDb();
 
     try {
         recordNav(db, entry);
@@ -249,7 +250,7 @@ function navRecord(flags: NavRecordFlags): void {
         entry.from = flags.from;
     }
 
-    const db = openNavDb();
+    const db = openHubDb();
 
     try {
         const result = recordNav(db, entry, flags.keep);
@@ -264,17 +265,17 @@ function navRecord(flags: NavRecordFlags): void {
 }
 
 function navList(flags: { json?: boolean; limit?: number }): void {
-    const db = openNavDb();
+    const db = openHubDb();
 
     try {
         const entries = listNav(db, flags.limit);
 
         if (flags.json) {
-            out.result({ entries, keep: navKeep(db), path: navDbPath() });
+            out.result({ entries, keep: navKeep(db), path: hubDbPath() });
             return;
         }
 
-        renderCliHeader("Hub history", `${entries.length} places, newest first · ${navDbPath()}`);
+        renderCliHeader("Hub history", `${entries.length} places, newest first · ${hubDbPath()}`);
         const table = createBoxTable(["WHEN", "WHO", "PLACE", "NOTE"]);
         const tint = { user: pc.dim, agent: pc.magenta, link: pc.cyan } as const;
 

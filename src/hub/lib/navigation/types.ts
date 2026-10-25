@@ -1,6 +1,6 @@
 /**
  * The hub's navigation history: every place the hub showed, who took it there and why. The log lives here, in
- * `~/.genesis-tools/hub/navigation.db`; GenesisTools.app reads and writes it through `tools hub nav`, and its
+ * the `nav_entries` table of `~/.genesis-tools/hub/data.db` (`openHubDb`); GenesisTools.app reads and writes it through `tools hub nav`, and its
  * GenesisKit engine (`NavigationHistory`) walks it with Back, Forward and a hop.
  */
 
