@@ -714,8 +714,10 @@ struct MarkdownFileTreeView: View {
     }
 
     private func header(_ root: URL) -> some View {
-        HStack(spacing: 6) {
-            HStack(spacing: 2) {
+        // The 22 pt targets sit side by side with no gap: with 6 pt gaps the folder chip kept about 30 pt of a 230 pt
+        // sidebar and showed only "(…" (viewer shots, 2026-10-25). Each button keeps its own 22 pt target.
+        HStack(spacing: 2) {
+            HStack(spacing: 0) {
                 headerButton("chevron.left", enabled: history.canGoBack, id: "markdown-files-back",
                              tip: history.back.last.map { "Back to \(Self.placeName($0))" } ?? "Back") { model.treeBack() }
                 headerButton("chevron.right", enabled: history.canGoForward, id: "markdown-files-forward",
@@ -754,7 +756,7 @@ struct MarkdownFileTreeView: View {
                     .truncationMode(.middle)
                     .layoutPriority(1)
             }
-            .padding(.horizontal, 6)
+            .padding(.horizontal, 4)
             .padding(.vertical, 2)
             .background(RoundedRectangle(cornerRadius: 5).fill(model.theme.accent.opacity(0.10)))
             // "Navigate in Sidebar", or a reveal that re-rooted the tree: the new root lights up.
@@ -763,9 +765,11 @@ struct MarkdownFileTreeView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel("Folder \(root.lastPathComponent)")
             .accessibilityIdentifier("markdown-files-root")
+            .layoutPriority(1)
 
             Spacer(minLength: 0)
 
+            HStack(spacing: 0) {
             PathMenuButton(entries: { newItemEntries(root) }) {
                 Image(systemName: "plus")
                     .font(.system(size: 9, weight: .bold))
@@ -827,8 +831,9 @@ struct MarkdownFileTreeView: View {
             .accessibilityLabel("Re-read this folder")
             .accessibilityIdentifier("markdown-files-reload")
             .instantTooltip("Re-read this folder")
+            }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 6)
         // 22 pt buttons in a header that kept its height: 4 + 22 + 4 is the old 7 + 16 + 7.
         .padding(.vertical, 4)
     }
