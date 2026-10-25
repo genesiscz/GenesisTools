@@ -149,8 +149,7 @@ export function sessionAgents(input: SessionAgentsInput): Record<string, Session
     const lunaSlug = resolveOpenAiSubModel("luna");
     const luna = input.codexModel(lunaSlug);
     agents["codex-worker"] = {
-        description:
-            "Hands a task to a headless Codex CLI worker (`tools codex spawn`), waits for it and reports its final message. For long or independent work that should run in the Codex CLI's own sandbox instead of this session.",
+        description: `Hands a task to a headless Codex CLI worker (\`${toolCommand("codex spawn")}\`), waits for it and reports its final message. For long or independent work that should run in the Codex CLI's own sandbox instead of this session.`,
         prompt: codexWorkerPrompt(input.codexAccount),
         model: `codex/${lunaSlug}:low`,
         tools: ["Bash", "Read", "Write"],
