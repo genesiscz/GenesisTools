@@ -6,6 +6,7 @@ import SwiftUI
 public enum HubSettingsPages {
     public static let appearancePageID = "hub.appearance"
     public static let panesPageID = "hub.panes"
+    public static let historyPageID = "hub.history"
 
     public static func section(preferences: HubPreferences? = nil) -> NativeSettingsSection {
         let preferences = preferences ?? .shared
@@ -23,6 +24,12 @@ public enum HubSettingsPages {
                     subtitle: "Defaults for the Agent processes and Worktree cleanup panes."
                 ) {
                     HubPaneSettings(preferences: preferences)
+                },
+                NativeSettingsPage(
+                    id: historyPageID, title: "History", symbol: "clock.arrow.circlepath", tint: .purple,
+                    subtitle: "Back, Forward and the list of places the hub showed, yours and the agents'."
+                ) {
+                    HubHistorySettings(preferences: preferences)
                 },
             ], order: 35)
     }
@@ -110,6 +117,42 @@ private struct HubPaneSettings: View {
                 }
             }
             Text("The panes in the hub show the same controls. Changes apply to a running hub at once.")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+@MainActor
+private struct HubHistorySettings: View {
+    @ObservedObject var preferences: HubPreferences
+
+    var body: some View {
+        VStack(spacing: 18) {
+            NativeSettingsCard(
+                "When an agent opens something",
+                subtitle: "An agent or a link names a PR, a commit, a worktree or a session (tools hub nav open)."
+            ) {
+                NativeSettingsSegmented(
+                    "Agent navigation", identifier: "hub.nav.agentNavigation",
+                    options: HubAgentNavigation.allCases.map { NativeSettingsOption($0, $0.title, detail: $0.detail) },
+                    selection: $preferences.agentNavigation, minSegmentWidth: 90)
+            }
+            NativeSettingsCard("History") {
+                NativeSettingsRow(
+                    "Keep the last", detail: "Older places leave History, Back and Forward. The log is ~/.genesis-tools/hub/navigation.db."
+                ) {
+                    HStack(spacing: 8) {
+                        NativeSettingsNumberPicker(
+                            "Places kept",
+                            range: HubPreferences.navigationLimitRange.lowerBound
+                                ..< (HubPreferences.navigationLimitRange.upperBound + 1),
+                            identifier: "hub.nav.limit", value: $preferences.navigationLimit)
+                        Text("places").font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }
+            }
+            Text("⌘[ and ⌘] go back and forward; ⌘Y lists every place. Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }

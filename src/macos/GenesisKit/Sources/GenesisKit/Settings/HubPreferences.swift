@@ -15,6 +15,26 @@ public enum HubWindowStyle: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// What an agent's (or a link's) request to show a place does to the hub: it navigates there, as a click would,
+/// or it only adds the place to the history list and leaves the view alone. Either way Back returns.
+public enum HubAgentNavigation: String, CaseIterable, Identifiable, Sendable {
+    case navigate, listOnly
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .navigate: return "Show it"
+        case .listOnly: return "Only add it to History"
+        }
+    }
+
+    public var detail: String {
+        switch self {
+        case .navigate: return "The hub moves to what the agent opened. Back returns to where you were."
+        case .listOnly: return "The view stays. The place waits in History (⌘Y) until you open it."
+        }
+    }
+}
+
 /// The hub's preferences that a person sets, shared by the hub window (`--hub`) and the Hub pages of the settings
 /// window (`--features`). Both faces run from one bundle, so they read one defaults domain. A write posts a distributed
 /// notification, and every other process reloads, as `NativeSettingsAppearance` does for General.
@@ -28,11 +48,16 @@ public final class HubPreferences: ObservableObject {
         public static let glass = "hub.glass"
         public static let processEnergy = "hub.procs.energy"
         public static let cleanupIdleDays = "hub.worktreeCleanup.olderThanDays"
+        public static let navigationLimit = "hub.nav.limit"
+        public static let agentNavigation = "hub.nav.agentNavigation"
     }
 
     public static let shared = HubPreferences()
     /// The idle days a worktree needs before cleanup counts it as removable; 0 means any idle time.
     public static let cleanupIdleDaysRange = 0...90
+    /// How many places the navigation history keeps (`tools hub nav`); the oldest go first.
+    public static let navigationLimitRange = 20...2000
+    public static let navigationLimitDefault = 200
 
     @Published public var style: HubWindowStyle { didSet { if oldValue != style { persist(.style) } } }
     /// The Hub style only: the desktop shows through, blurred. The Native style follows General → Theme instead.
@@ -44,8 +69,16 @@ public final class HubPreferences: ObservableObject {
     @Published public var cleanupIdleDays: Int {
         didSet { if oldValue != cleanupIdleDays { persist(.cleanupIdleDays) } }
     }
+    /// The places Back, Forward and History keep.
+    @Published public var navigationLimit: Int {
+        didSet { if oldValue != navigationLimit { persist(.navigationLimit) } }
+    }
+    /// What an agent's request to show a place does: navigate (the default) or only add it to History.
+    @Published public var agentNavigation: HubAgentNavigation {
+        didSet { if oldValue != agentNavigation { persist(.agentNavigation) } }
+    }
 
-    private enum Field { case style, glass, processEnergy, cleanupIdleDays }
+    private enum Field { case style, glass, processEnergy, cleanupIdleDays, navigationLimit, agentNavigation }
     public let notificationNamespace: String
     public let notificationName: Notification.Name
     private let defaults: UserDefaults
@@ -70,6 +103,8 @@ public final class HubPreferences: ObservableObject {
         glass = defaults.bool(forKey: Key.glass)
         processEnergy = defaults.bool(forKey: Key.processEnergy)
         cleanupIdleDays = Self.storedIdleDays(defaults)
+        navigationLimit = Self.storedNavigationLimit(defaults)
+        agentNavigation = Self.storedAgentNavigation(defaults)
         if observeExternalChanges {
             observer = DistributedNotificationCenter.default().addObserver(
                 forName: notificationName, object: notificationNamespace, queue: .main
@@ -91,11 +126,15 @@ public final class HubPreferences: ObservableObject {
         let storedGlass = defaults.bool(forKey: Key.glass)
         let storedEnergy = defaults.bool(forKey: Key.processEnergy)
         let storedDays = Self.storedIdleDays(defaults)
+        let storedLimit = Self.storedNavigationLimit(defaults)
+        let storedAgent = Self.storedAgentNavigation(defaults)
         applyingExternal = true
         if style != storedStyle { style = storedStyle }
         if glass != storedGlass { glass = storedGlass }
         if processEnergy != storedEnergy { processEnergy = storedEnergy }
         if cleanupIdleDays != storedDays { cleanupIdleDays = storedDays }
+        if navigationLimit != storedLimit { navigationLimit = storedLimit }
+        if agentNavigation != storedAgent { agentNavigation = storedAgent }
         applyingExternal = false
     }
 
@@ -107,6 +146,16 @@ public final class HubPreferences: ObservableObject {
         min(cleanupIdleDaysRange.upperBound, max(cleanupIdleDaysRange.lowerBound, defaults.integer(forKey: Key.cleanupIdleDays)))
     }
 
+    /// Unset reads as the default; a stored value outside the range reads as its nearest limit.
+    private static func storedNavigationLimit(_ defaults: UserDefaults) -> Int {
+        guard defaults.object(forKey: Key.navigationLimit) != nil else { return navigationLimitDefault }
+        return min(navigationLimitRange.upperBound, max(navigationLimitRange.lowerBound, defaults.integer(forKey: Key.navigationLimit)))
+    }
+
+    private static func storedAgentNavigation(_ defaults: UserDefaults) -> HubAgentNavigation {
+        HubAgentNavigation(rawValue: defaults.string(forKey: Key.agentNavigation) ?? "") ?? .navigate
+    }
+
     private func persist(_ field: Field) {
         guard !applyingExternal else { return }
         switch field {
@@ -116,6 +165,10 @@ public final class HubPreferences: ObservableObject {
         case .cleanupIdleDays:
             let clamped = min(Self.cleanupIdleDaysRange.upperBound, max(Self.cleanupIdleDaysRange.lowerBound, cleanupIdleDays))
             defaults.set(clamped, forKey: Key.cleanupIdleDays)
+        case .navigationLimit:
+            let clamped = min(Self.navigationLimitRange.upperBound, max(Self.navigationLimitRange.lowerBound, navigationLimit))
+            defaults.set(clamped, forKey: Key.navigationLimit)
+        case .agentNavigation: defaults.set(agentNavigation.rawValue, forKey: Key.agentNavigation)
         }
         guard broadcasts else { return }
         if !defaults.synchronize() { log.warning("Could not flush the hub preferences") }

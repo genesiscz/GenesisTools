@@ -59,6 +59,25 @@ final class HubPreferencesTests: XCTestCase {
         XCTAssertEqual(preferences(defaults, name).cleanupIdleDays, 0)
     }
 
+    func testHistoryKeepsTwoHundredPlacesAndAgentsNavigateUntilChanged() {
+        let (defaults, name) = suite()
+        defer { defaults.removePersistentDomain(forName: name) }
+        let hub = preferences(defaults, name)
+        XCTAssertEqual(hub.navigationLimit, 200)
+        XCTAssertEqual(hub.agentNavigation, .navigate)
+        hub.navigationLimit = 50
+        hub.agentNavigation = .listOnly
+        XCTAssertEqual(defaults.integer(forKey: "hub.nav.limit"), 50)
+        XCTAssertEqual(defaults.string(forKey: "hub.nav.agentNavigation"), "listOnly")
+        let reopened = preferences(defaults, name)
+        XCTAssertEqual(reopened.navigationLimit, 50)
+        XCTAssertEqual(reopened.agentNavigation, .listOnly)
+        defaults.set(5, forKey: HubPreferences.Key.navigationLimit)
+        defaults.set("steal", forKey: HubPreferences.Key.agentNavigation)
+        XCTAssertEqual(preferences(defaults, name).navigationLimit, HubPreferences.navigationLimitRange.lowerBound)
+        XCTAssertEqual(preferences(defaults, name).agentNavigation, .navigate)
+    }
+
     func testAChangeInOneProcessReachesAnotherThroughTheDistributedNotification() async {
         let (defaults, name) = suite()
         defer { defaults.removePersistentDomain(forName: name) }
@@ -111,7 +130,7 @@ final class HubPreferencesTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: name) }
         let section = HubSettingsPages.section(preferences: preferences(defaults, name))
         XCTAssertEqual(section.title, "Hub")
-        XCTAssertEqual(section.pages.map(\.id), [HubSettingsPages.appearancePageID, HubSettingsPages.panesPageID])
+        XCTAssertEqual(section.pages.map(\.id), [HubSettingsPages.appearancePageID, HubSettingsPages.panesPageID, HubSettingsPages.historyPageID])
         let appearance = NativeSettingsAppearance(defaults: defaults, notificationNamespace: name, observeExternalChanges: false)
         let clicky = ClickyModel(defaults: defaults, previewOnly: true, appearance: appearance, observeSystemEvents: false)
         let widget = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults, appearance: appearance)
