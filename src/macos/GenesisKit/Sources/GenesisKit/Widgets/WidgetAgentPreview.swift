@@ -211,6 +211,13 @@ struct AgentWidgetPreview: View {
                             Text(session.visualStatus.label).lineLimit(1)
                         }.font(.system(size: 11)).foregroundStyle(.white.opacity(0.6))
                         WidgetSessionTimes(session: session, inbox: model.inboxFor(session.key))
+                        // The waiting question itself, so an alert that folded can be found again here (Martin,
+                        // 2026-10-25: "I can't seem to find that same stuff anywhere").
+                        if model.snapshot?.state.preferences.previewQuestion ?? true,
+                           let pending = model.inboxFor(session.key)?.pendingItem, let title = pending.title, !title.isEmpty {
+                            Text(WidgetAlerts.kicker(pending) + " · " + title)
+                                .font(.system(size: 11)).foregroundStyle(Color.orange.opacity(0.9)).lineLimit(1)
+                        }
                     }
                     Spacer(minLength: 2)
                     if let inbox = model.inboxFor(session.key), inbox.unread + inbox.needsAnswer > 0 {

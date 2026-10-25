@@ -28,9 +28,25 @@ final class WidgetPolishShotsTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
             "selectedKey": key + "0", "preferences": preferences, "assets": [:], "drafts": [:], "outgoing": []],
             "sessions": sessions, "cards": [], "manifests": [:], "errors": [], "selectedKey": key + "0",
-            "notifications": ["unread": 0, "needsAnswer": 0, "complete": true, "truncated": false, "sessions": []]])
+            "notifications": ["unread": 0, "needsAnswer": 1, "complete": true, "truncated": false,
+                "sessions": [["key": key + "0", "unread": 0, "needsAnswer": 1, "pendingItem": Self.pending(key + "0"),
+                              "items": [Self.pending(key + "0")]]]]])
         model.receive([String(decoding: data, as: UTF8.self)])
         return model
+    }
+
+    static func pending(_ key: String) -> [String: Any] {
+        ["id": "decision:d10", "sourceId": "d10", "kind": "decision", "key": key, "at": Date().timeIntervalSince1970 * 1000,
+         "needsAnswer": true, "number": 10, "title": "P8 scope: where \"no automatic failover, show the error\" applies",
+         "options": ["a) only the fleet publisher", "b) every remote call", "c) the installer as well"], "recommended": "b",
+         "revision": 1]
+    }
+
+    func testTheRecommendedOptionIsFoundByLetterOrText() {
+        XCTAssertTrue(WidgetPeekOptions.isRecommended("b) every remote call", "b"))
+        XCTAssertTrue(WidgetPeekOptions.isRecommended("keep", "keep"))
+        XCTAssertFalse(WidgetPeekOptions.isRecommended("a) only the fleet publisher", "b"))
+        XCTAssertFalse(WidgetPeekOptions.isRecommended("bigger", "b"))
     }
 
     func testThePanelIsDarkUnlessGlassOrTheAppThemeIsPicked() throws {
@@ -69,5 +85,15 @@ final class WidgetPolishShotsTests: XCTestCase {
         let previewShot = try KitShots.render(preview, size: CGSize(width: 420, height: 320), name: "widget-preview", settle: 0.6)
         try XCTUnwrap(previewShot.representation(using: .png, properties: [:]))
             .write(to: URL(fileURLWithPath: folder).appendingPathComponent("widget-inbox-sort-label.png"))
+        // The alert card at the size of Martin's screenshot (2026-10-25 18:47): the pane is as tall as the rail.
+        let item = try XCTUnwrap(model.inboxFor(key + "0")?.pendingItem)
+        let peek = WidgetPeekView(model: model, item: item).padding(WidgetPeekView.inset)
+            .frame(width: 310, height: 290, alignment: .top)
+            .background(NativeThemePalette.graphiteBase)
+            .environment(\.nativeSettingsTheme, model.panelTheme)
+            .environment(\.colorScheme, .dark)
+        let peekShot = try KitShots.render(peek, size: CGSize(width: 310, height: 290), name: "widget-peek", settle: 0.6)
+        try XCTUnwrap(peekShot.representation(using: .png, properties: [:]))
+            .write(to: URL(fileURLWithPath: folder).appendingPathComponent("widget-alert-card.png"))
     }
 }

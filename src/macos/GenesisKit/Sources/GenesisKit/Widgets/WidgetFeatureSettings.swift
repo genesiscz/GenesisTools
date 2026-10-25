@@ -225,6 +225,11 @@ private struct WidgetGeneralSettings: View {
                     isOn: $appearance.reduceTransparency)
             }
             NativeSettingsCard("Inbox behavior") {
+                NativeSettingsToggle(
+                    "Show the waiting question in the list",
+                    detail: "Each session in the hover list shows its open decision under its name, so an alert that closed can be found again.",
+                    isOn: boolean("previewQuestion", prefs?.previewQuestion ?? true))
+                Divider()
                 NativeSettingsRow(
                     "Collapse when quiet", detail: "A draft, recording or active agent keeps the inbox open."
                 ) {

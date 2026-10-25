@@ -600,6 +600,11 @@ struct WidgetPeekView: View {
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .lineLimit(1).truncationMode(.middle)
             }
+            // The pane is never shorter than the rail beside it; the decision's options fill it with what the click
+            // will ask, instead of an empty card (Martin, 2026-10-25: "this is now quite ugly").
+            if item.needsAnswer, let options = item.options, !options.isEmpty {
+                WidgetPeekOptions(options: options, recommended: item.recommended).padding(.top, 4)
+            }
         }
     }
 
@@ -607,6 +612,41 @@ struct WidgetPeekView: View {
         var style = model.attentionStyle
         style.cornerRadius = Self.cornerRadius
         return style
+    }
+}
+
+/// A decision's options in the alert card, up to four, the recommended one marked; read-only, the card's click answers.
+struct WidgetPeekOptions: View {
+    let options: [String]
+    let recommended: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(options.prefix(4).enumerated()), id: \.offset) { _, option in
+                let picked = Self.isRecommended(option, recommended)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Image(systemName: picked ? "star.fill" : "circle")
+                        .font(.system(size: picked ? 8 : 6, weight: .semibold))
+                        .foregroundStyle(picked ? Color.green : Color.secondary)
+                        .frame(width: 10)
+                    Text(option).font(.system(size: 11.5)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                        .foregroundStyle(picked ? .primary : .secondary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(option + (picked ? ", recommended" : ""))
+            }
+            if options.count > 4 {
+                Text("\(options.count - 4) more").font(.system(size: 10.5)).foregroundStyle(.secondary).padding(.leading, 16)
+            }
+        }
+    }
+
+    /// The hub names the recommended option by its letter ("b") or its whole text.
+    static func isRecommended(_ option: String, _ recommended: String?) -> Bool {
+        guard let recommended = recommended?.trimmingCharacters(in: .whitespaces).lowercased(), !recommended.isEmpty
+        else { return false }
+        let lower = option.lowercased()
+        return lower == recommended || lower.hasPrefix(recommended + ")") || lower.hasPrefix(recommended + ".")
     }
 }
 

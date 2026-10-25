@@ -285,6 +285,8 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var glassEffect: Bool?
     /// "dark", "glass" or "theme"; nil reads as "dark".
     public var panelBackground: String?
+    /// The hover list's rows show their waiting question; nil reads as on.
+    public var previewQuestion: Bool?
     public var display: String?
     public var providers: [String]?
     /// Widget alerts for new items: a chime (`alertSound`, a system sound name or "none") and a popup.

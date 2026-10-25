@@ -54,6 +54,8 @@ export const widgetPreferencesSchema = z.object({
     glassEffect: z.boolean().default(true),
     /** The widget panel's own background: "dark" (solid near-black), "glass", or "theme" (the app-wide theme). */
     panelBackground: z.enum(["dark", "glass", "theme"]).default("dark"),
+    /** The hover list's rows show their waiting question under the session. */
+    previewQuestion: z.boolean().default(true),
     display: z.string().default(""),
     providers: z.array(z.enum(["claude", "codex", "grok", "unknown"])).default([]),
     quietSeconds: z.number().int().min(3).max(300).default(15),
