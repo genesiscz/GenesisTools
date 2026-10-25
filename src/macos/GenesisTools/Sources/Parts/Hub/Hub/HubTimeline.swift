@@ -702,7 +702,8 @@ enum TimelinePrompts {
 // shows the same colour in every pane's header (`HubNotice`, Hub/HubWindow.swift).
 
 extension HubModel {
-    /// A launch from an Activity row (resume, a new agent) as a note: started or refused.
+    /// A launch (resume, a new agent) from an Activity or PR row as a note with its tone: a start is success, a
+    /// failure is an error, a cancel says nothing.
     @MainActor
     func postLaunchNotice(_ outcome: LaunchOutcome) {
         switch outcome {

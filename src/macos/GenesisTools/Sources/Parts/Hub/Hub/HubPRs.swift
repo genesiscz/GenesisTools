@@ -2130,7 +2130,7 @@ struct PRDetailView: View {
                     .popover(isPresented: $reviewing, arrowEdge: .bottom) {
                         LaunchPicker(mode: .new(cwd: path, name: "review \(pr.repo) \(pr.label)", prompt: Self.reviewPrompt(pr))) { outcome in
                             reviewing = false
-                            model.postLaunch(outcome)
+                            model.postLaunchNotice(outcome)
                         }
                     }
                     // The palette's "review": the same popover, with the command shown before Start.
@@ -2150,7 +2150,7 @@ struct PRDetailView: View {
                     .popover(isPresented: $launching, arrowEdge: .bottom) {
                         LaunchPicker(mode: .new(cwd: path, name: "\(pr.repo) \(pr.label)")) { outcome in
                             launching = false
-                            model.postLaunch(outcome)
+                            model.postLaunchNotice(outcome)
                         }
                     }
                 }
@@ -2756,16 +2756,5 @@ struct PRSessionsSection: View {
         if loading { return "Looking through the agent sessions…" }
         if pr.repoRoot == nil { return "No local checkout of this project, so no session can be matched." }
         return "No session worked on this branch, its commits or its files."
-    }
-}
-
-extension HubModel {
-    /// A launch outcome in the header with its tone: a start is success, a failure is an error, a cancel says nothing.
-    func postLaunch(_ outcome: LaunchOutcome) {
-        switch outcome {
-        case .cancelled: break
-        case .launched(let text): post(text, .success)
-        case .failed(let text): post(text, .error)
-        }
     }
 }

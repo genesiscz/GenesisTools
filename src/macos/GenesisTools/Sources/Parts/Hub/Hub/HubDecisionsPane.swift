@@ -81,7 +81,7 @@ struct DecisionsView: View {
                         ForEach(shown) { item in
                             InboxDecisionCard(model: model, inbox: inbox, session: session, item: item)
                         }
-                        InboxSendBar(model: model, inbox: inbox, session: session)
+                        InboxSendBar(model: model, inbox: inbox, session: session, claimsShortcut: true)
                     }
                 }
                 .padding(18)

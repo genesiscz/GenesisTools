@@ -794,7 +794,7 @@ final class HubInboxModel: ObservableObject {
     }
 
     /// Brings the session's cmux pane forward through its own agent's resolver (`tools <agent> cmux focus`).
-    func focusPane(_ session: InboxSession, notice: @escaping (String) -> Void) {
+    func focusPane(_ session: InboxSession, notice: @escaping (String, NoticePill.Tone) -> Void) {
         guard let sessionId = session.sessionId else { return }
         let tool = cmuxTool(provider: session.provider)
         DispatchQueue.global(qos: .userInitiated).async {
@@ -804,7 +804,7 @@ final class HubInboxModel: ObservableObject {
             let message = failed
                 ? "No cmux pane found for this session: " + (capture.map { String(decoding: $0.stderr, as: UTF8.self).trimmed.suffix(120) } ?? "tools did not run")
                 : "Focused the session's cmux pane"
-            DispatchQueue.main.async { notice(String(message)) }
+            DispatchQueue.main.async { notice(String(message), failed ? .error : .success) }
         }
     }
 }
@@ -1203,7 +1203,7 @@ private struct InboxSessionSection: View {
             }
             if let provider = session.provider, ["claude", "codex", "grok"].contains(provider) {
                 IconButton(systemName: "terminal", tooltip: "Show this session's cmux pane") {
-                    inbox.focusPane(session) { model.post($0, $0.hasPrefix("No cmux pane") ? .error : .success) }
+                    inbox.focusPane(session) { model.post($0, $1) }
                 }
             }
             IconButton(systemName: "text.bubble", tooltip: hubSession == nil ? "This session is older than the hub's list" : "Open this session's transcript in the hub") {
@@ -1222,13 +1222,15 @@ struct InboxSendBar: View {
     @ObservedObject var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     let session: InboxSession
+    /// The Decisions pane shows one session's bar, whatever the Inbox has selected, so that bar takes ⌘↩.
+    var claimsShortcut = false
 
     private var drafted: [InboxItem] { session.draftedItems }
     private var sending: Bool { session.sessionId.map { inbox.sendingSessions.contains($0) } ?? false }
     private var result: InboxDelivery? { session.sessionId.flatMap { inbox.sessionResults[$0] } }
     private var ownsShortcut: Bool {
         guard !drafted.isEmpty else { return false }
-        if inbox.selectedID == session.id { return true }
+        if claimsShortcut || inbox.selectedID == session.id { return true }
         let staging = inbox.sessions.filter { !$0.draftedItems.isEmpty }
         return staging.count == 1 && staging[0].id == session.id
     }
