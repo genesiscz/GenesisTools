@@ -14,6 +14,8 @@ export interface ModsSettings {
     diff: { fullDiff: boolean; collapseGitSync: boolean };
     idleCompact: { enabled: boolean; minutes: number; minTokens: number };
     agentModel: { enabled: boolean; format: "label" | "short" };
+    /** Read by the CLI's agents panel command (`hooks/agent-row.ts`), not by a hook of this plugin. */
+    agentRow: { enabled: boolean; format: "label" | "short" };
     decisions: { enabled: boolean; chip: "any" | "waiting" | "off"; expand: "waiting" | "all" | "none" };
     inbox: { enabled: boolean; chip: "any" | "unread" | "off"; expand: "unread" | "all" | "none" };
     links: { enabled: boolean };
@@ -41,6 +43,7 @@ export const MODS_DEFAULTS: ModsSettings = {
     diff: { fullDiff: true, collapseGitSync: true },
     idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
     agentModel: { enabled: false, format: "label" },
+    agentRow: { enabled: false, format: "label" },
     decisions: { enabled: false, chip: "any", expand: "waiting" },
     inbox: { enabled: false, chip: "any", expand: "none" },
     links: { enabled: false },
@@ -130,6 +133,7 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
     const idle = part("idleCompact");
     const legacyIdle = typeof held.idleCompact === "boolean" ? held.idleCompact : undefined;
     const model = part("agentModel");
+    const row = part("agentRow");
     const cache = part("cacheBand");
     const tmp = part("tmpUsage");
     const agents = part("agentsBand");
@@ -159,6 +163,10 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
         agentModel: {
             enabled: bool(model.enabled, d.agentModel.enabled),
             format: model.format === "short" || model.format === "label" ? model.format : d.agentModel.format,
+        },
+        agentRow: {
+            enabled: bool(row.enabled, d.agentRow.enabled),
+            format: row.format === "short" || row.format === "label" ? row.format : d.agentRow.format,
         },
         decisions: {
             enabled: enabled("decisions", d.decisions.enabled),

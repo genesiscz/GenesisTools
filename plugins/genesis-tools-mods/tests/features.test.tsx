@@ -1,6 +1,6 @@
 import type { On, TurnStepChunk } from "claude-code";
 import { expect, mock, test } from "claude-code/testing";
-import { bareDescription, lastSaidOf } from "../hooks/agents-band";
+import { lastSaidOf } from "../hooks/agents-band";
 import { answersFrom, callFor, firstAsks, questionCalls } from "../hooks/answers";
 import { quoteOf } from "../hooks/ask-row";
 import { cacheRowsOf, cacheTone } from "../hooks/cache-band";
@@ -39,6 +39,7 @@ import {
 import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
 import { targetFor } from "../hooks/links";
 import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live";
+import { bareDescription } from "../hooks/model-label";
 import { modsSettings } from "../hooks/settings";
 import { forgetSettings, type Host } from "../hooks/shared";
 import { toolLabel } from "../hooks/spinner";

@@ -40,7 +40,9 @@ import {
     installAndPoint,
     readSettings,
     repoRoot,
+    type SubagentLinePlan,
     uninstallHooks,
+    wireSubagentLine,
     wiringStatus,
 } from "../lib/hooks/install";
 import {
@@ -102,6 +104,10 @@ function printInstallResult(result: InstallResult, write: boolean, file: string)
 
     if (result.backup) {
         ui.raw(`${pc.bold("backup")}     ${result.backup}`);
+    }
+
+    if (result.subagentLine === "theirs" || result.subagentLine === "replaced" || result.subagentLine === "restored") {
+        ui.raw(`${pc.bold("subagentStatusLine")} ${subagentLineSaid(result.subagentLine, write)}`);
     }
 
     if (result.nativeDiff === "turned-off") {
@@ -350,53 +356,72 @@ export function registerHooksCommands(program: Command): void {
         .option("--harness [name]", "claude (default) or codex")
         .option("--dist <path>", "Stable path the entries call (default: the agents dist symlink)")
         .option("--target <path>", "Claude only: checkout the dist symlink points at (default: this checkout)")
+        .option(
+            "--replace-subagent-line",
+            "Claude only: while mods.agentRow is on, replace a subagentStatusLine of someone else's (uninstall puts it back)"
+        )
         .option("--write", "Actually write; without it this is a dry run")
-        .action((options: { harness?: string | boolean; dist?: string; target?: string; write?: boolean }) => {
-            const harness = installableHarness(options.harness, "install");
+        .action(
+            (options: {
+                harness?: string | boolean;
+                dist?: string;
+                target?: string;
+                write?: boolean;
+                replaceSubagentLine?: boolean;
+            }) => {
+                const harness = installableHarness(options.harness, "install");
 
-            if (!harness) {
-                return;
-            }
-
-            const dist = options.dist ?? hooksDistPath();
-
-            if (harness === "codex") {
-                const result = installCodexHooks({ dist, write: Boolean(options.write) });
-
-                ui.raw(`${pc.bold("file")}       ${codexHooksPath()}`);
-                printInstallResult(result, Boolean(options.write), "the hooks file");
-
-                if (result.changed && options.write) {
-                    ui.raw(
-                        pc.dim(
-                            "Codex trusts each hook by its position and content: it asks to review a new or changed one at its next interactive start, and does not run it before that."
-                        )
-                    );
+                if (!harness) {
+                    return;
                 }
 
-                return;
+                const dist = options.dist ?? hooksDistPath();
+
+                if (harness === "codex") {
+                    const result = installCodexHooks({ dist, write: Boolean(options.write) });
+
+                    ui.raw(`${pc.bold("file")}       ${codexHooksPath()}`);
+                    printInstallResult(result, Boolean(options.write), "the hooks file");
+
+                    if (result.changed && options.write) {
+                        ui.raw(
+                            pc.dim(
+                                "Codex trusts each hook by its position and content: it asks to review a new or changed one at its next interactive start, and does not run it before that."
+                            )
+                        );
+                    }
+
+                    return;
+                }
+
+                const target = options.target ?? repoRoot();
+                // The symlink is only ours to manage when it IS ours. A `--dist` pointing
+                // somewhere else is the caller's path, and silently repointing it would be a
+                // surprise; it is reported instead.
+                const managed = dist === hooksDistPath();
+                const result = installAndPoint({
+                    dist,
+                    target,
+                    write: Boolean(options.write),
+                    replaceSubagentLine: Boolean(options.replaceSubagentLine),
+                });
+
+                ui.raw(
+                    `${pc.bold("dist")}       ${dist}${managed ? ` → ${target}` : pc.dim(" (yours, not repointed)")}`
+                );
+
+                if (options.write) {
+                    // Also when nothing changed: the file then gains every setting and the record.
+                    recordInstallState({ dist, target: managed ? target : null });
+                }
+
+                printInstallResult(result, Boolean(options.write), "the settings file");
+
+                if (options.write) {
+                    ui.raw(`${pc.bold("config")}     ${hooksConfigPath()} (every setting, plus what was installed)`);
+                }
             }
-
-            const target = options.target ?? repoRoot();
-            // The symlink is only ours to manage when it IS ours. A `--dist` pointing
-            // somewhere else is the caller's path, and silently repointing it would be a
-            // surprise; it is reported instead.
-            const managed = dist === hooksDistPath();
-            const result = installAndPoint({ dist, target, write: Boolean(options.write) });
-
-            ui.raw(`${pc.bold("dist")}       ${dist}${managed ? ` → ${target}` : pc.dim(" (yours, not repointed)")}`);
-
-            if (options.write) {
-                // Also when nothing changed: the file then gains every setting and the record.
-                recordInstallState({ dist, target: managed ? target : null });
-            }
-
-            printInstallResult(result, Boolean(options.write), "the settings file");
-
-            if (options.write) {
-                ui.raw(`${pc.bold("config")}     ${hooksConfigPath()} (every setting, plus what was installed)`);
-            }
-        });
+        );
 
     hooks
         .command("uninstall")
@@ -779,6 +804,7 @@ function registerMods(hooks: Command): void {
                     `after ${mods.idleCompact.minutes} min · floor ${mods.idleCompact.minTokens} tokens`,
                 ],
                 ["mods.agentModel", mods.agentModel.enabled, `format ${mods.agentModel.format}`],
+                ["mods.agentRow", mods.agentRow.enabled, `agents panel rows · format ${mods.agentRow.format}`],
                 [
                     "mods.decisions",
                     mods.decisions.enabled,
@@ -880,9 +906,18 @@ function registerMods(hooks: Command): void {
         mods.command(verb)
             .description(`Turn mods ${on ? "on" : "off"} by name, or all: ${Object.keys(MOD_SWITCHES).join(", ")}`)
             .argument("[names...]", "The mods to switch")
+            .option(
+                "--replace-subagent-line",
+                "agentRow: replace a subagentStatusLine of someone else's; disable puts it back"
+            )
             .option("--write", "Actually write; without it this is a dry run")
-            .action((names: string[], options: { write?: boolean }) => {
-                switchMods({ names, on, write: Boolean(options.write) });
+            .action((names: string[], options: { write?: boolean; replaceSubagentLine?: boolean }) => {
+                switchMods({
+                    names,
+                    on,
+                    write: Boolean(options.write),
+                    replaceSubagentLine: Boolean(options.replaceSubagentLine),
+                });
             });
     }
 
@@ -910,8 +945,43 @@ function registerMods(hooks: Command): void {
         });
 }
 
+/** What happened to `subagentStatusLine`, for `mods enable|disable agentRow` and `install`. */
+function subagentLineSaid(plan: SubagentLinePlan, write: boolean): string {
+    const will = (done: string, planned: string): string => (write ? done : planned);
+    const held = readSettings().subagentStatusLine;
+    const command =
+        typeof held === "object" && held !== null && "command" in held
+            ? String(held.command)
+            : SafeJSON.stringify(held);
+    const said: Record<SubagentLinePlan, string> = {
+        added: will("wired", "would be wired"),
+        updated: will("rewired", "would be rewired"),
+        replaced: will(
+            "replaced; the command it held is kept and comes back on disable",
+            "would replace the command it holds, keeping it for disable to restore"
+        ),
+        removed: will("removed", "would be removed"),
+        restored: will("back to the command it held before", "would go back to the command it held before"),
+        unchanged: "already wired",
+        absent: "not ours, nothing to do",
+        theirs: `holds another command (${command}), so the agents panel rows stay the engine's. Replace it (kept, and restored on disable): ${suggestCommand("tools agents", { replaceCommand: ["hooks", "mods", "enable", "agentRow", "--replace-subagent-line", "--write"] })}`,
+    };
+
+    return said[plan];
+}
+
 /** `hooks mods enable|disable <names...>`: one `config set` per switch key of the named mods. */
-function switchMods({ names, on, write }: { names: string[]; on: boolean; write: boolean }): void {
+function switchMods({
+    names,
+    on,
+    write,
+    replaceSubagentLine,
+}: {
+    names: string[];
+    on: boolean;
+    write: boolean;
+    replaceSubagentLine?: boolean;
+}): void {
     const { keys, unknown } = modSwitchKeys(names);
     const verb = on ? "enable" : "disable";
 
@@ -942,6 +1012,13 @@ function switchMods({ names, on, write }: { names: string[]; on: boolean; write:
     }
 
     ui.raw(pc.dim(hooksConfigPath()));
+
+    if (keys.includes("mods.agentRow.enabled")) {
+        // The agents panel rows are Claude Code's `subagentStatusLine`, a setting of its own, not a hook of the plugin.
+        const plan = wireSubagentLine({ on, write, replace: replaceSubagentLine });
+
+        ui.raw(`${pc.bold("subagentStatusLine")} ${subagentLineSaid(plan, write)} ${pc.dim(claudeSettingsPath())}`);
+    }
 
     if (!write) {
         ui.raw(pc.yellow("dry run: nothing was written. Pass --write to apply."));

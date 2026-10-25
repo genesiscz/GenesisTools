@@ -20,6 +20,7 @@ export const MOD_SWITCHES: Record<string, string[]> = {
     diff: ["mods.diff.fullDiff"],
     idleCompact: ["mods.idleCompact.enabled"],
     agentModel: ["mods.agentModel.enabled"],
+    agentRow: ["mods.agentRow.enabled"],
     decisions: ["mods.decisions.enabled"],
     inbox: ["mods.inbox.enabled"],
     links: ["mods.links.enabled"],

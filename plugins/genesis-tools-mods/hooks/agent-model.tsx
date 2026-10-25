@@ -12,31 +12,12 @@
 // fork. Without either, the agent's own definition or the default subagent model decides later, so the
 // description stays as it was rather than guess.
 import type { AgentSpawnInput, HookStream, TurnStepChunk, TurnStepResult } from "claude-code";
+import { type Format, modelLabel, modelPrefix } from "./model-label";
 import { isRecord } from "./shared";
-
-export type Format = "label" | "short";
-
-const LETTERS: Record<string, string> = { opus: "O", sonnet: "S", fable: "F", haiku: "H" };
-
-/**
- * `label`: `claude-sonnet-5-5` shows as `sonnet-5-5`, a dated id loses its date, an alias such as `sonnet` stays.
- * `short` (`mods.agentModel.format`): one letter per family, O S F H, else the label.
- */
-export function modelLabel(id: string, format: Format): string {
-    const label = id.replace(/^claude-/, "").replace(/-\d{8}$/, "");
-
-    if (format === "label") {
-        return label;
-    }
-
-    const family = Object.keys(LETTERS).find((name) => label.startsWith(name));
-
-    return family ? (LETTERS[family] ?? label) : label;
-}
 
 /** `sonnet · Pair one`, or `(S) Pair one` in the short form; a description that already has it stays. */
 function withModel(description: string, label: string, format: Format): string {
-    const prefix = format === "short" ? `(${label}) ` : `${label} · `;
+    const prefix = modelPrefix(label, format);
 
     return description.startsWith(prefix) ? description : `${prefix}${description}`;
 }

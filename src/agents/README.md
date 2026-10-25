@@ -251,6 +251,12 @@ Each feature appends what it did to `~/.genesis-tools/agents/mods-log/<feature>.
 checked against real use.
 
 - `mods.agentModel` (`format` `label` or `short`): `sonnet · Pair one` or `(S) Pair one` on a subagent's rows.
+- `mods.agentRow` (`format` `label` or `short`): the agents panel under the prompt names each subagent's model beside
+  its type, `general-purpose · sonnet-5-5  Reading foo.ts  1m 5s · ↓ 58k tokens`. No mod hook reaches that panel, so
+  this is Claude Code's `subagentStatusLine` setting: `mods enable agentRow --write` (and `hooks install --write`
+  while it is on) writes it into `~/.claude/settings.json`, pointing at `src/agents/bin/hook-subagent-line.ts`, and
+  `disable` takes it out again. A `subagentStatusLine` of your own is left alone. Claude Code runs the command every
+  5 s, so the time on a row moves in 5 s steps.
 - `mods.decisions` (`chip` `any`, `expand` `waiting`): the Decisions sidebar, opened by `/decisions` or the band's
   `decisions 1 waiting` chip. It lists every `❓ DECISION N` of the session from the decision log (`tools question
   inbox --session <id> --json --all-items`) and from its messages, grouped as waiting, answered, done and closed. A

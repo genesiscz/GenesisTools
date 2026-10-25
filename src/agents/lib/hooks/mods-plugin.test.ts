@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { agentRows, duration, finishedAt, rowInput } from "../../../../plugins/genesis-tools-mods/hooks/agent-row";
 import {
     compactionEndsIdleWait,
     IDLE_COMPACT_DEFAULTS,
@@ -287,5 +288,83 @@ describe("the mods section", () => {
         expect(read.cacheBand.warnMinutes).toBe(10);
         expect(read.hooks).toEqual({ tokens: false, dedupe: false });
         expect(modsSettings("{ not json")).toEqual(MODS_DEFAULTS);
+    });
+});
+
+describe("the agents panel rows (mods.agentRow)", () => {
+    const now = 1_000_000;
+    // The shape Claude Code 2.1.296 sends its subagentStatusLine command, captured live on 2026-10-25.
+    const payload = {
+        session_id: "s-1",
+        columns: 80,
+        tasks: [
+            {
+                id: "a1",
+                type: "local_agent",
+                agentType: "general-purpose",
+                status: "running",
+                description: "(H) Probe one",
+                label: "Reading foo.ts",
+                startTime: now - 65_000,
+                model: "claude-haiku-5-5",
+                tokenCount: 58_500,
+            },
+            {
+                id: "a2",
+                type: "local_agent",
+                agentType: "Explore",
+                status: "completed",
+                description: "sonnet-5-5 · Probe two",
+                label: "sonnet-5-5 · Probe two",
+                startTime: now - 30_000,
+                model: "claude-sonnet-5-5",
+                tokenCount: 0,
+            },
+        ],
+    };
+    const options = { format: "label" as const, now, ends: { a2: now - 10_000 }, width: Bun.stringWidth };
+
+    it("puts the model beside the type, drops the description's model, and right-aligns time and tokens", () => {
+        const input = rowInput(payload);
+
+        expect(input?.columns).toBe(80);
+
+        const rows = agentRows(input ?? { columns: 0, tasks: [] }, options);
+
+        expect(rows.map((row) => row.id)).toEqual(["a1", "a2"]);
+        expect(rows[0]?.content.startsWith("general-purpose · haiku-5-5  Reading foo.ts ")).toBe(true);
+        expect(rows[0]?.content.endsWith(" 1m 5s · ↓ 58.5k tokens")).toBe(true);
+        // A finished agent's time stops at its end; no tokens print nothing.
+        expect(rows[1]?.content.startsWith("Explore · sonnet-5-5         Probe two ")).toBe(true);
+        expect(rows[1]?.content.endsWith("20s")).toBe(true);
+
+        for (const row of rows) {
+            expect(Bun.stringWidth(row.content)).toBeLessThanOrEqual(79);
+        }
+    });
+
+    it("cuts a long activity with an ellipsis and keeps the status whole on a narrow row", () => {
+        const input = rowInput({
+            columns: 40,
+            tasks: [{ id: "a", agentType: "general-purpose", model: "claude-opus-5-5", label: "x".repeat(80) }],
+        });
+        const [row] = agentRows(input ?? { columns: 0, tasks: [] }, { ...options, format: "short" });
+
+        expect(row?.content).toBe(`general-purpose · O  ${"x".repeat(17)}…`);
+    });
+
+    it("keeps an end once seen and forgets agents the panel no longer lists", () => {
+        const input = rowInput(payload) ?? { columns: 0, tasks: [] };
+
+        expect(finishedAt(input, { gone: 5, a2: 7 }, now)).toEqual({ a2: 7 });
+        expect(finishedAt(input, {}, now)).toEqual({ a2: now });
+    });
+
+    it("writes time as the engine does and refuses a payload without tasks", () => {
+        expect(duration(4_900)).toBe("4s");
+        expect(duration(65_000)).toBe("1m 5s");
+        expect(duration(3_723_000)).toBe("1h 2m 3s");
+        expect(rowInput({ columns: 80 })).toBeUndefined();
+        expect(rowInput("nope")).toBeUndefined();
     });
 });

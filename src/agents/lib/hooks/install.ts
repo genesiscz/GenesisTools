@@ -127,6 +127,145 @@ export function entriesFor(
     ];
 }
 
+/** Claude Code's command for the agents panel rows (`mods.agentRow`, `plugins/genesis-tools-mods/hooks/agent-row.ts`). */
+export function subagentLineFor(dist: string): { type: "command"; command: string } {
+    return { type: "command", command: `bun ${shellQuote(`${dist}/src/agents/bin/hook-subagent-line.ts`)}` };
+}
+
+/**
+ * What an install does to `subagentStatusLine`. `theirs`: `mods.agentRow` is on, but the setting holds a command this
+ * installer did not write, which stays (the agents panel rows stay the engine's) unless `replace` is asked for.
+ * `replaced`: that command was kept beside the settings file and ours took its place. `restored`: the mod went off and
+ * the kept command came back. `absent`: the mod is off and no command of ours is there.
+ */
+export type SubagentLinePlan =
+    | "added"
+    | "updated"
+    | "unchanged"
+    | "replaced"
+    | "removed"
+    | "restored"
+    | "absent"
+    | "theirs";
+
+/** The `subagentStatusLine` that `replace` took out, kept beside the settings file so turning the mod off restores it. */
+function subagentLineOwnedPath(settingsPath: string): string {
+    return `${settingsPath}.subagent-line-owned`;
+}
+
+/** The command `replace` kept; `undefined` when none was (or the file does not parse, so nothing is guessed). */
+function savedSubagentLine(settingsPath: string): unknown {
+    const path = subagentLineOwnedPath(settingsPath);
+
+    if (!existsSync(path)) {
+        return undefined;
+    }
+
+    try {
+        return readSettings(path).previous;
+    } catch (err) {
+        hookDiag("Could not read the kept subagentStatusLine", { err, path });
+
+        return undefined;
+    }
+}
+
+/**
+ * Puts the agents panel command into `settings` (changed in place) while `on`, and takes our own out while off, putting
+ * back `saved` (the command `replace` took out) when there is one. A command of someone else's is replaced only with
+ * `replace`.
+ */
+export function planSubagentLine(
+    settings: SettingsShape,
+    options: { dist: string; on: boolean; replace?: boolean; saved?: unknown }
+): SubagentLinePlan {
+    const held = settings.subagentStatusLine;
+    const ours =
+        typeof held === "object" &&
+        held !== null &&
+        "command" in held &&
+        typeof held.command === "string" &&
+        held.command.includes(INSTALL_MARKER);
+
+    if (!options.on) {
+        if (!ours) {
+            return "absent";
+        }
+
+        if (options.saved !== undefined) {
+            settings.subagentStatusLine = options.saved;
+            return "restored";
+        }
+
+        delete settings.subagentStatusLine;
+        return "removed";
+    }
+
+    const wanted = subagentLineFor(options.dist);
+
+    if (held !== undefined && !ours) {
+        if (!options.replace) {
+            return "theirs";
+        }
+
+        settings.subagentStatusLine = wanted;
+        return "replaced";
+    }
+
+    if (SafeJSON.stringify(held) === SafeJSON.stringify(wanted)) {
+        return "unchanged";
+    }
+
+    settings.subagentStatusLine = wanted;
+    return held === undefined ? "added" : "updated";
+}
+
+/** Whether a plan changed the settings, so they must be written. */
+function subagentLineChanged(plan: SubagentLinePlan): boolean {
+    return plan !== "unchanged" && plan !== "absent" && plan !== "theirs";
+}
+
+/**
+ * The bookkeeping beside a written plan: `replaced` keeps the command it took out, and a plan that took ours out
+ * drops the kept copy, which is back in the settings or no longer wanted.
+ */
+function keepSubagentLine(settingsPath: string, plan: SubagentLinePlan, previous: unknown): void {
+    if (plan === "replaced") {
+        writeJsonFile(subagentLineOwnedPath(settingsPath), { previous });
+    } else if (plan === "restored" || plan === "removed") {
+        rmSync(subagentLineOwnedPath(settingsPath), { force: true });
+    }
+}
+
+/**
+ * `mods enable|disable agentRow`: the `subagentStatusLine` part of an install alone, so switching the mod does not
+ * also rewire every hook. Writes only when the plan changed something and `write` is set.
+ */
+export function wireSubagentLine(options: {
+    on: boolean;
+    write: boolean;
+    replace?: boolean;
+    dist?: string;
+    settingsPath?: string;
+}): SubagentLinePlan {
+    const settingsPath = options.settingsPath ?? claudeSettingsPath();
+    const settings = readSettings(settingsPath);
+    const previous = settings.subagentStatusLine;
+    const plan = planSubagentLine(settings, {
+        dist: options.dist ?? hooksDistPath(),
+        on: options.on,
+        replace: options.replace,
+        saved: savedSubagentLine(settingsPath),
+    });
+
+    if (options.write && subagentLineChanged(plan)) {
+        writeJsonFile(settingsPath, settings);
+        keepSubagentLine(settingsPath, plan, previous);
+    }
+
+    return plan;
+}
+
 /**
  * A settings file that does not exist yet is an EMPTY one, not a crash: a fresh machine has
  * no `~/.claude/settings.json`, and `install` should write one rather than exit with a stack
@@ -187,11 +326,18 @@ export function installAndPoint(options: {
     settingsPath?: string;
     write: boolean;
     decisions?: boolean;
+    replaceSubagentLine?: boolean;
 }): InstallAndPointResult {
     const dist = options.dist ?? hooksDistPath();
     const repoint = options.write && dist === hooksDistPath();
-    const decisions = options.decisions;
-    const planned = installHooks({ dist, settingsPath: options.settingsPath, write: false, decisions });
+    const { decisions, replaceSubagentLine } = options;
+    const planned = installHooks({
+        dist,
+        settingsPath: options.settingsPath,
+        write: false,
+        decisions,
+        replaceSubagentLine,
+    });
 
     if (!options.write) {
         return { ...planned, repointed: false };
@@ -205,7 +351,7 @@ export function installAndPoint(options: {
 
     try {
         return {
-            ...installHooks({ dist, settingsPath: options.settingsPath, write: true, decisions }),
+            ...installHooks({ dist, settingsPath: options.settingsPath, write: true, decisions, replaceSubagentLine }),
             repointed: repoint,
         };
     } catch (err) {
@@ -260,6 +406,8 @@ export interface InstallResult {
     dist: string;
     /** What became of Claude Code's own Bash diff; see `diff.replaceNative`. */
     nativeDiff?: "turned-off" | "already-off" | "kept";
+    /** `theirs`: `subagentStatusLine` holds a command of the user's, so the agents panel rows were not wired. */
+    subagentLine?: SubagentLinePlan;
 }
 
 /** Does this entry belong to this installer? */
@@ -305,6 +453,10 @@ export function installHooks(options: {
     decisions?: boolean;
     /** Wire the Stop hook for the unpushed reminder. Omitted: `unpushed.enabled` from the hooks config. */
     unpushed?: boolean;
+    /** Wire `subagentStatusLine` for the agents panel rows. Omitted: `mods.agentRow.enabled`. */
+    agentRow?: boolean;
+    /** Replace a `subagentStatusLine` of someone else's, kept for `disable` and `uninstall` to restore. */
+    replaceSubagentLine?: boolean;
 }): InstallResult {
     const dist = options.dist ?? hooksDistPath();
     const settingsPath = options.settingsPath ?? claudeSettingsPath();
@@ -349,6 +501,24 @@ export function installHooks(options: {
         (ours.length === 0 ? added : updated).push(event);
     }
 
+    const previousLine = settings.subagentStatusLine;
+    const subagentLine = planSubagentLine(settings, {
+        dist,
+        on: options.agentRow ?? config.mods.agentRow.enabled,
+        replace: options.replaceSubagentLine,
+        saved: savedSubagentLine(settingsPath),
+    });
+    const lists: Partial<Record<SubagentLinePlan, string[]>> = {
+        added,
+        updated,
+        replaced: updated,
+        unchanged,
+        removed,
+        restored: removed,
+    };
+
+    lists[subagentLine]?.push("subagentStatusLine");
+
     // The hook replaces Claude Code's own Bash diff, in the same write as the wiring.
     // While `shadow` is on the hook prints nothing (`hook-diff-post`), so turning the native
     // diff off would remove the only diff the user sees. It stays until the hook speaks.
@@ -364,7 +534,7 @@ export function installHooks(options: {
     const changed = SafeJSON.stringify(settings) !== before;
 
     if (!options.write || !changed) {
-        return { added, updated, unchanged, removed, changed, dist, nativeDiff };
+        return { added, updated, unchanged, removed, changed, dist, nativeDiff, subagentLine };
     }
 
     const backup = `${settingsPath}.pre-agents-hooks`;
@@ -374,12 +544,13 @@ export function installHooks(options: {
     }
 
     writeJsonFile(settingsPath, settings);
+    keepSubagentLine(settingsPath, subagentLine, previousLine);
 
     if (nativeDiff === "turned-off") {
         rememberNativeDiff(settingsPath, previousNative);
     }
 
-    return { added, updated, unchanged, removed, changed, backup, dist, nativeDiff };
+    return { added, updated, unchanged, removed, changed, backup, dist, nativeDiff, subagentLine };
 }
 
 /** The previous `bashEditDiffEnabled`, kept beside the settings file install rewrote. */
@@ -457,6 +628,16 @@ export function uninstallHooks(options: { settingsPath?: string; write: boolean 
         }
     }
 
+    const line = planSubagentLine(settings, {
+        dist: hooksDistPath(),
+        on: false,
+        saved: savedSubagentLine(settingsPath),
+    });
+
+    if (subagentLineChanged(line)) {
+        removed++;
+    }
+
     const saved = options.write ? savedNativeDiff(settingsPath) : { found: false as const };
     let restored = false;
 
@@ -474,6 +655,7 @@ export function uninstallHooks(options: { settingsPath?: string; write: boolean 
 
     if (options.write && (removed > 0 || restored)) {
         writeJsonFile(settingsPath, settings);
+        keepSubagentLine(settingsPath, line, undefined);
     }
 
     if (saved.found) {

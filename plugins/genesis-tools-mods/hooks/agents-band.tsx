@@ -9,8 +9,8 @@
 // the subagent's own `tool.call`s.
 import type { AgentInfo, AgentSpawnInput, AgentSpawnResult, ElementTable, RenderElement } from "claude-code";
 import type { SpawnedAgents } from "../types";
-import { modelLabel } from "./agent-model";
 import { liveAgo, liveSince } from "./live";
+import { bareDescription, modelLabel } from "./model-label";
 import { type Feature, type Host, isRecord, settingsOf } from "./shared";
 import {
     actionRow,
@@ -104,11 +104,6 @@ export function recordSpawn(host: Host, e: AgentSpawnInput, result: AgentSpawnRe
     const model = result.model || e.model || e.parentModel;
     spawned = { ...spawned, [agentId]: { model, description: bareDescription(e.description), at: Date.now() } };
     host.redraw();
-}
-
-/** A description without the model the agent-model mod put in front (`(H) `, `haiku-5-5 · `): the row prints it once. */
-export function bareDescription(description: string): string {
-    return description.replace(/^\([A-Z]\) /, "").replace(/^[a-z]+(?:-[\w.]+)* · /, "");
 }
 
 /** Remembers where the session's transcripts are, from any classic hook input. */

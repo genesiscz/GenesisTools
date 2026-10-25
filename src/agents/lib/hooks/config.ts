@@ -292,6 +292,13 @@ export interface ModsConfig {
     /** A subagent's model in front of its description: `sonnet · Pair one` (`label`) or `(S) Pair one` (`short`). */
     agentModel: { enabled: boolean; format: "label" | "short" };
     /**
+     * The agents panel rows under the prompt name each subagent's model beside its type
+     * (`general-purpose · sonnet-5-5  Reading foo.ts  4s · ↓ 58k tokens`). Claude Code's `subagentStatusLine`
+     * setting draws them, so `tools agents hooks install` (and `mods enable agentRow --write`) wires
+     * `hook-subagent-line.ts` there while this is on. `format`: the model as `sonnet-5-5` (`label`) or `S` (`short`).
+     */
+    agentRow: { enabled: boolean; format: "label" | "short" };
+    /**
      * The Decisions sidebar (`/decisions`, the band's `decisions` chip): every decision of the session from the
      * decision log and its messages, by state, an answer staged per decision and sent in one message, and `jump to`
      * the first ask. `chip`: shown while the session has any decision, only while one waits, or never. `expand`:
@@ -507,6 +514,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         diff: { fullDiff: true, collapseGitSync: true },
         idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
         agentModel: { enabled: false, format: "label" },
+        agentRow: { enabled: false, format: "label" },
         decisions: { enabled: false, chip: "any", expand: "waiting" },
         inbox: { enabled: false, chip: "any", expand: "none" },
         links: { enabled: false },
@@ -1124,6 +1132,7 @@ export function mergeMods(stored: unknown): ModsConfig {
     const idle = partOf(held.idleCompact);
     const legacyIdle = typeof held.idleCompact === "boolean" ? held.idleCompact : undefined;
     const model = partOf(held.agentModel);
+    const row = partOf(held.agentRow);
     const cache = partOf(held.cacheBand);
     const tmp = partOf(held.tmpUsage);
     const agents = partOf(held.agentsBand);
@@ -1159,6 +1168,10 @@ export function mergeMods(stored: unknown): ModsConfig {
         agentModel: {
             enabled: boolOr(model.enabled, base.agentModel.enabled),
             format: model.format === "short" || model.format === "label" ? model.format : base.agentModel.format,
+        },
+        agentRow: {
+            enabled: boolOr(row.enabled, base.agentRow.enabled),
+            format: oneOf(row.format, ["label", "short"], base.agentRow.format),
         },
         decisions: {
             enabled: enabled("decisions", base.decisions.enabled),

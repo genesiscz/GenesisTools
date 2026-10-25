@@ -50,7 +50,9 @@ import {
     pointDist,
     readSettings,
     repoRoot,
+    subagentLineFor,
     uninstallHooks,
+    wireSubagentLine,
     wiringStatus,
 } from "./install";
 import { logDecision, releaseRotationLock, setDiagLogPath, setMaxLogBytes, takeRotationLock } from "./log";
@@ -337,6 +339,53 @@ describe("installHooks", () => {
         expect(after.hooks?.PostToolUse?.[0]?.hooks[0]?.command).toBe("bun '/dist/src/agents/bin/hook-diff-post.ts'");
         // The file tools reach the post hook only for the session change log.
         expect(after.hooks?.PostToolUse?.[0]?.matcher).toBe("Bash|Edit|MultiEdit|Write");
+    });
+
+    it("wires subagentStatusLine while mods.agentRow is on, removes its own when off, and leaves another one", () => {
+        const path = settingsFile({ hooks: {} });
+
+        expect(installHooks({ dist: "/dist", settingsPath: path, write: true, agentRow: true }).added).toContain(
+            "subagentStatusLine"
+        );
+        expect(readSettings(path).subagentStatusLine).toEqual({
+            type: "command",
+            command: "bun '/dist/src/agents/bin/hook-subagent-line.ts'",
+        });
+
+        expect(installHooks({ dist: "/dist", settingsPath: path, write: true, agentRow: false }).removed).toContain(
+            "subagentStatusLine"
+        );
+        expect(readSettings(path).subagentStatusLine).toBeUndefined();
+
+        const theirs = { type: "command", command: "/home/alice/rows.sh" };
+        const other = settingsFile({ subagentStatusLine: theirs });
+
+        expect(installHooks({ dist: "/dist", settingsPath: other, write: true, agentRow: true }).subagentLine).toBe(
+            "theirs"
+        );
+        expect(wireSubagentLine({ on: false, write: true, dist: "/dist", settingsPath: other })).toBe("absent");
+        expect(readSettings(other).subagentStatusLine).toEqual(theirs);
+    });
+
+    it("replaces another subagentStatusLine only when asked, and disable or uninstall puts it back", () => {
+        const theirs = { type: "command", command: "/home/alice/rows.sh" };
+        const path = settingsFile({ subagentStatusLine: theirs });
+        const wire = (on: boolean, replace?: boolean) =>
+            wireSubagentLine({ on, write: true, replace, dist: "/dist", settingsPath: path });
+
+        expect(wire(true, true)).toBe("replaced");
+        expect(readSettings(path).subagentStatusLine).toEqual(subagentLineFor("/dist"));
+        expect(existsSync(`${path}.subagent-line-owned`)).toBe(true);
+        // Enabling again finds our own command, so the kept one is not overwritten with ours.
+        expect(wire(true, true)).toBe("unchanged");
+
+        expect(wire(false)).toBe("restored");
+        expect(readSettings(path).subagentStatusLine).toEqual(theirs);
+        expect(existsSync(`${path}.subagent-line-owned`)).toBe(false);
+
+        expect(wire(true, true)).toBe("replaced");
+        expect(uninstallHooks({ settingsPath: path, write: true }).removed).toBe(1);
+        expect(readSettings(path).subagentStatusLine).toEqual(theirs);
     });
 
     it("quotes the script path, so a dist under a directory with a space still runs", () => {

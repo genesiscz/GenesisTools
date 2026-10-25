@@ -8,8 +8,9 @@
 // 2 s. A press on the row opens the Session files sidebar. Each reading goes to `mods-log/tmp.jsonl`.
 import type { ElementTable, RenderElement } from "claude-code";
 import type { SessionWorktree, TmpReading, TmpUsage } from "../types";
-import { bareDescription, sessionDirOf } from "./agents-band";
+import { sessionDirOf } from "./agents-band";
 import { liveAgo } from "./live";
+import { bareDescription } from "./model-label";
 import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
 import { actionButton, type Kit, line, type Pressable, plural, pressed, sidebarFrame } from "./sidebar";
 
