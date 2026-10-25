@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
     agentsArgs,
@@ -9,7 +10,6 @@ import {
 } from "@app/claude/lib/codex-session/agents";
 import { type CodexModelInfo, mergeCodexModelRecords } from "@genesiscz/utils/ai/openai/codex-models";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 
 const catalog = mergeCodexModelRecords({ cache: [] });
 const codexModel = (slug: string): CodexModelInfo | undefined => catalog.get(slug);
@@ -80,8 +80,13 @@ describe("writeAgentFiles", () => {
         expect(sol).toContain("disallowedTools: Agent");
     });
 
-    it("refuses ~/.claude, a project folder and the config root itself", () => {
-        for (const dir of [nativeHome("claude"), process.cwd(), claudeCodexConfigRoot()]) {
+    it("refuses any folder outside the config root (a home folder, a project) and the root itself", () => {
+        for (const dir of [
+            homedir(),
+            process.cwd(),
+            claudeCodexConfigRoot(),
+            join(claudeCodexConfigRoot(), "..", "x"),
+        ]) {
             expect(() => writeAgentFiles(dir, agents)).toThrow("agent files are written only into a folder under");
         }
     });
