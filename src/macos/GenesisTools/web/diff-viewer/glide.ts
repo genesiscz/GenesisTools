@@ -14,6 +14,11 @@ export interface GlideDeps {
     log: (message: string) => void;
     setTimeout: (callback: () => void, ms: number) => number;
     clearTimeout: (id: number) => void;
+    /**
+     * True while the system asks for reduced motion: the view lands on the target at once, with no glide. The
+     * default reads `prefers-reduced-motion`, which WebKit takes from the system's Reduce Motion, on each glide.
+     */
+    reducedMotion?: () => boolean;
 }
 
 /** How long a glide may take before the view lands on its target at once. */
@@ -27,6 +32,9 @@ export const GLIDE_SETTLE_MS = 400;
  */
 export function createGlide(deps: GlideDeps): (target: GlideTarget) => void {
     const { viewer } = deps;
+    const reducedMotion =
+        deps.reducedMotion ??
+        (() => typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches);
     // Only the latest glide may land. A drafts-list click glides to the file and then to the card's
     // line; the file's check, still pending, would put the view back on the file's top whenever the
     // line lies between the file's top and where that glide started.
@@ -42,7 +50,8 @@ export function createGlide(deps: GlideDeps): (target: GlideTarget) => void {
         const destination = viewer.getScrollTop();
         const distance = destination - start;
 
-        if (Math.abs(distance) < 1) {
+        // Under Reduce Motion the instant scroll above is the whole move: travel is what it asks to drop.
+        if (Math.abs(distance) < 1 || reducedMotion()) {
             return;
         }
 

@@ -6,7 +6,7 @@ import { createGlide, GLIDE_SETTLE_MS } from "./glide";
  * A CodeView stand-in: an instant scroll lands at once, a smooth one only on `settle()` (the
  * animation frames), and the timers run on `advance()`.
  */
-function fakeView(start: number, places: Record<string, number>) {
+function fakeView(start: number, places: Record<string, number>, reducedMotion = false) {
     let scrollTop = start;
     let smooth: number | null = null;
     let now = 0;
@@ -50,6 +50,7 @@ function fakeView(start: number, places: Record<string, number>) {
             timers.push({ id, at: now + ms, run });
             return id;
         },
+        reducedMotion: () => reducedMotion,
         clearTimeout(id) {
             const index = timers.findIndex((timer) => timer.id === id);
 
@@ -62,6 +63,7 @@ function fakeView(start: number, places: Record<string, number>) {
     return {
         glideTo,
         logs,
+        smoothPending: () => smooth !== null,
         scrollTop: () => scrollTop,
         readerScroll(top: number) {
             scrollTop = top;
@@ -115,5 +117,16 @@ describe("glideTo", () => {
         view.advance(GLIDE_SETTLE_MS);
 
         expect(view.scrollTop()).toBe(9_000);
+    });
+
+    test("under Reduce Motion the view lands on the target at once, with no glide", () => {
+        const view = fakeView(0, { "Filters.tsx:36": 2_986 }, true);
+
+        view.glideTo({ type: "line", id: "Filters.tsx", lineNumber: 36, side: "additions", align: "center" });
+
+        expect(view.scrollTop()).toBe(2_986);
+        expect(view.smoothPending()).toBe(false);
+        view.advance(GLIDE_SETTLE_MS);
+        expect(view.logs).toEqual([]);
     });
 });
