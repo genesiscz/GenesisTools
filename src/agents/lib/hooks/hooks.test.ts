@@ -23,6 +23,7 @@ import type { NativeHistoryEntry } from "@genesiscz/utils/agent-sessions/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
+import { type ChatAnswerRun, userMessageOutcome } from "./chat-answer-log";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
 import {
     changedOnly,
@@ -2040,6 +2041,59 @@ describe("decision hub hooks", () => {
         // Said once per decision: the next Stop reads again and says nothing about DECISION 2.
         expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps)).toBeNull();
         expect(readDecisions(log.file)[1]?.state).toBe("open");
+    });
+
+    it("logs every chat-answer run with each user message read, and marks the ones that matched nothing", async () => {
+        const { log, counts } = harness();
+        const [row] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Keep it?", options: ["yes", "no"] }],
+        });
+        const at = (minutes: number) => new Date(Date.parse(row.createdTs ?? "") + minutes * 60_000).toISOString();
+        const runs: ChatAnswerRun[] = [];
+        const user = (text: string, minutes: number): NativeHistoryEntry => ({
+            line: -minutes,
+            role: "user",
+            text,
+            paths: [],
+            commits: [],
+            timestamp: at(minutes),
+        });
+        const deps = {
+            log,
+            counts,
+            appendRun: (run: ChatAnswerRun) => runs.push(run),
+            chat: {
+                checkedAt: () => undefined,
+                setCheckedAt: () => undefined,
+                sentBack: () => false,
+                markSentBack: () => undefined,
+            },
+            readSession: async () => ({
+                found: true,
+                issues: [],
+                entries: [
+                    user("first, the cache stays as it is", 1),
+                    user(`${"long context ".repeat(40)}\nD1 a) keep it`, 2),
+                ],
+            }),
+        };
+
+        await runDecisionStop(
+            stopPayload("Done.", { transcript_path: "/tmp/sess-1.jsonl" }),
+            decisionsOn({ chatAnswers: "record" }),
+            deps
+        );
+
+        const [run] = runs;
+        expect(run?.open).toMatchObject([{ id: row.id, number: 1 }]);
+        expect(run?.recorded).toEqual([row.id]);
+        expect(run?.users.map((message) => (run ? userMessageOutcome(run, message) : ""))).toEqual([
+            "no match",
+            "recorded D1 a)",
+        ]);
+        // A long message keeps its start and the line that answers, so a review sees why it matched.
+        expect(run?.users[1]?.candidates).toEqual(["D1 a) keep it"]);
     });
 
     it("in remind mode stores nothing and sends the agent back to record the chat answer itself", async () => {

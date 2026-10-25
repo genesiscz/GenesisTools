@@ -293,6 +293,11 @@ export function logDecision(record: DecisionRecord, logPath: string): void {
     append(logPath, record);
 }
 
+/** One record into a hook's own JSONL log, with the same modes and rotation as the hooks log; never throws. */
+export function appendHookRecord(path: string, record: Record<string, unknown>): void {
+    append(path, record);
+}
+
 /** A caught error on the hot path. Never thrown, never swallowed: it lands in the log. */
 export function hookDiag(reason: string, fields: Record<string, unknown> = {}): void {
     append(diagPath, {

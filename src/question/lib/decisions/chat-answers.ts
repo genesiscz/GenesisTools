@@ -61,6 +61,8 @@ interface Found {
 const ASK = /❓\s*\**\s*DECISION\s+(\d+)\b/g;
 /** A compaction or continuation summary is the harness's text about the past, not the user answering now. */
 const SUMMARY = /^This session is being continued from a previous conversation/;
+/** An attached image's own entry (`[Image: source: /var/…/clipboard-….png]`): an attachment, not the user's words. */
+const IMAGE_ONLY = /^\[Image(?: #\d+)?: source: [^\]\n]*\]$/;
 /** Where a second answer starts on the same line: `D14 b, D15 a` or `14 b); 15 a)`. */
 const NEXT_ANSWER = /\s*[,;]\s*(?=(?:D|DECISION\s*)?#?\d+\s*[:.)\-–—]?\s*\(?[a-z]{1,4}\b)/i;
 const LEAD = /^\s*[-–—:,]\s*/;
@@ -118,14 +120,14 @@ function mentions(text: string, n: number): boolean {
 }
 
 /** The user's own words: harness wrappers and summaries are not the user answering. */
-function userText(entry: NativeHistoryEntry): string | undefined {
+export function userText(entry: NativeHistoryEntry): string | undefined {
     if (entry.role !== "user") {
         return undefined;
     }
 
     const text = entry.text.trim();
 
-    if (!text || isWrapperUserText(text) || SUMMARY.test(text)) {
+    if (!text || isWrapperUserText(text) || SUMMARY.test(text) || IMAGE_ONLY.test(text)) {
         return undefined;
     }
 

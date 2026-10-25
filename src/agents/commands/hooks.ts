@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { suggestCommand, suggestEnumFlag } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { ui } from "@genesiscz/utils/cli/ui";
+import { formatLocalDateTimeStamp } from "@genesiscz/utils/date";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
@@ -10,6 +11,7 @@ import type { ShellRule } from "@genesiscz/utils/shell/rules/types";
 import { createBoxTable, renderCliHeader } from "@genesiscz/utils/table";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { chatAnswerLogPath, readChatAnswerRuns, userMessageOutcome } from "../lib/hooks/chat-answer-log";
 import {
     type CodexWiring,
     codexHooksPath,
@@ -532,6 +534,68 @@ export function registerHooksCommands(program: Command): void {
             }
 
             out.result(filtered);
+        });
+
+    hooks
+        .command("chat-answers")
+        .description(
+            "Review the decision Stop hook's chat-answer runs (decisions.chatAnswers): each user message it read and what it made of it"
+        )
+        .option("--session <id>", "Only this session (an id prefix)")
+        .option("--misses", "Only user messages that matched nothing while decisions were open")
+        .option("-n, --runs <count>", "How many of the newest runs", "20")
+        .option("--json", "Print the runs as JSON")
+        .action((options: { session?: string; misses?: boolean; runs?: string; json?: boolean }) => {
+            const count = Number(options.runs ?? "20");
+
+            if (!Number.isInteger(count) || count < 1) {
+                ui.err(`--runs must be a positive integer, got ${options.runs}`);
+                process.exitCode = 1;
+                return;
+            }
+
+            const runs = readChatAnswerRuns({ session: options.session }).slice(-count);
+
+            if (options.json) {
+                out.result(runs);
+                return;
+            }
+
+            if (runs.length === 0) {
+                ui.info(
+                    `No chat-answer runs in ${chatAnswerLogPath()}${options.session ? ` for ${options.session}` : ""}.`
+                );
+                return;
+            }
+
+            for (const run of runs) {
+                const rows = run.users
+                    .map((message) => ({ message, outcome: userMessageOutcome(run, message) }))
+                    .filter((row) => !options.misses || row.outcome === "no match");
+
+                if (rows.length === 0) {
+                    continue;
+                }
+
+                const open = run.open.map((row) => `D${row.number}`).join(", ");
+                ui.header(
+                    `${formatLocalDateTimeStamp(run.at)}  ${run.harness} ${run.session.slice(0, 8)}  open: ${open}`
+                );
+
+                for (const { message, outcome } of rows) {
+                    const tag = outcome === "no match" ? pc.yellow(outcome) : pc.green(outcome);
+                    const when = message.timestamp
+                        ? `${formatLocalDateTimeStamp(message.timestamp, { seconds: false })} `
+                        : "";
+                    ui.raw(`  ${tag}  ${pc.dim(when)}${message.text.replace(/\s+/g, " ").slice(0, 160)}`);
+
+                    for (const candidate of message.candidates ?? []) {
+                        ui.raw(`      ${pc.dim("…")} ${candidate}`);
+                    }
+                }
+            }
+
+            ui.dim(`Log: ${chatAnswerLogPath()}`);
         });
 
     hooks

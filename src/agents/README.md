@@ -194,8 +194,14 @@ the agent back to record it. An unclear one (two different answers, a letter the
 without an option) sends the agent back once per decision, quoting the line. A read that ends before the oldest open
 ask is logged to the hooks log. It needs only the Stop entry.
 
+Every run that read a user message is logged to `~/.genesis-tools/agents/chat-answers.jsonl`: the open decisions, each
+user message read (its start, plus any later line that names a decision or opens with an option letter), and what came
+of it. `tools agents hooks chat-answers --misses` lists the messages that matched nothing while decisions were open, so
+an answer the finder should have taken is found in a minute; `--session <id>` and `--json` narrow and export it.
+
 ```bash
 tools agents hooks config set decisions.chatAnswers record --write
+tools agents hooks chat-answers --misses
 ```
 
 ## How a diff looks

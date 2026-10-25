@@ -1,5 +1,5 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
-import { type AmbiguousAnswer, type ChatAnswer, chatAnswers } from "@app/question/lib/decisions/chat-answers";
+import { type AmbiguousAnswer, type ChatAnswer, chatAnswers, userText } from "@app/question/lib/decisions/chat-answers";
 import {
     decisionQuestion,
     decisionQuestionRefs,
@@ -20,6 +20,7 @@ import {
 } from "@app/question/lib/decisions/store";
 import type { BackwardRead, ReadBackwardOptions } from "@genesiscz/utils/agent-sessions/types";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { appendChatAnswerRun, type ChatAnswerRun, loggedUserMessage } from "./chat-answer-log";
 import type { DecisionsHookConfig } from "./config";
 import { hookDiag } from "./log";
 import type { HookPayload } from "./payload";
@@ -81,6 +82,8 @@ export interface DecisionHookDeps {
     readSession?: ReadSession;
     /** The chat-answer step's state store; tests pass an in-memory one. */
     chat?: ChatAnswerState;
+    /** Where each chat-answer run is logged (`chat-answers.jsonl`); tests collect them instead. */
+    appendRun?: (run: ChatAnswerRun) => void;
     now?: () => number;
     /** The loop guard's counter store; tests pass an in-memory one. */
     counts?: { read: (session: string) => number; bump: (session: string) => void };
@@ -313,6 +316,31 @@ async function runChatAnswers(
     const toRecord =
         config.chatAnswers === "remind" ? answers.filter(({ row }) => !state.sentBack(session, row.id)) : [];
     const toCheck = unclear.filter(({ row }) => !state.sentBack(session, row.id));
+    const users = read.entries.filter((entry) => entry.role === "user" && userText(entry) !== undefined);
+
+    // Every run that read a user message is kept, a miss included: `tools agents hooks chat-answers --misses` lists the
+    // messages that matched nothing, so an answer the finder should have taken is found later.
+    if (users.length > 0 || found.unambiguous.length > 0 || found.ambiguous.length > 0) {
+        (deps.appendRun ?? appendChatAnswerRun)({
+            at: new Date(now).toISOString(),
+            harness: payload.harness,
+            session,
+            transcript: transcriptPath,
+            mode: config.chatAnswers,
+            open: open.map((row) => ({ id: row.id, number: row.number, askedAt: askedAt(row) })),
+            read: {
+                ...(from > 0 ? { from: new Date(from).toISOString() } : {}),
+                found: read.found,
+                entries: read.entries.length,
+                issues: read.issues.length,
+            },
+            users: users.map((entry) => loggedUserMessage(entry)),
+            unambiguous: found.unambiguous,
+            ambiguous: found.ambiguous,
+            recorded: recorded.map((row) => row.id),
+            sentBack: [...toRecord, ...toCheck].map(({ row }) => row.id),
+        });
+    }
 
     if (toRecord.length === 0 && toCheck.length === 0) {
         return recordedNote ? { systemMessage: recordedNote } : null;
