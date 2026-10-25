@@ -4,7 +4,7 @@ On 2026-10-24 about 110 SwiftUI and AppKit agent skills were found (the first UX
 skill registries) and read as data, never installed or run. Their rules were judged against this skill (105, 91 and
 about 150 rules before merging), merged into 45 rules, and checked against a code audit of the app that found 36
 confirmed defects ([audit.md](audit.md) holds the result). The notes, with every quote, file and line and the hit
-counts in `src/macos`, are in the GenesisBrain vault under `GenesisTools/2026-10-24-SwiftPerfSkills/`
+counts in `src/macos`, are in the notes vault under `GenesisTools/2026-10-24-SwiftPerfSkills/`
 (`Research-SwiftRulesMerged` is the merged list; `SwiftChanges` is the list of defects).
 
 ## The skills worth citing

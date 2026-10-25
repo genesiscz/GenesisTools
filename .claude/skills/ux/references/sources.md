@@ -5,7 +5,7 @@ downloaded and read as data (never installed, never run). Their rules were merge
 judged against this skill, and the gaps were added to [checklist.md](checklist.md) and [audit.md](audit.md). A rule
 was rejected when it conflicts with a repo rule (`.claude/rules/opinionated-settings.md`, `.claude/rules/macos-app.md`),
 when it is web-only or iOS-only, or when the skills contradict each other without evidence. The research notes, with
-every quote, its file and line, and the hit counts in `src/macos`, are in the GenesisBrain vault under
+every quote, its file and line, and the hit counts in `src/macos`, are in the notes vault under
 `GenesisTools/2026-10-24-UxSkillChanges/` (`Research-UxSkillGaps-MacOSMotion`, `Research-UxSkillGaps-FeedbackA11y`,
 and the four `Research-Rules*` notes).
 
