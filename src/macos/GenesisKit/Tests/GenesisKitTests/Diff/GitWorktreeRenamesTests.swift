@@ -109,6 +109,16 @@ final class GitWorktreeRenamesTests: XCTestCase {
         XCTAssertEqual(paired.count, raw.count - renamed.count, "each rename replaces a deleted and an untracked entry")
     }
 
+    func testAMovedFilesStateSaysWhereItCameFrom() throws {
+        let repo = try movedFolderRepository()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let state = try XCTUnwrap(try provider.fileState(repo.appendingPathComponent("moved/run/compiler.ts")))
+        XCTAssertEqual(state.entry?.unstaged, .renamed)
+        XCTAssertEqual(state.summary, "Moved from data/run/compiler.ts")
+        let edited = try XCTUnwrap(try provider.fileState(repo.appendingPathComponent("moved/run/notes.md")))
+        XCTAssertEqual(edited.summary, "new file, not in git", "an edited copy is not an exact move")
+    }
+
     func testOpeningTheMovedFileShowsItsOldSide() throws {
         let repo = try movedFolderRepository()
         defer { try? FileManager.default.removeItem(at: repo) }

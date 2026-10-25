@@ -108,6 +108,7 @@ public struct GitFileState: Equatable, Sendable {
     public var summary: String {
         guard let entry else { return "" }
         if isUntracked { return "new file, not in git" }
+        if entry.unstaged == .renamed, entry.staged == nil, let old = entry.oldPath { return "Moved from \(old)" }
         if entry.shown == .conflicted { return "In conflict" }
         let word = (entry.shown ?? .modified).word
         var parts = [word.prefix(1).uppercased() + word.dropFirst()]
@@ -148,8 +149,13 @@ public struct GitRepoStatus: Equatable, Sendable {
     public var upstream: String?
     public var ahead = 0
     public var behind = 0
-    public var entries: [GitStatusEntry] = []
+    public var entries: [GitStatusEntry] = [] {
+        didSet { byPath = Self.index(entries) }
+    }
     public var commits: [GitCommit] = []
+    /// Path → place in `entries`: the status bar's and the toolbar's marks ask on every render, and a search through a
+    /// vault's 5,650 entries showed up in the repository panel's sort sample (2026-10-25).
+    private var byPath: [String: Int] = [:]
 
     public init(root: URL, branch: String, upstream: String? = nil, ahead: Int = 0, behind: Int = 0, entries: [GitStatusEntry] = [], commits: [GitCommit] = []) {
         self.root = root
@@ -159,12 +165,22 @@ public struct GitRepoStatus: Equatable, Sendable {
         self.behind = behind
         self.entries = entries
         self.commits = commits
+        byPath = Self.index(entries)
+    }
+
+    private static func index(_ entries: [GitStatusEntry]) -> [String: Int] {
+        Dictionary(entries.enumerated().map { ($1.path, $0) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    public static func == (lhs: GitRepoStatus, rhs: GitRepoStatus) -> Bool {
+        lhs.root == rhs.root && lhs.branch == rhs.branch && lhs.upstream == rhs.upstream && lhs.ahead == rhs.ahead
+            && lhs.behind == rhs.behind && lhs.entries == rhs.entries && lhs.commits == rhs.commits
     }
 
     /// The entry of a file in this repository, nil when the file is clean or outside it.
     public func entry(for file: URL) -> GitStatusEntry? {
-        guard let path = GitQueries.relative(file, to: root) else { return nil }
-        return entries.first { $0.path == path }
+        guard let path = GitQueries.relative(file, to: root), let index = byPath[path] else { return nil }
+        return entries[index]
     }
 
     public var staged: [GitStatusEntry] { entries.filter { $0.staged != nil } }

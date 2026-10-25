@@ -132,19 +132,65 @@ public enum GitWorktreeRenames {
             sizes.insert(size)
         }
         guard !deletedSides.isEmpty else { return [] }
-        var candidates: [String] = []
+        var known: [Side] = []
+        var unknown: [(path: String, identity: HashCache.Identity)] = []
         var info = stat()
+        let base = root.path + "/"
         for path in untracked where !path.contains("\n") {
-            guard lstat(root.appendingPathComponent(path).path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
-                  sizes.contains(Int(info.st_size)) else { continue }
-            candidates.append(path)
+            guard lstat(base + path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, sizes.contains(Int(info.st_size)) else { continue }
+            let identity = HashCache.Identity(inode: UInt64(info.st_ino), size: Int64(info.st_size),
+                                              mtime: Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec))
+            if let oid = hashes.oid(base + path, identity) {
+                known.append(Side(path: path, oid: oid))
+            } else {
+                unknown.append((path, identity))
+            }
         }
-        guard !candidates.isEmpty,
-              let hashed = try? provider.git(["hash-object", "--stdin-paths"], in: root,
-                                             input: Data(candidates.map { $0 + "\n" }.joined().utf8), gitDirectory: nil, environment: nil),
-              hashed.status == 0 else { return [] }
-        let oids = String(decoding: hashed.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
-        guard oids.count == candidates.count else { return [] }
-        return pair(deleted: deletedSides, untracked: zip(candidates, oids).map { Side(path: $0, oid: $1) })
+        if !unknown.isEmpty {
+            guard let hashed = try? provider.git(["hash-object", "--stdin-paths"], in: root,
+                                                 input: Data(unknown.map { $0.path + "\n" }.joined().utf8), gitDirectory: nil, environment: nil),
+                  hashed.status == 0 else { return [] }
+            let oids = String(decoding: hashed.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
+            guard oids.count == unknown.count else { return [] }
+            for (file, oid) in zip(unknown, oids) {
+                hashes.store(base + file.path, file.identity, oid)
+                known.append(Side(path: file.path, oid: oid))
+            }
+        }
+        return pair(deleted: deletedSides, untracked: known)
+    }
+
+    /// Blob ids of untracked files by file identity (inode, size, mtime to the nanosecond): a file that did not
+    /// change is not hashed again on the next status read. Shared by every repository, bounded.
+    static let hashes = HashCache(limit: 50_000)
+
+    final class HashCache: @unchecked Sendable {
+        struct Identity: Equatable {
+            let inode: UInt64
+            let size: Int64
+            let mtime: Int64
+        }
+        private let lock = NSLock()
+        private var entries: [String: (identity: Identity, oid: String)] = [:]
+        private let limit: Int
+
+        init(limit: Int) {
+            self.limit = limit
+        }
+
+        func oid(_ path: String, _ identity: Identity) -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            guard let entry = entries[path], entry.identity == identity else { return nil }
+            return entry.oid
+        }
+
+        func store(_ path: String, _ identity: Identity, _ oid: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            // Past the bound the cache starts over: simpler than an order list, and a refill costs one hash pass.
+            if entries.count >= limit, entries[path] == nil { entries.removeAll(keepingCapacity: true) }
+            entries[path] = (identity, oid)
+        }
     }
 }

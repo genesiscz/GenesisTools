@@ -85,13 +85,23 @@ public final class GitRepoModel: ObservableObject {
     @Published public private(set) var status: GitRepoStatus?
     /// The last status read failed: `status` keeps the last good answer, and the panel says the refresh failed.
     @Published public private(set) var failure: GitFailure?
-    /// Every completed refresh invalidates followers, even when HEAD or index changes leave status equal.
+    /// Bumped by a refresh that changed the status, or that git's own folder, a save or a retry asked for (HEAD or the
+    /// index can change while the status stays equal): followers reload on it.
     @Published public private(set) var generation = 0
+    /// Bumped by every completed read, also one that working-tree events started and that found the status equal: the
+    /// repository panel re-reads its file dates on it (an edited file stays "modified" but moves up in Last update).
+    @Published public private(set) var reads = 0
     private var watch: DispatchSourceFileSystemObject?
     private var workingTree: DirectoryWatcher?
     private var pending: DispatchWorkItem?
     private var loading = false
     private var again = false
+    /// A read asked for by git's own folder, a save or a retry wakes the followers even when the status comes back
+    /// equal (HEAD moved, a commit landed). A read started by working-tree file events wakes them only for a changed
+    /// status: each wake reloads every open note's agent blame and the panel's lists.
+    private var wake = false
+    /// The wake a read queued behind the running one asked for.
+    private var againWake = false
     private var lastLoad = Date.distantPast
 
     /// The least time between two refreshes that working-tree file events start. Before it, an edit by another
@@ -136,7 +146,7 @@ public final class GitRepoModel: ObservableObject {
         let wait = max(0.25, Self.workingTreeInterval - Date().timeIntervalSince(lastLoad))
         let work = DispatchWorkItem { [weak self] in
             self?.pending = nil
-            self?.load()
+            self?.load(wake: false)
         }
         pending = work
         DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: work)
@@ -153,11 +163,13 @@ public final class GitRepoModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 
-    private func load() {
+    private func load(wake: Bool = true) {
         guard !loading else {
             again = true
+            againWake = againWake || wake
             return
         }
+        self.wake = wake
         loading = true
         lastLoad = Date()
         let provider = GenesisKitGT.provider
@@ -174,16 +186,22 @@ public final class GitRepoModel: ObservableObject {
                     if self.failure != nil { self.failure = nil }
                     if self.status != status {
                         self.status = status
+                        self.wake = true
                     }
                 case .failure(let error):
                     // The last good list stays: a locked index or a slow disk must not blank the panel.
                     GenesisKit.log("git: status of \(root.lastPathComponent) failed: \(error)")
                     self.failure = GitFailure(error, fallback: "Could not read this repository's status. Try again.")
                 }
-                self.generation += 1
+                if self.wake || self.failure != nil {
+                    self.generation += 1
+                }
+                self.reads += 1
                 if self.again {
+                    let wake = self.againWake
                     self.again = false
-                    self.load()
+                    self.againWake = false
+                    self.load(wake: wake)
                 }
             }
         }

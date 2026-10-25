@@ -53,6 +53,11 @@ struct GitQueries {
         guard let root = root(of: file.deletingLastPathComponent()), let path = Self.relative(file, to: root) else { return nil }
         let status = Self.parseStatus(try run(["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all", "--", path], in: root))
         var state = GitFileState(repoRoot: root, path: path, branch: status.branch, entry: status.entries.first { $0.path == path })
+        // An untracked file may be a file moved outside git: the status bar says where it came from, as the repository
+        // panel does (GitWorktreeRenames).
+        if state.isUntracked, let from = movedFrom(path, in: root) {
+            state.entry = GitStatusEntry(path: path, oldPath: from, unstaged: .renamed)
+        }
         if state.hasUnstaged, !state.isUntracked,
            let counts = Self.parseNumstat(try run(["--no-optional-locks", "diff", "--numstat", "--", path], in: root)) {
             state.unstagedAdditions = counts.additions
@@ -63,6 +68,14 @@ struct GitQueries {
             state.stagedDeletions = counts.deletions
         }
         return state
+    }
+
+    /// The deleted file an untracked `path` is an exact copy of, if any: only tracked entries are listed (no untracked
+    /// walk), and the pairing hashes one file at most.
+    func movedFrom(_ path: String, in root: URL) -> String? {
+        guard let output = try? run(["--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=no"], in: root) else { return nil }
+        let deleted = Self.parseStatus(output).entries.filter { $0.unstaged == .deleted }.map(\.path)
+        return GitWorktreeRenames.find(in: root, deleted: deleted, untracked: [path], revision: "", provider: provider).first?.old
     }
 
     func contents(of file: URL, at revision: GitRevision) throws -> String? {
