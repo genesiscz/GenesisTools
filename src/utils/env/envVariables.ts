@@ -211,6 +211,8 @@ export const env = {
          * run. Read through the facade so `env.testing` overrides are seen; a
          * direct `process.env` read in the guard was invisible to them.
          */
+        /** Set by `tools update` on the child it starts after the pull, so the steps after it run the new code. */
+        isUpdatePostPull: () => getRaw("GENESIS_TOOLS_UPDATE_POST_PULL") === "1",
         allowsRealMigration: () => getTrimmed("GENESIS_TOOLS_ALLOW_REAL_MIGRATION") === "1",
         getHomeEnvKey: () => (isNonEmpty("GENESIS_TOOLS_HOME") ? "GENESIS_TOOLS_HOME" : undefined),
         getPath: () => getTrimmed("GENESIS_TOOLS_PATH"),

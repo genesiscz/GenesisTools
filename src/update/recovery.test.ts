@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { copyRepoTree } from "@genesiscz/utils/git/test-repo";
+import { pickNewestUnifiedBranch, postPullInvocation, readDevChannel, switchChannel } from "./channel";
 import { git, recoverFromFailedPull, upstreamRef } from "./recovery";
 
 const dirs: string[] = [];
@@ -201,5 +202,81 @@ describe("recoverFromFailedPull", () => {
         expect(stash.output).toContain("tools update");
         const shown = await git(["stash", "show", "-p", "stash@{0}"], local);
         expect(shown.output).toContain("my uncommitted edit");
+    });
+});
+
+describe("the steps after the pull run the pulled code", () => {
+    it("hands over through a variable that older code ignores, keeping --no-plugins", () => {
+        expect(postPullInvocation({ plugins: true })).toEqual({
+            args: ["update"],
+            env: { GENESIS_TOOLS_UPDATE_POST_PULL: "1" },
+        });
+        expect(postPullInvocation({ plugins: false }).args).toEqual(["update", "--no-plugins"]);
+    });
+});
+
+describe("tools update dev", () => {
+    it("picks the newest unified branch by the date in its name", () => {
+        expect(
+            pickNewestUnifiedBranch([
+                "origin/master",
+                "origin/feat/2026-10-13-enhancements-unified",
+                "origin/feat/2026-09-01-enhancements-unified",
+                "origin/feat/2026-11-01-something-else",
+            ])
+        ).toBe("feat/2026-10-13-enhancements-unified");
+        expect(pickNewestUnifiedBranch(["origin/master"])).toBeUndefined();
+    });
+
+    async function withUnifiedBranches(): Promise<{ local: string; statePath: string }> {
+        const { local } = await repoPair();
+        const seed = join(local, "..", "seed");
+
+        for (const branch of ["feat/2026-09-01-enhancements-unified", "feat/2026-10-13-enhancements-unified"]) {
+            await git(["switch", "-c", branch, "master"], seed);
+            await writeFile(join(seed, "b.txt"), `${branch}\n`);
+            await git(["add", "."], seed);
+            await git(["commit", "-m", branch], seed);
+            await git(["push", "origin", branch], seed);
+        }
+
+        return { local, statePath: join(await scratch(), "dev-channel.json") };
+    }
+
+    it("switches to the newest unified branch, and the next plain update returns to the old branch", async () => {
+        const { local, statePath } = await withUnifiedBranches();
+
+        expect(await switchChannel(local, "dev", statePath)).toBe("at-tip");
+        expect((await git(["branch", "--show-current"], local)).output).toBe("feat/2026-10-13-enhancements-unified");
+        expect(readDevChannel(statePath)?.returnTo).toBe("master");
+
+        expect(await switchChannel(local, "default", statePath)).toBe("pull");
+        expect((await git(["branch", "--show-current"], local)).output).toBe("master");
+        expect(readDevChannel(statePath)).toBeUndefined();
+
+        // Without the dev channel a plain update stays on its branch.
+        expect(await switchChannel(local, "default", statePath)).toBe("pull");
+        expect((await git(["branch", "--show-current"], local)).output).toBe("master");
+    });
+
+    it("refuses to reset a local dev branch that has commits origin does not have", async () => {
+        const { local, statePath } = await withUnifiedBranches();
+        expect(await switchChannel(local, "dev", statePath)).toBe("at-tip");
+        await writeFile(join(local, "c.txt"), "local only\n");
+        await git(["add", "."], local);
+        await git(["commit", "-m", "local only"], local);
+        const head = (await git(["rev-parse", "HEAD"], local)).output;
+
+        expect(await switchChannel(local, "dev", statePath)).toBe("failed");
+        expect((await git(["rev-parse", "HEAD"], local)).output).toBe(head);
+    });
+
+    it("refuses to switch over uncommitted tracked changes", async () => {
+        const { local, statePath } = await withUnifiedBranches();
+        await writeFile(join(local, "a.txt"), "dirty\n");
+
+        expect(await switchChannel(local, "dev", statePath)).toBe("failed");
+        expect((await git(["branch", "--show-current"], local)).output).toBe("master");
+        expect(readDevChannel(statePath)).toBeUndefined();
     });
 });
