@@ -819,6 +819,13 @@ final class WidgetVisibilityTests: XCTestCase {
         seen = try read("peek", WidgetPeekView(model: model, item: peek))
         XCTAssertTrue(seen.contains("Decision 8"), "read: \(seen)")
         XCTAssertTrue(seen.contains("Pick a parser"), "read: \(seen)")
+        // The card fills a pane taller than itself (the rail sets the panel's height) with one inset on every side.
+        let pane = WidgetPeekView(model: model, item: peek).padding(WidgetPeekView.inset)
+            .frame(width: 324, height: 270, alignment: .top)
+            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(white: 0.17)))
+        seen = try read("peek-pane", pane)
+        XCTAssertTrue(seen.contains("Click to answer"), "read: \(seen)")
+        XCTAssertEqual(WidgetPeekView.cornerRadius + WidgetPeekView.inset, 18, "the card's corner runs parallel to the panel's")
 
         model.openDecision(id: "d_8_fixture-session", sessionKey: key)
         XCTAssertEqual(model.card?.id, "decision:d_8_fixture-session", "the link opens the newer decision")

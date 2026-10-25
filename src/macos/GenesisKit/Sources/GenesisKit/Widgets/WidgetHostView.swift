@@ -368,10 +368,12 @@ struct WidgetHostView: View {
             if selected.id == "agents", let item = model.peekItem {
                 // The alert popup (`showPeek`): one item, a click answers it, × or Esc closes it. Measured like the
                 // hover list, so the panel takes the popup's own height.
-                WidgetPeekView(model: model, item: item)
-                    .padding(.horizontal, 6).padding(.vertical, 8)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { model.reportPreviewFit($0) }
+                // The panel is never shorter than the rail beside it, so the card fills the pane: one inset on every
+                // side, the panel's 18 pt corner minus that inset, and the alert flash on the card's own edge. Only the
+                // content is measured, so the fill cannot feed its own height back (Martin's screenshot, 2026-10-25:
+                // a short card over an empty pane, its flash border hugging the text).
+                WidgetPeekView(model: model, item: item) { model.reportPreviewFit($0 + 2 * WidgetPeekView.inset) }
+                    .padding(WidgetPeekView.inset)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             } else if selected.id == "agents" {
                 AgentWidgetPreview(model: model, surface: surface)
@@ -515,6 +517,13 @@ struct WarmPaneVisibility: ViewModifier {
 struct WidgetPeekView: View {
     @ObservedObject var model: WidgetModel
     let item: WidgetInboxItem
+    /// The card's natural height, before it stretches to fill the pane.
+    var measured: (CGFloat) -> Void = { _ in }
+
+    /// The gap between the card and the panel edge on every side.
+    static let inset: CGFloat = 8
+    /// The panel's corner (EdgePanelShape's 18) minus the inset, so the card's corner runs parallel to the panel's.
+    static let cornerRadius: CGFloat = 18 - inset
 
     /// The kicker names the decision ("Decision 4"), so the title under it does not repeat the number.
     private var title: String {
@@ -527,33 +536,23 @@ struct WidgetPeekView: View {
             guard let surface = model.hoveredSurface else { return }
             model.openInboxNotification(on: surface, key: item.key, needsAnswer: item.needsAnswer)
         } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Image(systemName: item.needsAnswer ? "questionmark.bubble.fill" : "text.bubble.fill")
-                        .foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.blue)
-                    Text(WidgetAlerts.kicker(item)).font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(item.needsAnswer ? Color.orange : .secondary)
-                    Spacer(minLength: 0)
-                    LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                    // Room for the close button, which sits over this corner outside the row button.
-                    Color.clear.frame(width: 18, height: 1)
-                }
-                Text(title).font(.system(size: 12.5, weight: .medium))
-                    .lineLimit(3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
-                if let session = model.session(forKey: item.key) {
-                    Text([session.title, session.project].filter { !$0.isEmpty }.joined(separator: " · "))
-                        .font(.system(size: 11)).foregroundStyle(.secondary)
-                        .lineLimit(1).truncationMode(.middle)
-                }
-                Text(item.needsAnswer ? "Click to answer" : "Click to read").font(.system(size: 11))
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 0) {
+                header
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { headerHeight = $0; report() }
+                Spacer(minLength: Self.footerGap)
+                footer
+                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { footerHeight = $0; report() }
             }
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Self.padding)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                .fill(Color.primary.opacity(0.05)))
+            .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
             .contentShape(Rectangle())
         }
-        .buttonStyle(RowButtonStyle(cornerRadius: 10))
+        .buttonStyle(RowButtonStyle(cornerRadius: Self.cornerRadius))
         .attentionPulse(trigger: model.attentionTrigger(item.key), style: popupAttention, since: model.attentionStart(item.key))
         .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + title)
         .accessibilityAction(.escape) { model.dismissPeek() }
@@ -562,13 +561,55 @@ struct WidgetPeekView: View {
             IconButton(systemName: "xmark", tooltip: "Close without opening it", size: 10) { model.dismissPeek() }
                 .accessibilityLabel("Close the alert")
                 .accessibilityIdentifier("widget.peek.close")
-                .padding(.top, 3).padding(.trailing, 3)
+                .padding(.top, 5).padding(.trailing, 5)
+        }
+    }
+
+    @State private var headerHeight: CGFloat = 0
+    @State private var footerHeight: CGFloat = 0
+    private static let padding: CGFloat = 10
+    private static let footerGap: CGFloat = 10
+
+    /// The card's natural height: header, gap and footer, without the stretch that fills the pane.
+    private func report() {
+        guard headerHeight > 0, footerHeight > 0 else { return }
+        measured(headerHeight + Self.footerGap + footerHeight + 2 * Self.padding)
+    }
+
+    private var footer: some View {
+        HStack(spacing: 3) {
+            Text(item.needsAnswer ? "Click to answer" : "Click to read")
+            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+        }
+        .font(.system(size: 11)).foregroundStyle(.secondary)
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: item.needsAnswer ? "questionmark.bubble.fill" : "text.bubble.fill")
+                    .foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.blue)
+                Text(WidgetAlerts.kicker(item)).font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(item.needsAnswer ? Color.orange : .secondary)
+                Spacer(minLength: 0)
+                LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                // Room for the close button, which sits over this corner outside the row button.
+                Color.clear.frame(width: 18, height: 1)
+            }
+            Text(title).font(.system(size: 12.5, weight: .medium))
+                .lineLimit(3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+            if let session = model.session(forKey: item.key) {
+                Text([session.title, session.project].filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle)
+            }
         }
     }
 
     private var popupAttention: AttentionPulseStyle {
         var style = model.attentionStyle
-        style.cornerRadius = 10
+        style.cornerRadius = Self.cornerRadius
         return style
     }
 }
