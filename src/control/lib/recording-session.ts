@@ -451,11 +451,23 @@ export class RecordingSession {
 
         const ordered = [...this.segments].sort((a, b) => a.index - b.index);
         let durationMs: number;
-        if (ordered.length === 1) {
-            await rename(ordered[0].path, this.options.output);
-            durationMs = ordered[0].durationMs;
-        } else {
-            ({ durationMs } = await this.options.join({ segments: ordered, output: this.options.output }));
+        try {
+            if (ordered.length === 1) {
+                await rename(ordered[0].path, this.options.output);
+                durationMs = ordered[0].durationMs;
+            } else {
+                ({ durationMs } = await this.options.join({ segments: ordered, output: this.options.output }));
+            }
+        } catch (error) {
+            // The segments are still on disk: a stop tries the save again and a discard still works.
+            log.warn({ error, output: this.options.output, segments: ordered.length }, "recording could not be saved");
+            this.setState("paused", "recorder");
+            this.options.emit({
+                event: "error",
+                message: `The recording could not be saved: ${messageOf(error)}`,
+                fatal: false,
+            });
+            return;
         }
 
         await this.removeDirectory();

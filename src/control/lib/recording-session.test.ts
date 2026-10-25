@@ -110,7 +110,12 @@ describe("RecordingSession", () => {
 
     function session(
         recorder: SegmentRecorder,
-        extra: { maxSeconds?: number; segmentSeconds?: number; slowStartMs?: number } = {}
+        extra: {
+            maxSeconds?: number;
+            segmentSeconds?: number;
+            slowStartMs?: number;
+            join?: ConstructorParameters<typeof RecordingSession>[0]["join"];
+        } = {}
     ) {
         return new RecordingSession({
             target: finder,
@@ -224,6 +229,59 @@ describe("RecordingSession", () => {
         await recording.command({ cmd: "stop" });
         expect(await recording.finished).toBe("done");
         expect(joined[0].map((segment) => segment.index)).toEqual([3, 4]);
+    });
+
+    it("a save that fails pauses the session, so a stop tries again and a discard still works", async () => {
+        const { recorder, runs } = fakeRecorder();
+        let attempts = 0;
+        const recording = session(recorder, {
+            join: async ({ segments, output }) => {
+                attempts += 1;
+                if (attempts === 1) {
+                    throw new Error("ffmpeg is missing");
+                }
+
+                await writeFile(output, segments.map((segment) => segment.path).join("\n"));
+                return { durationMs: segments.reduce((sum, segment) => sum + segment.durationMs, 0) };
+            },
+        });
+        await recording.start();
+        clock += 2000;
+        await recording.command({ cmd: "pause" });
+        await recording.command({ cmd: "resume" });
+        clock += 1000;
+        await recording.command({ cmd: "stop" });
+
+        expect(states().slice(-2)).toEqual(["finishing:user:app", "paused:recorder:app"]);
+        expect(events.at(-1)).toEqual({
+            event: "error",
+            message: "The recording could not be saved: ffmpeg is missing",
+            fatal: false,
+        });
+        expect(runs.every((run) => existsSync(run.output))).toBe(true);
+
+        await recording.command({ cmd: "stop" });
+        expect(await recording.finished).toBe("done");
+        expect(attempts).toBe(2);
+        expect(existsSync(join(root, "out.mp4"))).toBe(true);
+    });
+
+    it("a discard after a failed save deletes every segment", async () => {
+        const { recorder, runs } = fakeRecorder();
+        const recording = session(recorder, {
+            join: async () => {
+                throw new Error("disk full");
+            },
+        });
+        await recording.start();
+        await recording.command({ cmd: "pause" });
+        await recording.command({ cmd: "resume" });
+        await recording.command({ cmd: "stop" });
+        await recording.command({ cmd: "discard" });
+
+        expect(await recording.finished).toBe("discarded");
+        expect(runs.every((run) => !existsSync(run.output))).toBe(true);
+        expect(existsSync(join(root, "segments"))).toBe(false);
     });
 
     it("discard deletes every segment and writes no movie", async () => {

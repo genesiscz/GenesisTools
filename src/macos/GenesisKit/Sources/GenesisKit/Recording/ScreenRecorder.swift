@@ -47,6 +47,8 @@ public final class ScreenRecorder: ObservableObject {
     private var host: ScreenRecordingHost?
     private var controller: RecordingSessionController?
     private var controllerWatch: AnyCancellable?
+    /// Waits for the recorder to confirm a pause before the Switch picker opens (`switchTarget`).
+    private var pauseWatch: AnyCancellable?
     private var settingsWatch: AnyCancellable?
     private var controls: RecordingControlsPanel?
     private var controlsModel: RecordingControlsModel?
@@ -260,11 +262,38 @@ public final class ScreenRecorder: ObservableObject {
             moved: { [weak controls] in controls?.noteMoved() })))
     }
 
-    /// Pauses (so the picker never shows in the movie), lets the person choose, then switches or resumes.
+    /// Pauses (so the picker never shows in the movie), lets the person choose, then switches or resumes. The picker
+    /// is a window the recorder was not told to leave out, so it opens only once the recorder confirms the pause: a
+    /// display recording would otherwise capture it in the frames before the pause takes effect.
     private func switchTarget() {
-        guard let controller, let controls, !picker.isVisible else { return }
+        guard let controller, !picker.isVisible, pauseWatch == nil else { return }
         let wasRecording = controller.phase == .recording || controller.phase == .starting
-        if wasRecording { controller.pause() }
+        guard wasRecording else { return openSwitchPicker(resumeOnCancel: false) }
+        controller.pause()
+        pauseWatch = controller.$phase
+            .first { $0 != .recording && $0 != .starting }
+            .timeout(.seconds(Self.pauseConfirmSeconds), scheduler: DispatchQueue.main)
+            .receive(on: DispatchQueue.main)
+            .sink(receiveCompletion: { [weak self] _ in
+                guard let self, self.pauseWatch != nil else { return }
+                self.pauseWatch = nil
+                guard let controller = self.controller, controller.phase != .paused else { return }
+                if controller.phase == .recording || controller.phase == .starting {
+                    controller.notice = "The recording did not pause, so the picker stayed closed. Try Switch again."
+                }
+            }, receiveValue: { [weak self] phase in
+                guard let self else { return }
+                self.pauseWatch = nil
+                if phase == .paused { self.openSwitchPicker(resumeOnCancel: true) }
+            })
+    }
+
+    /// How long `switchTarget` waits for the recorder's pause before it gives up and keeps the picker closed.
+    static let pauseConfirmSeconds = 3
+
+    private func openSwitchPicker(resumeOnCancel: Bool) {
+        guard let controls else { return }
+        let wasRecording = resumeOnCancel
         let frame = controls.window.frame
         openPicker(title: "Switch to", anchor: CGPoint(x: frame.midX, y: frame.minY), preferredPid: nil,
                    choose: { [weak self] target in
