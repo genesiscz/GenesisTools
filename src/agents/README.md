@@ -181,6 +181,23 @@ tools agents hooks config set decisions.questionNudge block --write
 tools agents hooks install --write   # only when doctor says the Stop hook is not wired
 ```
 
+## Chat answers
+
+`decisions.chatAnswers` (`off`, the default; `record`; `remind`) finds answers the user typed in the chat to an open
+`❓ DECISION N` of the session (`D14 b)`, `14 b`, `DECISION 14: b`, `D14: own words`, several on one line split by `,`
+or `;`, or a bare `b)` right after a reply that asked one decision). At the end of each turn the Stop hook reads the
+transcript from its end back to the oldest open ask, or to its previous read when that is later, through the session's
+provider (`NativeSessionReader.readBackward`, so Claude, Codex and Grok each read their own format), and looks only at
+user messages written after each decision was asked. `record` stores an unambiguous answer as `acknowledged` with
+`answeredVia: "automatic_heuristic"` and the user's line as a comment, and says so; `remind` stores nothing and sends
+the agent back to record it. An unclear one (two different answers, a letter the decision does not have, `D14` named
+without an option) sends the agent back once per decision, quoting the line. A read that ends before the oldest open
+ask is logged to the hooks log. It needs only the Stop entry.
+
+```bash
+tools agents hooks config set decisions.chatAnswers record --write
+```
+
 ## How a diff looks
 
 `diff.theme` picks the look. `claude` (the default) copies Claude Code's own Bash diff in the theme

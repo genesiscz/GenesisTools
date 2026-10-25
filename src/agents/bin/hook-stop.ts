@@ -33,7 +33,13 @@ if (decisionStopWanted(config)) {
         const { decisionFiles } = await import("@app/question/lib/decisions/read");
         const { runDecisionStop } = await import("../lib/hooks/decisions");
 
-        const decided = await runDecisionStop(payload, config.decisions, { log: decisionFiles() });
+        // lazy: saves 126 ms cold import (the provider registry, bun probe 2026-10-25) — read only for chat answers
+        const readSession =
+            config.decisions.chatAnswers === "off"
+                ? undefined
+                : (await import("@genesiscz/utils/agent-sessions/session-backward")).readSessionBackward;
+
+        const decided = await runDecisionStop(payload, config.decisions, { log: decisionFiles(), readSession });
 
         if (decided) {
             logDecision(

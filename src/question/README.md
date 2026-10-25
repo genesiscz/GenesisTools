@@ -348,7 +348,7 @@ Decision states: `open`, `drafted`, `answered` (stored, waiting for delivery), `
 
 - **The user answered in chat.** The agent records it in the same turn, so the inbox stops asking: `question_update { id, state: "acknowledged", option, answer: "<the user's words or a short copy>" }` (CLI: `tools question update` with the same JSON on stdin). `open` and `drafted` may move straight to `acknowledged` when the row then has `option` or `answer`. Nothing is delivered: every send reads `answered` rows only.
 - **A later decision replaced it.** `question_update { id, state: "superseded", supersededBy: "d_<n>_<session>", comment: "<why>" }`. `superseded` is legal from `open`, `drafted`, `sent` and `acknowledged`, for decisions only, and is terminal. It needs `supersededBy` or a `comment`. `supersededBy` must name another stored decision (any session). Unlike `supersedes` on a post, the old item keeps its text and number; the widget card links to the new one.
-- **`answeredVia`** on a stored row says who stored the answer: `inbox` (the move to `answered`: widget, hub, CLI `answer`) or `agent` (a move from `open` or `drafted` to `acknowledged`). The store sets it.
+- **`answeredVia`** on a stored row says who stored the answer: `inbox` (the move to `answered`: widget, hub, CLI `answer`), `agent` (a move from `open` or `drafted` to `acknowledged`), or `automatic_heuristic` (the decision Stop hook read an unambiguous answer from the chat, `decisions.chatAnswers record` in `tools agents hooks`; `recordChatAnswers`). The store sets it; no `question_update` can claim `automatic_heuristic`.
 
 ## Set up on a fresh clone
 

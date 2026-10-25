@@ -13,7 +13,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { shellQuote } from "@genesiscz/utils/shell/quote";
-import { agentsDataDir, decisionHooksWanted, diffFor, loadHooksConfig } from "./config";
+import { agentsDataDir, decisionHooksWanted, diffFor, loadHooksConfig, stopOnlyDecisionsWanted } from "./config";
 import { hookDiag } from "./log";
 import { writeJsonFile } from "./write-json";
 
@@ -458,7 +458,7 @@ export function installHooks(options: {
     agentRow?: boolean;
     /** Replace a `subagentStatusLine` of someone else's, kept for `disable` and `uninstall` to restore. */
     replaceSubagentLine?: boolean;
-    /** Wire the Stop hook for the question nudge. Omitted: whether `decisions.questionNudge` is on. */
+    /** Wire the Stop hook for the question nudge and the chat answers. Omitted: whether either is on. */
     questionNudge?: boolean;
 }): InstallResult {
     const dist = options.dist ?? hooksDistPath();
@@ -473,7 +473,7 @@ export function installHooks(options: {
     const wanted = entriesFor(dist, {
         decisions: options.decisions ?? decisionHooksWanted(config),
         unpushed: options.unpushed ?? config.unpushed.enabled,
-        questionNudge: options.questionNudge ?? config.decisions.questionNudge !== "off",
+        questionNudge: options.questionNudge ?? stopOnlyDecisionsWanted(config),
     });
     const wantedEvents = new Set(wanted.map((item) => item.event));
 

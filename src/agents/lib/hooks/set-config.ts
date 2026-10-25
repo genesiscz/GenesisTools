@@ -1,6 +1,7 @@
 import { SafeJSON } from "@genesiscz/utils/json";
 import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
 import {
+    DECISION_CHAT_ANSWERS,
     DEFAULT_HOOKS_CONFIG,
     FILL_MODES,
     type HarnessName,
@@ -67,6 +68,7 @@ export const SETTABLE_KEYS = [
     "harnesses.<claude|codex|grok>.<rule-id>",
     "decisions.stopHook",
     "decisions.questionNudge",
+    "decisions.chatAnswers",
     "decisions.maxBlocksPerSession",
     "decisions.harnesses",
     "decisions.harvest",
@@ -191,6 +193,16 @@ function withDecisions(next: HooksConfig, key: string, value: string): HooksConf
             }
 
             decisions[key === "decisions.stopHook" ? "stopHook" : "questionNudge"] = value;
+            return next;
+        }
+        case "decisions.chatAnswers": {
+            const mode = DECISION_CHAT_ANSWERS.find((choice) => choice === value);
+
+            if (!mode) {
+                throw new Error(`${key} takes ${listed(DECISION_CHAT_ANSWERS)}, not ${SafeJSON.stringify(value)}`);
+            }
+
+            decisions.chatAnswers = mode;
             return next;
         }
         case "decisions.maxBlocksPerSession":

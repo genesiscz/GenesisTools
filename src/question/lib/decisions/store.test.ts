@@ -13,6 +13,7 @@ import {
 } from "@app/hub/lib/widget/tasks";
 import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
+import type { NativeHistoryEntry } from "@genesiscz/utils/agent-sessions/types";
 import { withTimeout } from "@genesiscz/utils/async";
 import { listClaudeSessionInventory } from "@genesiscz/utils/claude/peer-message";
 import { env } from "@genesiscz/utils/env";
@@ -20,6 +21,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { z } from "zod";
+import { chatAnswers } from "./chat-answers";
 import { DeliveryUnknownError, deliverToSession, resolveDeliveryTarget } from "./deliver";
 import { livePaneTargets, noPaneTargets } from "./deliver.fixtures";
 import { decisionPayload, validateQuestionItems } from "./items";
@@ -2589,5 +2591,95 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
         await expect(
             editWidgetTask({ files, input: { id: row.id, title: "t".repeat(180), expected: expected(longTitle) } })
         ).rejects.toThrow("longer than the widget shows (a 180-character title)");
+    });
+});
+
+describe("chatAnswers", () => {
+    const at = (minute: number) => `2026-10-25T16:${String(minute).padStart(2, "0")}:00.000Z`;
+    const entry = (role: NativeHistoryEntry["role"], text: string, minute?: number): NativeHistoryEntry => ({
+        line: -1,
+        role,
+        text,
+        paths: [],
+        commits: [],
+        ...(minute === undefined ? {} : { timestamp: at(minute) }),
+    });
+    const two = ["a", "b"];
+
+    test("reads the forms people type, several on one line, and only after the ask", () => {
+        const found = chatAnswers(
+            [
+                entry("user", "D14 a) before it was asked", 1),
+                entry("assistant", "❓ DECISION 14 …\n❓ DECISION 15 …\n❓ DECISION 16 …", 2),
+                entry("user", "D14 b - smaller, D15 a\n16 b", 3),
+                entry("assistant", "Recap: [❓ DECISION 14](link) is decided.", 4),
+            ],
+            [
+                { number: 14, letters: two, askedAt: at(2) },
+                { number: 15, letters: two, askedAt: at(2) },
+                { number: 16, letters: two, askedAt: at(2) },
+            ]
+        );
+
+        expect(found.ambiguous).toEqual([]);
+        expect(found.unambiguous.map((answer) => [answer.number, answer.option, answer.answer])).toEqual([
+            [14, "b", "smaller"],
+            [15, "a", ""],
+            [16, "b", ""],
+        ]);
+    });
+
+    test("calls two answers, a letter past the options, or a bare mention ambiguous", () => {
+        const found = chatAnswers(
+            [
+                entry("assistant", "❓ DECISION 1 ❓ DECISION 2 ❓ DECISION 3", 1),
+                entry("user", "D1 a)", 2),
+                entry("user", "actually D1 b) and\n2 z)\nD3 needs more thought", 3),
+            ],
+            [
+                { number: 1, letters: two, askedAt: at(1) },
+                { number: 2, letters: two, askedAt: at(1) },
+                { number: 3, letters: two, askedAt: at(1) },
+            ]
+        );
+
+        // `actually D1 b)` does not open its line, so D1 has one answer; `2 z)` is past b; D3 is named without one.
+        expect(found.unambiguous.map((answer) => [answer.number, answer.option])).toEqual([[1, "a"]]);
+        expect(found.ambiguous.map((item) => [item.number, item.reason])).toEqual([
+            [2, "unknown option"],
+            [3, "mentioned without an option"],
+        ]);
+    });
+
+    test("takes a bare `b)` only after a reply that asked one decision, and skips harness text", () => {
+        const one = chatAnswers(
+            [
+                entry("assistant", "❓ DECISION 7 — Keep?\n- a) yes\n- b) no", 1),
+                entry("user", "<system-reminder>D7 a)</system-reminder>", 2),
+                entry("user", "b) no, drop it", 3),
+            ],
+            [{ number: 7, letters: two, askedAt: at(1) }]
+        );
+        const several = chatAnswers(
+            [entry("assistant", "❓ DECISION 7 ❓ DECISION 8", 1), entry("user", "b)", 2)],
+            [{ number: 7, letters: two, askedAt: at(1) }]
+        );
+
+        expect(one.unambiguous).toMatchObject([{ number: 7, option: "b", answer: "no, drop it" }]);
+        expect(several).toEqual({ unambiguous: [], ambiguous: [] });
+    });
+
+    test("counts from the first ask when the entries carry no time (Grok), and takes own words", () => {
+        const found = chatAnswers(
+            [
+                entry("user", "D4: before"),
+                entry("assistant", "❓ DECISION 4 — Name it"),
+                entry("user", "D4: call it Atlas"),
+            ],
+            [{ number: 4, letters: [], askedAt: at(1) }]
+        );
+
+        expect(found.unambiguous).toMatchObject([{ number: 4, answer: "call it Atlas" }]);
+        expect(found.unambiguous[0]?.option).toBeUndefined();
     });
 });

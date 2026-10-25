@@ -992,6 +992,7 @@ function applyUpdates({
     now,
     signal,
     beforeUpdate,
+    answeredVia,
 }: {
     file: string;
     events: string;
@@ -999,6 +1000,8 @@ function applyUpdates({
     now: () => string;
     signal?: AbortSignal;
     beforeUpdate?: (row: DecisionRecord) => void;
+    /** Who recorded a chat answer, in place of `agent`; never reachable from `question_update`. */
+    answeredVia?: AnsweredVia;
 }): Promise<DecisionRecord[]> {
     signal?.throwIfAborted();
     return withDecisionsLock(file, () => {
@@ -1015,7 +1018,13 @@ function applyUpdates({
             }
 
             beforeUpdate?.(row);
-            byId.set(id, patched(row, patch, ts, byId));
+            const next = patched(row, patch, ts, byId);
+
+            if (answeredVia && next.answeredVia === "agent") {
+                next.answeredVia = answeredVia;
+            }
+
+            byId.set(id, next);
         }
 
         signal?.throwIfAborted();
@@ -1033,6 +1042,78 @@ function applyUpdates({
 
         return result;
     });
+}
+
+/** An answer the decision Stop hook read from the chat (`chatAnswers`), to record without the agent. */
+export interface ChatAnswerRecord {
+    id: string;
+    option?: string;
+    /** The user's words beside the letters, or the whole answer when it names no letter. */
+    answer: string;
+    /** The user's line the answer was read from; kept as a comment, so the hub shows where it came from. */
+    evidence: { text: string; timestamp?: string };
+}
+
+class MovedOn extends Error {}
+
+/**
+ * Records answers the user typed in the chat, found by a heuristic (`answeredVia: "automatic_heuristic"`). Each
+ * decision moves from open or drafted to acknowledged, as an agent's own `question_update` of a chat answer does, so
+ * nothing is delivered again. One transition per answer: a decision that moved on meanwhile (answered in the hub,
+ * recorded by the agent) stays as it is and is not returned.
+ */
+export async function recordChatAnswers({
+    file,
+    events,
+    answers,
+    now = () => new Date().toISOString(),
+}: {
+    file: string;
+    events: string;
+    answers: ChatAnswerRecord[];
+    now?: () => string;
+}): Promise<DecisionRecord[]> {
+    const recorded: DecisionRecord[] = [];
+
+    for (const item of answers) {
+        const when = item.evidence.timestamp ? ` (${item.evidence.timestamp})` : "";
+
+        try {
+            const [row] = await applyUpdates({
+                file,
+                events,
+                updates: [
+                    {
+                        id: item.id,
+                        state: "acknowledged",
+                        ...(item.option ? { option: item.option } : {}),
+                        ...(item.answer ? { answer: item.answer } : {}),
+                        comment: `Read from the chat by the decision Stop hook: "${item.evidence.text}"${when}`,
+                    },
+                ],
+                now,
+                answeredVia: "automatic_heuristic",
+                beforeUpdate: (current) => {
+                    if (!SUPERSEDABLE.has(current.state)) {
+                        throw new MovedOn(`${current.id} is ${current.state}`);
+                    }
+                },
+            });
+
+            if (row) {
+                recorded.push(row);
+            }
+        } catch (error) {
+            if (error instanceof MovedOn) {
+                logger.debug({ id: item.id, reason: error.message }, "[decisions] chat answer not recorded: moved on");
+                continue;
+            }
+
+            logger.warn({ error, id: item.id }, "[decisions] chat answer not recorded");
+        }
+    }
+
+    return recorded;
 }
 
 export interface HarvestedDecision {

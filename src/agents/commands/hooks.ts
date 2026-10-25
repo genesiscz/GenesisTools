@@ -286,6 +286,7 @@ export function registerHooksCommands(program: Command): void {
             table.push(["agentsTalk.hint", String(config.agentsTalk.hint)]);
             table.push(["decisions.stopHook", config.decisions.stopHook]);
             table.push(["decisions.questionNudge", config.decisions.questionNudge]);
+            table.push(["decisions.chatAnswers", config.decisions.chatAnswers]);
             table.push(["Stop hook", stopWired ? "wired" : "not wired"]);
             table.push(["shadow", config.shadow ? "ON (decides, says nothing)" : "off (it speaks)"]);
             table.push(["log", config.logPath]);

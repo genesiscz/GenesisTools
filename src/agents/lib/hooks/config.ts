@@ -232,6 +232,8 @@ export interface GuardConfig {
 export type LogCommandsPolicy = "shadow" | "always" | "never";
 
 export type DecisionStopHook = "off" | "warn" | "block";
+export const DECISION_CHAT_ANSWERS = ["off", "record", "remind"] as const;
+export type DecisionChatAnswers = (typeof DECISION_CHAT_ANSWERS)[number];
 
 /**
  * The decision hub's optional hooks. Everything ships OFF, and `tools agents hooks install` only
@@ -253,6 +255,14 @@ export interface DecisionsHookConfig {
      * It needs only the Stop entry, so turning it on wires no UserPromptSubmit hook.
      */
     questionNudge: DecisionStopHook;
+    /**
+     * Answers the user typed in the chat to an open `❓ DECISION N` (`D14 b)`), read from the session's transcript
+     * after the decision was asked, through its provider's `readBackward`. `record`: an unambiguous answer is stored
+     * as acknowledged with `answeredVia: "automatic_heuristic"`, and the agent is sent back once per unclear one to
+     * record it; `remind`: nothing is stored, the agent is sent back once per decision to record what it finds;
+     * `off`. It needs only the Stop entry.
+     */
+    chatAnswers: DecisionChatAnswers;
     maxBlocksPerSession: number;
     harnesses: HarnessName[];
     /** Safety net: store an unposted `❓ DECISION N` block as an open decision under its number. */
@@ -521,6 +531,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
     decisions: {
         stopHook: "off",
         questionNudge: "off",
+        chatAnswers: "off",
         maxBlocksPerSession: 2,
         harnesses: ["claude", "codex", "grok"],
         harvest: false,
@@ -1308,6 +1319,7 @@ function mergeDecisions(stored: Partial<DecisionsHookConfig> | undefined): Decis
         questionNudge: STOP_HOOK_MODES.includes(stored?.questionNudge as DecisionStopHook)
             ? (stored?.questionNudge as DecisionStopHook)
             : base.questionNudge,
+        chatAnswers: oneOf(stored?.chatAnswers, DECISION_CHAT_ANSWERS, base.chatAnswers),
         maxBlocksPerSession: countOr({
             field: "decisions.maxBlocksPerSession",
             value: stored?.maxBlocksPerSession,
@@ -1340,7 +1352,12 @@ export function decisionHooksWanted(config: HooksConfig): boolean {
 
 /** Whether the Stop hook has decision work: the hub's own checks, or the question nudge, which needs only Stop. */
 export function decisionStopWanted(config: HooksConfig): boolean {
-    return decisionHooksWanted(config) || config.decisions.questionNudge !== "off";
+    return decisionHooksWanted(config) || stopOnlyDecisionsWanted(config);
+}
+
+/** The decision checks that need only the Stop entry: the question nudge and the chat answers. */
+export function stopOnlyDecisionsWanted(config: HooksConfig): boolean {
+    return config.decisions.questionNudge !== "off" || config.decisions.chatAnswers !== "off";
 }
 
 /** Whether this run should record the command verbatim in the decision log. */

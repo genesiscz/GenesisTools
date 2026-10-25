@@ -19,8 +19,11 @@ export const DECISION_STATES = [
     "superseded",
 ] as const;
 
-/** How an answer reached the row: the user in the widget, hub or CLI, or an agent copying a chat answer. */
-export const ANSWERED_VIA = ["inbox", "agent"] as const;
+/**
+ * How an answer reached the row: the user in the widget, hub or CLI, an agent copying a chat answer, or the decision
+ * Stop hook reading an unambiguous chat answer from the transcript (`recordChatAnswers`).
+ */
+export const ANSWERED_VIA = ["inbox", "agent", "automatic_heuristic"] as const;
 
 /**
  * The rule every agent-facing text repeats (server instructions, question_post and question_update descriptions):

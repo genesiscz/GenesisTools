@@ -1,4 +1,5 @@
 import { closeSync, fstatSync, openSync, readSync } from "node:fs";
+import { type AmbiguousAnswer, type ChatAnswer, chatAnswers } from "@app/question/lib/decisions/chat-answers";
 import {
     decisionQuestion,
     mentionedDecisions,
@@ -8,7 +9,15 @@ import {
     sendSessionDecisions,
     stopHookVerdict,
 } from "@app/question/lib/decisions/read";
-import { harvestDecisions, kindOf, readDecisions, recordDelivery } from "@app/question/lib/decisions/store";
+import {
+    type DecisionRecord,
+    harvestDecisions,
+    kindOf,
+    readDecisions,
+    recordChatAnswers,
+    recordDelivery,
+} from "@app/question/lib/decisions/store";
+import type { BackwardRead, ReadBackwardOptions } from "@genesiscz/utils/agent-sessions/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import type { DecisionsHookConfig } from "./config";
 import { hookDiag } from "./log";
@@ -21,6 +30,13 @@ export const STOP_BLOCK_COUNTER = "decisions-stop-block";
 export const NUDGE_BLOCK_COUNTER = "decisions-nudge-block";
 /** The start (epoch ms) of the last turn the question nudge spoke in: it speaks once per turn. */
 export const NUDGE_TURN_KEY = "decisions-nudge-turn";
+
+/** When the chat-answer step last read the session (epoch ms): the next read stops there. */
+export const CHAT_CHECKED_KEY = "decisions-chat-checked";
+/** Prefix of the per-decision mark that the chat-answer step already sent the agent back about it. */
+export const CHAT_SENT_BACK_PREFIX = "decisions-chat-sent-back:";
+/** The most the chat-answer step reads back from a transcript's end, when no time bounds the read (Grok). */
+const CHAT_READ_BYTES = 8 * 1024 * 1024;
 
 /** How much of a transcript's end is read to find the last reply. A final reply is far smaller. */
 const TAIL_BYTES = 512 * 1024;
@@ -42,8 +58,29 @@ export interface NudgeState {
     record: (session: string, turn: number, blocked: boolean) => void;
 }
 
+/** The chat-answer step's per-session memory: when it last read, and which decisions it sent the agent back about. */
+export interface ChatAnswerState {
+    checkedAt: (session: string) => number | undefined;
+    setCheckedAt: (session: string, at: number) => void;
+    sentBack: (session: string, id: string) => boolean;
+    markSentBack: (session: string, ids: string[]) => void;
+}
+
+/** A session's newest entries through its provider's reader (`readSessionBackward`). */
+export type ReadSession = (
+    options: ReadBackwardOptions & { kind: string; transcriptPath: string }
+) => Promise<BackwardRead>;
+
 export interface DecisionHookDeps {
     log: DecisionLogPaths;
+    /**
+     * Reads the session for the chat-answer step. Passed by the Stop entry only while `decisions.chatAnswers` is on,
+     * so the provider registry loads only then; without it the step does nothing.
+     */
+    readSession?: ReadSession;
+    /** The chat-answer step's state store; tests pass an in-memory one. */
+    chat?: ChatAnswerState;
+    now?: () => number;
     /** The loop guard's counter store; tests pass an in-memory one. */
     counts?: { read: (session: string) => number; bump: (session: string) => void };
     /** The question nudge's state store; tests pass an in-memory one. */
@@ -153,6 +190,164 @@ const fileNudgeState: NudgeState = {
         setContextValues(session, { [NUDGE_TURN_KEY]: turn, [NUDGE_BLOCK_COUNTER]: blocked ? blocks + 1 : blocks });
     },
 };
+
+const fileChatState: ChatAnswerState = {
+    checkedAt: (session) => readContextCounts(session)[CHAT_CHECKED_KEY],
+    setCheckedAt: (session, at) => setContextValues(session, { [CHAT_CHECKED_KEY]: at }),
+    sentBack: (session, id) => readContextCounts(session)[`${CHAT_SENT_BACK_PREFIX}${id}`] !== undefined,
+    markSentBack: (session, ids) =>
+        setContextValues(session, Object.fromEntries(ids.map((id) => [`${CHAT_SENT_BACK_PREFIX}${id}`, 1]))),
+};
+
+function lettersFor(count: number): string[] {
+    return Array.from({ length: count }, (_, index) => String.fromCharCode(97 + index));
+}
+
+/** When a decision was asked as it stands: its latest revision, else its post. */
+function askedAt(row: DecisionRecord): string {
+    return row.revisedTs ?? row.createdTs ?? row.updatedTs;
+}
+
+function quoted(evidence: { text: string }): string {
+    const text = evidence.text.length > 160 ? `${evidence.text.slice(0, 159)}…` : evidence.text;
+
+    return SafeJSON.stringify(text);
+}
+
+function answerLine(row: DecisionRecord, answer: ChatAnswer): string {
+    return `❓ DECISION ${row.number}: ${answer.option ? `${answer.option}) ` : ""}from ${quoted(answer.evidence)}`;
+}
+
+function unclearLine(row: DecisionRecord, item: AmbiguousAnswer): string {
+    return `❓ DECISION ${row.number} (${item.reason}): ${quoted(item.evidence)}`;
+}
+
+/**
+ * The chat-answer step (`decisions.chatAnswers`): the open decisions of the session, the transcript since the oldest
+ * was asked (or since the last check, whichever is later) read through the session's provider, and the user's chat
+ * answers in it. `record` stores each unambiguous one as `automatic_heuristic` and tells the user; an unclear one,
+ * and in `remind` every one found, sends the agent back once per decision to record it with question_update.
+ */
+async function runChatAnswers(
+    payload: HookPayload,
+    session: string,
+    config: DecisionsHookConfig,
+    deps: DecisionHookDeps
+): Promise<StopHookOutput | null> {
+    const transcriptPath = str(payload.raw.transcript_path) ?? str(payload.raw.transcriptPath);
+
+    if (config.chatAnswers === "off" || !deps.readSession || !transcriptPath) {
+        return null;
+    }
+
+    const open = readDecisions(deps.log.file).filter(
+        (row) =>
+            row.sessionId === session && kindOf(row) === "decision" && (row.state === "open" || row.state === "drafted")
+    );
+
+    if (open.length === 0) {
+        return null;
+    }
+
+    const state = deps.chat ?? fileChatState;
+    const now = deps.now?.() ?? Date.now();
+    const asked = open.map((row) => Date.parse(askedAt(row))).filter(Number.isFinite);
+    const from = Math.max(asked.length > 0 ? Math.min(...asked) : 0, state.checkedAt(session) ?? 0);
+    const read = await deps.readSession({
+        kind: payload.harness,
+        transcriptPath,
+        maxBytes: CHAT_READ_BYTES,
+        until: (entry) => {
+            const at = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
+
+            return Number.isFinite(at) && at < from;
+        },
+    });
+    state.setCheckedAt(session, now);
+
+    if (!read.found && from > 0) {
+        // Not an error for Grok (its rows carry no time), but for Claude and Codex a read that never reached the
+        // oldest open ask means an answer before the cut is not seen.
+        hookDiag("Chat answers: the read ended before the oldest open ask", {
+            session,
+            harness: payload.harness,
+            from: new Date(from).toISOString(),
+            entries: read.entries.length,
+            issues: read.issues.slice(0, 3),
+        });
+    }
+
+    const byNumber = new Map(open.map((row) => [row.number, row]));
+    const found = chatAnswers(
+        read.entries,
+        open.map((row) => ({ number: row.number, letters: lettersFor(row.options.length), askedAt: askedAt(row) }))
+    );
+    const pairs = <T extends { number: number }>(items: T[]) =>
+        items.flatMap((item) => {
+            const row = byNumber.get(item.number);
+
+            return row ? [{ row, item }] : [];
+        });
+    const answers = pairs(found.unambiguous);
+    const unclear = pairs(found.ambiguous);
+    let recorded: DecisionRecord[] = [];
+
+    if (config.chatAnswers === "record" && answers.length > 0) {
+        recorded = await recordChatAnswers({
+            file: deps.log.file,
+            events: deps.log.events,
+            answers: answers.map(({ row, item }) => ({
+                id: row.id,
+                ...(item.option ? { option: item.option } : {}),
+                answer: item.answer,
+                evidence: item.evidence,
+            })),
+        });
+    }
+
+    const recordedNote =
+        recorded.length > 0
+            ? `Recorded the chat answer to ❓ DECISION ${recorded.map((row) => `${row.number}${row.option ? ` ${row.option})` : ""}`).join(", ")} from the transcript (automatic_heuristic).`
+            : "";
+    const toRecord =
+        config.chatAnswers === "remind" ? answers.filter(({ row }) => !state.sentBack(session, row.id)) : [];
+    const toCheck = unclear.filter(({ row }) => !state.sentBack(session, row.id));
+
+    if (toRecord.length === 0 && toCheck.length === 0) {
+        return recordedNote ? { systemMessage: recordedNote } : null;
+    }
+
+    state.markSentBack(
+        session,
+        [...toRecord, ...toCheck].map(({ row }) => row.id)
+    );
+    const parts = [
+        recordedNote,
+        toRecord.length > 0
+            ? `The user answered in the chat:\n${toRecord.map(({ row, item }) => answerLine(row, item)).join("\n")}\nRecord each with question_update (state acknowledged, option or answer) unless you already did.`
+            : "",
+        toCheck.length > 0
+            ? `The user's messages since these decisions were asked talk about them without a clear answer:\n${toCheck.map(({ row, item }) => unclearLine(row, item)).join("\n")}\nIf one is an answer, record it with question_update (state acknowledged, option or answer); otherwise leave it open.`
+            : "",
+        "The decision Stop hook says this once per decision.",
+    ];
+
+    return { decision: "block", reason: parts.filter(Boolean).join("\n\n") };
+}
+
+/** Two Stop outputs as one: any block wins and carries every text. */
+function mergedStop(outputs: (StopHookOutput | null)[]): StopHookOutput | null {
+    const given = outputs.filter((output): output is StopHookOutput => output !== null);
+    const texts = given.map((output) => ("decision" in output ? output.reason : output.systemMessage));
+
+    if (given.length === 0) {
+        return null;
+    }
+
+    return given.some((output) => "decision" in output)
+        ? { decision: "block", reason: texts.join("\n\n") }
+        : { systemMessage: texts.join(" ") };
+}
 
 /**
  * The time (epoch ms) of a transcript line when it is a prompt that opens a turn, else null. Claude: a `user` row
@@ -319,6 +514,7 @@ function runQuestionNudge({
  * A reply that names `❓ DECISION N` is this check's alone: it harvests unposted blocks when asked
  * to, then warns or blocks on what is still unposted. A block is counted per session, and past
  * `maxBlocksPerSession` it only warns. Any other reply goes to the question nudge (`runQuestionNudge`).
+ * Before those, the chat-answer step (`decisions.chatAnswers`) records answers the user typed in the chat.
  */
 export async function runDecisionStop(
     payload: HookPayload,
@@ -326,13 +522,33 @@ export async function runDecisionStop(
     deps: DecisionHookDeps
 ): Promise<StopHookOutput | null> {
     const session = safeSessionId(payload.sessionId);
+
+    if (!session || !config.harnesses.includes(payload.harness)) {
+        return null;
+    }
+
+    let chat: StopHookOutput | null = null;
+
+    try {
+        chat = await runChatAnswers(payload, session, config, deps);
+    } catch (err) {
+        // A chat read that fails costs the automatic record, never the reply checks below.
+        hookDiag("Chat answers failed; the reply checks still run", { err, session });
+    }
+
+    return mergedStop([chat, await runReplyChecks(payload, session, config, deps)]);
+}
+
+/** The checks on the reply itself: unposted `❓ DECISION N` blocks (harvest, warn, block) and the question nudge. */
+async function runReplyChecks(
+    payload: HookPayload,
+    session: string,
+    config: DecisionsHookConfig,
+    deps: DecisionHookDeps
+): Promise<StopHookOutput | null> {
     const nudging = config.questionNudge !== "off";
 
-    if (
-        (config.stopHook === "off" && !config.harvest && !nudging) ||
-        !session ||
-        !config.harnesses.includes(payload.harness)
-    ) {
+    if (config.stopHook === "off" && !config.harvest && !nudging) {
         return null;
     }
 

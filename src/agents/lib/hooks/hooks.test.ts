@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
 import { postDecisions, readDecisions, updateDecision } from "@app/question/lib/decisions/store";
+import type { NativeHistoryEntry } from "@genesiscz/utils/agent-sessions/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
@@ -1949,6 +1950,139 @@ describe("decision hub hooks", () => {
 
         expect(finalReply(payload, () => `{"torn":${lines}`)).toBe("❓ DECISION 2");
         expect(finalReply(stopPayload("given"), () => lines)).toBe("given");
+    });
+
+    it("records an unambiguous chat answer as automatic_heuristic and sends the agent back once about an unclear one", async () => {
+        const { log, counts } = harness();
+        const [keep, ship] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [
+                { prompt: "Keep it?", options: ["yes", "no"] },
+                { prompt: "Ship it?", options: ["now", "later"] },
+            ],
+        });
+        const after = (minutes: number) => new Date(Date.parse(keep.createdTs ?? "") + minutes * 60_000).toISOString();
+        const reads: { kind: string; transcriptPath: string; old: boolean }[] = [];
+        const chat = new Map<string, number>();
+        const deps = {
+            log,
+            counts,
+            now: () => Date.parse(after(10)),
+            chat: {
+                checkedAt: (session: string) => chat.get(`${session}:checked`),
+                setCheckedAt: (session: string, at: number) => chat.set(`${session}:checked`, at),
+                sentBack: (session: string, id: string) => chat.has(`${session}:${id}`),
+                markSentBack: (session: string, ids: string[]) => {
+                    for (const id of ids) {
+                        chat.set(`${session}:${id}`, 1);
+                    }
+                },
+            },
+            readSession: async (options: {
+                kind: string;
+                transcriptPath: string;
+                until: (entry: NativeHistoryEntry) => boolean;
+            }) => {
+                const old = options.until({
+                    line: -9,
+                    role: "user",
+                    text: "old",
+                    paths: [],
+                    commits: [],
+                    timestamp: after(-5),
+                });
+                reads.push({ kind: options.kind, transcriptPath: options.transcriptPath, old });
+                const entry = (
+                    role: NativeHistoryEntry["role"],
+                    text: string,
+                    minutes: number
+                ): NativeHistoryEntry => ({
+                    line: -minutes,
+                    role,
+                    text,
+                    paths: [],
+                    commits: [],
+                    timestamp: after(minutes),
+                });
+
+                return {
+                    found: true,
+                    issues: [],
+                    entries: [
+                        entry("assistant", "❓ DECISION 1 — Keep\n❓ DECISION 2 — Ship", 1),
+                        entry("user", "D1 b) drop it\nand D2 when you can", 2),
+                        entry("assistant", "Recap: [❓ DECISION 1](link) is open.", 3),
+                    ],
+                };
+            },
+        };
+        const payload = stopPayload("Done.", { transcript_path: "/tmp/sess-1.jsonl" });
+
+        expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "off" }), deps)).toBeNull();
+        expect(reads).toEqual([]);
+
+        const first = await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps);
+
+        // The read stops at the first entry older than the oldest open ask, and goes through the session's harness.
+        expect(reads).toEqual([{ kind: "claude", transcriptPath: "/tmp/sess-1.jsonl", old: true }]);
+        expect(first && "decision" in first ? first.reason : "").toContain(
+            "Recorded the chat answer to ❓ DECISION 1 b)"
+        );
+        expect(first && "decision" in first ? first.reason : "").toContain(
+            '❓ DECISION 2 (mentioned without an option): "and D2 when you can"'
+        );
+        const [stored, open] = readDecisions(log.file);
+        expect(stored).toMatchObject({ id: keep.id, state: "acknowledged", option: "b", answer: "drop it" });
+        expect(stored?.answeredVia).toBe("automatic_heuristic");
+        expect(stored?.comments?.at(-1)).toContain('"D1 b) drop it"');
+        expect(open).toMatchObject({ id: ship.id, state: "open" });
+
+        // Said once per decision: the next Stop reads again and says nothing about DECISION 2.
+        expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps)).toBeNull();
+        expect(readDecisions(log.file)[1]?.state).toBe("open");
+    });
+
+    it("in remind mode stores nothing and sends the agent back to record the chat answer itself", async () => {
+        const { log, counts } = harness();
+        const [row] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Keep it?", options: ["yes", "no"] }],
+        });
+        const later = new Date(Date.parse(row.createdTs ?? "") + 60_000).toISOString();
+        const deps = {
+            log,
+            counts,
+            readSession: async () => ({
+                found: true,
+                issues: [],
+                entries: [{ line: -1, role: "user" as const, text: "1 a)", paths: [], commits: [], timestamp: later }],
+            }),
+        };
+        const output = await runDecisionStop(
+            stopPayload("Done.", { transcript_path: "/tmp/sess-1.jsonl", session_id: "sess-remind" }),
+            decisionsOn({ chatAnswers: "remind" }),
+            deps
+        );
+
+        // Another session's decision is not this session's to read.
+        expect(output).toBeNull();
+
+        const own = await runDecisionStop(
+            stopPayload("Done.", { transcript_path: "/tmp/sess-1.jsonl" }),
+            decisionsOn({ chatAnswers: "remind" }),
+            {
+                ...deps,
+                chat: {
+                    checkedAt: () => undefined,
+                    setCheckedAt: () => undefined,
+                    sentBack: () => false,
+                    markSentBack: () => undefined,
+                },
+            }
+        );
+
+        expect(own && "decision" in own ? own.reason : "").toContain('❓ DECISION 1: a) from "1 a)"');
+        expect(readDecisions(log.file)[0]?.state).toBe("open");
     });
 
     it("hands answered decisions to the next prompt once, and stays silent when off or nothing is due", async () => {
