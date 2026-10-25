@@ -510,9 +510,14 @@ struct PaneRail: View {
 
 // MARK: - Glass surfaces
 
+private struct HubGlassKey: EnvironmentKey { static let defaultValue = false }
+
 extension EnvironmentValues {
     /// On when the hub's glass mode is (`HubGlass`): surfaces let the blurred desktop through.
-    @Entry var hubGlass = false
+    var hubGlass: Bool {
+        get { self[HubGlassKey.self] }
+        set { self[HubGlassKey.self] = newValue }
+    }
 }
 
 enum HubSurfaceLevel {

@@ -11,6 +11,7 @@ import {
     BARE_REQUIRE_RATCHET,
     changedFiles,
     checkSource,
+    checkSwiftSource,
     namesToolCommand,
     namesTranscriptFormat,
     pluginsDisabledFor,
@@ -31,6 +32,27 @@ import { TRANSCRIPT_FORMAT_RATCHET } from "./transcript-format-ratchet";
 function rules(source: string, file = "src/example.ts"): string[] {
     return checkSource(file, source).map((f) => f.rule);
 }
+
+describe("swift-no-entry-macro", () => {
+    const swiftRules = (source: string) => checkSwiftSource("Sources/Example.swift", source).map((f) => f.rule);
+
+    test("flags @Entry, which needs Xcode's SwiftUIMacros plugin", () => {
+        expect(swiftRules("extension EnvironmentValues {\n    @Entry public var flag = false\n}\n")).toEqual([
+            "swift-no-entry-macro",
+        ]);
+    });
+
+    test("leaves a hand-written EnvironmentKey and a mention in a comment alone", () => {
+        const source = [
+            "private struct FlagKey: EnvironmentKey { static let defaultValue = false }",
+            "// was @Entry before #564",
+            "extension EnvironmentValues {",
+            "    var flag: Bool { get { self[FlagKey.self] } set { self[FlagKey.self] = newValue } }",
+            "}",
+        ].join("\n");
+        expect(swiftRules(source)).toEqual([]);
+    });
+});
 
 describe("no-hardcoded-tmp", () => {
     test("flags a /tmp literal in the binding contexts GritQL enumerated", () => {

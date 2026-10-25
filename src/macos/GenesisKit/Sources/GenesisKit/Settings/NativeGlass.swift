@@ -229,10 +229,15 @@ public enum NativePaneLevel: Sendable {
     case bar
 }
 
+private struct NativePanesKey: EnvironmentKey { static let defaultValue = false }
+
 extension EnvironmentValues {
     /// On in a host that draws its panes in the native settings look over a `NativeSettingsBackdrop` (the hub's
     /// Native style). GenesisKit panes then draw `NativePaneFill` instead of their own palette.
-    @Entry public var nativePanes = false
+    public var nativePanes: Bool {
+        get { self[NativePanesKey.self] }
+        set { self[NativePanesKey.self] = newValue }
+    }
 }
 
 /// The fill of one pane in the native settings look, for the theme in the environment.

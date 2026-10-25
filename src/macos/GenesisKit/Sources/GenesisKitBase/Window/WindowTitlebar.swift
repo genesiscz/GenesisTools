@@ -373,8 +373,13 @@ public struct TitlebarMetrics: Equatable {
     public var leadingReserve: CGFloat = 0
 }
 
+private struct TitlebarMetricsKey: EnvironmentKey { static let defaultValue: TitlebarMetrics = TitlebarMetrics() }
+
 extension EnvironmentValues {
-    @Entry public var titlebarMetrics = TitlebarMetrics()
+    public var titlebarMetrics: TitlebarMetrics {
+        get { self[TitlebarMetricsKey.self] }
+        set { self[TitlebarMetricsKey.self] = newValue }
+    }
 }
 
 /// The empty part of the strip. It lies behind the window's SwiftUI content, so a control in the

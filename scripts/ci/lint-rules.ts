@@ -766,9 +766,20 @@ const SWIFT_CLICK_COUNT_RULE = {
 };
 const SWIFT_CURRENT_EVENT_CLICK_COUNT = /currentEvent\s*[?!]?\s*\.clickCount/;
 
+const SWIFT_ENTRY_MACRO_RULE = {
+    name: "swift-no-entry-macro",
+    severity: "error" as const,
+    message:
+        "`@Entry` is a SwiftUI macro: its plugin (SwiftUIMacros) ships only with Xcode, so the app stops building on " +
+        "a Mac with only the Command Line Tools (#564). Write a `private struct <Name>Key: EnvironmentKey` and a " +
+        "computed `EnvironmentValues` property with `get`/`set`, as `Style/MotionEnvironment.swift` does.",
+};
+const SWIFT_ENTRY_MACRO = /@Entry\b/;
+
 const SWIFT_LINE_RULES = [
     { rule: SWIFT_WAIT_RULE, pattern: SWIFT_BARE_WAIT },
     { rule: SWIFT_CLICK_COUNT_RULE, pattern: SWIFT_CURRENT_EVENT_CLICK_COUNT },
+    { rule: SWIFT_ENTRY_MACRO_RULE, pattern: SWIFT_ENTRY_MACRO },
 ];
 
 /**

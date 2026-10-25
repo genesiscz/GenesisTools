@@ -115,14 +115,27 @@ struct NativeSettingsSearchKey: PreferenceKey {
     }
 }
 
+private struct NativeSettingsPageIDKey: EnvironmentKey { static let defaultValue: String? = nil }
+private struct NativeSettingsSearchCardKey: EnvironmentKey { static let defaultValue: String? = nil }
+private struct NativeSettingsIndexingKey: EnvironmentKey { static let defaultValue = false }
+
 extension EnvironmentValues {
     /// The settings page a card or row is drawn on; nil outside the settings window.
-    @Entry var nativeSettingsPageID: String? = nil
+    var nativeSettingsPageID: String? {
+        get { self[NativeSettingsPageIDKey.self] }
+        set { self[NativeSettingsPageIDKey.self] = newValue }
+    }
     /// The title of the titled card a row is drawn in, so the row's search key and its jump target name the card.
-    @Entry var nativeSettingsSearchCard: String? = nil
+    var nativeSettingsSearchCard: String? {
+        get { self[NativeSettingsSearchCardKey.self] }
+        set { self[NativeSettingsSearchCardKey.self] = newValue }
+    }
     /// True in the hidden copy of the pages the search reads: nothing there flashes, and a page's own code must not
     /// speak (`GenAnnounce`) or ask for anything, since nobody sees it.
-    @Entry public var nativeSettingsIndexing = false
+    public var nativeSettingsIndexing: Bool {
+        get { self[NativeSettingsIndexingKey.self] }
+        set { self[NativeSettingsIndexingKey.self] = newValue }
+    }
 }
 
 /// A card or row the search can jump to: when a jump names it, it flashes, and its marker is what the page scrolls to.
