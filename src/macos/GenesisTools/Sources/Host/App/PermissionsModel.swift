@@ -115,9 +115,9 @@ final class PermissionsModel: ObservableObject {
     }
 
     private func recheckProbes(now: Date = Date()) {
-        // Every probe kind, not only those answered here: another feature may have asked, and `recheck` skips a kind
-        // macOS never answered.
-        let kinds = PermissionKind.allCases.filter { $0.requestStyle == .probe }
+        // Only the probes answered in this window. A grant another feature got is rechecked app-wide on activation
+        // (`PermissionCenter.recheckGrantedProbesOnActivation`), and the rows read that remembered answer.
+        let kinds = PermissionKind.allCases.filter { probeResults[$0] != nil }
         guard !kinds.isEmpty, !rechecking, busy == nil else { return }
         rechecking = true
         lastProbeRecheck = now
