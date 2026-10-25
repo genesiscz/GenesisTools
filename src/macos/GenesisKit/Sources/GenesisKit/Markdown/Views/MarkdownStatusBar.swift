@@ -88,28 +88,34 @@ struct MarkdownStatusBar: View {
                     Text(model.theme.label)
                 }
                 .foregroundColor(model.theme.textSecondary)
+                .frame(minHeight: 22)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverPlain())
-            .instantTooltip("Theme: \(model.theme.label) — click for \(model.theme.next.label)")
+            .instantTooltip("Theme: \(model.theme.label). Click for \(model.theme.next.label).")
             .hoverHighlight(color: model.theme.accent, cornerRadius: 5, fillOpacity: 0.12)
             .accessibilityIdentifier("markdown-theme-toggle")
         }
         .onAppear { git.follow(configuration.git ? doc.url : nil) }
         .onChange(of: doc.url) { _, url in git.follow(configuration.git ? url : nil) }
         .onChange(of: configuration.git) { _, on in git.follow(on ? doc.url : nil) }
+        // The file changing under unsaved edits happens without the reader: say it (UX audit E6).
+        .onChange(of: doc.hasDiskChange) { _, changed in
+            if changed { GenAnnounce.post("\(doc.title) changed on disk while you have unsaved edits.", priority: .high) }
+        }
         // A save changes the file's state before git's own folder changes (an unstaged edit touches no index).
         .onChange(of: doc.modifiedAt) { _, _ in
             guard configuration.git else { return }
             git.refresh()
             GitRepos.shared.noteSaved(doc.url)
         }
-        .font(GenTypography.mono(9.5))
+        .font(GenTypography.mono(11))
         // Secondary, not muted: every word here is information (Martin, 2026-10-13: the bar read too gray).
         .foregroundColor(model.theme.textSecondary)
         .lineLimit(1)
         .padding(.horizontal, 12)
-        .padding(.vertical, 5)
+        // 22 pt targets (the theme button) with 11 pt text: the bar keeps about its old height with less padding.
+        .padding(.vertical, 2)
         .background(model.theme.chrome)
         .overlay(alignment: .top) {
             Rectangle().fill(model.theme.border).frame(height: 1)

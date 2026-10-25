@@ -144,14 +144,14 @@ struct MarkdownDocumentToolbar: View {
                     "sidebar.left", label: "Files",
                     tint: model.showFiles ? model.theme.accent : nil,
                     tooltip: keymap.hint("Files", "markdown.view.files"), id: "markdown-files-toggle", labels: labels,
-                    action: toggleFiles
+                    isOn: model.showFiles, action: toggleFiles
                 )
                 groupDivider
                 toolButton(
                     "list.bullet.indent", label: "Outline",
                     tint: model.showOutline ? model.theme.accent : nil,
                     tooltip: keymap.hint("Outline", "markdown.view.outline"), id: "markdown-outline-toggle", labels: labels,
-                    action: toggleOutline
+                    isOn: model.showOutline, action: toggleOutline
                 )
                 if modes.contains(.changes) {
                     groupDivider
@@ -159,7 +159,7 @@ struct MarkdownDocumentToolbar: View {
                         "arrow.triangle.branch", label: "Git",
                         tint: model.showGit ? model.theme.accent : nil,
                         tooltip: "Git: this file's history and the repository", id: "markdown-git-toggle", labels: labels,
-                        action: { GenMotion.perform(expanding: !model.showGit, reduceMotion: reduceMotion) { model.showGit.toggle() } }
+                        isOn: model.showGit, action: { GenMotion.perform(expanding: !model.showGit, reduceMotion: reduceMotion) { model.showGit.toggle() } }
                     )
                 }
             }
@@ -175,7 +175,7 @@ struct MarkdownDocumentToolbar: View {
                     "square.and.arrow.down", label: "Save",
                     tint: doc.isDirty ? model.theme.accent : model.theme.textMuted,
                     tooltip: keymap.hint("Save", "markdown.file.save")
-                        + (doc.hasDiskChange ? " — resolve the change on disk first" : ""),
+                        + (doc.hasDiskChange ? ". Resolve the change on disk first." : ""),
                     id: "markdown-save", labels: labels
                 ) {
                     model.saveSelected()
@@ -185,7 +185,7 @@ struct MarkdownDocumentToolbar: View {
                     model.floating ? "pin.fill" : "pin", label: "On Top",
                     tint: model.floating ? model.theme.accent : nil,
                     tooltip: model.floating ? "Keep on top: on" : "Keep on top: off",
-                    id: "markdown-float-toggle", labels: labels
+                    id: "markdown-float-toggle", labels: labels, isOn: model.floating
                 ) {
                     model.floating.toggle()
                 }
@@ -229,9 +229,9 @@ struct MarkdownDocumentToolbar: View {
                     model.zoomReset()
                 } label: {
                     Text(MarkdownZoom.percent(model.zoom))
-                        .font(GenTypography.mono(9, weight: .medium))
+                        .font(GenTypography.mono(11, weight: .medium))
                         .foregroundColor(model.zoom == MarkdownZoom.base ? model.theme.textSecondary : model.theme.accent)
-                        .frame(minWidth: 34, minHeight: 18)
+                        .frame(minWidth: 34, minHeight: 22)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.genHoverPlain())
@@ -341,11 +341,11 @@ struct MarkdownDocumentToolbar: View {
                 Image(systemName: model.renderer.icon)
                     .font(.system(size: 10, weight: .semibold))
                 Text(model.renderer.label)
-                    .font(GenTypography.mono(9, weight: .medium))
+                    .font(GenTypography.mono(11, weight: .medium))
             }
             .foregroundColor(model.theme.accent)
             .padding(.horizontal, 6)
-            .frame(minHeight: 18)
+            .frame(minHeight: 22)
             .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverPlain())
@@ -376,7 +376,7 @@ struct MarkdownDocumentToolbar: View {
                     }
                     .foregroundColor(active ? model.theme.accent : model.theme.textSecondary)
                     .padding(.horizontal, labels ? 6 : 0)
-                    .frame(minWidth: 26, minHeight: 18)
+                    .frame(minWidth: 26, minHeight: 22)
                     .background(active ? model.theme.accent.opacity(0.14) : Color.clear)
                     .clipShape(RoundedRectangle(cornerRadius: 5))
                     .contentShape(Rectangle())
@@ -413,6 +413,7 @@ struct MarkdownDocumentToolbar: View {
         tooltip: String,
         id: String,
         labels: Bool,
+        isOn: Bool? = nil,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -428,7 +429,7 @@ struct MarkdownDocumentToolbar: View {
             }
             .foregroundColor(tint ?? model.theme.textSecondary)
             .padding(.horizontal, labels ? 6 : 0)
-            .frame(minWidth: 22, minHeight: 18)
+            .frame(minWidth: 22, minHeight: 22)
             .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverPlain())
@@ -437,6 +438,9 @@ struct MarkdownDocumentToolbar: View {
         // The tooltip is a hover overlay, not an accessibility label, and the
         // identifier is for automation; VoiceOver needs the action's name.
         .accessibilityLabel(MarkdownDocumentActions.spokenLabel(tooltip))
+        // A toggle says its state, not only by its tint (UX audit E5).
+        .accessibilityValue(isOn.map { $0 ? "On" : "Off" } ?? "")
+        .accessibilityAddTraits(isOn == true ? .isSelected : [])
         .accessibilityIdentifier(id)
     }
 

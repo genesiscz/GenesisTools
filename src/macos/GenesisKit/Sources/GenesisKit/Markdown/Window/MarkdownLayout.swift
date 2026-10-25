@@ -112,8 +112,9 @@ enum MarkdownSidebarWidth {
 /// `MarkdownWindowPublishCostTests` compares it with that measurement (603 points, 743 with all three sidebars at their
 /// standard widths, 2026-10-14).
 enum MarkdownWindowMinimum {
-    /// Measured minimum width of the toolbar row, in points.
-    static let toolbarRow: Double = 603
+    /// Measured minimum width of the toolbar row, in points (606 since the reading size and the renderer name became
+    /// 11 pt text, UX audit E15; `MarkdownWindowPublishCostTests` measures it).
+    static let toolbarRow: Double = 606
     /// Minimum reading-pane width retained beside the visible sidebars.
     static let pane: Double = 10
     /// Minimum content height retained by the viewer window.
