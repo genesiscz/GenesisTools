@@ -315,6 +315,16 @@ public struct PermissionAccess: Sendable {
     /// The real system and the simulation in this app's defaults.
     public static let live = PermissionAccess(system: SystemPermissions(), simulation: { PermissionSimulation.current() })
 
+    /// The shortest time between two rechecks of the answered probes that an app activation starts. Activating the app
+    /// is frequent, and an Automation probe runs AppleScript. `PermissionCenter` and the settings window both use it.
+    public static let activationRecheckInterval: TimeInterval = 10
+
+    /// True when an activation may recheck the answered probes: never yet, or `activationRecheckInterval` since the last.
+    public static func activationRecheckDue(last: Date?, now: Date = Date()) -> Bool {
+        guard let last else { return true }
+        return now.timeIntervalSince(last) >= activationRecheckInterval
+    }
+
     public let system: any PermissionSystem
     private let simulation: @Sendable () -> PermissionSimulation
     private let lifted = LiftedKinds()

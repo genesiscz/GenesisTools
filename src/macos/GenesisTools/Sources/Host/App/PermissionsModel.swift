@@ -59,6 +59,8 @@ final class PermissionsModel: ObservableObject {
     /// The grant `lastMessage` is about: once a refresh finds it no longer refused, the message goes.
     private var messageKind: PermissionKind?
     private var rechecking = false
+    /// When the answered probes last ran again; an activation reruns them at most every 10 s.
+    private var lastProbeRecheck: Date?
 
     private static let usedBy: [(PermissionKind, String)] = [
         (.calendars, "tools macos calendar, tools todo sync"),
@@ -93,6 +95,15 @@ final class PermissionsModel: ObservableObject {
         recheckProbes()
     }
 
+    /// The app became active (the user may be back from System Settings). The rows are read again every time; the
+    /// answered probes run again at most every `PermissionAccess.activationRecheckInterval`, as the permission center
+    /// does, since activating is frequent and an Automation probe runs AppleScript. The Refresh button is not limited.
+    func refreshOnActivation(now: Date = Date()) {
+        rebuildRows()
+        guard PermissionAccess.activationRecheckDue(last: lastProbeRecheck, now: now) else { return }
+        recheckProbes(now: now)
+    }
+
     private func rebuildRows() {
         rows = Self.usedBy.map { kind, usedBy in
             PermissionRow(kind: kind, usedBy: usedBy, state: probeResults[kind] ?? access.status(kind))
@@ -103,10 +114,11 @@ final class PermissionsModel: ObservableObject {
         }
     }
 
-    private func recheckProbes() {
+    private func recheckProbes(now: Date = Date()) {
         let kinds = PermissionKind.allCases.filter { probeResults[$0] != nil }
         guard !kinds.isEmpty, !rechecking, busy == nil else { return }
         rechecking = true
+        lastProbeRecheck = now
         Task { @MainActor in
             for kind in kinds {
                 probeResults[kind] = await access.recheck(kind)

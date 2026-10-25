@@ -80,4 +80,36 @@ final class PermissionsModelTests: XCTestCase {
         XCTAssertEqual(model.rows.first { $0.kind == .downloadsFolder }?.state, .granted)
         XCTAssertEqual(system.requests, [.downloadsFolder, .downloadsFolder])
     }
+
+    /// Coming back to the app reads the rows every time, but runs the answered probes again at most every 10 s, as the
+    /// permission center does (`PermissionAccess.activationRecheckInterval`).
+    func testActivationRerunsTheAnsweredProbesAtMostEvery10Seconds() async throws {
+        let system = FakeSystem()
+        system.statuses[.downloadsFolder] = .unknown("asks on first use")
+        let model = PermissionsModel(access: PermissionAccess(system: system))
+        model.refresh()
+        model.request(try XCTUnwrap(model.rows.first { $0.kind == .downloadsFolder }))
+        for _ in 0 ..< 200 where model.busy != nil {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(system.requests.count, 1)
+
+        let start = Date()
+        model.refreshOnActivation(now: start)
+        for _ in 0 ..< 200 where system.requests.count < 2 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(system.requests.count, 2, "the first activation reruns the answered probe")
+        try await Task.sleep(for: .milliseconds(50))
+
+        model.refreshOnActivation(now: start.addingTimeInterval(3))
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(system.requests.count, 2, "a second activation within 10 s runs no probe")
+
+        model.refreshOnActivation(now: start.addingTimeInterval(11))
+        for _ in 0 ..< 200 where system.requests.count < 3 {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(system.requests.count, 3, "after 10 s the next activation runs it again")
+    }
 }

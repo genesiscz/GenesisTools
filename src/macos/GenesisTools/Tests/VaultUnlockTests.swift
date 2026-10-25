@@ -607,3 +607,26 @@ final class VaultUnlockTests: XCTestCase {
         XCTAssertNotEqual(VaultWindowLock.path(for: "vault|/a|x.ts"), VaultWindowLock.path(for: "vault|/a|y.ts"))
     }
 }
+
+/// The route approval card (Sources/Host/RouteApproval.swift) takes the keyboard when it appears, so a Return meant for
+/// another app must not run a command: Allow has no key, only Esc answers (Deny). UX catalogue Q1 and Q5.
+@MainActor
+final class RouteApprovalCardTests: XCTestCase {
+    func testAllowIsClickOnlyAndEscDenies() throws {
+        _ = NSApplication.shared
+        let card = RouteApprovalCard(argv: ["/usr/bin/true", "--flag"], open: nil)
+        let buttons = Self.buttons(in: try XCTUnwrap(card.contentView))
+        let allow = try XCTUnwrap(buttons.first { $0.accessibilityLabel() == "Allow" }, "VoiceOver reads Allow alone")
+        let deny = try XCTUnwrap(buttons.first { $0.accessibilityLabel() == "Deny" }, "VoiceOver reads Deny, not Deny esc")
+        XCTAssertEqual(allow.keyEquivalent, "", "Return must not allow")
+        XCTAssertEqual(deny.keyEquivalent, "\u{1b}")
+        XCTAssertFalse(buttons.contains { $0.keyEquivalent == "\r" }, "no button answers Return")
+        XCTAssertEqual(card.accessibilitySubrole(), .dialog)
+        XCTAssertEqual(card.title, "Approval needed: Run true")
+    }
+
+    private static func buttons(in view: NSView) -> [NSButton] {
+        let own: [NSButton] = (view as? NSButton).map { [$0] } ?? []
+        return own + view.subviews.flatMap { buttons(in: $0) }
+    }
+}

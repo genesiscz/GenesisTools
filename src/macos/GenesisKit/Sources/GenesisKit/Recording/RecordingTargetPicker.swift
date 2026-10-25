@@ -22,11 +22,6 @@ public enum RecordingPickerTab: String, CaseIterable, Hashable, Sendable {
     }
 }
 
-/// Text the person must read on the dark panels: 11 pt or more at about 62% white (above 4.5:1), never tertiary grey.
-enum RecordingInk {
-    static let readable = Color.white.opacity(0.62)
-}
-
 extension RecordingPickerTab {
     /// The chord that switches to this tab, shown in the tab's tooltip.
     var chord: String {
@@ -222,7 +217,7 @@ public struct RecordingTargetPicker: View {
 
     private var filterField: some View {
         HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(RecordingInk.readable)
+            Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
             TextField("Filter \(tab.title.lowercased())", text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
@@ -241,11 +236,11 @@ public struct RecordingTargetPicker: View {
             VStack(spacing: 6) {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Looking for windows and displays…").font(.system(size: 12)).foregroundStyle(RecordingInk.readable)
+                    Text("Looking for windows and displays…").font(.system(size: 12)).foregroundStyle(SessionPalette.secondary)
                 }
                 if slowLoad {
                     Text("The first time after an update, the recorder is built first. This can take up to a minute.")
-                        .font(.system(size: 11)).foregroundStyle(RecordingInk.readable)
+                        .font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
                         .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: 300)
                 }
@@ -257,7 +252,7 @@ public struct RecordingTargetPicker: View {
             }
         case let .failed(message):
             VStack(spacing: 8) {
-                Text(message).font(.system(size: 12)).foregroundStyle(RecordingInk.readable)
+                Text(message).font(.system(size: 12)).foregroundStyle(SessionPalette.secondary)
                     .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
                 Button("Try again", action: onRetry).buttonStyle(.genHover())
             }
@@ -274,7 +269,7 @@ public struct RecordingTargetPicker: View {
                         .frame(maxWidth: .infinity, minHeight: 120)
                 } else {
                     Text("Nothing matches “\(query)”.")
-                        .font(.system(size: 12)).foregroundStyle(RecordingInk.readable)
+                        .font(.system(size: 12)).foregroundStyle(SessionPalette.secondary)
                         .frame(maxWidth: .infinity, minHeight: 80)
                 }
             } else {
@@ -311,7 +306,7 @@ public struct RecordingTargetPicker: View {
                             .background(.white.opacity(0.12), in: Capsule())
                     }
                     Spacer(minLength: 8)
-                    Text(verbatim: row.detail).font(.system(size: 11).monospacedDigit()).foregroundStyle(RecordingInk.readable)
+                    Text(verbatim: row.detail).font(.system(size: 11).monospacedDigit()).foregroundStyle(SessionPalette.secondary)
                 }
                 .padding(.leading, row.symbol == "macwindow" ? 22 : 6)
                 .padding(.trailing, 8)
@@ -337,8 +332,8 @@ public struct RecordingTargetPicker: View {
         } else {
             HStack(spacing: 6) {
                 icon(row).frame(width: 14, height: 14)
-                Text(row.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(RecordingInk.readable)
-                Text(verbatim: row.detail).font(.system(size: 11)).foregroundStyle(RecordingInk.readable)
+                Text(row.title).font(.system(size: 11, weight: .semibold)).foregroundStyle(SessionPalette.secondary)
+                Text(verbatim: row.detail).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
             }
             .padding(.horizontal, 6)
             .padding(.top, 6)
@@ -351,7 +346,7 @@ public struct RecordingTargetPicker: View {
         if let image = RecordingAppIcon.image(pid: row.pid) {
             Image(nsImage: image).resizable().interpolation(.high)
         } else {
-            Image(systemName: row.symbol).font(.system(size: 12)).foregroundStyle(RecordingInk.readable)
+            Image(systemName: row.symbol).font(.system(size: 12)).foregroundStyle(SessionPalette.secondary)
         }
     }
 
@@ -362,7 +357,7 @@ public struct RecordingTargetPicker: View {
             Spacer(minLength: 0)
         }
         .font(.system(size: 11))
-        .foregroundStyle(RecordingInk.readable)
+        .foregroundStyle(SessionPalette.secondary)
     }
 
     /// What VoiceOver reads for a row: the action, then the badge and the details the row shows.

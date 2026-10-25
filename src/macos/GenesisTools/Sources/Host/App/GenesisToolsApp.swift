@@ -154,7 +154,8 @@ final class GenesisAppDelegate: NSObject, NSApplicationDelegate {
         let window = NSWindow(contentViewController: controller)
         window.title = "GenesisTools"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 860, height: 620))
+        // 660, not 620: the line under the table about Full Disk Access and Accessibility (Q9) took the last row.
+        window.setContentSize(NSSize(width: 860, height: 660))
         window.center()
         window.makeKeyAndOrderFront(nil)
         self.window = window
@@ -232,7 +233,7 @@ struct RootView: View {
         }
         // A grant changed in System Settings shows as soon as the user comes back, without Refresh.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            permissions.refresh()
+            permissions.refreshOnActivation()
         }
     }
 

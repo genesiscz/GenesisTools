@@ -42,17 +42,17 @@ struct PermissionsView: View {
             }
 
             Text("Full Disk Access and Accessibility are turned on in System Settings, not in a prompt: open the list, then drag \(appName) into it.")
-                .font(.caption)
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             HStack {
                 if let busy = model.busyTitle {
                     ProgressView().controlSize(.small)
-                    Text("Asking macOS for \(busy)…").font(.caption)
+                    Text("Asking macOS for \(busy)…").font(.system(size: 11))
                 }
                 if let message = model.lastMessage {
-                    Text(message).font(.caption).foregroundStyle(.orange)
+                    Text(message).font(.system(size: 11)).foregroundStyle(.orange)
                 }
                 Spacer()
                 Button("Reveal app in Finder") { model.revealApp() }
@@ -170,7 +170,7 @@ struct SettingsView: View {
                     }
                 }
                 Text("A program that asks for the vault key or an AI account opens a request window. The window never takes the keyboard by itself, so this sound and notification tell you it is waiting.")
-                    .font(.caption)
+                    .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
 

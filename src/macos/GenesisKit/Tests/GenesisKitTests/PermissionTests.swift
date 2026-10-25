@@ -1143,3 +1143,14 @@ final class PermissionSettingsGuideTests: XCTestCase {
         }
     }
 }
+
+/// An app activation rechecks the answered probes at most every 10 s, in the permission center and the settings window.
+final class ActivationRecheckLimitTests: XCTestCase {
+    func testTheRecheckIsDueFirstAndThenAfter10Seconds() {
+        let last = Date(timeIntervalSince1970: 1_000)
+        XCTAssertEqual(PermissionAccess.activationRecheckInterval, 10)
+        XCTAssertTrue(PermissionAccess.activationRecheckDue(last: nil, now: last))
+        XCTAssertFalse(PermissionAccess.activationRecheckDue(last: last, now: last.addingTimeInterval(9.9)))
+        XCTAssertTrue(PermissionAccess.activationRecheckDue(last: last, now: last.addingTimeInterval(10)))
+    }
+}

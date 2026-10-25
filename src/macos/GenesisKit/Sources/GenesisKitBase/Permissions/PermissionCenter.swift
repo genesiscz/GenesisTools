@@ -143,9 +143,10 @@ public final class PermissionCenter {
     private var activationObserver: ObservationToken?
     private var lastGrantRecheck: Date?
 
-    /// At most every 10 s: activating the app is frequent, and an Automation probe runs AppleScript.
+    /// At most every `PermissionAccess.activationRecheckInterval` (10 s): activating the app is frequent, and an
+    /// Automation probe runs AppleScript.
     private func recheckGrantedProbesOnActivation() {
-        if let lastGrantRecheck, Date().timeIntervalSince(lastGrantRecheck) < 10 { return }
+        guard PermissionAccess.activationRecheckDue(last: lastGrantRecheck) else { return }
         lastGrantRecheck = Date()
         Task { await recheckGrantedProbes() }
     }

@@ -238,7 +238,7 @@ public struct RecordingControlsView: View {
     }
 
     private var captionColor: Color {
-        state.phase == .paused || remainingMs != nil ? .orange : RecordingInk.readable
+        state.phase == .paused || remainingMs != nil ? .orange : SessionPalette.secondary
     }
 
     private var accessibilityStatus: String {
@@ -385,7 +385,7 @@ public struct RecordingControlsView: View {
     private func preparingRow(_ text: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "hourglass").font(.system(size: 10)).foregroundStyle(.secondary)
-            Text(text).font(.system(size: 11)).foregroundStyle(RecordingInk.readable)
+            Text(text).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 420, alignment: .leading)
             Spacer(minLength: 0)
@@ -398,7 +398,7 @@ public struct RecordingControlsView: View {
     private func noticeRow(_ notice: String) -> some View {
         HStack(alignment: .top, spacing: 6) {
             Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10)).foregroundStyle(.orange)
-            Text(notice).font(.system(size: 11)).foregroundStyle(RecordingInk.readable)
+            Text(notice).font(.system(size: 11)).foregroundStyle(SessionPalette.secondary)
                 .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .frame(maxWidth: 420, alignment: .leading)
