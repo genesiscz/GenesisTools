@@ -290,14 +290,15 @@ export interface ModsConfig {
      */
     idleCompact: { enabled: boolean; minutes: number; minTokens: number };
     /** A subagent's model in front of its description: `sonnet · Pair one` (`label`) or `(S) Pair one` (`short`). */
-    agentModel: { enabled: boolean; format: "label" | "short" };
+    agentModel: { enabled: boolean; format: "label" | "short" | "version" };
     /**
      * The agents panel rows under the prompt name each subagent's model beside its type
      * (`general-purpose · sonnet-5-5  Reading foo.ts  4s · ↓ 58k tokens`). Claude Code's `subagentStatusLine`
      * setting draws them, so `tools agents hooks install` (and `mods enable agentRow --write`) wires
-     * `hook-subagent-line.ts` there while this is on. `format`: the model as `sonnet-5-5` (`label`) or `S` (`short`).
+     * `hook-subagent-line.ts` there while this is on. `format`: the model as `sonnet-5-5` (`label`), `S` (`short`) or
+     * `S5.5` (`version`); `effort`: the effort beside it, `S5.5(xhigh)`.
      */
-    agentRow: { enabled: boolean; format: "label" | "short" };
+    agentRow: { enabled: boolean; format: "label" | "short" | "version"; effort: boolean };
     /**
      * The Decisions sidebar (`/decisions`, the band's `decisions` chip): every decision of the session from the
      * decision log and its messages, by state, an answer staged per decision and sent in one message, and `jump to`
@@ -522,7 +523,7 @@ export const DEFAULT_HOOKS_CONFIG: HooksConfig = {
         diff: { fullDiff: true, collapseGitSync: true },
         idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
         agentModel: { enabled: false, format: "label" },
-        agentRow: { enabled: false, format: "label" },
+        agentRow: { enabled: false, format: "version", effort: true },
         decisions: { enabled: false, chip: "any", expand: "waiting", history: "collapsed", enter: "stage-then-send" },
         inbox: { enabled: false, chip: "any", expand: "none" },
         links: { enabled: false },
@@ -1175,11 +1176,12 @@ export function mergeMods(stored: unknown): ModsConfig {
         },
         agentModel: {
             enabled: boolOr(model.enabled, base.agentModel.enabled),
-            format: model.format === "short" || model.format === "label" ? model.format : base.agentModel.format,
+            format: oneOf(model.format, ["label", "short", "version"], base.agentModel.format),
         },
         agentRow: {
             enabled: boolOr(row.enabled, base.agentRow.enabled),
-            format: oneOf(row.format, ["label", "short"], base.agentRow.format),
+            format: oneOf(row.format, ["label", "short", "version"], base.agentRow.format),
+            effort: boolOr(row.effort, base.agentRow.effort),
         },
         decisions: {
             enabled: enabled("decisions", base.decisions.enabled),

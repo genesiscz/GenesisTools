@@ -71,6 +71,12 @@ if (endsPath && SafeJSON.stringify(ends) !== SafeJSON.stringify(held)) {
     }
 }
 
-const rows = agentRows(input, { format: config.mods.agentRow.format, now, ends, width: Bun.stringWidth });
+const rows = agentRows(input, {
+    format: config.mods.agentRow.format,
+    effort: config.mods.agentRow.effort,
+    now,
+    ends,
+    width: Bun.stringWidth,
+});
 
 process.stdout.write(rows.map((row) => `${SafeJSON.stringify(row)}\n`).join(""));

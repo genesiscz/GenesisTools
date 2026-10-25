@@ -74,7 +74,7 @@ export const SETTABLE_KEYS = [
     "mods.diff.<fullDiff|collapseGitSync>",
     "mods.idleCompact.<enabled|minutes|minTokens>",
     "mods.agentModel.<enabled|format>",
-    "mods.agentRow.<enabled|format>",
+    "mods.agentRow.<enabled|format|effort>",
     "mods.<decisions|inbox|links|git|askRow|spinner>.enabled",
     "mods.decisions.<chip|expand|history|enter>",
     "mods.inbox.<chip|expand>",
@@ -109,8 +109,8 @@ const MOD_NUMBER_LIMITS: Record<string, { max: number; min?: number; why: string
 
 /** The values each text mods field takes, as `--help` and an error list them. */
 const MOD_CHOICES: Record<string, readonly string[]> = {
-    "agentModel.format": ["label", "short"],
-    "agentRow.format": ["label", "short"],
+    "agentModel.format": ["label", "short", "version"],
+    "agentRow.format": ["label", "short", "version"],
     "decisions.chip": ["any", "waiting", "off"],
     "decisions.expand": ["waiting", "all", "none"],
     "decisions.history": ["collapsed", "shown"],

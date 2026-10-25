@@ -804,7 +804,11 @@ function registerMods(hooks: Command): void {
                     `after ${mods.idleCompact.minutes} min · floor ${mods.idleCompact.minTokens} tokens`,
                 ],
                 ["mods.agentModel", mods.agentModel.enabled, `format ${mods.agentModel.format}`],
-                ["mods.agentRow", mods.agentRow.enabled, `agents panel rows · format ${mods.agentRow.format}`],
+                [
+                    "mods.agentRow",
+                    mods.agentRow.enabled,
+                    `agents panel rows · format ${mods.agentRow.format}${mods.agentRow.effort ? " + effort" : ""}`,
+                ],
                 [
                     "mods.decisions",
                     mods.decisions.enabled,

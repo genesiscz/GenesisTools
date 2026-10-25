@@ -250,9 +250,11 @@ them as off, and the next `mods enable` wrote them off.
 Each feature appends what it did to `~/.genesis-tools/agents/mods-log/<feature>.jsonl`, so its heuristics can be
 checked against real use.
 
-- `mods.agentModel` (`format` `label` or `short`): `sonnet · Pair one` or `(S) Pair one` on a subagent's rows.
-- `mods.agentRow` (`format` `label` or `short`): the agents panel under the prompt names each subagent's model beside
-  its type, `general-purpose · sonnet-5-5  Reading foo.ts  1m 5s · ↓ 58k tokens`. No mod hook reaches that panel, so
+- `mods.agentModel` (`format` `label`, `short` or `version`): `sonnet · Pair one`, `(S) Pair one` or `(S5.5) Pair one`
+  on a subagent's rows.
+- `mods.agentRow` (`format` `version`, `label` or `short`; `effort` on): the agents panel under the prompt names each
+  subagent's model and effort beside its type, `general-purpose · O5.5(xhigh)  Reading foo.ts  1m 5s · ↓ 58k tokens`
+  (`label`: `opus-5-5 (xhigh)`, `short`: `O(xhigh)`; `mods.agentRow.effort false` drops the effort). No mod hook reaches that panel, so
   this is Claude Code's `subagentStatusLine` setting: `mods enable agentRow --write` (and `hooks install --write`
   while it is on) writes it into `~/.claude/settings.json`, pointing at `src/agents/bin/hook-subagent-line.ts`, and
   `disable` takes it out again. A `subagentStatusLine` of your own is left alone. Claude Code runs the command every

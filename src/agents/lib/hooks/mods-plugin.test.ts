@@ -11,6 +11,7 @@ import {
     idleCompactSkip,
     idleNotice,
 } from "../../../../plugins/genesis-tools-mods/hooks/idle";
+import { bareDescription, modelLabel } from "../../../../plugins/genesis-tools-mods/hooks/model-label";
 import {
     collapseGitSyncEnabled,
     fullDiffEnabled,
@@ -322,7 +323,13 @@ describe("the agents panel rows (mods.agentRow)", () => {
             },
         ],
     };
-    const options = { format: "label" as const, now, ends: { a2: now - 10_000 }, width: Bun.stringWidth };
+    const options = {
+        format: "label" as const,
+        effort: false,
+        now,
+        ends: { a2: now - 10_000 },
+        width: Bun.stringWidth,
+    };
 
     it("puts the model beside the type, drops the description's model, and right-aligns time and tokens", () => {
         const input = rowInput(payload);
@@ -351,6 +358,30 @@ describe("the agents panel rows (mods.agentRow)", () => {
         const [row] = agentRows(input ?? { columns: 0, tasks: [] }, { ...options, format: "short" });
 
         expect(row?.content).toBe(`general-purpose · O  ${"x".repeat(17)}…`);
+    });
+
+    it("names the version and the effort compactly (`O5.5(xhigh)`), and the effort only when the engine sends one", () => {
+        const input = rowInput({
+            columns: 80,
+            tasks: [
+                { id: "a", agentType: "general-purpose", model: "claude-opus-5-5", effort: "xhigh", label: "Reading" },
+                { id: "b", agentType: "Explore", model: "claude-haiku-4-5-20251001", label: "Searching" },
+                { id: "c", agentType: "Plan", model: "sonnet", effort: "high", label: "Planning" },
+            ],
+        });
+        const rows = agentRows(input ?? { columns: 0, tasks: [] }, { ...options, format: "version", effort: true });
+
+        expect(rows.map((row) => row.content.split("  ")[0])).toEqual([
+            "general-purpose · O5.5(xhigh)",
+            "Explore · H4.5",
+            "Plan · S(high)",
+        ]);
+
+        const labelled = agentRows(input ?? { columns: 0, tasks: [] }, { ...options, effort: true });
+
+        expect(labelled[0]?.content.startsWith("general-purpose · opus-5-5 (xhigh)")).toBe(true);
+        expect(modelLabel("gpt-6-astra", "version")).toBe("gpt-6-astra");
+        expect(bareDescription("(O5.5) Probe")).toBe("Probe");
     });
 
     it("keeps an end once seen and forgets agents the panel no longer lists", () => {

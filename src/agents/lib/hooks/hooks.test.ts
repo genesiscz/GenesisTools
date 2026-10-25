@@ -728,7 +728,12 @@ describe("applySetting", () => {
         const set = (key: string, value: string) => applySetting(DEFAULT_HOOKS_CONFIG, key, value).mods;
 
         expect(set("mods.agentModel.format", "short").agentModel).toEqual({ enabled: false, format: "short" });
-        expect(() => set("mods.agentModel.format", "tiny")).toThrow("label or short");
+        expect(() => set("mods.agentModel.format", "tiny")).toThrow("label, short or version");
+        expect(set("mods.agentRow.effort", "false").agentRow).toEqual({
+            enabled: false,
+            format: "version",
+            effort: false,
+        });
         expect(set("mods.git.labels", "minimal").git).toEqual({
             enabled: false,
             labels: "minimal",

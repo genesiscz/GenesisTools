@@ -13,9 +13,9 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export interface ModsSettings {
     diff: { fullDiff: boolean; collapseGitSync: boolean };
     idleCompact: { enabled: boolean; minutes: number; minTokens: number };
-    agentModel: { enabled: boolean; format: "label" | "short" };
+    agentModel: { enabled: boolean; format: "label" | "short" | "version" };
     /** Read by the CLI's agents panel command (`hooks/agent-row.ts`), not by a hook of this plugin. */
-    agentRow: { enabled: boolean; format: "label" | "short" };
+    agentRow: { enabled: boolean; format: "label" | "short" | "version"; effort: boolean };
     decisions: {
         enabled: boolean;
         chip: "any" | "waiting" | "off";
@@ -49,7 +49,7 @@ export const MODS_DEFAULTS: ModsSettings = {
     diff: { fullDiff: true, collapseGitSync: true },
     idleCompact: { enabled: true, minutes: 56, minTokens: 200_000 },
     agentModel: { enabled: false, format: "label" },
-    agentRow: { enabled: false, format: "label" },
+    agentRow: { enabled: false, format: "version", effort: true },
     decisions: { enabled: false, chip: "any", expand: "waiting", history: "collapsed", enter: "stage-then-send" },
     inbox: { enabled: false, chip: "any", expand: "none" },
     links: { enabled: false },
@@ -168,11 +168,18 @@ export function modsSettings(hooksFile: string | undefined): ModsSettings {
         },
         agentModel: {
             enabled: bool(model.enabled, d.agentModel.enabled),
-            format: model.format === "short" || model.format === "label" ? model.format : d.agentModel.format,
+            format:
+                model.format === "short" || model.format === "label" || model.format === "version"
+                    ? model.format
+                    : d.agentModel.format,
         },
         agentRow: {
             enabled: bool(row.enabled, d.agentRow.enabled),
-            format: row.format === "short" || row.format === "label" ? row.format : d.agentRow.format,
+            format:
+                row.format === "short" || row.format === "label" || row.format === "version"
+                    ? row.format
+                    : d.agentRow.format,
+            effort: bool(row.effort, d.agentRow.effort),
         },
         decisions: {
             enabled: enabled("decisions", d.decisions.enabled),

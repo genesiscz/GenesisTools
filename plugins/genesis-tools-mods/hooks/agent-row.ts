@@ -15,7 +15,7 @@
 // - The payload has no end time: a finished agent's time ends when this command first saw it finished.
 // No engine types here: the CLI's command imports this file.
 
-import { bareDescription, type Format, modelLabel } from "./model-label";
+import { bareDescription, type Format, modelLabel, withEffort } from "./model-label";
 
 export interface RowTask {
     id: string;
@@ -28,6 +28,8 @@ export interface RowTask {
     label?: string;
     startTime?: number;
     model?: string;
+    /** The reasoning effort the agent runs at (`xhigh`), when the engine names one. */
+    effort?: string;
     tokenCount?: number;
 }
 
@@ -40,6 +42,8 @@ export interface RowInput {
 
 export interface RowOptions {
     format: Format;
+    /** Name the effort beside the model: `O5.5(xhigh)` (`mods.agentRow.effort`). */
+    effort: boolean;
     now: number;
     /** When each finished agent was first seen finished (`finishedAt`). */
     ends: Record<string, number>;
@@ -87,6 +91,7 @@ export function rowInput(payload: unknown): RowInput | undefined {
             label: text(task.get("label")),
             startTime: count(task.get("startTime")),
             model: text(task.get("model")),
+            effort: text(task.get("effort")),
             tokenCount: count(task.get("tokenCount")),
         });
     }
@@ -162,11 +167,17 @@ function statusOf(task: RowTask, options: RowOptions): string {
     return [time, tokens(task.tokenCount)].filter(Boolean).join(" · ");
 }
 
-/** The left column: the name or type, then the model. */
-function labelOf(task: RowTask, format: Format): string {
+/** The left column: the name or type, then the model and its effort. */
+function labelOf(task: RowTask, options: RowOptions): string {
     const who = task.name || task.agentType || "agent";
 
-    return task.model ? `${who} · ${modelLabel(task.model, format)}` : who;
+    if (!task.model) {
+        return who;
+    }
+
+    const model = modelLabel(task.model, options.format);
+
+    return `${who} · ${withEffort(model, options.effort ? task.effort : undefined, options.format)}`;
 }
 
 /** One line of plain text: control characters and runs of white space become one space. */
@@ -218,7 +229,7 @@ export function agentRows(input: RowInput, options: RowOptions): { id: string; c
     const columns = Math.max(0, input.columns - 1);
     const rows = input.tasks.map((task) => ({
         id: task.id,
-        label: oneLine(labelOf(task, options.format)),
+        label: oneLine(labelOf(task, options)),
         activity: oneLine(bareDescription(task.label || task.description || "")),
         status: statusOf(task, options),
     }));
