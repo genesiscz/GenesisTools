@@ -481,3 +481,19 @@ Keep measured findings separate from hypotheses; faster CPU numbers alone do not
   while the output device was slow, every typing pause, and a tap that waits delays every key in every app. Start it
   on its own queue and play the first click when it runs; keep the synchronous start only for offline rendering in
   tests (`isInManualRenderingMode`).
+
+## A button that works once, and pictures that come out white — 2026-10-23 22:44
+
+- **A SwiftUI button whose label has no hit-testable pixel ignores the click, with no error.** The widget's rail
+  bubble put its count under `.allowsHitTesting(false)`, and its only background was a fill whose opacity was 0.07
+  while the attention ring showed and 0 after it. SwiftUI does not hit-test a view at opacity 0 (nor `Color.clear`),
+  so the first click worked (the ring showed) and every click after it fell through, hover too. AppKit still
+  delivered the click to the hosting view (`mouseDown` logged, `tools control hittest` named the button), which made
+  it look like an event problem. Fix: `.contentShape(Circle())` (or the control's shape) on any control whose label
+  can become fully transparent. Test with a click at the control's edge, off its glyph (`WidgetBubbleHitTests`).
+- **`cacheDisplay(in:to:)` and `CALayer.render(in:)` leave out SwiftUI materials and layer-drawn backgrounds.** A
+  dark panel came out with its white text on white, and filling the bitmap dark first did not help. Use the window
+  server's picture instead: `screencapture -x -o -l <windowNumber>` of the test window. The window must not be
+  occluded (below the desktop it is never drawn), so show it at alpha 0.02 above the others with
+  `ignoresMouseEvents`, then drop the alpha channel of the capture: the colours are stored unassociated, so the
+  opaque copy is the panel as it looks on screen (`WidgetScrollReplayTests`, `GENESIS_WIDGET_REPLAY_PNG`).
