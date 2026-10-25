@@ -96,6 +96,11 @@ export const env = {
     codex: {
         /** Codex CLI data root override. Codex accepts a comma-separated list of homes. */
         getHomeOverride: () => getTrimmed("CODEX_HOME"),
+        /**
+         * `GENESIS_TOOLS_CODEX_MODELS_CACHE`: the Codex CLI model cache GenesisTools reads instead of
+         * `<CODEX_HOME>/models_cache.json`. The test preload points it at an empty folder.
+         */
+        getModelsCachePathOverride: () => getTrimmed("GENESIS_TOOLS_CODEX_MODELS_CACHE"),
     },
 
     copilot: {

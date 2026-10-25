@@ -24,7 +24,7 @@ import { isObject } from "@genesiscz/utils/object";
 const XAI_EFFORT_ORDER = ["low", "medium", "high", "xhigh"] as const;
 
 /** Proxy-only vocabulary mapped onto xAI's ladder before clamping. */
-const PROXY_TO_XAI: Record<string, string> = { minimal: "low", max: "xhigh" };
+const PROXY_TO_XAI: Record<string, string> = { minimal: "low", max: "xhigh", ultra: "xhigh" };
 
 const XAI_EFFORT_MODELS: Array<{ test: RegExp; allowed: readonly string[] }> = [
     { test: /^grok-4\.[67]/, allowed: XAI_EFFORT_ORDER },
@@ -129,18 +129,21 @@ export function clampXaiReasoningEffort(bodyText: string, upstreamModel: string)
 /**
  * OpenRouter's top-level `reasoning_effort` enum has no `max`; its docs give
  * max and xhigh the same token allocation, so `max` maps to `xhigh` instead of
- * 400ing. Every other proxy value is in OpenRouter's enum, and OpenRouter
- * normalizes per model on its own.
+ * 400ing. `ultra` (a Codex UI level) maps the same way. Every other proxy value
+ * is in OpenRouter's enum, and OpenRouter normalizes per model on its own.
  */
 export function mapOpenRouterReasoningEffort(bodyText: string): string {
     try {
         const parsed = SafeJSON.parse(bodyText, { strict: true });
 
-        if (!isObject(parsed) || parsed.reasoning_effort !== "max") {
+        if (!isObject(parsed) || (parsed.reasoning_effort !== "max" && parsed.reasoning_effort !== "ultra")) {
             return bodyText;
         }
 
-        logger.debug("ai-proxy: mapped reasoning_effort max → xhigh for OpenRouter's top-level enum");
+        logger.debug(
+            { effort: parsed.reasoning_effort },
+            "ai-proxy: mapped reasoning_effort to xhigh for OpenRouter's top-level enum"
+        );
         return SafeJSON.stringify({ ...parsed, reasoning_effort: "xhigh" });
     } catch (err) {
         logger.debug({ err }, "ai-proxy: OpenRouter effort map skipped — body was not parseable JSON");

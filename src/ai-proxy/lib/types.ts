@@ -1,6 +1,7 @@
 import type { AccountRef } from "@genesiscz/utils/ai/config/refs";
 import type { CopilotAccountType, CopilotUsageSummary } from "@genesiscz/utils/ai/github-copilot/types";
 import type { GrokBillingConfig, GrokModelRecord, GrokSettings } from "@genesiscz/utils/ai/grok";
+import type { CodexModelOverride } from "@genesiscz/utils/ai/openai/codex-models";
 import type { MaybeSecret } from "@genesiscz/utils/security";
 
 export type CursorTranslationMode = "auto" | "on" | "off";
@@ -271,9 +272,15 @@ export interface AiProxyConfig {
     realtime?: AiProxyRealtimeConfig;
     public?: AiProxyPublicConfig;
     accounts: AiProxyAccountConfig[];
+    /**
+     * Per Codex model (`gpt-6.1-sol`, …): window, usable and compact percents, default effort. They win over the
+     * live list, the Codex CLI cache and the static table (`@genesiscz/utils/ai/openai/codex-models`).
+     */
+    codexModels?: Record<string, CodexModelOverride>;
 }
 
-export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "minimal" | "max";
+/** `ultra` is a Codex UI level: the Codex agent resolves it per model (codex-rs `resolve_reasoning_effort`). */
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "minimal" | "max" | "ultra";
 
 export interface ResolvedRoute {
     accountName: string;

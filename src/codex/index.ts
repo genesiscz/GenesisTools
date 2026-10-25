@@ -7,6 +7,7 @@ import { registerApprovalCommands } from "./commands/approve";
 import { registerDesktopCommand } from "./commands/desktop";
 import { registerLogsCommand } from "./commands/logs";
 import { registerMigrateHomeCommand } from "./commands/migrate-home";
+import { registerModelsCommand } from "./commands/models";
 import { registerCodexMessageCommands } from "./commands/queue";
 import { registerReviewCommand } from "./commands/review";
 import { registerReviewsCommands } from "./commands/reviews";
@@ -28,5 +29,6 @@ registerReviewCommand(program);
 registerReviewsCommands(program);
 registerApprovalCommands(program);
 registerLogsCommand(program);
+registerModelsCommand(program);
 
 await runTool(program, { tool: "codex" });

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { resetCooldowns } from "@app/ai-proxy/lib/providers/cooldown";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 const TEST_TOKEN = "codex-access-token";
@@ -35,6 +39,24 @@ mock.module("@genesiscz/utils/ai/openai/sub-models", () => ({
     resolveOpenAiSubModel: (id: string, aliases?: Record<string, string>) => aliases?.[id] ?? id,
     tryFetchWhamModels: async () => whamModelsStub,
     fetchWhamModels: async () => whamModelsStub ?? [],
+    // The catalog reads the Codex CLI cache through this mapper; the fixtures below need only these fields.
+    whamModelRecordFromApi: (model: {
+        slug: string;
+        display_name: string;
+        context_window: number;
+        visibility: "list" | "hide";
+        supported_reasoning_levels?: Array<{ effort: string }>;
+        default_reasoning_level?: string;
+        multi_agent_reasoning_effort?: string | null;
+    }) => ({
+        slug: model.slug,
+        displayName: model.display_name,
+        contextWindow: model.context_window,
+        visibility: model.visibility,
+        supportedEfforts: model.supported_reasoning_levels?.map((level) => level.effort),
+        defaultEffort: model.default_reasoning_level,
+        multiAgentReasoningEffort: model.multi_agent_reasoning_effort ?? undefined,
+    }),
 }));
 
 const account: AiProxyAccountConfig = {
@@ -224,9 +246,108 @@ describe("buildWhamResponsesBody", () => {
         );
         expect(bogus.body.reasoning).toEqual({ effort: "high" });
     });
+
+    it("checks the effort against the model's catalog record instead of the fixed allowlist", async () => {
+        const { buildWhamResponsesBody } = await import("./openai-subscription");
+        const { mergeCodexModelRecords } = await import("@genesiscz/utils/ai/openai/codex-models");
+        const catalog = mergeCodexModelRecords({
+            live: [
+                {
+                    slug: "gpt-x-sol",
+                    displayName: "X",
+                    contextWindow: 500_000,
+                    visibility: "list",
+                    supportedEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"],
+                    defaultEffort: "low",
+                    multiAgentReasoningEffort: "xhigh",
+                },
+            ],
+            fallback: [],
+        }).get("gpt-x-sol");
+        const build = (extra: Record<string, unknown>, defaultReasoningEffort?: "none" | "high") =>
+            buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }], ...extra }, "gpt-x-sol", {
+                itemScope: ITEM_SCOPE,
+                catalog,
+                defaultReasoningEffort,
+            });
+
+        // `max` is a real backend effort for these models: it is sent as `max`, not clamped to xhigh.
+        expect(build({ reasoning_effort: "max" }).body.reasoning).toEqual({ effort: "max" });
+        expect(build({ reasoning: { effort: "max", summary: "auto" } }).body.reasoning).toEqual({
+            effort: "max",
+            summary: "auto",
+        });
+        // `ultra` is never sent (the backend answers 400): it resolves to the record's multi-agent effort.
+        expect(build({ reasoning_effort: "ultra" }).body.reasoning).toEqual({ effort: "xhigh" });
+        // No effort: the account default, else the model's own default.
+        expect(build({}, "high").body.reasoning).toEqual({ effort: "high" });
+        expect(build({}).body.reasoning).toEqual({ effort: "low" });
+        expect(build({}, "none").body.reasoning).toBeUndefined();
+
+        const refused = build({ reasoning_effort: "minimal" });
+        expect(refused.effortError).toBe(
+            'gpt-x-sol has no reasoning effort "minimal". Allowed: low, medium, high, xhigh, max, ultra (runs as xhigh).'
+        );
+        expect(refused.body.reasoning).toBeUndefined();
+    });
 });
 
 describe("OpenAiSubscriptionProvider", () => {
+    it("reads efforts from the Codex CLI model cache: max reaches WHAM, a missing effort is a 400 with no upstream call", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-codex-cache-"));
+        const cachePath = join(dir, "models_cache.json");
+        writeFileSync(
+            cachePath,
+            SafeJSON.stringify({
+                models: [
+                    {
+                        slug: "gpt-x-luna",
+                        display_name: "X Luna",
+                        context_window: 272_000,
+                        visibility: "list",
+                        supported_reasoning_levels: ["low", "medium", "high", "xhigh", "max"].map((effort) => ({
+                            effort,
+                        })),
+                        default_reasoning_level: "medium",
+                    },
+                ],
+            })
+        );
+        const sentBodies: Array<{ reasoning?: unknown }> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sentBodies.push(SafeJSON.parse(String(init?.body)) as { reasoning?: unknown });
+            return whamStreamResponse();
+        }) as typeof fetch;
+
+        await env.testing.withOverrides({ GENESIS_TOOLS_CODEX_MODELS_CACHE: cachePath }, async () => {
+            const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+            const provider = await OpenAiSubscriptionProvider.create(account);
+            const send = (effort: string) => {
+                const bodyText = SafeJSON.stringify({ input: "hi", reasoning: { effort }, stream: true });
+                return provider.responses(
+                    new Request("http://localhost/v1/responses", { method: "POST", body: bodyText }),
+                    "gpt-x-luna",
+                    bodyText
+                );
+            };
+
+            expect((await send("max")).status).toBe(200);
+            expect(sentBodies[0]?.reasoning).toEqual({ effort: "max" });
+
+            const refused = await send("ultra");
+            expect(refused.status).toBe(400);
+            expect(await refused.json()).toEqual({
+                error: {
+                    message: 'gpt-x-luna has no reasoning effort "ultra". Allowed: low, medium, high, xhigh, max.',
+                    type: "invalid_request_error",
+                    param: "reasoning.effort",
+                    code: "unsupported_effort",
+                },
+            });
+            expect(sentBodies).toHaveLength(1);
+        });
+    });
+
     it("forwards a chat request to WHAM and maps the response to chat.completion", async () => {
         let capturedUrl: unknown;
         let capturedInit: RequestInit | undefined;

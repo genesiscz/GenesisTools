@@ -3,6 +3,7 @@ import { anthropicMessagesPipeline, countAnthropicInputTokens } from "@app/ai-pr
 import { handleAudioTranscriptions } from "@app/ai-proxy/lib/audio";
 import { buildProxyModelCatalog } from "@app/ai-proxy/lib/catalog";
 import { clientProviderDenial, type ResolvedClient, resolveClient, validateClients } from "@app/ai-proxy/lib/clients";
+import { setCodexModelOverrides } from "@app/ai-proxy/lib/codex-catalog";
 import { loadConfigFresh } from "@app/ai-proxy/lib/config";
 import { stripBasePath } from "@app/ai-proxy/lib/path-prefix";
 import { acquireProvider, buildProviderMap, providerUnavailableResponse } from "@app/ai-proxy/lib/providers/registry";
@@ -252,6 +253,7 @@ export function startAiProxyServer(runtime: AiProxyRuntime) {
             }
 
             const config = await loadConfigFresh();
+            setCodexModelOverrides(config.codexModels);
 
             if (path === "/v1/realtime" && req.method === "GET") {
                 return handleRealtimeUpgrade({ req, url, server, config, providers: runtime.providers });

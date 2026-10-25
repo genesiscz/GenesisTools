@@ -114,8 +114,18 @@ Append `:<effort>` to any model id to pin the reasoning effort for that call:
 <account>/<provider>/<upstreamModelId>:<effort>
 ```
 
-Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Example:
+Supported values: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`. Example:
 `martin/grok/grok-4.6:xhigh`.
+
+- **Codex models check the effort against the model's own list.** The list comes from the live WHAM `/models`
+  record, then the Codex CLI's `~/.codex/models_cache.json`, then the static table (`tools codex models` prints
+  it, with the source of each field). `max` is sent as `max`. `ultra` is never sent (the backend answers 400): it
+  runs as the model's `multi_agent_reasoning_effort`, else `max` (gpt-6.1-sol and gpt-6-astra run it as `xhigh`,
+  gpt-6-sol as `max`). An effort the model does not list is a 400 that names the allowed ones. A Codex model the
+  catalog does not know keeps the older fixed list, where `max` runs as `xhigh`. xAI and OpenRouter map `ultra` to
+  `xhigh`, like `max`.
+- **Per-model overrides** go in `config.json` as `codexModels.<slug>`: `window`, `usablePercent`,
+  `compactPercent`, `defaultEffort`. The proxy uses `defaultEffort`; `tools claude codex` uses the rest.
 
 - **The client's own field wins.** An explicit `reasoning_effort` (or a nested `reasoning.effort`
   on the Responses door) takes precedence over the suffix, which is the fallback.

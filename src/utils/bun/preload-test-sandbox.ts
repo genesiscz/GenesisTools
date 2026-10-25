@@ -122,5 +122,20 @@ function isolateObsidian(): void {
     });
 }
 
+/**
+ * The Codex model catalog reads the Codex CLI's own `models_cache.json` from the real home, so a test that reached it
+ * depended on whichever models this Mac's Codex CLI last fetched. A missing file answers "no cache"; a test that needs
+ * one writes a fixture and passes its path.
+ */
+function isolateCodexModelsCache(): void {
+    if (env.test.allowsRealHome()) {
+        return;
+    }
+
+    const missing = join(mkdtempSync(join(tmpdir(), "gt-test-codex-models-")), "models_cache.json");
+    env.testing.set("GENESIS_TOOLS_CODEX_MODELS_CACHE", env.getTrimmed("GENESIS_TOOLS_CODEX_MODELS_CACHE") ?? missing);
+}
+
 installSandbox();
 isolateObsidian();
+isolateCodexModelsCache();

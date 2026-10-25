@@ -9,6 +9,7 @@ export const REASONING_EFFORT_SUFFIXES = [
     "xhigh",
     "minimal",
     "max",
+    "ultra",
 ] as const satisfies readonly ReasoningEffort[];
 
 const REASONING_EFFORT_SET = new Set<string>(REASONING_EFFORT_SUFFIXES);

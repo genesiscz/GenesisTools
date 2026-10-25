@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { accountConfigFingerprint } from "@app/ai-proxy/lib/account-config";
 import { convertMessagesToInput } from "@app/ai-proxy/lib/chat-to-responses-body";
+import { codexModelInfo } from "@app/ai-proxy/lib/codex-catalog";
 import { captureUpstreamFailure } from "@app/ai-proxy/lib/debug-capture";
 import { clientAbortResponse } from "@app/ai-proxy/lib/providers/client-abort";
 import { cooldownRemainingMs, markRateLimited, markSuccess, markUnhealthy } from "@app/ai-proxy/lib/providers/cooldown";
@@ -17,6 +18,7 @@ import { responsesToChat } from "@app/ai-proxy/lib/translators/responses-to-chat
 import type { AiProxyAccountConfig, ThinkingPresentationMode, UsageSummary } from "@app/ai-proxy/lib/types";
 import { getTodayUsageSummary, getUsageSummarySince } from "@app/ai-proxy/lib/usage/store";
 import { extractPlanType, WHAM_BASE_URL } from "@genesiscz/utils/ai/openai/codex-auth";
+import { type CodexModelInfo, resolveCodexEffort } from "@genesiscz/utils/ai/openai/codex-models";
 import {
     fetchWhamModels,
     resolveOpenAiSubModel,
@@ -47,8 +49,9 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
     readonly id = "openai-subscription";
     readonly accountFingerprint: string;
     private readonly account: AiProxyAccountConfig;
-    private modalityRecords: WhamModelRecord[] | null = null;
-    private modalityFetchedAt = 0;
+    /** The live WHAM model list, when the image guard or `listModels` already fetched it (10 min). */
+    private liveRecords: WhamModelRecord[] | null = null;
+    private liveFetchedAt = 0;
 
     constructor(account: AiProxyAccountConfig) {
         this.account = account;
@@ -62,6 +65,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
     async listModels(options?: ProviderInspectionOptions): Promise<OpenAiModel[]> {
         const { token, accountId } = await resolveOpenAiSubToken(this.account, { noRefresh: options?.probe });
         const records = await fetchWhamModels(token, accountId);
+        this.liveRecords = records;
+        this.liveFetchedAt = Date.now();
 
         return records
             .filter((record) => record.visibility === "list")
@@ -129,18 +134,18 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
      * own error surfaces.
      */
     private async lookupInputModalities(concreteModel: string): Promise<string[] | undefined> {
-        if (!this.modalityRecords || Date.now() - this.modalityFetchedAt > MODALITY_CACHE_TTL_MS) {
+        if (!this.liveRecords || Date.now() - this.liveFetchedAt > MODALITY_CACHE_TTL_MS) {
             try {
                 const { token, accountId } = await resolveOpenAiSubToken(this.account);
-                this.modalityRecords = await tryFetchWhamModels(token, accountId);
-                this.modalityFetchedAt = Date.now();
+                this.liveRecords = await tryFetchWhamModels(token, accountId);
+                this.liveFetchedAt = Date.now();
             } catch (err) {
                 logger.debug({ err, account: this.account.name }, "ai-proxy: modality lookup failed — skipping guard");
                 return undefined;
             }
         }
 
-        return this.modalityRecords?.find((record) => record.slug === concreteModel)?.inputModalities;
+        return this.liveRecords?.find((record) => record.slug === concreteModel)?.inputModalities;
     }
 
     private async fetchWham({
@@ -190,7 +195,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             const modalities = await this.lookupInputModalities(concreteModel);
 
             if (modalities && !modalities.includes("image")) {
-                const visionModels = (this.modalityRecords ?? [])
+                const visionModels = (this.liveRecords ?? [])
                     .filter((record) => record.visibility === "list" && record.inputModalities?.includes("image"))
                     .map((record) => record.slug);
                 const hint = visionModels.length > 0 ? ` Vision-capable: ${visionModels.join(", ")}.` : "";
@@ -211,10 +216,33 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const wantStream = parsed.stream === true;
         // Stored items are private to the presenting client; see wham-item-store.ts.
         const itemScope = whamItemScope(req);
-        const { body: whamBody, dropped } = buildWhamResponsesBody(parsed, concreteModel, {
+        const fresh = Date.now() - this.liveFetchedAt <= MODALITY_CACHE_TTL_MS ? this.liveRecords : null;
+        const catalog = codexModelInfo(concreteModel, fresh);
+        const {
+            body: whamBody,
+            dropped,
+            effortError,
+        } = buildWhamResponsesBody(parsed, concreteModel, {
             defaultReasoningEffort: this.account.openaiSub?.defaultReasoningEffort,
             itemScope,
+            catalog,
         });
+
+        if (effortError) {
+            logger.info({ account: this.account.name, model: concreteModel, effortError }, "ai-proxy: effort refused");
+            return new Response(
+                SafeJSON.stringify({
+                    error: {
+                        message: effortError,
+                        type: "invalid_request_error",
+                        param: "reasoning.effort",
+                        code: "unsupported_effort",
+                    },
+                }),
+                { status: 400, headers: { "Content-Type": "application/json" } }
+            );
+        }
+
         warnDroppedParamsOnce(dropped);
         const whamBodyText = SafeJSON.stringify(whamBody);
 
@@ -569,6 +597,8 @@ export interface WhamBodyBuildResult {
     body: Record<string, unknown>;
     /** Client-sent parameters WHAM cannot enforce, silently stripped from the upstream body. */
     dropped: string[];
+    /** Set when the catalog says the model has no such effort: the caller answers 400 with this text. */
+    effortError?: string;
 }
 
 const warnedDroppedParams = new Set<string>();
@@ -591,7 +621,16 @@ export function buildWhamResponsesBody(
     model: string,
     // `itemScope` is required, not optional: a caller that forgot it would share
     // one store partition with every other client, which is the bug this fixes.
-    options: { defaultReasoningEffort?: "none" | "low" | "medium" | "high"; itemScope: string }
+    options: {
+        defaultReasoningEffort?: "none" | "low" | "medium" | "high";
+        itemScope: string;
+        /**
+         * The model's catalog record. With efforts listed, the effort is checked against the model's own list: `max`
+         * passes, `ultra` resolves like codex-rs, anything else is refused. Without one (an unknown model), the
+         * older fixed allowlist and its `max` to `xhigh` clamp apply.
+         */
+        catalog?: CodexModelInfo;
+    }
 ): WhamBodyBuildResult {
     const body: Record<string, unknown> = {
         model,
@@ -677,6 +716,11 @@ export function buildWhamResponsesBody(
         dropped.push("store");
     }
 
+    if (options.catalog && options.catalog.efforts.length > 0) {
+        const effortError = applyCatalogEffort({ parsed, body, model, catalog: options.catalog, options });
+        return { body, dropped, effortError };
+    }
+
     if (isObject(parsed.reasoning)) {
         // Pass the client's reasoning through, clamping unknown efforts. The
         // `:max` suffix lands HERE when the client already sent a reasoning
@@ -723,6 +767,61 @@ export function buildWhamResponsesBody(
     }
 
     return { body, dropped };
+}
+
+/**
+ * Effort for a model the catalog knows. The nested `reasoning.effort` wins over a stamped top-level
+ * `reasoning_effort` (a `:effort` model-id suffix), as before. With none, the account default applies, then the
+ * model's own default (codex-rs sends `default_reasoning_level`), then `low`. Returns the refusal text, if any.
+ */
+function applyCatalogEffort({
+    parsed,
+    body,
+    model,
+    catalog,
+    options,
+}: {
+    parsed: Record<string, unknown>;
+    body: Record<string, unknown>;
+    model: string;
+    catalog: CodexModelInfo;
+    options: { defaultReasoningEffort?: "none" | "low" | "medium" | "high" };
+}): string | undefined {
+    const nested = isObject(parsed.reasoning) ? { ...parsed.reasoning } : undefined;
+    const requested =
+        nested && typeof nested.effort === "string"
+            ? nested.effort
+            : typeof parsed.reasoning_effort === "string"
+              ? parsed.reasoning_effort
+              : undefined;
+
+    if (requested === undefined) {
+        const fallback = options.defaultReasoningEffort ?? catalog.defaultEffort ?? "low";
+
+        if (fallback === "none") {
+            if (nested) {
+                body.reasoning = nested;
+            }
+
+            return undefined;
+        }
+
+        body.reasoning = { ...nested, effort: fallback };
+        return undefined;
+    }
+
+    const resolved = resolveCodexEffort(catalog, requested);
+
+    if (!resolved.ok) {
+        return resolved.message;
+    }
+
+    if (resolved.mappedFrom) {
+        logger.debug({ model, from: resolved.mappedFrom, to: resolved.effort }, "ai-proxy: resolved Codex effort");
+    }
+
+    body.reasoning = { ...nested, effort: resolved.effort };
+    return undefined;
 }
 
 const SSE_LINE_END = /\r\n|\r|\n/;
