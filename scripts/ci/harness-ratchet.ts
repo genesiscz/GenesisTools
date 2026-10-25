@@ -1,3 +1,7 @@
+/*
+ * The job that empties this list: handoff h_2ehgo4gz, "lint-ratchets-migration" (genesis-tools MCP handoff_get
+ * { name: "lint-ratchets-migration" }). Remove a file here in the same commit that migrates it.
+ */
 /**
  * The files that still branch on a harness name, read a hook payload field themselves, or find a running agent by its
  * command line, counted 2026-10-25 when lint-rules `no-harness-name-branch`, `no-hook-payload-read` and

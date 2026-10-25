@@ -1,3 +1,7 @@
+/*
+ * The job that empties this list: handoff h_2ehgo4gz, "lint-ratchets-migration" (genesis-tools MCP handoff_get
+ * { name: "lint-ratchets-migration" }). Remove a file here in the same commit that migrates it.
+ */
 /**
  * The files that still build a path into a coding agent's own home by hand, counted 2026-10-25 when lint-rules
  * `no-hand-built-claude-home` and `no-hand-built-codex-grok-home` were added (❓ DECISION 22 b, a Haiku survey,

@@ -1,3 +1,7 @@
+/*
+ * The job that empties this list: handoff h_2ehgo4gz, "lint-ratchets-migration" (genesis-tools MCP handoff_get
+ * { name: "lint-ratchets-migration" }). Remove a file here in the same commit that migrates it.
+ */
 /**
  * The files that still write a model fact the catalog owns (.claude/rules/models.md), counted 2026-10-25 when
  * lint-rules `no-model-id-literal-outside-catalog`, `no-model-price-table` and `no-effort-vocabulary-list` were added

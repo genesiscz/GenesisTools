@@ -182,6 +182,14 @@ export const BARE_REQUIRE_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/utils/tokens.ts",
 ]);
 
+// ─── The ratchet rules of 2026-10-25 (❓ DECISION 22 b) ────────────────────────────────────────────────────────────────
+// no-transcript-format-outside-readers, no-hand-built-claude-home, no-hand-built-codex-grok-home,
+// no-model-id-literal-outside-catalog, no-model-price-table, no-effort-vocabulary-list, no-harness-name-branch,
+// no-hook-payload-read, no-agent-name-in-command-match. Their lists of files that still break them live in
+// scripts/ci/{transcript-format,native-home,model-facts,harness}-ratchet.ts and may only shrink.
+// The job that empties those lists is handoff h_2ehgo4gz, named "lint-ratchets-migration": read it with the
+// genesis-tools MCP tool handoff_get { name: "lint-ratchets-migration" }. It says, rule by rule, which owner each
+// violation moves into, the commit and verification rules, and where the report goes.
 /**
  * A literal that names a coding agent's transcript format: a Claude, Codex or Grok record type or field, or a raw-line
  * probe such as `'"type":"user"'`. That knowledge belongs to the provider readers (.claude/rules/agent-transcripts.md).
