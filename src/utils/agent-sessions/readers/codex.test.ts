@@ -1315,3 +1315,29 @@ test.each([true, false, "partial"] as const)(
         }
     }
 );
+
+test("readBackward reads the rollout from its end back to the entry `until` accepts", async () => {
+    const message = (role: "user" | "assistant", text: string) => ({
+        type: "response_item",
+        payload: {
+            type: "message",
+            role,
+            content: [{ type: role === "user" ? "input_text" : "output_text", text }],
+        },
+    });
+    const source = legacyFixture([
+        { type: "session_meta", payload: { id: CHILD_ID, cwd: "/projects/child", history_mode: "legacy" } },
+        message("assistant", "❓ DECISION 2: Ship it?"),
+        message("user", "D2 a)"),
+    ]);
+
+    const read = await createCodexHistoryOperations().readBackward(source, {
+        until: (entry) => entry.text.includes("DECISION 2"),
+    });
+
+    expect(read.found).toBe(true);
+    expect(read.entries.map((entry) => [entry.role, entry.text])).toEqual([
+        ["assistant", "❓ DECISION 2: Ship it?"],
+        ["user", "D2 a)"],
+    ]);
+});

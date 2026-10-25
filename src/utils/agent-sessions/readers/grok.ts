@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "@genesiscz/utils/agent-sessions/metadata";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
+import { readJsonlBackward } from "@genesiscz/utils/agent-sessions/read-backward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
@@ -9,6 +10,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
 import type {
+    BackwardRead,
     BoundedMetadataField,
     HistoryMetadataRead,
     HistoryReadOptions,
@@ -18,6 +20,7 @@ import type {
     NativeSessionReader,
     NativeSessionSource,
     NativeSourceIssue,
+    ReadBackwardOptions,
 } from "../types";
 
 const USER_QUERY_RE = /<user_query>\s*([\s\S]*?)\s*<\/user_query>/i;
@@ -706,7 +709,30 @@ async function readGrokMetadataUncounted(
 }
 
 export type GrokHistoryOperations = Pick<NativeSessionReader<"grok">, "parserVersion"> &
-    Required<Pick<NativeSessionReader<"grok">, "readMetadata" | "scan" | "readRecords">>;
+    Required<Pick<NativeSessionReader<"grok">, "readMetadata" | "scan" | "readRecords" | "readBackward">>;
+
+/**
+ * The chat history JSONL from its end. Its rows carry no timestamps, so a caller bounds the walk by content (a
+ * decision's ask), never by time; a session without a chat file reads as nothing, with an issue.
+ */
+async function readGrokBackward(
+    source: NativeSessionSource<"grok">,
+    options: ReadBackwardOptions
+): Promise<BackwardRead> {
+    const chat = preferredChatPath(source);
+
+    if (!chat) {
+        return { entries: [], found: false, issues: [{ path: source.filePath, message: "Chat source missing" }] };
+    }
+
+    const tools: ToolContext = { names: new Map(), paths: new Map() };
+
+    return readJsonlBackward({
+        ...options,
+        path: chat,
+        rowEntries: (row, line) => recordEntries(asRecord(row), line, tools),
+    });
+}
 
 export function createGrokHistoryOperations(): GrokHistoryOperations {
     return {
@@ -717,5 +743,6 @@ export function createGrokHistoryOperations(): GrokHistoryOperations {
         readMetadata: readGrokMetadata,
         scan: scanGrokRecords,
         readRecords: readGrokRecords,
+        readBackward: readGrokBackward,
     };
 }

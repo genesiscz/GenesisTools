@@ -8,6 +8,7 @@ import { codexHistoryReader, grokHistoryReader } from "./compact-readers";
 import { initializeCompactHistorySchema } from "./migrations";
 import { HistoryService } from "./service";
 import { HistorySyncRepository } from "./sync-repository";
+import { noBackwardRead } from "./testing/no-backward-read";
 import type { HistoryMetadataRecord, HistorySourceRecord, NativeSessionReader, NativeSessionSource } from "./types";
 
 interface FixtureSource {
@@ -124,6 +125,7 @@ function fixtureReader(options: {
     return {
         kind: "fixture",
         parserVersion: "fixture-v1",
+        readBackward: noBackwardRead,
         roots: () => [...new Set(options.fixtures.map((fixture) => fixture.source.root))],
         discover: async () => ({
             sources: options.fixtures.map((fixture) => fixture.source),

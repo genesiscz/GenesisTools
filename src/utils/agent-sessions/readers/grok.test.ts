@@ -732,3 +732,35 @@ test("user-query extraction pulls the tagged query and skips harness info blobs"
         })
     ).toEqual([]);
 });
+
+test("readBackward reads the chat history from its end, bounded by content since Grok rows have no time", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-grok-backward-"));
+    const root = join(home, "sessions");
+    const directory = join(root, encodeURIComponent(CWD), SESSION_ID);
+    mkdirSync(directory, { recursive: true });
+    const chatPath = join(directory, "chat_history.jsonl");
+    writeFileSync(
+        chatPath,
+        [
+            line({ type: "user", content: [{ type: "text", text: "<user_query>start</user_query>" }] }),
+            line({ type: "assistant", content: [{ type: "text", text: "❓ DECISION 3: Which one?" }] }),
+            line({ type: "user", content: [{ type: "text", text: "<user_query>3 b)</user_query>" }] }),
+        ].join("")
+    );
+    const source: NativeSessionSource<"grok"> = {
+        kind: "grok",
+        root,
+        sourceHome: home,
+        filePath: chatPath,
+        dataPaths: [chatPath],
+        metadataPaths: [],
+    };
+
+    const read = await createGrokHistoryOperations().readBackward(source, {
+        until: (entry) => entry.text.includes("DECISION 3"),
+    });
+
+    expect(read.found).toBe(true);
+    expect(read.entries.map((entry) => entry.role)).toEqual(["assistant", "user"]);
+    expect(read.entries[1]?.text).toContain("3 b)");
+});

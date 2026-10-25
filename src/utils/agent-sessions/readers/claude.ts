@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { basename, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
+import { readJsonlBackward } from "@genesiscz/utils/agent-sessions/read-backward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
@@ -10,6 +11,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import { profiler } from "@genesiscz/utils/profile";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "../metadata";
 import type {
+    BackwardRead,
     BoundedMetadataField,
     HistoryMetadataRead,
     HistoryReadOptions,
@@ -19,6 +21,7 @@ import type {
     NativeSessionReader,
     NativeSessionSource,
     NativeSourceIssue,
+    ReadBackwardOptions,
 } from "../types";
 import { claudeNativeId, claudeProjectDirectory, claudeProjectName, isClaudeSubagentPath } from "./claude-paths";
 
@@ -616,7 +619,24 @@ async function readClaudeMetadataUncounted(
 }
 
 export type ClaudeHistoryOperations = Pick<NativeSessionReader<"claude">, "parserVersion"> &
-    Required<Pick<NativeSessionReader<"claude">, "readMetadata" | "scan" | "readRecords">>;
+    Required<Pick<NativeSessionReader<"claude">, "readMetadata" | "scan" | "readRecords" | "readBackward">>;
+
+/**
+ * The session JSONL from its end. A tool result's name comes from its call, an earlier row, so walking back from a
+ * result leaves the name out until the call is reached; message text is whole.
+ */
+async function readClaudeBackward(
+    source: NativeSessionSource<"claude">,
+    options: ReadBackwardOptions
+): Promise<BackwardRead> {
+    const tools: ToolContext = { names: new Map(), paths: new Map() };
+
+    return readJsonlBackward({
+        ...options,
+        path: source.filePath,
+        rowEntries: (row, line) => recordEntries(asRecord(row), line, tools),
+    });
+}
 
 export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
     return {
@@ -624,5 +644,6 @@ export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
         readMetadata: readClaudeMetadata,
         scan: scanClaudeRecords,
         readRecords: readClaudeRecords,
+        readBackward: readClaudeBackward,
     };
 }

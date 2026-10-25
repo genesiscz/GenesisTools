@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { initializeCompactHistorySchema } from "./migrations";
 import { synchronizeHistory } from "./sync";
 import { HistorySyncRepository } from "./sync-repository";
+import { noBackwardRead } from "./testing/no-backward-read";
 import type { HistoryMetadataRead, NativeSessionReader, NativeSessionSource, NativeSourceIssue } from "./types";
 
 const PROVIDER = "fixture-provider";
@@ -35,6 +36,7 @@ function fixture() {
     const reader: NativeSessionReader<string> = {
         kind: "fixture",
         parserVersion: "fixture-v1",
+        readBackward: noBackwardRead,
         roots: () => [root],
         discover: async () => {
             state.discoveryCount++;

@@ -7,6 +7,7 @@ import { historySourceKey } from "./identity";
 import { initializeCompactHistorySchema } from "./migrations";
 import { synchronizeHistory } from "./sync";
 import { HistorySyncRepository } from "./sync-repository";
+import { noBackwardRead } from "./testing/no-backward-read";
 import type { HistoryMetadataRead, NativeSessionReader, NativeSessionSource } from "./types";
 
 const PROVIDER = "fixture-provider";
@@ -57,6 +58,7 @@ function createFixture(): {
     const reader: NativeSessionReader<string> = {
         kind: "fixture",
         parserVersion: "fixture-v1",
+        readBackward: noBackwardRead,
         roots: () => [root],
         discover: async () => ({
             sources: state.sources,
@@ -406,6 +408,7 @@ test("selective refresh reuses full discovery, retains unselected sources, and l
     const reader: NativeSessionReader<string> = {
         kind: "fixture",
         parserVersion: "fixture-v1",
+        readBackward: noBackwardRead,
         roots: () => [root],
         discover: async () => discovery,
         readMetadata: async (source): Promise<HistoryMetadataRead> => {

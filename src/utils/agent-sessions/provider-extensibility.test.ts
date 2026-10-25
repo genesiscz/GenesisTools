@@ -13,6 +13,7 @@ import { createNativeHistoryAdapter } from "./native-adapter";
 import { openHistoryService } from "./open-service";
 import { createClaudeHistoryOperations } from "./readers/claude";
 import { discoverClaudeHistorySources } from "./readers/claude-discovery";
+import { noBackwardRead } from "./testing/no-backward-read";
 import type { NativeSessionSource } from "./types";
 
 afterEach(() => {
@@ -46,6 +47,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
         codingAgent: {
             kind: "fixture",
             parserVersion: "1",
+            readBackward: noBackwardRead,
             roots: () => [root],
             discover: async (roots, options) => {
                 const discovered = await discoverClaudeHistorySources(roots, options);

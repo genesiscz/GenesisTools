@@ -590,3 +590,42 @@ test("an unparsable timestamp never becomes the session date", async () => {
     expect(result.metadata?.firstTimestamp).toBe("2026-09-01T10:00:00.000Z");
     expect(result.metadata?.lastTimestamp).toBe("2026-09-01T10:00:00.000Z");
 });
+
+test("readBackward walks from the end back to the entry `until` accepts, and returns it in order", async () => {
+    const { path, source } = fixture();
+    writeFileSync(
+        path,
+        jsonl(
+            { type: "user", sessionId: MAIN_ID, timestamp: "2026-09-01T11:00:00.000Z", message: { content: "start" } },
+            {
+                type: "assistant",
+                sessionId: MAIN_ID,
+                timestamp: "2026-09-01T11:01:00.000Z",
+                message: { content: [{ type: "text", text: "❓ DECISION 1: Keep it?\n- a) keep\n- b) drop" }] },
+            },
+            { type: "user", sessionId: MAIN_ID, timestamp: "2026-09-01T11:02:00.000Z", message: { content: "D1 b)" } },
+            {
+                type: "assistant",
+                sessionId: MAIN_ID,
+                timestamp: "2026-09-01T11:03:00.000Z",
+                message: { content: [{ type: "text", text: "Dropping it." }] },
+            }
+        )
+    );
+
+    const read = await createClaudeHistoryOperations().readBackward(source, {
+        until: (entry) => entry.text.includes("DECISION 1"),
+    });
+
+    expect(read.found).toBe(true);
+    expect(read.entries.map((entry) => [entry.role, entry.text.split("\n")[0], entry.line])).toEqual([
+        ["assistant", "❓ DECISION 1: Keep it?", -3],
+        ["user", "D1 b)", -2],
+        ["assistant", "Dropping it.", -1],
+    ]);
+
+    const none = await createClaudeHistoryOperations().readBackward(source, { until: () => false });
+
+    expect(none.found).toBe(false);
+    expect(none.entries.map((entry) => entry.text)[0]).toBe("start");
+});

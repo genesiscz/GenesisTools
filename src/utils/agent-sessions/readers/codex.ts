@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { sep } from "node:path";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
+import { readJsonlBackward } from "@genesiscz/utils/agent-sessions/read-backward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
@@ -13,6 +14,7 @@ import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 import { foldJsonlResumable } from "../jsonl-fold";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "../metadata";
 import type {
+    BackwardRead,
     BoundedMetadataField,
     HistoryMetadataRead,
     HistoryReadOptions,
@@ -22,6 +24,7 @@ import type {
     NativeSessionReader,
     NativeSessionSource,
     NativeSourceIssue,
+    ReadBackwardOptions,
 } from "../types";
 import {
     type CodexProjectionIndex,
@@ -1347,7 +1350,25 @@ async function readCodexMetadataUncounted(
 }
 
 export type CodexHistoryOperations = Pick<NativeSessionReader<"codex">, "parserVersion"> &
-    Required<Pick<NativeSessionReader<"codex">, "readMetadata" | "scan" | "readRecords">>;
+    Required<Pick<NativeSessionReader<"codex">, "readMetadata" | "scan" | "readRecords" | "readBackward">>;
+
+/**
+ * The rollout JSONL from its end. It holds every response item in both history modes (a paginated thread's projection
+ * database is a second copy), so the backward walk needs no projection; a tool result's name comes from its call, an
+ * earlier row, so walking back from a result leaves the name out until the call is reached.
+ */
+async function readCodexBackward(
+    source: NativeSessionSource<"codex">,
+    options: ReadBackwardOptions
+): Promise<BackwardRead> {
+    const tools: ToolContext = { names: new Map(), paths: new Map() };
+
+    return readJsonlBackward({
+        ...options,
+        path: source.filePath,
+        rowEntries: (row, line) => legacyEntries(asRecord(row), line, tools),
+    });
+}
 
 export function createCodexHistoryOperations(): CodexHistoryOperations {
     return {
@@ -1355,5 +1376,6 @@ export function createCodexHistoryOperations(): CodexHistoryOperations {
         readMetadata: readCodexMetadata,
         scan: scanCodexRecords,
         readRecords: readCodexRecords,
+        readBackward: readCodexBackward,
     };
 }

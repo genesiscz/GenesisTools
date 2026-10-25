@@ -17,6 +17,7 @@ import {
     sessionMessageTextHash,
 } from "./message-queue";
 import { resolveHistoryProvider } from "./provider";
+import { noBackwardRead } from "./testing/no-backward-read";
 
 afterEach(() => {
     _resetPluginsForTest();
@@ -35,6 +36,7 @@ test("a registered fourth history provider can be resolved without an account al
         codingAgent: {
             kind: "fixture",
             parserVersion: "1",
+            readBackward: noBackwardRead,
             roots: () => [],
             async discover() {
                 return { sources: [], issues: [], completeRoots: [] };

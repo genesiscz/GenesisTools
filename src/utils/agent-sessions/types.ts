@@ -243,7 +243,34 @@ export interface HistoryDiscoveryOptions {
     signal?: AbortSignal;
 }
 
+/** What `readBackward` reads: a session from its end, back to the first entry `until` accepts. */
+export interface ReadBackwardOptions {
+    /** Reading backwards, the walk stops at the first entry this accepts; that entry is returned too. */
+    until: (entry: NativeHistoryEntry) => boolean;
+    /** At most this many bytes from the end (default `READ_BACKWARD_MAX_BYTES`). */
+    maxBytes?: number;
+    signal?: AbortSignal;
+}
+
+export interface BackwardRead {
+    /** In conversation order, oldest first. `line` counts back from the end of the file: -1 is the last line. */
+    entries: NativeHistoryEntry[];
+    /** Whether `until` accepted an entry; false when the walk reached the start of the file or `maxBytes`. */
+    found: boolean;
+    issues: NativeSourceIssue[];
+}
+
+/**
+ * One coding agent's native sessions (Claude, Codex, Grok). Every fact a feature reads from a transcript is a member
+ * here, implemented by each provider from its own format, so a feature never parses a transcript itself
+ * (`.claude/rules/agent-transcripts.md`). A required member makes a new provider name what it cannot answer.
+ */
 export interface NativeSessionReader<Kind extends string = AgentKind> {
+    /**
+     * The newest entries of a session, read from the end of its source back to the first entry `options.until`
+     * accepts: the conversation after a known point (a decision's ask) without reading the whole file.
+     */
+    readBackward(source: NativeSessionSource<Kind>, options: ReadBackwardOptions): Promise<BackwardRead>;
     importSession?(
         session: AgentSession<Kind>,
         context: NativeSessionImportContext
