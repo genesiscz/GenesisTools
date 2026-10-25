@@ -23,6 +23,8 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
     let revision: Revision
     /// The shared scroll handle used by reveals and history restoration.
     let box: MarkdownTreeScrollBox
+    /// What the keyboard does on a row (Up, Down, Left, Right, Return). nil: the table never takes the keyboard.
+    var keys: MarkdownTreeKeys? = nil
     /// Builds the hosted SwiftUI content for a row when the table needs it.
     let cell: (FileTreeRow) -> AnyView
 
@@ -46,6 +48,7 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
         table.usesAutomaticRowHeights = false
         table.dataSource = context.coordinator
         table.delegate = context.coordinator
+        table.coordinatorKeys = context.coordinator
 
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -88,6 +91,8 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
         let rowsChanged = force || coordinator.rows != rows
         let revisionChanged = force || coordinator.reduceMotion != reduced || coordinator.revision as? Revision != revision
         coordinator.reduceMotion = reduced
+        coordinator.keys = keys
+        (table as? MarkdownTreeTableView)?.takesKeyboard = keys != nil
         let old = coordinator.rows
         coordinator.rows = rows
         coordinator.revision = revision
@@ -106,6 +111,7 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
         } else if revisionChanged {
             coordinator.rebuildVisible()
         }
+        if rowsChanged { coordinator.keepCursor() }
     }
 
     /// A folder opening or closing: its rows slide in or out, and the rows whose value changed (the folder's chevron)
@@ -138,7 +144,7 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
 
     /// Keeps row values and builds reusable cells for the AppKit table.
     @MainActor
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, MarkdownTreeKeyTarget {
         /// The table supplied by the representable, held without extending its lifetime.
         weak var table: NSTableView?
         /// The row snapshot currently exposed to the table data source.
@@ -155,6 +161,75 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
         var rowHeight: CGFloat?
         /// The current builder installed by the representable for reusable cells.
         var cell: (FileTreeRow) -> AnyView = { _ in AnyView(EmptyView()) }
+        /// The keyboard's verbs, from the representable.
+        var keys: MarkdownTreeKeys?
+        /// The row the keyboard is on, by identity, so a folder opening above it does not move it to another row.
+        private var cursorKey: FileTreeRowKey?
+
+        /// The keyboard row's index in the current rows.
+        var cursor: Int? { cursorKey.flatMap { key in rows.firstIndex { $0.key == key } } }
+
+        /// Puts the keyboard on `index` (nil: off), selects it in the table and scrolls it into view.
+        func setCursor(_ index: Int?) {
+            guard let table else { return }
+            guard let index, rows.indices.contains(index) else {
+                cursorKey = nil
+                table.deselectAll(nil)
+                return
+            }
+            cursorKey = rows[index].key
+            table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            table.scrollRowToVisible(index)
+            if NSWorkspace.shared.isVoiceOverEnabled {
+                GenAnnounce.post(MarkdownTreeKeys.spoken(rows[index]), priority: .low)
+            }
+        }
+
+        /// The rows changed (a folder opened, a listing landed): the keyboard stays on its row, or leaves when it is gone.
+        func keepCursor() {
+            guard cursorKey != nil, let table else { return }
+            if let index = cursor {
+                if table.selectedRow != index { table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false) }
+            } else {
+                cursorKey = nil
+                table.deselectAll(nil)
+            }
+        }
+
+        /// The table took the keyboard: start on the row it was clicked on, else the open file, else the first row.
+        func beginKeyboard(at clicked: Int?) {
+            if let clicked { setCursor(clicked); return }
+            guard cursor == nil else { return }
+            setCursor(keys?.start(rows) ?? (rows.isEmpty ? nil : 0))
+        }
+
+        func endKeyboard() {
+            cursorKey = nil
+            table?.deselectAll(nil)
+        }
+
+        /// Runs one key; false hands it on.
+        func handle(_ key: MarkdownTreeKey) -> Bool {
+            guard let keys else { return false }
+            switch MarkdownTreeKeys.action(for: key, rows: rows, cursor: cursor) {
+            case .none:
+                return false
+            case .select(let index):
+                setCursor(index)
+            case .toggle(let index):
+                keys.toggle(rows[index])
+            case .open(let index):
+                keys.open(rows[index])
+            case .navigate(let index):
+                keys.navigate(rows[index])
+            case .up:
+                keys.up()
+            case .clear:
+                endKeyboard()
+                table?.window?.makeFirstResponder(nil)
+            }
+            return true
+        }
 
         /// Reports exactly the number of rows in the current snapshot.
         func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
@@ -183,10 +258,48 @@ struct MarkdownTreeTable<Revision: Equatable>: NSViewRepresentable {
     }
 }
 
-/// The table under the rows: it never takes the keyboard or a selection, so a click reaches the row's button.
+/// The table under the rows. A click reaches the row's button; the keyboard, when the host gives it verbs
+/// (`MarkdownTreeKeys`), walks the rows with a selection of its own, which the pointer's hover never moves.
 final class MarkdownTreeTableView: NSTableView {
-    /// Keeps keyboard focus in the row controls rather than the table itself.
-    override var acceptsFirstResponder: Bool { false }
+    /// The coordinator that owns the rows and the keyboard row.
+    weak var coordinatorKeys: (any MarkdownTreeKeyTarget)?
+    /// Whether the host gave the keyboard any verbs.
+    var takesKeyboard = false {
+        didSet { if takesKeyboard != oldValue { selectionHighlightStyle = takesKeyboard ? .regular : .none } }
+    }
+    /// A row click that brings the keyboard here, read once by `becomeFirstResponder`.
+    var clickedRowForKeyboard: Int?
+
+    override var acceptsFirstResponder: Bool { takesKeyboard }
+
+    override func becomeFirstResponder() -> Bool {
+        guard super.becomeFirstResponder() else { return false }
+        coordinatorKeys?.beginKeyboard(at: clickedRowForKeyboard)
+        clickedRowForKeyboard = nil
+        return true
+    }
+
+    override func resignFirstResponder() -> Bool {
+        guard super.resignFirstResponder() else { return false }
+        coordinatorKeys?.endKeyboard()
+        return true
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if let key = MarkdownTreeKey(event), coordinatorKeys?.handle(key) == true { return }
+        super.keyDown(with: event)
+    }
+
+    /// A click on a row puts the keyboard there, as in Finder's sidebar: Up and Down go on from the clicked row.
+    func noteRowClick(_ row: Int) {
+        guard takesKeyboard, row >= 0 else { return }
+        if window?.firstResponder === self {
+            coordinatorKeys?.beginKeyboard(at: row)
+        } else {
+            clickedRowForKeyboard = row
+            window?.makeFirstResponder(self)
+        }
+    }
 
     /// A table hands a click to a subview only when this says yes, and it says yes for controls alone: without it the
     /// row's SwiftUI button never saw a click (2026-10-15, the first live check of the table).
@@ -211,7 +324,7 @@ final class MarkdownTreeTableView: NSTableView {
 
 /// One reused cell: a hosting view whose root view is swapped when the cell shows another row.
 final class MarkdownTreeTableCell: NSView {
-    private let host = NSHostingView(rootView: AnyView(EmptyView()))
+    private let host = MarkdownTreeCellHost(rootView: AnyView(EmptyView()))
 
     /// Creates a reusable cell whose hosting view fills the cell without sizing the window.
     init(identifier: NSUserInterfaceItemIdentifier) {
@@ -246,5 +359,114 @@ final class MarkdownTreeTableCell: NSView {
     static func height(of view: AnyView) -> CGFloat {
         let probe = NSHostingView(rootView: view)
         return max(ceil(probe.fittingSize.height), 1)
+    }
+}
+
+/// A cell's hosting view: a click on the row tells the table, so the keyboard continues from that row.
+final class MarkdownTreeCellHost: NSHostingView<AnyView> {
+    override func mouseDown(with event: NSEvent) {
+        var view: NSView? = superview
+        while let current = view, !(current is MarkdownTreeTableView) { view = current.superview }
+        if let table = view as? MarkdownTreeTableView {
+            table.noteRowClick(table.row(for: self))
+        }
+        super.mouseDown(with: event)
+    }
+}
+
+/// The coordinator side of the table's keyboard.
+@MainActor
+protocol MarkdownTreeKeyTarget: AnyObject {
+    func beginKeyboard(at clicked: Int?)
+    func endKeyboard()
+    func handle(_ key: MarkdownTreeKey) -> Bool
+}
+
+/// A key the tree answers.
+enum MarkdownTreeKey: Equatable {
+    case up, down, left, right
+    /// Return or Enter.
+    case open
+    /// ⌘↓: a folder becomes the root, a file opens.
+    case navigate
+    /// ⌘↑: the folder above the root.
+    case parent
+    case escape
+
+    init?(_ event: NSEvent) {
+        let command = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command)
+        switch event.keyCode {
+        case 126: self = command ? .parent : .up
+        case 125: self = command ? .navigate : .down
+        case 123: self = .left
+        case 124: self = .right
+        case 36, 76: self = .open
+        case 53: self = .escape
+        default: return nil
+        }
+    }
+}
+
+/// What a key does to the rows: pure, so it is tested without a window.
+enum MarkdownTreeKeyAction: Equatable {
+    case none
+    case select(Int)
+    case toggle(Int)
+    case open(Int)
+    case navigate(Int)
+    case up
+    case clear
+}
+
+/// The verbs the keyboard reaches: the host's own, so a key does what a click on the row does.
+struct MarkdownTreeKeys {
+    /// Opens a file (Return on a file row).
+    var open: (FileTreeRow) -> Void
+    /// Opens or closes a folder (Right, Left, Return on a folder row).
+    var toggle: (FileTreeRow) -> Void
+    /// Makes a folder the root (⌘↓ on a folder row).
+    var navigate: (FileTreeRow) -> Void
+    /// The folder above the root (⌘↑).
+    var up: () -> Void
+    /// The row the keyboard starts on (the open file), or nil for the first row.
+    var start: ([FileTreeRow]) -> Int?
+
+    /// Up and Down move, Right opens a folder or goes into it, Left closes it or goes to its parent, Return opens a
+    /// file or toggles a folder, ⌘↓ goes into a folder, ⌘↑ goes up, Esc lets the keyboard go.
+    static func action(for key: MarkdownTreeKey, rows: [FileTreeRow], cursor: Int?) -> MarkdownTreeKeyAction {
+        if key == .parent { return .up }
+        if key == .escape { return cursor == nil ? .none : .clear }
+        guard !rows.isEmpty else { return .none }
+        guard let index = cursor, rows.indices.contains(index) else {
+            return key == .down || key == .up ? .select(0) : .none
+        }
+        let row = rows[index]
+        switch key {
+        case .down:
+            return .select(min(index + 1, rows.count - 1))
+        case .up:
+            return .select(max(index - 1, 0))
+        case .right:
+            guard row.isFolder else { return .none }
+            if !row.expanded { return .toggle(index) }
+            let next = index + 1
+            return next < rows.count && rows[next].depth > row.depth ? .select(next) : .none
+        case .left:
+            if row.isFolder, row.expanded { return .toggle(index) }
+            guard row.depth > 0 else { return .none }
+            let parent = rows[..<index].lastIndex { $0.depth == row.depth - 1 && $0.isFolder }
+            return parent.map(MarkdownTreeKeyAction.select) ?? .none
+        case .open:
+            return row.isFolder ? .toggle(index) : .open(index)
+        case .navigate:
+            return row.isFolder ? .navigate(index) : .open(index)
+        case .parent, .escape:
+            return .none
+        }
+    }
+
+    /// A row as VoiceOver says it when the keyboard lands on it.
+    static func spoken(_ row: FileTreeRow) -> String {
+        row.isFolder ? "\(row.name), folder, \(row.expanded ? "expanded" : "collapsed")" : row.name
     }
 }

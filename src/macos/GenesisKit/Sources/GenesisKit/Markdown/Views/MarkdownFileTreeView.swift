@@ -30,6 +30,10 @@ struct MarkdownFileTreeView: View {
     @StateObject private var tree = FileTreeModel(root: FileManager.default.homeDirectoryForCurrentUser)
     @StateObject private var search = FileTreeSearchModel()
     @State private var searchOpen = false
+    /// The search hit the keyboard is on (Up and Down in the field); nil: Return opens the first hit.
+    @State private var hitCursor: Int?
+    /// Why the tree has no rows, once a check of the folder says so (nil while it loads or has rows).
+    @State private var treeEmpty: MarkdownTreeEmpty?
     @State private var debounce: Task<Void, Never>?
     @FocusState private var searchFocused: Bool
     /// The folder "Go to Location…" revealed: highlighted until another document is selected.
@@ -113,6 +117,8 @@ struct MarkdownFileTreeView: View {
                             .padding(.vertical, 4)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
+                    } else if let empty = shownEmpty {
+                        emptyTree(empty)
                     } else {
                         // An AppKit table with its own scroll view (`MarkdownTreeTable`).
                         treeRows
@@ -130,6 +136,10 @@ struct MarkdownFileTreeView: View {
                     }
                 }
                 .onChange(of: model.revealToken) { _, _ in handleReveal(proxy) }
+                .onChange(of: hitCursor) { _, index in
+                    guard let index, search.hits.indices.contains(index) else { return }
+                    proxy.scrollTo(search.hits[index].id)
+                }
                 .onChange(of: tree.rows) { _, _ in
                     scrollToPending(proxy)
                     applyPendingPlaceScroll(force: false)
@@ -186,6 +196,51 @@ struct MarkdownFileTreeView: View {
         .onChange(of: model.treeSearchToken) { _, _ in applySearchRequest() }
         .onChange(of: search.query) { _, _ in scheduleSearch() }
         .onChange(of: search.mode) { _, _ in scheduleSearch() }
+        .onChange(of: search.hits) { _, _ in hitCursor = nil }
+        .onChange(of: search.failure) { _, now in if let now { GenAnnounce.post(now.message) } }
+        // An empty tree is checked once its rows settle: a folder still being read has no rows either.
+        .task(id: MarkdownTreeEmptyCheck(root: root.path, empty: tree.rows.isEmpty)) {
+            guard tree.rows.isEmpty else {
+                treeEmpty = nil
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(250))
+            guard !Task.isCancelled, tree.rows.isEmpty else { return }
+            let path = root.path
+            treeEmpty = await Task.detached(priority: .utility) { MarkdownTreeEmpty.check(path) }.value
+        }
+    }
+
+    /// The empty state on screen: the folder has nothing, cannot be read, or the changed-files filter hides every row.
+    private var shownEmpty: MarkdownTreeEmpty? {
+        if tree.rows.isEmpty { return treeEmpty }
+        if changedOnly, gitMarks, displayedRows.isEmpty { return .noChanges }
+        return nil
+    }
+
+    @ViewBuilder
+    private func emptyTree(_ empty: MarkdownTreeEmpty) -> some View {
+        let name = Self.folderName(model.filesRootURL)
+        switch empty {
+        case .empty:
+            EmptyState(symbol: "folder", text: "\(name) has no visible files",
+                       detail: "Hidden files are not listed.",
+                       actionTitle: Self.parentFolderName(model.filesRootURL).map { "Go up to \($0)" },
+                       action: { model.filesRootUp() })
+                .accessibilityIdentifier("markdown-files-empty")
+        case .unreadable:
+            EmptyState(symbol: "lock", text: "\(name) cannot be read",
+                       detail: "macOS privacy settings (Files and Folders, or Full Disk Access) or the folder's permissions block it.",
+                       actionTitle: "Open Privacy Settings",
+                       action: { MarkdownTreeEmpty.openPrivacySettings() })
+                .accessibilityIdentifier("markdown-files-unreadable")
+        case .noChanges:
+            EmptyState(symbol: "checkmark.circle", text: "No changed files",
+                       detail: "Show only changed files is on, and nothing under \(name) differs from git.",
+                       actionTitle: "Show all files",
+                       action: { changedOnly = false })
+                .accessibilityIdentifier("markdown-files-no-changes")
+        }
     }
 
     /// The rows on screen, in order: every row, or only the changed ones when the git filter is on.
@@ -239,27 +294,52 @@ struct MarkdownFileTreeView: View {
                     .foregroundColor(model.theme.textMuted)
                 TextField(search.mode == .names ? "File name" : "Text in files", text: $search.query)
                     .textFieldStyle(.plain)
-                    .font(GenTypography.mono(10))
+                    .font(GenTypography.mono(11))
                     .foregroundColor(model.theme.text)
                     .focused($searchFocused)
                     .onExitCommand { closeSearch() }
+                    // Return opens the hit the keyboard is on, or the first; Up and Down walk the hits.
+                    .onSubmit { openHit(at: hitCursor ?? 0) }
+                    .onKeyPress(.downArrow, phases: [.down, .repeat]) { _ in moveHit(1) }
+                    .onKeyPress(.upArrow, phases: [.down, .repeat]) { _ in moveHit(-1) }
+                    .accessibilityLabel(search.mode == .names ? "Find a file by name" : "Find text in files")
+                    .accessibilityHint("Up and Down choose a result, Return opens it")
                     .accessibilityIdentifier("markdown-files-search")
+                if !search.query.isEmpty {
+                    Button {
+                        search.query = ""
+                        searchFocused = true
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 10.5))
+                            .foregroundColor(model.theme.textMuted)
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.genHoverPlain())
+                    .instantTooltip("Clear")
+                    .accessibilityLabel("Clear the search")
+                    .accessibilityIdentifier("markdown-files-search-clear")
+                }
                 // Names or text: one toggle, the way a code editor keeps ⌘P and ⌘⇧F apart.
                 Button {
                     search.mode = search.mode == .names ? .text : .names
                 } label: {
                     Text(search.mode == .names ? "name" : "text")
-                        .font(GenTypography.mono(8.5, weight: .semibold))
+                        .font(GenTypography.mono(11, weight: .semibold))
                         .foregroundColor(model.theme.accent)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(model.theme.accent.opacity(0.14))
                         .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .frame(minHeight: 22)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.genHoverPlain())
+                .accessibilityLabel(search.mode == .names ? "Searching file names" : "Searching text in files")
+                .accessibilityHint("Switches between file names and text in files")
                 .accessibilityIdentifier("markdown-files-search-mode")
-                .instantTooltip(search.mode == .names ? "Searching file names — click for text in files" : "Searching text in files — click for file names")
+                .instantTooltip(search.mode == .names ? "Searching file names. Click for text in files" : "Searching text in files. Click for file names")
                 if search.searching {
                     ProgressView().controlSize(.mini)
                 }
@@ -286,7 +366,7 @@ struct MarkdownFileTreeView: View {
                 Image(systemName: "folder.fill")
                     .font(.system(size: 8.5))
                 Text(name.isEmpty ? "/" : name)
-                    .font(GenTypography.mono(9, weight: .medium))
+                    .font(GenTypography.mono(11, weight: .medium))
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Image(systemName: "xmark")
@@ -297,10 +377,11 @@ struct MarkdownFileTreeView: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 2.5)
             .background(Capsule().fill(model.theme.accent.opacity(0.14)))
-            .contentShape(Capsule())
+            .frame(minHeight: 22)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverPlain())
-        .instantTooltip("Searching only in \(PathLabel.display(scope)) — click to search the whole tree")
+        .instantTooltip("Searching only in \(PathLabel.display(scope)). Click to search the whole tree")
         .accessibilityLabel("Searching only in \(name). Remove the folder limit")
         .accessibilityIdentifier("markdown-files-search-scope")
     }
@@ -308,30 +389,41 @@ struct MarkdownFileTreeView: View {
     @ViewBuilder
     private var results: some View {
         let size = fontSize
-        if search.hits.isEmpty, !search.searching {
-            Text("No match under \((search.searchRoot as NSString).lastPathComponent)")
-                .font(GenTypography.mono(9.5))
-                .foregroundColor(model.theme.textMuted)
-                .padding(.horizontal, 10)
+        if let failure = search.failure, !search.searching {
+            NoticePill(text: failure.message, more: failure.detail, tone: .error,
+                       fixes: [.button("Try again", symbol: "arrow.clockwise") { search.run() }])
+                .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .accessibilityIdentifier("markdown-files-no-match")
+                .accessibilityIdentifier("markdown-files-search-failed")
+        } else if search.hits.isEmpty, !search.searching {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("No match under \((search.searchRoot as NSString).lastPathComponent)")
+                    .font(GenTypography.mono(11))
+                    .foregroundColor(model.theme.textSecondary)
+                    .accessibilityIdentifier("markdown-files-no-match")
+                Text(FileTreeSearch.leftOut)
+                    .font(.system(size: 11))
+                    .foregroundColor(model.theme.textMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("markdown-files-left-out")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
         }
         if search.fellBackToText, !search.hits.isEmpty {
             Text("No file name matches. Text inside files:")
-                .font(GenTypography.mono(9))
+                .font(GenTypography.mono(11))
                 .foregroundColor(model.theme.textMuted)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .accessibilityIdentifier("markdown-files-text-fallback")
         }
-        ForEach(search.hits) { hit in
-            MarkdownFileTreeResultRow(hit: hit, model: model, fontSize: size) { open(hit) }
+        ForEach(Array(search.hits.enumerated()), id: \.element.id) { index, hit in
+            MarkdownFileTreeResultRow(hit: hit, model: model, fontSize: size, keyed: index == hitCursor) { open(hit) }
         }
-        if search.truncated {
-            Text(search.mode == .names && !search.fellBackToText
-                 ? "Index stopped at \(FileTreeSearch.maxIndexedFiles) files — pick a narrower folder"
-                 : "First \(FileTreeSearch.maxTextHits) hits shown")
-                .font(GenTypography.mono(9))
+        if search.truncated || search.namesCut {
+            Text(Self.cutNotice(names: search.mode == .names && !search.fellBackToText, indexFull: search.truncated))
+                .font(GenTypography.mono(11))
                 .foregroundColor(model.theme.textMuted)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -347,6 +439,29 @@ struct MarkdownFileTreeView: View {
         guard FileTree.isReadable(url) else { return }
         tree.reveal(url)
         if let line = hit.line { model.jump(toLine: line) }
+    }
+
+    /// Under a cut list: the name index stopped, or only the first names or text hits are shown.
+    static func cutNotice(names: Bool, indexFull: Bool) -> String {
+        if names {
+            return indexFull
+                ? "Index stopped at \(FileTreeSearch.maxIndexedFiles) files. Pick a narrower folder"
+                : "First \(FileTreeSearch.maxNameHits) names shown. Type more of the name"
+        }
+        return "First \(FileTreeSearch.maxTextHits) hits shown"
+    }
+
+    /// Up or Down in the search field: the keyboard moves through the hits, from the first.
+    private func moveHit(_ step: Int) -> KeyPress.Result {
+        guard showingResults, !search.hits.isEmpty else { return .ignored }
+        let next = (hitCursor ?? (step > 0 ? -1 : search.hits.count)) + step
+        hitCursor = min(max(next, 0), search.hits.count - 1)
+        return .handled
+    }
+
+    private func openHit(at index: Int) {
+        guard showingResults, search.hits.indices.contains(index) else { return }
+        open(search.hits[index])
     }
 
     private func closeSearch() {
@@ -588,7 +703,7 @@ struct MarkdownFileTreeView: View {
             Image(systemName: symbol)
                 .font(.system(size: 9, weight: .bold))
                 .foregroundColor(enabled ? model.theme.textSecondary : model.theme.textMuted.opacity(0.45))
-                .frame(width: 16, height: 16)
+                .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverPlain())
@@ -621,9 +736,11 @@ struct MarkdownFileTreeView: View {
                         model.filesRootUp()
                     } label: {
                         Text(parentName + " /")
-                            .font(.system(size: 10.5))
+                            .font(.system(size: 11))
                             .foregroundColor(model.theme.textMuted)
                             .lineLimit(1)
+                            .frame(minHeight: 22)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.genHoverPlain())
                     .layoutPriority(0)
@@ -653,7 +770,7 @@ struct MarkdownFileTreeView: View {
                 Image(systemName: "plus")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(model.theme.textMuted)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverPlain())
@@ -670,10 +787,13 @@ struct MarkdownFileTreeView: View {
                     Image(systemName: "plusminus")
                         .font(.system(size: 9, weight: .bold))
                         .foregroundColor(changedOnly ? model.theme.accent : model.theme.textMuted)
-                        .frame(width: 16, height: 16)
+                        .frame(width: 22, height: 22)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.genHoverPlain())
+                .accessibilityLabel("Show only changed files")
+                .accessibilityValue(changedOnly ? "on" : "off")
+                .accessibilityAddTraits(changedOnly ? .isSelected : [])
                 .accessibilityIdentifier("markdown-files-changed-only")
                 .instantTooltip(changedOnly ? "Showing only changed files: click for all" : "Show only changed files")
             }
@@ -684,10 +804,13 @@ struct MarkdownFileTreeView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(searchOpen ? model.theme.accent : model.theme.textMuted)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverPlain())
+            .accessibilityLabel("Find in files")
+            .accessibilityValue(searchOpen ? "open" : "closed")
+            .accessibilityAddTraits(searchOpen ? .isSelected : [])
             .accessibilityIdentifier("markdown-files-search-toggle")
             .instantTooltip(keymap.hint("Find a file by name, or text in files", "markdown.find.files"))
 
@@ -697,15 +820,17 @@ struct MarkdownFileTreeView: View {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 9, weight: .bold))
                     .foregroundColor(model.theme.textMuted)
-                    .frame(width: 16, height: 16)
+                    .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.genHoverPlain())
+            .accessibilityLabel("Re-read this folder")
             .accessibilityIdentifier("markdown-files-reload")
             .instantTooltip("Re-read this folder")
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 7)
+        // 22 pt buttons in a header that kept its height: 4 + 22 + 4 is the old 7 + 16 + 7.
+        .padding(.vertical, 4)
     }
 }
 
@@ -752,7 +877,16 @@ private struct MarkdownFileTreeRows: View, Equatable {
             rows: rows,
             revision: Revision(selected: selected, pulse: pulse, actions: actions.revision, git: git, metrics: style.metrics,
                                colors: [style.text, style.secondary, style.muted, style.accent, style.selection]),
-            box: box
+            box: box,
+            keys: MarkdownTreeKeys(
+                open: { actions.open($0.url) },
+                toggle: { row in
+                    GenMotion.perform(expanding: !row.expanded, reduceMotion: tree.reduceMotion) { tree.toggle(row.id) }
+                },
+                navigate: { actions.setRoot($0.url) },
+                up: { model.filesRootUp() },
+                start: { rows in selectedKey.flatMap { key in rows.firstIndex { $0.key == key } } }
+            )
         ) { row in
             AnyView(
                 FileTreeRowView(
@@ -763,6 +897,9 @@ private struct MarkdownFileTreeRows: View, Equatable {
                 )
                 .equatable()
                 .markdownHoverPreview(row.isFolder ? nil : row.url, model: model)
+                // A folder says whether it is open; the open file says it is the selected one.
+                .accessibilityValue(row.isFolder ? (row.expanded ? "expanded" : "collapsed") : "")
+                .accessibilityAddTraits(row.key == selectedKey ? .isSelected : [])
             )
         }
     }
@@ -772,6 +909,8 @@ private struct MarkdownFileTreeResultRow: View {
     let hit: FileTreeSearch.Hit
     @ObservedObject var model: MarkdownDocumentsModel
     let fontSize: CGFloat
+    /// The keyboard is on this hit (Up and Down in the search field).
+    var keyed = false
     let action: () -> Void
 
     var body: some View {
@@ -815,9 +954,14 @@ private struct MarkdownFileTreeResultRow: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, metrics.verticalPadding)
+            .background(
+                RoundedRectangle(cornerRadius: 5).fill(keyed ? model.theme.accent.opacity(0.16) : Color.clear)
+                    .padding(.horizontal, 3)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.genHoverPlain())
+        .accessibilityAddTraits(keyed ? .isSelected : [])
         .contextMenu {
             let url = URL(fileURLWithPath: hit.path)
             PathActionsMenu(entries: MarkdownSearchResultMenu.entries(
@@ -827,7 +971,8 @@ private struct MarkdownFileTreeResultRow: View {
                 open: action
             ))
         }
-        .instantTooltip(hit.path)
+        // `.help`, not an instant tooltip: up to 300 rows each with an AppKit hover view lagged the list (2026-10-13).
+        .help(hit.path)
         .accessibilityIdentifier("markdown-files-result")
     }
 }
@@ -1052,4 +1197,38 @@ enum MarkdownTreeScroll {
         guard !flight.cancelled else { return }
         RunLoop.main.add(timer, forMode: .common)
     }
+}
+
+/// Why the file tree shows no rows.
+enum MarkdownTreeEmpty: Equatable, Sendable {
+    /// The folder holds no visible file.
+    case empty
+    /// The folder cannot be listed: a privacy grant or its permissions.
+    case unreadable
+    /// "Show only changed files" is on and nothing changed.
+    case noChanges
+
+    /// Reads the folder once, off the main thread: an empty listing and a refused one are different answers.
+    nonisolated static func check(_ path: String) -> MarkdownTreeEmpty {
+        do {
+            _ = try FileManager.default.contentsOfDirectory(atPath: path)
+            return .empty
+        } catch {
+            return .unreadable
+        }
+    }
+
+    /// System Settings at Privacy & Security, Files and Folders.
+    @MainActor
+    static func openPrivacySettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+/// The empty-tree check runs again when the root changes or the rows empty or fill.
+private struct MarkdownTreeEmptyCheck: Equatable {
+    let root: String
+    let empty: Bool
 }

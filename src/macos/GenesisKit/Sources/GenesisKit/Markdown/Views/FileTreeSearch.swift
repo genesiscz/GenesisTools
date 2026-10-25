@@ -44,6 +44,19 @@ enum FileTreeSearch {
     static let maxNameHits = 200
     static let maxTextHits = 300
 
+    /// What a search never looks at, said under an empty or short result so "No match" is not read as "not there".
+    static let leftOut = "Hidden folders, node_modules, build output and files over 2 MB are not searched."
+
+    /// ripgrep's exit status 2 is an error; with `--no-messages` it is also 2 when a file could not be read, so it
+    /// counts as a failure only when nothing was found.
+    static func ripgrepFailed(status: Int32, hits: Int) -> Bool { status == 2 && hits == 0 }
+
+    /// A search that could not run: one sentence, and the raw text for Details.
+    struct Failure: Equatable {
+        let message: String
+        let detail: String?
+    }
+
     static func skips(directoryNamed name: String) -> Bool {
         skippedFolders.contains(name) || name.hasPrefix(".")
     }
@@ -207,6 +220,11 @@ final class FileTreeSearchModel: ObservableObject {
     @Published private(set) var truncated = false
     /// Names mode found no file name, so the hits are text matches inside files.
     @Published private(set) var fellBackToText = false
+    /// Names mode stopped at `maxNameHits` names.
+    @Published private(set) var namesCut = false
+    /// The search could not run (ripgrep did not start, or stopped with an error): one sentence, and the raw text for
+    /// Details. Not the same as "No match".
+    @Published private(set) var failure: FileTreeSearch.Failure?
     /// Files the name index holds for the current root (0 before the first search).
     @Published private(set) var indexedCount = 0
     /// The folder "Search in Folder…" limits the search to, nil for the whole tree (the scope chip).
@@ -260,6 +278,8 @@ final class FileTreeSearchModel: ObservableObject {
         searching = false
         truncated = false
         fellBackToText = false
+        namesCut = false
+        failure = nil
     }
 
     /// Debounced by the view: called on every keystroke, it cancels the
@@ -277,6 +297,8 @@ final class FileTreeSearchModel: ObservableObject {
         generation += 1
         let gen = generation
         fellBackToText = false
+        namesCut = false
+        failure = nil
         searching = true
         let rootPath = root
         switch mode {
@@ -303,6 +325,7 @@ final class FileTreeSearchModel: ObservableObject {
                 self.hits = ranked.map {
                     FileTreeSearch.Hit(path: rootPath + "/" + $0, relative: $0, line: nil, snippet: nil)
                 }
+                self.namesCut = ranked.count >= FileTreeSearch.maxNameHits
                 self.searching = false
             }
         case .text:
@@ -369,20 +392,27 @@ final class FileTreeSearchModel: ObservableObject {
         proc.executableURL = URL(fileURLWithPath: rg)
         proc.arguments = FileTreeSearch.ripgrepArguments(query: query, root: root)
         let pipe = Pipe()
+        let errors = Pipe()
         proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
+        // `--no-messages` keeps per-file complaints out, so what is left here is short: why the run failed.
+        proc.standardError = errors
         process = proc
         searchTask = Task.detached(priority: .userInitiated) { [weak self] in
             do { try proc.run() } catch {
+                let detail = "\(rg): \(error.localizedDescription)"
                 await MainActor.run { [weak self] in
                     guard let self, self.generation == gen else { return }
-                    self.hits = []; self.searching = false
+                    self.hits = []
+                    self.searching = false
+                    self.failure = FileTreeSearch.Failure(message: "The text search could not start.", detail: detail)
                 }
                 return
             }
             // Read everything, then cut: rg is done long before 300 hits cost anything.
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let errorText = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             proc.waitUntilExit()
+            let status = proc.terminationReason == .exit ? proc.terminationStatus : 0
             let text = String(decoding: data, as: UTF8.self)
             var hits: [FileTreeSearch.Hit] = []
             var cut = false
@@ -394,11 +424,17 @@ final class FileTreeSearchModel: ObservableObject {
             }
             let result = hits
             let wasCut = cut
+            let failed = FileTreeSearch.ripgrepFailed(status: status, hits: result.count)
             await MainActor.run { [weak self] in
                 guard let self, self.generation == gen else { return }
                 self.hits = result
                 self.truncated = wasCut
                 self.searching = false
+                if failed {
+                    let detail = errorText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.failure = FileTreeSearch.Failure(message: "The text search stopped with an error.",
+                                              detail: detail.isEmpty ? "ripgrep exited with status 2" : detail)
+                }
             }
         }
     }
