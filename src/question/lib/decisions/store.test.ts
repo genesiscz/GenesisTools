@@ -14,6 +14,7 @@ import {
 import { runAsCaller } from "@genesiscz/utils/agent/runtime";
 import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-queue";
 import { withTimeout } from "@genesiscz/utils/async";
+import { listClaudeSessionInventory } from "@genesiscz/utils/claude/peer-message";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { withFileLock } from "@genesiscz/utils/storage/file-lock";
@@ -1217,6 +1218,120 @@ describe("delivery routes", () => {
                 ],
             })
         ).toMatchObject({ kind: "none", reason: expect.stringContaining("pid 42, pid 41") });
+    });
+
+    test("a parked registry entry blocks even a live recorded terminal, while absent entries allow fallback", async () => {
+        const home = mkdtempSync(join(tmpdir(), "parked-routing-"));
+        const registry = {
+            pid: 42,
+            sessionId: "parked-session",
+            messagingSocketPath: "/fixture/42.sock",
+            parkedJobId: "background-job",
+        };
+        writeFileSync(join(home, "42.json"), SafeJSON.stringify(registry));
+        const peers = () => listClaudeSessionInventory({ dir: home, liveOf: (pids) => new Set(pids) });
+        const recorded = await livePaneTargets(registry.sessionId);
+        recorded.source = "recorded";
+        recorded.targets = recorded.targets.map((target) => ({ ...target, matchedOn: "recorded" }));
+        recorded.snapshot = {
+            fetchedAt: "2026-01-01T00:00:00Z",
+            available: true,
+            workspaces: [{ id: "ws-1", name: "work" }],
+            panes: [
+                {
+                    id: "pane:1",
+                    workspaceId: "ws-1",
+                    title: "agent",
+                    active: true,
+                    surfaceCount: 1,
+                    surfaces: [
+                        {
+                            id: "surface:1",
+                            title: "agent",
+                            type: "terminal",
+                            index: 0,
+                            selected: true,
+                            active: true,
+                        },
+                    ],
+                },
+            ],
+        };
+        let socketWrites = 0;
+        let terminalWrites = 0;
+        let lookups = 0;
+        const deps = {
+            nativeWorkers: () => [],
+            claudePeers: peers,
+            peerToken: () => null,
+            sendClaudePeer: async () => {
+                socketWrites++;
+            },
+            findTargets: async () => {
+                lookups++;
+                return recorded;
+            },
+            runTool: async () => {
+                terminalWrites++;
+                return { success: true, stdout: '{"sent":true}', stderr: "" };
+            },
+        };
+        const request = { session: registry.sessionId, provider: "claude", text: "decision answer" };
+        expect(await deliverToSession(request, deps)).toMatchObject({
+            channel: "queued",
+            delivered: false,
+            error: expect.stringContaining("parked in a background job"),
+        });
+        expect([socketWrites, terminalWrites, lookups]).toEqual([0, 0, 0]);
+
+        // Control: the same recorded target remains a working fallback when no registry entry claims the session.
+        expect(await deliverToSession(request, { ...deps, claudePeers: () => [] })).toMatchObject({
+            channel: "cmux",
+            delivered: true,
+        });
+        expect([socketWrites, terminalWrites, lookups]).toEqual([0, 1, 1]);
+
+        // A live, unparked copy of the same session is still a valid receiver.
+        writeFileSync(
+            join(home, "43.json"),
+            SafeJSON.stringify({ ...registry, pid: 43, messagingSocketPath: "/fixture/43.sock", parkedJobId: undefined })
+        );
+        expect(await deliverToSession(request, deps)).toMatchObject({ channel: "claude-peer", delivered: true });
+        expect([socketWrites, terminalWrites, lookups]).toEqual([1, 1, 1]);
+    });
+
+    test("a Claude receiver that parks before the consuming write is refused", async () => {
+        const home = mkdtempSync(join(tmpdir(), "parking-race-"));
+        const file = join(home, "42.json");
+        const registry = { pid: 42, sessionId: "parking-session", messagingSocketPath: "/fixture/42.sock" };
+        writeFileSync(file, SafeJSON.stringify(registry));
+        let reads = 0;
+        let writes = 0;
+        const result = await deliverToSession(
+            { session: registry.sessionId, provider: "claude", text: "answer" },
+            {
+                nativeWorkers: () => [],
+                claudePeers: () => {
+                    const peers = listClaudeSessionInventory({ dir: home, liveOf: (pids) => new Set(pids) });
+                    if (++reads === 1) {
+                        writeFileSync(file, SafeJSON.stringify({ ...registry, parkedJobId: "background-job" }));
+                    }
+
+                    return peers;
+                },
+                peerToken: () => null,
+                sendClaudePeer: async () => {
+                    writes++;
+                },
+                runTool: async () => {
+                    writes++;
+                    return { success: true, stdout: '{"sent":true}', stderr: "" };
+                },
+            }
+        );
+        expect(result).toMatchObject({ delivered: false, error: expect.stringContaining("receiver changed") });
+        expect(reads).toBe(2);
+        expect(writes).toBe(0);
     });
 
     test("duplicate Claude receivers need a valid activity timestamp on every copy", async () => {

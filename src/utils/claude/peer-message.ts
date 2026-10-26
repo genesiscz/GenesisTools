@@ -185,11 +185,14 @@ export function liveClaudeSessionIds(
     return new Set([...byPid].filter(([pid]) => live.has(pid)).map(([, id]) => id));
 }
 
-/** Every live Claude session that advertises a messaging socket. `liveOf` checks the whole inventory at once. */
-export function listClaudeLiveSessions(
-    dir: string = claudeSessionsDir(),
-    liveOf: (pids: number[]) => Set<number> = (pids) => liveClaudePids(pids)
-): ClaudeLiveSession[] {
+/** Live registry entries, including parked conversations so routing can refuse their old terminal. */
+export function listClaudeSessionInventory({
+    dir = claudeSessionsDir(),
+    liveOf = liveClaudePids,
+}: {
+    dir?: string;
+    liveOf?: (pids: number[]) => Set<number>;
+} = {}): ClaudeLiveSession[] {
     let names: string[];
 
     try {
@@ -218,13 +221,14 @@ export function listClaudeLiveSessions(
 
         const entry = parseRegistryEntry(raw, file);
 
-        // A parked entry is no receiver: a decision "delivered" to its socket was lost (Kalendora, 2026-10-25 18:03).
         if (entry?.parkedJobId) {
             log.info(
                 { pid: entry.pid, sessionId: entry.sessionId, parkedJobId: entry.parkedJobId },
                 "Claude session is parked in a background job; not a message receiver"
             );
-        } else if (entry) {
+        }
+
+        if (entry) {
             entries.push(entry);
         }
     }
@@ -235,6 +239,14 @@ export function listClaudeLiveSessions(
 
     const live = liveOf(entries.map((entry) => entry.pid));
     return entries.filter((entry) => live.has(entry.pid));
+}
+
+/** Every live, unparked Claude message receiver. `liveOf` checks the whole inventory at once. */
+export function listClaudeLiveSessions(
+    dir: string = claudeSessionsDir(),
+    liveOf: (pids: number[]) => Set<number> = (pids) => liveClaudePids(pids)
+): ClaudeLiveSession[] {
+    return listClaudeSessionInventory({ dir, liveOf }).filter((entry) => !entry.parkedJobId);
 }
 
 /**

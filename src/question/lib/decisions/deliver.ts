@@ -22,7 +22,7 @@ import {
 import {
     type ClaudeLiveSession,
     claudeSessionsDir,
-    listClaudeLiveSessions,
+    listClaudeSessionInventory,
     readPeerToken,
     sendClaudePeerMessage,
 } from "@genesiscz/utils/claude/peer-message";
@@ -67,7 +67,7 @@ export interface ToolRun {
 
 function liveClaudePeers(session: string, sourceHome?: string): ClaudeLiveSession[] {
     const directory = sourceHome ? join(workerSourceHome(sourceHome), "sessions") : claudeSessionsDir();
-    const candidates = listClaudeLiveSessions(directory, (pids) => new Set(pids)).filter(
+    const candidates = listClaudeSessionInventory({ dir: directory, liveOf: (pids) => new Set(pids) }).filter(
         (peer) => peer.sessionId === session
     );
     const processes = batchPsInfo(candidates.map((peer) => peer.pid));
@@ -88,10 +88,15 @@ export const ACTIVE_RECEIVER_LEAD_MS = 10 * 60_000;
 export function pickClaudePeer(
     peers: readonly ClaudeLiveSession[]
 ): { peer: ClaudeLiveSession; others: number } | { reason: string } {
-    const ranked = [...peers].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    const ranked = peers.filter((peer) => !peer.parkedJobId).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
     const [first, second] = ranked;
     if (!first) {
-        return { reason: "No native Claude receiver claims this session." };
+        return {
+            reason:
+                peers.length > 0
+                    ? "This Claude session is parked in a background job; its old terminal is not a receiver."
+                    : "No native Claude receiver claims this session.",
+        };
     }
 
     const knownActivity = ranked.every(

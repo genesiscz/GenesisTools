@@ -8,6 +8,7 @@ import type { ClaudeLiveSession, PeerSender } from "@genesiscz/utils/claude/peer
 import {
     escapePeerBody,
     listClaudeLiveSessions,
+    listClaudeSessionInventory,
     liveClaudePids,
     parseRegistryEntry,
     peerAddress,
@@ -503,6 +504,12 @@ test("a parked registry entry is no message receiver: its conversation moved to 
         );
         const sessions = listClaudeLiveSessions(dir, (pids) => new Set(pids));
         expect(sessions.map((session) => session.sessionId)).toEqual(["live"]);
+        const inventory = listClaudeSessionInventory({ dir, liveOf: (pids) => new Set(pids) });
+        expect(inventory.map((session) => session.sessionId).sort()).toEqual(["live", "parked"]);
+        expect(inventory.find((session) => session.sessionId === "parked")?.parkedJobId).toBe("68f2bba6");
+        expect(
+            listClaudeSessionInventory({ dir, liveOf: () => new Set([11]) }).map((session) => session.sessionId)
+        ).toEqual(["live"]);
     } finally {
         rmSync(dir, { recursive: true, force: true });
     }
