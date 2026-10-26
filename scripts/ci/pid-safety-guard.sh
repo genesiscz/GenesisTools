@@ -136,9 +136,10 @@ while IFS= read -r hit; do
     if ! sed -n "${previous},${hit_line}p" "$hit_file" | grep -q 'pid-verified:'; then
         unmarked="${unmarked}${hit_file}:${hit_line}"$'\n'
     fi
-done <<EOF
-$(grep -rnE "${common_excludes[@]}" --exclude=*.test.ts "$signal_re" "${scan_roots[@]}" || true)
-EOF
+# Process substitution, not a here-document: bash 5.3 writes a here-document into a pipe that only it reads,
+# so a body larger than the pipe buffer deadlocks. Under pipe-memory pressure macOS gives 512-byte pipes, and
+# the 4 KB of hits hung every pre-push for 180 s (2026-10-26). Here grep writes while the loop reads.
+done < <(grep -rnE "${common_excludes[@]}" --exclude=*.test.ts "$signal_re" "${scan_roots[@]}" || true)
 
 if [ -n "${unmarked//[$'\n' ]/}" ]; then
     printf '%s' "$unmarked"
