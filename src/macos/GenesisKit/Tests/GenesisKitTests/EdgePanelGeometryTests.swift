@@ -825,12 +825,10 @@ final class WidgetVisibilityTests: XCTestCase {
 
         model.selectedCardID = "decision:d_8_fixture-session"
         XCTAssertNil(model.ownAnswerCard, "the options show until the user asks for an own answer")
-        var seen = try read("own-answer-row", WidgetOwnAnswerRow {})
-        XCTAssertTrue(seen.contains("Write my own answer"), "read: \(seen)")
         model.ownAnswerCardID = "decision:d_8_fixture-session"
         XCTAssertEqual(model.ownAnswerCard?.number, 8)
         model.submitOwnAnswer()
-        XCTAssertEqual(model.error, "Write your answer or attach media first.", "an empty own answer is refused")
+        XCTAssertEqual(model.notice, "Write your answer or attach media first.", "an empty own answer is refused in a note that fades")
         model.foldedCardIDs.insert("decision:d_8_fixture-session")
         XCTAssertNil(model.ownAnswerCard, "a folded card gives the composer back to the bottom of the panel")
         model.foldedCardIDs.remove("decision:d_8_fixture-session")
@@ -838,7 +836,7 @@ final class WidgetVisibilityTests: XCTestCase {
 
         let superseded = try XCTUnwrap(model.cards.first { $0.number == 7 })
         var opened: [String] = []
-        seen = try read("superseded", WidgetDecisionOutcome(card: superseded) { opened.append($0.id) })
+        var seen = try read("superseded", WidgetDecisionOutcome(card: superseded) { opened.append($0.id) })
         XCTAssertTrue(seen.contains("Superseded by DECISION 8"), "read: \(seen)")
         XCTAssertTrue(seen.contains("Answer recorded by the agent"), "read: \(seen)")
         XCTAssertTrue(seen.contains("Keep the current one"), "the picked option is named: \(seen)")
@@ -855,7 +853,7 @@ final class WidgetVisibilityTests: XCTestCase {
             .frame(width: 324, height: 270, alignment: .top)
             .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(white: 0.17)))
         seen = try read("peek-pane", pane)
-        XCTAssertTrue(seen.contains("Click to answer"), "read: \(seen)")
+        XCTAssertTrue(seen.contains("Answer in its session"), "a decision without options says where it is answered: \(seen)")
         XCTAssertEqual(WidgetPeekView.cornerRadius + WidgetPeekView.inset, 18, "the card's corner runs parallel to the panel's")
 
         model.openDecision(id: "d_8_fixture-session", sessionKey: key)

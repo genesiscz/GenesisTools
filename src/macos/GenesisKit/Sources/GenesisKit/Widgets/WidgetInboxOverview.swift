@@ -61,7 +61,7 @@ struct WidgetInboxOverview: View {
         return options.indices.map(Self.letter)
     }
 
-    static func letter(_ index: Int) -> String { String(UnicodeScalar(97 + index).map(Character.init) ?? "?") }
+    static func letter(_ index: Int) -> String { WidgetOptionText.letter(index) }
 
     /// Up and Down move the highlight, and inside an open decision walk its options first; Return opens or folds the
     /// highlighted row, or stages the highlighted option as a click does; with "Send at once" Return does not send,
@@ -237,7 +237,7 @@ struct WidgetInboxOverview: View {
                                 Text("·")
                             }
                             LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
-                        }.font(.system(size: 10)).foregroundStyle(item.needsAnswer ? Color.orange : .secondary)
+                        }.font(.system(size: 11)).foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.secondary)
                     }
                     Spacer(minLength: 4)
                     if let count = item.count, count > 1 {
@@ -278,57 +278,16 @@ struct WidgetInboxOverview: View {
         return WidgetStagedText.line(item, option: option)
     }
 
-    /// One option row of an open decision: the letter badge, the text, Staged, the recommended mark, the focus ring.
-    private func optionLabel(_ letter: String, title: String, picked: Bool, focused: Bool, recommended: Bool) -> some View {
-        let shape = RoundedRectangle(cornerRadius: 8)
-        let fill: Color = picked ? SessionPalette.blue.opacity(0.16) : .white.opacity(0.06)
-        let border: Color = picked ? SessionPalette.blue.opacity(0.7) : .clear
-        let ring: Color = focused ? Color(nsColor: .keyboardFocusIndicatorColor) : .clear
-        return HStack(alignment: .top, spacing: 8) {
-            Text(verbatim: letter).font(.system(size: 11, weight: .semibold, design: .rounded))
-                .frame(width: 20, height: 20).background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
-            Text(title).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).padding(.top, 2)
-            Spacer(minLength: 0)
-            if picked {
-                Text("Staged").font(.system(size: 10, weight: .semibold)).foregroundStyle(SessionPalette.blue)
-                    .padding(.top, 3)
-            }
-            if recommended { Image(systemName: "sparkle").foregroundStyle(.orange) }
-        }
-        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-        .background(fill, in: shape)
-        .overlay(shape.strokeBorder(border, lineWidth: 1))
-        // The keyboard's option: the same focus ring as the row's.
-        .overlay(shape.strokeBorder(ring, lineWidth: 2))
-        .contentShape(shape)
-    }
-
-    /// One option of an open decision as a button. It stages, or with "Send at once" sends, as the decision click
-    /// setting says (`WidgetModel.choose(_:option:)` for an inbox item), and its words follow that setting.
-    private func optionButton(_ item: WidgetInboxItem, letter: String, title: String, picked: Bool) -> some View {
-        let focused = focusID == item.id && focusedOption == letter
-        let recommended = item.recommended == letter
-        let stages = model.decisionClickStages
-        let tooltip = LiveWidgetView.choiceTooltip(WidgetChoice(id: letter, title: title, recommended: recommended),
-                                                   index: 10, stages: stages, picked: picked)
-        return Button { model.choose(item, option: letter) } label: {
-            optionLabel(letter, title: title, picked: picked, focused: focused, recommended: recommended)
-        }
-        .buttonStyle(RowButtonStyle(cornerRadius: 8))
-        .instantTooltip(tooltip)
-        .accessibilityLabel((stages ? "Stage " : "Answer ") + letter + ": " + title)
-        .accessibilityValue(picked ? "Staged" : "")
-        .accessibilityAddTraits(focused ? .isSelected : [])
-        .id(item.id + "#" + letter)
-    }
-
-    /// An open decision's options, each staging (or sending, by the setting) that pick from here.
+    /// An open decision's options, each staging (or sending, by the setting) that pick from here; the shared option
+    /// row, so this list, the alert and a session's inbox draw an option one way.
     @ViewBuilder private func choices(_ item: WidgetInboxItem) -> some View {
         if item.kind == "decision", item.needsAnswer, let options = item.options, !options.isEmpty {
-            let staged = model.stagedOption(item.sourceId, stored: item.draftOption)
             VStack(alignment: .leading, spacing: 6) {
-                ForEach(Array(options.enumerated()), id: \.offset) { index, title in
-                    optionButton(item, letter: Self.letter(index), title: title, picked: staged == Self.letter(index))
+                ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                    let letter = Self.letter(index)
+                    WidgetItemOptionButton(model: model, item: item, index: index, option: option,
+                                           focused: focusID == item.id && focusedOption == letter)
+                        .id(item.id + "#" + letter)
                 }
             }
         }
@@ -376,7 +335,10 @@ struct WidgetInboxOverview: View {
         switch item.kind {
         case "answer": return "New answer"
         case "result": return "Agent result"
-        default: return item.kind.capitalized
+        // Words, never the wire kind: "Todo" and "Form" read as raw data.
+        case "todo": return "Task"
+        case "form": return "Question"
+        default: return LiveWidgetView.sentenceCase(item.kind)
         }
     }
 }
