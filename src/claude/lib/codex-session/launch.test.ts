@@ -12,6 +12,7 @@ import {
     sessionEnv,
 } from "@app/claude/lib/codex-session/launch";
 import { guardSharedModel, isSessionOnlyModel, restoreSharedModel } from "@app/claude/lib/codex-session/settings-guard";
+import { ensureOnboardingSkippedForOAuthToken } from "@app/claude/lib/launch-env";
 import { type CodexModelInfo, mergeCodexModelRecords } from "@genesiscz/utils/ai/openai/codex-models";
 import type { AccountUsageSnapshot } from "@genesiscz/utils/ai/providers/account-features";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -252,5 +253,32 @@ describe("the shared settings model guard (a /model pick must not become every s
 
         expect([brokenGuard.launchModel, read(broken)]).toEqual([undefined, { hooks: {} }]);
         expect(read(clean)).toEqual({ hooks: {} });
+    });
+
+    it("repairs a save the folder watch never reported, through its slow check", async () => {
+        const path = settingsFile({ model: "opus" });
+        // A watch that never fires, as a deaf fs.watch on Bun 1.3.13.
+        const guard = guardSharedModel(path, { pollMs: 100, watchFolder: () => ({ close() {} }) });
+
+        try {
+            writeFileSync(path, SafeJSON.stringify({ model: "codex/gpt-6-astra" }));
+            const deadline = Date.now() + 5_000;
+
+            while ((read(path) as { model?: string }).model !== "opus" && Date.now() < deadline) {
+                await Bun.sleep(100);
+            }
+
+            expect(read(path)).toEqual({ model: "opus" });
+        } finally {
+            guard.stop();
+        }
+    });
+
+    it("skips onboarding in the folder the child gets as CLAUDE_CONFIG_DIR", async () => {
+        const isolated = mkdtempSync(join(tmpdir(), "codex-isolated-config-"));
+
+        await ensureOnboardingSkippedForOAuthToken(isolated);
+
+        expect(read(join(isolated, ".claude.json"))).toEqual({ hasCompletedOnboarding: true });
     });
 });

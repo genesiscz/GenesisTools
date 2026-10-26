@@ -298,7 +298,6 @@ export async function runCodexSession(
     );
 
     await ensureProxyUp(config, opts.start !== false && port === undefined);
-    await ensureOnboardingSkippedForOAuthToken();
 
     const resumed =
         opts.resume === undefined || opts.resume === false
@@ -320,6 +319,9 @@ export async function runCodexSession(
         mkdirSync(configDir, { recursive: true });
         writeAgentFiles(configDir, agents);
     }
+
+    // The child reads .claude.json from the folder it gets as CLAUDE_CONFIG_DIR: the isolated one under --isolated.
+    await ensureOnboardingSkippedForOAuthToken(configDir);
 
     const agentArgs = configDir ? [] : agentsArgs(passthrough, agents);
     const ownAgents = configDir || agentArgs.length > 0 ? Object.keys(agents) : undefined;

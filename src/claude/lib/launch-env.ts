@@ -31,8 +31,8 @@ export const FABLE_MODEL_OPTION_DESCRIPTION = "Fable 5.1 · Most capable for har
  * env var is set (else `~/.claude.json`). The onboarding patch must target the same
  * file the launched claude will read, or it silently patches the wrong config.
  */
-function claudeJsonPath(): string {
-    return join(env.paths.getClaudeConfigDir() ?? homedir(), ".claude.json");
+function claudeJsonPath(configDir?: string): string {
+    return join(configDir ?? env.paths.getClaudeConfigDir() ?? homedir(), ".claude.json");
 }
 
 /**
@@ -40,10 +40,11 @@ function claudeJsonPath(): string {
  * the OAuth login screen when hasCompletedOnboarding is false (e.g. after /logout).
  * See anthropics/claude-code#8938, #46259 — token auth works once onboarding is skipped.
  */
-export async function ensureOnboardingSkippedForOAuthToken(): Promise<void> {
+export async function ensureOnboardingSkippedForOAuthToken(configDir?: string): Promise<void> {
     // Best-effort by contract: any fs/parse failure here (permissions, disk, foreign
     // ~/.claude.json) must log and return — never abort the actual claude launch.
-    const claudeJson = claudeJsonPath();
+    // `configDir`: the CLAUDE_CONFIG_DIR the child gets when it differs from this process's own.
+    const claudeJson = claudeJsonPath(configDir);
 
     try {
         const file = Bun.file(claudeJson);

@@ -81,19 +81,39 @@ export function restoreSharedModel(path: string, launchModel: string | undefined
     return removed;
 }
 
+/**
+ * How often the guard re-checks the settings without an event. On Bun 1.3.13 an `fs.watch` created after another
+ * watcher closed in the same process can go deaf (.claude/rules/code.md), and a missed save would leave a session-only
+ * model in every other session's default.
+ */
+export const SETTINGS_GUARD_POLL_MS = 5_000;
+
+export interface SharedModelGuardOptions {
+    pollMs?: number;
+    /** The folder watch; a test passes one that never fires, as a deaf `fs.watch` would. */
+    watchFolder?: (folder: string, onChange: (name: string | null) => void) => Pick<FSWatcher, "close">;
+}
+
+function watchFolder(folder: string, onChange: (name: string | null) => void): Pick<FSWatcher, "close"> {
+    return watch(folder, (_event, name) => onChange(name));
+}
+
 /** Watch the shared settings for the session's lifetime; `stop()` ends the watch after one last check. */
-export function guardSharedModel(path: string = sharedClaudeSettingsPath()): { launchModel?: string; stop(): void } {
+export function guardSharedModel(
+    path: string = sharedClaudeSettingsPath(),
+    options: SharedModelGuardOptions = {}
+): { launchModel?: string; stop(): void } {
     const atLaunch = readSettings(path)?.model;
     // A file that already holds a session-only id is broken for every other session: repaired, not kept.
     const launchModel = typeof atLaunch === "string" && !isSessionOnlyModel(atLaunch) ? atLaunch : undefined;
     restoreSharedModel(path, launchModel);
 
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let watcher: FSWatcher | undefined;
+    let watcher: Pick<FSWatcher, "close"> | undefined;
 
     try {
         // The folder, not the file: an atomic save replaces the file, which ends a watch on the old one.
-        watcher = watch(dirname(path), (_event, name) => {
+        watcher = (options.watchFolder ?? watchFolder)(dirname(path), (name) => {
             if (name !== basename(path)) {
                 return;
             }
@@ -102,13 +122,18 @@ export function guardSharedModel(path: string = sharedClaudeSettingsPath()): { l
             timer = setTimeout(() => restoreSharedModel(path, launchModel), 50);
         });
     } catch (err) {
-        logger.warn({ err, path }, "[codex] cannot watch the shared Claude settings; /model in this session may leak");
+        logger.warn({ err, path }, "[codex] cannot watch the shared Claude settings; the slow check still runs");
     }
+
+    // The safety check behind the watch: cheap (one small read), and it catches a save the watch missed.
+    const poll = setInterval(() => restoreSharedModel(path, launchModel), options.pollMs ?? SETTINGS_GUARD_POLL_MS);
+    poll.unref();
 
     return {
         ...(launchModel === undefined ? {} : { launchModel }),
         stop() {
             clearTimeout(timer);
+            clearInterval(poll);
             watcher?.close();
             restoreSharedModel(path, launchModel);
         },
