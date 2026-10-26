@@ -23,9 +23,11 @@ import {
     type ClaudeLiveSession,
     claudeSessionsDir,
     listClaudeSessionInventory,
+    type PeerSenderMode,
     readPeerToken,
     sendClaudePeerMessage,
 } from "@genesiscz/utils/claude/peer-message";
+import { sessionSenderMode, standInSender } from "@genesiscz/utils/claude/peer-sender";
 import { execTool } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { type CmuxLiveSnapshot, fetchCmuxLiveSnapshot } from "@genesiscz/utils/cmux/lib/live-snapshot";
@@ -197,6 +199,8 @@ export interface DeliverDeps {
     nativeWorkers?: (provider: "claude" | "grok") => NativeDeliveryWorker[];
     claudePeers?: (sourceHome?: string) => ClaudeLiveSession[];
     sendClaudePeer?: typeof sendClaudePeerMessage;
+    /** The receiving Claude session's permission class; read from its transcript by default. */
+    receiverMode?: (sessionId: string) => Promise<PeerSenderMode | null>;
     peerToken?: typeof readPeerToken;
     /** The cmux panes a session runs in; tests pass a fake. */
     findTargets?: (sessionId: string, opts: { skipRecorded?: boolean }) => Promise<SessionTargetsResult>;
@@ -509,12 +513,18 @@ export async function deliverToSession(
             return undelivered("The native Claude receiver changed before delivery; no message was written.");
         }
         const directory = dirname(target.peer.file);
+        // A receiver in bypass holds a plain frame for approval, so the answer goes out with a stand-in sender of
+        // the same class, as `tools claude message` attests one (DECISION 25 a)). Any other receiver gets the plain
+        // frame, as before.
+        const receiverMode = await (deps.receiverMode ?? sessionSenderMode)(session);
+        const sender = receiverMode === "bypass" ? standInSender("bypass") : null;
         try {
             await (deps.sendClaudePeer ?? sendClaudePeerMessage)({
                 session: target.peer,
                 text,
                 token: (deps.peerToken ?? readPeerToken)(target.peer, directory),
                 priority: "next",
+                sender,
                 timeoutMs: 5_000,
             });
         } catch (error) {
@@ -523,7 +533,10 @@ export async function deliverToSession(
                 "The native Claude message may have been received. Inspect the conversation before retrying."
             );
         }
-        log.info({ session, pid: target.peer.pid }, "native Claude peer message flushed");
+        log.info(
+            { session, pid: target.peer.pid, receiverMode, attested: sender !== null },
+            "native Claude peer message flushed"
+        );
         // This confirms a complete transport write, not an agent-processing acknowledgement.
         // DECISION remains sent until the receiving agent records acknowledged/implemented.
         return { channel: "claude-peer", delivered: true, target: target.label };
