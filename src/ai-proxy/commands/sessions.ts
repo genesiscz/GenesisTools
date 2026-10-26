@@ -355,6 +355,11 @@ export function transcriptRequestRows(sinceMs: number): RequestRow[] {
         });
 }
 
+/** `--session` takes a session id or its prefix, on the ledger and on the transcripts alike. */
+export function matchesSessionPrefix(session: string | undefined, prefix: string | undefined): boolean {
+    return !prefix || (session?.startsWith(prefix) ?? false);
+}
+
 export function runStatsCommand(options: {
     session?: string;
     agent?: string;
@@ -366,9 +371,9 @@ export function runStatsCommand(options: {
     const agent = parseAgent(options.agent);
     const source = options.fromTranscripts
         ? transcriptRequestRows(sinceMs)
-        : requestRows(readRequestRecords(sinceMs, (row) => !options.session || row.tags?.session === options.session));
+        : requestRows(readRequestRecords(sinceMs, (row) => matchesSessionPrefix(row.tags?.session, options.session)));
     const rows = source.filter(
-        (row) => (!agent || row.agent === agent) && (!options.session || row.session?.startsWith(options.session))
+        (row) => (!agent || row.agent === agent) && matchesSessionPrefix(row.session, options.session)
     );
     const stats = statsByAgent(rows);
 

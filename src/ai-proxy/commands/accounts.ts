@@ -210,11 +210,13 @@ export async function runAccountsBind(name: string, options: { codex?: string })
     if (!account) {
         out.log.warn(`Account not found: ${name}`);
         out.log.info(cmd(["accounts", "list"]));
+        process.exitCode = 1;
         return;
     }
 
     if (account.provider !== "openai-subscription") {
         out.log.warn(`Account "${name}" is ${account.provider}; bind takes an openai-subscription (codex) account.`);
+        process.exitCode = 1;
         return;
     }
 

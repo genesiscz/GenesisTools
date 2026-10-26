@@ -409,17 +409,23 @@ export async function runCodexSession(
 
     // A /model pick in this session would become every other session's default through the shared settings.
     const modelGuard = configDir ? undefined : guardSharedModel();
-    const code = await spawnClaude(args, launchEnv, (pid) => {
-        whenSessionRecordFree(() =>
-            updateSessionRecord(sessionId, (record) => {
-                record.claudePid = pid;
-                record.claudePidStartMs = processStartMs(pid) ?? undefined;
-            })
-        ).catch((err) => logger.warn({ err, session: sessionId }, "[codex] could not record the Claude Code pid"));
-    });
+    let code: number;
 
-    modelGuard?.stop();
-    await whenSessionRecordFree(() => closeSessionRecord(sessionId, "exited"));
+    try {
+        code = await spawnClaude(args, launchEnv, (pid) => {
+            whenSessionRecordFree(() =>
+                updateSessionRecord(sessionId, (record) => {
+                    record.claudePid = pid;
+                    record.claudePidStartMs = processStartMs(pid) ?? undefined;
+                })
+            ).catch((err) => logger.warn({ err, session: sessionId }, "[codex] could not record the Claude Code pid"));
+        });
+    } finally {
+        // Also when the spawn throws: an open record would count as a live session on its login.
+        modelGuard?.stop();
+        await whenSessionRecordFree(() => closeSessionRecord(sessionId, "exited"));
+    }
+
     process.exit(code);
 }
 

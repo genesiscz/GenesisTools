@@ -111,6 +111,14 @@ export function guardSharedModel(
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     let watcher: Pick<FSWatcher, "close"> | undefined;
+    // A timer callback that throws would end the launcher mid-session: a failed check is logged and the next one retries.
+    const check = (): void => {
+        try {
+            restoreSharedModel(path, launchModel);
+        } catch (err) {
+            logger.warn({ err, path }, "[codex] the shared-settings model check failed; the next check retries");
+        }
+    };
 
     try {
         // The folder, not the file: an atomic save replaces the file, which ends a watch on the old one.
@@ -120,14 +128,14 @@ export function guardSharedModel(
             }
 
             clearTimeout(timer);
-            timer = setTimeout(() => restoreSharedModel(path, launchModel), 50);
+            timer = setTimeout(check, 50);
         });
     } catch (err) {
         logger.warn({ err, path }, "[codex] cannot watch the shared Claude settings; the slow check still runs");
     }
 
     // The safety check behind the watch: cheap (one small read), and it catches a save the watch missed.
-    const poll = setInterval(() => restoreSharedModel(path, launchModel), options.pollMs ?? SETTINGS_GUARD_POLL_MS);
+    const poll = setInterval(check, options.pollMs ?? SETTINGS_GUARD_POLL_MS);
     poll.unref();
 
     return {

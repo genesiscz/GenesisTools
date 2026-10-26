@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { isError, namedAccount } from "@app/ai-proxy/lib/sessions/accounts";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import {
@@ -270,6 +270,30 @@ describe("the shared settings model guard (a /model pick must not become every s
 
             expect(read(path)).toEqual({ model: "opus" });
         } finally {
+            guard.stop();
+        }
+    });
+
+    it("logs a check that throws and repairs the file on a later check, instead of ending the launcher", async () => {
+        const path = settingsFile({ model: "opus" });
+        const guard = guardSharedModel(path, { pollMs: 50, watchFolder: () => ({ close() {} }) });
+        // A read-only folder refuses the guard's temp file, so its check throws EACCES.
+        chmodSync(dirname(path), 0o555);
+
+        try {
+            writeFileSync(path, SafeJSON.stringify({ model: "codex/gpt-6-astra" }));
+            await Bun.sleep(200);
+            expect(read(path)).toEqual({ model: "codex/gpt-6-astra" });
+            chmodSync(dirname(path), 0o755);
+            const deadline = Date.now() + 5_000;
+
+            while ((read(path) as { model?: string }).model !== "opus" && Date.now() < deadline) {
+                await Bun.sleep(50);
+            }
+
+            expect(read(path)).toEqual({ model: "opus" });
+        } finally {
+            chmodSync(dirname(path), 0o755);
             guard.stop();
         }
     });

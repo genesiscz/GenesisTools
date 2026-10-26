@@ -424,7 +424,11 @@ describe("codex accounts: one auth engine", () => {
 
         await runAccountsBind("work", { codex: "personal" });
 
+        expect(process.exitCode).toBe(1);
         expect((await readAccount("work"))?.openaiSub).toBeUndefined();
+        process.exitCode = 0;
+        await runAccountsBind("missing", { codex: "personal" });
+        expect(process.exitCode).toBe(1);
     });
 
     it("failover is off by default; on and off set and clear it; a non-codex account is refused", async () => {

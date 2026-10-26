@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sinceToMs } from "@app/ai-proxy/commands/sessions";
+import { matchesSessionPrefix, sinceToMs } from "@app/ai-proxy/commands/sessions";
 import {
     clientProviderDenial,
     type ResolvedClient,
@@ -465,5 +465,10 @@ describe("session view rows and stats", () => {
         expect(codex.hitPercent).toBeCloseTo((52_000 / 52_300) * 100, 6);
         expect(sinceToMs("7d", 1_000_000_000_000)).toBe(1_000_000_000_000 - 7 * 86_400_000);
         expect(() => sinceToMs("soon")).toThrow("--since");
+        // --session matches a prefix on the ledger and on the transcripts: a short id finds the same rows.
+        expect(
+            ["4e5f6a7b-8c9d", "4e5f6a7b-8c9d:subagents", "other", undefined].map((s) => matchesSessionPrefix(s, "4e5f"))
+        ).toEqual([true, true, false, false]);
+        expect(matchesSessionPrefix(undefined, undefined)).toBe(true);
     });
 });
