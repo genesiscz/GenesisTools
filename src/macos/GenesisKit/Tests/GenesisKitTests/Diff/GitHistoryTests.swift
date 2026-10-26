@@ -60,6 +60,11 @@ final class GitHistoryTests: XCTestCase {
         final class Provider: GenesisKitGTCLIProvider {
             private let lock = NSLock()
             private var failing = false
+            private var emptyResult = false
+            var empty: Bool {
+                get { lock.withLock { emptyResult } }
+                set { lock.withLock { emptyResult = newValue } }
+            }
             var fail: Bool {
                 get { lock.withLock { failing } }
                 set { lock.withLock { failing = newValue } }
@@ -67,11 +72,11 @@ final class GitHistoryTests: XCTestCase {
             let commit = GitCommit(sha: "abc1234", short: "abc1234", subject: "Kept", author: "Alice", date: .distantPast)
             override func history(of file: URL, limit: Int) throws -> [GitCommit] {
                 if fail { throw ReviewError.git("history unavailable") }
-                return [commit]
+                return empty ? [] : [commit]
             }
             override func repoStatus(_ folder: URL, commits: Int) throws -> GitRepoStatus? {
                 if fail { throw ReviewError.git("log unavailable") }
-                return GitRepoStatus(root: folder, branch: "main", commits: [commit])
+                return GitRepoStatus(root: folder, branch: "main", commits: empty ? [] : [commit])
             }
         }
         let previous = GenesisKitGT.provider
@@ -82,6 +87,8 @@ final class GitHistoryTests: XCTestCase {
             let root = FileManager.default.temporaryDirectory.appendingPathComponent("absent-history-\(UUID())")
             let history = GitHistoryModel()
             history.follow(repository ? .repository(root) : .file(root.appendingPathComponent("note.md")))
+            let documents = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "history-view-\(UUID())")!)
+            let content = MarkdownGitRepositoryHistory(history: history, theme: documents.theme, onOpen: { _ in })
             history.reload()
             await wait("the initial history") { history.loaded }
             XCTAssertEqual(history.commits.map(\.sha), [provider.commit.sha])
@@ -91,6 +98,7 @@ final class GitHistoryTests: XCTestCase {
             await wait("the history failure") { history.failure != nil }
             XCTAssertEqual(history.commits.map(\.sha), [provider.commit.sha])
             XCTAssertEqual(history.failure?.detail, repository ? "log unavailable" : "history unavailable")
+            XCTAssertFalse(content.showsEmpty, "a failed refresh keeps its commits and shows the retry notice")
 
             provider.fail = false
             history.reload()
@@ -108,6 +116,12 @@ final class GitHistoryTests: XCTestCase {
             await wait("a failed initial history read") { history.failure != nil }
             XCTAssertTrue(history.loaded)
             XCTAssertTrue(history.commits.isEmpty, "an initial failure has a failure, not a successful empty answer")
+            XCTAssertFalse(content.showsEmpty, "the Commits tab must not claim an initial failed read has no commits")
+            provider.fail = false
+            provider.empty = true
+            history.reload()
+            await wait("a successful empty history retry") { history.failure == nil }
+            XCTAssertTrue(content.showsEmpty, "a successful empty history still shows No commits yet")
             history.follow(nil)
         }
     }

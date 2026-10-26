@@ -10,8 +10,9 @@
 //  sides pass.
 //
 //  Cost on the vault (650 deleted, 4,834 untracked): one `cat-file --batch-check` for the deleted blobs' sizes,
-//  a `stat` per untracked file, and `hash-object` only for files whose size equals a deleted blob's: 46 ms, where
-//  git's own detection through a scratch index (`add -N`, then `status`) took 3.9 s.
+//  a `stat` per untracked file, and `hash-object` for files whose size equals a deleted blob's: 46 ms, where
+//  git's own detection through a scratch index (`add -N`, then `status`) took 3.9 s. Paths with Git clean conversion
+//  bypass the size shortcut: their raw size can differ from the normalized blob.
 //
 
 import Foundation
@@ -113,9 +114,26 @@ public enum GitWorktreeRenames {
         return count
     }
 
+    /// Paths whose clean conversion can change their size. Unknown eligibility disables the size shortcut.
+    private static func normalizingPaths(_ paths: [String], in root: URL, provider: GenesisKitGTProvider) -> Set<String> {
+        guard let config = try? provider.git(["config", "--default", "false", "--get", "core.autocrlf"],
+                                              in: root, input: nil, gitDirectory: nil, environment: nil),
+              config.status == 0, String(decoding: config.stdout, as: UTF8.self).trimmed.lowercased() == "false",
+              let attributes = try? provider.git(["check-attr", "-z", "--stdin", "text", "eol", "filter", "working-tree-encoding", "ident", "crlf"],
+                                                  in: root, input: Data(paths.map { $0 + "\0" }.joined().utf8), gitDirectory: nil, environment: nil),
+              attributes.status == 0 else { return Set(paths) }
+        let fields = attributes.stdout.split(separator: 0, omittingEmptySubsequences: false).map { String(decoding: $0, as: UTF8.self) }
+        var normalizing = Set<String>()
+        for index in stride(from: 0, to: max(0, fields.count - 2), by: 3) {
+            let value = fields[index + 2]
+            if value != "unspecified", value != "unset" { normalizing.insert(fields[index]) }
+        }
+        return normalizing
+    }
+
     /// The moves among `deleted` (repo-relative paths whose last version is at `revision`: "HEAD", "" for the index,
     /// or a commit) and `untracked` (repo-relative paths on disk). Reads only what can match: blob sizes in one
-    /// `cat-file`, a `stat` per untracked file, and `hash-object` for the files of a matching size.
+    /// `cat-file`, a `stat` per untracked file, and `hash-object` for matching sizes or paths with clean conversion.
     public static func find(in root: URL, deleted: [String], untracked: [String], revision: String,
                             provider: GenesisKitGTProvider) -> [Pair] {
         guard !deleted.isEmpty, !untracked.isEmpty else { return [] }
@@ -136,16 +154,19 @@ public enum GitWorktreeRenames {
             sizes.insert(size)
         }
         guard !deletedSides.isEmpty else { return [] }
+        let normalizing = normalizingPaths(untracked.filter { !$0.contains("\n") }, in: root, provider: provider)
         var known: [Side] = []
         var unknown: [(path: String, identity: HashCache.Identity)] = []
         var info = stat()
         let base = root.path + "/"
         for path in untracked where !path.contains("\n") {
-            guard lstat(base + path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG, sizes.contains(Int(info.st_size)) else { continue }
+            guard lstat(base + path, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG,
+                  sizes.contains(Int(info.st_size)) || normalizing.contains(path) else { continue }
             let identity = HashCache.Identity(inode: UInt64(info.st_ino), size: Int64(info.st_size),
                                               mtime: Int64(info.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(info.st_mtimespec.tv_nsec),
                                               ctime: Int64(info.st_ctimespec.tv_sec) * 1_000_000_000 + Int64(info.st_ctimespec.tv_nsec))
-            if let oid = hashes.oid(base + path, identity) {
+            // A clean filter or attributes can change without changing this file's identity.
+            if !normalizing.contains(path), let oid = hashes.oid(base + path, identity) {
                 known.append(Side(path: path, oid: oid))
             } else {
                 unknown.append((path, identity))
@@ -159,7 +180,7 @@ public enum GitWorktreeRenames {
             let oids = String(decoding: hashed.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
             guard oids.count == unknown.count else { return [] }
             for (file, oid) in zip(unknown, oids) {
-                hashes.store(base + file.path, file.identity, oid)
+                if !normalizing.contains(file.path) { hashes.store(base + file.path, file.identity, oid) }
                 known.append(Side(path: file.path, oid: oid))
             }
         }
@@ -168,7 +189,9 @@ public enum GitWorktreeRenames {
 
     /// Blob ids of untracked files by file identity (inode, size, mtime and ctime to the nanosecond): a file that did
     /// not change is not hashed again on the next status read. The ctime catches a rewrite that kept the size and put
-    /// the mtime back (performance skill, caching-and-freshness.md: the mtime alone is not enough). Shared by every repository, bounded.
+    /// the mtime back (performance skill, caching-and-freshness.md: the mtime alone is not enough). Paths with Git clean
+    /// conversion bypass this cache because their attributes or filter configuration can change independently.
+    /// Shared by every repository, bounded.
     static let hashes = HashCache(limit: 50_000)
 
     final class HashCache: @unchecked Sendable {

@@ -16,6 +16,15 @@ final class GitWorktreeRenamesTests: XCTestCase {
             let untracked: [Side]
             let pairs: [[String]]
         }
+        struct NormalizationCase: Decodable {
+            let name: String
+            let autocrlf: String
+            let attributes: String
+            let clean: String?
+            let blob: String
+            let working: String
+        }
+        let normalizationCases: [NormalizationCase]
         let cases: [Case]
     }
 
@@ -135,6 +144,37 @@ final class GitWorktreeRenamesTests: XCTestCase {
         XCTAssertEqual(state.summary, "Moved from data/run/compiler.ts")
         let edited = try XCTUnwrap(try provider.fileState(repo.appendingPathComponent("moved/run/notes.md")))
         XCTAssertEqual(edited.summary, "new file, not in git", "an edited copy is not an exact move")
+    }
+
+    func testNormalizationCasesMatchTheCLIContract() throws {
+        let contract = try JSONDecoder().decode(Contract.self, from: KitFixture.data("contract-worktree-renames.json", in: "Git"))
+        XCTAssertEqual(contract.normalizationCases.count, 3)
+        for item in contract.normalizationCases {
+            let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gitrenames-normalized-\(UUID())")
+            try FileManager.default.createDirectory(at: repo, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: repo) }
+            try git(["init", "-q", "-b", "main"], in: repo)
+            try git(["config", "core.autocrlf", item.autocrlf], in: repo)
+            if let clean = item.clean { try git(["config", "filter.fixture.clean", clean], in: repo) }
+            try item.attributes.write(to: repo.appendingPathComponent(".gitattributes"), atomically: true, encoding: .utf8)
+            try item.blob.write(to: repo.appendingPathComponent("old.md"), atomically: true, encoding: .utf8)
+            try git(["add", "."], in: repo)
+            try git(["commit", "-q", "-m", "Normalized blob"], in: repo)
+            let moved = repo.appendingPathComponent("moved.md")
+            try FileManager.default.moveItem(at: repo.appendingPathComponent("old.md"), to: moved)
+            try item.working.write(to: moved, atomically: true, encoding: .utf8)
+            XCTAssertNotEqual(item.working.utf8.count, item.blob.utf8.count, item.name)
+            let status = try XCTUnwrap(try provider.repoStatus(repo, commits: 0))
+            XCTAssertEqual(status.entry(for: moved)?.unstaged, .renamed, item.name)
+            XCTAssertEqual(status.entry(for: moved)?.oldPath, "old.md", item.name)
+            XCTAssertFalse(status.entries.contains { $0.path == "old.md" }, item.name)
+            if item.clean != nil {
+                // Only the clean configuration changes: this file's inode, size and timestamps stay the same.
+                try git(["config", "filter.fixture.clean", "cat"], in: repo)
+                let changedFilter = try XCTUnwrap(try provider.repoStatus(repo, commits: 0))
+                XCTAssertEqual(changedFilter.entry(for: moved)?.unstaged, .untracked, "a normalized hash cannot be reused after filter config changes")
+            }
+        }
     }
 
     func testAQuotedDestinationDoesNotBreakTheHashBatch() throws {

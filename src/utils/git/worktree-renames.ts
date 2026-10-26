@@ -8,8 +8,9 @@
  * diffs. `GenesisKitFixtures/Git/contract-worktree-renames.json` holds the cases both implementations pass.
  *
  * Cost on a vault with 650 deleted and 4,834 untracked files: one `cat-file --batch-check` for the deleted blobs'
- * sizes, an `lstat` per untracked file, and `hash-object` only for files whose size equals a deleted blob's (about
- * 50 ms), where git's own detection through a scratch index (`add -N`, then `status`) took 3.9 s.
+ * sizes, an `lstat` per untracked file, and `hash-object` for files whose size equals a deleted blob's (about 50 ms),
+ * where git's own detection through a scratch index (`add -N`, then `status`) took 3.9 s. Paths with Git clean
+ * conversion bypass the size shortcut: their raw bytes can differ in size from the normalized blob.
  */
 
 import { lstatSync } from "node:fs";
@@ -143,6 +144,35 @@ async function runGit({ root, args, input }: { root: string; args: string[]; inp
     return stdout;
 }
 
+/** Paths whose Git clean conversion can change their size. A failed eligibility read disables the size shortcut. */
+async function normalizingPaths(root: string, paths: string[]): Promise<Set<string>> {
+    const [autocrlf, attributes] = await Promise.all([
+        runGit({ root, args: ["config", "--default", "false", "--get", "core.autocrlf"], input: "" }),
+        runGit({
+            root,
+            args: ["check-attr", "-z", "--stdin", "text", "eol", "filter", "working-tree-encoding", "ident", "crlf"],
+            input: paths.map((path) => `${path}\0`).join(""),
+        }),
+    ]);
+
+    if (autocrlf?.trim().toLowerCase() !== "false" || attributes === null) {
+        return new Set(paths);
+    }
+
+    const fields = attributes.split("\0");
+    const normalizing = new Set<string>();
+
+    for (let index = 0; index + 2 < fields.length; index += 3) {
+        const value = fields[index + 2];
+
+        if (value !== "unspecified" && value !== "unset") {
+            normalizing.add(fields[index]);
+        }
+    }
+
+    return normalizing;
+}
+
 /**
  * The moves among `deleted` (repo-relative paths whose last version is at `revision`: `HEAD`, `""` for the index, or
  * a commit) and `untracked` (repo-relative paths on disk). Reads only what can match.
@@ -185,6 +215,11 @@ export async function findWorktreeRenames(opts: {
         }
     }
 
+    if (deletedSides.length === 0) {
+        return [];
+    }
+
+    const normalizing = await normalizingPaths(root, opts.untracked.filter((path) => !path.includes("\n")));
     const candidates: string[] = [];
 
     for (const path of opts.untracked) {
@@ -195,7 +230,7 @@ export async function findWorktreeRenames(opts: {
         try {
             const stat = lstatSync(join(root, path));
 
-            if (stat.isFile() && sizes.has(stat.size)) {
+            if (stat.isFile() && (sizes.has(stat.size) || normalizing.has(path))) {
                 candidates.push(path);
             }
         } catch (error) {

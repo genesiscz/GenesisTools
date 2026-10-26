@@ -100,13 +100,7 @@ struct MarkdownGitSidebar: View, Equatable {
         case .pending:
             EmptyView()
         case .repo(let repo):
-            if repoLog.loaded && repoLog.commits.isEmpty {
-                Text("No commits yet.")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.textSecondary)
-            } else {
-                GitCommitList(commits: repoLog.commits, onOpen: { [model] in model.openCommit($0, root: repo.root) })
-            }
+            MarkdownGitRepositoryHistory(history: repoLog, theme: theme, onOpen: { [model] in model.openCommit($0, root: repo.root) })
         case .none:
             notInGit
         }
@@ -131,6 +125,28 @@ struct MarkdownGitSidebar: View, Equatable {
     private func follow() {
         fileHistory.follow(.file(doc.url))
         repoLog.follow(.repository(doc.folder))
+    }
+}
+
+/// Repository history retains its last commits alongside a failed-refresh notice and retry action.
+struct MarkdownGitRepositoryHistory: View {
+    @ObservedObject var history: GitHistoryModel
+    let theme: MarkdownTheme
+    var onOpen: (GitCommit) -> Void
+
+    var showsEmpty: Bool { history.failure == nil && history.loaded && history.commits.isEmpty }
+
+    var body: some View {
+        if let failure = history.failure {
+            GitFailureNotice(failure) { history.reload() }
+        }
+        if showsEmpty {
+            Text("No commits yet.")
+                .font(.system(size: 11))
+                .foregroundColor(theme.textSecondary)
+        } else {
+            GitCommitList(commits: history.commits, onOpen: onOpen)
+        }
     }
 }
 

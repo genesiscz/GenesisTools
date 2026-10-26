@@ -1,5 +1,29 @@
 {
     "about": "Moves git does not report: a deleted file paired with an untracked file of the same blob. GenesisKit GitWorktreeRenames.pair and src/utils/git/worktree-renames.ts pairWorktreeRenames must both turn every case's deleted and untracked lists into its pairs, in this order.",
+    "normalizationCases": [
+        {
+            "name": "core autocrlf normalizes a moved CRLF file",
+            "autocrlf": "true",
+            "attributes": "",
+            "blob": "first\nsecond\n",
+            "working": "first\r\nsecond\r\n"
+        },
+        {
+            "name": "eol attributes normalize a moved CRLF file",
+            "autocrlf": "false",
+            "attributes": "*.md text eol=crlf\n",
+            "blob": "first\nsecond\n",
+            "working": "first\r\nsecond\r\n"
+        },
+        {
+            "name": "a clean filter normalizes a moved file with a different raw size",
+            "autocrlf": "false",
+            "attributes": "*.md filter=fixture\n",
+            "clean": "tr -d X",
+            "blob": "first\nsecond\n",
+            "working": "fiXrst\nsecXond\n"
+        }
+    ],
     "cases": [
         {
             "name": "a moved folder pairs each file with its new place",

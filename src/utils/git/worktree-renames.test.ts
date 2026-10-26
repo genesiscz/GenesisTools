@@ -7,6 +7,14 @@ import { createGit } from "./core";
 import { applyWorktreeRenames, pairStatusRenames, pairWorktreeRenames, type WorktreeSide } from "./worktree-renames";
 
 interface Contract {
+    normalizationCases: {
+        name: string;
+        autocrlf: string;
+        attributes: string;
+        clean?: string;
+        blob: string;
+        working: string;
+    }[];
     cases: { name: string; deleted: WorktreeSide[]; untracked: WorktreeSide[]; pairs: [string, string][] }[];
 }
 
@@ -53,6 +61,37 @@ describe("pairStatusRenames", () => {
             },
         });
         expect(await proc.exited).toBe(0);
+    }
+
+    const fixture = join(
+        import.meta.dir,
+        "../../macos/GenesisKit/Sources/GenesisKitFixtures/Git/contract-worktree-renames.json"
+    );
+    const contract = SafeJSON.parse(readFileSync(fixture, "utf8"), { strict: true }) as Contract;
+
+    for (const item of contract.normalizationCases) {
+        it(item.name, async () => {
+            const root = mkdtempSync(join(tmpdir(), "worktree-renames-normalized-"));
+            made.push(root);
+            await run(root, ["init", "-q", "-b", "main"]);
+            await run(root, ["config", "core.autocrlf", item.autocrlf]);
+
+            if (item.clean) {
+                await run(root, ["config", "filter.fixture.clean", item.clean]);
+            }
+
+            writeFileSync(join(root, ".gitattributes"), item.attributes);
+            writeFileSync(join(root, "old.md"), item.blob);
+            await run(root, ["add", "."]);
+            await run(root, ["commit", "-q", "-m", "Normalized blob"]);
+            renameSync(join(root, "old.md"), join(root, "moved.md"));
+            writeFileSync(join(root, "moved.md"), item.working);
+            expect(Buffer.byteLength(item.working)).not.toBe(Buffer.byteLength(item.blob));
+            const status = await createGit({ cwd: root }).status({ untracked: "all" });
+            const entries = await pairStatusRenames(root, status.entries);
+            expect(entries.find((entry) => entry.path === "moved.md")).toMatchObject({ origPath: "old.md", worktree: "R" });
+            expect(entries.some((entry) => entry.path === "old.md")).toBe(false);
+        });
     }
 
     it("hashes a destination beginning with a quote without breaking other pairs", async () => {
