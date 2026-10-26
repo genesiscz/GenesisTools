@@ -24,6 +24,8 @@ import { sniffAudioExt } from "@genesiscz/utils/audio/detect-format";
 import type { AIProviderType } from "@genesiscz/utils/config/ai.types";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
+// The exported model type: deriving it from generateText's parameters cost about 40k type instantiations here.
+import type { LanguageModel } from "ai";
 
 type LlmCloudType = "openai" | "groq" | "openrouter";
 type TranscribeOnlyCloudType = "assemblyai" | "deepgram" | "gladia";
@@ -228,9 +230,7 @@ export class AICloudProvider
         return results;
     }
 
-    private async getLanguageModel(
-        modelSpec?: string
-    ): Promise<Parameters<typeof import("ai").generateText>[0]["model"]> {
+    private async getLanguageModel(modelSpec?: string): Promise<LanguageModel> {
         if (modelSpec) {
             return this.resolveModel(modelSpec);
         }
@@ -255,7 +255,7 @@ export class AICloudProvider
         throw new Error("No cloud LLM API key available. Set GROQ_API_KEY, OPENROUTER_API_KEY, or OPENAI_API_KEY.");
     }
 
-    private async resolveModel(spec: string): Promise<Parameters<typeof import("ai").generateText>[0]["model"]> {
+    private async resolveModel(spec: string): Promise<LanguageModel> {
         const [providerName, ...modelParts] = spec.split("/");
         const modelId = modelParts.join("/");
 

@@ -84,14 +84,18 @@ export interface CallLLMResult {
     usage?: LanguageModelUsage;
 }
 
-export interface CallLLMStructuredOptions<T> {
+/**
+ * `S` is the schema itself and the result its `z.output`. Inferring an output `T` from a `z.ZodType<T>` field instead
+ * walks the whole schema type against ZodType at every call (about 3,400 instantiations per call, 2026-10-25).
+ */
+export interface CallLLMStructuredOptions<S extends z.ZodType = z.ZodType> {
     systemPrompt: string;
     userPrompt: string;
     providerChoice?: ProviderChoice;
     model?: ModelRef | ResolvedBinding;
     task?: ResolveOptions["task"];
     app?: ResolveOptions["app"];
-    schema: z.ZodType<T>;
+    schema: S;
     maxTokens?: number;
     temperature?: number;
     /** The SDK's own retries; 0 lets a caller with another account to try fail at once. */
@@ -525,7 +529,9 @@ export async function streamLLM(
     }
 }
 
-export async function callLLMStructured<T>(options: CallLLMStructuredOptions<T>): Promise<CallLLMStructuredResult<T>> {
+export async function callLLMStructured<S extends z.ZodType>(
+    options: CallLLMStructuredOptions<S>
+): Promise<CallLLMStructuredResult<z.output<S>>> {
     const target = await resolveCallTarget(options);
 
     try {
@@ -535,10 +541,10 @@ export async function callLLMStructured<T>(options: CallLLMStructuredOptions<T>)
     }
 }
 
-async function runStructured<T>(
+async function runStructured<S extends z.ZodType>(
     target: CallTarget,
-    options: CallLLMStructuredOptions<T>
-): Promise<CallLLMStructuredResult<T>> {
+    options: CallLLMStructuredOptions<S>
+): Promise<CallLLMStructuredResult<z.output<S>>> {
     const { schema, maxTokens, onPartial } = options;
     const temperature = acceptedTemperature(target, options.temperature);
 
@@ -553,7 +559,7 @@ async function runStructured<T>(
     };
 
     if (onPartial) {
-        const streamed = await tryStreamObject<T>({ model: target.model, callArgs, onPartial });
+        const streamed = await tryStreamObject({ model: target.model, callArgs, onPartial });
 
         if (streamed) {
             return streamed;
@@ -561,23 +567,23 @@ async function runStructured<T>(
     }
 
     const result = await generateObject({
-        model: target.model as unknown as Parameters<typeof generateObject>[0]["model"],
+        model: target.model,
         ...callArgs,
     });
 
     return {
-        object: result.object as T,
+        object: result.object as z.output<S>,
         content: SafeJSON.stringify(result.object, null, 2),
         usage: result.usage,
     };
 }
 
-interface TryStreamObjectOpts<T> {
+interface TryStreamObjectOpts<S extends z.ZodType> {
     model: LanguageModel;
     callArgs: {
         system: string | undefined;
         prompt: string;
-        schema: z.ZodType<T>;
+        schema: S;
         providerOptions: ReturnType<typeof buildProviderOptions>;
         maxOutputTokens?: number;
         temperature?: number;
@@ -590,12 +596,14 @@ interface TryStreamObjectOpts<T> {
  * `generateObject` fallback) when the stream fails before the first chunk;
  * errors after the first chunk propagate like a failed `generateObject` call.
  */
-async function tryStreamObject<T>(opts: TryStreamObjectOpts<T>): Promise<CallLLMStructuredResult<T> | null> {
+async function tryStreamObject<S extends z.ZodType>(
+    opts: TryStreamObjectOpts<S>
+): Promise<CallLLMStructuredResult<z.output<S>> | null> {
     let sawChunk = false;
 
     try {
         const result = streamObject({
-            model: opts.model as unknown as Parameters<typeof streamObject>[0]["model"],
+            model: opts.model,
             ...opts.callArgs,
         });
 
@@ -604,7 +612,7 @@ async function tryStreamObject<T>(opts: TryStreamObjectOpts<T>): Promise<CallLLM
             opts.onPartial(partial);
         }
 
-        const object = (await result.object) as T;
+        const object = (await result.object) as z.output<S>;
 
         return {
             object,

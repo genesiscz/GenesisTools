@@ -9,7 +9,8 @@ import {
     FeatureCardNexusHeader,
 } from "./feature-card";
 
-type IconComponent = React.ElementType<{ className?: string }>;
+// Not React.ElementType: its union of every HTML tag made each JSX use ~175k instantiations (see app-sidebar.tsx).
+type IconComponent = React.ComponentType<{ className?: string }>;
 
 const colorStyles: Record<FeatureCardNexusColor, { bg: string; icon: string; badge: string }> = {
     cyan: { bg: "bg-cyan-500/10", icon: "text-cyan-400", badge: "bg-cyan-500/20 text-cyan-400" },
@@ -33,7 +34,8 @@ export interface FeatureGridItem {
 
 interface FeatureGridProps {
     items: FeatureGridItem[];
-    LinkComponent: React.ElementType;
+    /** A component type, not React.ElementType (see IconComponent). */
+    LinkComponent: React.ComponentType<{ to: string; children?: React.ReactNode }>;
 }
 
 export function FeatureGrid({ items, LinkComponent }: FeatureGridProps) {

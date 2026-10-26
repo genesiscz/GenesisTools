@@ -35,7 +35,9 @@ export interface WriterAnswer {
 }
 
 /** The one model call the writer makes; `callLLMStructured` in production, a fake in tests. */
-export type WriterCall = (options: CallLLMStructuredOptions<WriterAnswer>) => Promise<{ object: WriterAnswer }>;
+export type WriterCall = (
+    options: CallLLMStructuredOptions<z.ZodType<WriterAnswer>>
+) => Promise<{ object: WriterAnswer }>;
 
 const answerSchema = z
     .object({

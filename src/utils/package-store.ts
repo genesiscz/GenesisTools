@@ -22,6 +22,9 @@ export const STORE_PACKAGES: Readonly<Record<string, string>> = {
     "@huggingface/transformers": "4.2.0",
     "@lancedb/lancedb": "0.38.0",
     "@qdrant/js-client-rest": "1.19.0",
+    // Only the youtube server's checkout uses it. As a repo dependency its 5.9 MB of declarations were about 6% of
+    // every TypeScript program (2026-10-25).
+    stripe: "22.6.0",
 };
 
 /**

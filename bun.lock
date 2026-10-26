@@ -133,7 +133,6 @@
         "sonner": "^2.0.8",
         "sqlite-vec": "^0.1.9",
         "streamx": "^2.28.1",
-        "stripe": "^22.6.0",
         "tar-stream": "^3.2.1",
         "telegram": "^2.26.22",
         "tough-cookie": "^6.0.2",
@@ -2702,8 +2701,6 @@
     "strip-final-newline": ["strip-final-newline@4.0.0", "", {}, "sha512-aulFJcD6YK8V1G7iRB5tigAP4TsHBZZrOV8pjV++zdUwmeV8uzbY7yn6h9MswN62adStNZFuCIx4haBnRuMDaw=="],
 
     "strip-json-comments": ["strip-json-comments@5.0.3", "", {}, "sha512-1tB5mhVo7U+ETBKNf92xT4hrQa3pm0MZ0PQvuDnWgAAGHDsfp4lPSpiS6psrSiet87wyGPh9ft6wmhOMQ0hDiw=="],
-
-    "stripe": ["stripe@22.6.0", "", { "peerDependencies": { "@types/node": ">=18" }, "optionalPeers": ["@types/node"] }, "sha512-Ezk+WYEEwX2DLxFrKfb6coznlCMZvCaCYMNPXNHFSZkBIEzF5Hgm7RLb38q/0h9Ol5jsUJGJRorvhzAvckgfhw=="],
 
     "strtok3": ["strtok3@10.3.5", "", { "dependencies": { "@tokenizer/token": "^0.3.0" } }, "sha512-ki4hZQfh5rX0QDLLkOCj+h+CVNkqmp/CMf8v8kZpkNVK6jGQooMytqzLZYUVYIZcFZ6yDB70EfD8POcFXiF5oA=="],
 

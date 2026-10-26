@@ -2,7 +2,8 @@ import { IconButton } from "@ui/components/icon-button";
 import { cn } from "@ui/lib/utils";
 import type React from "react";
 
-type IconComponent = React.ElementType<{ className?: string }>;
+// Not React.ElementType: its union of every HTML tag made each JSX use ~175k instantiations (see app-sidebar.tsx).
+type IconComponent = React.ComponentType<{ className?: string }>;
 
 export interface ViewMode<V extends string> {
     value: V;

@@ -11,7 +11,8 @@ import {
     FeatureCardNexusTitle,
 } from "./feature-card";
 
-type IconComponent = React.ElementType<{ className?: string }>;
+// Not React.ElementType: its union of every HTML tag made each JSX use ~175k instantiations (see app-sidebar.tsx).
+type IconComponent = React.ComponentType<{ className?: string }>;
 
 const tint: Record<
     FeatureCardNexusColor,

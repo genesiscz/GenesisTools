@@ -3,6 +3,9 @@
     "version": "0.1.0",
     "private": true,
     "type": "module",
+    "scripts": {
+        "typecheck:tsgate": "if command -v vybava >/dev/null; then vybava tsgate tsconfig.json; else tsc --noEmit -p tsconfig.json; fi"
+    },
     "description": "GenesisTools pure utils surface for external consumption. Full GT tree remains under the @genesiscz/tools root; this package only exports modules without tool (@app/*) imports.",
     "exports": {
         ".": {

@@ -172,8 +172,13 @@ export type PostDecisionsInput = z.infer<typeof postDecisionsInputSchema>;
 export type DecisionPatch = z.infer<typeof decisionPatchSchema>;
 export type DecisionUpdate = z.infer<typeof decisionUpdateInputSchema>;
 
-/** Parses or throws one readable error that names every bad field. */
-export function parseDecisionInput<T>(schema: z.ZodType<T>, value: unknown, label: string): T {
+/**
+ * Parses or throws one readable error that names every bad field.
+ *
+ * The type parameter is the schema itself, and the result its `z.output`. Inferring `T` from a `z.ZodType<T>`
+ * parameter instead makes the checker walk the whole schema type against ZodType at every call.
+ */
+export function parseDecisionInput<S extends z.ZodType>(schema: S, value: unknown, label: string): z.output<S> {
     const result = schema.safeParse(value);
 
     if (!result.success) {

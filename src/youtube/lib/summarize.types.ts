@@ -13,6 +13,7 @@ import type {
     CallLLMStructuredResult,
 } from "@genesiscz/utils/ai/core/call";
 import type { ProviderChoice } from "@genesiscz/utils/ask/types";
+import type { z } from "zod";
 
 export interface SummaryProgressInfo {
     phase: "summarize";
@@ -75,7 +76,9 @@ export interface SummaryBin {
 
 export interface SummaryServiceDeps {
     callLLM: (opts: CallLLMOptions) => Promise<CallLLMResult>;
-    callLLMStructured: <T>(opts: CallLLMStructuredOptions<T>) => Promise<CallLLMStructuredResult<T>>;
+    callLLMStructured: <S extends z.ZodType>(
+        opts: CallLLMStructuredOptions<S>
+    ) => Promise<CallLLMStructuredResult<z.output<S>>>;
 }
 
 /** Pre-flight cost estimate for an LLM summarize/QA call (GET /videos/:id/estimate). */

@@ -641,7 +641,8 @@ export function Gantt({
     const todayIndex = todayDate ? ganttDayIndex(todayDate, axis.start) : -1;
     const showToday = todayDate !== null && todayIndex >= 0 && todayIndex < totalDays;
     const cells = ganttCells(axis, locale);
-    const bandLayer: CSSProperties = {
+    // Only the property it sets: spreading a whole CSSProperties into a style copies every CSS property into a new type.
+    const bandLayer: Pick<CSSProperties, "backgroundImage"> = {
         backgroundImage: [
             `repeating-linear-gradient(to right, var(--border) 0 1px, transparent 1px ${cellWidth}px)`,
             `repeating-linear-gradient(to right, transparent 0 ${cellWidth}px, var(--wash) ${cellWidth}px ${cellWidth * 2}px)`,

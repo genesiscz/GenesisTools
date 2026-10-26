@@ -14,11 +14,18 @@
         // `bun run typecheck:all` (src/spotify/ui/tsconfig.json).
         "src/spotify/ui",
         "src/monitor/ui",
-        "src/Internal/commands/reas/ui"
+        "src/Internal/commands/reas/ui",
+        // Build output (a 764 KB minified bundle under src/youtube/ui cost 0.6 s and 23k types).
+        "src/**/dist"
     ],
     "compilerOptions": {
         // Enable latest features
         "lib": ["ESNext", "DOM"],
+        // TypeScript 6 adds no @types package to the global scope unless named here (an import still loads its
+        // package's types). Without it Bun's globals came only from the one
+        // file that imports "bun", so a smaller program (a reviewer's, a per-folder one) reported
+        // "Cannot find name 'Bun'" in files that never import it.
+        "types": ["bun"],
         "target": "ESNext",
         "module": "ESNext",
         "moduleDetection": "force",

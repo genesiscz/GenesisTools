@@ -1,7 +1,7 @@
 export { AlertBlock } from "./alert-block";
 export { AnimatedCard } from "./animated-card";
 export { AppShell } from "./app-shell";
-export type { SidebarGroupTheme, SidebarNavGroup, SidebarNavItem } from "./app-sidebar";
+export type { SidebarGroupTheme, SidebarLinkComponent, SidebarNavGroup, SidebarNavItem } from "./app-sidebar";
 export { AppSidebar } from "./app-sidebar";
 export { AppleWindow } from "./apple-window";
 export { ChartSkeleton } from "./chart-skeleton";

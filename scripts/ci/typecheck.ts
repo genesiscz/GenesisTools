@@ -32,6 +32,9 @@ export const PROJECTS: Project[] = [
     { name: "clarity-ui", tsconfig: "src/clarity/ui/tsconfig.json" },
     { name: "dev-dashboard-ui", tsconfig: "src/dev-dashboard/ui/tsconfig.json" },
     { name: "fable-replace", tsconfig: "plugins/genesis-tools/skills/fable-replace/scripts/tsconfig.json" },
+    // The @genesiscz/utils package as consumers see it: its own paths and no @app/* alias, so an @app/* import
+    // under src/utils fails here while the root program (which maps @app/*) passes it.
+    { name: "utils", tsconfig: "src/utils/tsconfig.json" },
 ];
 
 /** What a project can take in: the root project has `allowJs`, so JavaScript inputs count too. */

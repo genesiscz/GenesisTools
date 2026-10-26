@@ -7,13 +7,12 @@ import { fetchUiConfig } from "@app/yt/config.client";
 import { applyAppearance } from "@app/yt/lib/appearance";
 import { pageTitleFromPath } from "@app/yt/lib/theme";
 import { useEventStream } from "@app/yt/ws.client";
-import { AppShell, AppSidebar, type SidebarNavItem } from "@genesiscz/utils/ui/custom";
+import { AppShell, AppSidebar, type SidebarLinkComponent, type SidebarNavItem } from "@genesiscz/utils/ui/custom";
 import { cn } from "@genesiscz/utils/ui/lib/utils";
 import { useDashboardTheme } from "@genesiscz/utils/ui/theme/dashboard-theme";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRootRouteWithContext, Link, Outlet, redirect, useRouterState } from "@tanstack/react-router";
 import { BriefcaseBusiness, History, Library, Newspaper, PlaySquare, Settings, Tv } from "lucide-react";
-import type React from "react";
 import { useEffect } from "react";
 
 interface RouterContext {
@@ -42,7 +41,7 @@ function YtSidebarItem({
 }: {
     item: SidebarNavItem;
     active: boolean;
-    LinkComponent: React.ElementType;
+    LinkComponent: SidebarLinkComponent;
 }) {
     const Icon = item.icon;
 

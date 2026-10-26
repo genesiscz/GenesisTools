@@ -3,9 +3,11 @@
     // and Bun resolves a dependency's internal aliases from the dependency's own
     // nearest tsconfig — so @genesiscz/utils/* and @ui/* self-imports keep
     // working when the package is consumed from node_modules, where the repo
-    // root tsconfig.json does not exist. Mirrors the root compilerOptions.
+    // root tsconfig.json does not exist. Mirrors the root compilerOptions except `paths` (only the package's own
+    // aliases); the root's `false` flags are TypeScript's defaults. Keep `types` in step with the root.
     "compilerOptions": {
         "lib": ["ESNext", "DOM"],
+        "types": ["bun"],
         "target": "ESNext",
         "module": "ESNext",
         "moduleDetection": "force",

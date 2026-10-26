@@ -31,7 +31,9 @@ const SYSTEM_PROMPT = [
 ].join("\n");
 
 export interface CollectionAskDeps {
-    callLLMStructured: (options: CallLLMStructuredOptions<AgentStep>) => Promise<CallLLMStructuredResult<AgentStep>>;
+    callLLMStructured: (
+        options: CallLLMStructuredOptions<z.ZodType<AgentStep>>
+    ) => Promise<CallLLMStructuredResult<AgentStep>>;
 }
 
 export interface CollectionAskInput {

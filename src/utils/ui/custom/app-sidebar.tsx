@@ -16,7 +16,11 @@ import type React from "react";
 import { type ReactNode, useState } from "react";
 
 export type SidebarGroupTheme = "primary" | "purple" | "accent" | "neutral";
-type IconComponent = React.ElementType<{ className?: string }>;
+// Component types, not React.ElementType: ElementType is a union of every HTML tag too, so each JSX use checked its
+// props against all of them (about 175k type instantiations per file, 2026-10-25).
+type IconComponent = React.ComponentType<{ className?: string }>;
+/** The router's link (TanStack `Link`). */
+export type SidebarLinkComponent = React.ComponentType<{ to: string; className?: string; children?: ReactNode }>;
 
 export interface SidebarNavItem {
     title: string;
@@ -50,9 +54,9 @@ interface AppSidebarProps {
     MenuItemComponent?: React.ComponentType<{
         item: SidebarNavItem;
         active: boolean;
-        LinkComponent: React.ElementType;
+        LinkComponent: SidebarLinkComponent;
     }>;
-    LinkComponent: React.ElementType;
+    LinkComponent: SidebarLinkComponent;
 }
 
 const groupLabel: Record<SidebarGroupTheme, string> = {
@@ -250,7 +254,7 @@ function MenuLink({
     to,
     children,
 }: {
-    LinkComponent: React.ElementType;
+    LinkComponent: SidebarLinkComponent;
     to: string;
     children: ReactNode;
 }) {
