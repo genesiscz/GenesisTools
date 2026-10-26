@@ -163,6 +163,8 @@ export interface SendDraftsInput {
     waitLiveMs?: number;
     /** The session submits the message itself; see `sendAnsweredDecisions` `inSession`. */
     inSession?: boolean;
+    /** The batch the session already submitted successfully. Acknowledgement never promotes new drafts. */
+    promptReceipt?: { ids: string[]; text: string };
 }
 
 /** Polled once a second while waiting for a resumed session's pane; the deadline is a count, not a clock. */
@@ -204,6 +206,19 @@ export async function sendDrafts(
     input: SendDraftsInput,
     deps: DraftDeps & { deliver?: DeliverDeps; sleep?: (ms: number) => Promise<void> }
 ): Promise<SendResult & { promoted: number[] }> {
+    if (input.promptReceipt) {
+        const result = await sendAnsweredDecisions({
+            session: input.session,
+            provider: input.provider,
+            inSession: true,
+            ids: input.promptReceipt.ids,
+            promptReceipt: input.promptReceipt,
+            dryRun: input.dryRun,
+            files: deps,
+        });
+        return { ...result, promoted: [] };
+    }
+
     const drafted = readDecisions(deps.file).filter((row) => row.sessionId === input.session && isDrafted(row));
 
     if (input.dryRun) {

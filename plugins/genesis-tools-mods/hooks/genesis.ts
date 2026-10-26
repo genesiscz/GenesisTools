@@ -130,18 +130,22 @@ export function encodePath(path: string): string {
     return encodeURI(path).replace(/\(/g, "%28").replace(/\)/g, "%29");
 }
 
+function queryPath(value: string): string {
+    return encodeURIComponent(value).replace(/%2F/g, "/").replace(/\(/g, "%28").replace(/\)/g, "%29");
+}
+
 function linkOn(probe: GenesisProbe, kind: LinkKind, path: string): string | undefined {
     return probe.linkHost && probe.opens[kind] ? `https://${probe.linkHost}/${path}` : undefined;
 }
 
 /** A note or data file in Genesis Markdown; `range` highlights `12` or `12-30`. */
 export function mdLink(probe: GenesisProbe, path: string, range?: string): string | undefined {
-    return linkOn(probe, "md", `md/open?path=${encodePath(path)}${range ? `&range=${range}` : ""}`);
+    return linkOn(probe, "md", `md/open?path=${queryPath(path)}${range ? `&range=${encodeURIComponent(range)}` : ""}`);
 }
 
 /** A folder or file shown in Finder. */
 export function finderLink(probe: GenesisProbe, target: string): string | undefined {
-    return linkOn(probe, "finder", `finder/reveal?target=${encodePath(target)}`);
+    return linkOn(probe, "finder", `finder/reveal?target=${queryPath(target)}`);
 }
 
 /** The GenesisTools hub on a PR (`owner/repo#42`), or a repository's commit. */

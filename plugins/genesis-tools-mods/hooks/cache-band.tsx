@@ -1,8 +1,9 @@
 // The cache countdown. Each session writes `<agents>/mods-state/cache/<session>.json` when its main loop finishes a
-// turn (the prompt cache was written then), and an `ended` mark when it ends. The band shows this session's minutes
+// turn (the prompt cache was written then), and removes it when it ends. The band shows this session's minutes
 // left dim, yellow under `mods.cacheBand.cautionMinutes` and red under `mods.cacheBand.warnMinutes`; with `others`
 // on, it also shows every other session whose cache runs out inside the yellow window, so a reply that would rewrite
-// a cold cache is visible from any open session. Reading the folder is a file listing, no process; it runs every 15 seconds.
+// a cold cache is visible from any open session. A listing runs every 15 seconds; one prune every five minutes
+// removes marks older than the cache lifetime before history can accumulate in each session's reads.
 // The times are live (`live.ts`): a yellow or red chip counts each second, a dim one each minute. After a compaction
 // the chip says so and that the next reply starts a fresh cache, since there is nothing left to keep warm.
 import type { ElementTable, RenderElement } from "claude-code";
@@ -17,6 +18,8 @@ let rows: CacheRows = [];
 /** Claude Code's prompt cache for a subscription session lives an hour after its last write. */
 const TTL_MS = 60 * 60_000;
 const EVERY_MS = 15_000;
+const PRUNE_MS = 5 * 60_000;
+let prunedAt = 0;
 
 interface CacheMark {
     sessionId: string;
@@ -41,7 +44,7 @@ async function labelOf(host: Host): Promise<string> {
     return `${cwd.split("/").filter(Boolean).pop() ?? "~"}·${id.slice(0, 6)}`;
 }
 
-async function mark(host: Host, why: "turn" | "ended" | "compacted"): Promise<void> {
+async function mark(host: Host, why: "turn" | "compacted"): Promise<void> {
     const dir = await folder(host);
 
     if (!dir) {
@@ -55,7 +58,6 @@ async function mark(host: Host, why: "turn" | "ended" | "compacted"): Promise<vo
         label: await labelOf(host),
         lastAt: now,
         ttlMs: TTL_MS,
-        ended: why === "ended",
         ...(why === "compacted" ? { compactedAt: now } : {}),
     };
 
@@ -68,10 +70,6 @@ async function mark(host: Host, why: "turn" | "ended" | "compacted"): Promise<vo
 
             if (isRecord(parsed) && typeof parsed.lastAt === "number") {
                 held.lastAt = parsed.lastAt;
-            }
-
-            if (why === "ended" && isRecord(parsed) && typeof parsed.compactedAt === "number") {
-                held.compactedAt = parsed.compactedAt;
             }
         } catch {
             // A broken mark is rewritten whole.
@@ -123,6 +121,18 @@ async function scan(host: Host): Promise<void> {
         return;
     }
 
+    const now = Date.now();
+
+    if (settings.others && now - prunedAt >= PRUNE_MS) {
+        const done = await host
+            .run(["find", dir, "-type", "f", "-name", "*.json", "-mmin", "+60", "-delete"], { timeoutMs: 5_000 })
+            .catch(() => undefined);
+
+        if (done?.exitCode === 0) {
+            prunedAt = now;
+        }
+    }
+
     const ownId = await host.sessionId();
     const entries = settings.others
         ? await host.list(dir).catch(() => [])
@@ -131,6 +141,11 @@ async function scan(host: Host): Promise<void> {
 
     for (const entry of entries) {
         if (entry.kind !== "file" || !entry.name.endsWith(".json")) {
+            continue;
+        }
+
+        // Expired historical sessions need no JSON read, even when pruning could not run.
+        if (entry.name !== `${ownId}.json` && "mtimeMs" in entry && entry.mtimeMs + TTL_MS < now) {
             continue;
         }
 
@@ -154,7 +169,14 @@ async function scan(host: Host): Promise<void> {
         }
     }
 
-    rows = cacheRowsOf(marks, ownId, alertMs(settings), Date.now());
+    const own = rows.find((row) => row.own && row.sessionId === ownId);
+    rows = cacheRowsOf(marks, ownId, alertMs(settings), now);
+
+    // Another session may prune our cold mark; keep the own cold/compacted row while this session stays open.
+    if (own && !rows.some((row) => row.own)) {
+        rows.unshift(own);
+    }
+
     host.redraw();
 }
 
@@ -163,7 +185,7 @@ export const cacheBand: Feature = {
         host.every(EVERY_MS, () => {
             void scan(host);
         });
-        void scan(host);
+        await scan(host);
     },
     async afterTurn(host, e) {
         if (e.agentId === undefined && (await settingsOf(host)).cacheBand.enabled) {
@@ -179,9 +201,17 @@ export const cacheBand: Feature = {
     },
 };
 
-/** The `ended` mark, so other sessions stop counting this one down. */
+/** Remove this session's mark, including when the cache feature was disabled before the session ended. */
 export async function markEnded(host: Host): Promise<void> {
-    await mark(host, "ended").catch(() => undefined);
+    const dir = await folder(host);
+
+    if (dir) {
+        await host
+            .run(["find", dir, "-type", "f", "-name", `${await host.sessionId()}.json`, "-delete"], {
+                timeoutMs: 5_000,
+            })
+            .catch(() => undefined);
+    }
 }
 
 /** The wider of the two windows: a chip turns yellow, or red, from this much time left. */

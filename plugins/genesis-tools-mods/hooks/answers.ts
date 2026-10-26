@@ -645,20 +645,37 @@ export async function stageAnswer(
 }
 
 /**
- * Sends the session's staged answers through its own prompt: the store marks them sent (route `prompt`) and gives
- * the message, which the caller submits. Nothing is typed into the terminal, so a sidebar holding the keys is safe.
+ * Prepares the session's answers, submits its own prompt, then acknowledges that exact batch. A failed submission
+ * leaves answers pending for a retry or next-prompt injection. Nothing is typed into a terminal pane.
  */
 export async function sendStaged(host: Host): Promise<{ text?: string; numbers?: number[]; error?: string }> {
     const sent = await questionCommand(host, ["send", "--in-session"]);
     await logMod(host, "decisions", { event: "send", promoted: sent.promoted, error: sent.error });
-    void refreshAnswers(host, "send", true);
-
     if (typeof sent.error === "string") {
         return { error: sent.error };
     }
 
-    return {
-        text: text(sent.text),
-        numbers: Array.isArray(sent.numbers) ? sent.numbers.filter((n): n is number => typeof n === "number") : [],
-    };
+    const message = text(sent.text);
+
+    if (!message || !isRecord(sent.promptReceipt)) {
+        return { error: "The CLI did not prepare a pending prompt batch; update GenesisTools" };
+    }
+
+    try {
+        await host.submit(message);
+        const ack = await questionCommand(host, ["send", "--ack-prompt", JSON.stringify(sent.promptReceipt)]);
+
+        if (typeof ack.error === "string") {
+            return { error: ack.error };
+        }
+
+        return {
+            text: message,
+            numbers: Array.isArray(ack.numbers) ? ack.numbers.filter((n): n is number => typeof n === "number") : [],
+        };
+    } catch (error) {
+        return { error: String(error) };
+    } finally {
+        await refreshAnswers(host, "send", true);
+    }
 }

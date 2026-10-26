@@ -43,6 +43,29 @@ function positiveInt(value: string | undefined, fallback: number): number {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function promptReceipt(raw: string | undefined): { ids: string[]; text: string } | undefined {
+    if (raw === undefined) {
+        return undefined;
+    }
+
+    const value: unknown = SafeJSON.parse(raw, { strict: true });
+
+    if (
+        typeof value !== "object" ||
+        value === null ||
+        !("text" in value) ||
+        typeof value.text !== "string" ||
+        !("ids" in value) ||
+        !Array.isArray(value.ids) ||
+        value.ids.length === 0 ||
+        !value.ids.every((id): id is string => typeof id === "string")
+    ) {
+        throw new Error("--ack-prompt takes the promptReceipt returned by --in-session");
+    }
+
+    return { ids: value.ids, text: value.text };
+}
+
 function formAnswers(raw: string): AskAnswer[] {
     const parsed: unknown = SafeJSON.parse(raw, { strict: true });
 
@@ -335,11 +358,16 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
         .option("--dry-run", "Print the message and the route; change nothing")
         .option(
             "--in-session",
-            "The session sends it itself: record the answers as sent through its prompt, type nothing, print the message to submit"
+            "Prepare the session's own prompt; keep answers pending until --ack-prompt acknowledges submission"
         )
+        .option("--ack-prompt <receipt>", "Acknowledge the exact promptReceipt after the session accepted its prompt")
         .action(async (_flags: unknown, command: Command) => {
-            const flags: AnswerFlags & { resumeTarget?: string; waitLive?: string; inSession?: boolean } =
-                command.optsWithGlobals();
+            const flags: AnswerFlags & {
+                resumeTarget?: string;
+                waitLive?: string;
+                inSession?: boolean;
+                ackPrompt?: string;
+            } = command.optsWithGlobals();
 
             try {
                 if (!flags.session) {
@@ -358,6 +386,7 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                                 : {}),
                             dryRun: flags.dryRun === true,
                             ...(flags.inSession ? { inSession: true } : {}),
+                            promptReceipt: promptReceipt(flags.ackPrompt),
                         },
                         storeDeps()
                     )

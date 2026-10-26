@@ -357,6 +357,40 @@ describe("focusCommand", () => {
         expect(events.filter((event) => event.startsWith("focus-pane"))).toEqual([]);
     });
 
+    test("--exact rechecks a stale recorded ref's fallback before focusing a screen-only match", async () => {
+        setSnapshot([pane({ id: "pane:33", title: "ncdu /tmp", preview: `/tmp/cc/${SESSION_A}/` })]);
+        const { focusCommand } = await import("@app/claude/commands/cmux/focus");
+        await focusCommand(
+            SESSION_A,
+            { activate: false, json: true, first: true, exact: true },
+            {
+                fetchSnapshot: async () => snapshot,
+                lookupRefs: () => staleRefs(),
+                lookupSession: async () => ({ aliases: [], sessionId: SESSION_A }),
+            }
+        );
+        expect(process.exitCode).toBe(1);
+        expect(await capturedResult()).toContain('"exact": false');
+        expect(events.filter((event) => !event.includes("identify"))).toEqual([`focus-surface ${DEAD_SURFACE}`]);
+    });
+
+    test("--exact still focuses a proven fallback after stale recorded refs", async () => {
+        setSnapshot([pane({ id: "pane:33", preview: resumeScreen(SESSION_A) })]);
+        const { focusCommand } = await import("@app/claude/commands/cmux/focus");
+        await focusCommand(
+            SESSION_A,
+            { activate: false, json: true, first: true, exact: true },
+            {
+                fetchSnapshot: async () => snapshot,
+                lookupRefs: () => staleRefs(),
+                lookupSession: async () => ({ aliases: [], sessionId: SESSION_A }),
+            }
+        );
+        expect(process.exitCode ?? 0).toBe(0);
+        expect(await capturedResult()).toContain('"paneId": "pane:33"');
+        expect(events).toContain("focus-pane workspace:11 pane:33");
+    });
+
     test("a stale recorded ref with no other pane says the pane is gone and moves nothing", async () => {
         // The hub showed "ERROR: [socket] RPC error" here, after raising the dead tab's window
         // and pane. The answer is a plain `gone` result, and nothing on screen changes.

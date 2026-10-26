@@ -1,9 +1,9 @@
 import type { On, TurnStepChunk } from "claude-code";
 import { expect, mock, test } from "claude-code/testing";
 import { lastSaidOf } from "../hooks/agents-band";
-import { answersFrom, callFor, firstAsks, questionCalls } from "../hooks/answers";
+import { answersFrom, callFor, firstAsks, forgetAnswers, questionCalls, sendStaged } from "../hooks/answers";
 import { quoteOf } from "../hooks/ask-row";
-import { cacheRowsOf, cacheTone } from "../hooks/cache-band";
+import { cacheBand, cacheRowsOf, cacheTone, markEnded } from "../hooks/cache-band";
 import {
     addCheckout,
     addedCheckouts,
@@ -20,8 +20,15 @@ import {
     sessionCheckouts,
     writtenFiles,
 } from "../hooks/checkouts";
-import { chatDecisions, openDecisions, shownDecisions, stagedMessage, stagedText } from "../hooks/decisions";
-import { forgetGenesisProbe, type GenesisProbe, genesisProbe, probeOf } from "../hooks/genesis";
+import {
+    chatDecisions,
+    openDecisions,
+    sendDecisionAnswers,
+    shownDecisions,
+    stagedMessage,
+    stagedText,
+} from "../hooks/decisions";
+import { finderLink, forgetGenesisProbe, type GenesisProbe, genesisProbe, mdLink, probeOf } from "../hooks/genesis";
 import {
     checkCounts,
     checksOf,
@@ -43,7 +50,17 @@ import { bareDescription } from "../hooks/model-label";
 import { modsSettings } from "../hooks/settings";
 import { forgetSettings, type Host } from "../hooks/shared";
 import { toolLabel } from "../hooks/spinner";
-import { clearStall, continueText, lastSentence, noteStop, pressStall, stallNow, stallSentence } from "../hooks/stall";
+import {
+    checkStall,
+    clearStall,
+    continueText,
+    lastSentence,
+    noteStop,
+    pressStall,
+    stallCatcher,
+    stallNow,
+    stallSentence,
+} from "../hooks/stall";
 import { lockedToSession, samePath, sessionTotalKb, statusOf } from "../hooks/tmp-usage";
 
 /** A Mac where every GenesisTools link opens, on an invented link host. */
@@ -1054,4 +1071,239 @@ test("mods settings: a value equal to the file's shipped copy follows today's de
     });
     expect(sidebars.inbox).toEqual({ enabled: true, chip: "unread", expand: "all" });
     expect(modsSettings(undefined).inbox).toEqual({ enabled: false, chip: "any", expand: "none" });
+});
+
+test("file links preserve reserved query characters, Unicode and markdown parentheses", async () => {
+    const target = "/tmp/a&b#c+d?e%f (ž).md";
+    const md = mdLink(ALL_LINKS, target, "12-30");
+    const finder = finderLink(ALL_LINKS, target);
+    expect(new URL(md ?? "").searchParams.get("path")).toBe(target);
+    expect(new URL(md ?? "").searchParams.get("range")).toBe("12-30");
+    expect(new URL(finder ?? "").searchParams.get("target")).toBe(target);
+    expect(md).not.toContain("(");
+    expect(mdLink(NO_LINKS, target)).toBeUndefined();
+    expect(finderLink(NO_LINKS, target)).toBeUndefined();
+});
+
+test("sending staged answers acknowledges only after successful prompt submission", async () => {
+    forgetGenesisProbe();
+    forgetAnswers();
+    const effects: string[] = [];
+    const message = "DECISION 1: a) keep";
+    let rejects = true;
+    const base = checkoutHost();
+    const host: Host = {
+        ...base,
+        async run(argv) {
+            const probe = argv[1] === "genesis-tools";
+            const ack = argv.includes("--ack-prompt");
+
+            if (argv.includes("send")) {
+                effects.push(ack ? "ack" : "prepare");
+            }
+
+            return {
+                stdout: JSON.stringify(
+                    probe
+                        ? { links: {}, router: {} }
+                        : ack
+                          ? { numbers: [1] }
+                          : {
+                                text: message,
+                                promptReceipt: { ids: ["d_1_s"], text: message },
+                            }
+                ),
+                stderr: "",
+                exitCode: 0,
+                isStdoutTruncated: false,
+                isStderrTruncated: false,
+            };
+        },
+        async submit(text) {
+            effects.push(`submit ${text}`);
+
+            if (rejects) {
+                throw new Error("prompt rejected");
+            }
+        },
+    };
+    expect((await sendStaged(host)).error).toContain("prompt rejected");
+    expect(effects).toEqual(["prepare", `submit ${message}`]);
+    rejects = false;
+    effects.length = 0;
+    expect(await sendStaged(host)).toEqual({ text: message, numbers: [1] });
+    expect(effects).toEqual(["prepare", `submit ${message}`, "ack"]);
+    forgetGenesisProbe();
+    forgetAnswers();
+});
+
+test("cache polling skips expired JSON contents and removes session marks on end", async () => {
+    forgetSettings();
+    const base = checkoutHost();
+    const reads: string[] = [];
+    const runs: string[][] = [];
+    let writes = 0;
+    const host: Host = {
+        ...base,
+        async read(path) {
+            if (path.endsWith("hooks.json")) {
+                return JSON.stringify({ mods: { cacheBand: { enabled: true, others: true } } });
+            }
+
+            reads.push(path);
+            return JSON.stringify({ sessionId: "warm", lastAt: Date.now(), ttlMs: 3600000 });
+        },
+        async list() {
+            return [
+                { name: "old.json", kind: "file", size: 1, mtimeMs: Date.now() - 7200000, isLink: false },
+                { name: "warm.json", kind: "file", size: 1, mtimeMs: Date.now(), isLink: false },
+            ];
+        },
+        async run(argv) {
+            runs.push([...argv]);
+            return { stdout: "", stderr: "", exitCode: 0, isStdoutTruncated: false, isStderrTruncated: false };
+        },
+        async write() {
+            writes++;
+        },
+    };
+    await cacheBand.start?.(host);
+    expect(reads).toEqual(["/home/test/.genesis-tools/agents/mods-state/cache/warm.json"]);
+    expect(runs[0]).toEqual([
+        "find",
+        "/home/test/.genesis-tools/agents/mods-state/cache",
+        "-type",
+        "f",
+        "-name",
+        "*.json",
+        "-mmin",
+        "+60",
+        "-delete",
+    ]);
+    await markEnded(host);
+    expect(runs.at(-1)?.slice(-4)).toEqual(["f", "-name", "sess-1.json", "-delete"]);
+    expect(writes).toBe(0);
+    forgetSettings();
+});
+
+test("disabling automatic stall continuation clears the pending stall before its timer fires", async () => {
+    forgetSettings();
+    const base = checkoutHost();
+    const sent: string[] = [];
+    let enabled = true;
+
+    const host: Host = {
+        ...base,
+        async read(path) {
+            return path.endsWith("hooks.json")
+                ? JSON.stringify({ mods: { stall: { enabled, action: "auto", minutes: 1 } } })
+                : base.read(path);
+        },
+        async submit(text) {
+            sent.push(text);
+        },
+    };
+    const stop = {
+        hook_event_name: "Stop",
+        last_assistant_message: "Next I'll run the tests.",
+        background_tasks: [],
+        session_crons: [],
+    };
+    await stallCatcher.start?.(host);
+    await noteStop(host, stop);
+    enabled = false;
+    forgetSettings();
+    await checkStall(host, Date.now() + 3600000);
+    expect(stallNow()).toBeUndefined();
+    expect(sent).toEqual([]);
+    enabled = true;
+    forgetSettings();
+    await noteStop(host, stop);
+    await checkStall(host, Date.now() + 3600000);
+    expect(sent).toEqual([continueText(stop.last_assistant_message)]);
+    forgetSettings();
+});
+
+test("decision actions fill the exact preview and send an answered batch with no drafted rows", async () => {
+    forgetSettings();
+    forgetGenesisProbe();
+    forgetAnswers();
+    const base = checkoutHost();
+    const filled: string[] = [];
+    const submitted: string[] = [];
+    const outgoing = "DECISION 1: a) already answered\nDECISION 2: own staged note";
+    const host: Host = {
+        ...base,
+        async fill(args) {
+            filled.push(args.text);
+        },
+        async submit(text) {
+            submitted.push(text);
+        },
+        async run(argv) {
+            const value =
+                argv[1] === "genesis-tools"
+                    ? { links: {}, router: {} }
+                    : argv.includes("--ack-prompt")
+                      ? { numbers: [1, 2] }
+                      : { text: outgoing, promptReceipt: { ids: ["d_1_s", "d_2_s"], text: outgoing } };
+            return {
+                stdout: JSON.stringify(value),
+                stderr: "",
+                exitCode: 0,
+                isStdoutTruncated: false,
+                isStderrTruncated: false,
+            };
+        },
+    };
+    await sendDecisionAnswers(host, { outgoing, how: "fill" });
+    expect(filled).toEqual([outgoing]);
+    await sendDecisionAnswers(host, { outgoing, how: "send" });
+    expect(submitted).toEqual([outgoing]);
+    await sendDecisionAnswers(host, { outgoing: "", how: "send" });
+    expect(submitted).toEqual([outgoing]);
+    forgetAnswers();
+    forgetGenesisProbe();
+    forgetSettings();
+});
+
+test("an automatic stall check cannot continue a newer stall captured while it checked agents", async () => {
+    forgetSettings();
+    const base = checkoutHost();
+    const submitted: string[] = [];
+    let replace = false;
+    const stop = (sentence: string) => ({
+        hook_event_name: "Stop",
+        last_assistant_message: sentence,
+        background_tasks: [],
+        session_crons: [],
+    });
+    const host: Host = {
+        ...base,
+        async read(path) {
+            return path.endsWith("hooks.json")
+                ? JSON.stringify({ mods: { stall: { enabled: true, action: "auto", minutes: 1 } } })
+                : base.read(path);
+        },
+        async agents() {
+            if (replace) {
+                replace = false;
+                clearStall(host, "new turn");
+                await noteStop(host, stop("Next I'll check the logs."));
+            }
+
+            return [];
+        },
+        async submit(text) {
+            submitted.push(text);
+        },
+    };
+    await noteStop(host, stop("Next I'll run the tests."));
+    replace = true;
+    await checkStall(host, Date.now() + 3600000);
+    expect(submitted).toEqual([]);
+    expect(stallNow()?.sentence).toBe("Next I'll check the logs.");
+    await checkStall(host, Date.now() + 3600000);
+    expect(submitted).toEqual([continueText("Next I'll check the logs.")]);
+    forgetSettings();
 });

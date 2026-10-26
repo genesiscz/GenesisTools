@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { deliverDecisions, parseDecisionBlocks } from "../decisions/read";
-import { type DecisionRecord, postDecisions, readDecisions } from "../decisions/store";
+import { type DecisionRecord, postDecisions, readDecisions, updateDecisions } from "../decisions/store";
 import { dismissDecision, draftDecision, sendDrafts, stagedSendText } from "./drafts";
 
 // A decision post reads its checkout with eight `git` starts; see no-git.ts for the CI hang they caused.
@@ -101,7 +101,7 @@ describe("dismissDecision", () => {
 });
 
 describe("sendDrafts", () => {
-    test("in session: the drafts become sent through the prompt, nothing is typed, and the message comes back", async () => {
+    test("in session: answers stay retryable until the exact submitted prompt is acknowledged", async () => {
         const { file, events } = scratch();
         await postDecisions(file, events, {
             sessionId: "s",
@@ -132,12 +132,46 @@ describe("sendDrafts", () => {
         expect(result.channel).toBe("prompt");
         expect(result.text).toBe("DECISION 1: a) a1\nDECISION 2: my own words");
         expect(preview).toBe(result.text);
+        expect(result.delivered).toBe(false);
+        expect(result.numbers).toEqual([]);
+        expect(readDecisions(file).every((row) => row.state === "answered" && !row.delivery)).toBe(true);
+        // A rejected submission or a process exit sends no acknowledgement; both send and injection can retry.
+        const retry = await sendDrafts({ session: "s", inSession: true }, deps);
+        expect(retry.text).toBe(result.text);
+        expect(deliverDecisions(readDecisions(file), () => undefined).numbers).toEqual([1, 2]);
+        expect(stagedSendText(readDecisions(file), "s")).toBe(preview);
+        const ack = await sendDrafts({ session: "s", promptReceipt: result.promptReceipt }, deps);
+        expect(ack).toMatchObject({ delivered: true, channel: "prompt", numbers: [1, 2] });
         expect(stagedSendText(readDecisions(file), "s")).toBeUndefined();
         const rows = readDecisions(file);
         expect(rows.map((row) => [row.state, row.delivery?.route])).toEqual([
             ["sent", "prompt"],
             ["sent", "prompt"],
         ]);
+    });
+
+    test("prompt acknowledgement rejects edited answers and never promotes newer drafts", async () => {
+        const deps = { ...scratch(), block: async () => null };
+        await postDecisions(deps.file, deps.events, {
+            sessionId: "s",
+            decisions: [
+                { prompt: "One?", options: ["one", "two"] },
+                { prompt: "New?", options: ["yes", "no"] },
+            ],
+        });
+        await draftDecision({ session: "s", number: 1, option: "a" }, deps);
+        const prepared = await sendDrafts({ session: "s", inSession: true }, deps);
+        await draftDecision({ session: "s", number: 2, option: "b" }, deps);
+        const first = readDecisions(deps.file)[0];
+        await updateDecisions(deps.file, deps.events, { updates: [{ id: first.id, answer: "changed" }] });
+        await expect(sendDrafts({ session: "s", promptReceipt: prepared.promptReceipt }, deps)).rejects.toThrow(
+            "pending answers changed"
+        );
+        expect(readDecisions(deps.file).map((row) => row.state)).toEqual(["answered", "drafted"]);
+        const retry = await sendDrafts({ session: "s", inSession: true }, deps);
+        const dry = await sendDrafts({ session: "s", promptReceipt: retry.promptReceipt, dryRun: true }, deps);
+        expect(dry.dryRun).toBe(true);
+        expect(readDecisions(deps.file).every((row) => row.state === "answered")).toBe(true);
     });
 
     test("promotes every drafted answer and delivers them as one message", async () => {

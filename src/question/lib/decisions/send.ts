@@ -7,7 +7,7 @@ import {
     deliverToSession,
     NotDeliveredError,
 } from "./deliver";
-import { decisionFiles, decisionLine, sendSessionDecisions } from "./read";
+import { decisionFiles, decisionLine, dueDecisions, sendSessionDecisions } from "./read";
 import { kindOf, readDecisions, recordDelivery } from "./store";
 
 const { log } = logger.scoped("question-send");
@@ -19,6 +19,8 @@ export interface SendResult extends Partial<DeliveryResult> {
     /** The decision numbers marked sent; empty for a dry run and for a queued batch. */
     numbers: number[];
     dryRun: boolean;
+    /** Exact pending batch, acknowledged only after the session accepts its prompt. */
+    promptReceipt?: { ids: string[]; text: string };
 }
 
 /** The provider name the delivery compares against (`claude`, `codex`, `grok`). */
@@ -45,6 +47,7 @@ export async function sendAnsweredDecisions({
     ids,
     dryRun = false,
     inSession = false,
+    promptReceipt,
     files = decisionFiles(),
     deps = {},
 }: {
@@ -56,14 +59,16 @@ export async function sendAnsweredDecisions({
     dryRun?: boolean;
     /**
      * The session delivers the message itself, through its own prompt (the mods Decisions sidebar): nothing is
-     * typed, the answers are recorded as sent through `prompt`, and the caller submits the returned `text`.
+     * typed and the answers stay pending. After submitting `text`, pass `promptReceipt` back to acknowledge it.
      */
     inSession?: boolean;
+    promptReceipt?: { ids: string[]; text: string };
     files?: { file: string; events: string };
     deps?: DeliverDeps;
 }): Promise<SendResult> {
     const { file, events } = files;
-    const selected = ids ? new Set(ids) : undefined;
+    const selectedIds = promptReceipt?.ids ?? ids;
+    const selected = selectedIds ? new Set(selectedIds) : undefined;
     const rows = readDecisions(file).filter((row) => row.sessionId === session && (!selected || selected.has(row.id)));
     const provider = providerOf(given, rows);
 
@@ -77,6 +82,26 @@ export async function sendAnsweredDecisions({
         return { session, provider, text: due.map(decisionLine).join("\n"), numbers: [], dryRun: true };
     }
 
+    if (inSession && !promptReceipt) {
+        const due = dueDecisions(rows);
+
+        if (due.length === 0) {
+            throw new Error("nothing to send");
+        }
+
+        const text = due.map(decisionLine).join("\n");
+        return {
+            session,
+            provider,
+            text,
+            numbers: [],
+            dryRun: false,
+            channel: "prompt",
+            delivered: false,
+            promptReceipt: { ids: due.map((row) => row.id), text },
+        };
+    }
+
     const delivery: { route?: DeliveryResult; text?: string; numbers?: number[] } = {};
     // Only the rows this send claimed under the lock; a row already reserved by another queue keeps its stamp.
     const claimed = () =>
@@ -86,7 +111,7 @@ export async function sendAnsweredDecisions({
 
     try {
         const sent = await sendSessionDecisions({
-            ids,
+            ids: selectedIds,
             file,
             events,
             session,
@@ -95,6 +120,10 @@ export async function sendAnsweredDecisions({
                 delivery.numbers = numbers;
 
                 if (inSession) {
+                    if (!promptReceipt || text !== promptReceipt.text || numbers.length !== promptReceipt.ids.length) {
+                        throw new Error("The pending answers changed; the submitted batch was not marked sent");
+                    }
+
                     delivery.route = { channel: "prompt", delivered: true, target: "the session's own prompt" };
                     return;
                 }

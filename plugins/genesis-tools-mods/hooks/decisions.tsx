@@ -365,6 +365,37 @@ function tailOf(decision: ShownDecision): { text: string; color?: string } {
     }
 }
 
+/** Both actions use the same outgoing batch as the preview, including answered rows with no drafts. */
+export async function sendDecisionAnswers(
+    host: Host,
+    request: { outgoing: string; how: "send" | "fill" }
+): Promise<void> {
+    if (!request.outgoing) {
+        return;
+    }
+
+    if (request.how === "fill") {
+        await host.fill({ text: request.outgoing, mode: "replace" });
+        await pressed(host, "decisions-fill", "In the prompt; the answers stay staged until the agent records them.");
+        return;
+    }
+
+    await pressed(host, "decisions-send", "Sending…", "busy");
+    const sent = await sendStaged(host);
+
+    if (sent.error || !sent.text) {
+        await pressed(host, "decisions-send", `Not sent: ${sent.error ?? "nothing staged"}`, "error");
+        return;
+    }
+
+    typed.clear();
+    await pressed(
+        host,
+        "decisions-send",
+        `Sent ${plural(sent.numbers?.length ?? 0, "answer")}; the decision log marks them sent.`
+    );
+}
+
 /** The Decisions sidebar: a summary line, the decisions by state, each opening to its options and [jump to]. */
 async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
     const { Box, Button, Text } = kit.ui;
@@ -379,6 +410,8 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
     const message = stagedMessage(
         Object.fromEntries(staged.map((decision) => [String(decision.n), stagedText(decision)]))
     );
+    // Preview, fill and send all use the store's complete outgoing batch, including answered rows.
+    const outgoing = read?.staged ?? message;
     const width = Math.max(10, kit.columns - 4);
     const isOpen = (decision: ShownDecision) => {
         const byDefault = settings.expand === "all" || (settings.expand === "waiting" && isWaiting(decision));
@@ -411,37 +444,7 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
 
         await pressed(host, key, `Not staged: ${done.error}`, "error");
     };
-    const send = async (how: "send" | "fill") => {
-        if (!message) {
-            return;
-        }
-
-        if (how === "fill") {
-            await host.fill({ text: message, mode: "replace" });
-            await pressed(
-                host,
-                "decisions-fill",
-                "In the prompt; the answers stay staged until the agent records them."
-            );
-            return;
-        }
-
-        await pressed(host, "decisions-send", "Sending…", "busy");
-        const sent = await sendStaged(host);
-
-        if (sent.error || !sent.text) {
-            await pressed(host, "decisions-send", `Not sent: ${sent.error ?? "nothing staged"}`, "error");
-            return;
-        }
-
-        await host.submit(sent.text);
-        typed.clear();
-        await pressed(
-            host,
-            "decisions-send",
-            `Sent ${plural(sent.numbers?.length ?? 0, "answer")}; the decision log marks them sent.`
-        );
-    };
+    const send = (how: "send" | "fill") => sendDecisionAnswers(host, { outgoing, how });
 
     /**
      * The own-answer field. While the ring is elsewhere it sits in a rounded border, so it reads as a field: cyan
@@ -687,8 +690,6 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
     }));
     const historyCount = history.reduce((sum, held) => sum + held.rows.length, 0);
     const showsHistory = (settings.history === "shown") !== historyFlipped;
-    // What [send] submits, as the CLI builds it; this session's own list where the CLI is older.
-    const outgoing = read?.staged ?? message;
 
     return sidebarFrame(
         kit,

@@ -142,25 +142,39 @@ export async function pressStall(host: Host, how: "continue" | "auto" | "dismiss
     }
 }
 
+/** One automatic timer check. Disabled settings discard any continuation captured before the switch changed. */
+export async function checkStall(host: Host, now: number): Promise<void> {
+    const settings = (await settingsOf(host)).stall;
+
+    if (!settings.enabled) {
+        clearStall(host, "disabled");
+        return;
+    }
+
+    const held = stall;
+
+    if (!held || settings.action !== "auto" || now - held.at < settings.minutes * 60_000) {
+        return;
+    }
+
+    const agents = await busyAgents(host);
+
+    if (stall !== held) {
+        return;
+    }
+
+    if (agents === undefined || agents > 0) {
+        clearStall(host, "an agent works");
+        return;
+    }
+
+    await pressStall(host, "auto");
+}
+
 export const stallCatcher: Feature = {
     async start(host) {
         host.every(5_000, () => {
-            void (async () => {
-                const settings = (await settingsOf(host)).stall;
-
-                if (!stall || settings.action !== "auto" || Date.now() - stall.at < settings.minutes * 60_000) {
-                    return;
-                }
-
-                const agents = await busyAgents(host);
-
-                if (agents === undefined || agents > 0) {
-                    clearStall(host, "an agent works");
-                    return;
-                }
-
-                await pressStall(host, "auto");
-            })();
+            void checkStall(host, Date.now());
         });
     },
     beforeTool(host, e) {

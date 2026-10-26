@@ -4,6 +4,7 @@ import {
     identifiesExactSession,
     type ResolveDeps,
     retryAfterStaleRefs,
+    type SessionTargetsResult,
     tmuxMissHint,
 } from "@app/claude/lib/cmux/resolve";
 import * as p from "@clack/prompts";
@@ -255,24 +256,32 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
         process.exit(1);
     }
 
-    if (opts.exact && !identifiesExactSession(result)) {
+    const acceptsExact = (found: SessionTargetsResult): boolean => {
+        if (!opts.exact || identifiesExactSession(found)) {
+            return true;
+        }
+
         process.exitCode = 1;
 
         if (opts.json) {
-            out.result(SafeJSON.stringify({ query, focused: null, exact: false, matches: targets }, null, 2));
-            return;
+            out.result(SafeJSON.stringify({ query, focused: null, exact: false, matches: found.targets }, null, 2));
+            return false;
         }
 
-        const [best] = targets;
+        const [best] = found.targets;
         out.error(pc.red(`No cmux pane is proven to run ${query.slice(0, 8)}; nothing was focused.`));
         out.printlnErr(
             pc.dim(
-                `  ${targets.length} pane(s) only show its id on screen${best ? ` (best: ${describeMatch(best)})` : ""}.`
+                `  ${found.targets.length} pane(s) only show its id on screen${best ? ` (best: ${describeMatch(best)})` : ""}.`
             )
         );
         out.printlnErr(
             pc.dim(`  Pick one anyway: ${suggestCommand("tools claude", { replaceCommand: ["cmux", "focus", query] })}`)
         );
+        return false;
+    };
+
+    if (!acceptsExact(result)) {
         return;
     }
 
@@ -312,7 +321,7 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
         // Recorded refs outlived their pane (cmux restart). Fall back to the matcher.
         log.debug({ err }, "recorded cmux refs are stale; retrying with the text matcher");
         const retry = await retryAfterStaleRefs(queryTrim, { includeSelf: opts.includeSelf, deps }, (found) =>
-            chooseTarget(found.targets, query, opts)
+            acceptsExact(found) ? chooseTarget(found.targets, query, opts) : Promise.resolve(null)
         );
 
         if (retry.status === "stopped") {
