@@ -40,6 +40,8 @@ final class SourceTextView: NSTextView {
     var onHunk: ((GitHunk, NSRect) -> Void)?
     /// The tooltips of the bars on screen, removed before the next set is added.
     private var hunkTips: [NSView.ToolTipTag] = []
+    /// AppKit keeps only a weak reference to a tooltip's owner, so the strings live here as long as their tooltips.
+    private var hunkTipOwners: [NSString] = []
 
     override func drawBackground(in rect: NSRect) {
         super.drawBackground(in: rect)
@@ -73,13 +75,16 @@ final class SourceTextView: NSTextView {
         super.resetCursorRects()
         hunkTips.forEach { removeToolTip($0) }
         hunkTips = []
+        hunkTipOwners = []
         guard onHunk != nil else { return }
         let visible = visibleRect
         for (hunk, bar) in hunkBars() {
             let target = bar.insetBy(dx: -4, dy: -2)
             guard target.intersects(visible) else { continue }
             addCursorRect(target, cursor: .pointingHand)
-            hunkTips.append(addToolTip(target, owner: Self.hunkTip(hunk.kind) as NSString, userData: nil))
+            let tip = Self.hunkTip(hunk.kind) as NSString
+            hunkTipOwners.append(tip)
+            hunkTips.append(addToolTip(target, owner: tip, userData: nil))
         }
     }
 
