@@ -322,47 +322,92 @@ export function readLastLines(path: string, { maxBytes = END_BYTES, method }: Ed
  * older than you need, and the rest of the file is never read. A line without its trailing newline (a writer in the
  * middle of it) still comes out. Throws when the file cannot be opened; `.zst` files are not supported.
  */
+export interface BackwardLineEnd {
+    reason: "eof" | "maxBytes" | "aborted";
+    position: number;
+    bytesRead: number;
+}
+
+export interface BackwardLineOptions {
+    chunkBytes?: number;
+    maxBytes?: number;
+    signal?: AbortSignal;
+    /** Absolute byte offset of the line about to be yielded. */
+    onLine?: (position: number) => void;
+}
+
 export function* readLinesBackwardSync(
     path: string,
-    { chunkBytes = 256 * 1024 }: { chunkBytes?: number } = {}
-): Generator<string> {
+    { chunkBytes = 256 * 1024, maxBytes = Number.POSITIVE_INFINITY, signal, onLine }: BackwardLineOptions = {}
+): Generator<string, BackwardLineEnd> {
+    if (!(chunkBytes > 0) || !(maxBytes >= 0)) {
+        throw new Error("Backward read requires a positive chunk size and a nonnegative byte limit");
+    }
+
     const fd = openSync(path, "r");
 
     try {
-        let position = fstatSync(fd).size;
-        // Bytes of a line that started before the chunk just read.
-        let carry = Buffer.alloc(0);
+        const fileSize = fstatSync(fd).size;
+        const start = Math.max(0, fileSize - maxBytes);
+        let position = fileSize;
+        let bytesRead = 0;
+        // Retain slices until a delimiter is reached, then join once per line.
+        let parts: Buffer[] = [];
 
-        while (position > 0) {
-            const size = Math.min(chunkBytes, position);
+        while (position > start) {
+            if (signal?.aborted) {
+                return { reason: "aborted", position, bytesRead };
+            }
+
+            const size = Math.min(chunkBytes, position - start);
             position -= size;
             const chunk = Buffer.allocUnsafe(size);
             const read = readSync(fd, chunk, 0, size, position);
-            const buffer = Buffer.concat([chunk.subarray(0, read), carry]);
-            let end = buffer.length;
+            bytesRead += read;
+            let end = read;
 
             for (
-                let newline = buffer.lastIndexOf(10, end - 1);
-                newline !== -1;
-                newline = buffer.lastIndexOf(10, end - 1)
+                let index = end > 0 ? chunk.lastIndexOf(10, end - 1) : -1;
+                index !== -1;
+                index = end > 0 ? chunk.lastIndexOf(10, end - 1) : -1
             ) {
-                if (newline + 1 < end) {
-                    yield buffer.toString("utf8", newline + 1, end);
+                if (signal?.aborted) {
+                    return { reason: "aborted", position: position + index, bytesRead };
                 }
 
-                end = newline;
-
-                if (end === 0) {
-                    break;
+                if (index + 1 < end) {
+                    parts.push(chunk.subarray(index + 1, end));
                 }
+
+                if (parts.length > 0) {
+                    const line = parts.length === 1 ? parts[0] : Buffer.concat(parts.reverse());
+                    parts = [];
+                    onLine?.(position + index + 1);
+                    yield line?.toString("utf8") ?? "";
+                }
+
+                end = index;
             }
 
-            carry = buffer.subarray(0, end);
+            if (end > 0) {
+                parts.push(chunk.subarray(0, end));
+            }
         }
 
-        if (carry.length > 0) {
-            yield carry.toString("utf8");
+        if (signal?.aborted) {
+            return { reason: "aborted", position, bytesRead };
         }
+
+        if (start > 0) {
+            return { reason: "maxBytes", position, bytesRead };
+        }
+
+        if (parts.length > 0) {
+            onLine?.(0);
+            yield Buffer.concat(parts.reverse()).toString("utf8");
+        }
+
+        return { reason: "eof", position: 0, bytesRead };
     } finally {
         closeSync(fd);
     }

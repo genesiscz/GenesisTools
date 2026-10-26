@@ -108,6 +108,41 @@ describe("readLinesBackwardSync", () => {
     });
 });
 
+describe("bounded backward reads", () => {
+    it("caps physical reads inside an oversized row and discards its partial content", () => {
+        const path = file("bounded-row.txt", `${"x".repeat(1024 * 1024)}\nnew\n`);
+        const walk = readLinesBackwardSync(path, { chunkBytes: 7, maxBytes: 64 });
+        expect(walk.next()).toMatchObject({ done: false, value: "new" });
+        expect(walk.next()).toMatchObject({
+            done: true,
+            value: { reason: "maxBytes", bytesRead: 64, position: 1024 * 1024 + 5 - 64 },
+        });
+    });
+
+    it("honors an abort before reading and between yields within one chunk", () => {
+        const path = file("abort-backward.txt", "old\nnew\n");
+        const controller = new AbortController();
+        const walk = readLinesBackwardSync(path, { signal: controller.signal });
+        expect(walk.next().value).toBe("new");
+        controller.abort();
+        expect(walk.next()).toMatchObject({ done: true, value: { reason: "aborted" } });
+        expect(readLinesBackwardSync(path, { signal: controller.signal }).next()).toMatchObject({
+            done: true,
+            value: { reason: "aborted", bytesRead: 0 },
+        });
+    });
+
+    it("reports stable absolute line offsets across appends and chunk boundaries", () => {
+        const path = file("backward-offset.txt", "old\nnew\n");
+        const offsets: number[] = [];
+        expect([...readLinesBackwardSync(path, { chunkBytes: 2, onLine: (offset) => offsets.push(offset) })]).toEqual([
+            "new",
+            "old",
+        ]);
+        expect(offsets).toEqual([4, 0]);
+    });
+});
+
 describe("readLastLines window bound", () => {
     it.each(["fs", "ffi"] as const)(
         "keeps only lines inside the last maxBytes, also one byte short of the whole file (%s)",

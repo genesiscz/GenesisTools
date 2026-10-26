@@ -34,11 +34,13 @@ provider, so a new provider is a list of members to fill in and no feature parse
 - **Members today:** `discover`, `read`, `readMetadata`, `scan`, `readRecords`, `readStatistics`, and
   `readBackward` (the newest entries, from the end back to the entry a caller's `until` accepts; added 2026-10-25
   for the decision Stop hook's chat answers). A hook or tool reaches it with `readSessionBackward({ kind,
-  transcriptPath, until })` (`src/utils/agent-sessions/session-backward.ts`).
+  transcriptPath, until })` (`src/utils/agent-sessions/session-backward.ts`). `readTurnBoundary` returns the latest
+  real prompt's stable key and optional timestamp; `readSessionTurnBoundary` reaches it from a transcript path.
+  Timestamp-free Grok prompts use their absolute byte offset as the turn key.
 - **What a feature gets is normalized**: `NativeHistoryEntry` (role, text, timestamp, tool, paths). Logic over it
   (decision answers in `src/question/lib/decisions/chat-answers.ts`, a reply's decision blocks) is provider-neutral
   and never names a JSONL field such as `"type":"assistant"`, `response_item`, `continued-in` or `chat_history`.
-- **Legacy parsers still exist** (about 20 folders read transcript rows directly: the decision hook's `finalReply`,
+- **Legacy parsers still exist** (about 20 folders read transcript rows directly:
   `src/claude/lib/usage/session-rows.ts` for `continued-in`, `src/utils/ai/transcripts/`). Do not copy them. When a
   change touches one, move the fact it reads into a reader member first.
 - **A reader that caps or skips records says so in the log.** A byte cap, a timeout or a skipped row that hides

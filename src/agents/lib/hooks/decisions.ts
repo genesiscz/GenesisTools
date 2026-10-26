@@ -1,4 +1,3 @@
-import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { type AmbiguousAnswer, type ChatAnswer, chatAnswers, userText } from "@app/question/lib/decisions/chat-answers";
 import {
     decisionQuestion,
@@ -18,7 +17,7 @@ import {
     recordChatAnswers,
     recordDelivery,
 } from "@app/question/lib/decisions/store";
-import type { BackwardRead, ReadBackwardOptions } from "@genesiscz/utils/agent-sessions/types";
+import type { BackwardRead, ReadBackwardOptions, TurnBoundary } from "@genesiscz/utils/agent-sessions/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { appendChatAnswerRun, type ChatAnswerRun, loggedUserMessage } from "./chat-answer-log";
 import type { DecisionsHookConfig } from "./config";
@@ -30,7 +29,7 @@ import { bumpContextCounts, readContextCounts, safeSessionId, setContextValues }
 export const STOP_BLOCK_COUNTER = "decisions-stop-block";
 /** The question nudge's own block counter, so it and the `❓ DECISION N` check do not spend each other's budget. */
 export const NUDGE_BLOCK_COUNTER = "decisions-nudge-block";
-/** The start (epoch ms) of the last turn the question nudge spoke in: it speaks once per turn. */
+/** The provider's stable key for the last turn the question nudge spoke in. */
 export const NUDGE_TURN_KEY = "decisions-nudge-turn";
 
 /** When the chat-answer step last read the session (epoch ms): the next read stops there. */
@@ -80,6 +79,8 @@ export interface DecisionHookDeps {
      * so the provider registry loads only then; without it the step does nothing.
      */
     readSession?: ReadSession;
+    /** Normalized turn identity, supplied by each provider reader. */
+    readTurn?: (options: { kind: string; transcriptPath: string; maxBytes: number }) => Promise<TurnBoundary | null>;
     /** The chat-answer step's state store; tests pass an in-memory one. */
     chat?: ChatAnswerState;
     /** Where each chat-answer run is logged (`chat-answers.jsonl`); tests collect them instead. */
@@ -89,7 +90,6 @@ export interface DecisionHookDeps {
     counts?: { read: (session: string) => number; bump: (session: string) => void };
     /** The question nudge's state store; tests pass an in-memory one. */
     nudge?: NudgeState;
-    readTail?: (path: string) => string;
 }
 
 export type StopHookOutput = { decision: "block"; reason: string } | { systemMessage: string };
@@ -98,86 +98,48 @@ function str(value: unknown): string | undefined {
     return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function readTail(path: string, bytes = TAIL_BYTES): string {
-    const fd = openSync(path, "r");
-
-    try {
-        const size = fstatSync(fd).size;
-        const start = Math.max(0, size - bytes);
-        const buffer = Buffer.alloc(size - start);
-        readSync(fd, buffer, 0, buffer.length, start);
-        return buffer.toString("utf8");
-    } finally {
-        closeSync(fd);
-    }
-}
-
-/** The text of one transcript line when it is an assistant reply: Claude's `assistant` rows, Codex's `message` items. */
-function assistantText(line: string): string | null {
-    let row: unknown;
-
-    try {
-        row = SafeJSON.parse(line, { strict: true });
-    } catch {
-        // The first line of a tail read starts mid-row; any other torn line is equally not a reply.
-        return null;
-    }
-
-    if (typeof row !== "object" || row === null) {
-        return null;
-    }
-
-    const record = row as { type?: unknown; message?: unknown; payload?: unknown };
-    const message = (record.type === "assistant" ? record.message : record.payload) as
-        | { role?: unknown; type?: unknown; content?: unknown }
-        | undefined;
-
-    if (!message || (record.type !== "assistant" && message.role !== "assistant")) {
-        return null;
-    }
-
-    const content = Array.isArray(message.content) ? message.content : [];
-    const texts = content
-        .map((block: { type?: unknown; text?: unknown }) =>
-            block.type === "text" || block.type === "output_text" ? str(block.text) : undefined
-        )
-        .filter((text): text is string => Boolean(text));
-
-    return texts.length > 0 ? texts.join("\n") : null;
-}
-
-/**
- * The reply this Stop is about. Codex (and newer Claude builds) hand it over as
- * `last_assistant_message`; otherwise it is the last assistant text in the transcript.
- */
-export function finalReply(payload: HookPayload, read: (path: string) => string = readTail): string {
+/** The supplied final reply, else the latest assistant row through the required provider reader. */
+export async function finalReply(payload: HookPayload, read: ReadSession | undefined): Promise<string> {
     const given = str(payload.raw.last_assistant_message) ?? str(payload.raw.lastAssistantMessage);
 
     if (given) {
         return given;
     }
 
-    const transcript = str(payload.raw.transcript_path) ?? str(payload.raw.transcriptPath);
+    const transcriptPath = str(payload.raw.transcript_path) ?? str(payload.raw.transcriptPath);
 
-    if (!transcript) {
+    if (!transcriptPath) {
         return "";
     }
 
     try {
-        const lines = read(transcript).split("\n");
+        const readSession =
+            read ?? (await import("@genesiscz/utils/agent-sessions/session-backward")).readSessionBackward;
+        let replyLine: number | undefined;
+        const result = await readSession({
+            kind: payload.harness,
+            transcriptPath,
+            maxBytes: TAIL_BYTES,
+            until: (entry) => {
+                if (replyLine !== undefined && entry.line !== replyLine) {
+                    return true;
+                }
 
-        for (let index = lines.length - 1; index >= 0; index--) {
-            const text = assistantText(lines[index] ?? "");
+                if (entry.role === "assistant") {
+                    replyLine = entry.line;
+                }
 
-            if (text) {
-                return text;
-            }
-        }
+                return false;
+            },
+        });
+        return result.entries
+            .filter((entry) => entry.role === "assistant" && entry.line === replyLine)
+            .map((entry) => entry.text)
+            .join("\n");
     } catch (err) {
-        hookDiag("Could not read the transcript for the final reply", { err, transcript });
+        hookDiag("Could not read the transcript for the final reply", { err, transcript: transcriptPath });
+        return "";
     }
-
-    return "";
 }
 
 const fileCounts = {
@@ -302,6 +264,7 @@ async function runChatAnswers(
             events: deps.log.events,
             answers: answers.map(({ row, item }) => ({
                 id: row.id,
+                expectedRevision: row.revision ?? 1,
                 ...(item.option ? { option: item.option } : {}),
                 answer: item.answer,
                 evidence: item.evidence,
@@ -318,29 +281,26 @@ async function runChatAnswers(
     const toCheck = unclear.filter(({ row }) => !state.sentBack(session, row.id));
     const users = read.entries.filter((entry) => entry.role === "user" && userText(entry) !== undefined);
 
-    // Every run that read a user message is kept, a miss included: `tools agents hooks chat-answers --misses` lists the
-    // messages that matched nothing, so an answer the finder should have taken is found later.
-    if (users.length > 0 || found.unambiguous.length > 0 || found.ambiguous.length > 0) {
-        (deps.appendRun ?? appendChatAnswerRun)({
-            at: new Date(now).toISOString(),
-            harness: payload.harness,
-            session,
-            transcript: transcriptPath,
-            mode: config.chatAnswers,
-            open: open.map((row) => ({ id: row.id, number: row.number, askedAt: askedAt(row) })),
-            read: {
-                ...(from > 0 ? { from: new Date(from).toISOString() } : {}),
-                found: read.found,
-                entries: read.entries.length,
-                issues: read.issues.length,
-            },
-            users: users.map((entry) => loggedUserMessage(entry)),
-            unambiguous: found.unambiguous,
-            ambiguous: found.ambiguous,
-            recorded: recorded.map((row) => row.id),
-            sentBack: [...toRecord, ...toCheck].map(({ row }) => row.id),
-        });
-    }
+    // Empty reads are runs too: their boundary and issues explain why no answer was recorded.
+    (deps.appendRun ?? appendChatAnswerRun)({
+        at: new Date(now).toISOString(),
+        harness: payload.harness,
+        session,
+        transcript: transcriptPath,
+        mode: config.chatAnswers,
+        open: open.map((row) => ({ id: row.id, number: row.number, askedAt: askedAt(row) })),
+        read: {
+            ...(from > 0 ? { from: new Date(from).toISOString() } : {}),
+            found: read.found,
+            entries: read.entries.length,
+            issues: read.issues.length,
+        },
+        users: users.map((entry) => loggedUserMessage(entry)),
+        unambiguous: found.unambiguous,
+        ambiguous: found.ambiguous,
+        recorded: recorded.map((row) => row.id),
+        sentBack: [...toRecord, ...toCheck].map(({ row }) => row.id),
+    });
 
     if (toRecord.length === 0 && toCheck.length === 0) {
         return recordedNote ? { systemMessage: recordedNote } : null;
@@ -378,93 +338,6 @@ function mergedStop(outputs: (StopHookOutput | null)[]): StopHookOutput | null {
         : { systemMessage: texts.join(" ") };
 }
 
-/**
- * The time (epoch ms) of a transcript line when it is a prompt that opens a turn, else null. Claude: a `user` row
- * that is not `isMeta` (Stop hook feedback and injected skill text are meta) and carries text, not only tool
- * results; a background task's notification counts, since it starts a turn too. Codex: a `user` message item or a
- * `user_message` event. Both write a top-level ISO `timestamp`.
- */
-function promptTime(line: string): number | null {
-    if (!line.includes('"type":"user"') && !line.includes('"role":"user"') && !line.includes('"user_message"')) {
-        return null;
-    }
-
-    let row: unknown;
-
-    try {
-        row = SafeJSON.parse(line, { strict: true });
-    } catch {
-        // The first line of a tail read starts mid-row; it is not a prompt either way.
-        return null;
-    }
-
-    if (typeof row !== "object" || row === null) {
-        return null;
-    }
-
-    const record = row as {
-        type?: unknown;
-        isMeta?: unknown;
-        isSidechain?: unknown;
-        timestamp?: unknown;
-        message?: { content?: unknown };
-        payload?: { type?: unknown; role?: unknown };
-    };
-    const at = typeof record.timestamp === "string" ? Date.parse(record.timestamp) : Number.NaN;
-
-    if (Number.isNaN(at)) {
-        return null;
-    }
-
-    if (record.type === "user") {
-        const content = record.message?.content;
-        const hasText =
-            typeof content === "string"
-                ? content.length > 0
-                : Array.isArray(content) && content.some((block: { type?: unknown }) => block?.type === "text");
-
-        return hasText && record.isMeta !== true && record.isSidechain !== true ? at : null;
-    }
-
-    const payload = record.payload;
-    const codexPrompt =
-        (record.type === "response_item" && payload?.type === "message" && payload.role === "user") ||
-        (record.type === "event_msg" && payload?.type === "user_message");
-
-    return codexPrompt ? at : null;
-}
-
-/**
- * When the turn this Stop ends began: the time of the last prompt in the transcript (`promptTime`), epoch ms. Null
- * when the payload names no transcript, it cannot be read, or its last `PROMPT_TAIL_BYTES` hold no prompt.
- */
-export function turnStartedAt(
-    payload: HookPayload,
-    read: (path: string) => string = (path) => readTail(path, PROMPT_TAIL_BYTES)
-): number | null {
-    const transcript = str(payload.raw.transcript_path) ?? str(payload.raw.transcriptPath);
-
-    if (!transcript) {
-        return null;
-    }
-
-    try {
-        const lines = read(transcript).split("\n");
-
-        for (let index = lines.length - 1; index >= 0; index--) {
-            const at = promptTime(lines[index] ?? "");
-
-            if (at !== null) {
-                return at;
-            }
-        }
-    } catch (err) {
-        hookDiag("Could not read the transcript for the turn's prompt", { err, transcript });
-    }
-
-    return null;
-}
-
 /** Whether the session posted a decision at or after `since`: a new post, or a new version of one. */
 function decisionLoggedSince(file: string, session: string, since: number): boolean {
     return readDecisions(file).some(
@@ -481,7 +354,7 @@ function decisionLoggedSince(file: string, session: string, since: number): bool
  * (`stop_hook_active`, sent by Claude Code), and so does any later Stop of a turn it already spoke in, which covers a
  * harness that does not send that flag.
  */
-function runQuestionNudge({
+async function runQuestionNudge({
     payload,
     session,
     reply,
@@ -493,14 +366,22 @@ function runQuestionNudge({
     reply: string;
     config: DecisionsHookConfig;
     deps: DecisionHookDeps;
-}): StopHookOutput | null {
+}): Promise<StopHookOutput | null> {
     const question = decisionQuestion(reply);
 
     if (!question || payload.raw.stop_hook_active === true || payload.raw.stopHookActive === true) {
         return null;
     }
 
-    const turn = turnStartedAt(payload, deps.readTail);
+    const transcriptPath = str(payload.raw.transcript_path) ?? str(payload.raw.transcriptPath);
+
+    if (!transcriptPath) {
+        return null;
+    }
+
+    const readTurn =
+        deps.readTurn ?? (await import("@genesiscz/utils/agent-sessions/session-backward")).readSessionTurnBoundary;
+    const turn = await readTurn({ kind: payload.harness, transcriptPath, maxBytes: PROMPT_TAIL_BYTES });
 
     if (turn === null) {
         hookDiag("The question nudge found no prompt in the transcript, so it stays quiet", { session });
@@ -509,7 +390,7 @@ function runQuestionNudge({
 
     const state = deps.nudge ?? fileNudgeState;
 
-    if (state.lastTurn(session) === turn) {
+    if (state.lastTurn(session) === turn.key) {
         return null;
     }
 
@@ -534,16 +415,16 @@ function runQuestionNudge({
             blocksUsed: state.blocks(session),
         },
         question,
-        decisionLoggedSince(deps.log.file, session, turn)
+        turn.timestamp !== undefined && decisionLoggedSince(deps.log.file, session, Date.parse(turn.timestamp))
     );
 
     if (verdict.action === "block" && verdict.reason) {
-        state.record(session, turn, true);
+        state.record(session, turn.key, true);
         return { decision: "block", reason: verdict.reason };
     }
 
     if (verdict.action === "warn" && verdict.reason) {
-        state.record(session, turn, false);
+        state.record(session, turn.key, false);
         return { systemMessage: verdict.reason };
     }
 
@@ -595,7 +476,7 @@ async function runReplyChecks(
         return null;
     }
 
-    const reply = finalReply(payload, deps.readTail);
+    const reply = await finalReply(payload, deps.readSession);
     const mentioned = mentionedDecisions(reply);
 
     if (mentioned.length === 0) {

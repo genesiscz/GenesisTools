@@ -764,3 +764,27 @@ test("readBackward reads the chat history from its end, bounded by content since
     expect(read.entries.map((entry) => entry.role)).toEqual(["assistant", "user"]);
     expect(read.entries[1]?.text).toContain("3 b)");
 });
+
+test("Grok turn boundaries stay stable across replies and distinguish identical new prompts", async () => {
+    const home = mkdtempSync(join(tmpdir(), "gt-grok-turn-"));
+    const chat = join(home, "chat_history.jsonl");
+    const source: NativeSessionSource<"grok"> = {
+        kind: "grok",
+        root: home,
+        sourceHome: home,
+        filePath: chat,
+        dataPaths: [chat],
+        metadataPaths: [],
+    };
+    const prompt = line({ type: "user", content: [{ type: "text", text: "<user_query>go</user_query>" }] });
+    const reply = line({ type: "assistant", content: [{ type: "text", text: "done" }] });
+    writeFileSync(chat, prompt);
+    const reader = createGrokHistoryOperations();
+    const first = await reader.readTurnBoundary(source, {});
+    writeFileSync(chat, prompt + reply);
+    expect(await reader.readTurnBoundary(source, {})).toEqual(first);
+    writeFileSync(chat, prompt + reply + prompt);
+    const next = await reader.readTurnBoundary(source, {});
+    expect(next).not.toEqual(first);
+    expect(next?.timestamp).toBeUndefined();
+});

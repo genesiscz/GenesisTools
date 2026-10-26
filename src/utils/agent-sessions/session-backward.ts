@@ -1,5 +1,6 @@
+import { logger } from "@genesiscz/utils/logger";
 import { resolveHistoryProvider } from "./provider";
-import type { BackwardRead, ReadBackwardOptions } from "./types";
+import type { BackwardRead, ReadBackwardOptions, TurnBoundary } from "./types";
 
 /**
  * A session's newest entries, from the transcript a hook names (`transcript_path`), through its provider's reader
@@ -30,4 +31,28 @@ export async function readSessionBackward({
     }
 
     return reader.readBackward(source, options);
+}
+
+/** The provider's normalized identity and optional timestamp of the prompt that opened the current turn. */
+export async function readSessionTurnBoundary({
+    kind,
+    transcriptPath,
+    ...options
+}: Omit<ReadBackwardOptions, "until"> & { kind: string; transcriptPath: string }): Promise<TurnBoundary | null> {
+    const { reader } = resolveHistoryProvider(kind);
+    const found = await reader.discover(reader.roots(), { filePaths: [transcriptPath], signal: options.signal });
+    const source = found.sources.find(
+        (candidate) => candidate.filePath === transcriptPath || candidate.dataPaths.includes(transcriptPath)
+    );
+
+    for (const issue of found.issues) {
+        logger.warn(issue, "Turn boundary discovery issue");
+    }
+
+    if (!source) {
+        logger.warn({ path: transcriptPath, kind }, "No session source for turn boundary");
+        return null;
+    }
+
+    return reader.readTurnBoundary(source, options);
 }

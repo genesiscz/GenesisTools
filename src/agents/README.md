@@ -168,9 +168,10 @@ Every writing command is a **dry run by default**; `--write` applies it. The one
 `decisions.questionNudge` (`off`, the default; `warn`; `block`) catches a final reply that asks the user to decide
 something that never reached the widget inbox. It fires when the reply's own prose (fenced code, inline code and `>`
 quoted lines left out) holds a cue, the word `decision`, `decisions`, `decide` or `choose` in any case or `❓`, and a
-sentence that ends in `?`, while this session posted no decision since the turn's prompt. The prompt's time is the
-last transcript row that opened a turn: a Claude `user` row that is not `isMeta` and carries text, or a Codex user
-message. `block` sends the agent back once per turn, quoting the question, to post it with `question_post` as type
+sentence that ends in `?`, while this session posted no decision since the turn's prompt. The provider reader's
+`readTurnBoundary` identifies that prompt: its timestamp for Claude and Codex, or its byte offset for timestamp-free
+Grok. Grok can check explicitly named decisions against the log, but cannot time-match an unnamed post to a prompt.
+`block` sends the agent back once per turn, quoting the question, to post it with `question_post` as type
 `decision` or to say in one line that it is not a decision for the user. A second Stop of the turn always passes
 (Claude's `stop_hook_active`, or the turn it already spoke in), and past `decisions.maxBlocksPerSession` blocks it
 only warns. A reply that names `❓ DECISION N` stays with `decisions.stopHook`. It needs only the Stop entry, which
@@ -188,13 +189,15 @@ tools agents hooks install --write   # only when doctor says the Stop hook is no
 or `;`, or a bare `b)` right after a reply that asked one decision). At the end of each turn the Stop hook reads the
 transcript from its end back to the oldest open ask, or to its previous read when that is later, through the session's
 provider (`NativeSessionReader.readBackward`, so Claude, Codex and Grok each read their own format), and looks only at
-user messages written after each decision was asked. `record` stores an unambiguous answer as `acknowledged` with
+user messages written after each decision was asked. Fenced code, inline code, indented examples and block quotes
+are excluded. A bare option applies only to the first real user response to the immediately preceding assistant
+reply. `record` checks the matched decision revision under the store lock and stores an unambiguous answer as `acknowledged` with
 `answeredVia: "automatic_heuristic"` and the user's line as a comment, and says so; `remind` stores nothing and sends
 the agent back to record it. An unclear one (two different answers, a letter the decision does not have, `D14` named
 without an option) sends the agent back once per decision, quoting the line. A read that ends before the oldest open
 ask is logged to the hooks log. It needs only the Stop entry.
 
-Every run that read a user message is logged to `~/.genesis-tools/agents/chat-answers.jsonl`: the open decisions, each
+Every completed chat-answer read, including an empty read, is logged to `~/.genesis-tools/agents/chat-answers.jsonl`: the open decisions, each
 user message read (its start, plus any later line that names a decision or opens with an option letter), and what came
 of it. `tools agents hooks chat-answers --misses` lists the messages that matched nothing while decisions were open, so
 an answer the finder should have taken is found in a minute; `--session <id>` and `--json` narrow and export it.

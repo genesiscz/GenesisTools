@@ -238,6 +238,7 @@ function reader(overrides: Partial<Reader> = {}): Reader {
         kind: "claude",
         parserVersion: "test",
         readBackward: noBackwardRead,
+        readTurnBoundary: async () => null,
         roots: () => [root],
         discover: async () => ({ sources: [], issues: [], completeRoots: [root] }),
         read: async () => {

@@ -48,6 +48,7 @@ test("a registered fourth provider supports listing, content, detail and unavail
             kind: "fixture",
             parserVersion: "1",
             readBackward: noBackwardRead,
+            readTurnBoundary: async () => null,
             roots: () => [root],
             discover: async (roots, options) => {
                 const discovered = await discoverClaudeHistorySources(roots, options);

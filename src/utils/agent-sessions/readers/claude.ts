@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import { basename, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
-import { readJsonlBackward } from "@genesiscz/utils/agent-sessions/read-backward";
+import { readJsonlBackward, readJsonlTurnBoundary } from "@genesiscz/utils/agent-sessions/read-backward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
@@ -22,6 +22,7 @@ import type {
     NativeSessionSource,
     NativeSourceIssue,
     ReadBackwardOptions,
+    TurnBoundary,
 } from "../types";
 import { claudeNativeId, claudeProjectDirectory, claudeProjectName, isClaudeSubagentPath } from "./claude-paths";
 
@@ -619,7 +620,12 @@ async function readClaudeMetadataUncounted(
 }
 
 export type ClaudeHistoryOperations = Pick<NativeSessionReader<"claude">, "parserVersion"> &
-    Required<Pick<NativeSessionReader<"claude">, "readMetadata" | "scan" | "readRecords" | "readBackward">>;
+    Required<
+        Pick<
+            NativeSessionReader<"claude">,
+            "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary"
+        >
+    >;
 
 /**
  * The session JSONL from its end. A tool result's name comes from its call, an earlier row, so walking back from a
@@ -634,7 +640,33 @@ async function readClaudeBackward(
     return readJsonlBackward({
         ...options,
         path: source.filePath,
-        rowEntries: (row, line) => recordEntries(asRecord(row), line, tools),
+        rowEntries: (value, line) => {
+            const row = asRecord(value);
+
+            // Meta and sidechain user rows are harness text, never an answer from this session's user.
+            if (row.type === "user" && (row.isMeta === true || row.isSidechain === true)) {
+                return [];
+            }
+
+            return recordEntries(row, line, tools);
+        },
+    });
+}
+
+async function readClaudeTurnBoundary(
+    source: NativeSessionSource<"claude">,
+    options: Omit<ReadBackwardOptions, "until">
+): Promise<TurnBoundary | null> {
+    const tools: ToolContext = { names: new Map(), paths: new Map() };
+    return readJsonlTurnBoundary({
+        ...options,
+        path: source.filePath,
+        rowEntries: (value, line) => {
+            const row = asRecord(value);
+            return row.type === "user" && row.isMeta !== true && row.isSidechain !== true
+                ? recordEntries(row, line, tools)
+                : [];
+        },
     });
 }
 
@@ -645,5 +677,6 @@ export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
         scan: scanClaudeRecords,
         readRecords: readClaudeRecords,
         readBackward: readClaudeBackward,
+        readTurnBoundary: readClaudeTurnBoundary,
     };
 }

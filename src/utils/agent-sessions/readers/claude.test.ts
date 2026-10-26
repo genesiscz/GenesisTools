@@ -1,8 +1,9 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { logger } from "@genesiscz/utils/logger";
 import { claudeHistoryReader } from "../compact-readers";
 import { searchHistorySource } from "../search-source";
 import type { NativeSessionSource } from "../types";
@@ -628,4 +629,63 @@ test("readBackward walks from the end back to the entry `until` accepts, and ret
 
     expect(none.found).toBe(false);
     expect(none.entries.map((entry) => entry.text)[0]).toBe("start");
+});
+
+test("readTurnBoundary ignores Claude meta, sidechain and tool-result rows", async () => {
+    const { path, source } = fixture();
+    const timestamp = "2026-09-01T11:00:00.000Z";
+    writeFileSync(
+        path,
+        jsonl(
+            { type: "user", timestamp, message: { content: "start" } },
+            {
+                type: "user",
+                timestamp: "2026-09-01T11:01:00.000Z",
+                message: { content: [{ type: "tool_result", content: "ok" }] },
+            },
+            { type: "user", isMeta: true, message: { content: "hook feedback" } },
+            { type: "user", isSidechain: true, message: { content: "worker prompt" } }
+        )
+    );
+    expect(await createClaudeHistoryOperations().readTurnBoundary(source, {})).toEqual({
+        key: Date.parse(timestamp),
+        timestamp,
+    });
+});
+
+test("backward read logs skipped rows even on success, and distinguishes byte caps from EOF", async () => {
+    const { path, source } = fixture();
+    writeFileSync(path, `${jsonl({ type: "user", message: { content: "boundary" } })}{torn\n`);
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+
+    try {
+        const read = await createClaudeHistoryOperations().readBackward(source, { until: () => true });
+        expect(read.found).toBe(true);
+        expect(read.issues).toMatchObject([{ path, message: expect.stringContaining("Unreadable row") }]);
+        expect(warn).toHaveBeenCalled();
+        warn.mockClear();
+        const capped = await createClaudeHistoryOperations().readBackward(source, { until: () => false, maxBytes: 2 });
+        expect(capped.issues).toMatchObject([{ path, message: expect.stringContaining("maxBytes") }]);
+        expect(warn).toHaveBeenCalledWith(
+            expect.objectContaining({ path, maxBytes: 2, position: expect.any(Number) }),
+            expect.stringContaining("maxBytes")
+        );
+    } finally {
+        warn.mockRestore();
+    }
+});
+
+test("backward conversation reads exclude meta and sidechain answers", async () => {
+    const { path, source } = fixture();
+    writeFileSync(
+        path,
+        jsonl(
+            { type: "assistant", message: { content: "❓ DECISION 1" } },
+            { type: "user", isMeta: true, message: { content: "D1 b)" } },
+            { type: "user", isSidechain: true, message: { content: "D1 b)" } },
+            { type: "user", message: { content: "D1 a)" } }
+        )
+    );
+    const read = await createClaudeHistoryOperations().readBackward(source, { until: () => false });
+    expect(read.entries.filter((entry) => entry.role === "user").map((entry) => entry.text)).toEqual(["D1 a)"]);
 });

@@ -49,6 +49,7 @@ import {
     moveDecisions,
     postDecisions,
     readDecisions,
+    recordChatAnswers,
     updateDecision,
     updateDecisions,
     updateTodo,
@@ -2594,6 +2595,33 @@ describe("Widget Tasks use the canonical TODO ledger", () => {
     });
 });
 
+test("chat answers cannot acknowledge a revision that replaced the matched question", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "decisions-chat-revision-"));
+    const file = join(dir, "decisions.jsonl");
+    const events = join(dir, "events.jsonl");
+    const [original] = await postDecisions(file, events, {
+        sessionId: "s",
+        decisions: [{ prompt: "Keep?", options: ["yes", "no"] }],
+    });
+    const answer = {
+        id: original.id,
+        expectedRevision: original.revision ?? 1,
+        option: "b",
+        answer: "",
+        evidence: { text: "D1 b)" },
+    };
+    const [revised] = await postDecisions(file, events, {
+        sessionId: "s",
+        decisions: [{ prompt: "Ship?", options: ["later", "now"], supersedes: original.id }],
+    });
+
+    expect(await recordChatAnswers({ file, events, answers: [answer] })).toEqual([]);
+    expect(readDecisions(file)[0]).toEqual(revised);
+    expect(
+        await recordChatAnswers({ file, events, answers: [{ ...answer, expectedRevision: revised.revision ?? 1 }] })
+    ).toMatchObject([{ id: original.id, state: "acknowledged", option: "b", answeredVia: "automatic_heuristic" }]);
+});
+
 describe("chatAnswers", () => {
     const at = (minute: number) => `2026-10-25T16:${String(minute).padStart(2, "0")}:00.000Z`;
     const entry = (role: NativeHistoryEntry["role"], text: string, minute?: number): NativeHistoryEntry => ({
@@ -2667,6 +2695,43 @@ describe("chatAnswers", () => {
 
         expect(one.unambiguous).toMatchObject([{ number: 7, option: "b", answer: "no, drop it" }]);
         expect(several).toEqual({ unambiguous: [], ambiguous: [] });
+    });
+
+    test("ignores fenced, quoted, inline and indented examples while keeping actual answers", () => {
+        for (const example of [
+            "Why did this example fail?\n```text\nD14 b)\n```",
+            "Why did this example fail?\n~~~~text\nD14 b)\n~~~~",
+            "> example, D14 b)",
+            "`D14 b)`",
+            "    D14 b)",
+            "Why did this fail?\n```\nD14 b)\n~~~\nD14 a)\n```",
+        ]) {
+            const entries = [entry("assistant", "❓ DECISION 14", 1), entry("user", example, 2)];
+            expect(chatAnswers(entries, [{ number: 14, letters: two, askedAt: at(1) }])).toEqual({
+                unambiguous: [],
+                ambiguous: [],
+            });
+            expect(
+                chatAnswers(
+                    [...entries, entry("user", "D14 a) keep it", 3)],
+                    [{ number: 14, letters: two, askedAt: at(1) }]
+                ).unambiguous
+            ).toMatchObject([{ number: 14, option: "a" }]);
+        }
+    });
+
+    test("expires a bare option after an unrelated assistant reply or a real user response", () => {
+        for (const intervening of [
+            [entry("assistant", "Choose a color: a) red or b) blue", 2)],
+            [entry("user", "Tell me about the cache first", 2)],
+        ]) {
+            expect(
+                chatAnswers(
+                    [entry("assistant", "❓ DECISION 7 — Keep?", 1), ...intervening, entry("user", "b)", 3)],
+                    [{ number: 7, letters: two, askedAt: at(1) }]
+                )
+            ).toEqual({ unambiguous: [], ambiguous: [] });
+        }
     });
 
     test("counts from the first ask when the entries carry no time (Grok), and takes own words", () => {

@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { boundHistoryText, HISTORY_METADATA_LIMITS } from "@genesiscz/utils/agent-sessions/metadata";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
-import { readJsonlBackward } from "@genesiscz/utils/agent-sessions/read-backward";
+import { readJsonlBackward, readJsonlTurnBoundary } from "@genesiscz/utils/agent-sessions/read-backward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
@@ -21,6 +21,7 @@ import type {
     NativeSessionSource,
     NativeSourceIssue,
     ReadBackwardOptions,
+    TurnBoundary,
 } from "../types";
 
 const USER_QUERY_RE = /<user_query>\s*([\s\S]*?)\s*<\/user_query>/i;
@@ -709,7 +710,9 @@ async function readGrokMetadataUncounted(
 }
 
 export type GrokHistoryOperations = Pick<NativeSessionReader<"grok">, "parserVersion"> &
-    Required<Pick<NativeSessionReader<"grok">, "readMetadata" | "scan" | "readRecords" | "readBackward">>;
+    Required<
+        Pick<NativeSessionReader<"grok">, "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary">
+    >;
 
 /**
  * The chat history JSONL from its end. Its rows carry no timestamps, so a caller bounds the walk by content (a
@@ -734,6 +737,26 @@ async function readGrokBackward(
     });
 }
 
+async function readGrokTurnBoundary(
+    source: NativeSessionSource<"grok">,
+    options: Omit<ReadBackwardOptions, "until">
+): Promise<TurnBoundary | null> {
+    const chat = preferredChatPath(source);
+
+    if (!chat) {
+        logger.warn({ path: source.filePath }, "Turn boundary unavailable: chat source missing");
+        return null;
+    }
+
+    // Grok has no prompt timestamps. The shared reader retains the prompt's byte offset as its turn key.
+    const tools: ToolContext = { names: new Map(), paths: new Map() };
+    return readJsonlTurnBoundary({
+        ...options,
+        path: chat,
+        rowEntries: (row, line) => recordEntries(asRecord(row), line, tools),
+    });
+}
+
 export function createGrokHistoryOperations(): GrokHistoryOperations {
     return {
         // 5: `lastTimestamp` is capped at the last turn-file write. The bump makes every indexed session read once
@@ -744,5 +767,6 @@ export function createGrokHistoryOperations(): GrokHistoryOperations {
         scan: scanGrokRecords,
         readRecords: readGrokRecords,
         readBackward: readGrokBackward,
+        readTurnBoundary: readGrokTurnBoundary,
     };
 }

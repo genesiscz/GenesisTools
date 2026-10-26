@@ -252,6 +252,12 @@ export interface ReadBackwardOptions {
     signal?: AbortSignal;
 }
 
+export interface TurnBoundary {
+    /** Stable within an append-only transcript, including providers without prompt timestamps. */
+    key: number;
+    timestamp?: string;
+}
+
 export interface BackwardRead {
     /** In conversation order, oldest first. `line` counts back from the end of the file: -1 is the last line. */
     entries: NativeHistoryEntry[];
@@ -271,6 +277,10 @@ export interface NativeSessionReader<Kind extends string = AgentKind> {
      * accepts: the conversation after a known point (a decision's ask) without reading the whole file.
      */
     readBackward(source: NativeSessionSource<Kind>, options: ReadBackwardOptions): Promise<BackwardRead>;
+    readTurnBoundary(
+        source: NativeSessionSource<Kind>,
+        options: Omit<ReadBackwardOptions, "until">
+    ): Promise<TurnBoundary | null>;
     importSession?(
         session: AgentSession<Kind>,
         context: NativeSessionImportContext

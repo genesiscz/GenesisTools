@@ -1048,6 +1048,8 @@ function applyUpdates({
 /** An answer the decision Stop hook read from the chat (`chatAnswers`), to record without the agent. */
 export interface ChatAnswerRecord {
     id: string;
+    /** The revision whose prompt and options the transcript answer was matched against. */
+    expectedRevision: number;
     option?: string;
     /** The user's words beside the letters, or the whole answer when it names no letter. */
     answer: string;
@@ -1089,6 +1091,7 @@ export async function recordChatAnswers({
                 updates: [
                     {
                         id: item.id,
+                        expectedRevision: item.expectedRevision,
                         state: "acknowledged",
                         ...(item.option ? { option: item.option } : {}),
                         ...(item.answer ? { answer: item.answer } : {}),

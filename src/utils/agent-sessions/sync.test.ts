@@ -59,6 +59,7 @@ function createFixture(): {
         kind: "fixture",
         parserVersion: "fixture-v1",
         readBackward: noBackwardRead,
+        readTurnBoundary: async () => null,
         roots: () => [root],
         discover: async () => ({
             sources: state.sources,
@@ -409,6 +410,7 @@ test("selective refresh reuses full discovery, retains unselected sources, and l
         kind: "fixture",
         parserVersion: "fixture-v1",
         readBackward: noBackwardRead,
+        readTurnBoundary: async () => null,
         roots: () => [root],
         discover: async () => discovery,
         readMetadata: async (source): Promise<HistoryMetadataRead> => {

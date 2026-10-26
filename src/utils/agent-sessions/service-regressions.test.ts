@@ -126,6 +126,7 @@ function fixtureReader(options: {
         kind: "fixture",
         parserVersion: "fixture-v1",
         readBackward: noBackwardRead,
+        readTurnBoundary: async () => null,
         roots: () => [...new Set(options.fixtures.map((fixture) => fixture.source.root))],
         discover: async () => ({
             sources: options.fixtures.map((fixture) => fixture.source),

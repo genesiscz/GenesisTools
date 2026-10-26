@@ -1341,3 +1341,24 @@ test("readBackward reads the rollout from its end back to the entry `until` acce
         ["user", "D2 a)"],
     ]);
 });
+
+test("readTurnBoundary normalizes Codex response items and user-message events", async () => {
+    for (const row of [
+        {
+            type: "response_item",
+            payload: { type: "message", role: "user", content: [{ type: "input_text", text: "go" }] },
+        },
+        { type: "event_msg", payload: { type: "user_message", message: "go" } },
+    ]) {
+        const timestamp = "2026-09-01T11:00:00.000Z";
+        const source = legacyFixture([
+            { type: "session_meta", payload: { id: CHILD_ID, cwd: "/projects/child", history_mode: "legacy" } },
+            { ...row, timestamp },
+            { type: "response_item", payload: { type: "function_call_output", output: "ok" } },
+        ]);
+        expect(await createCodexHistoryOperations().readTurnBoundary(source, {})).toEqual({
+            key: Date.parse(timestamp),
+            timestamp,
+        });
+    }
+});

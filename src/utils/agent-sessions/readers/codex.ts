@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { stat } from "node:fs/promises";
 import { sep } from "node:path";
 import { flattenToolInput } from "@genesiscz/utils/agent-sessions/native-content";
-import { readJsonlBackward } from "@genesiscz/utils/agent-sessions/read-backward";
+import { readJsonlBackward, readJsonlTurnBoundary } from "@genesiscz/utils/agent-sessions/read-backward";
 import type { JsonRecord, JsonValue } from "@genesiscz/utils/agent-sessions/source-scan";
 import { asRecord, blocksMetadata, scanJsonlRecords } from "@genesiscz/utils/agent-sessions/source-scan";
 import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
@@ -25,6 +25,7 @@ import type {
     NativeSessionSource,
     NativeSourceIssue,
     ReadBackwardOptions,
+    TurnBoundary,
 } from "../types";
 import {
     type CodexProjectionIndex,
@@ -1350,7 +1351,12 @@ async function readCodexMetadataUncounted(
 }
 
 export type CodexHistoryOperations = Pick<NativeSessionReader<"codex">, "parserVersion"> &
-    Required<Pick<NativeSessionReader<"codex">, "readMetadata" | "scan" | "readRecords" | "readBackward">>;
+    Required<
+        Pick<
+            NativeSessionReader<"codex">,
+            "readMetadata" | "scan" | "readRecords" | "readBackward" | "readTurnBoundary"
+        >
+    >;
 
 /**
  * The rollout JSONL from its end. It holds every response item in both history modes (a paginated thread's projection
@@ -1370,6 +1376,39 @@ async function readCodexBackward(
     });
 }
 
+async function readCodexTurnBoundary(
+    source: NativeSessionSource<"codex">,
+    options: Omit<ReadBackwardOptions, "until">
+): Promise<TurnBoundary | null> {
+    const tools: ToolContext = { names: new Map(), paths: new Map() };
+    return readJsonlTurnBoundary({
+        ...options,
+        path: source.filePath,
+        rowEntries: (value, line) => {
+            const row = asRecord(value);
+            const payload = asRecord(row.payload);
+
+            if (row.type === "event_msg" && payload.type === "user_message") {
+                const text = asText(payload.message);
+                return text
+                    ? [
+                          {
+                              role: "user",
+                              text,
+                              line,
+                              paths: [],
+                              commits: [],
+                              timestamp: asText(row.timestamp) || undefined,
+                          },
+                      ]
+                    : [];
+            }
+
+            return legacyEntries(row, line, tools).filter((entry) => entry.role === "user");
+        },
+    });
+}
+
 export function createCodexHistoryOperations(): CodexHistoryOperations {
     return {
         parserVersion: "7",
@@ -1377,5 +1416,6 @@ export function createCodexHistoryOperations(): CodexHistoryOperations {
         scan: scanCodexRecords,
         readRecords: readCodexRecords,
         readBackward: readCodexBackward,
+        readTurnBoundary: readCodexTurnBoundary,
     };
 }

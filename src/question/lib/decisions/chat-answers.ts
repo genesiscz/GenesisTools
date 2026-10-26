@@ -68,7 +68,7 @@ const NEXT_ANSWER = /\s*[,;]\s*(?=(?:D|DECISION\s*)?#?\d+\s*[:.)\-–—]?\s*\(?
 const LEAD = /^\s*[-–—:,]\s*/;
 
 function asksIn(text: string): number[] {
-    return [...text.matchAll(ASK)].map((match) => Number(match[1]));
+    return [...answerLines(text).join("\n").matchAll(ASK)].map((match) => Number(match[1]));
 }
 
 function found(letters: string, rest: string, allowed: readonly string[]): Found {
@@ -131,7 +131,34 @@ export function userText(entry: NativeHistoryEntry): string | undefined {
         return undefined;
     }
 
-    return text;
+    return entry.text.trimEnd();
+}
+
+/** Only prose outside code and block quotes can be an instruction to record an answer. */
+function answerLines(text: string): string[] {
+    let fence: { marker: string; length: number } | undefined;
+
+    return text.split("\n").map((line) => {
+        if (/^\s*>/.test(line)) {
+            return "";
+        }
+
+        const marker = /^\s{0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+
+        if (marker) {
+            const run = marker[1] ?? "";
+
+            if (!fence) {
+                fence = { marker: run[0] ?? "", length: run.length };
+            } else if (run[0] === fence.marker && run.length >= fence.length && !marker[2]?.trim()) {
+                fence = undefined;
+            }
+
+            return "";
+        }
+
+        return fence || /^(?: {4}|\t)/.test(line) ? "" : line.replace(/(`+)[\s\S]*?\1/g, "");
+    });
 }
 
 function time(value: string | undefined): number | undefined {
@@ -169,13 +196,20 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
         for (const [index, entry] of entries.entries()) {
             if (entry.role === "assistant") {
                 const asked = asksIn(entry.text);
-                lastAsked = asked.length > 0 ? asked : lastAsked;
+                lastAsked = asked;
                 continue;
             }
 
             const text = userText(entry);
 
-            if (!text || !afterAsk(entry, index, askedAt, firstAsk)) {
+            if (!text) {
+                continue;
+            }
+
+            const alone = lastAsked.length === 1 && lastAsked[0] === decision.number;
+            lastAsked = [];
+
+            if (!afterAsk(entry, index, askedAt, firstAsk)) {
                 continue;
             }
 
@@ -184,7 +218,7 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
                 line: entry.line,
                 ...(entry.timestamp ? { timestamp: entry.timestamp } : {}),
             });
-            const lines = text.split("\n");
+            const lines = answerLines(text);
             let answered = false;
 
             for (const line of lines) {
@@ -200,14 +234,13 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
 
             const first = lines.find((line) => line.trim() !== "") ?? "";
             const bare = /^\s*\(?([a-z]{1,4})\)(.*)$/i.exec(first);
-            const alone = lastAsked.length === 1 && lastAsked[0] === decision.number;
 
             if (!answered && bare && alone && !/DECISION/.test(text)) {
                 hits.push({ found: found(bare[1] ?? "", bare[2] ?? "", decision.letters), evidence: evidence(first) });
                 answered = true;
             }
 
-            if (!answered && mentions(text, decision.number)) {
+            if (!answered && lines.some((line) => mentions(line, decision.number))) {
                 mentioned = evidence(lines.find((line) => mentions(line, decision.number)) ?? first);
             }
         }

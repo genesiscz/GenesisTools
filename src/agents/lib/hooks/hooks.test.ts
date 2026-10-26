@@ -19,6 +19,9 @@ import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
 import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
 import { postDecisions, readDecisions, updateDecision } from "@app/question/lib/decisions/store";
+import { createClaudeHistoryOperations } from "@genesiscz/utils/agent-sessions/readers/claude";
+import { createCodexHistoryOperations } from "@genesiscz/utils/agent-sessions/readers/codex";
+import { createGrokHistoryOperations } from "@genesiscz/utils/agent-sessions/readers/grok";
 import type { NativeHistoryEntry } from "@genesiscz/utils/agent-sessions/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -42,7 +45,7 @@ import {
 } from "./config";
 import { recentBashCommands } from "./corpus";
 import { type DetectFailure, expandRulePath, guardRules, loadCustomRules, loadRuleSet } from "./custom-rules";
-import { finalReply, type PromptHookOutput, runDecisionInject, runDecisionStop, turnStartedAt } from "./decisions";
+import { finalReply, type PromptHookOutput, type ReadSession, runDecisionInject, runDecisionStop } from "./decisions";
 import { collectStaleCaptures, parseHorizon } from "./gc";
 import { evaluateCommand, evaluateGuard } from "./guard";
 import { lastSeenPerHarness } from "./harnesses";
@@ -1933,24 +1936,89 @@ describe("decision hub hooks", () => {
         ]);
     });
 
-    it("reads the final reply from the transcript when the payload does not carry it", () => {
-        const lines = [
-            SafeJSON.stringify({ type: "user", message: { content: "go" } }),
-            SafeJSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "first" }] } }),
-            SafeJSON.stringify({
-                type: "assistant",
-                message: {
-                    content: [
-                        { type: "tool_use", name: "Bash" },
-                        { type: "text", text: "❓ DECISION 2" },
-                    ],
-                },
-            }),
-        ].join("\n");
-        const payload = stopPayload("", { last_assistant_message: undefined, transcript_path: "/fixture.jsonl" });
+    it("reads the final reply through each provider, preserving all text blocks in its last row", async () => {
+        const fixtures = [
+            {
+                kind: "claude" as const,
+                rows: [
+                    { type: "user", message: { content: "go" } },
+                    { type: "assistant", message: { content: [{ type: "text", text: "old" }] } },
+                    {
+                        type: "assistant",
+                        message: {
+                            content: [
+                                { type: "text", text: "❓ DECISION 2" },
+                                { type: "text", text: "Choose?" },
+                            ],
+                        },
+                    },
+                ],
+            },
+            {
+                kind: "codex" as const,
+                rows: [
+                    {
+                        type: "response_item",
+                        payload: { type: "message", role: "user", content: [{ type: "input_text", text: "go" }] },
+                    },
+                    {
+                        type: "response_item",
+                        payload: {
+                            type: "message",
+                            role: "assistant",
+                            content: [
+                                { type: "output_text", text: "❓ DECISION 2" },
+                                { type: "output_text", text: "Choose?" },
+                            ],
+                        },
+                    },
+                ],
+            },
+            {
+                kind: "grok" as const,
+                rows: [
+                    { type: "user", content: [{ type: "text", text: "<user_query>go</user_query>" }] },
+                    {
+                        type: "assistant",
+                        content: [
+                            { type: "text", text: "❓ DECISION 2" },
+                            { type: "text", text: "Choose?" },
+                        ],
+                    },
+                ],
+            },
+        ];
 
-        expect(finalReply(payload, () => `{"torn":${lines}`)).toBe("❓ DECISION 2");
-        expect(finalReply(stopPayload("given"), () => lines)).toBe("given");
+        for (const { kind, rows } of fixtures) {
+            const transcriptPath = join(mkdtempSync(join(tmpdir(), "gt-final-reply-")), "chat_history.jsonl");
+            writeFileSync(transcriptPath, rows.map((row) => SafeJSON.stringify(row)).join("\n"));
+            // Each provider receives the native source type through its own implementation below.
+            const read: ReadSession = async (options) => {
+                const source = {
+                    root: "/",
+                    sourceHome: "/",
+                    filePath: transcriptPath,
+                    dataPaths: [transcriptPath],
+                    metadataPaths: [],
+                };
+
+                if (kind === "claude") {
+                    return createClaudeHistoryOperations().readBackward({ ...source, kind: "claude" }, options);
+                }
+
+                if (kind === "codex") {
+                    return createCodexHistoryOperations().readBackward({ ...source, kind: "codex" }, options);
+                }
+
+                return createGrokHistoryOperations().readBackward({ ...source, kind: "grok" }, options);
+            };
+            const payload = {
+                ...stopPayload("", { last_assistant_message: undefined, transcript_path: transcriptPath }),
+                harness: kind,
+            };
+            expect(await finalReply(payload, read)).toBe("❓ DECISION 2\nChoose?");
+            expect(await finalReply(stopPayload("given"), read)).toBe("given");
+        }
     });
 
     it("records an unambiguous chat answer as automatic_heuristic and sends the agent back once about an unclear one", async () => {
@@ -2094,6 +2162,40 @@ describe("decision hub hooks", () => {
         ]);
         // A long message keeps its start and the line that answers, so a review sees why it matched.
         expect(run?.users[1]?.candidates).toEqual(["D1 a) keep it"]);
+    });
+
+    it("logs a completed chat read with no user messages", async () => {
+        const { log, counts } = harness();
+        await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Keep?", options: ["yes", "no"] }],
+        });
+        const runs: ChatAnswerRun[] = [];
+        await runDecisionStop(
+            stopPayload("Done.", { transcript_path: "/fixture.jsonl" }),
+            decisionsOn({ chatAnswers: "record" }),
+            {
+                log,
+                counts,
+                appendRun: (run) => {
+                    runs.push(run);
+                },
+                readSession: async () => ({
+                    found: false,
+                    entries: [],
+                    issues: [{ path: "/fixture.jsonl", message: "maxBytes" }],
+                }),
+                chat: {
+                    checkedAt: () => undefined,
+                    setCheckedAt: () => undefined,
+                    sentBack: () => false,
+                    markSentBack: () => undefined,
+                },
+            }
+        );
+
+        expect(runs).toHaveLength(1);
+        expect(runs[0]).toMatchObject({ users: [], recorded: [], read: { entries: 0, issues: 1, found: false } });
     });
 
     it("in remind mode stores nothing and sends the agent back to record the chat answer itself", async () => {
@@ -2302,7 +2404,23 @@ describe("decision hub hooks", () => {
                     { now: () => at }
                 );
 
-            return { ...base, blocks, tail, post, deps: { ...base.deps, nudge, readTail: () => tail.text } };
+            const transcriptPath = join(mkdtempSync(join(tmpdir(), "gt-turn-boundary-")), "session.jsonl");
+            const readTurn = async () => {
+                writeFileSync(transcriptPath, tail.text);
+                return createClaudeHistoryOperations().readTurnBoundary(
+                    {
+                        kind: "claude",
+                        root: "/",
+                        sourceHome: "/",
+                        filePath: transcriptPath,
+                        dataPaths: [transcriptPath],
+                        metadataPaths: [],
+                    },
+                    {}
+                );
+            };
+
+            return { ...base, blocks, tail, post, deps: { ...base.deps, nudge, readTurn } };
         }
 
         it("blocks a reply that asks the user to decide when the turn logged no decision, quoting the line", async () => {
@@ -2419,25 +2537,20 @@ describe("decision hub hooks", () => {
             const { deps } = nudgeHarness();
 
             expect(await runDecisionStop(stopPayload(asks), nudgeOn(), deps)).toBeNull();
-            expect(await runDecisionStop(stop(asks), nudgeOn(), { ...deps, readTail: () => "" })).toBeNull();
+            expect(await runDecisionStop(stop(asks), nudgeOn(), { ...deps, readTurn: async () => null })).toBeNull();
         });
 
-        it("finds the turn's prompt in Claude and Codex transcripts", () => {
-            const codex = [
-                SafeJSON.stringify({
-                    timestamp: "2026-10-23T09:00:00.000Z",
-                    type: "response_item",
-                    payload: { type: "message", role: "user", content: [{ type: "input_text", text: "go" }] },
-                }),
-                SafeJSON.stringify({
-                    timestamp: "2026-10-23T09:01:00.000Z",
-                    type: "response_item",
-                    payload: { type: "function_call_output", output: "ok" },
-                }),
-            ].join("\n");
+        it("nudges a timestamp-free Grok turn once, then recognizes a new turn", async () => {
+            const { deps } = nudgeHarness();
+            let key = -12;
+            const grok = { ...stop(asks), harness: "grok" as const };
+            const options = nudgeOn({ harnesses: ["grok"] });
+            const grokDeps = { ...deps, readTurn: async () => ({ key }) };
 
-            expect(turnStartedAt(stop(asks), () => `{"torn":${transcript(promptAt)}`)).toBe(Date.parse(promptAt));
-            expect(turnStartedAt(stop(asks), () => codex)).toBe(Date.parse("2026-10-23T09:00:00.000Z"));
+            expect(await runDecisionStop(grok, options, grokDeps)).toMatchObject({ decision: "block" });
+            expect(await runDecisionStop(grok, options, grokDeps)).toBeNull();
+            key = -25;
+            expect(await runDecisionStop(grok, options, grokDeps)).toMatchObject({ decision: "block" });
         });
 
         it("wires the Stop hook alone, and the Stop entrypoint loads the decision checks for it", () => {

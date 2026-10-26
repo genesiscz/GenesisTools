@@ -37,6 +37,7 @@ test("a registered fourth history provider can be resolved without an account al
             kind: "fixture",
             parserVersion: "1",
             readBackward: noBackwardRead,
+            readTurnBoundary: async () => null,
             roots: () => [],
             async discover() {
                 return { sources: [], issues: [], completeRoots: [] };
