@@ -23,13 +23,15 @@ export interface ReviewGitReaders {
     /** `origin/<name>` when it exists, else the local branch, else null. */
     resolveBranch(cwd: string, name: string): Promise<string | null>;
     refExists(cwd: string, ref: string): Promise<boolean>;
+    resolveCommit(cwd: string, ref: string): Promise<string>;
+    mergeBase(cwd: string, base: string, head: string): Promise<string>;
     /** The newest PR of the branch; null when there is none or the host cannot answer. */
     pullRequest(cwd: string, branch: string): Promise<PrInfo | null>;
     upstream(cwd: string, branch: string): Promise<string | null>;
     /** `git diff --numstat <base>...<head>` (head defaults to HEAD), limited to `paths` when given. */
     numstat(cwd: string, base: string, paths?: string[], head?: string): Promise<NumstatEntry[]>;
-    /** The newest commit of HEAD's history committed at or before `at` (ISO time); null when there is none. */
-    commitBefore(cwd: string, at: string): Promise<string | null>;
+    /** The ref's value at `at` (ISO time), from its reflog; null when the historical value is unavailable. */
+    commitBefore(cwd: string, at: string, ref?: string): Promise<string | null>;
 }
 
 export function defaultReviewGitReaders(): ReviewGitReaders {
@@ -46,6 +48,8 @@ export function defaultReviewGitReaders(): ReviewGitReaders {
             return (await git.refExists(`refs/heads/${short}`)) ? short : null;
         },
         refExists: (cwd, ref) => createGit({ cwd }).refExists(`${ref}^{commit}`),
+        resolveCommit: (cwd, ref) => createGit({ cwd }).getSha(`${ref}^{commit}`),
+        mergeBase: (cwd, base, head) => createGit({ cwd }).mergeBase(base, head),
         async pullRequest(cwd, branch) {
             const driver = await originDriver(cwd);
 
@@ -67,15 +71,24 @@ export function defaultReviewGitReaders(): ReviewGitReaders {
             const mergeBase = await git.mergeBase(base, head);
             return git.numstat({ from: mergeBase, to: head, ...(paths?.length ? { paths } : {}) });
         },
-        async commitBefore(cwd, at) {
-            const result = await createGit({ cwd }).executor.exec([
-                "log",
-                "-1",
-                "--format=%H",
-                `--before=${at}`,
-                "HEAD",
-            ]);
-            return result.success && result.stdout ? result.stdout : null;
+        async commitBefore(cwd, at, ref = "HEAD") {
+            const git = createGit({ cwd });
+            const resolved = await git.executor.exec(["rev-parse", "--symbolic-full-name", ref]);
+            const reflogRef = ref === "HEAD" ? "HEAD" : resolved.stdout;
+
+            if (!resolved.success || !reflogRef) {
+                return null;
+            }
+
+            const exists = await git.executor.exec(["reflog", "exists", reflogRef]);
+
+            if (!exists.success) {
+                return null;
+            }
+
+            const result = await git.executor.exec(["rev-parse", "--verify", `${reflogRef}@{${at}}`]);
+            // Git returns the oldest entry with a warning when the requested date predates the reflog.
+            return result.success && result.stdout && !result.stderr ? result.stdout : null;
         },
     };
 }
@@ -83,6 +96,8 @@ export function defaultReviewGitReaders(): ReviewGitReaders {
 export interface PrepareReviewInput {
     cwd: string;
     base?: string;
+    /** Explicit identity for detached reviews; the base still comes from --base. */
+    pr?: number;
     effort?: string;
     allowShallow?: boolean;
     /** Limit the manifest to these paths: one slice of a split review. */
@@ -287,7 +302,17 @@ export async function prepareReview(input: PrepareReviewInput): Promise<Prepared
     const allowShallow = input.allowShallow === true;
     const branch = await readers.currentBranch(input.cwd);
     const base = await chooseBase({ ...input, readers, branch });
-    const manifest = buildManifest(base.ref, await readers.numstat(input.cwd, base.ref, input.paths));
+    if (input.pr !== undefined && (!Number.isSafeInteger(input.pr) || input.pr <= 0)) {
+        throw new Error("--pr must be a positive integer");
+    }
+
+    const head = await readers.resolveCommit(input.cwd, "HEAD");
+    const baseCommit = await readers.resolveCommit(input.cwd, base.ref);
+    const mergeBase = await readers.mergeBase(input.cwd, baseCommit, head);
+    const manifest = {
+        ...buildManifest(mergeBase, await readers.numstat(input.cwd, mergeBase, input.paths, head)),
+        head,
+    };
 
     if (manifest.files.length === 0) {
         throw new Error(
@@ -312,7 +337,7 @@ export async function prepareReview(input: PrepareReviewInput): Promise<Prepared
             baseSource: base.source,
             baseDetail: base.detail,
             ...(branch ? { branch } : {}),
-            ...(base.pr ? { pr: base.pr.number } : {}),
+            ...(input.pr !== undefined ? { pr: input.pr } : base.pr ? { pr: base.pr.number } : {}),
             manifest,
             effort,
             effortSource: source,

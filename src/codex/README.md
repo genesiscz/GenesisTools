@@ -273,7 +273,8 @@ spelling, hidden from help.
 remote copy); the spawn prints which. It runs `git diff --numstat <base>...HEAD` in the worker's cwd (limited to
 `--paths <path...>` when given) and refuses an empty diff. The worker's developer instructions carry the shared worker
 contract plus `reviewLines(effort)` from `src/utils/worker/contract.ts` and the manifest (`Files to review (N, +A -D)`
-and one line per file).
+and one line per file). The manifest pins the merge-base and head commits, so a steer or escalation reviews the
+same range after either branch moves. Pass `--pr <number>` to record an explicit PR identity in detached reviews.
 
 The tier is `--effort`, else the diff size: `high` up to 15 files and 800 changed lines, `xhigh` above. `max` only when
 named. `low` (triage) and `medium` are refused unless `--allow-shallow`. Above 60 files or 4,000 lines the spawn prints
@@ -299,8 +300,11 @@ tools codex reviews import <name...> [--base <ref>] [--no-cwd-from-session] [--j
 `reviews import` backfills sessions that ran before the ledger: a start line, one turn line per booked turn of the
 worker cost ledger, and a gate line marked `imported: true`. Its verdict comes from the final agent message (from the
 session's event log): `pass` for `Files reviewed: n of n`, `shallow` for fewer, `imported` with no such line. The
-manifest is `<base>...<the last commit before the session started>` in the session's cwd, so fix commits made after
-the review do not count; with no base (no `--base`, no PR target, no upstream) or a removed cwd its counts are null.
+manifest uses the session's saved pinned commits when available, even if its cwd is gone. For older sessions it
+reconstructs both HEAD and the chosen base from their reflogs at the session's start time, then diffs their
+merge-base to that historical head. Missing reflogs, an unknown base or a removed cwd leave counts null and scope
+unconfirmed. Commit dates alone cannot establish when a ref moved. Named binary files with a reason get the same
+coverage exemption as live reviews.
 A session already in the ledger is skipped, so a repeated import adds nothing.
 
 `login` and `usage` are doors onto the provider-neutral account core: the same code runs behind `tools ai accounts login --provider codex` and `tools ai usage --provider codex`. `tools ai accounts discover --provider codex` lists every `~/.codex*` profile on the machine and `--bind` turns the unbound ones into accounts.

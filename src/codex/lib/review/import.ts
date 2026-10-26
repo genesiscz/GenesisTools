@@ -83,7 +83,7 @@ export function defaultReviewImportReaders(ledgerPath = reviewLedgerPath()): Rev
 
 export interface ReviewImportManifest {
     base: string;
-    /** The commit the manifest ends at: the last one before the session started, else HEAD. */
+    /** The saved review head, or HEAD's value in the reflog when the session started. */
     head: string;
     files: number;
     lines: number;
@@ -130,6 +130,16 @@ async function importManifest(meta: CodexSessionMeta, input: ReviewImportInput, 
         return none("manifest skipped (--no-cwd-from-session): file and line counts are null");
     }
 
+    if (meta.review?.manifest.head) {
+        return {
+            manifest: meta.review.manifest,
+            chosen: { ref: meta.review.manifest.base, source: meta.review.baseSource, detail: meta.review.baseDetail },
+            branch: meta.review.branch ?? null,
+            head: meta.review.manifest.head,
+            notes: ["manifest restored from the session's pinned review commits"],
+        } satisfies ManifestOutcome;
+    }
+
     const cwd = meta.cwd;
     const branch = await git.currentBranch(cwd);
     let chosen: ChosenBase;
@@ -140,16 +150,24 @@ async function importManifest(meta: CodexSessionMeta, input: ReviewImportInput, 
         return none(`no base: ${err instanceof Error ? err.message : String(err)} File and line counts are null.`);
     }
 
-    // The worktree may have gained fix commits since the review: diff up to the commit the review saw.
-    const seen = await git.commitBefore(cwd, meta.startedAt);
-    const notes = seen
-        ? [
-              `manifest ${chosen.ref}...${seen.slice(0, 10)} (the last commit before the session started at ${meta.startedAt})`,
-          ]
-        : [`no commit before ${meta.startedAt}; the manifest runs to HEAD and may include later commits`];
-    const head = seen ?? "HEAD";
-    const manifest = buildManifest(chosen.ref, await git.numstat(cwd, chosen.ref, undefined, head));
-    return { manifest, chosen, branch, head, notes } satisfies ManifestOutcome;
+    // Both refs must be historical: today's target can already contain the reviewed head.
+    const head = await git.commitBefore(cwd, meta.startedAt);
+    const historicalBase = await git.commitBefore(cwd, meta.startedAt, chosen.ref);
+
+    if (!head || !historicalBase) {
+        return {
+            ...none(
+                `historical head or base before ${meta.startedAt} cannot be established; file and line counts are null`
+            ),
+            chosen,
+            branch,
+        };
+    }
+
+    const base = await git.mergeBase(cwd, historicalBase, head);
+    const manifest = { ...buildManifest(base, await git.numstat(cwd, base, undefined, head)), head };
+    const notes = [`manifest ${base}...${head} reconstructed from both reflogs at ${meta.startedAt}`];
+    return { manifest, chosen: { ...chosen, ref: base }, branch, head, notes } satisfies ManifestOutcome;
 }
 
 function spentOf(rows: readonly WorkerCostRow[]): CodexReviewSpent {
@@ -189,6 +207,12 @@ function impliedVerdict(
             ? `; the reviewed manifest has ${manifest.files.length} files`
             : "";
 
+    const check = manifest ? checkCoverage(parsed, manifest, report) : null;
+
+    if (check?.ok) {
+        return { verdict: "pass", reason: `imported: Files reviewed ${coverage.reviewed} of ${coverage.total}` };
+    }
+
     if (coverage.reviewed < coverage.total) {
         return {
             verdict: "shallow",
@@ -203,11 +227,7 @@ function impliedVerdict(
         };
     }
 
-    const check = checkCoverage(parsed, manifest, report);
-
-    return check.ok
-        ? { verdict: "pass", reason: `imported: Files reviewed ${coverage.reviewed} of ${coverage.total}` }
-        : { verdict: "imported", reason: `imported: ${check.detail}; the scope is not confirmed` };
+    return { verdict: "imported", reason: `imported: ${check?.detail}; the scope is not confirmed` };
 }
 
 /**
@@ -247,15 +267,16 @@ async function importOne(name: string, input: ReviewImportInput, readers: Review
         } satisfies ReviewImportResult;
     }
 
-    const outcome = readers.cwdExists(meta.cwd)
-        ? await importManifest(meta, input, readers.git)
-        : {
-              manifest: null,
-              chosen: null,
-              branch: null,
-              head: null,
-              notes: [`${meta.cwd} is gone: file and line counts are null`],
-          };
+    const outcome =
+        meta.review?.manifest.head || readers.cwdExists(meta.cwd)
+            ? await importManifest(meta, input, readers.git)
+            : {
+                  manifest: null,
+                  chosen: null,
+                  branch: null,
+                  head: null,
+                  notes: [`${meta.cwd} is gone: file and line counts are null`],
+              };
     const { manifest, chosen } = outcome;
     const rows = readers.costRows(meta);
     const report = await readers.lastAgentMessage(meta);
@@ -281,7 +302,7 @@ async function importOne(name: string, input: ReviewImportInput, readers: Review
         name,
         chain: name,
         ...(meta.label ? { label: meta.label } : {}),
-        ...(chosen?.pr ? { pr: chosen.pr.number } : {}),
+        ...(meta.review?.pr !== undefined ? { pr: meta.review.pr } : chosen?.pr ? { pr: chosen.pr.number } : {}),
         ...(outcome.branch ? { branch: outcome.branch } : {}),
         base: chosen?.ref ?? input.base ?? null,
         files: manifest ? manifest.files.length : null,

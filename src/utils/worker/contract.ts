@@ -41,6 +41,8 @@ export interface ReviewManifestFile {
 /** The files a review must cover, computed by the harness before the worker starts. */
 export interface ReviewManifest {
     base: string;
+    /** Pinned commit for new reviews; absent only on older saved manifests. */
+    head?: string;
     files: ReviewManifestFile[];
     added: number;
     deleted: number;
@@ -59,7 +61,12 @@ export function manifestChangedLines(manifest: Pick<ReviewManifest, "added" | "d
 /** `Files to review (3, +40 -2):` and one `path +a -d` line per file. */
 export function manifestLines(manifest: ReviewManifest): string[] {
     return [
-        `Base: ${manifest.base}. Read each change with \`git diff ${manifest.base}...HEAD -- <path>\`.`,
+        `Base: ${manifest.base}. Read each change with \`git diff --no-textconv --no-ext-diff ${manifest.base}...${manifest.head ?? "HEAD"} -- <path>\`.`,
+        ...(manifest.head
+            ? [
+                  `Review the pinned commits above even if HEAD or the base branch moves. Read file versions with \`git show --no-textconv --no-ext-diff ${manifest.head}:<path>\`.`,
+              ]
+            : []),
         `Files to review (${manifest.files.length}, +${manifest.added} -${manifest.deleted}):`,
         ...manifest.files.map((file) =>
             file.binary ? `- ${file.path} (binary)` : `- ${file.path} +${file.added} -${file.deleted}`

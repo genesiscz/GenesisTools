@@ -3,7 +3,6 @@ import { dirname, join } from "node:path";
 import { codexRoot } from "@genesiscz/utils/codex/worker-paths";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
-import { JsonlWriter } from "@genesiscz/utils/log-session/jsonl-writer";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 import { manifestChangedLines } from "@genesiscz/utils/worker/contract";
@@ -33,7 +32,7 @@ export interface ReviewLedgerBase {
     effort: string;
     /** Backfilled by `tools codex reviews import` from a session that ran before the ledger existed. */
     imported?: true;
-    /** Imported: the commit the review is taken to have read (the last one before the session started). */
+    /** The pinned review head, or the historical HEAD recovered for an import. */
     head?: string;
 }
 
@@ -96,7 +95,8 @@ export function reviewLedgerBase(input: { name: string; review: CodexReviewConfi
         ...(input.label ? { label: input.label } : {}),
         ...(review.pr === undefined ? {} : { pr: review.pr }),
         ...(review.branch ? { branch: review.branch } : {}),
-        base: review.base,
+        base: review.manifest.base,
+        ...(review.manifest.head ? { head: review.manifest.head } : {}),
         files: review.manifest.files.length,
         lines: manifestChangedLines(review.manifest),
         effort: review.effort,
@@ -114,14 +114,7 @@ export function appendReviewRecord(
 ): ReviewLedgerRecord | null {
     const record: ReviewLedgerRecord = { ...base, ...entry };
 
-    try {
-        new JsonlWriter(path).append({ ...record });
-        log.debug({ path, kind: record.kind, name: record.name }, "review ledger record written");
-        return record;
-    } catch (err) {
-        log.warn({ err, path, kind: record.kind, name: record.name }, "review ledger write failed");
-        return null;
-    }
+    return appendReviewRecords([record], path).ok ? record : null;
 }
 
 /**

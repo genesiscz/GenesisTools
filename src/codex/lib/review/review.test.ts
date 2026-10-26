@@ -6,6 +6,7 @@ import type { WorkerCostRow } from "@app/ai-spend/lib/workers/ledger";
 import type { CodexFinishedTurn } from "@genesiscz/utils/codex/turn-cost";
 import { env } from "@genesiscz/utils/env";
 import type { NumstatEntry, PrInfo } from "@genesiscz/utils/git";
+import { TestRepo } from "@genesiscz/utils/git/test-repo";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import type { ReviewManifest } from "@genesiscz/utils/worker/contract";
@@ -14,10 +15,17 @@ import { codexDriver } from "../driver";
 import { spawnCodexSession } from "../spawn";
 import type { CodexSessionMeta } from "../store";
 import { escalatedReviewName, markReviewShallow, recordReviewTurn } from "./controller";
+import { escalatedReview } from "./escalate";
 import { checkReview, decideGate, parseReviewReport } from "./gate";
 import { importReviewSessions, type ReviewImportReaders } from "./import";
-import { type ReviewGateRecord, type ReviewLedgerRecord, readReviewRecords } from "./ledger";
-import { prepareReview, type ReviewGitReaders } from "./prepare";
+import {
+    appendReviewRecord,
+    type ReviewGateRecord,
+    type ReviewLedgerRecord,
+    readReviewRecords,
+    reviewLedgerBase,
+} from "./ledger";
+import { defaultReviewGitReaders, prepareReview, type ReviewGitReaders } from "./prepare";
 import {
     currentReviewRecords,
     filterReviews,
@@ -38,11 +46,13 @@ function readers(options: {
     upstream?: string | null;
     numstat?: NumstatEntry[];
     refs?: string[];
-    commitBefore?: (at: string) => string | null;
+    commitBefore?: (at: string, ref?: string) => string | null;
 }): ReviewGitReaders & { calls: string[] } {
     const calls: string[] = [];
     return {
         calls,
+        resolveCommit: async (_cwd, ref) => (ref === "HEAD" ? "head-sha" : ref),
+        mergeBase: async (_cwd, base) => base,
         currentBranch: async () => (options.branch === undefined ? "feat/x" : options.branch),
         resolveBranch: async (_cwd, name) =>
             (options.refs ?? ["origin/master"]).includes(`origin/${name}`) ? `origin/${name}` : null,
@@ -53,7 +63,7 @@ function readers(options: {
             calls.push(`numstat ${base}${head ? `...${head}` : ""}${paths ? ` ${paths.join(",")}` : ""}`);
             return options.numstat ?? [entry("src/a.ts", 40, 2)];
         },
-        commitBefore: async (_cwd, at) => (options.commitBefore ? options.commitBefore(at) : null),
+        commitBefore: async (_cwd, at, ref) => (options.commitBefore ? options.commitBefore(at, ref) : null),
     };
 }
 
@@ -66,7 +76,7 @@ describe("prepareReview", () => {
 
         expect(prepared.config).toMatchObject({ base: "origin/master", baseSource: "flag", pr: 12, branch: "feat/x" });
         expect(prepared.notes[0]).toBe("review base origin/master (flag: --base)");
-        expect(fake.calls).toEqual(["numstat origin/master"]);
+        expect(fake.calls).toEqual(["numstat origin/master...head-sha"]);
         await expect(prepareReview({ cwd: "/repo", base: "origin/nope", readers: fake })).rejects.toThrow(
             "--base origin/nope does not resolve"
         );
@@ -95,7 +105,53 @@ describe("prepareReview", () => {
 
         const fake = readers({});
         await prepareReview({ cwd: "/repo", base: "origin/master", paths: ["src/codex"], readers: fake });
-        expect(fake.calls).toEqual(["numstat origin/master src/codex"]);
+        expect(fake.calls).toEqual(["numstat origin/master...head-sha src/codex"]);
+    });
+
+    test("a detached review keeps its explicit PR identity in the ledger and filters", async () => {
+        const prepared = await prepareReview({
+            cwd: "/repo",
+            base: "origin/master",
+            pr: 592,
+            readers: readers({ branch: null }),
+        });
+        const review = reviewConfig(prepared.config);
+        const record: ReviewLedgerRecord = {
+            ...reviewLedgerBase({ name: "detached", review }),
+            kind: "start",
+            cwd: "/repo",
+            effortSource: "diff-size",
+            allowShallow: false,
+        };
+        expect(filterReviews(summarizeReviews([record]), { pr: 592 })).toHaveLength(1);
+        expect(prepared.config.pr).toBe(592);
+        for (const pr of [0, -1, 1.5, Number.NaN]) {
+            await expect(
+                prepareReview({ cwd: "/repo", base: "origin/master", pr, readers: readers({}) })
+            ).rejects.toThrow("--pr must be a positive integer");
+        }
+    });
+
+    test("pins both endpoints before counting, and escalation keeps them after refs move", async () => {
+        let head = "head-before";
+        let base = "base-before";
+        const fake = readers({});
+        fake.resolveCommit = async (_cwd, ref) => (ref === "HEAD" ? head : base);
+        fake.mergeBase = async (_cwd, from, to) => {
+            expect([from, to]).toEqual(["base-before", "head-before"]);
+            return "merge-before";
+        };
+        const prepared = await prepareReview({ cwd: "/repo", base: "origin/master", readers: fake });
+        head = "head-after";
+        base = "base-after";
+        expect(fake.calls).toEqual(["numstat merge-before...head-before"]);
+        expect(prepared.config.manifest).toMatchObject({ base: "merge-before", head: "head-before" });
+        const escalated = escalatedReview(reviewConfig(prepared.config), { effort: "xhigh", meta: importedMeta("rv") });
+        expect(escalated.manifest).toEqual(prepared.config.manifest);
+        expect(reviewLedgerBase({ name: "rv-xhigh", review: escalated })).toMatchObject({
+            base: "merge-before",
+            head: "head-before",
+        });
     });
 
     test("the tier comes from the diff size; low and medium need --allow-shallow", async () => {
@@ -652,6 +708,24 @@ describe("the review ledger report", () => {
         expect(parseReviewSince("bogus", now)).toBeNull();
     });
 
+    test("live starts, turns and gates recover a torn last line and keep a reused name's runs separate", () => {
+        const ledgerPath = join(mkdtempSync(join(tmpdir(), "gt-review-live-torn-")), "reviews.jsonl");
+        const [start, turn, gate] = ledgerFixture();
+        for (const record of [start, turn, gate]) {
+            appendFileSync(ledgerPath, '{"v":1,"kind":"torn');
+            expect(appendReviewRecord(record, record, ledgerPath)).toEqual(record);
+        }
+        const recovered = readReviewRecords(ledgerPath);
+        expect(recovered.skipped).toBe(3);
+        expect(recovered.records).toEqual([start, turn, gate]);
+        appendFileSync(ledgerPath, '{"v":1');
+        expect(appendReviewRecord(start, start, ledgerPath)).toEqual(start);
+        const runs = summarizeReviews(readReviewRecords(ledgerPath).records);
+        expect(runs).toHaveLength(2);
+        expect(runs.at(-1)?.turns).toBe(0);
+        expect(appendReviewRecord(start, start, join(ledgerPath, "invalid"))).toBeNull();
+    });
+
     test("a torn ledger line is skipped and counted, never fatal", () => {
         const path = join(mkdtempSync(join(tmpdir(), "gt-review-ledger-")), "reviews.jsonl");
         const [start] = ledgerFixture();
@@ -674,6 +748,7 @@ describe("spawn guards", () => {
 
         await expect(spawn({ base: "origin/master" })).rejects.toThrow("apply to --mode review only");
         await expect(spawn({ allowShallow: true })).rejects.toThrow("apply to --mode review only");
+        await expect(spawn({ pr: "592" })).rejects.toThrow("apply to --mode review only");
     });
 
     test("a review session cannot start without its review record, and a task session cannot carry one", async () => {
@@ -741,7 +816,7 @@ function importReaders(ledgerPath: string, options: { gone?: string[]; noBase?: 
     const git = readers({
         pr: options.noBase ? null : PR,
         numstat: [entry("src/a.ts", 30, 5), entry("src/b.ts", 10)],
-        commitBefore: (at) => (at.startsWith("2026-10-22") ? "abc1234567890" : null),
+        commitBefore: (at, ref) => (at.startsWith("2026-10-22") ? (ref ? "base1234567890" : "abc1234567890") : null),
     });
     const messages: Record<string, string> = {
         "rv-full":
@@ -778,10 +853,10 @@ describe("reviews import", () => {
             ["rv-gone", "imported", "imported"],
             ["rv-none", "missing", null],
         ]);
-        expect(results[0].manifest).toEqual({ base: "origin/master", head: "abc1234567890", files: 2, lines: 45 });
+        expect(results[0].manifest).toEqual({ base: "base1234567890", head: "abc1234567890", files: 2, lines: 45 });
         expect(results[2].manifest).toBeNull();
         expect(results[2].notes[0]).toContain("/wt/rv-gone is gone");
-        expect(git.calls).toEqual(["numstat origin/master...abc1234567890", "numstat origin/master...abc1234567890"]);
+        expect(git.calls).toEqual(["numstat base1234567890...abc1234567890", "numstat base1234567890...abc1234567890"]);
 
         const records = readReviewRecords(ledgerPath).records;
         expect(records.map((record) => `${record.name}:${record.kind}`)).toEqual([
@@ -832,6 +907,99 @@ describe("reviews import", () => {
         const again = await importReviewSessions({ names: ["rv-full", "rv-part"], readers: fake, ledgerPath });
         expect(again.map((result) => result.status)).toEqual(["skipped", "skipped"]);
         expect(readReviewRecords(ledgerPath).records).toHaveLength(10);
+    });
+
+    test("real reflogs recover a pre-merge base even when today's base already contains the reviewed head", async () => {
+        const repo = await TestRepo.create();
+        const base = await repo.sha();
+        const head = await repo.commit({ file: "reviewed.ts", content: "export const reviewed = true;\n" });
+        await repo.branch("target", head);
+        const identity = "Fixture <alice@example.com>";
+        writeFileSync(
+            join(repo.dir, ".git/logs/refs/heads/target"),
+            `${"0".repeat(40)} ${base} ${identity} 1792454400 +0000\tbase\n${base} ${head} ${identity} 1792800000 +0000\tmerged\n`
+        );
+        const git = { ...defaultReviewGitReaders(), currentBranch: async () => null };
+        expect(await git.numstat(repo.dir, "target")).toEqual([]);
+        expect(await git.commitBefore(repo.dir, "2026-10-22T10:00:00Z", "target")).toBe(base);
+        expect(await git.commitBefore(repo.dir, "2000-01-01T00:00:00Z", "target")).toBeNull();
+        const ledgerPath = join(repo.root, "reviews.jsonl");
+        const { fake } = importReaders(ledgerPath);
+        fake.git = git;
+        fake.readMeta = async (name) => importedMeta(name, { cwd: repo.dir });
+        fake.lastAgentMessage = async () => "Findings: none\nRan: nothing\nFiles reviewed: 1 of 1\nNot reviewed: none";
+        const [result] = await importReviewSessions({ names: ["rv-full"], base: "target", readers: fake, ledgerPath });
+        expect(result.manifest).toEqual({ base, head, files: 1, lines: 1 });
+        expect(result.verdict).toBe("pass");
+    });
+
+    test("import uses the live gate's binary exemption before deciding that a review is shallow", async () => {
+        const ledgerPath = join(mkdtempSync(join(tmpdir(), "gt-review-import-binary-")), "reviews.jsonl");
+        const { fake, git } = importReaders(ledgerPath);
+        git.numstat = async () => [entry("src/a.ts", 10), entry("logo.png", 0, 0, true)];
+        fake.lastAgentMessage = async () =>
+            "Findings: none\nRan: nothing\nFiles reviewed: 1 of 2\nNot reviewed: logo.png (binary)";
+        const [result] = await importReviewSessions({
+            names: ["rv-full"],
+            base: "origin/master",
+            readers: fake,
+            ledgerPath,
+        });
+        expect(result.verdict).toBe("pass");
+        fake.lastAgentMessage = async () =>
+            "Findings: none\nRan: nothing\nFiles reviewed: 1 of 2\nNot reviewed: src/a.ts (time)";
+        const [unread] = await importReviewSessions({
+            names: ["rv-part"],
+            base: "origin/master",
+            readers: fake,
+            ledgerPath,
+        });
+        expect(unread.verdict).toBe("shallow");
+    });
+
+    test("historical base missing after a merge leaves scope unconfirmed instead of trusting today's empty diff", async () => {
+        const ledgerPath = join(mkdtempSync(join(tmpdir(), "gt-review-import-history-")), "reviews.jsonl");
+        const { fake, git } = importReaders(ledgerPath);
+        git.commitBefore = async (_cwd, _at, ref) => (ref ? null : "reviewed-head");
+        const [result] = await importReviewSessions({
+            names: ["rv-full"],
+            base: "origin/master",
+            readers: fake,
+            ledgerPath,
+        });
+        expect(result.manifest).toBeNull();
+        expect(result.verdict).toBe("imported");
+        expect(result.notes[0]).toContain("cannot be established");
+        expect(git.calls).toEqual([]);
+    });
+
+    test("saved pinned manifests import even after the worktree is gone or detached", async () => {
+        const ledgerPath = join(mkdtempSync(join(tmpdir(), "gt-review-import-pinned-")), "reviews.jsonl");
+        const { fake, git } = importReaders(ledgerPath, { gone: ["rv-full"], noBase: true });
+        fake.readMeta = async (name) =>
+            importedMeta(name, {
+                review: reviewConfig({
+                    manifest: {
+                        base: "pinned-base",
+                        head: "pinned-head",
+                        files: [
+                            { path: "src/a.ts", added: 30, deleted: 5 },
+                            { path: "src/b.ts", added: 10, deleted: 0 },
+                        ],
+                        added: 40,
+                        deleted: 5,
+                    },
+                }),
+            });
+        const [result] = await importReviewSessions({ names: ["rv-full"], readers: fake, ledgerPath });
+        expect(result.manifest).toEqual({ base: "pinned-base", head: "pinned-head", files: 2, lines: 45 });
+        expect(result.verdict).toBe("pass");
+        expect(readReviewRecords(ledgerPath).records[0]).toMatchObject({
+            pr: 12,
+            base: "pinned-base",
+            head: "pinned-head",
+        });
+        expect(git.calls).toEqual([]);
     });
 
     test("without a base or with --no-cwd-from-session the manifest is null and the note says why", async () => {

@@ -70,6 +70,7 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
                 "--base <ref>",
                 "--mode review: the ref to diff against (git diff <base>...HEAD); default the branch's PR target, else its upstream"
             )
+            .option("--pr <number>", "--mode review: explicit PR identity, including detached post-merge reviews")
             .option("--allow-shallow", "--mode review: accept --effort low or medium, which the gate never tunes up")
             .option(
                 "--paths <path...>",
@@ -113,6 +114,7 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             writableRoot?: string[];
             project?: string;
             base?: string;
+            pr?: string;
             allowShallow?: boolean;
             paths?: string[];
         };
@@ -121,8 +123,8 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
             throw new Error("--mode must be review or task");
         }
 
-        if (extras.mode === "task" && (extras.base || extras.allowShallow || extras.paths)) {
-            throw new Error("--base, --allow-shallow and --paths apply to --mode review only");
+        if (extras.mode === "task" && (extras.base || extras.pr !== undefined || extras.allowShallow || extras.paths)) {
+            throw new Error("--base, --pr, --allow-shallow and --paths apply to --mode review only");
         }
 
         // A silent no-op here reads as isolation that was applied. It never was, so this
@@ -145,6 +147,7 @@ export const codexDriver: WorkerDriver<CodexSessionMeta> = {
                 ? await prepareReview({
                       cwd: input.cwd,
                       ...(extras.base ? { base: extras.base } : {}),
+                      ...(extras.pr === undefined ? {} : { pr: Number(extras.pr) }),
                       ...(extras.effort === undefined ? {} : { effort: extras.effort }),
                       allowShallow: extras.allowShallow === true,
                       ...(extras.paths ? { paths: extras.paths } : {}),

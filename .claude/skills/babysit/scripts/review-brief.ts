@@ -86,7 +86,7 @@ export function reviewSpawnCommand({ pr, wt, base, briefPath, postMerge }: Revie
         ? ["--base", `${postMerge.mergeCommit}^`, "--paths", ...postMerge.files]
         : ["--base", `origin/${base}`];
     const argv = [
-        ...["tools", "codex", "spawn", "--mode", "review", ...target],
+        ...["tools", "codex", "spawn", "--mode", "review", "--pr", String(pr), ...target],
         ...["--name", `bs-${pr}-review`, "--model", "gpt-6.1-sol", "--write", "ask", "--cwd", wt],
         ...["--label", `babysit pr${pr} review`, "--prompt-file", briefPath],
     ];

@@ -111,6 +111,19 @@ describe("buildWorkerContract", () => {
         }
     });
 
+    test("a pinned review contract never substitutes today's HEAD for its saved endpoint", () => {
+        const text = buildWorkerContract({
+            backend: "codex",
+            review: {
+                effort: "high",
+                manifest: { base: "base-sha", head: "head-sha", files: [], added: 0, deleted: 0 },
+            },
+        });
+        expect(text).toContain("git diff --no-textconv --no-ext-diff base-sha...head-sha -- <path>");
+        expect(text).toContain("git show --no-textconv --no-ext-diff head-sha:<path>");
+        expect(text).not.toContain("...HEAD");
+    });
+
     test("review: the manifest and tier ride after the report shape; without review the text is unchanged", () => {
         const manifest: ReviewManifest = {
             base: "origin/master",
@@ -135,7 +148,7 @@ describe("buildWorkerContract", () => {
             expect(reviewer.startsWith(`${plain}\n`)).toBe(true);
             expect(reviewer).toContain("You are a code REVIEWER at the high tier.");
             expect(reviewer).toContain("Files to review (2, +40 -2):\n- src/a.ts +40 -2\n- assets/logo.png (binary)");
-            expect(reviewer).toContain("`git diff origin/master...HEAD -- <path>`");
+            expect(reviewer).toContain("`git diff --no-textconv --no-ext-diff origin/master...HEAD -- <path>`");
             expect(reviewer.indexOf("OPEN: ")).toBeLessThan(reviewer.indexOf("code REVIEWER"));
         }
     });
