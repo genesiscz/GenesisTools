@@ -9,6 +9,7 @@
  * Ratchets: no file may join a list, and `lint-rules.test.ts` fails when a listed file no longer offends.
  */
 export const MODEL_ID_LITERAL_RATCHET: ReadonlySet<string> = new Set<string>([
+    ".claude/skills/babysit/scripts/review-brief.ts",
     "scripts/ai-proxy/structured-output.ts",
     "scripts/benchmarks/compress/read-paths.ts",
     "scripts/benchmarks/statusline/current-statusline.ts",
@@ -49,4 +50,5 @@ export const EFFORT_LIST_RATCHET: ReadonlySet<string> = new Set<string>([
     "src/ai-proxy/lib/types.ts",
     "src/utils/agent-harness/llm.ts",
     "src/utils/ai/providers/plugins/openrouter.ts",
+    "src/utils/worker/contract.ts",
 ]);
