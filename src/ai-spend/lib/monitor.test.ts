@@ -4,6 +4,7 @@ import {
     mkdirSync,
     mkdtempSync,
     readFileSync,
+    renameSync,
     rmSync,
     statSync,
     utimesSync,
@@ -588,6 +589,44 @@ describe("multi-agent monitor report", () => {
         // +1M uncached input on gpt-5 = +$1.25 on top of $2.375.
         expect(complete.agents.codex.today.tokens).toBe(2_100_000 + 1_000_000);
         expect(complete.agents.codex.today.cost).toBeCloseTo(2.375 + 1.25, 6);
+    });
+
+    test("a compressed rollout that changes is parsed whole again, each event counted once", () => {
+        const storage = new Storage("ai-spend");
+        const dir = join(home, ".codex", "sessions", "2026", "08", "27");
+        const plain = join(dir, "rollout-2026-08-27T09-00-00-synthetic.jsonl");
+        const text = readFileSync(plain, "utf8");
+        renameSync(plain, join(home, "rollout-moved-aside.jsonl"));
+        const compressed = `${plain}.zst`;
+        writeFileSync(compressed, compressBytes(text));
+        const run = () =>
+            buildMonitorReport({ home, pricing: DEFAULT_PRICING, storage, sweepTtlMs: 0, drivers: [codexDriver] });
+
+        expect(run().agents.codex.today.tokens).toBe(2_100_000);
+
+        const nextEvent = SafeJSON.stringify({
+            timestamp: new Date().toISOString(),
+            type: "event_msg",
+            payload: {
+                type: "token_count",
+                info: {
+                    total_token_usage: {
+                        input_tokens: 3_000_000,
+                        cached_input_tokens: 1_000_000,
+                        output_tokens: 100_000,
+                    },
+                    last_token_usage: { input_tokens: 1_000_000, output_tokens: 0, total_tokens: 1_000_000 },
+                },
+            },
+        });
+        const before = statSync(compressed).size;
+        writeFileSync(compressed, compressBytes(`${text}${nextEvent}\n`));
+        expect(statSync(compressed).size).toBeGreaterThan(before);
+
+        expect(run().agents.codex.today.tokens).toBe(2_100_000 + 1_000_000);
+        const unchanged = run();
+        expect(unchanged.parsedFiles).toBe(0);
+        expect(unchanged.agents.codex.today.tokens).toBe(2_100_000 + 1_000_000);
     });
 
     test("grok's roots follow GROK_HOME even when the fixture home has its own tree", () => {

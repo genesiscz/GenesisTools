@@ -618,7 +618,8 @@ function scanAgent(options: ScanOptions): ScanResult {
 
         let entry: FileCacheEntry;
 
-        if (cached && stat.size > cached.size && cached.offset > 0) {
+        // A `.jsonl.zst` is never appended to, and its offset counts decompressed bytes: a changed one is parsed whole.
+        if (cached && stat.size > cached.size && cached.offset > 0 && !isZstdPath(file)) {
             // Append-only growth: parse just the tail.
             entry = cached;
         } else {
