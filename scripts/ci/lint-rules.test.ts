@@ -77,7 +77,7 @@ describe("swift-no-entry-macro", () => {
     test("still flags attributes after strings and honours an explicit suppression", () => {
         expect(swiftRules('let text = "@Entry"; @Entry var flag = false')).toEqual(["swift-no-entry-macro"]);
         expect(swiftRules('let raw = #"@Entry"#; @Entry var flag = false')).toEqual(["swift-no-entry-macro"]);
-        expect(swiftRules('// lint-rules-ignore: fixture\n@Entry var flag = false')).toEqual([]);
+        expect(swiftRules("// lint-rules-ignore: fixture\n@Entry var flag = false")).toEqual([]);
     });
 
     test("leaves a hand-written EnvironmentKey and a mention in a comment alone", () => {
