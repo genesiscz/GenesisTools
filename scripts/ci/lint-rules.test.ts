@@ -42,6 +42,44 @@ describe("swift-no-entry-macro", () => {
         ]);
     });
 
+    test("ignores inline comments and ordinary, escaped, raw and multiline string literals", () => {
+        const source = [
+            "let flag = false // @Entry",
+            'let text = "@Entry"',
+            'let escaped = "quote: \\" @Entry"',
+            'let raw = #"@Entry "quoted""#',
+            'let multiline = """',
+            "@Entry",
+            '"""',
+            'let rawMultiline = ##"""',
+            '@Entry """ still raw',
+            '"""##',
+            'let multipleHashes = ##"@Entry"##',
+            String.raw`let interpolated = "\("@Entry")"`,
+            String.raw`let rawInterpolated = #"\#("@Entry")"#`,
+        ].join("\n");
+        expect(swiftRules(source)).toEqual([]);
+    });
+
+    test("ignores nested block comments while preserving the position of a real attribute", () => {
+        const source = [
+            "/* @Entry",
+            "   /* nested @Entry */ still a comment",
+            "*/ extension EnvironmentValues {",
+            "/* @Entry */ @Entry var flag = false",
+            "}",
+        ].join("\n");
+        expect(checkSwiftSource("Sources/Example.swift", source)).toMatchObject([
+            { rule: "swift-no-entry-macro", line: 4, column: 14, text: "/* @Entry */ @Entry var flag = false" },
+        ]);
+    });
+
+    test("still flags attributes after strings and honours an explicit suppression", () => {
+        expect(swiftRules('let text = "@Entry"; @Entry var flag = false')).toEqual(["swift-no-entry-macro"]);
+        expect(swiftRules('let raw = #"@Entry"#; @Entry var flag = false')).toEqual(["swift-no-entry-macro"]);
+        expect(swiftRules('// lint-rules-ignore: fixture\n@Entry var flag = false')).toEqual([]);
+    });
+
     test("leaves a hand-written EnvironmentKey and a mention in a comment alone", () => {
         const source = [
             "private struct FlagKey: EnvironmentKey { static let defaultValue = false }",

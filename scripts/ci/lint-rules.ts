@@ -1091,9 +1091,87 @@ function recordBusyWaitFindings(root: SgNode, record: RecordFinding): void {
     recordSleepSyncFindings(root.findAll(SLEEP_SYNC_IN_LOOP_MATCHER), record);
 }
 
+interface SwiftLintString {
+    end: string;
+    hashes: string;
+    interpolationDepth: number;
+}
+
+/** Blank Swift comments and strings without moving the code's line or column offsets. */
+function maskSwiftNonCode(source: string): string {
+    const masked = source.split("");
+    let index = 0;
+    let blockDepth = 0;
+    const strings: SwiftLintString[] = [];
+
+    const blank = (end: number) => {
+        while (index < end) {
+            if (source[index] !== "\n" && source[index] !== "\r") {
+                masked[index] = " ";
+            }
+
+            index++;
+        }
+    };
+
+    while (index < source.length) {
+        const string = strings.at(-1);
+
+        if (blockDepth > 0) {
+            if (source.startsWith("/*", index)) {
+                blockDepth++;
+                blank(index + 2);
+            } else if (source.startsWith("*/", index)) {
+                blockDepth--;
+                blank(index + 2);
+            } else {
+                blank(index + 1);
+            }
+        } else if (string?.interpolationDepth === 0) {
+            if (source.startsWith(string.end, index)) {
+                blank(index + string.end.length);
+                strings.pop();
+            } else if (source.startsWith(`\\${string.hashes}(`, index)) {
+                blank(index + string.hashes.length + 2);
+                string.interpolationDepth = 1;
+            } else if (source.startsWith(`\\${string.hashes}`, index)) {
+                blank(Math.min(index + string.hashes.length + 2, source.length));
+            } else {
+                blank(index + 1);
+            }
+        } else if (source.startsWith("//", index)) {
+            const newline = source.indexOf("\n", index);
+            blank(newline === -1 ? source.length : newline);
+        } else if (source.startsWith("/*", index)) {
+            blockDepth = 1;
+            blank(index + 2);
+        } else if (source[index] === '"' || source[index] === "#") {
+            const opening = /^(#*)("{3}|")/.exec(source.slice(index));
+
+            if (opening) {
+                strings.push({ end: opening[2] + opening[1], hashes: opening[1], interpolationDepth: 0 });
+                blank(index + opening[0].length);
+            } else {
+                index++;
+            }
+        } else if (string && source[index] === "(") {
+            string.interpolationDepth++;
+            index++;
+        } else if (string && source[index] === ")") {
+            string.interpolationDepth--;
+            blank(index + 1);
+        } else {
+            index++;
+        }
+    }
+
+    return masked.join("");
+}
+
 /** Swift has no grammar in the ast-grep napi package, so its rules are line regexes. */
 export function checkSwiftSource(file: string, source: string): Finding[] {
     const lines = source.split("\n");
+    const codeLines = maskSwiftNonCode(source).split("\n");
     const findings: Finding[] = [];
 
     for (const [index, text] of lines.entries()) {
@@ -1102,7 +1180,7 @@ export function checkSwiftSource(file: string, source: string): Finding[] {
         }
 
         for (const { rule, pattern } of SWIFT_LINE_RULES) {
-            const column = text.search(pattern);
+            const column = (rule === SWIFT_ENTRY_MACRO_RULE ? codeLines[index] : text).search(pattern);
 
             if (column === -1) {
                 continue;
