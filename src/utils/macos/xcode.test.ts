@@ -1,5 +1,17 @@
-import { describe, expect, it } from "bun:test";
-import { detectXcodeToolchain, genesisAppBuildHint, resolveAppBuildSdk, sdkVersion } from "./xcode";
+import { describe, expect, it, spyOn } from "bun:test";
+import * as childProcess from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    detectXcodeToolchain,
+    genesisAppBuildHint,
+    resolveAppBuildSdk,
+    sdkVersion,
+    swiftUiStateIsPlainWrapper,
+} from "./xcode";
 
 function fakeSpawn(exitCode: number, stdout: string) {
     return () => ({ exitCode, stdout });
@@ -142,5 +154,111 @@ describe("sdkVersion", () => {
         expect(sdkVersion("MacOSX27.0.sdk")).toEqual([27, 0]);
         expect(sdkVersion("MacOSX27.sdk")).toBeUndefined();
         expect(sdkVersion("MacOSX.sdk")).toBeUndefined();
+    });
+});
+
+describe("swiftUiStateIsPlainWrapper", () => {
+    const sdkRoot = "/fixture/SDKs/MacOSX26.5.sdk";
+    const success = { pid: 1, output: [], stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), status: 0, signal: null };
+
+    async function withCache(run: (home: string) => void) {
+        const home = mkdtempSync(join(tmpdir(), "sdk-probe-"));
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: home }, () => run(home));
+    }
+
+    it("bounds the compiler and retries a timeout instead of persisting an incompatible SDK", async () => {
+        await withCache((home) => {
+            const error = Object.assign(new Error("timed out"), { code: "ETIMEDOUT" });
+            const spawn = spyOn(childProcess, "spawnSync")
+                .mockReturnValueOnce({ ...success, status: null, signal: "SIGKILL", error })
+                .mockReturnValue(success);
+            try {
+                expect(swiftUiStateIsPlainWrapper(sdkRoot)).toBe(false);
+                expect(swiftUiStateIsPlainWrapper(sdkRoot)).toBe(true);
+                expect(spawn).toHaveBeenCalledTimes(2);
+                expect(spawn.mock.calls[0]).toEqual([
+                    "xcrun",
+                    ["swiftc", "-typecheck", "-sdk", sdkRoot, "-target", expect.any(String), "-"],
+                    expect.objectContaining({
+                        timeout: 30_000,
+                        killSignal: "SIGKILL",
+                        input: expect.stringContaining("@State"),
+                    }),
+                ]);
+                expect(readFileSync(join(home, ".genesis-tools", "app", "sdk-probe.json"), "utf8")).toContain(
+                    '"ok": true'
+                );
+            } finally {
+                spawn.mockRestore();
+            }
+        });
+    });
+
+    it.each(["null", "[]", '"text"', "{", '{"/fixture/SDKs/MacOSX26.5.sdk":{"stamp":"none","ok":"yes"}}'])(
+        "treats invalid cache data %s as a miss",
+        async (contents) => {
+            await withCache((home) => {
+                mkdirSync(join(home, ".genesis-tools", "app"), { recursive: true });
+                writeFileSync(join(home, ".genesis-tools", "app", "sdk-probe.json"), contents);
+                const spawn = spyOn(childProcess, "spawnSync").mockReturnValue(success);
+                try {
+                    expect(swiftUiStateIsPlainWrapper(sdkRoot)).toBe(true);
+                    expect(spawn).toHaveBeenCalledTimes(1);
+                    expect(swiftUiStateIsPlainWrapper(sdkRoot)).toBe(true);
+                    expect(spawn).toHaveBeenCalledTimes(1);
+                } finally {
+                    spawn.mockRestore();
+                }
+            });
+        }
+    );
+
+    it.each([true, false])("reuses a valid cached compatibility result of %s", async (ok) => {
+        await withCache((home) => {
+            mkdirSync(join(home, ".genesis-tools", "app"), { recursive: true });
+            writeFileSync(
+                join(home, ".genesis-tools", "app", "sdk-probe.json"),
+                SafeJSON.stringify({ [sdkRoot]: { stamp: "none", ok } })
+            );
+            const spawn = spyOn(childProcess, "spawnSync").mockReturnValue(success);
+            try {
+                expect(swiftUiStateIsPlainWrapper(sdkRoot)).toBe(ok);
+                expect(spawn).not.toHaveBeenCalled();
+            } finally {
+                spawn.mockRestore();
+            }
+        });
+    });
+
+    it.each(["parent", "file"])("returns the probe result when the cache %s cannot be written", async (blocked) => {
+        await withCache((home) => {
+            if (blocked === "parent") {
+                mkdirSync(join(home, ".genesis-tools"), { recursive: true });
+                writeFileSync(join(home, ".genesis-tools", "app"), "blocked");
+            } else {
+                mkdirSync(join(home, ".genesis-tools", "app", "sdk-probe.json"), { recursive: true });
+            }
+
+            const spawn = spyOn(childProcess, "spawnSync").mockReturnValue(success);
+            try {
+                expect(swiftUiStateIsPlainWrapper(sdkRoot)).toBe(true);
+                expect(spawn).toHaveBeenCalledTimes(1);
+            } finally {
+                spawn.mockRestore();
+            }
+        });
+    });
+
+    it("persists a completed incompatible SDK result", async () => {
+        await withCache(() => {
+            const spawn = spyOn(childProcess, "spawnSync").mockReturnValue({ ...success, status: 1 });
+            try {
+                expect(swiftUiStateIsPlainWrapper(sdkRoot)).toBe(false);
+                expect(swiftUiStateIsPlainWrapper(sdkRoot)).toBe(false);
+                expect(spawn).toHaveBeenCalledTimes(1);
+            } finally {
+                spawn.mockRestore();
+            }
+        });
     });
 });

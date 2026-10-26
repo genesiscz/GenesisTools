@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
@@ -189,10 +190,28 @@ export function swiftUiStateIsPlainWrapper(sdkRoot: string): boolean {
     const settings = join(sdkRoot, "SDKSettings.json");
     const stamp = existsSync(settings) ? String(statSync(settings).mtimeMs) : "none";
     const cacheFile = genesisToolsDir("app", "sdk-probe.json");
-    let cache: Record<string, { stamp: string; ok: boolean }> = {};
+    const cache: Record<string, { stamp: string; ok: boolean }> = {};
 
     try {
-        cache = existsSync(cacheFile) ? SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true }) : {};
+        const parsed: unknown = existsSync(cacheFile)
+            ? SafeJSON.parse(readFileSync(cacheFile, "utf8"), { strict: true })
+            : {};
+
+        if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+            const entries: [string, unknown][] = Object.entries(parsed);
+            for (const [sdk, entry] of entries) {
+                if (
+                    entry !== null &&
+                    typeof entry === "object" &&
+                    "stamp" in entry &&
+                    typeof entry.stamp === "string" &&
+                    "ok" in entry &&
+                    typeof entry.ok === "boolean"
+                ) {
+                    cache[sdk] = { stamp: entry.stamp, ok: entry.ok };
+                }
+            }
+        }
     } catch (error) {
         logger.debug({ error, cacheFile }, "sdk probe cache unreadable; probing again");
     }
@@ -203,17 +222,31 @@ export function swiftUiStateIsPlainWrapper(sdkRoot: string): boolean {
         return hit.ok;
     }
 
-    const probeFile = genesisToolsDir("app", "sdk-probe.swift");
-    mkdirSync(dirname(probeFile), { recursive: true });
-    writeFileSync(probeFile, STATE_PROBE);
     const arch = process.arch === "arm64" ? "arm64" : "x86_64";
-    const proc = Bun.spawnSync(
-        ["xcrun", "swiftc", "-typecheck", "-sdk", sdkRoot, "-target", `${arch}-apple-macos14.0`, probeFile],
-        { stdout: "pipe", stderr: "pipe" }
+    const proc = spawnSync(
+        "xcrun",
+        ["swiftc", "-typecheck", "-sdk", sdkRoot, "-target", `${arch}-apple-macos14.0`, "-"],
+        { input: STATE_PROBE, timeout: 30_000, killSignal: "SIGKILL", stdio: "pipe" }
     );
-    const ok = proc.exitCode === 0;
+
+    if (proc.error || proc.signal !== null || proc.status === null) {
+        logger.warn(
+            { sdkRoot, error: proc.error, signal: proc.signal },
+            "sdk probe could not finish; retry on next run"
+        );
+        return false;
+    }
+
+    const ok = proc.status === 0;
     logger.debug({ sdkRoot, ok }, "sdk probe: @State without the SwiftUI macro plugin");
     cache[sdkRoot] = { stamp, ok };
-    writeFileSync(cacheFile, SafeJSON.stringify(cache, null, 2));
+
+    try {
+        mkdirSync(dirname(cacheFile), { recursive: true });
+        writeFileSync(cacheFile, SafeJSON.stringify(cache, null, 2));
+    } catch (error) {
+        logger.debug({ error, cacheFile }, "sdk probe cache unwritable; using probe result");
+    }
+
     return ok;
 }
