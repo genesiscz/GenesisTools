@@ -31,7 +31,7 @@
  * Full measurements and the decision record live in the author's notes, out of repo.
  */
 
-import { readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { findInFiles, Lang, type NapiConfig, parse, type SgNode } from "@ast-grep/napi";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -529,11 +529,14 @@ const RULES: Rule[] = [
             const args = (node.field("arguments")?.children() ?? []).filter((child) => child.isNamed());
 
             if (method === "test" || method === "match" || method === "search") {
-                if (object?.kind() !== "regex" || !AGENT_HARNESS_WORD.test(object.text())) {
-                    return false;
-                }
+                const regex = method === "test" ? object : args[0];
+                const subject = method === "test" ? args[0] : object;
 
-                return AGENT_SUBJECT.test(args[0]?.text() ?? "");
+                return (
+                    regex?.kind() === "regex" &&
+                    AGENT_HARNESS_WORD.test(regex.text()) &&
+                    AGENT_SUBJECT.test(subject?.text() ?? "")
+                );
             }
 
             if (!AGENT_HARNESS_LITERAL.test(args[0]?.text() ?? "")) {
@@ -1227,19 +1230,116 @@ export function checkSource(file: string, source: string, { ratchets = true }: {
 /**
  * Restrict to files changed against `base`.
  *
- * Every rule here is per-file and syntactic: a literal is a violation or it is
- * not, regardless of what any other file does. So unlike a typecheck, scoping
- * to the diff cannot hide a violation the branch introduced. A push to the
- * default branch still runs the whole tree.
+ * Source rules are per-file and syntactic. Changes to a rule or an exemption
+ * list rescan the whole tree because they can expose unchanged offenders.
+ * Established exemption lists are also compared with the base before scoping.
  */
-function changedFiles(base: string): Set<string> | null {
+const RATCHET_INPUTS = [
+    "scripts/ci/harness-ratchet.ts",
+    "scripts/ci/model-facts-ratchet.ts",
+    "scripts/ci/native-home-ratchet.ts",
+    "scripts/ci/tool-command-ratchet.ts",
+    "scripts/ci/transcript-format-ratchet.ts",
+];
+
+/** Read data, never execute a historical module. An unsupported list shape fails closed. */
+function ratchetLists(source: string): Map<string, Set<string>> {
+    const root = parse(Lang.TypeScript, source).root();
+    const lists = new Map<string, Set<string>>();
+
+    for (const node of root.findAll({ rule: { kind: "variable_declarator" } })) {
+        const name = node.field("name")?.text() ?? "";
+
+        if (!name.endsWith("_RATCHET")) {
+            continue;
+        }
+
+        const value = node.field("value");
+        const args =
+            value
+                ?.field("arguments")
+                ?.children()
+                .filter((child) => child.isNamed()) ?? [];
+        const array = args[0];
+
+        if (
+            value?.kind() !== "new_expression" ||
+            value.field("constructor")?.text() !== "Set" ||
+            array?.kind() !== "array"
+        ) {
+            throw new Error(`lint-rules: ${name} must be a literal new Set([...])`);
+        }
+
+        const entries = array.children().filter((child) => child.isNamed() && child.kind() !== "comment");
+
+        if (entries.some((entry) => entry.kind() !== "string")) {
+            throw new Error(`lint-rules: ${name} must contain only literal paths`);
+        }
+
+        lists.set(name, new Set(entries.map(unquote)));
+    }
+
+    return lists;
+}
+
+/** A list's first introduction establishes its baseline; an established list may only lose entries. */
+export function ratchetAdditions(baseSource: string, headSource: string): string[] {
+    const base = ratchetLists(baseSource);
+    const additions: string[] = [];
+
+    for (const [name, files] of ratchetLists(headSource)) {
+        const previous = base.get(name);
+
+        if (previous) {
+            additions.push(...[...files].filter((file) => !previous.has(file)).map((file) => `${name}: ${file}`));
+        }
+    }
+
+    return additions;
+}
+
+function checkRatchetGrowth({ from, cwd, changed }: { from: string; cwd: string; changed: ReadonlySet<string> }): void {
+    const inputs = RATCHET_INPUTS.filter((file) => changed.has(file));
+
+    if (inputs.length === 0) {
+        return;
+    }
+
+    const listed = Bun.spawnSync(["git", "ls-tree", "--name-only", from, "--", ...inputs], { cwd });
+
+    if (listed.exitCode !== 0) {
+        throw new Error(`lint-rules: cannot read ratchet baseline: ${listed.stderr.toString()}`);
+    }
+
+    for (const file of listed.stdout.toString().trim().split("\n").filter(Boolean)) {
+        if (!existsSync(join(cwd, file))) {
+            continue;
+        }
+
+        const previous = Bun.spawnSync(["git", "show", "--no-textconv", "--no-ext-diff", `${from}:${file}`], { cwd });
+
+        if (previous.exitCode !== 0) {
+            throw new Error(`lint-rules: cannot read ${from}:${file}: ${previous.stderr.toString()}`);
+        }
+
+        const additions = ratchetAdditions(previous.stdout.toString(), readFileSync(join(cwd, file), "utf8"));
+
+        if (additions.length > 0) {
+            throw new Error(`lint-rules: ratchet lists may only shrink (${file})\n${additions.join("\n")}`);
+        }
+    }
+}
+
+export function changedFiles(base: string, { cwd = process.cwd() }: { cwd?: string } = {}): Set<string> | null {
     // Prefer the merge base, but fall back to diffing the ref directly. CI
     // checks out at depth 1 and fetches only the PR's base commit, so there is
     // no shared history for `merge-base` to walk — and GitHub's
     // `pull_request.base.sha` already IS the merge base.
-    const merged = Bun.spawnSync(["git", "merge-base", base, "HEAD"]);
+    const merged = Bun.spawnSync(["git", "merge-base", base, "HEAD"], { cwd });
     const from = merged.exitCode === 0 ? merged.stdout.toString().trim() : base;
-    const diff = Bun.spawnSync(["git", "diff", "--name-only", "-z", from, "HEAD"]);
+    const diff = Bun.spawnSync(["git", "diff", "--no-textconv", "--no-ext-diff", "--name-only", "-z", from, "HEAD"], {
+        cwd,
+    });
 
     if (diff.exitCode !== 0) {
         // Every failure degrades to a full scan. A changed-file optimisation
@@ -1249,7 +1349,13 @@ function changedFiles(base: string): Set<string> | null {
     }
 
     const changed = new Set(diff.stdout.toString().split("\0").filter(Boolean));
-    const ruleInputs = new Set(["biome.json", "scripts/ci/lint-rules.ts", "scripts/ci/lint-changed.sh"]);
+    checkRatchetGrowth({ from, cwd, changed });
+    const ruleInputs = new Set([
+        "biome.json",
+        "scripts/ci/lint-rules.ts",
+        "scripts/ci/lint-changed.sh",
+        ...RATCHET_INPUTS,
+    ]);
     if ([...changed].some((file) => ruleInputs.has(file))) {
         return null;
     }

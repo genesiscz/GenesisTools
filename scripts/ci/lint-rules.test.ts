@@ -4,14 +4,17 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writ
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Lang, parse } from "@ast-grep/napi";
+import { SafeJSON } from "@genesiscz/utils/json";
 import { keptExecutable } from "@genesiscz/utils/test/kept-executable";
 import { AGENT_PROCESS_MATCH_RATCHET, HARNESS_BRANCH_RATCHET, HOOK_PAYLOAD_READ_RATCHET } from "./harness-ratchet";
 import {
     BARE_REQUIRE_RATCHET,
+    changedFiles,
     checkSource,
     namesToolCommand,
     namesTranscriptFormat,
     pluginsDisabledFor,
+    ratchetAdditions,
 } from "./lint-rules";
 import { EFFORT_LIST_RATCHET, MODEL_ID_LITERAL_RATCHET, MODEL_PRICE_TABLE_RATCHET } from "./model-facts-ratchet";
 import { NATIVE_HOME_CLAUDE_RATCHET, NATIVE_HOME_CODEX_GROK_RATCHET } from "./native-home-ratchet";
@@ -588,6 +591,96 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
         }
     });
 
+    test("process match methods use the regex and command in their actual positions", () => {
+        const rule = "no-agent-name-in-command-match";
+
+        for (const source of [
+            "process.command.match(/claude/i);",
+            "process.command.search(/codex/);",
+            "/grok/.test(process.command);",
+        ]) {
+            expect(rules(source)).toContain(rule);
+            expect(rules(source, "src/utils/process/classify.ts")).not.toContain(rule);
+        }
+
+        expect(rules("text.match(/claude/i);")).not.toContain(rule);
+        expect(rules("process.command.search(/editor/);")).not.toContain(rule);
+    });
+
+    test("established lists reject additions, including a new offender, but allow removals and initialization", () => {
+        const list = (files: string[]) =>
+            `export const EXAMPLE_RATCHET = new Set<string>(${SafeJSON.stringify(files)});`;
+        const source = 'const id = "claude-opus-5";';
+        expect(rules(source, "src/new-offender.ts")).toContain("no-model-id-literal-outside-catalog");
+        expect(ratchetAdditions(list(["src/old.ts"]), list(["src/old.ts", "src/new-offender.ts"]))).toEqual([
+            "EXAMPLE_RATCHET: src/new-offender.ts",
+        ]);
+        expect(ratchetAdditions(list(["src/old.ts"]), list([]))).toEqual([]);
+        expect(ratchetAdditions("", list(["src/old.ts"]))).toEqual([]);
+        expect(() => ratchetAdditions(list([]), "const EXAMPLE_RATCHET = loadExemptions();")).toThrow(
+            "literal new Set"
+        );
+    });
+
+    test("changing any imported ratchet rescans an unchanged offender and rejects growth against the base", () => {
+        const dir = mkdtempSync(join(tmpdir(), "lint-ratchet-"));
+        const run = (args: string[]) => {
+            const result = spawnSync("git", ["-c", "core.hooksPath=/dev/null", ...args], {
+                cwd: dir,
+                encoding: "utf8",
+                env: { ...process.env },
+            });
+            expect(result.status, result.stderr).toBe(0);
+            return result.stdout.trim();
+        };
+        const inputs = [
+            "harness-ratchet.ts",
+            "model-facts-ratchet.ts",
+            "native-home-ratchet.ts",
+            "tool-command-ratchet.ts",
+            "transcript-format-ratchet.ts",
+        ];
+        const list = (files: string[]) =>
+            `export const EXAMPLE_RATCHET = new Set<string>(${SafeJSON.stringify(files)});`;
+
+        try {
+            mkdirSync(join(dir, "scripts/ci"), { recursive: true });
+            mkdirSync(join(dir, "src"));
+            writeFileSync(join(dir, "src/offender.ts"), 'const id = "claude-opus-5";');
+
+            for (const file of inputs) {
+                writeFileSync(join(dir, "scripts/ci", file), list(["src/offender.ts"]));
+            }
+
+            run(["init", "-q"]);
+            run(["config", "user.name", "Fixture User"]);
+            run(["config", "user.email", "fixture@example.com"]);
+            run(["add", "--", "src/offender.ts", ...inputs.map((file) => `scripts/ci/${file}`)]);
+            run(["commit", "-qm", "base"]);
+            const base = run(["rev-parse", "HEAD"]);
+            expect(changedFiles(base, { cwd: dir })).toEqual(new Set());
+
+            let previous = base;
+
+            for (const file of inputs) {
+                writeFileSync(join(dir, "scripts/ci", file), list([]));
+                run(["add", "--", `scripts/ci/${file}`]);
+                run(["commit", "-qm", "remove exemption"]);
+                expect(changedFiles(previous, { cwd: dir })).toBeNull();
+                previous = run(["rev-parse", "HEAD"]);
+                const source = readFileSync(join(dir, "src/offender.ts"), "utf8");
+                expect(rules(source, "src/offender.ts")).toContain("no-model-id-literal-outside-catalog");
+            }
+
+            writeFileSync(join(dir, "scripts/ci/harness-ratchet.ts"), list(["src/offender.ts", "src/new.ts"]));
+            run(["add", "--", "scripts/ci/harness-ratchet.ts"]);
+            run(["commit", "-qm", "grow exemption"]);
+            expect(() => changedFiles(base, { cwd: dir })).toThrow("EXAMPLE_RATCHET: src/new.ts");
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    }, 30_000);
+
     test("every file on a ratchet list still offends its rule, so a migrated file leaves the list", async () => {
         const lists: [string, ReadonlySet<string>][] = [
             ["no-transcript-format-outside-readers", TRANSCRIPT_FORMAT_RATCHET],
@@ -601,17 +694,27 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
             ["no-agent-name-in-command-match", AGENT_PROCESS_MATCH_RATCHET],
         ];
         const stale: string[] = [];
+        const files = [...new Set(lists.flatMap(([, entries]) => [...entries]))];
+        const found = new Map(
+            await Promise.all(
+                files.map(async (file) => {
+                    const source = await Bun.file(file).text();
+                    return [
+                        file,
+                        new Set(checkSource(file, source, { ratchets: false }).map((finding) => finding.rule)),
+                    ] as const;
+                })
+            )
+        );
 
-        for (const [rule, files] of lists) {
-            for (const file of files) {
-                const found = checkSource(file, await Bun.file(file).text(), { ratchets: false });
-
-                if (!found.some((finding) => finding.rule === rule)) {
+        for (const [rule, entries] of lists) {
+            for (const file of entries) {
+                if (!found.get(file)?.has(rule)) {
                     stale.push(`${rule}: ${file}`);
                 }
             }
         }
 
         expect(stale).toEqual([]);
-    });
+    }, 30_000);
 });
