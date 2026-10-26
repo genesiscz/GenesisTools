@@ -9,6 +9,16 @@ public struct NativeTimePoint: Identifiable, Equatable, Sendable {
 }
 
 public enum NativeChartSampling {
+    static func zoomFraction(_ zoom: Double, minimum: Double, maximum: Double) -> Double {
+        guard maximum > minimum else { return 0 }
+        return min(1, max(0, log(max(1, zoom / minimum)) / log(maximum / minimum)))
+    }
+
+    /// Grouped points may start before the picked interval, such as its first partial week.
+    static func fittedStart(_ start: Date, firstPoint: Date?) -> Date {
+        min(start, firstPoint ?? start)
+    }
+
     public static func pannedPosition(origin: Date, translation: Double, width: Double,
         window: TimeInterval, domain: ClosedRange<Date>) -> Date {
         clampedPosition(origin.addingTimeInterval(-translation / max(1, width) * window), window: window, domain: domain)
@@ -171,7 +181,9 @@ public struct NativeTimeSeriesChart: View {
         self.combine = combine
         self.valueFormat = valueFormat
         styleBinding = style
-        let start = rangeStart.map { min($0, end.addingTimeInterval(-interval * 5)) }
+        let start = rangeStart.map {
+            min(NativeChartSampling.fittedStart($0, firstPoint: points.first?.date), end.addingTimeInterval(-interval * 5))
+        }
         _position = State(initialValue: start ?? end.addingTimeInterval(-initialWindow))
     }
 
@@ -181,7 +193,7 @@ public struct NativeTimeSeriesChart: View {
     /// The whole range in fitted mode.
     private var span: TimeInterval {
         guard let rangeStart else { return initialWindow }
-        return max(minimumWindow, end.timeIntervalSince(rangeStart))
+        return max(minimumWindow, end.timeIntervalSince(NativeChartSampling.fittedStart(rangeStart, firstPoint: points.first?.date)))
     }
     private var maxZoom: Double { fitted ? max(1, span / minimumWindow) : 8 }
     private var minZoom: Double { fitted ? 1 : 0.25 }
@@ -208,7 +220,7 @@ public struct NativeTimeSeriesChart: View {
     private func format(_ value: Double) -> String { valueFormat?(value) ?? NativeChartSampling.valueText(value) }
     /// The zoom on a log scale, so one slider spans "whole two years" to "five bins" evenly.
     private var zoomSlider: Binding<Double> {
-        Binding(get: { log(max(1, zoom / minZoom)) / log(maxZoom / minZoom) },
+        Binding(get: { NativeChartSampling.zoomFraction(zoom, minimum: minZoom, maximum: maxZoom) },
             set: { zoom = minZoom * pow(maxZoom / minZoom, $0) })
     }
     private func pan(by fraction: Double) {
@@ -236,7 +248,7 @@ public struct NativeTimeSeriesChart: View {
                 IconButton(systemName: "chevron.right", tooltip: "Later (Right Arrow)") { pan(by: 0.5) }
                 IconButton(systemName: "minus.magnifyingglass", tooltip: "Zoom out chart") { zoom = max(minZoom, zoom / 2) }
                 Slider(value: zoomSlider, in: 0...1).frame(width: 90).accessibilityLabel("Chart zoom")
-                    .help("Chart zoom")
+                    .help("Chart zoom").disabled(maxZoom <= minZoom)
                 IconButton(systemName: "plus.magnifyingglass", tooltip: "Zoom in chart") { zoom = min(maxZoom, zoom * 2) }
                 if fitted {
                     Button("Whole range") {

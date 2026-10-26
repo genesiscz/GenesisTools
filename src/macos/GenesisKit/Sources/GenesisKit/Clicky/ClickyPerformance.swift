@@ -16,13 +16,14 @@ public struct ClickyPerformanceBucket: Codable, Equatable, Sendable {
     public var activeSeconds = 0.0
     public var bursts = 0
     public var carriedBurst = false
-    /// Typing sessions that start in this bucket: text after a minute or more without text. Kept only in the hourly
-    /// roll-up; a minute's session is worked out from its neighbour when the report is built.
+    /// Typing sessions that start in this bucket: text after a minute or more without text.
     public var sessions = 0
+    /// Frozen at the retention boundary before the preceding minute is discarded. Nil derives it from neighbours.
+    var startsTypingSession: Bool?
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case presses, characters, corrections, activeSeconds, bursts, carriedBurst, sessions
+        case presses, characters, corrections, activeSeconds, bursts, carriedBurst, sessions, startsTypingSession
     }
 
     /// Every key is optional, so buckets saved before `sessions` existed still load.
@@ -35,6 +36,7 @@ public struct ClickyPerformanceBucket: Codable, Equatable, Sendable {
         bursts = try values.decodeIfPresent(Int.self, forKey: .bursts) ?? 0
         carriedBurst = try values.decodeIfPresent(Bool.self, forKey: .carriedBurst) ?? false
         sessions = try values.decodeIfPresent(Int.self, forKey: .sessions) ?? 0
+        startsTypingSession = try values.decodeIfPresent(Bool.self, forKey: .startsTypingSession)
     }
 
     mutating func add(_ other: Self) {
@@ -69,13 +71,18 @@ extension ClickyStatistics {
 
     /// Whether `minute` starts a typing session: it has text and the minute before it has none.
     static func startsSession(_ minute: Int, in minutes: [Int: ClickyPerformanceBucket]) -> Bool {
-        (minutes[minute]?.characters ?? 0) > 0 && (minutes[minute - 1]?.characters ?? 0) == 0
+        minutes[minute]?.startsTypingSession
+            ?? ((minutes[minute]?.characters ?? 0) > 0 && (minutes[minute - 1]?.characters ?? 0) == 0)
     }
 
     /// Rolls the minutes older than `horizon` into hourly buckets, then drops them and hours past their retention.
     mutating func rollUpPerformance(olderThan horizon: Int) {
         let old = performanceMinutes.filter { $0.key < horizon }
-        guard !old.isEmpty else { return }
+        // Freeze the first retained minute while its predecessor is still available, including across saves.
+        if performanceMinutes[horizon] != nil {
+            let starts = Self.startsSession(horizon, in: performanceMinutes)
+            performanceMinutes[horizon]?.startsTypingSession = starts
+        }
         for (minute, source) in old {
             var bucket = source
             bucket.carriedBurst = false
@@ -83,7 +90,8 @@ extension ClickyStatistics {
             performanceHours[Int(floor(Double(minute) / 60)), default: ClickyPerformanceBucket()].add(bucket)
         }
         performanceMinutes = performanceMinutes.filter { $0.key >= horizon }
-        let oldestHour = horizon / 60 - Self.performanceHourDays * 24
+        let recordingMinute = horizon + Self.performanceMinuteDays * 24 * 60
+        let oldestHour = recordingMinute / 60 - Self.performanceHourDays * 24
         performanceHours = performanceHours.filter { $0.key >= oldestHour }
     }
 

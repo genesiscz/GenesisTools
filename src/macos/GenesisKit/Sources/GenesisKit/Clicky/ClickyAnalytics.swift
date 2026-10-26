@@ -176,6 +176,7 @@ struct ClickyStatsReport: Sendable {
     var interval = DateInterval()
     var total = 0
     var previousTotal: Int?
+    var approximateTotals = false
     var totalDays = 0
     var coveredDays = 0
     var activeDays = 0
@@ -204,28 +205,57 @@ struct ClickyStatsReport: Sendable {
             ?? statistics.days.keys.min().map { Date(timeIntervalSince1970: Double($0)) }
         totalDays = ClickyRanges.dayCount(interval, calendar: calendar)
         coveredDays = ClickyRanges.coveredDays(interval, earliest: earliest, calendar: calendar)
-        let oldestHour = statistics.hours.keys.min().map { Date(timeIntervalSince1970: Double($0) * 3600) }
-        func presses(in range: DateInterval) -> Int {
-            // Hours give the exact span (Today against yesterday until the same time); past the hourly retention,
-            // whole days.
-            if let oldestHour, range.start >= oldestHour {
-                let first = Int(floor(range.start.timeIntervalSince1970 / 3600))
-                let last = Int(ceil(range.end.timeIntervalSince1970 / 3600))
-                return statistics.hours.reduce(0) { $1.key >= first && $1.key < last ? $0 + $1.value.presses : $0 }
+        let minuteRetention = floor(now.timeIntervalSince1970 / 3600) * 3600 - 30 * 86400
+        let hourRetention = floor(now.timeIntervalSince1970 / 3600) * 3600 - 366 * 86400
+        func presses(in range: DateInterval) -> (count: Int, approximate: Bool) {
+            var count = 0
+            var approximate = false
+            for (key, bucket) in statistics.days {
+                let day = Date(timeIntervalSince1970: Double(key))
+                let dayEnd = calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86400)
+                guard day < range.end, dayEnd > range.start else { continue }
+                if day >= range.start && dayEnd <= range.end {
+                    count += bucket.presses
+                } else if day.timeIntervalSince1970 >= hourRetention {
+                    for (hour, hourly) in statistics.hours {
+                        let start = Double(hour) * 3600
+                        let end = start + 3600
+                        guard start >= day.timeIntervalSince1970, start < dayEnd.timeIntervalSince1970,
+                            start < range.end.timeIntervalSince1970, end > range.start.timeIntervalSince1970 else { continue }
+                        if start >= range.start.timeIntervalSince1970 && end <= range.end.timeIntervalSince1970 {
+                            count += hourly.presses
+                        } else if start >= minuteRetention {
+                            count += statistics.minutes.reduce(0) { sum, entry in
+                                let date = Date(timeIntervalSince1970: Double(entry.key) * 60)
+                                return entry.key / 60 == hour && date >= range.start && date < range.end
+                                    ? sum + entry.value.presses : sum
+                            }
+                        } else {
+                            count += hourly.presses
+                            approximate = true
+                        }
+                    }
+                } else {
+                    count += bucket.presses
+                    approximate = true
+                }
             }
-            return statistics.days.reduce(0) { sum, entry in
-                let day = Date(timeIntervalSince1970: Double(entry.key))
-                return day >= calendar.startOfDay(for: range.start) && day < range.end ? sum + entry.value.presses : sum
-            }
+            return (count, approximate)
         }
-        total = presses(in: interval)
-        if let previous, let earliest, earliest < previous.end { previousTotal = presses(in: previous) }
+        let current = presses(in: interval)
+        total = current.count
+        approximateTotals = current.approximate
+        if let previous, let earliest, earliest < previous.end {
+            let comparison = presses(in: previous)
+            previousTotal = comparison.count
+            approximateTotals = approximateTotals || comparison.approximate
+        }
 
         var daily: [Date: Double] = [:]
         for (key, bucket) in statistics.days {
             let day = Date(timeIntervalSince1970: Double(key))
             guard day >= calendar.startOfDay(for: interval.start), day < interval.end else { continue }
-            daily[day] = Double(releases ? bucket.releases : bucket.presses)
+            daily[day] = Double(bucket.presses)
         }
         activeDays = daily.values.filter { $0 > 0 }.count
         records = ClickyRecords(days: daily, today: now, calendar: calendar)

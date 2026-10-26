@@ -29,6 +29,20 @@ public struct ClickyOutputResolution: Equatable, Sendable {
 }
 
 public enum ClickyOutputRouting {
+    static func acceptingFasterOutput(_ faster: AudioOutputDevice, preferences: ClickyPreferences,
+        resolution: ClickyOutputResolution?) -> ClickyPreferences {
+        var updated = preferences
+        if preferences.outputDeviceUID != nil {
+            updated.outputDeviceUID = faster.uid
+            updated.outputDeviceName = faster.name
+        } else if let system = resolution?.system {
+            updated.outputRules.removeAll { $0.whenUID == system.uid }
+            updated.outputRules.append(ClickyOutputRule(whenUID: system.uid, whenName: system.name,
+                playOnUID: faster.uid, playOnName: faster.name))
+        }
+        return updated
+    }
+
     /// Which device Clicky plays on. A device picked by hand wins; otherwise the first rule for the current system output;
     /// otherwise the system output. A picked or ruled device that is not connected falls back to the system output.
     public static func resolve(preferences: ClickyPreferences, outputs: [AudioOutputDevice],

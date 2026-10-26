@@ -157,6 +157,10 @@ public struct ClickyAnalyticsView: View {
             if let coverage = ClickyRanges.coverageText(interval, earliest: earliest) {
                 Label(coverage, systemImage: "calendar.badge.clock").font(.caption).foregroundStyle(.secondary)
             }
+            if report.approximateTotals {
+                Text("Totals and comparisons are approximate at partial hours or days where minute detail has expired.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -234,9 +238,11 @@ public struct ClickyAnalyticsView: View {
                 initialWindow: resolution.initialWindow, end: now, valueLabel: releases ? "Releases" : "Presses",
                 rangeStart: interval.start, style: $chartStyle)
                 .id("\(resolution.rawValue).\(range).\(example != nil)")
-            Text(resolutions.count < ClickyTimeResolution.allCases.count
-                ? "Minute detail is kept for 30 days, so this range shows hours or days. Wide views combine nearby bars."
-                : "\(resolution.rawValue)-by-\(resolution.rawValue.lowercased()) recorded counts. Wide views combine nearby bars.")
+            Text(resolutions == [.day]
+                ? "Hourly counts are kept for 1 year, so this range shows daily totals."
+                : resolutions.count < ClickyTimeResolution.allCases.count
+                    ? "Minute detail is kept for 30 days, so this range shows hours or days. Wide views combine nearby bars."
+                    : "\(resolution.rawValue)-by-\(resolution.rawValue.lowercased()) recorded counts. Wide views combine nearby bars.")
                 .font(.caption).foregroundStyle(.secondary)
         }
     }

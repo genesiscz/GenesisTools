@@ -63,6 +63,8 @@ public struct ClickyPreferences: Codable, Equatable {
     /// Offer another output when the one Clicky plays on is late by more than `delayWarningMilliseconds`.
     public var delayWarning = true
     public var delayWarningMilliseconds = 150
+    /// Zero keeps the prompt visible until dismissed.
+    public var delayPromptSeconds = 45
     /// Outputs the user chose to keep although they are late: never offered again.
     public var delayAcceptedUIDs: [String] = []
 
@@ -96,6 +98,7 @@ public struct ClickyPreferences: Codable, Equatable {
         try read(.outputRules, into: &outputRules)
         try read(.delayWarning, into: &delayWarning)
         try read(.delayWarningMilliseconds, into: &delayWarningMilliseconds)
+        try read(.delayPromptSeconds, into: &delayPromptSeconds)
         try read(.delayAcceptedUIDs, into: &delayAcceptedUIDs)
     }
 
@@ -105,6 +108,7 @@ public struct ClickyPreferences: Codable, Equatable {
         quietEnd = min(1439, max(0, quietEnd))
         excludedApplications = Array(Set(excludedApplications.filter { !$0.isEmpty })).sorted()
         delayWarningMilliseconds = min(5000, max(20, delayWarningMilliseconds))
+        delayPromptSeconds = min(300, max(0, delayPromptSeconds))
     }
 
     public func isQuiet(at date: Date, calendar: Calendar = .current) -> Bool {

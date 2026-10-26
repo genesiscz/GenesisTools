@@ -116,7 +116,8 @@ enum ClickyRanges {
     }
 
     static func resolutions(for interval: DateInterval, now: Date) -> [ClickyTimeResolution] {
-        hasMinuteDetail(interval, now: now) ? ClickyTimeResolution.allCases : [.hour, .day]
+        if interval.start < now.addingTimeInterval(-366 * 86400) { return [.day] }
+        return hasMinuteDetail(interval, now: now) ? ClickyTimeResolution.allCases : [.hour, .day]
     }
 }
 

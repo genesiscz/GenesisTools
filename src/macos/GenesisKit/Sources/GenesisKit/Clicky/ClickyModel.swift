@@ -512,17 +512,14 @@ public final class ClickyModel: ObservableObject {
         delayPrompted.insert(late.uid)
         ClickyDelayPrompt.shared.show(
             late: late, suggestion: faster, reduceMotion: appearance.reduceMotion,
-            onSwitch: { [weak self] in self?.playLateOutputOn(faster, instead: late) },
+            holdSeconds: TimeInterval(preferences.delayPromptSeconds),
+            onSwitch: { [weak self] in self?.playLateOutputOn(faster) },
             onKeep: { [weak self] in self?.preferences.delayAcceptedUIDs.append(late.uid) })
     }
 
-    /// The prompt's answer: a hand-picked late output is replaced; a late system output gets a rule.
-    private func playLateOutputOn(_ faster: AudioOutputDevice, instead late: AudioOutputDevice) {
-        if preferences.outputDeviceUID == late.uid {
-            pickOutput(faster)
-        } else {
-            setRule(when: late, playOn: faster)
-        }
+    /// Replace an explicit pick, including a disconnected one; otherwise update the current system output's rule.
+    private func playLateOutputOn(_ faster: AudioOutputDevice) {
+        preferences = ClickyOutputRouting.acceptingFasterOutput(faster, preferences: preferences, resolution: output)
     }
 
     /// nil follows the system output.

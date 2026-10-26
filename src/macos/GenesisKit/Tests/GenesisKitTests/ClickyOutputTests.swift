@@ -48,6 +48,28 @@ final class ClickyOutputTests: XCTestCase {
         XCTAssertTrue(gone.reason.contains("not connected"), gone.reason)
     }
 
+    func testAcceptingFasterOutputReplacesTheActiveRuleOrDisconnectedPick() {
+        var preferences = ClickyPreferences()
+        preferences.outputRules = [ClickyOutputRule(whenUID: monitor.uid, whenName: monitor.name,
+            playOnUID: homePod.uid, playOnName: homePod.name)]
+        let routed = ClickyOutputRouting.resolve(preferences: preferences, outputs: all, systemID: monitor.id)
+        let updated = ClickyOutputRouting.acceptingFasterOutput(speakers, preferences: preferences, resolution: routed)
+        XCTAssertEqual(updated.outputRules.count, 1)
+        XCTAssertEqual(updated.outputRules.first?.whenUID, monitor.uid)
+        XCTAssertEqual(ClickyOutputRouting.resolve(preferences: updated, outputs: all, systemID: monitor.id).effective, speakers)
+
+        preferences.outputDeviceUID = "disconnected"
+        let fallback = ClickyOutputRouting.resolve(preferences: preferences, outputs: all, systemID: homePod.id)
+        let picked = ClickyOutputRouting.acceptingFasterOutput(speakers, preferences: preferences, resolution: fallback)
+        XCTAssertEqual(picked.outputDeviceUID, speakers.uid)
+        XCTAssertEqual(ClickyOutputRouting.resolve(preferences: picked, outputs: all, systemID: homePod.id).effective, speakers)
+
+        let system = ClickyOutputRouting.resolve(preferences: ClickyPreferences(), outputs: all, systemID: homePod.id)
+        let followed = ClickyOutputRouting.acceptingFasterOutput(speakers, preferences: ClickyPreferences(), resolution: system)
+        XCTAssertNil(followed.outputDeviceUID)
+        XCTAssertEqual(ClickyOutputRouting.resolve(preferences: followed, outputs: all, systemID: homePod.id).effective, speakers)
+    }
+
     func testTheSuggestionPrefersBuiltInSpeakersAndNeverAVirtualDevice() {
         XCTAssertEqual(AudioOutputs.suggestion(instead: homePod, outputs: all, limit: 0.15), speakers)
         XCTAssertEqual(AudioOutputs.suggestion(instead: homePod, outputs: [homePod, monitor, loopback], limit: 0.15),
@@ -64,10 +86,25 @@ final class ClickyOutputTests: XCTestCase {
         XCTAssertNil(decoded.outputDeviceUID)
         XCTAssertTrue(decoded.delayWarning)
         XCTAssertEqual(decoded.delayWarningMilliseconds, 150)
+        XCTAssertEqual(decoded.delayPromptSeconds, 45)
         var changed = decoded
+        changed.delayPromptSeconds = 0
         changed.outputRules = [ClickyOutputRule(whenUID: "a", whenName: "A", playOnUID: "b", playOnName: "B")]
         let again = try JSONDecoder().decode(ClickyPreferences.self, from: JSONEncoder().encode(changed))
         XCTAssertEqual(again, changed)
+    }
+
+    func testPromptDurationNormalizesAndKeepsUntilDismissed() {
+        var preferences = ClickyPreferences()
+        preferences.delayPromptSeconds = -1
+        preferences.normalize()
+        XCTAssertEqual(preferences.delayPromptSeconds, 0)
+        preferences.delayPromptSeconds = 900
+        preferences.normalize()
+        XCTAssertEqual(preferences.delayPromptSeconds, 300)
+        preferences.delayPromptSeconds = 120
+        preferences.normalize()
+        XCTAssertEqual(preferences.delayPromptSeconds, 120)
     }
 
     func testDelayText() {

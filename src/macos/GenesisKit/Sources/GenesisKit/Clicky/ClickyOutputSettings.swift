@@ -24,6 +24,11 @@ struct ClickyOutputCard: View {
                     identifier: "clicky.output.delayLimit",
                     options: [100, 150, 300, 500].map { NativeSettingsOption($0, "\($0) ms") },
                     selection: $model.preferences.delayWarningMilliseconds)
+                NativeSettingsPicker("Close prompt after", detail: "How long the faster-output suggestion stays visible.",
+                    identifier: "clicky.output.promptDuration",
+                    options: [NativeSettingsOption(15, "15 seconds"), NativeSettingsOption(45, "45 seconds"),
+                        NativeSettingsOption(120, "2 minutes"), NativeSettingsOption(0, "Until dismissed")],
+                    selection: $model.preferences.delayPromptSeconds)
             }
             if !model.preferences.delayAcceptedUIDs.isEmpty {
                 NativeSettingsRow("Kept although late", detail: keptNames) {

@@ -7,12 +7,11 @@ import SwiftUI
 @MainActor
 final class ClickyDelayPrompt {
     static let shared = ClickyDelayPrompt()
-    static let holdSeconds: TimeInterval = 45
 
     private var panel: NSPanel?
     private var generation = 0
 
-    func show(late: AudioOutputDevice, suggestion: AudioOutputDevice, reduceMotion: Bool,
+    func show(late: AudioOutputDevice, suggestion: AudioOutputDevice, reduceMotion: Bool, holdSeconds: TimeInterval,
               onSwitch: @escaping () -> Void, onKeep: @escaping () -> Void) {
         generation += 1
         let shown = generation
@@ -39,8 +38,10 @@ final class ClickyDelayPrompt {
                 panel.animator().alphaValue = 1
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.holdSeconds) { [weak self] in
-            MainActor.assumeIsolated { self?.close(shown) }
+        if holdSeconds > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + holdSeconds) { [weak self] in
+                MainActor.assumeIsolated { self?.close(shown) }
+            }
         }
     }
 

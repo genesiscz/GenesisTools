@@ -77,6 +77,68 @@ final class ClickyStatsPagesTests: XCTestCase {
         XCTAssertTrue(span.hasSuffix(" to \(sundayText)"), "a week bar names its whole span: \(span)")
     }
 
+    func testZoomFractionIsFiniteWithNoZoomRangeAndClampsNormalRanges() {
+        XCTAssertEqual(NativeChartSampling.zoomFraction(1, minimum: 1, maximum: 1), 0)
+        XCTAssertEqual(NativeChartSampling.zoomFraction(2, minimum: 1, maximum: 4), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(NativeChartSampling.zoomFraction(8, minimum: 1, maximum: 4), 1)
+        XCTAssertEqual(NativeChartSampling.zoomFraction(0.5, minimum: 1, maximum: 4), 0)
+    }
+
+    func testFittedDomainIncludesTheFirstPartialWeek() {
+        let calendar = calendar()
+        let start = date("2026-10-21T10:00:00Z")
+        let end = date("2026-12-25T10:00:00Z")
+        var stats = ClickyStatistics()
+        stats.record(keyCode: 0, release: false, at: start, calendar: calendar)
+        let report = ClickyPerformanceReport(statistics: stats,
+            filter: ClickyPerformanceFilter(start: start, end: end), grouping: .week, calendar: calendar)
+        let first = report.timeline.first!.date
+        XCTAssertLessThan(first, start)
+        XCTAssertEqual(NativeChartSampling.fittedStart(start, firstPoint: first), first)
+        let points = report.timeline.map { NativeTimePoint(date: $0.date, value: Double($0.totals.presses)) }
+        let bins = NativeChartSampling.bins(points: points,
+            start: NativeChartSampling.fittedStart(start, firstPoint: first), end: end, step: 604800, calendar: calendar)
+        XCTAssertEqual(bins.reduce(0) { $0 + $1.value }, Double(report.total.presses))
+        XCTAssertEqual(NativeChartSampling.fittedStart(start, firstPoint: nil), start)
+    }
+
+    func testComparisonUsesMinutesOnBothSidesOfPartialHourBoundaries() {
+        let calendar = calendar()
+        let now = date("2026-10-25T14:05:00Z")
+        let start = calendar.startOfDay(for: now)
+        let interval = DateInterval(start: start, end: now)
+        let previous = ClickyRanges.previous(interval, range: ClickyRanges.today, calendar: calendar)!
+        let cutoff = previous.end
+        var stats = ClickyStatistics()
+        for at in [cutoff.addingTimeInterval(-60), cutoff.addingTimeInterval(60), now.addingTimeInterval(-60)] {
+            stats.record(keyCode: 0, release: false, at: at, calendar: calendar)
+        }
+        let report = ClickyStatsReport(statistics: stats, interval: interval, previous: previous,
+            resolution: .minute, releases: false, now: now, calendar: calendar)
+        XCTAssertEqual(report.total, 1)
+        XCTAssertEqual(report.previousTotal, 1, "the later press is after yesterday's local-time cutoff, even across DST")
+        XCTAssertFalse(report.approximateTotals)
+
+        let partial = ClickyStatsReport(statistics: stats,
+            interval: DateInterval(start: cutoff, end: cutoff.addingTimeInterval(120)),
+            previous: nil, resolution: .minute, releases: false, now: now, calendar: calendar)
+        XCTAssertEqual(partial.total, 1, "the leading boundary excludes the earlier press")
+    }
+
+    func testComparisonDisclosesExpiredMinutePrecision() {
+        let calendar = calendar()
+        let now = date("2026-10-25T14:05:00Z")
+        let at = date("2026-08-24T14:04:00Z")
+        var stats = ClickyStatistics()
+        stats.record(keyCode: 0, release: false, at: at, calendar: calendar)
+        stats.minutes = [:]
+        let report = ClickyStatsReport(statistics: stats,
+            interval: DateInterval(start: calendar.startOfDay(for: at), end: at.addingTimeInterval(60)),
+            previous: nil, resolution: .hour, releases: false, now: now, calendar: calendar)
+        XCTAssertEqual(report.total, 1)
+        XCTAssertTrue(report.approximateTotals)
+    }
+
     func testAverageBinsLeaveEmptySlotsOutAndDoNotAddRates() {
         let points = [
             NativeTimePoint(date: Date(timeIntervalSince1970: 0), value: 40),
@@ -120,6 +182,32 @@ final class ClickyStatsPagesTests: XCTestCase {
         XCTAssertEqual(ClickyWeekdays.order(calendar).first, 6, "a Sunday-first calendar lists Sunday first")
         let sundayRow = report.heatmap.filter { $0.row == 0 }.reduce(0) { $0 + $1.value }
         XCTAssertEqual(sundayRow, 1, "today is a Sunday with one press")
+    }
+
+    func testReleaseChartKeepsPressSummaryAndDailyRhythm() {
+        let calendar = calendar()
+        let now = date("2026-10-25T14:30:00Z")
+        var stats = ClickyStatistics()
+        stats.record(keyCode: 0, release: false, at: now.addingTimeInterval(-86400), calendar: calendar)
+        stats.record(keyCode: 0, release: true, at: now.addingTimeInterval(-60), calendar: calendar)
+        let interval = ClickyRanges.interval(ClickyRanges.week, now: now, earliest: stats.historyStartedAt, calendar: calendar)
+        let report = ClickyStatsReport(statistics: stats, interval: interval, previous: nil,
+            resolution: .minute, releases: true, now: now, calendar: calendar)
+        XCTAssertEqual(report.total, 1)
+        XCTAssertEqual(report.records.busiestDay, calendar.startOfDay(for: now.addingTimeInterval(-86400)))
+        XCTAssertEqual(report.dayTimeline.reduce(0) { $0 + $1.value }, 1)
+        XCTAssertEqual(report.dayTimeline.first { $0.date == calendar.startOfDay(for: now) }?.value, 0)
+        XCTAssertEqual(report.timeline.reduce(0) { $0 + $1.value }, 1, "the Activity chart still shows releases")
+    }
+
+    func testStatsResolutionsRespectBothRetentionTiers() {
+        let now = date("2026-10-25T14:30:00Z")
+        func available(_ days: Double) -> [ClickyTimeResolution] {
+            ClickyRanges.resolutions(for: DateInterval(start: now.addingTimeInterval(-days * 86400), end: now), now: now)
+        }
+        XCTAssertEqual(available(7), [.minute, .hour, .day])
+        XCTAssertEqual(available(90), [.hour, .day])
+        XCTAssertEqual(available(730), [.day], "a two-year hourly chart would silently omit its first year")
     }
 
     func testRecordingStatusNamesTheReasonAndTheFix() {

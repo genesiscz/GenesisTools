@@ -2416,6 +2416,41 @@ extension ClickyTests {
         XCTAssertEqual(report.total.activeSeconds, 54, accuracy: 0.001)
     }
 
+    func testHourlyPerformanceExpiresFromRecordingTimeEvenWithoutOldMinutes() {
+        var stats = ClickyStatistics()
+        let nowMinute = 30_000_000
+        let oldestHour = nowMinute / 60 - 730 * 24
+        var bucket = ClickyPerformanceBucket()
+        bucket.characters = 5
+        stats.performanceHours = [oldestHour - 1: bucket, oldestHour: bucket]
+        stats.performanceMinutes[nowMinute] = bucket
+        stats.rollUpPerformance(olderThan: nowMinute - 30 * 24 * 60)
+        XCTAssertEqual(stats.performanceHours.keys.sorted(), [oldestHour])
+        XCTAssertEqual(stats.performanceMinutes.keys.sorted(), [nowMinute])
+    }
+
+    func testSessionContinuitySurvivesRollingBoundaryAndReload() throws {
+        var stats = ClickyStatistics()
+        let horizon = 29_000_000
+        var bucket = ClickyPerformanceBucket()
+        bucket.characters = 5
+        for minute in (horizon - 1)...(horizon + 1) { stats.performanceMinutes[minute] = bucket }
+        let filter = ClickyPerformanceFilter(start: Date(timeIntervalSince1970: Double(horizon - 120) * 60),
+            end: Date(timeIntervalSince1970: Double(horizon + 120) * 60))
+        func sessions(_ statistics: ClickyStatistics) -> Int {
+            ClickyPerformanceReport(statistics: statistics, filter: filter, grouping: .hour, calendar: calendar).total.sessions
+        }
+        XCTAssertEqual(sessions(stats), 1)
+        stats.rollUpPerformance(olderThan: horizon)
+        XCTAssertEqual(sessions(stats), 1)
+        stats = try JSONDecoder().decode(ClickyStatistics.self, from: JSONEncoder().encode(stats))
+        XCTAssertEqual(sessions(stats), 1, "the boundary survives saving and loading")
+        stats.rollUpPerformance(olderThan: horizon + 1)
+        XCTAssertEqual(sessions(stats), 1)
+        stats.rollUpPerformance(olderThan: horizon + 2)
+        XCTAssertEqual(sessions(stats), 1, "advancing the cutoff never invents another setup")
+    }
+
     func testEachRangeOpensWithAGroupingThatKeepsTheTimelineReadable() {
         XCTAssertEqual(ClickyPerformanceView.grouping(for: "Today"), .fifteenMinutes)
         XCTAssertEqual(ClickyPerformanceView.grouping(for: "7 days"), .hour)
