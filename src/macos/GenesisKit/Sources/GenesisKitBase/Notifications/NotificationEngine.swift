@@ -239,7 +239,7 @@ public final class NotificationEngine: @unchecked Sendable {
             }
         }
         record(note, outcome: .posted, reason: nil, id: identifier)
-        let start = { [weak self] in
+        let start: () -> Void = { [weak self] in
             if note.actions.isEmpty {
                 add()
             } else {
