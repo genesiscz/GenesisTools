@@ -30,6 +30,12 @@ describe("liveClaudeSessionIds", () => {
         expect(liveClaudeSessionIds(dir, () => new Set([1]))).toEqual(new Set());
     });
 
+    it("answers unknown when an individual entry cannot be parsed, even beside readable entries", () => {
+        const dir = registry([{ pid: 1, sessionId: "live" }]);
+        writeFileSync(join(dir, "2.json"), "{partial");
+        expect(liveClaudeSessionIds(dir, () => new Set([1]))).toBeNull();
+    });
+
     it("answers null, not empty, when the registry cannot be read", () => {
         expect(liveClaudeSessionIds(join(tmpdir(), "no-such-registry-dir"), () => new Set())).toBeNull();
     });

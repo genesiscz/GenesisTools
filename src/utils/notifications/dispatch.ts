@@ -38,6 +38,16 @@ export async function dispatchSay(message: string, config: SayChannelConfig): Pr
     }
 }
 
+type Channels = Awaited<ReturnType<typeof notificationsConfig.getChannels>>;
+
+/** A channel switched on without what it needs to send: its ledger line says suppressed, not failed. */
+export function unconfiguredChannel(name: ChannelName, channels: Channels): boolean {
+    return (
+        (name === "telegram" && (!channels.telegram.botToken || !channels.telegram.chatId)) ||
+        (name === "webhook" && !channels.webhook.url)
+    );
+}
+
 /**
  * True when every channel that was asked to send accepted the event. A channel
  * that is switched off, or excluded by `event.only`, counts as accepted: there
@@ -51,7 +61,7 @@ export async function dispatchNotification(event: NotificationEvent): Promise<bo
         const allows = (name: ChannelName): boolean => only === undefined || only.includes(name);
 
         if (allows("system") && !channels.system.enabled) {
-            recordNotification({
+            await recordNotification({
                 source: event.app,
                 channel: "macos",
                 outcome: "suppressed",
@@ -72,12 +82,14 @@ export async function dispatchNotification(event: NotificationEvent): Promise<bo
 
         for (let i = 0; i < results.length; i++) {
             const r = results[i];
+            const unconfigured = unconfiguredChannel(channelNames[i], channels);
             // The system channel records itself in postNotification, with the backend it used.
             if (channelNames[i] !== "system" && allows(channelNames[i]) && channels[channelNames[i]].enabled) {
-                recordNotification({
+                await recordNotification({
                     source: event.app,
                     channel: channelNames[i],
-                    outcome: r.status === "fulfilled" && r.value ? "posted" : "failed",
+                    outcome: unconfigured ? "suppressed" : r.status === "fulfilled" && r.value ? "posted" : "failed",
+                    ...(unconfigured ? { reason: "channel enabled but not configured" } : {}),
                     title: event.title,
                     body: event.message,
                 });

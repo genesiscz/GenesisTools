@@ -374,8 +374,7 @@ async function runUpdate(opts: UpdateOptions, targets: Target[], startedAt: numb
         const bigFileLimit = Number(getMeta(db, "big_file_limit") ?? INDEX_DEFAULTS.bigFileLimit);
         const fsid = getMeta(db, "volume_fsid");
         const knownUuid = getMeta(db, "volume_uuid");
-        // Read once, and only when needed: a moved fsid, or an index that has no UUID stored yet.
-        let currentUuid: string | null | undefined = knownUuid === null ? volumeUuidAt(root.name) : undefined;
+        const currentUuid = knownUuid === null ? volumeUuidAt(root.name) : null;
         let movedFsid: string | null = null;
 
         const queueReadAt = now();
@@ -489,11 +488,10 @@ async function runUpdate(opts: UpdateOptions, targets: Target[], startedAt: numb
                 }
 
                 if (fsid !== null && walk.end.fsid !== "" && walk.end.fsid !== fsid) {
-                    if (currentUuid === undefined) {
-                        currentUuid = volumeUuidAt(root.name);
-                    }
-
-                    if (!sameVolume({ fsid, uuid: knownUuid }, { fsid: walk.end.fsid, uuid: currentUuid })) {
+                    const regionUuid = volumeUuidAt(owner.path);
+                    if (
+                        !sameVolume({ fsid, uuid: knownUuid ?? currentUuid }, { fsid: walk.end.fsid, uuid: regionUuid })
+                    ) {
                         throw new IndexError(
                             "volume_changed",
                             `${owner.path} is on another volume than the index (${walk.end.fsid}, built on ${fsid}). Run a build.`

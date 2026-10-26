@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 /// The one record of every notification a GenesisTools or Genesis surface sent, or decided not to send:
@@ -66,8 +67,30 @@ public enum NotificationLedger {
         if file == nil, NSClassFromString("XCTestCase") != nil { return }
         let target = file ?? path
         queue.async {
-            rotateIfFull(target)
-            GateAudit.appendLine(data, to: target)
+            do {
+                try FileManager.default.createDirectory(atPath: (target as NSString).deletingLastPathComponent,
+                                                        withIntermediateDirectories: true,
+                                                        attributes: [.posixPermissions: 0o700])
+                let descriptor = open(target + ".lock", O_CREAT | O_WRONLY | O_CLOEXEC, 0o600)
+                guard descriptor >= 0 else {
+                    KitHost.log("notification ledger: cannot open lock for \(target)")
+                    return
+                }
+                defer { close(descriptor) }
+                let deadline = ProcessInfo.processInfo.systemUptime + 5
+                while flock(descriptor, LOCK_EX | LOCK_NB) != 0 {
+                    guard ProcessInfo.processInfo.systemUptime < deadline else {
+                        KitHost.log("notification ledger: lock timed out for \(target)")
+                        return
+                    }
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+                defer { flock(descriptor, LOCK_UN) }
+                rotateIfFull(target)
+                GateAudit.appendLine(data, to: target)
+            } catch {
+                KitHost.log("notification ledger: cannot prepare \(target): \(error)")
+            }
         }
     }
 
@@ -81,7 +104,9 @@ public enum NotificationLedger {
               size > maxBytes
         else { return }
         let older = file + ".1"
-        try? FileManager.default.removeItem(atPath: older)
-        try? FileManager.default.moveItem(atPath: file, toPath: older)
+        // POSIX rename replaces the destination atomically, with no delete/move gap.
+        if rename(file, older) != 0 {
+            KitHost.log("notification ledger: cannot rotate \(file), errno \(errno)")
+        }
     }
 }

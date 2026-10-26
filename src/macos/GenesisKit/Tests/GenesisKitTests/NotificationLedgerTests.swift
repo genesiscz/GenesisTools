@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import GenesisKit
 
@@ -35,6 +36,27 @@ final class NotificationLedgerTests: XCTestCase {
         XCTAssertNotNil((written[0]["writer"] as? [String: Any])?["pid"])
         XCTAssertEqual(written[1]["reason"] as? String, "process exited")
         XCTAssertNil(written[1]["bad"], "a non-JSON value is dropped, the line is still written")
+    }
+
+    func testRotationAndAppendWaitForTheSharedInterprocessLock() throws {
+        let full = Data(count: Int(NotificationLedger.maxBytes) + 1)
+        try full.write(to: URL(fileURLWithPath: file))
+        let descriptor = open(file + ".lock", O_CREAT | O_WRONLY | O_CLOEXEC, 0o600)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        XCTAssertEqual(flock(descriptor, LOCK_EX | LOCK_NB), 0)
+        NotificationLedger.record(source: "first", channel: "macos", file: file)
+        NotificationLedger.record(source: "second", channel: "macos", file: file)
+        let released = expectation(description: "other writer releases the lock")
+        let target = file
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) {
+            XCTAssertEqual(try? Data(contentsOf: URL(fileURLWithPath: target)), full)
+            flock(descriptor, LOCK_UN)
+            close(descriptor)
+            released.fulfill()
+        }
+        wait(for: [released], timeout: 2)
+        XCTAssertEqual(try lines().compactMap { $0["source"] as? String }, ["first", "second"])
+        XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: file + ".1")), full)
     }
 
     func testAFullFileMovesAsideBeforeTheNextLine() throws {

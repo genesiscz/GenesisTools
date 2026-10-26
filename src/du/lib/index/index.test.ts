@@ -48,6 +48,7 @@ import { withIndexLock } from "./store";
 import type { DiffRowOut, DirRow, IndexEvent } from "./types";
 import { errorEvent, IndexError } from "./types";
 import { updateIndex } from "./update";
+import * as volume from "./volume";
 import * as indexWalk from "./walk";
 import { runIndexWalk, type WalkOptions } from "./walk";
 
@@ -879,6 +880,55 @@ describeOnDarwin("du index: review regressions (2026-10-13 CLI review)", () => {
             check.close();
         }
     });
+
+    it.each([false, true])(
+        "checks each walked region's UUID before accepting a moved fsid, legacy=%s",
+        async (legacy) => {
+            const root = join(base, `volume-${legacy}`);
+            const region = join(root, "child");
+            mkdirSync(region, { recursive: true });
+            write(join(region, "file"), 4096);
+            const db = join(base, `volume-${legacy}.db`);
+            await buildIndex({ db, root, ...OPTS, minDirBytes: 0 });
+            const check = openIndexDbForWrite(db);
+            setMeta(check, "volume_fsid", "old-fsid");
+            if (legacy) {
+                check.run("DELETE FROM meta WHERE key = 'volume_uuid'");
+            } else {
+                setMeta(check, "volume_uuid", "volume-A");
+            }
+            let foreign = true;
+            const uuid = spyOn(volume, "volumeUuidAt").mockImplementation((path) =>
+                path === region && foreign ? "volume-B" : "volume-A"
+            );
+            const original = indexWalk.runIndexWalk;
+            const walk = spyOn(indexWalk, "runIndexWalk").mockImplementation(async (options) => {
+                const result = await original(options);
+                return { ...result, end: { ...result.end, fsid: "new-fsid" } };
+            });
+            try {
+                await expect(updateIndex({ db, paths: [region], minFreeBytes: 0 })).rejects.toMatchObject({
+                    code: "volume_changed",
+                });
+                expect(check.query("SELECT value FROM meta WHERE key = 'volume_fsid'").get()).toEqual({
+                    value: "old-fsid",
+                });
+                expect(uuid).toHaveBeenCalledWith(region);
+                foreign = false;
+                await updateIndex({ db, paths: [region], minFreeBytes: 0 });
+                expect(check.query("SELECT value FROM meta WHERE key = 'volume_fsid'").get()).toEqual({
+                    value: "new-fsid",
+                });
+                expect(check.query("SELECT value FROM meta WHERE key = 'volume_uuid'").get()).toEqual({
+                    value: "volume-A",
+                });
+            } finally {
+                uuid.mockRestore();
+                walk.mockRestore();
+                check.close();
+            }
+        }
+    );
 
     it("forwards update walk progress and blocked events", async () => {
         const root = join(base, "update-events");

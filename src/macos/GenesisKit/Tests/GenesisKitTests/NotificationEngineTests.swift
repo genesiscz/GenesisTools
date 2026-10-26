@@ -9,6 +9,8 @@ private final class FakeCenter: NotificationCenterPort {
     var categorySet: Set<UNNotificationCategory> = []
     var deliveredNotes: [DeliveredNotification] = []
     var failNextAdd = false
+    var delayDelivered = false
+    var deliveredCallbacks: [([DeliveredNotification]) -> Void] = []
 
     func add(_ request: UNNotificationRequest, completion: @escaping (Error?) -> Void) {
         if failNextAdd {
@@ -24,7 +26,14 @@ private final class FakeCenter: NotificationCenterPort {
         completion(nil)
     }
 
-    func delivered(_ completion: @escaping ([DeliveredNotification]) -> Void) { completion(deliveredNotes) }
+    func delivered(_ completion: @escaping ([DeliveredNotification]) -> Void) {
+        if delayDelivered { deliveredCallbacks.append(completion) } else { completion(deliveredNotes) }
+    }
+
+    func finishDelivered(at index: Int = 0) {
+        let callback = deliveredCallbacks.remove(at: index)
+        callback(deliveredNotes)
+    }
 
     func removeDelivered(identifiers: [String]) {
         removed += identifiers
@@ -71,6 +80,31 @@ final class NotificationEngineTests: XCTestCase {
         XCTAssertEqual(center.added.last?.content.threadIdentifier, "s1", "the key threads the cards")
     }
 
+    func testReplacementWaitsForOlderSweepAndAllowsOtherKeysToCompleteOutOfOrder() {
+        center.delayDelivered = true
+        engine.post(EngineNotification(source: "disk", title: "first", body: "b", identifier: "first", replaceKey: "key"))
+        engine.post(EngineNotification(source: "disk", title: "latest", body: "b", identifier: "latest", replaceKey: "key"))
+        engine.post(EngineNotification(source: "disk", title: "other", body: "b", identifier: "other", replaceKey: "other"))
+        XCTAssertEqual(center.added.map(\.identifier), ["first", "other"])
+        center.finishDelivered(at: 1)
+        center.finishDelivered()
+        XCTAssertEqual(center.added.map(\.identifier), ["first", "other", "latest"])
+        center.finishDelivered()
+        XCTAssertEqual(Set(center.deliveredNotes.map(\.identifier)), ["latest", "other"])
+        XCTAssertEqual(center.removed, ["first"])
+    }
+
+    func testFailedReplacementReleasesTheNextPost() {
+        center.delayDelivered = true
+        engine.post(EngineNotification(source: "disk", title: "first", body: "b", replaceKey: "key"))
+        engine.post(EngineNotification(source: "disk", title: "failed", body: "b", replaceKey: "key"))
+        engine.post(EngineNotification(source: "disk", title: "last", body: "b", identifier: "last", replaceKey: "key"))
+        center.failNextAdd = true
+        center.finishDelivered()
+        center.finishDelivered()
+        XCTAssertEqual(center.deliveredNotes.map(\.identifier), ["last"])
+    }
+
     func testAQuietRuleHoldsTheCardBackAndTheLedgerSaysWhy() throws {
         engine.addQuietRule("focus") { $0.source == "server.notify" ? "focus session active" : nil }
         XCTAssertEqual(engine.post(EngineNotification(source: "server.notify", title: "t", body: "b")),
@@ -107,7 +141,7 @@ final class NotificationEngineTests: XCTestCase {
         XCTAssertEqual(lines[0]["stallSeconds"] as? Int, 21)
     }
 
-    func testWithdrawByKeyAndCountByCategory() {
+    func testWithdrawByKeyAndCountByCategory() throws {
         engine.post(EngineNotification(source: "disk", title: "full", body: "b", replaceKey: "disk.full",
                                        category: "genesis.disk"))
         engine.post(EngineNotification(source: "monitor.cache", title: "t", body: "b", category: "genesis.monitor.session"))
@@ -118,6 +152,14 @@ final class NotificationEngineTests: XCTestCase {
         engine.withdraw(replaceKey: "disk.full") { withdrawn = $0 }
         XCTAssertEqual(withdrawn.count, 1)
         XCTAssertEqual(center.deliveredNotes.map(\.category), ["genesis.monitor.session"])
+        engine.withdraw(where: { $0.category == "genesis.monitor.session" })
+        engine.withdraw(replaceKey: "disk.full")
+        let withdrawnLines = try ledgerLines().filter { $0["outcome"] as? String == "withdrawn" }
+        XCTAssertEqual(withdrawnLines.count, 2, "one line per removed card, none for a no-op")
+        XCTAssertEqual(withdrawnLines[0]["source"] as? String, "disk")
+        XCTAssertEqual(withdrawnLines[0]["id"] as? String, withdrawn.first)
+        XCTAssertEqual(withdrawnLines[0]["replaceKey"] as? String, "disk.full")
+        XCTAssertEqual(withdrawnLines[1]["source"] as? String, "monitor.cache")
     }
 
     func testNoCenterMeansNothingPostedAndNothingRecorded() throws {

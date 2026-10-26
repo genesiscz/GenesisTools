@@ -337,8 +337,12 @@ describe("withLiveness", () => {
         expect(rows.map((r) => r.alive)).toEqual([true, false, undefined]);
     });
 
-    test("an unreadable registry changes nothing: unknown is not dead", () => {
-        const rows = [row("claude", "aaaa")];
-        expect(withLiveness(rows, null)).toBe(rows);
+    test("an unreadable registry clears cached Claude liveness without changing other providers", () => {
+        const other = { ...row("codex", "cccc"), alive: false };
+        const rows = [{ ...row("claude", "aaaa"), alive: false }, { ...row("claude", "bbbb"), alive: true }, other];
+        const refreshed = withLiveness(rows, null);
+        expect(refreshed.map((r) => r.alive)).toEqual([null, null, false]);
+        expect(refreshed[2]).toBe(other);
+        expect(rows[0].alive).toBe(false);
     });
 });

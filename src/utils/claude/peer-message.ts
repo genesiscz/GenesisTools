@@ -162,7 +162,14 @@ export function liveClaudeSessionIds(
                 byPid.set(parsed.pid, String(parsed.sessionId).toLowerCase());
             }
         } catch (error) {
+            // Entries can disappear between readdir and read when a process exits. Other failures
+            // leave an unknown live inventory, so do not classify every missing session as dead.
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+                continue;
+            }
+
             log.debug({ error, name }, "unreadable session registry file");
+            return null;
         }
     }
 

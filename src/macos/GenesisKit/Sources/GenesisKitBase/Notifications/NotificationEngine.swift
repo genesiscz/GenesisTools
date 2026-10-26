@@ -133,6 +133,7 @@ public final class NotificationEngine: @unchecked Sendable {
 
     /// The userInfo key the replacement sweep reads. Posters keep their own keys beside it.
     public static let replaceKeyInfoKey = "genesis.replaceKey"
+    private static let sourceInfoKey = "genesis.source"
 
     /// nil when this process must not touch Notification Center: `UNUserNotificationCenter.current()`
     /// aborts outside a real `.app` (raw `swift run`, `swift test`).
@@ -143,6 +144,7 @@ public final class NotificationEngine: @unchecked Sendable {
     private let lock = NSLock()
     private var rules: [(name: String, rule: (EngineNotification) -> String?)] = []
     private var registered: [String: UNNotificationCategory] = [:]
+    private var replacements: [String: [() -> Void]] = [:]
 
     public init(centerProvider: @escaping () -> NotificationCenterPort? = NotificationEngine.systemCenterIfAvailable,
                 ledgerFile: String? = nil) {
@@ -227,18 +229,32 @@ public final class NotificationEngine: @unchecked Sendable {
             center.add(request) { error in
                 if let error {
                     self?.record(note, outcome: .failed, reason: error.localizedDescription, id: identifier)
+                    if let key = note.replaceKey { self?.finishReplacement(key) }
                 } else if let key = note.replaceKey {
-                    self?.sweep(center: center, replaceKey: key, keep: identifier)
+                    self?.sweep(center: center, replaceKey: key, keep: identifier) { [weak self] in
+                        self?.finishReplacement(key)
+                    }
                 }
                 completion?(error)
             }
         }
         record(note, outcome: .posted, reason: nil, id: identifier)
-        if note.actions.isEmpty {
-            add()
+        let start = { [weak self] in
+            if note.actions.isEmpty {
+                add()
+            } else {
+                self?.register(categories: [UNNotificationCategory(identifier: identifier, actions: note.actions,
+                                                                   intentIdentifiers: [], options: [])], then: add)
+            }
+        }
+        if let key = note.replaceKey {
+            lock.lock()
+            replacements[key, default: []].append(start)
+            let first = replacements[key]?.count == 1
+            lock.unlock()
+            if first { start() }
         } else {
-            register(categories: [UNNotificationCategory(identifier: identifier, actions: note.actions,
-                                                         intentIdentifiers: [], options: [])], then: add)
+            start()
         }
         return .posted(id: identifier)
     }
@@ -257,6 +273,7 @@ public final class NotificationEngine: @unchecked Sendable {
         }
         if let thread = note.threadId ?? note.replaceKey { content.threadIdentifier = thread }
         var info = note.userInfo
+        info[Self.sourceInfoKey] = note.source
         if let key = note.replaceKey { info[Self.replaceKeyInfoKey] = key }
         content.userInfo = info
         content.attachments = note.attachments
@@ -271,10 +288,21 @@ public final class NotificationEngine: @unchecked Sendable {
             .map(\.identifier)
     }
 
-    private func sweep(center: NotificationCenterPort, replaceKey: String, keep: String) {
+    private func finishReplacement(_ key: String) {
+        lock.lock()
+        replacements[key]?.removeFirst()
+        let next = replacements[key]?.first
+        if next == nil { replacements.removeValue(forKey: key) }
+        lock.unlock()
+        next?()
+    }
+
+    private func sweep(center: NotificationCenterPort, replaceKey: String, keep: String,
+                       completion: @escaping () -> Void) {
         center.delivered { delivered in
             let stale = Self.stale(delivered, replaceKey: replaceKey, keep: keep)
             if !stale.isEmpty { center.removeDelivered(identifiers: stale) }
+            completion()
         }
     }
 
@@ -288,8 +316,17 @@ public final class NotificationEngine: @unchecked Sendable {
             return
         }
         center.delivered { delivered in
-            let ids = delivered.filter(match).map(\.identifier)
-            if !ids.isEmpty { center.removeDelivered(identifiers: ids) }
+            let matches = delivered.filter(match)
+            let ids = matches.map(\.identifier)
+            if !ids.isEmpty {
+                center.removeDelivered(identifiers: ids)
+                for card in matches {
+                    var fields: [String: Any] = ["id": card.identifier, "category": card.category]
+                    if let key = card.userInfo[Self.replaceKeyInfoKey] as? String { fields["replaceKey"] = key }
+                    NotificationLedger.record(source: card.userInfo[Self.sourceInfoKey] as? String ?? "notification-engine",
+                                              channel: "macos", outcome: .withdrawn, fields: fields, file: self.ledgerFile)
+                }
+            }
             completion?(ids)
         }
     }

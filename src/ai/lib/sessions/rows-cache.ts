@@ -175,16 +175,17 @@ async function withTmuxLocations(
 /**
  * Claude rows with `alive` read now from the session registry, never from the cached file: a cached answer may
  * be 90 s old, and a session that exited in that time would still read as running. Other providers have no
- * registry and keep what they had. `live` null (registry unreadable) changes nothing: unknown is not dead.
+ * registry and keep what they had. `live` null (registry unreadable) clears any cached observation.
  */
 export function withLiveness(rows: AgentSessionRow[], live: Set<string> | null): AgentSessionRow[] {
-    if (!live) {
-        return rows;
-    }
-
     return rows.map((row) => {
         if (row.provider !== "claude") {
             return row;
+        }
+
+        if (live === null) {
+            // Unknown is not dead: an earlier observation is dropped, never kept as fact.
+            return row.alive === undefined || row.alive === null ? row : { ...row, alive: null };
         }
 
         const alive = live.has(row.sessionId.toLowerCase());

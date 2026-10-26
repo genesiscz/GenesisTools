@@ -451,7 +451,7 @@ export async function postNotification(opts: NotificationOptions): Promise<Poste
         return posted;
     }
 
-    recordNotification({
+    await recordNotification({
         source: opts.group ?? "tools",
         channel: "macos",
         outcome: "posted",
