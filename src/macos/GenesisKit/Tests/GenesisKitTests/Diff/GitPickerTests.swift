@@ -95,6 +95,15 @@ final class GitPickerTests: XCTestCase {
         XCTAssertEqual(unpicked.highlighted, choices[0].id, "Down from nothing starts at the top")
     }
 
+    func testAShiftClickStartsAtTheCommitOnScreenNotWhereThePointerWas() {
+        let choices = Self.choices(10)
+        var state = GitCommitPickerState(choices: choices, selection: choices[2].sha)
+        // The pointer moves the highlight to the row it is over, so it is on row 6 when the Shift-click lands there.
+        state.highlighted = choices[6].id
+        state.extend(to: choices[6].id)
+        XCTAssertEqual(state.range?.count, 5, "commits 2 to 6: from the commit on screen, not from the row under the pointer")
+    }
+
     func testShiftExtendsARangeThatKeepsEveryCommitBetweenItsEnds() {
         let choices = Self.choices(10)
         var state = GitCommitPickerState(choices: choices, selection: choices[2].sha)
@@ -108,11 +117,33 @@ final class GitPickerTests: XCTestCase {
         XCTAssertNil(state.range, "a plain move is back to one commit")
 
         // A Shift-click across a filter: the hidden commits between the ends still belong to the range.
-        state.highlighted = choices[1].id
-        state.extend(to: choices[1].id)
+        state.move(-1)
         state.query = "number 6"
         state.extend(to: choices[6].id)
         XCTAssertEqual(state.range?.count, 6, "commits 1 to 6, though the filter shows only one row")
+    }
+
+    func testAClickChoosesASecondClickShowsAndAClickOnAnotherChoosesTheRunBetween() {
+        let choices = Self.choices(10)
+        var state = GitCommitPickerState(choices: choices, selection: choices[2].sha)
+        XCTAssertEqual(state.choose(choices[4].id, ranges: true), .chose)
+        XCTAssertNil(state.range, "one chosen commit is no range")
+        XCTAssertEqual(state.choose(choices[4].id, ranges: true), .show(choices[4].id), "a second click on it shows it")
+
+        var run = GitCommitPickerState(choices: choices, selection: choices[2].sha)
+        _ = run.choose(choices[4].id, ranges: true)
+        XCTAssertEqual(run.choose(choices[7].id, ranges: true), .chose)
+        XCTAssertEqual(run.range?.count, 4, "commits 4 to 7")
+        XCTAssertEqual(run.choose(choices[9].id, ranges: true), .chose, "a click outside the run moves its end")
+        XCTAssertEqual(run.range?.count, 6, "commits 4 to 9")
+        XCTAssertEqual(run.choose(choices[5].id, ranges: true), .showRange, "a click inside the run shows it")
+        run.extend(to: choices[1].id)
+        XCTAssertEqual(run.range?.count, 4, "a Shift-click keeps the run's start: commits 1 to 4")
+
+        var single = GitCommitPickerState(choices: choices, selection: nil)
+        _ = single.choose(choices[4].id, ranges: false)
+        XCTAssertEqual(single.choose(choices[7].id, ranges: false), .chose, "without runs another click chooses that commit")
+        XCTAssertEqual(single.choose(choices[7].id, ranges: false), .show(choices[7].id))
     }
 
     func testTheDetailsComeFromOneGitLogWithTheFileAndTheCommitCounts() throws {
