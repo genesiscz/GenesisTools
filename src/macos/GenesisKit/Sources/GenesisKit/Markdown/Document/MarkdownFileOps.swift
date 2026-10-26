@@ -37,6 +37,11 @@ extension MarkdownDocumentsModel {
             defer { navigatingHistory = false }
             for doc in docs where doc.url.path == old || doc.url.path.hasPrefix(old + "/") {
                 let moved = URL(fileURLWithPath: to.standardizedFileURL.path + doc.url.path.dropFirst(old.count))
+                var groups = configuration.tabGroupState
+                if let assigned = groups.assigned.removeValue(forKey: doc.id) {
+                    groups.assigned[moved.standardizedFileURL.path] = assigned
+                    configuration.tabGroupState = groups
+                }
                 if doc.id == selectedBefore {
                     reselect = moved.standardizedFileURL.path
                 }

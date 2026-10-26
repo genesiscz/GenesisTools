@@ -16,7 +16,12 @@ final class MarkdownFileOpsTests: XCTestCase {
         for path in ["readme.md", "notes/a.md", "notes/sub/deep.md"] {
             try "# \(path)".write(to: root.appendingPathComponent(path), atomically: true, encoding: .utf8)
         }
-        model = MarkdownDocumentsModel(defaults: UserDefaults(suiteName: "md-fileops-\(UUID().uuidString)")!)
+        let suite = "md-fileops-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        model = MarkdownDocumentsModel(defaults: defaults)
+        model.configuration = GenesisKitMarkdownConfiguration(defaults: defaults)
+        model.configuration.tabGroupFrom = 0
+        addTeardownBlock { defaults.removePersistentDomain(forName: suite) }
     }
 
     override func tearDownWithError() throws {
@@ -69,6 +74,47 @@ final class MarkdownFileOpsTests: XCTestCase {
 
         XCTAssertEqual(model.selected?.url, url("notes/b.md"))
         XCTAssertTrue(model.recentlyClosed.isEmpty)
+    }
+
+    func testAFileRenameKeepsItsOnlyManualGroupMemberAndGroupState() throws {
+        model.open([url("readme.md"), url("notes/a.md")])
+        let old = url("notes/a.md").path
+        let moved = url("notes/b.md").path
+        let group = model.newGroup(with: old, title: "Reading")
+        model.toggleGroup(group)
+        model.moveGroup(group, before: nil)
+        var expected = model.configuration.tabGroupState
+        expected.assigned[old] = nil
+        expected.assigned[moved] = group
+        try FileManager.default.moveItem(at: url("notes/a.md"), to: url("notes/b.md"))
+
+        model.applyFileChange(.renamed(from: url("notes/a.md"), to: url("notes/b.md")))
+
+        XCTAssertEqual(model.configuration.tabGroupState, expected, "the move changes only the tab's identity, not its group name, fold or order")
+        XCTAssertEqual(model.group(of: moved)?.id, group)
+        XCTAssertEqual(model.group(of: moved)?.title, "Reading", "a named single-member group must not disappear")
+        XCTAssertEqual(model.selected?.id, moved)
+    }
+
+    func testAFolderRenameMigratesDescendantAssignmentsAndKeepsUnrelatedTabs() throws {
+        model.open([url("notes/a.md"), url("notes/sub/deep.md"), url("readme.md")])
+        let group = model.newGroup(with: url("notes/a.md").path, title: "Reading")
+        model.assign(url("notes/sub/deep.md").path, to: group)
+        let unrelated = model.newGroup(with: url("readme.md").path, title: "Other work")
+        var expected = model.configuration.tabGroupState
+        for (old, moved) in [("notes/a.md", "renamed/a.md"), ("notes/sub/deep.md", "renamed/sub/deep.md")] {
+            expected.assigned[url(old).path] = nil
+            expected.assigned[url(moved).path] = group
+        }
+        try FileManager.default.moveItem(at: url("notes"), to: url("renamed"))
+
+        model.applyFileChange(.renamed(from: url("notes"), to: url("renamed")))
+
+        XCTAssertEqual(model.configuration.tabGroupState, expected)
+        XCTAssertEqual(model.group(of: url("renamed/a.md").path)?.id, group)
+        XCTAssertEqual(model.group(of: url("renamed/sub/deep.md").path)?.id, group)
+        XCTAssertEqual(model.group(of: url("readme.md").path)?.id, unrelated)
+        XCTAssertEqual(model.selected?.url, url("readme.md"))
     }
 
     func testATrashClosesOnlyTheTabsUnderItAndLeavesNothingToReopen() {
