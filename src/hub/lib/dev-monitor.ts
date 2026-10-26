@@ -150,11 +150,10 @@ export function classifyPerfLine(
     hangsDir = genesisToolsDir("logs", "hangs")
 ): DevEvent | null {
     const time = line.match(timePattern)?.[1] ?? "";
-    const body = line
-        .replace(timePattern, "")
-        .replace(/^\[[a-z-]+\]\s+/, "")
-        .replace(/^mark\s+/, "");
-    const short = (text: string) => text.replace(/ recent=\[.*$/, "").slice(0, 300);
+    const message = line.replace(timePattern, "");
+    const tag = message.match(/^(\[[a-z-]+\])\s+/)?.[1] ?? "";
+    const body = message.replace(/^\[[a-z-]+\]\s+/, "").replace(/^mark\s+/, "");
+    const short = (text: string) => `${tag ? `${tag} ` : ""}${text.replace(/ recent=\[.*$/, "")}`.slice(0, 300);
 
     if (/WEDGED|main-stall ongoing/.test(body)) {
         return { kind: "wedge", time, text: short(body) };
@@ -162,11 +161,12 @@ export function classifyPerfLine(
 
     // A burst of child processes (GenesisKit `SpawnMeter`): one blame per open note was 9,300 launches an hour.
     if (/^spawn\.storm /.test(body)) {
+        const source = tag ? `${hangsDir}:${tag}` : hangsDir;
         return {
             kind: "storm",
             time,
             text: short(body),
-            key: /^spawn\.storm ongoing\b/.test(body) ? `${hangsDir}:storm:ongoing` : undefined,
+            key: /^spawn\.storm ongoing\b/.test(body) ? `${source}:storm:ongoing` : undefined,
         };
     }
 

@@ -74,10 +74,29 @@ describe("classifyPerfLine", () => {
         expect(event).toMatchObject({
             kind: "hang",
             file: "/home/fixture/.genesis/logs/hangs/hang-2026-10-23-171243.txt",
+            text: "[md] main-stall 1.0s so far — sampling to hang-2026-10-23-171243.txt",
         });
         expect(classifyPerfLine("[17:11:59.681] [md] mark main-stall recovered after 1806ms load=159")?.kind).toBe(
             "stall"
         );
+    });
+
+    test("tagged helper events remain distinct from otherwise identical parent events", () => {
+        for (const body of [
+            "spawn.storm ongoing 30 s: 100 child processes started",
+            "main-spin 5s at 99% cpu: the main thread never idles",
+            "main-stall recovered after 1806ms",
+        ]) {
+            const parent = classifyPerfLine(`[10:00:00] mark ${body}`, DEFAULT_CLASSIFY, "/genesis/hangs");
+            const helper = classifyPerfLine(`[10:00:00] [md] mark ${body}`, DEFAULT_CLASSIFY, "/genesis/hangs");
+            expect(parent?.text).toBe(body);
+            expect(helper?.text).toBe(`[md] ${body}`);
+            expect(helper?.kind).toBe(parent?.kind);
+
+            if (parent && helper) {
+                expect(collapse([parent, helper])).toHaveLength(2);
+            }
+        }
     });
 
     test("a main thread spinning at full CPU is an event, and its sample names the file", () => {
@@ -304,6 +323,7 @@ test("both perf tails retain their storm updates and endings in a batch", async 
     writeFileSync(
         sources.genesisPerfLog,
         [
+            "[10:00:00] mark spawn.storm ongoing 30 s: 250 child processes started",
             "[10:00:00] [md] mark spawn.storm ongoing 30 s: 300 child processes started",
             "[10:00:02] [md] mark spawn.storm over after 30 s",
             "",
@@ -328,8 +348,9 @@ test("both perf tails retain their storm updates and endings in a batch", async 
             "spawn.storm ongoing 60 s: 200 child processes started (×2)",
             "spawn.storm over after 60 s",
             "spawn.storm over after 1 s",
-            "Genesis: spawn.storm ongoing 30 s: 300 child processes started",
-            "Genesis: spawn.storm over after 30 s",
+            "Genesis: spawn.storm ongoing 30 s: 250 child processes started",
+            "Genesis: [md] spawn.storm ongoing 30 s: 300 child processes started",
+            "Genesis: [md] spawn.storm over after 30 s",
         ]);
         expect(batches[0][0].time).toBe("10:00:01");
     } finally {

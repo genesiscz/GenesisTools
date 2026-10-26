@@ -131,6 +131,25 @@ final class SpawnStormTests: XCTestCase {
         XCTAssertEqual(storm.finish(at: 300.1), [], "the quiet child after it starts no new burst")
     }
 
+    func testFinishesReportAnOngoingConcurrencyStormWithoutMoreStarts() {
+        var storm = SpawnStorm()
+        for _ in 0..<SpawnStorm.burstRunning { _ = storm.start("git status", at: 0) }
+        XCTAssertEqual(storm.finish(at: 29), [])
+        XCTAssertEqual(storm.finish(at: 60), [
+            "spawn.storm ongoing 60 s: 16 child processes started, 14 running; git status ×16",
+        ])
+        XCTAssertEqual(storm.finish(at: 61), [], "finishes share the report deadline")
+        XCTAssertEqual(storm.start("rg", at: 62), [], "starts share the same report deadline")
+        XCTAssertEqual(storm.finish(at: 90), [
+            "spawn.storm ongoing 90 s: 17 child processes started, 13 running; git status ×16, rg ×1",
+        ])
+        for _ in 0..<5 { XCTAssertEqual(storm.finish(at: 91), []) }
+        XCTAssertEqual(storm.finish(at: 120), [
+            "spawn.storm over after 62 s: 17 child processes started; git status ×16, rg ×1",
+        ], "quiet wins over a due ongoing report")
+        XCTAssertEqual(storm.finish(at: 150), [])
+    }
+
     func testManyChildrenRunningAtOnceAreABurstToo() {
         var storm = SpawnStorm()
         var lines: [String] = []

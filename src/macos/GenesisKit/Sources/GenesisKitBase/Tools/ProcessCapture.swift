@@ -41,15 +41,30 @@ extension Process {
         timeout: TimeInterval = 60,
         afterStart: (() -> Void)? = nil
     ) throws -> ProcessCapture {
+        try runCapturing(mergeStderr: mergeStderr, timeout: timeout, afterStart: afterStart,
+                         meterStarted: { SpawnMeter.started(executable: $0, arguments: $1) })
+    }
+
+    func runCapturing(
+        mergeStderr: Bool,
+        timeout: TimeInterval,
+        afterStart: (() -> Void)?,
+        meterStarted: (URL?, [String]) -> @Sendable () -> Void
+    ) throws -> ProcessCapture {
         let out = Pipe()
         let err: Pipe? = mergeStderr ? nil : Pipe()
         standardOutput = out
         standardError = err ?? out
         let exited = DispatchSemaphore(value: 0)
-        terminationHandler = { _ in exited.signal() }
-        try run()
-        let ended = SpawnMeter.started(executable: executableURL, arguments: arguments ?? [])
-        defer { ended() }
+        let ended = meterStarted(executableURL, arguments ?? [])
+        terminationHandler = { _ in
+            ended()
+            exited.signal()
+        }
+        do { try run() } catch {
+            ended()
+            throw error
+        }
         let outReader = PipeReader(out, stream: "stdout")
         let errReader = err.map { PipeReader($0, stream: "stderr") }
         afterStart?()

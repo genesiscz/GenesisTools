@@ -3,6 +3,33 @@ import XCTest
 @testable import GenesisKit
 
 final class ToolsBridgeTests: XCTestCase {
+    func testCapturedChildEndsBeforeAfterStartReturns() throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        let ended = DispatchSemaphore(value: 0)
+        let result = try process.runCapturing(mergeStderr: false, timeout: 5, afterStart: {
+            XCTAssertEqual(ended.wait(timeout: .now() + 5), .success,
+                           "the child exits while afterStart still holds the capture call open")
+        }, meterStarted: { executable, arguments in
+            XCTAssertEqual(executable, process.executableURL)
+            XCTAssertEqual(arguments, [])
+            XCTAssertFalse(process.isRunning, "register before launch so a quick exit cannot precede registration")
+            return { ended.signal() }
+        })
+        XCTAssertEqual(result.status, 0)
+        XCTAssertEqual(ended.wait(timeout: .now()), .timedOut, "completion is counted exactly once")
+    }
+
+    func testCapturedChildLaunchFailureBalancesMeterRegistration() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/nonexistent/spawn-meter-fixture")
+        let ended = DispatchSemaphore(value: 0)
+        XCTAssertThrowsError(try process.runCapturing(mergeStderr: false, timeout: 5, afterStart: nil,
+                                                     meterStarted: { _, _ in { ended.signal() } }))
+        XCTAssertEqual(ended.wait(timeout: .now()), .success)
+        XCTAssertEqual(ended.wait(timeout: .now()), .timedOut)
+    }
+
     func testBunShebangLaunchPlanExecsBunBinary() throws {
         // Regression: Genesis.app exec'd the `#!/usr/bin/env bun` tools script.
         // Taskgated SIGKILL'd bun (Code Signature Invalid) in ~5ms — see

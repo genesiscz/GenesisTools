@@ -51,7 +51,8 @@ public enum SpawnMeter {
 }
 
 /// The burst rule, apart from the clock and the log: `burstStarts` starts within `window` seconds, or `burstRunning`
-/// children at once. A burst is reported when it starts, every `reportEvery` seconds while it lasts, and when it ends:
+/// children at once. Reporting is event-driven: a burst is reported when it starts, on the first start or finish
+/// after `reportEvery` seconds while it lasts, and when it ends:
 /// at the first start or finish that finds it quiet, timed to its last start, so quiet minutes are not counted.
 /// The hub opening a pull request starts about 24 in 10 s with 5 running (2026-10-24 19:45), which is normal; the blame
 /// waves had 51 to 66 running.
@@ -76,13 +77,11 @@ public struct SpawnStorm {
         var lines = endIfQuiet().map { [$0] } ?? []
         running += 1
         starts.append((now, label))
-        if let since {
+        if since != nil {
             total += 1
             counts[label, default: 0] += 1
             lastStart = now
-            guard now - lastReport >= Self.reportEvery else { return lines }
-            lastReport = now
-            lines.append("spawn.storm ongoing \(Int(now - since)) s: \(total) child processes started, \(running) running; \(top)")
+            if let ongoing = reportIfDue(at: now) { lines.append(ongoing) }
             return lines
         }
         guard starts.count >= Self.burstStarts || running >= Self.burstRunning else { return lines }
@@ -98,7 +97,14 @@ public struct SpawnStorm {
     public mutating func finish(at now: Double) -> [String] {
         running = max(0, running - 1)
         prune(now)
-        return endIfQuiet().map { [$0] } ?? []
+        if let ended = endIfQuiet() { return [ended] }
+        return reportIfDue(at: now).map { [$0] } ?? []
+    }
+
+    private mutating func reportIfDue(at now: Double) -> String? {
+        guard let since, now - lastReport >= Self.reportEvery else { return nil }
+        lastReport = now
+        return "spawn.storm ongoing \(Int(now - since)) s: \(total) child processes started, \(running) running; \(top)"
     }
 
     private mutating func endIfQuiet() -> String? {
