@@ -56,11 +56,10 @@ describe("Swift audit scanner candidates", () => {
             "final class Action: NSObject {\n@IBAction func run() {\nprocess.waitUntilExit()\n}\n}\n"
         );
         writeFileSync(join(root, "Worker.swift"), "final class Worker {\nprocess.waitUntilExit()\n}\n");
-        const result = Bun.spawnSync([
-            process.execPath,
-            new URL("../../swift/scripts/swift-scan.ts", import.meta.url).pathname,
-            root,
-        ]);
+        const result = Bun.spawnSync(
+            [process.execPath, new URL("../../swift/scripts/swift-scan.ts", import.meta.url).pathname, root],
+            { env: process.env }
+        );
         expect(result.exitCode).toBe(0);
         const output = result.stdout.toString();
         expect(output).toContain("process-or-encode [1]");
@@ -80,7 +79,9 @@ describe("Swift audit scanner candidates", () => {
                 ".frame(height: 21.5)",
             ].join("\n")
         );
-        const result = Bun.spawnSync([process.execPath, new URL("./ux-scan.ts", import.meta.url).pathname, root]);
+        const result = Bun.spawnSync([process.execPath, new URL("./ux-scan.ts", import.meta.url).pathname, root], {
+            env: process.env,
+        });
         expect(result.exitCode).toBe(0);
         const candidates = result.stdout.toString().split("- small-frame")[1]?.split("- small-glyph-button")[0];
         expect(candidates).toContain("[3]");
