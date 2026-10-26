@@ -1294,7 +1294,12 @@ describe("delivery routes", () => {
         // A live, unparked copy of the same session is still a valid receiver.
         writeFileSync(
             join(home, "43.json"),
-            SafeJSON.stringify({ ...registry, pid: 43, messagingSocketPath: "/fixture/43.sock", parkedJobId: undefined })
+            SafeJSON.stringify({
+                ...registry,
+                pid: 43,
+                messagingSocketPath: "/fixture/43.sock",
+                parkedJobId: undefined,
+            })
         );
         expect(await deliverToSession(request, deps)).toMatchObject({ channel: "claude-peer", delivered: true });
         expect([socketWrites, terminalWrites, lookups]).toEqual([1, 1, 1]);
