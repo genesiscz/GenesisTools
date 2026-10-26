@@ -123,7 +123,7 @@ PLAN CONTRACT (TypeScript)
           // window.id. Both backends agree on it, and it wins over app/windowTitle/windowIndex.
       region?: string;            // region mode: "x,y,w,h"
       duration: number;           // seconds — REQUIRED (never rely on peekaboo's 60s default)
-      activeFps?: number;         // default 8, max 15
+      activeFps?: number;         // default 60 with videoOut, else 8; max 120
       idleFps?: number;           // default 2
       threshold?: number;         // change %% cutoff, default 2.5; ~0.1 for sub-second blips
       videoOut?: string;          // KEEP THE MP4 — enables post-hoc \`peekaboo capture video\` re-sampling
@@ -201,8 +201,13 @@ PLAN CONTRACT (TypeScript)
       | { atMs: number; do: "type"; text: string; delayMs?: number; relativeTo?: RelativeTo; onError?: OnError }
         // typed with --profile linear (default "human" profile ignores --delay; 26 chars ≈ 7s)
       | { atMs: number; do: "scroll"; direction: "up" | "down" | "left" | "right";
-          amount?: number; coords?: Coords; relativeTo?: RelativeTo; app?: string;
+          amount?: number; time?: number; coords?: Coords; relativeTo?: RelativeTo; app?: string;
           windowTitle?: string; onError?: OnError }
+        // amount is PIXELS on the native backend. time is how long the scroll takes
+        // (seconds, trackpad-like, 60 events/s); default 0.25-1 s by distance, 0 = one
+        // wheel event. ONE scroll action with a time is a person flicking; a row of
+        // single-event scroll actions is slow (each observes the window first) and
+        // shows nothing about how a page behaves while it scrolls.
         // ⚠ scroll ok:true only means wheel events were injected — NOT that any
         // content scrolled or pixels changed. Target it: coords moves the cursor
         // there first (macOS scrolls under cursor; negative coords can't be moved
@@ -399,6 +404,8 @@ export type Action =
           do: "scroll";
           direction: "up" | "down" | "left" | "right";
           amount?: number;
+          /** Seconds the scroll takes, trackpad-like; 0 is one wheel event. Default 0.25 to 1 s by distance. */
+          time?: number;
           coords?: Coords;
           relativeTo?: RelativeTo;
           app?: string;

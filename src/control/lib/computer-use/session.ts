@@ -1391,6 +1391,11 @@ export class ComputerUse {
                     if (!options.revision && !record.implicitActionAllowed) {
                         throw new ComputerUseError("OBSERVE_FIRST", "Observe before another coordinate action.");
                     }
+                    // The window is pinned, not its pixels: a scroll at a point presses nothing, and a page that
+                    // repaints (a pulsing badge, a live diff) refused every coordinate scroll as "window pixels
+                    // changed since capture" (2026-10-26).
+                    const rows = record.snapshot.elements;
+                    const windowRow = rows.find((row) => row.index === 0);
                     target = [
                         "--coords",
                         this.point({
@@ -1399,6 +1404,7 @@ export class ComputerUse {
                             y: options.y,
                             coordinateSpace: options.coordinate_space,
                         }),
+                        ...(windowRow ? rowPin(windowRow, rows) : []),
                     ];
                 } else {
                     target = [
@@ -1423,6 +1429,7 @@ export class ComputerUse {
                     ...(options.pixels === undefined
                         ? ["--pages", String(options.pages ?? 1)]
                         : ["--pixels", String(options.pixels)]),
+                    ...(options.seconds === undefined ? [] : ["--time", String(options.seconds)]),
                     ...(options.background ? ["--background"] : []),
                 ];
             },

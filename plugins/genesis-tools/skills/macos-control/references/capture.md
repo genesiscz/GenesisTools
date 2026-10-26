@@ -154,10 +154,23 @@ recording can use one `computer-use run` script; not every adaptive action needs
 ## Duration, sampling and input
 
 - Plan/native `duration` is **seconds**, bounded by the recorder (up to 180). Set it explicitly.
-- `activeFps`, `idleFps` and `threshold` control sampling. Subtle motion may need 15 fps and a low
-  threshold. You cannot demand an exact number of retained frames.
+- `activeFps`, `idleFps` and `threshold` control sampling. With `videoOut` (CLI `--video-out`) the movie is
+  recorded at 60 fps by default (up to 120) and never drops to the idle rate; without a movie the PNG sampling
+  stays at 8 fps. PNGs are encoded on their own queue, so a slow encode never lowers the movie's rate (before
+  2026-10-26 it did: a retina window recorded at about 6 fps). You cannot demand an exact number of retained PNGs.
 - MP4 preserves the captured sequence; PNGs are selected by change threshold. Keep video for
-  timing investigations and sample it locally if the contact sheet lacks detail.
+  timing investigations and sample it locally if the contact sheet lacks detail. Read its frames with
+  `ffmpeg -fps_mode passthrough`: the movie has a variable frame rate, and the default constant-rate output repeats
+  frames, which looks like the page stood still.
+- **To show how a page behaves while it scrolls, use ONE scroll action with `time`**:
+  `{ "atMs": 800, "do": "scroll", "direction": "down", "amount": 9000, "time": 1.4, "coords": {…}, "app": "<pid>" }`.
+  `amount` is pixels; `time` spreads them over that many seconds with trackpad phases, and a scroll without `time`
+  is already animated (0.25 to 1 s by distance; `time: 0` is the old single wheel event). A scroll with `coords`
+  goes straight to the window, with no observation first. Never write a row of short scroll actions: each one
+  observes the window, which takes seconds on a big web page, so they land after the recording ends.
+- **Never start a recorder with `( … &)` in a shell.** The subshell exits at once, the GenesisTools launcher sees
+  its parent gone and stops the tool, and the result says `cancelled: true` after under a second. Run the plan in
+  the foreground, use the harness's own background mode, or start recorder and input from one script.
 - Native `type` is at most 256 single-line UTF-16 units; no custom per-character delay. Use
   script/API paste or exact AX set for longer values. Replacement must be explicit.
 - Native controls include `ax-set`, `ax-press`, `ax-perform`, click, type, hotkey and scroll.
