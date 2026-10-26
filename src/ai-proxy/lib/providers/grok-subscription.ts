@@ -180,7 +180,13 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                 const webSearch = parseWebSearchServerTool(parsed as Record<string, unknown>);
 
                 if (webSearch) {
-                    return this.emulatedWebSearchResponse(req, model, parsed as Record<string, unknown>, webSearch);
+                    return this.emulatedWebSearchResponse(
+                        req,
+                        model,
+                        parsed as Record<string, unknown>,
+                        webSearch,
+                        cacheKey
+                    );
                 }
             }
 
@@ -339,7 +345,8 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         req: Request,
         model: string,
         body: Record<string, unknown>,
-        tool: WebSearchServerTool
+        tool: WebSearchServerTool,
+        cacheKey: string | undefined
     ): Promise<Response> {
         logger.info({ model, maxUses: tool.maxUses }, "ai-proxy: running web_search server tool for grok");
 
@@ -352,6 +359,12 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                           tool,
                           callResponses: async (responsesBody) => {
                               responsesBody.model = model;
+
+                              // The conversation's key and header, as on every other Grok turn of the session.
+                              if (cacheKey) {
+                                  responsesBody.prompt_cache_key = cacheKey;
+                              }
+
                               const response = await this.dispatch({
                                   path: "/responses",
                                   req,
@@ -359,6 +372,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                                   modelOverride: model,
                                   requestedModel: model,
                                   imageRouted: false,
+                                  headers: grokConversationHeaders(cacheKey),
                                   signal,
                               });
 
@@ -398,7 +412,7 @@ export class GrokSubscriptionProvider implements ProxyProvider {
                         modelOverride: model,
                         requestedModel: model,
                         imageRouted: false,
-                        headers: { "anthropic-version": "2023-06-01" },
+                        headers: { "anthropic-version": "2023-06-01", ...grokConversationHeaders(cacheKey) },
                         signal,
                     });
 

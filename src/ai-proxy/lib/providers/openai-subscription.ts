@@ -99,6 +99,17 @@ interface FailureClient {
     anthropic: boolean;
     /** The session record the request came from, for the switch command. */
     sessionId?: string;
+    /** Filled by `respond`: the login that answered, which signs the reply's reasoning. */
+    servedIdentity?: string;
+}
+
+interface TokenCandidate {
+    key: string;
+    label: string;
+    /** The login whose tokens these are: a reasoning envelope is stamped with it, and only it can decrypt one. */
+    identity: string;
+    primary: boolean;
+    resolve: (options?: { forceRefresh?: boolean }) => Promise<{ token: string; accountId?: string }>;
 }
 
 export class OpenAiSubscriptionProvider implements ProxyProvider {
@@ -210,19 +221,13 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
      * Token candidates tried in order: the primary account source, then, only while the account's `failover` is on,
      * any `openaiSub.failoverAccountNames`. Each has its own cooldown key.
      */
-    private tokenCandidates(): Array<{
-        key: string;
-        label: string;
-        resolve: (options?: { forceRefresh?: boolean }) => Promise<{ token: string; accountId?: string }>;
-    }> {
-        const candidates: Array<{
-            key: string;
-            label: string;
-            resolve: (options?: { forceRefresh?: boolean }) => Promise<{ token: string; accountId?: string }>;
-        }> = [
+    private tokenCandidates(): TokenCandidate[] {
+        const candidates: TokenCandidate[] = [
             {
                 key: this.account.name,
                 label: this.account.name,
+                identity: this.primaryIdentity(),
+                primary: true,
                 resolve: (options) => resolveOpenAiSubToken(this.account, options),
             },
         ];
@@ -231,6 +236,8 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             candidates.push({
                 key: `${this.account.name}:${failoverName}`,
                 label: failoverName,
+                identity: failoverName,
+                primary: false,
                 resolve: (options) => resolveOpenAiSubFailoverToken(failoverName, options),
             });
         }
@@ -314,9 +321,9 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         return this.respond(req, model, parsed);
     }
 
-    /** The account identity a reasoning envelope is stamped with: the login, else the proxy account. */
-    private envelopeAccountHash(): string {
-        return accountHash8(this.account.openaiSub?.accountName ?? this.account.name);
+    /** The primary login: the one a request tries first, and the one replayed reasoning must come from. */
+    private primaryIdentity(): string {
+        return this.account.openaiSub?.accountName ?? this.account.name;
     }
 
     /**
@@ -356,7 +363,7 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         const catalog = codexModelInfo(concreteModel, fresh);
         const stamp: ReasoningEnvelopeStamp = {
             provider: "codex",
-            accountHash: this.envelopeAccountHash(),
+            accountHash: accountHash8(this.primaryIdentity()),
             model: concreteModel,
             compHash: catalog?.compHash ?? "0",
         };
@@ -469,7 +476,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 return "";
             }
 
-            return packReasoningEnvelope(stamp, {
+            // A failover login served this turn: its reasoning is its own, and the primary login could not decrypt it.
+            const servedBy = client.servedIdentity;
+            const signer = servedBy ? { ...stamp, accountHash: accountHash8(servedBy) } : stamp;
+
+            return packReasoningEnvelope(signer, {
                 id: typeof item.id === "string" ? item.id : `rs_${randomUUID()}`,
                 encrypted_content: item.encrypted_content,
                 summary: Array.isArray(item.summary) ? item.summary : [],
@@ -542,6 +553,11 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                           tool,
                           dialect: "openai",
                           callResponses: async (responsesBody) => {
+                              // The conversation's key, not one derived from the search prompt.
+                              if (context?.promptCacheKey) {
+                                  responsesBody.prompt_cache_key = context.promptCacheKey.key;
+                              }
+
                               const response = await this.respond(req, model, responsesBody, client);
                               return response.ok ? response : toAnthropicErrorResponse(response);
                           },
@@ -648,6 +664,17 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
 
         warnDroppedParamsOnce(dropped);
         const whamBodyText = SafeJSON.stringify(whamBody);
+        // Replayed reasoning was produced by the primary login; another login cannot decrypt it, and its 400 would
+        // mark every replayed item dead. A failover candidate gets the body without it.
+        let failoverBodyText: string | undefined;
+        const bodyTextFor = (candidate: TokenCandidate): string => {
+            if (candidate.primary || !hasReasoningInput(whamBody)) {
+                return whamBodyText;
+            }
+
+            failoverBodyText ??= SafeJSON.stringify(stripReasoningInput(whamBody));
+            return failoverBodyText;
+        };
 
         const started = performance.now();
         let upstream: Response | undefined;
@@ -681,7 +708,13 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             let attempt: Response;
             tried.push(candidate.label);
             try {
-                attempt = await this.fetchWham({ token, accountId, whamBodyText, sessionId, signal: req.signal });
+                attempt = await this.fetchWham({
+                    token,
+                    accountId,
+                    whamBodyText: bodyTextFor(candidate),
+                    sessionId,
+                    signal: req.signal,
+                });
             } catch (err) {
                 const aborted = clientAbortResponse(err, { err, account: this.account.name });
                 if (aborted) {
@@ -702,7 +735,13 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
                 void attempt.body?.cancel();
                 try {
                     ({ token, accountId } = await candidate.resolve({ forceRefresh: true }));
-                    attempt = await this.fetchWham({ token, accountId, whamBodyText, sessionId, signal: req.signal });
+                    attempt = await this.fetchWham({
+                        token,
+                        accountId,
+                        whamBodyText: bodyTextFor(candidate),
+                        sessionId,
+                        signal: req.signal,
+                    });
                 } catch (err) {
                     const aborted = clientAbortResponse(err, { err, account: this.account.name });
                     if (aborted) {
@@ -799,6 +838,10 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             markSuccess(candidate.key);
             upstream = attempt;
             servedBy = candidate.key;
+
+            if (client) {
+                client.servedIdentity = candidate.primary ? undefined : candidate.identity;
+            }
             break;
         }
 
@@ -1294,7 +1337,15 @@ function applyCatalogEffort({
             return undefined;
         }
 
-        body.reasoning = { ...nested, effort: fallback };
+        // A configured default goes through the same check as a requested effort: `ultra` is mapped, and an effort
+        // the model lacks is refused here instead of by WHAM.
+        const resolvedDefault = resolveCodexEffort(catalog, fallback);
+
+        if (!resolvedDefault.ok) {
+            return `${resolvedDefault.message} (the default effort for ${model})`;
+        }
+
+        body.reasoning = { ...nested, effort: resolvedDefault.effort };
         return undefined;
     }
 
@@ -1310,6 +1361,10 @@ function applyCatalogEffort({
 
     body.reasoning = { ...nested, effort: resolved.effort };
     return undefined;
+}
+
+function hasReasoningInput(body: Record<string, unknown>): boolean {
+    return Array.isArray(body.input) && body.input.some((item) => isObject(item) && item.type === "reasoning");
 }
 
 /** The first 12 hex of a SHA-256: enough to match a blob across turns in a log, nothing of its content. */

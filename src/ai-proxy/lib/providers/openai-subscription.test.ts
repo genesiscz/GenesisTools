@@ -308,6 +308,19 @@ describe("buildWhamResponsesBody", () => {
             'gpt-x-sol has no reasoning effort "minimal". Allowed: low, medium, high, xhigh, max, ultra (runs as xhigh).'
         );
         expect(refused.body.reasoning).toBeUndefined();
+
+        // A configured default goes through the same check: `ultra` is mapped, never sent as is.
+        const ultraDefault = { ...catalog, defaultEffort: "ultra" } as typeof catalog;
+        const fromDefault = buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }] }, "gpt-x-sol", {
+            itemScope: ITEM_SCOPE,
+            catalog: ultraDefault,
+        });
+        expect(fromDefault.body.reasoning).toEqual({ effort: "xhigh" });
+        const lacking = buildWhamResponsesBody({ messages: [{ role: "user", content: "x" }] }, "gpt-x-sol", {
+            itemScope: ITEM_SCOPE,
+            catalog: { ...catalog, defaultEffort: "minimal" } as typeof catalog,
+        });
+        expect(lacking.effortError).toContain("(the default effort for gpt-x-sol)");
     });
 });
 
@@ -1202,6 +1215,72 @@ describe("native /v1/messages route: reasoning carried in gtr1 envelopes", () =>
         expect(reasoningIn(2)).toBe(0);
     });
 
+    it("with failover on, a backup login gets no replayed reasoning and signs its own reasoning with its login", async () => {
+        const envelope = packReasoningEnvelope(
+            { provider: "codex", accountHash: accountHash8("codex"), model: "gpt-6.1-sol", compHash: "0" },
+            { id: "rs_primary", encrypted_content: "primary-blob", summary: [] }
+        );
+        const sse = (type: string, data: Record<string, unknown>) =>
+            `event: ${type}\ndata: ${SafeJSON.stringify({ type, ...data })}\n\n`;
+        // The terminal snapshot alone: the translator builds the blocks it never saw streamed.
+        const backupStream =
+            sse("response.created", { response: { id: "resp_b", status: "in_progress" } }) +
+            sse("response.completed", {
+                response: {
+                    id: "resp_b",
+                    status: "completed",
+                    output: [
+                        { type: "reasoning", id: "rs_backup", encrypted_content: "backup-blob", summary: [] },
+                        { type: "message", content: [{ type: "output_text", text: "ok" }] },
+                    ],
+                    usage: { input_tokens: 5, output_tokens: 2 },
+                },
+            });
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return sent.length === 1
+                ? new Response('{"error":{"message":"slow down"}}', { status: 429, headers: { "retry-after": "60" } })
+                : new Response(backupStream, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }) as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create({
+            ...account,
+            failover: true,
+            openaiSub: { failoverAccountNames: ["backup"] },
+        });
+        const bodyText = SafeJSON.stringify({
+            model: "gpt-6.1-sol",
+            stream: true,
+            messages: [
+                { role: "user", content: "q" },
+                {
+                    role: "assistant",
+                    content: [
+                        { type: "thinking", thinking: "", signature: envelope },
+                        { type: "text", text: "a" },
+                    ],
+                },
+                { role: "user", content: "again" },
+            ],
+        });
+        const res = await provider.messages?.(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6.1-sol",
+            bodyText
+        );
+        const text = (await res?.text()) ?? "";
+        const reasoningIn = (index: number) =>
+            ((sent[index]?.input ?? []) as Array<Record<string, unknown>>).filter((item) => item.type === "reasoning")
+                .length;
+        const signatures = text.match(/gtr1\.[A-Za-z0-9._-]+/g) ?? [];
+
+        expect(res?.status).toBe(200);
+        expect([reasoningIn(0), reasoningIn(1)]).toEqual([1, 0]);
+        expect(signatures.length).toBeGreaterThan(0);
+        expect(signatures.every((signature) => signature.split(".")[2] === accountHash8("backup"))).toBe(true);
+    });
+
     it("Claude Code's compaction turn goes out with tool_choice none", async () => {
         const sent: Array<Record<string, unknown>> = [];
         globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
@@ -1373,6 +1452,33 @@ describe("Claude Code's WebSearch on the Codex agent", () => {
                 page_age: null,
             },
         ]);
+    });
+
+    it("sends the hosted search with the conversation's cache key, not one derived from the search prompt", async () => {
+        const sent: Array<Record<string, unknown>> = [];
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            sent.push(SafeJSON.parse(String(init?.body)) as Record<string, unknown>);
+            return new Response(searchStream, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }) as typeof fetch;
+        const { OpenAiSubscriptionProvider } = await import("./openai-subscription");
+        const provider = await OpenAiSubscriptionProvider.create(account);
+        const bodyText = SafeJSON.stringify({
+            model: "codex/gpt-6-luna",
+            max_tokens: 4096,
+            tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
+            messages: [{ role: "user", content: "Perform a web search for the query: bun release" }],
+        });
+        const session = "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+        const res = await provider.messages?.(
+            new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+            "gpt-6-luna",
+            bodyText,
+            { promptCacheKey: { key: session, source: "claude-session" } }
+        );
+        await res?.text();
+
+        expect(sent).toHaveLength(1);
+        expect(sent[0]?.prompt_cache_key).toBe(session);
     });
 });
 

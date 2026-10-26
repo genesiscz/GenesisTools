@@ -146,6 +146,38 @@ describe("GrokSubscriptionProvider.messages server-tool handling", () => {
         expect(seen?.aborted).toBe(true);
     });
 
+    it("sends the native search with the conversation's cache key and x-grok-conv-id", async () => {
+        const provider = makeProvider();
+        const client = provider as unknown as {
+            client: {
+                fetch: (path: string, init: { body?: unknown; headers?: Record<string, string> }) => Promise<Response>;
+            };
+        };
+        const seen: Array<{ key: unknown; header: string | undefined }> = [];
+        client.client.fetch = async (_path, init) => {
+            const sentBody = SafeJSON.parse(String(init.body), { strict: true }) as Record<string, unknown>;
+            seen.push({ key: sentBody.prompt_cache_key, header: init.headers?.["x-grok-conv-id"] });
+            return new Response('{"error":"stop here"}', {
+                status: 500,
+                headers: { "content-type": "application/json" },
+            });
+        };
+        const key = { key: "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e", source: "claude-session" as const };
+
+        await env.testing.withOverrides({ BRAVE_API_KEY: undefined }, async () => {
+            const body = webSearchBody();
+            const res = await provider.messages(
+                new Request("http://proxy/v1/messages", { method: "POST", body }),
+                "grok-4.6",
+                body,
+                { promptCacheKey: key }
+            );
+            await res.text();
+        });
+
+        expect(seen).toEqual([{ key: key.key, header: key.key }]);
+    });
+
     it("never sends a request the native translation would truncate: no Brave key → self-explaining error", async () => {
         await env.testing.withOverrides({ BRAVE_API_KEY: undefined }, async () => {
             const provider = makeProvider();
