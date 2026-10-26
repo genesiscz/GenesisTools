@@ -11,6 +11,7 @@ import { AiProxyClient } from "@genesiscz/utils/ai/proxy/AiProxyClient";
 import { env } from "@genesiscz/utils/env";
 import { out } from "@genesiscz/utils/logger";
 import { profiler } from "@genesiscz/utils/profile";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import { EXTRACT_SCHEMA, EXTRACT_SYSTEM } from "../../src/learn-from-fable/lib/stages/mine";
 import { condenseForExtraction, loadTurns } from "../../src/learn-from-fable/lib/transcript";
 
@@ -26,7 +27,7 @@ function claudeProjectDir(repoRoot: string): string {
 
 // CLAUDE_CONFIG_DIR moves the whole config tree, transcripts included, so the
 // guidance below has to follow it or it names a directory that does not exist.
-const CLAUDE_DIR = env.paths.getClaudeConfigDir() ?? `${env.paths.getHome()}/.claude`;
+const CLAUDE_DIR = nativeHome("claude", env.paths.getHome());
 const TRANSCRIPT_DIR = `${CLAUDE_DIR}/projects/${claudeProjectDir(resolve(import.meta.dir, "../.."))}`;
 const SESSION = process.argv[2];
 

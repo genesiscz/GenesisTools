@@ -218,8 +218,15 @@ const HOME_ARGUMENT = /homedir\(\)|getHome\(\)|\bhome(?:Dir)?\b|\.HOME\b/;
 const NATIVE_HOME_TESTS =
     /(?:^|\/)__tests__\/|^src\/utils\/agent-sessions\/testing\/|^plugins\/|\.test\.tsx?$|test-utils\.ts$/;
 
-/** Whether the nearest enclosing call (five levels up at most) also takes the user's home as an argument. */
-function homeArgumentOfNearestCall(node: SgNode): boolean {
+/** A template's own home interpolation, or the nearest enclosing call's home argument (five levels up at most). */
+function hasHomeSource(node: SgNode): boolean {
+    if (
+        node.kind() === "template_string" &&
+        node.children().some((child) => child.kind() === "template_substitution" && HOME_ARGUMENT.test(child.text()))
+    ) {
+        return true;
+    }
+
     let up = node.parent();
 
     for (let depth = 0; up && depth < 5; depth++) {
@@ -237,7 +244,7 @@ export function buildsClaudeHome(text: string, node: SgNode): boolean {
     return (
         CLAUDE_HOME_LITERAL.test(text) ||
         CLAUDE_CONFIG_DIR_LITERAL.test(text) ||
-        (BARE_CLAUDE_SEGMENT.test(text) && homeArgumentOfNearestCall(node))
+        (BARE_CLAUDE_SEGMENT.test(text) && hasHomeSource(node))
     );
 }
 
@@ -245,7 +252,7 @@ export function buildsCodexGrokHome(text: string, node: SgNode): boolean {
     return (
         CODEX_GROK_HOME_LITERAL.test(text) ||
         CODEX_GROK_ENV_LITERAL.test(text) ||
-        (BARE_CODEX_GROK_SEGMENT.test(text) && homeArgumentOfNearestCall(node))
+        (BARE_CODEX_GROK_SEGMENT.test(text) && hasHomeSource(node))
     );
 }
 

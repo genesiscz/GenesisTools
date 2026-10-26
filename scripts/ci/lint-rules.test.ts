@@ -591,6 +591,21 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
         }
     });
 
+    test("standalone home templates are native roots, while repository-relative templates are not", () => {
+        for (const provider of ["claude", "codex", "grok"]) {
+            const rule = provider === "claude" ? "no-hand-built-claude-home" : "no-hand-built-codex-grok-home";
+
+            for (const home of ["homedir()", "env.paths.getHome()", "home"]) {
+                const source = "const root = `${" + home + "}/." + provider + "`;";
+                expect(rules(source)).toContain(rule);
+                expect(rules(source, "src/utils/providers/session-paths.ts")).not.toContain(rule);
+            }
+
+            const repositorySource = "const root = `${repoRoot}/." + provider + "`;";
+            expect(rules(repositorySource)).not.toContain(rule);
+        }
+    });
+
     test("hook payload reads include destructuring and literal indexes, but not payload construction", () => {
         const rule = "no-hook-payload-read";
         const file = "src/agents/lib/hooks/example.ts";
