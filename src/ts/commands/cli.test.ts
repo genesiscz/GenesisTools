@@ -8,6 +8,7 @@ import { type CapturedOutput, captureOutput } from "@genesiscz/utils/test/captur
 import { Command } from "commander";
 import type { MeasureOptions, MeasureResult, WorkerSample } from "../lib/measure";
 import { registerImportsCommands } from "./imports";
+import { registerProgramCommands } from "./program";
 import { registerSkeletonCommands } from "./skeleton";
 
 const ENTRY = join(import.meta.dir, "..", "index.ts");
@@ -909,5 +910,16 @@ describe("tools ts imports, run in process", () => {
 
             expect(run.stderr).toContain("A measure worker was killed at --timeout.");
         }
+    });
+});
+
+describe("tools ts program options", () => {
+    // A timer holds at most 2^31-1 ms: a larger --timeout used to reach boundedCommand and throw a bare Error.
+    test("refuses a --timeout past what a timer can hold before any check starts", async () => {
+        const { error } = await runInProcess({
+            register: registerProgramCommands,
+            args: ["program", "cost", "--timeout", "2147484"],
+        });
+        expect(String(error)).toContain("Must be at most 2147483.");
     });
 });

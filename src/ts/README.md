@@ -1,10 +1,11 @@
 # tools ts
 
-> **What is in this TypeScript file, what is written twice, and where does the startup time of an entry point go?**
+> **What is in this TypeScript file, what is written twice, where does the startup time of an entry point go, and what does type-checking cost?**
 
-Five command groups. `skeleton` prints a file's API. `duplicates` finds code written more than
+Six command groups. `skeleton` prints a file's API. `duplicates` finds code written more than
 once. `refactors` ranks what to change. `imports` answers the startup-cost question. `profile` answers where
-the CPU time of a whole run goes.
+the CPU time of a whole run goes. `program` answers what a TypeScript program costs to check, and which code makes it
+cost that.
 
 `skeleton`, `duplicates` and `refactors` take `--format text|md|json|json-compact|toon`, with
 `--md`, `--json`, `--json-compact` and `--toon` as shorthands. Asking for two different formats is
@@ -232,6 +233,73 @@ The `.cpuprofile` files stay in `~/.genesis-tools/ts/profiles/<time>/` and open 
 
 ---
 
+## `tools ts program cost|files|own|closure|sites|trace`
+
+> **Why does type-checking this project need gigabytes, and which code makes the checker work hardest?**
+
+Each command checks a tsconfig's program with the project's OWN `typescript` (the copy beside this tool when the
+project has none) in a separate `node` process, because V8's heap is the one `tsc` and a reviewer's
+`ts.createProgram` use. `--runtime bun` checks under Bun instead (JavaScriptCore numbers). `--heap <MiB>` limits that
+process, so `cost --heap 3072` answers "does it fit a 3 GiB reviewer" by passing or failing as out of memory. The
+tsconfig argument is a file or a folder holding `tsconfig.json`, default `./tsconfig.json`. Every command takes `--json`.
+
+The default worker requires Node.js 22.18 or newer with built-in TypeScript stripping enabled, because it runs the
+worker's `.ts` source directly. On an older Node installation, pass `--runtime bun` to `cost`, `files`, `own`,
+`closure` or `sites`. `trace` runs the project's JavaScript `tsc` entry point and only requires a Node version
+supported by that project's TypeScript.
+
+- **`cost`:** the heap after a full collection at each phase (parse, bind, check), the time, the files and bytes
+  (declaration packages apart), the checker's types, instantiations and symbols, and the diagnostics.
+- **`files`:** each file checked in program order with what its check created, ranked `--by instantiations` (or
+  `types`, `symbols`, `ms`). `--folders` sums per folder. The first file to touch a shared library type pays for it,
+  so read a ranking, not exact ownership.
+- **`own <files...>`:** one file's own work, in a smaller program: the target files plus the tsconfig's own `.d.ts`
+  files, and what they import. Everything in it except the targets is checked first, then each target. This is the
+  before and after instrument for an edit: run it, change the file, run it again. Its scope is not the full program:
+  another root file's `declare global` or module augmentation is missing unless a target imports that file, so the
+  diagnostics and the numbers can differ from `files` (which checks the whole program).
+- **`closure`:** what a tsconfig of only one folder would hold (files, bytes, the other folders and packages it pulls
+  in), the declaration packages by size with the project files that import them, and `--why <needle>`, the shortest
+  import chain from a project file to a matching file. It also lists packages whose declarations are in the program
+  from more than one installed copy (a nested `node_modules`), with the bytes deduplicating would save. No checking,
+  so it is quick.
+- **`sites`:** finds the next costly code shape without reading code. During the first check of each file, every call,
+  `new`, JSX element and type reference is resolved on its own, and what it created is grouped by what it calls or
+  references (`name @ declaring file`). A high MEDIAN over many sites is a shape that costs at every use; one large
+  site with a low median is the first use of a library type. A call is measured after its callee and before its
+  arguments, so an argument's work counts for the call that receives it (measured the other way, an argument's
+  contextual type resolves the outer call and the argument takes the blame). `--by median --min-sites 3` finds
+  repeated shapes, `--project-only` keeps keys declared in the project, `--key <text>` lists the single sites.
+- **`trace`:** runs `tsc --generateTrace` (or reads `--dir <folder>`) and lists the slowest files and the slowest single
+  check events with their source line. Nested events overlap: a statement's time includes its expressions.
+
+```bash
+tools ts program cost                       # heap per phase of ./tsconfig.json
+tools ts program cost --heap 3072           # passes or fails like a reviewer with a 3 GiB heap
+tools ts program files --folders            # which folders create the most work
+tools ts program own src/artifact/runtime/kit/chartjs.tsx
+tools ts program closure --why stripe       # why a package is in the program
+tools ts program sites --by median --min-sites 3   # shapes that cost at every use
+tools ts program sites --key callLLMStructured     # the single sites of one group
+tools ts program trace --min-ms 100
+```
+
+What it found in GenesisTools on 2026-10-25 (root program, TypeScript 6.0, 9,995 files, 4.4 GiB retained heap),
+each fix type-only, measured with `own` before and after:
+
+- `new Chart(canvas, config)` inferred Chart's type parameters over a union of every chart type: 1,084 ms and 250k
+  symbols for one expression. `new Chart<ChartType>(…)`: 12 ms.
+- Icon and link props typed `React.ElementType` (a union of every HTML tag) made each JSX use cost about 175k
+  instantiations, 220 to 250 ms per file. `React.ComponentType<…>`: 4 to 38 ms.
+- TypeScript 6 adds no `@types` package to the global scope unless `types` names it (an import still loads its own
+  package's types), so Bun's globals reached the program only through one file that imports `bun`; a program of
+  fewer files reported "Cannot find name 'Bun'".
+- A program of one folder needs 0.9 to 1.5 GB, against 4.1 GiB for the whole root.
+- `sites` on the commit before those fixes ranked them without help: the `ElementType` icons at places 2 and 6 to 11
+  (86k to 160k instantiations each), `new Chart` at 12 (1,260 ms), `generateText` at 15, `Parameters<typeof …>` at 34.
+
+---
+
 ## Commands
 
 | Command | Description |
@@ -244,6 +312,7 @@ The `.cpuprofile` files stay in `~/.genesis-tools/ts/profiles/<time>/` and open 
 | `imports barrels <entry>` | `import { a } from "<barrel>"` sites where the barrel re-exports far more than `a` needs, priced in real ms |
 | `imports cycles <entry>` | Import cycles on the startup path, with the edges that close them |
 | `profile <entry> [-- args...]` | CPU profile of a whole run: hot functions, repository functions, a repository call tree, optionally every thread |
+| `program cost\|files\|own\|closure\|sites\|trace [tsconfig]` | Type-check cost: heap per phase, checker work per file and folder, one file's own cost, one folder's closure and duplicate packages, the costliest calls and types by what they call, trace hot spots |
 
 `<entry>` is a `.ts` file, a directory (its `index.ts`, or every top-level source file when there is none), or a `tsconfig.json` (its directory). Test files and `.d.ts` files never count as entries.
 
@@ -343,7 +412,7 @@ src/ts/
 ├── index.ts                 commander entry (`tools ts`)
 ├── commands/
 │   ├── options.ts           the --format and scan flags every subcommand shares
-│   ├── imports.ts  skeleton.ts  duplicates.ts  refactors.ts
+│   ├── imports.ts  skeleton.ts  duplicates.ts  refactors.ts  profile.ts  program.ts
 └── lib/
     ├── collect.ts           walk paths to source files, honouring --tests and --ignore
     ├── load.ts              one read of every file, shared by skeleton/duplicates/refactors
@@ -359,7 +428,10 @@ src/ts/
     ├── analyze.ts           graph + measure + totals + attribution → AnalysisResult
     ├── attribute.ts         why a module is slow (native, await, side effects, barrel, subtree, cycle)
     ├── barrels.ts  lazy.ts  cycles.ts
-    └── render.ts            terminal output (box tables from @genesiscz/utils/table)
+    ├── render.ts            terminal output (box tables from @genesiscz/utils/table)
+    └── program/             `tools ts program`: check-worker.ts (node process, no repo imports), run.ts (spawns it),
+                             closure.ts (folder closures, package sizes, duplicate copies, --why), sites.ts (site
+                             groups), trace.ts (--generateTrace hot spots)
 ```
 
 ## Limits

@@ -6,6 +6,7 @@ import { Command } from "commander";
 import { registerDuplicatesCommands } from "./commands/duplicates";
 import { registerImportsCommands } from "./commands/imports";
 import { registerProfileCommands } from "./commands/profile";
+import { registerProgramCommands } from "./commands/program";
 import { registerRefactorsCommands } from "./commands/refactors";
 import { registerSkeletonCommands } from "./commands/skeleton";
 import { registerSourcemapsCommands } from "./commands/sourcemaps";
@@ -15,7 +16,7 @@ const program = new Command();
 program
     .name(`${toolCommand("ts")}`)
     .description(
-        "TypeScript analysis: API skeletons, duplicate code, refactor recommendations, import graphs and cost, CPU profiles"
+        "TypeScript analysis: API skeletons, duplicate code, refactor recommendations, import graphs and cost, CPU profiles, type-check cost"
     );
 
 registerImportsCommands(program);
@@ -24,6 +25,7 @@ registerDuplicatesCommands(program);
 registerRefactorsCommands(program);
 registerSourcemapsCommands(program);
 registerProfileCommands(program);
+registerProgramCommands(program);
 
 if (import.meta.main) {
     await runTool(program, { tool: "ts" });

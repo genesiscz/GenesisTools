@@ -69,6 +69,8 @@ measured. So the rule of this skill is simple: no change, and no claim, without 
 - "Which call sites still spawn, and at what cost?" → `bun scripts/benchmarks/process/call-sites-bench.ts --runs 3
   --compare` (cold and warm CPU per site, spawned children included).
 - "Did CI really pass, and why is it red?" → `references/tests-and-ci.md` (a green job can carry failing tests).
+- "Why does type-checking need gigabytes, and which code makes the checker work?" → `tools ts program cost|files|own|closure|trace`,
+  `references/typecheck.md` (the shapes that cost 175k instantiations per file, and the traps of a smaller program).
 
 ## Measured facts to start from (2026-10-12, this Mac)
 
@@ -105,5 +107,7 @@ Every number above has its method and commit in `references/` and in the ledger.
 - `references/caching-and-freshness.md`: the never-staler rule in practice, `FileIdentityCache`, persisted
   caches, serve-time clocks, the rows cache, the hub server, and the rejected skip-rebuild.
 - `references/ledger.md`: where results go and the entry format.
+- `references/typecheck.md`: the TypeScript program's memory per phase, `tools ts program`, the code shapes that
+  multiply checker work (with before and after numbers), and what a smaller program misses.
 - `references/compression.md`: zstd levels and speeds, the Bun 1.3.13 first-frame trap, seekable frames, reading
   compressed data within the 30% budget (measured per real command), backpressure for a spawned reader, APFS clones.
