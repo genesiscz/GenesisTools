@@ -42,6 +42,8 @@ interface BridgeFile {
     key: string;
     /** An image file's two sides as URLs the page's own scheme serves; null for a side the file lacks. */
     image?: BridgeImage | null;
+    /** Skipped only for its size: a click on its note asks Swift for it anyway (`showLarge`). */
+    large?: boolean;
 }
 
 /** Swift leaves a nil side out, so a missing side is undefined here. */
@@ -178,6 +180,12 @@ interface ItemContext {
 }
 
 function openOnCommandClick(click: OnLineClickProps | OnDiffLineClickProps, context: ItemContext): void {
+    // A file skipped for its size shows one note line; a click on it asks for the whole file (Martin, 2026-10-26).
+    if (!click.event.metaKey && largeFiles.has(context.item.id)) {
+        post({ type: "showLarge", fileId: context.item.id });
+        return;
+    }
+
     // ⌘-click opens the line in the editor; a plain click stays a selection.
     if (click.event.metaKey) {
         post({
@@ -337,6 +345,9 @@ function sideOf(side: string | undefined): Side {
 // A click on a file's header row folds the file; ⌘-click opens it in the editor instead. Folded
 // files are remembered by path, so a new file list from Swift (a scope switch, a refresh) keeps them.
 const folded = new Set<string>();
+
+/** Files skipped for their size, by id: a click on their note line asks for them (`openOnCommandClick`). */
+const largeFiles = new Set<string>();
 
 /** The header's fold chevron: shows the state, names the header for VoiceOver and `tools control`. */
 function foldChevron(path: string): HTMLElement {
@@ -3347,6 +3358,14 @@ function addFiles(batch: FilesBatch): void {
     }
 
     const parseStart = performance.now();
+    for (const file of batch.files) {
+        if (file.large) {
+            largeFiles.add(file.id);
+        } else {
+            largeFiles.delete(file.id);
+        }
+    }
+
     const items = batch.files.map(toItem);
     loadParseMs += performance.now() - parseStart;
     loadBatches += 1;

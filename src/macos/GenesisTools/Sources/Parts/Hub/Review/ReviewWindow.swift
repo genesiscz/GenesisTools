@@ -911,6 +911,7 @@ final class ReviewModel: ObservableObject {
         let primary = repo
         let commitRange = remoteHead?.commitRange
         let preferredBase = chosenBase ?? targetRef ?? branchTarget
+        let fullFiles = fullFiles
         let onlyPrimary: Bool
         switch scope {
         case .commit, .range, .compare: onlyPrimary = true
@@ -940,7 +941,9 @@ final class ReviewModel: ObservableObject {
                 } else {
                     let span = HubPerf.begin("review.load", namesRoot ? "\(scope) \(job.repo.lastPathComponent)" : "\(scope)")
                     let base = job.repo.path == primary.path ? preferredBase : nil
-                    result = Result { try GitWorkingTreeSource(repo: job.repo, preferredBase: base).load(scope: scope, session: session) }
+                    var source = GitWorkingTreeSource(repo: job.repo, preferredBase: base)
+                    source.fullFiles = fullFiles[job.folder] ?? []
+                    result = Result { try source.load(scope: scope, session: session) }
                     span.end()
                 }
                 lock.lock()
@@ -1354,6 +1357,8 @@ final class ReviewModel: ObservableObject {
     /// hub's Worktrees page: the Branch scope and the commit list count from it before the repository's default branch.
     /// Without it a branch stacked on another counted that one's commits too (28 instead of 11, 2026-10-26).
     private(set) var branchTarget: String?
+    /// Files skipped for their size that the reader asked to see anyway, repository-relative, per root folder.
+    private var fullFiles: [String: Set<String>] = [:]
 
     /// Sets `branchTarget` from a branch name; reloads when it changes the base in use.
     func useBranchTarget(_ branch: String?) {
@@ -1799,6 +1804,12 @@ final class ReviewModel: ObservableObject {
         case .openURL(let url):
             // A PR/MR link asks where to open it (host, hub, review window); anything else opens in the browser.
             MainActor.assumeIsolated { PRRefMenu.open(url, model: self) }
+        case .showLargeFile(let id):
+            // The reader asked for a file skipped for its size: read it up to GitWorkingTreeSource.maxShownBytes.
+            guard let found = locate(fileID: id) else { return }
+            fullFiles[found.root.folder, default: []].insert(found.file.path)
+            HubPerf.log("review.showLarge \(found.file.path)")
+            reload()
         case .focusFile(let id):
             if selectedID != id, files.contains(where: { $0.id == id }) {
                 selectedID = id

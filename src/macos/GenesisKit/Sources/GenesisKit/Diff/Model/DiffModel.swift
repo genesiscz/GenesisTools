@@ -369,6 +369,8 @@ public enum DiffRendererEvent: Equatable {
     case openURL(URL)
     /// The page moved to a file on its own (a find match): the file list selects it.
     case focusFile(String)
+    /// A click on the note of a file skipped for its size: read it anyway (`GitWorkingTreeSource.fullFiles`).
+    case showLargeFile(String)
     /// A card's Fix checkbox: this PR thread is in or out of the "Fix threads" selection.
     case threadSelect(id: String, selected: Bool)
     /// A review key (j k r e x f n p s) while the diff has the keyboard and nothing is being typed.
@@ -407,6 +409,9 @@ public enum DiffRendererEvent: Equatable {
         case "focusFile":
             guard let fileID = body["fileId"] as? String else { return nil }
             self = .focusFile(fileID)
+        case "showLarge":
+            guard let fileID = body["fileId"] as? String else { return nil }
+            self = .showLargeFile(fileID)
         case "open":
             guard let fileID = body["fileId"] as? String, let line = body["line"] as? Int else { return nil }
             self = .openLine(fileID: fileID, line: line, side: side)

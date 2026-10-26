@@ -370,6 +370,8 @@ private struct BridgeFile: Encodable {
     public let key: String
     /// An image file's two sides as `genesis-diff://viewer/_image/<token>` URLs; the page shows the pictures.
     public let image: BridgeImage?
+    /// Skipped only for its size: a click on its note asks for it anyway (`DiffRendererEvent.showLargeFile`).
+    public let large: Bool
 
     public struct BridgeImage: Encodable {
         public let old: String?
@@ -381,7 +383,9 @@ private struct BridgeFile: Encodable {
         path = file.path
         oldPath = file.oldPath
         oldContents = file.skipped == nil ? file.oldContents : nil
-        newContents = file.skipped.map { "(\($0))\n" } ?? file.newContents
+        let large = GitWorkingTreeSource.isLarge(file.skipped)
+        self.large = large
+        newContents = file.skipped.map { large ? "(\($0); click to show it anyway)\n" : "(\($0))\n" } ?? file.newContents
         // Hasher is seeded per process, and the page's cache lives no longer than the process.
         var hasher = Hasher()
         hasher.combine(file.path)

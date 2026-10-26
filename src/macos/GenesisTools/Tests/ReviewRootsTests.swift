@@ -256,6 +256,14 @@ final class ReviewRootsTests: XCTestCase {
         XCTAssertEqual(snapshot.files.first { $0.path == "packages/app/nested.txt" }?.newContents, "nested after\n")
         XCTAssertEqual(snapshot.files.first { $0.path == "huge.txt" }?.skipped, "large file, 976 KB")
         XCTAssertNil(snapshot.files.first { $0.path == "huge.txt" }?.oldContents)
+        XCTAssertTrue(GitWorkingTreeSource.isLarge(snapshot.files.first { $0.path == "huge.txt" }?.skipped))
+        // A click on the note asks for it: the page's message, then a load with the file in `fullFiles`.
+        XCTAssertEqual(DiffRendererEvent(pageMessage: ["type": "showLarge", "fileId": "huge.txt"]), .showLargeFile("huge.txt"))
+        var asked = GitWorkingTreeSource(repo: nested)
+        asked.fullFiles = ["huge.txt"]
+        let whole = try XCTUnwrap(try asked.load().files.first { $0.path == "huge.txt" })
+        XCTAssertNil(whole.skipped)
+        XCTAssertEqual(whole.oldContents?.count, GitWorkingTreeSource.maxBytes + 100)
 
         let model = ReviewModel(repo: nested, options: DiffViewOptions(), renderer: NullRenderer())
         model.reload()
