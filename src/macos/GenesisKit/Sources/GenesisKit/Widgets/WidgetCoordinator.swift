@@ -205,7 +205,6 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.inboxArrived = { [weak self] items in self?.alert(items) }
         model.decisionsAnsweredElsewhere = { [weak self] items in self?.alertAnswered(items) }
         model.stagedAtStart = { [weak self] items in self?.remindStaged(items) }
-        model.stagedLeftInPopup = { [weak self] items in self?.remindStaged(items) }
         model.decisionRequested = { [weak self] id in self?.showDecision(id) }
     }
 
@@ -263,8 +262,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
             + (model.snapshot?.notifications?.staged ?? [])
         PerfLog.mark("widget.show-decision \(id) listed=\(items.contains { $0.sourceId == id })")
         if let item = items.first(where: { $0.sourceId == id }) {
-            openSession(item.key)
-            model.openDecision(id: id, sessionKey: item.key)
+            popUp(item, with: [item], preferences: model.snapshot?.state.preferences, seconds: 0)
             return
         }
         let sessionID = id.split(separator: "_", maxSplits: 2).dropFirst(2).first.map(String.init) ?? id
@@ -333,11 +331,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         ) { [weak self] note in
             let width = (note.userInfo?["previewWidth"] as? Double).map { CGFloat($0) }
             let done = note.userInfo?["done"] as? Bool ?? false
-            let patch = WidgetLiveSettings.patch(from: note.userInfo)
-            MainActor.assumeIsolated {
-                if let patch { self?.model.showLivePreferences(patch) }
-                self?.showLivePreview(width: width, done: done)
-            }
+            MainActor.assumeIsolated { self?.showLivePreview(width: width, done: done) }
         }
         launchPending = !showSettings && settingsWhenOff
         model.start()
@@ -348,9 +342,6 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         if let shutdownTask { await shutdownTask.value; return }
         let task = Task { [self] in
             stop()
-            if !(await model.waitForShutdownMutations()) {
-                PerfLog.mark("widget shutdown: queued writes did not finish within 4 seconds")
-            }
             // A shelf item removed during its Undo is removed before the app quits, or it is back on the next launch.
             await shelf?.waitForRemoval()
             await voiceNotes?.shutdown()
@@ -1080,24 +1071,6 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
 public enum WidgetLiveSettings {
     public static var name: Notification.Name {
         Notification.Name((Bundle.main.bundleIdentifier ?? "com.genesiscz.genesistools") + ".widget.live-settings")
-    }
-
-    /// A preference patch, the moment it is made. The posting process skips its own copy (`patch(from:)`).
-    public static func postPreferences(_ patch: [String: WidgetJSON]) {
-        guard !patch.isEmpty, let data = try? JSONEncoder().encode(WidgetJSON.object(patch)),
-              let json = String(data: data, encoding: .utf8) else { return }
-        DistributedNotificationCenter.default().postNotificationName(
-            name, object: nil, userInfo: ["patch": json, "pid": Int(ProcessInfo.processInfo.processIdentifier)],
-            deliverImmediately: true)
-    }
-
-    /// The patch in a live-settings note from another process; nil for a width note or the process's own post.
-    static func patch(from userInfo: [AnyHashable: Any]?) -> [String: WidgetJSON]? {
-        guard let json = userInfo?["patch"] as? String,
-              (userInfo?["pid"] as? Int) != Int(ProcessInfo.processInfo.processIdentifier),
-              case .object(let patch)? = try? JSONDecoder().decode(WidgetJSON.self, from: Data(json.utf8))
-        else { return nil }
-        return patch
     }
 
     /// The hover list width while the slider moves; `done` when it is let go.

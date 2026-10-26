@@ -294,13 +294,6 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
-                NativeSettingsRow("Answer to an agent's dialog", detail: "An answer to an agent's own question dialog, such as Claude's AskUserQuestion: press the option's key in the live dialog, or refuse and leave the dialog to the terminal.") {
-                    Picker("Answer to an agent's dialog", selection: string("dialogAnswer", prefs?.dialogAnswer ?? "press")) {
-                        Text("Press the option").tag("press")
-                        Text("Refuse").tag("refuse")
-                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
-                }
-                Divider()
                 NativeSettingsToggle(
                     "Staged at start", detail: "When the widget starts with decisions staged and not sent, a popup lists them with Send now until you close it.",
                     isOn: boolean("stagedReminder", prefs?.stagedReminder ?? true))
@@ -567,7 +560,7 @@ private struct WidgetGeneralSettings: View {
         Binding(get: { value }, set: { patch([key: .bool($0)]) })
     }
     private func patch(_ values: [String: WidgetJSON]) {
-        model.updatePreferences(values)
+        model.action(["action": "preferences", "patch": .object(values)])
     }
 }
 
@@ -773,13 +766,13 @@ private struct WidgetSessionSettings: View {
     }
 
     private func patch(_ values: [String: WidgetJSON]) {
-        model.updatePreferences(values)
+        model.action(["action": "preferences", "patch": .object(values)])
     }
 }
 
 private struct WidgetProviderSettings: View {
     @ObservedObject var model: WidgetModel
-    private let providers = Harness.allCases.map(\.rawValue) + ["unknown"]
+    private let providers = ["claude", "codex", "grok", "unknown"]
     private var selected: [String] { model.snapshot?.state.preferences.providers ?? [] }
     var body: some View {
         VStack(spacing: 18) {
@@ -807,12 +800,14 @@ private struct WidgetProviderSettings: View {
                                 model.error = "Keep at least one source enabled."
                                 return
                             }
-                            model.updatePreferences(["providers": .array(values.map(WidgetJSON.string))])
+                            model.action([
+                                "action": "preferences", "patch": ["providers": .array(values.map(WidgetJSON.string))],
+                            ])
                         }))
             }
             Divider()
             Button("Show all providers") {
-                model.updatePreferences(["providers": []])
+                model.action(["action": "preferences", "patch": ["providers": []]])
             }.buttonStyle(.bordered).nativeSettingsPointer().disabled(selected.isEmpty)
             WidgetSettingsError(model: model)
         }
@@ -847,7 +842,7 @@ private struct WidgetModuleSettings: View {
                          : "The side groups are hidden: Visible edges is set to Top.")
                         .font(.caption).frame(maxWidth: .infinity, alignment: .leading)
                     Button(index == nil ? "Show the top notch" : "Show the side groups") {
-                        model.updatePreferences(["placement": "both"])
+                        model.action(["action": "preferences", "patch": ["placement": "both"]])
                     }.buttonStyle(.bordered).nativeSettingsPointer()
                         .accessibilityIdentifier("widget.modules.\(index == nil ? "top" : "side").show")
                 }
@@ -867,10 +862,20 @@ private struct WidgetModuleSettings: View {
                             if let index {
                                 var groups = model.layout.sideGroups
                                 groups[index] = WidgetLayoutConfiguration.unique(ids)
-                                model.updatePreferences(["sideGroups": .array(groups.map { .array($0.map(WidgetJSON.string)) })])
+                                model.action([
+                                    "action": "preferences",
+                                    "patch": [
+                                        "sideGroups": .array(groups.map { .array($0.map(WidgetJSON.string)) })
+                                    ],
+                                ])
                             } else {
-                                model.updatePreferences(
-                                    ["topModules": .array(WidgetLayoutConfiguration.unique(ids).map(WidgetJSON.string))])
+                                model.action([
+                                    "action": "preferences",
+                                    "patch": [
+                                        "topModules": .array(
+                                            WidgetLayoutConfiguration.unique(ids).map(WidgetJSON.string))
+                                    ],
+                                ])
                             }
                         }))
             }
@@ -1039,7 +1044,7 @@ private struct WidgetDictationSettings: View {
         }
     }
     private func patch(_ value: [String: WidgetJSON]) {
-        model.updatePreferences(value)
+        model.action(["action": "preferences", "patch": .object(value)])
     }
 }
 

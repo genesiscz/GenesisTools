@@ -618,7 +618,7 @@ struct WidgetPeekView: View {
     private func open(ownAnswer: Bool = false) {
         guard let surface = model.hoveredSurface else { return }
         if isReminder {
-            model.endPeek(advance: false)
+            model.dismissPeek()
             model.openStaged(on: surface)
             return
         }
@@ -670,15 +670,12 @@ struct WidgetPeekView: View {
         .accessibilityIdentifier("widget.peek.open")
     }
 
-    /// The whole summary, with no line limit: the sender already cuts it near 600 characters (`decisionSummary`), and
-    /// a selectable `Text` draws its full string while it is being selected, past the frame a line limit laid out
-    /// (2026-10-30: six lines laid out, nine drawn, the last three under the option rows).
     private func summaryText(_ summary: String) -> some View {
         let markdown = (try? AttributedString(
             markdown: summary, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(summary)
         return Text(markdown)
             .font(.system(size: 12)).foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
+            .lineLimit(6).fixedSize(horizontal: false, vertical: true)
             .textSelection(.enabled)
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, alignment: .leading)
