@@ -385,7 +385,7 @@ final class WidgetPolishShotsTests: XCTestCase {
             .background(NativeThemePalette.graphiteBase)
             .environment(\.nativeSettingsTheme, .graphite)
             .environment(\.colorScheme, .dark)
-        let pageShot = try KitShots.render(page, size: CGSize(width: 760, height: 1500), name: "widget-general", settle: 0.8)
+        let pageShot = try KitShots.render(page, size: CGSize(width: 760, height: 3600), name: "widget-general", settle: 0.8)
         try XCTUnwrap(pageShot.representation(using: .png, properties: [:]))
             .write(to: URL(fileURLWithPath: folder).appendingPathComponent("widget-general-settings.png"))
         let preview = AgentWidgetPreview(model: model, surface: WidgetSurfaceID(edge: .right)).padding(10)
@@ -406,5 +406,19 @@ final class WidgetPolishShotsTests: XCTestCase {
         let peekShot = try KitShots.render(peek, size: CGSize(width: 310, height: 290), name: "widget-peek", settle: 0.6)
         try XCTUnwrap(peekShot.representation(using: .png, properties: [:]))
             .write(to: URL(fileURLWithPath: folder).appendingPathComponent("widget-alert-card.png"))
+        // Alerts → Several at once: Listed. A second alert waits under the first one.
+        let later = WidgetInboxItem(id: "decision:d_31_x", sourceId: "d_31_x", kind: "decision", key: item.key,
+            at: item.at + 1_000, needsAnswer: true, title: "Rename the queue setting before the release?", number: 31)
+        let side = WidgetSurfaceID(edge: .right)
+        model.showPeek(item, on: side, seconds: 0, many: .list)
+        model.showPeek(later, on: side, seconds: 0, many: .list)
+        let listed = WidgetPeekView(model: model, item: item).padding(WidgetPeekView.inset)
+            .frame(width: 310, height: 380, alignment: .top)
+            .background(NativeThemePalette.graphiteBase)
+            .environment(\.nativeSettingsTheme, model.panelTheme)
+            .environment(\.colorScheme, .dark)
+        let listedShot = try KitShots.render(listed, size: CGSize(width: 310, height: 380), name: "widget-peek-listed", settle: 0.6)
+        try XCTUnwrap(listedShot.representation(using: .png, properties: [:]))
+            .write(to: URL(fileURLWithPath: folder).appendingPathComponent("widget-alert-card-listed.png"))
     }
 }
