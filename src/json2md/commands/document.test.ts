@@ -3,6 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerDocumentCommands } from "@app/json2md/commands/document";
+import { SafeJSON } from "@genesiscz/utils/json";
+import type { DocumentEnvironment } from "@genesiscz/utils/json2md/environment";
 import { out } from "@genesiscz/utils/logger";
 import { Command } from "commander";
 
@@ -164,5 +166,58 @@ describe("json2md init/build never trigger Bun's auto-installer", () => {
         expect(build.exitCode).toBe(1);
         expect(build.output).not.toContain("Resolving [");
         expect(build.output).toContain("does not resolve from");
+    });
+});
+
+// The verbs take everything host-specific from the environment, so a program that ships them without the link check
+// and the hints (another repo that copies json2md) passes its own and gets its own stamp.
+describe("json2md document environment", () => {
+    test("build stamps the environment's command and asks it, not the package link, whether imports resolve", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "json2md-env-"));
+        const documentFile = join(import.meta.dir, "../../utils/json2md/document-file.ts");
+        await Bun.write(join(dir, "doc.json"), '{ "title": "Hello" }');
+        await Bun.write(
+            join(dir, "doc.ts"),
+            `import { defineDocument } from ${SafeJSON.stringify(documentFile)};\n\nexport default defineDocument<{ title: string }>({ data: "./doc.json", render: (d) => [{ h2: d.title }] });\n`
+        );
+        const asked: string[] = [];
+        const reported: string[] = [];
+        const env: DocumentEnvironment = {
+            hints: () => ({ rebuildCommand: (portable) => `host json2md build ${portable}` }),
+            unresolvedImporterDir: async (modulePath) => {
+                asked.push(modulePath);
+                return null;
+            },
+            reportUnresolved: (folder) => {
+                reported.push(folder);
+            },
+            scaffoldSpecifier: "@host/json2md",
+        };
+        const program = new Command();
+        registerDocumentCommands(program, env);
+        const originalExitCode = process.exitCode;
+        process.exitCode = undefined;
+
+        try {
+            await program.parseAsync(["node", "json2md", "build", join(dir, "doc.ts")], { from: "node" });
+
+            expect(process.exitCode ?? 0).toBe(0);
+            expect(asked).toEqual([join(dir, "doc.ts")]);
+            expect(reported).toEqual([]);
+            expect(await Bun.file(join(dir, "doc.md")).text()).toContain(
+                `command=${encodeURIComponent("host json2md build ")}`
+            );
+        } finally {
+            process.exitCode = originalExitCode;
+        }
+    });
+
+    test("the verbs import neither the package link nor the GenesisTools hints, only their environment does", async () => {
+        const source = await Bun.file(join(import.meta.dir, "document.ts")).text();
+        const imports = new Bun.Transpiler({ loader: "ts" }).scanImports(source).map((imported) => imported.path);
+
+        expect(imports).not.toContain("@genesiscz/utils/package-link");
+        expect(imports).not.toContain("@genesiscz/utils/genesis-tools/tools/hints");
+        expect(imports).toContain("./document-env");
     });
 });

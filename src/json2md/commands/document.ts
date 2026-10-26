@@ -1,29 +1,20 @@
-import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { suggestCommand } from "@genesiscz/utils/cli";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
-import { json2mdBuild, transclusionHints } from "@genesiscz/utils/genesis-tools/tools/hints";
 import { SafeJSON } from "@genesiscz/utils/json";
 import {
     checkDocument,
     type DocumentCheck,
-    type DocumentHints,
     loadDocumentModule,
     writeDocument,
 } from "@genesiscz/utils/json2md/document-file";
+import { type DocumentEnvironment, shortPath } from "@genesiscz/utils/json2md/environment";
 import { type CheckResult, stripStamp, type Verdict } from "@genesiscz/utils/json2md/integrity";
 import { logger, out } from "@genesiscz/utils/logger";
-import {
-    nearestConfigFor,
-    PACKAGE_NAME,
-    packageImporterDirs,
-    packageResolvesFrom,
-    shadowedByFor,
-} from "@genesiscz/utils/package-link";
 import { createBoxTable, formatDotStatus, renderCliHeader } from "@genesiscz/utils/table";
-import { defaultTransclusionRegistry } from "@genesiscz/utils/transclude";
 import type { Command } from "commander";
 import pc from "picocolors";
+import { documentEnvironment } from "./document-env";
 
 /** How each verdict is shown, and whether it should fail the command. */
 const VERDICT: Record<Verdict, { dot: "ok" | "warn" | "err" | "dim"; label: string; fails: boolean }> = {
@@ -36,17 +27,6 @@ const VERDICT: Record<Verdict, { dot: "ok" | "warn" | "err" | "dim"; label: stri
 
 function absolute(path: string): string {
     return isAbsolute(path) ? path : resolve(process.cwd(), path);
-}
-
-/** The shorter of the repo-relative and absolute forms, so a `/tmp` path is not `../../../..`. */
-function short(path: string): string {
-    const rel = relative(process.cwd(), path);
-
-    if (rel === "") {
-        return path;
-    }
-
-    return rel.length < path.length ? rel : path;
 }
 
 /**
@@ -133,77 +113,6 @@ const JSON_SAMPLE = {
     ],
 };
 
-/** Whether `root` is `path` itself or an ancestor of it. */
-function within(root: string, path: string): boolean {
-    const rel = relative(root, path);
-
-    return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-}
-
-/**
- * Prints why `@genesiscz/utils` does not resolve from `moduleDir`, and the one command that
- * fixes it.
- *
- * Two different causes, two different fixes: a home-directory install cannot reach a folder
- * whose own tsconfig shadows it, so suggesting one there sends the user to a command that will
- * report success and change nothing.
- */
-function reportPackageNotLinked(moduleDir: string, severity: "warn" | "error"): void {
-    out.log[severity](`${PACKAGE_NAME} does not resolve from ${short(moduleDir)} yet.`);
-
-    const underHome = within(homedir(), moduleDir);
-    // `shadowedByFor` only sees a mapping that ALREADY exists above a nearer config. On a
-    // first setup nothing carries one yet, but a project tsconfig between the module and
-    // home still hides the future `~/tsconfig.json`. A config above home does not.
-    const nearest = nearestConfigFor(moduleDir);
-    const projectConfig =
-        nearest !== null &&
-        nearest !== join(homedir(), "tsconfig.json") &&
-        (!underHome || within(homedir(), dirname(nearest)))
-            ? nearest
-            : null;
-    const shadowedBy = shadowedByFor(moduleDir) ?? projectConfig;
-
-    if (shadowedBy === null && underHome) {
-        out.log.info("One command fixes it for every file under your home directory:");
-        out.log.info(suggestCommand("tools link", { replaceCommand: ["install"] }));
-    } else if (shadowedBy === null) {
-        // The home install writes `~/tsconfig.json`, which Bun never reads for a file
-        // outside home, so suggesting it here reported success and changed nothing.
-        out.log.info(`${moduleDir} is outside your home directory. Map it directly:`);
-        out.log.info(suggestCommand("tools link", { replaceCommand: ["install", "--root", moduleDir] }));
-    } else {
-        // Absolute, not `short()`: this names a place the user has to go and act
-        // on, and a cwd-relative form renders it as `../../..`, which tells them
-        // nothing. The same reasoning governs every path `tools link` prints.
-        out.log.info(`${shadowedBy} is nearer, and Bun reads only the nearest tsconfig.`);
-        out.log.info("So it hides any mapping above it. Install into that project instead:");
-        out.log.info(
-            suggestCommand("tools link", {
-                replaceCommand: ["install", "--root", dirname(shadowedBy)],
-            })
-        );
-    }
-}
-
-/**
- * Whether loading `modulePath` would need `@genesiscz/utils` and fail to find it.
- *
- * 🛑 Checked on the module's import graph first, not by always calling `packageResolvesFrom`: a
- * module that never imports the package (a hand-written throw, data with no helpers) must still
- * fail exactly as it always has when it is broken for some OTHER reason, not read "not linked
- * yet" guidance about a package it never needed. The graph includes local helpers, so a package
- * import one file away is caught here before Bun's resolver or its auto-installer sees it. The
- * package must resolve from each importing module's own folder, not the document's: a helper in a
- * linked project serves a document that sits outside it. Returns the first folder the package
- * does not resolve from, or null when every importer resolves it.
- */
-async function unlinkedImporterDir(modulePath: string): Promise<string | null> {
-    return (await packageImporterDirs(modulePath)).find((dir) => !packageResolvesFrom(dir)) ?? null;
-}
-
-const PACKAGE_SPECIFIER = "@genesiscz/utils/json2md/document-file";
-
 /**
  * The scaffolded module ALWAYS carries the package specifier, wherever it lands.
  *
@@ -212,8 +121,8 @@ const PACKAGE_SPECIFIER = "@genesiscz/utils/json2md/document-file";
  * the document lived in. The portable import plus a one-time `tools link install` is the
  * better trade: the file is the same everywhere, and the setup is visible and reversible.
  */
-function template(input: { data: string; title: string; moduleName: string }): string {
-    return `import { defineDocument } from ${SafeJSON.stringify(PACKAGE_SPECIFIER)};
+function template(input: { data: string; title: string; moduleName: string; specifier: string }): string {
+    return `import { defineDocument } from ${SafeJSON.stringify(input.specifier)};
 
 /**
  * Generated document. Three files work together:
@@ -269,12 +178,7 @@ export default defineDocument<Data>({
 `;
 }
 
-/** The GenesisTools commands a document's stamp and its `{{kind …}}` tokens name. */
-function documentHints(): DocumentHints {
-    return { rebuildCommand: json2mdBuild, transclusions: defaultTransclusionRegistry(transclusionHints()) };
-}
-
-function registerBuild(program: Command): void {
+function registerBuild(program: Command, env: DocumentEnvironment): void {
     program
         .command("build")
         .description("Render one or more document modules to their .md files")
@@ -286,11 +190,11 @@ function registerBuild(program: Command): void {
 
             for (const file of files) {
                 const modulePath = absolute(file);
-                const unlinkedDir = await unlinkedImporterDir(modulePath);
+                const unlinkedDir = await env.unresolvedImporterDir(modulePath);
 
                 if (unlinkedDir) {
                     refused += 1;
-                    reportPackageNotLinked(unlinkedDir, "error");
+                    env.reportUnresolved(unlinkedDir, "error");
                     continue;
                 }
 
@@ -298,14 +202,14 @@ function registerBuild(program: Command): void {
                 const result = await writeDocument(modulePath, definition, {
                     force: flags.force,
                     dryRun: flags.dryRun,
-                    ...documentHints(),
+                    ...env.hints(),
                 });
 
                 logger.debug({ file: modulePath, outcome: result.outcome, out: result.outPath }, "json2md: build");
 
                 if (result.outcome === "refused" && result.check) {
                     refused += 1;
-                    out.log.error(`${short(result.outPath)}: ${result.check.message} Refusing to overwrite it.`);
+                    out.log.error(`${shortPath(result.outPath)}: ${result.check.message} Refusing to overwrite it.`);
 
                     for (const line of guidance(result.check)) {
                         out.log.info(line);
@@ -318,16 +222,18 @@ function registerBuild(program: Command): void {
                 // A dry run reports `unchanged` for everything it did not write, including a file
                 // it WOULD write (missing, or stale). Only a `clean` check means up to date.
                 if (flags.dryRun && result.outcome === "unchanged" && result.check?.verdict !== "clean") {
-                    out.log.info(`${short(result.outPath)} would be written from ${short(result.dataPath)} (dry run).`);
+                    out.log.info(
+                        `${shortPath(result.outPath)} would be written from ${shortPath(result.dataPath)} (dry run).`
+                    );
                     continue;
                 }
 
                 if (result.outcome === "unchanged") {
-                    out.log.info(`${short(result.outPath)} is already up to date.`);
+                    out.log.info(`${shortPath(result.outPath)} is already up to date.`);
                     continue;
                 }
 
-                out.log.success(`${short(result.outPath)} written from ${short(result.dataPath)}.`);
+                out.log.success(`${shortPath(result.outPath)} written from ${shortPath(result.dataPath)}.`);
             }
 
             if (refused > 0) {
@@ -336,7 +242,7 @@ function registerBuild(program: Command): void {
         });
 }
 
-function registerCheck(program: Command): void {
+function registerCheck(program: Command, env: DocumentEnvironment): void {
     program
         .command("check")
         .description("Report whether generated markdown is current, stale, or edited by hand")
@@ -350,21 +256,21 @@ function registerCheck(program: Command): void {
                 const modulePath = given.endsWith(".md") ? await moduleForMarkdown(given) : given;
 
                 if (modulePath === null) {
-                    out.log.error(`${short(given)} has no stamp naming its generator, so it cannot be checked.`);
+                    out.log.error(`${shortPath(given)} has no stamp naming its generator, so it cannot be checked.`);
                     process.exitCode = 1;
                     continue;
                 }
 
-                const unlinkedDir = await unlinkedImporterDir(modulePath);
+                const unlinkedDir = await env.unresolvedImporterDir(modulePath);
 
                 if (unlinkedDir) {
-                    reportPackageNotLinked(unlinkedDir, "error");
+                    env.reportUnresolved(unlinkedDir, "error");
                     process.exitCode = 1;
                     continue;
                 }
 
                 const definition = await loadDocumentModule(modulePath);
-                results.push(await checkDocument(modulePath, definition, documentHints()));
+                results.push(await checkDocument(modulePath, definition, env.hints()));
             }
 
             // A document that was never generated reads as `unstamped`, which is not a failure for
@@ -383,7 +289,7 @@ function registerCheck(program: Command): void {
                     const shape = VERDICT[result.verdict];
 
                     table.push([
-                        pc.white(short(result.outPath)),
+                        pc.white(shortPath(result.outPath)),
                         formatDotStatus(shape.dot, shape.label),
                         result.dataChanged ? pc.yellow("changed") : pc.dim("same"),
                         result.message,
@@ -395,7 +301,7 @@ function registerCheck(program: Command): void {
 
             for (const result of failing) {
                 out.println("");
-                out.println(pc.bold(short(result.outPath)));
+                out.println(pc.bold(shortPath(result.outPath)));
 
                 for (const line of guidance(result)) {
                     out.println(`  ${line}`);
@@ -413,7 +319,7 @@ function registerCheck(program: Command): void {
         });
 }
 
-function registerInit(program: Command): void {
+function registerInit(program: Command, env: DocumentEnvironment): void {
     program
         .command("init")
         .description("Scaffold the three-file pattern: data.json, doc.ts, doc.md")
@@ -427,7 +333,7 @@ function registerInit(program: Command): void {
             const title = flags.title ?? basename(base);
 
             if (await Bun.file(modulePath).exists()) {
-                out.log.error(`${short(modulePath)} already exists. Not overwriting it.`);
+                out.log.error(`${shortPath(modulePath)} already exists. Not overwriting it.`);
                 process.exitCode = 1;
 
                 return;
@@ -438,7 +344,7 @@ function registerInit(program: Command): void {
             // Sample data is only for the default `<name>.json`, which the scaffold owns.
             if (flags.data && !(await Bun.file(dataPath).exists())) {
                 out.log.error(
-                    `--data ${short(dataPath)} does not exist. Pass an existing JSON file, or omit --data for sample data.`
+                    `--data ${shortPath(dataPath)} does not exist. Pass an existing JSON file, or omit --data for sample data.`
                 );
                 process.exitCode = 1;
 
@@ -451,34 +357,44 @@ function registerInit(program: Command): void {
             // `undefined is not an object` on its very first build.
             if (!(await Bun.file(dataPath).exists())) {
                 await Bun.write(dataPath, `${SafeJSON.stringify(JSON_SAMPLE, null, 4)}\n`);
-                out.log.success(`Created ${short(dataPath)} with sample data.`);
+                out.log.success(`Created ${shortPath(dataPath)} with sample data.`);
             }
 
             const relativeData = relative(dirname(modulePath), dataPath).replace(/\\/g, "/");
             const dataSpecifier = relativeData.startsWith(".") ? relativeData : `./${relativeData}`;
 
-            await Bun.write(modulePath, template({ data: dataSpecifier, title, moduleName: basename(modulePath) }));
-            out.log.success(`Created ${short(modulePath)}.`);
+            await Bun.write(
+                modulePath,
+                template({
+                    data: dataSpecifier,
+                    title,
+                    moduleName: basename(modulePath),
+                    specifier: env.scaffoldSpecifier,
+                })
+            );
+            out.log.success(`Created ${shortPath(modulePath)}.`);
 
             // 🛑 Stop before the first build rather than after it. The module is correct and
             // portable, but nothing under this directory can resolve the package yet, so the
             // build would fail with a resolution error that reads like a bug in the document.
-            if (!packageResolvesFrom(dirname(modulePath))) {
-                reportPackageNotLinked(dirname(modulePath), "warn");
+            const unresolvedDir = await env.unresolvedImporterDir(modulePath);
+
+            if (unresolvedDir !== null) {
+                env.reportUnresolved(unresolvedDir, "warn");
 
                 // The scaffold files were created; not being linked yet is guidance for the
                 // next step, not a failure, so this stays exit 0.
-                out.log.info(`Then: ${toolCommand("json2md build", short(modulePath))}`);
+                out.log.info(`Then: ${toolCommand("json2md build", shortPath(modulePath))}`);
 
                 return;
             }
 
             const definition = await loadDocumentModule(modulePath);
-            const result = await writeDocument(modulePath, definition, documentHints());
+            const result = await writeDocument(modulePath, definition, env.hints());
 
             if (result.outcome === "refused" && result.check) {
                 // A markdown file already sits at the output path. It is left alone.
-                out.log.error(`${short(result.outPath)}: ${result.check.message} Refusing to overwrite it.`);
+                out.log.error(`${shortPath(result.outPath)}: ${result.check.message} Refusing to overwrite it.`);
 
                 for (const line of guidance(result.check)) {
                     out.log.info(line);
@@ -489,14 +405,19 @@ function registerInit(program: Command): void {
                 return;
             }
 
-            out.log.success(`Created ${short(result.outPath)}.`);
-            out.log.info(`Regenerate with  ${toolCommand("json2md build", short(modulePath))}`);
-            out.log.info(`Verify with      ${toolCommand("json2md check", short(modulePath))}`);
+            out.log.success(`Created ${shortPath(result.outPath)}.`);
+            out.log.info(`Regenerate with  ${toolCommand("json2md build", shortPath(modulePath))}`);
+            out.log.info(`Verify with      ${toolCommand("json2md check", shortPath(modulePath))}`);
         });
 }
 
-export function registerDocumentCommands(program: Command): void {
-    registerBuild(program);
-    registerCheck(program);
-    registerInit(program);
+/**
+ * `build`, `check` and `init`. The environment holds everything that depends on the hosting program (the stamp's
+ * rebuild command, the transclusion hints, the package resolve check and the scaffold import); the default is this
+ * program's own, from the `document-env` seam.
+ */
+export function registerDocumentCommands(program: Command, env: DocumentEnvironment = documentEnvironment()): void {
+    registerBuild(program, env);
+    registerCheck(program, env);
+    registerInit(program, env);
 }
