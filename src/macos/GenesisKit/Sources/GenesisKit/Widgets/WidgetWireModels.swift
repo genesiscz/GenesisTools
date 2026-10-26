@@ -310,6 +310,12 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var railOrder: String?
     /// A click on a decision option: "stage" (default, sent later with the other staged ones) or "send" (at once).
     public var decisionClick: String?
+    /// ⌘-click on an option and ⌘-Return in a decision's own answer do the other action. Default true.
+    public var decisionCommandSwaps: Bool?
+    /// Return in a decision's own answer field: "stage" (default, the text becomes its note) or "send".
+    public var ownAnswerReturn: String?
+    /// At start, a popup lists the staged decisions with Send now until it is closed. Default true.
+    public var stagedReminder: Bool?
     /// Leaving the inbox with staged decisions: "ask" (default), "keep" or "send".
     public var stagedOnLeave: String?
     /// Seconds to show a delivered note before a send-and-close folds the panel; 0 keeps it open. Default 2.5.

@@ -616,7 +616,8 @@ public struct LiveWidgetView: View {
         // An answer on its way takes no second, conflicting pick (forms say "Answer queued" the same way).
         .disabled(model.importing > 0 || model.cardPending || model.sendingDecisionIDs.contains(card.sourceId))
         .id("choice-" + card.id + "-" + choice.id)
-        .instantTooltip(Self.choiceTooltip(choice, index: index, stages: stages, picked: picked))
+        .instantTooltip(Self.choiceTooltip(choice, index: index, stages: stages, picked: picked,
+                                           swaps: model.snapshot?.state.preferences.decisionCommandSwaps ?? true))
         .accessibilityLabel(WidgetOptionText.accessibilityLabel(letter: choice.id, text: text, stages: stages,
                                                                 recommended: choice.recommended))
         .accessibilityValue(picked ? "Staged" : "")
@@ -638,11 +639,13 @@ public struct LiveWidgetView: View {
         ledgerUndo.hold(card, to: state, model: model, reduceMotion: reduceMotion)
     }
 
-    static func choiceTooltip(_ choice: WidgetChoice, index: Int, stages: Bool, picked: Bool) -> String {
+    static func choiceTooltip(_ choice: WidgetChoice, index: Int, stages: Bool, picked: Bool, swaps: Bool = true) -> String {
         let key = index < 9 ? " · key \(index + 1)" : ""
-        if !stages { return "Answer \(choice.id)" + (choice.recommended ? " (recommended)" : "") + key }
+        if !stages {
+            return "Answer \(choice.id)" + (choice.recommended ? " (recommended)" : "") + key + (swaps ? " · ⌘-click stages it" : "")
+        }
         return (picked ? "Staged; click again to unstage" : "Stage \(choice.id), sent later with your other staged decisions")
-            + (choice.recommended ? " (recommended)" : "") + key
+            + (choice.recommended ? " (recommended)" : "") + key + (swaps ? " · ⌘-click sends it now" : "")
     }
 
     @ViewBuilder private func cardDetail(_ card: WidgetCard) -> some View {
@@ -1228,6 +1231,14 @@ public struct LiveWidgetView: View {
                         // answer showed its first line cut off at the top (Martin, 2026-10-26: "multilines suck").
                         .fixedSize(horizontal: false, vertical: true)
                         .focused(ownAnswer == nil ? $editing : $ownAnswerFocused)
+                        // A decision's own answer: Return stages the text as its note and ⌘-Return sends it, or the
+                        // other way round (Settings: Return in an own answer). Option-Return stays a new line.
+                        .onKeyPress(.return, phases: .down) { press in
+                            guard ownAnswer != nil, !press.modifiers.contains(.option),
+                                  !press.modifiers.contains(.shift) else { return .ignored }
+                            model.returnInOwnAnswer(command: press.modifiers.contains(.command))
+                            return .handled
+                        }
                         .onSubmit { model.send() }
                         .accessibilityLabel(ownAnswer == nil ? "Reply to selected agent" : "Your own answer")
                         .onGeometryChange(for: CGFloat.self, of: { $0.size.height.rounded() }) { height in
@@ -1242,7 +1253,8 @@ public struct LiveWidgetView: View {
                     Image(systemName: "arrow.up.circle.fill").font(.system(size: 23)).foregroundStyle(.blue)
                 }.buttonStyle(.genHoverIcon(accent: .blue, diameter: 28))
                     .disabled(model.importing > 0 || parked != nil || (ownAnswer != nil && model.ownAnswerIdle))
-                    .instantTooltip(ownAnswer == nil ? "Send (Return)" : "Send as your answer now (Return)")
+                    .instantTooltip(ownAnswer == nil ? "Send (Return)"
+                        : "Send as your answer now (" + (model.ownAnswerReturnStages ? "⌘-Return" : "Return") + ")")
                     .accessibilityLabel(ownAnswer == nil ? "Send reply" : "Send your answer")
                     .opacity(open ? 1 : 0).allowsHitTesting(open).accessibilityHidden(!open)
             }
@@ -1335,18 +1347,20 @@ public struct LiveWidgetView: View {
     private var composerKeys: some View {
         let paste = WidgetKeymap.label(WidgetKeymap.paste)
         let close = WidgetKeymap.label(WidgetKeymap.collapse)
-        let base = "↩ send · ⌥↩ new line"
+        let stagesOnReturn = model.ownAnswerCard != nil && model.ownAnswerReturnStages
+        let base = stagesOnReturn ? "↩ stage · ⌘↩ send · ⌥↩ new line" : "↩ send · ⌥↩ new line"
         let media = paste.isEmpty ? base : base + " · \(paste) media"
         return ViewThatFits(in: .horizontal) {
             Text(close.isEmpty ? media : media + " · \(close) close")
             Text(media)
             Text(base)
-            Text("↩ send")
+            Text(stagesOnReturn ? "↩ stage · ⌘↩ send" : "↩ send")
         }
         .font(.system(size: 11)).foregroundStyle(SessionPalette.secondary).lineLimit(1)
         .layoutPriority(1)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Return sends. Option Return adds a new line.")
+        .accessibilityLabel(stagesOnReturn ? "Return stages the note. Command Return sends it. Option Return adds a new line."
+                            : "Return sends. Option Return adds a new line.")
     }
 
     /// The microphone: Stop while a dictation runs; otherwise a menu of the two modes when the setting asks, else the

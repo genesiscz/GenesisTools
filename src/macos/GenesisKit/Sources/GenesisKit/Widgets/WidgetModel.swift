@@ -72,7 +72,7 @@ public final class WidgetModel: ObservableObject {
     @Published public private(set) var peekQueue: [WidgetInboxItem] = []
     /// How the open popup takes another alert, and how long it stays while the pointer is not on it (0: until closed).
     public private(set) var peekMany: WidgetAlerts.PopupMany = .newest
-    private var peekSeconds: Double = 7
+    private(set) var peekSeconds: Double = 7
     /// Duration and the inbox generation when each displayed or waiting alert arrived.
     private var peekDurations: [String: Double] = [:]
     private var peekInboxGenerations: [String: Int] = [:]
@@ -91,6 +91,10 @@ public final class WidgetModel: ObservableObject {
     /// announces nothing that was answered before it.
     private var answeredSeen: Set<String> = []
     private var answeredObserved = false
+    /// Called once, with the first complete snapshot, when decisions are staged and not sent: a pick staged before the
+    /// widget restarted waited unseen (DECISION 26, 2026-10-26). The coordinator shows the staged reminder.
+    public var stagedAtStart: (([WidgetInboxItem]) -> Void)?
+    private var stagedStartChecked = false
     public func session(forKey key: String) -> WidgetSession? { sessionIndex[key] }
     @Published public var moduleSelections: [String: String] = [:]
     @Published public var draggedSidePosition: Double?
@@ -1206,6 +1210,10 @@ public final class WidgetModel: ObservableObject {
             }
         }
         reconcileStaged(value.staged ?? value.sessions.flatMap { $0.items ?? [] })
+        if value.complete, !stagedStartChecked {
+            stagedStartChecked = true
+            if !stagedItems.isEmpty { stagedAtStart?(stagedItems) }
+        }
         if !inboxFilterPicked, let opening = snapshot?.state.preferences.inboxFilter, opening != inboxFilter {
             inboxFilter = opening
         }
@@ -1454,6 +1462,15 @@ public final class WidgetModel: ObservableObject {
         ownAnswerCardID = item.id
         ownAnswerFocusRequest = item.id
         if draft.text.isEmpty, let note = item.draft, !note.isEmpty { setText(note) }
+    }
+
+    /// The staged decisions of every session, in the inbox (the staged reminder's Show them).
+    public func openStaged(on surface: WidgetSurfaceID) {
+        guard !stopping else { return }
+        inboxOverview = true
+        section = "Inbox"
+        stagedView = "all"
+        openModule("agents", on: surface)
     }
 
     /// The inbox button: every session's entries in one list. A second click while that list is open hides the panel.

@@ -529,6 +529,10 @@ struct WidgetPeekView: View {
 
     /// The kicker names the decision ("Decision 4"), so the title under it does not repeat the number.
     private var title: String {
+        if isReminder {
+            let count = model.stagedItems.count
+            return count == 0 ? "Nothing is staged now." : Plural.count(count, "decision") + " staged and not sent yet"
+        }
         let plain = item.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return plain.isEmpty ? "Open the inbox to see it." : plain
     }
@@ -546,6 +550,7 @@ struct WidgetPeekView: View {
 
     /// The symbol and colour of an alert's kind: orange waits for you, green was answered elsewhere, blue is news.
     static func mark(_ item: WidgetInboxItem) -> (symbol: String, tint: Color) {
+        if item.kind == "staged" { return ("tray.full.fill", .orange) }
         if item.isAnsweredElsewhere { return ("checkmark.bubble.fill", .green) }
         return item.needsAnswer ? ("questionmark.bubble.fill", .orange) : ("text.bubble.fill", SessionPalette.blue)
     }
@@ -556,6 +561,7 @@ struct WidgetPeekView: View {
                 header
                 if !options.isEmpty { optionList }
                 if item.isAnsweredElsewhere { answeredBody }
+                if isReminder { stagedBody }
                 if model.peekMany == .list, !model.peekQueue.isEmpty { waitingList }
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -591,8 +597,16 @@ struct WidgetPeekView: View {
         measured(contentHeight + Self.footerGap + footerHeight + 2 * Self.padding)
     }
 
+    /// The staged reminder (`WidgetCoordinator.remindStaged`): it lists the staged decisions, not one item.
+    private var isReminder: Bool { item.kind == "staged" }
+
     private func open(ownAnswer: Bool = false) {
         guard let surface = model.hoveredSurface else { return }
+        if isReminder {
+            model.dismissPeek()
+            model.openStaged(on: surface)
+            return
+        }
         model.openAlert(item, on: surface, ownAnswer: ownAnswer)
     }
 
@@ -610,7 +624,8 @@ struct WidgetPeekView: View {
                 HStack(spacing: 6) {
                     Image(systemName: Self.mark(item).symbol).foregroundStyle(Self.mark(item).tint)
                     Text(WidgetAlerts.kicker(item)).font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(item.needsAnswer || item.isAnsweredElsewhere ? Self.mark(item).tint : .secondary)
+                        .foregroundStyle(item.needsAnswer || item.isAnsweredElsewhere || isReminder
+                                         ? Self.mark(item).tint : .secondary)
                     Spacer(minLength: 0)
                     if queued > 0 {
                         Text("\(queued) next").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -623,7 +638,7 @@ struct WidgetPeekView: View {
                 }
                 Text(title).font(.system(size: 13, weight: .semibold))
                     .lineLimit(3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
-                if let session = model.session(forKey: item.key) {
+                if !isReminder, let session = model.session(forKey: item.key) {
                     Text([session.title, session.project].filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                         .lineLimit(1).truncationMode(.middle)
@@ -647,7 +662,7 @@ struct WidgetPeekView: View {
         VStack(alignment: .leading, spacing: 5) {
             ForEach(Array(options.prefix(Self.shownOptions).enumerated()), id: \.offset) { index, option in
                 WidgetItemOptionButton(model: model, item: item, index: index, option: option) {
-                    if !model.decisionClickStages { open() }
+                    if !model.clickStagesNow { open() }
                 }
             }
             if options.count > Self.shownOptions {
@@ -712,6 +727,30 @@ struct WidgetPeekView: View {
         .accessibilityIdentifier("widget.peek.waiting")
     }
 
+    /// The staged decisions, one line each: the decision, its title and the pick or "note".
+    private var stagedBody: some View {
+        let staged = model.stagedItems
+        return VStack(alignment: .leading, spacing: 3) {
+            ForEach(staged.prefix(Self.shownWaiting + 1), id: \.id) { row in
+                HStack(spacing: 6) {
+                    Text(row.number.map { "Decision \($0)" } ?? "Decision").font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text(row.title ?? "").font(.system(size: 11)).lineLimit(1).truncationMode(.tail)
+                    Spacer(minLength: 4)
+                    Text(model.stagedOption(row.sourceId, stored: row.draftOption).map { "\($0))" } ?? "note")
+                        .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 8)
+            }
+            if staged.count > Self.shownWaiting + 1 {
+                Text("\(staged.count - Self.shownWaiting - 1) more in the inbox").font(.system(size: 11))
+                    .foregroundStyle(.secondary).padding(.leading, 8)
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("widget.peek.staged")
+    }
+
     /// The decision's staged pick or note, here or in the snapshot.
     private var staged: Bool {
         model.stagedOption(item.sourceId, stored: item.draftOption) != nil || item.draft != nil
@@ -731,7 +770,17 @@ struct WidgetPeekView: View {
                 .accessibilityIdentifier("widget.peek.ownAnswer")
             }
             Spacer(minLength: 0)
-            if staged {
+            if isReminder {
+                let ids = model.stagedItems.map(\.sourceId)
+                let sending = !ids.isEmpty && ids.allSatisfy { model.sendingDecisionIDs.contains($0) }
+                Button("Show them") { open() }
+                    .instantTooltip("Opens the staged decisions in the inbox")
+                Button(sending ? "Sending…" : "Send now") { model.sendStaged(ids) }
+                    .buttonStyle(.genHover(accent: SessionPalette.blue))
+                    .disabled(ids.isEmpty || sending)
+                    .instantTooltip("Sends every staged decision now, one message per session")
+                    .accessibilityIdentifier("widget.peek.sendStaged")
+            } else if staged {
                 let sending = model.sendingDecisionIDs.contains(item.sourceId)
                 Button(sending ? "Sending…" : "Send now") { model.sendStaged([item.sourceId], known: [item]) }
                     .buttonStyle(.genHover(accent: SessionPalette.blue))

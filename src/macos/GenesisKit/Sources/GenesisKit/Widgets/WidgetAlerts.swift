@@ -26,8 +26,12 @@ public enum WidgetAlerts {
     }
 
     /// The popup's first line: "Decision 4", "New question", "New answer". Sentence case, one word per thing.
+    /// The id of the staged reminder's popup item (`WidgetCoordinator.remindStaged`).
+    public static let stagedReminderID = "widget.staged-reminder"
+
     public static func kicker(_ item: WidgetInboxItem) -> String {
         switch item.kind {
+        case "staged": return "Staged, not sent"
         case "decision" where item.isAnsweredElsewhere: return item.number.map { "Decision \($0) answered" } ?? "Decision answered"
         case "decision": return item.number.map { "Decision \($0)" } ?? "New decision"
         case "form": return "New question"

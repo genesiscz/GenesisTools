@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Staged decisions: a pick or a note kept to send later, together with others (Martin, 2026-10-23: "click on the
@@ -7,6 +8,40 @@ import Foundation
 extension WidgetModel {
     /// A click on a decision option or its number key stages it ("stage", the default) or sends it at once ("send").
     public var decisionClickStages: Bool { (snapshot?.state.preferences.decisionClick ?? "stage") == "stage" }
+
+    /// What this click does: `decisionClickStages`, turned around while ⌘ is down (`decisionCommandSwaps`, on by
+    /// default), so a ⌘-click sends at once while clicks stage, and stages while clicks send (Martin, 2026-10-26).
+    public var clickStagesNow: Bool {
+        Self.stages(decisionClickStages, command: NSEvent.modifierFlags.contains(.command),
+                    swaps: snapshot?.state.preferences.decisionCommandSwaps ?? true)
+    }
+
+    /// Whether an action stages: `stagesByDefault`, turned around while ⌘ is down and `swaps` is on.
+    nonisolated static func stages(_ stagesByDefault: Bool, command: Bool, swaps: Bool) -> Bool {
+        stagesByDefault != (swaps && command)
+    }
+
+    /// Return in a decision's own answer field stages the text as its note ("stage", the default) or sends it.
+    public var ownAnswerReturnStages: Bool { (snapshot?.state.preferences.ownAnswerReturn ?? "stage") == "stage" }
+
+    /// Return (or ⌘-Return, `command`) in the own answer field of `ownAnswerCard`: stage the text as the decision's
+    /// note or send it as the answer, by `ownAnswerReturn`; ⌘ does the other while `decisionCommandSwaps` is on.
+    public func returnInOwnAnswer(command: Bool) {
+        guard let card = ownAnswerCard else {
+            send()
+            return
+        }
+        if Self.stages(ownAnswerReturnStages, command: command,
+                       swaps: snapshot?.state.preferences.decisionCommandSwaps ?? true) {
+            guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                postNote("Write your answer first.")
+                return
+            }
+            saveDraft(card)
+        } else {
+            submitOwnAnswer()
+        }
+    }
 
     /// The pick a card shows as staged: the one staged here a moment ago, else the snapshot's.
     public func stagedOption(_ sourceId: String, stored: String?) -> String? {
@@ -19,7 +54,7 @@ extension WidgetModel {
 
     /// A click on a decision option in a session's inbox. A second click on the staged option clears the pick.
     public func choose(_ card: WidgetCard, option: String) {
-        guard decisionClickStages else {
+        guard clickStagesNow else {
             // `submit` answers the selected card; another open row's click must answer its own decision. Only text
             // written in this card's own answer field goes with the pick; a reply typed above stays a reply.
             selectedCardID = card.id
@@ -45,7 +80,7 @@ extension WidgetModel {
     /// item's own session and sent once the hub has it.
     public func choose(_ item: WidgetInboxItem, option: String) {
         guard let session = session(forKey: item.key), let revision = item.revision else { return }
-        guard decisionClickStages else {
+        guard clickStagesNow else {
             stage(id: item.sourceId, sessionId: session.target.sessionId, revision: revision, option: option,
                   completed: { [weak self] in
                       self?.pendingStage[item.sourceId] = nil
