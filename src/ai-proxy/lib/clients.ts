@@ -5,6 +5,7 @@ import {
     type AiProxySessionRecord,
     isSessionKey,
     resolveSessionKey,
+    type SessionKeyResolution,
     sessionProxyAccounts,
 } from "@app/ai-proxy/lib/sessions/records";
 import type {
@@ -197,7 +198,7 @@ export async function resolveClient(req: Request, config: AiProxyConfig): Promis
     // A session key is looked up by its hash in the session records, never compared with client keys. Unknown and
     // closed keys get a 403 from the server before any route runs (`sessionKeyRejection`).
     if (isSessionKey(token)) {
-        const resolution = resolveSessionKey(token);
+        const resolution = sessionKeyResolution(req, token);
         return resolution.state === "open"
             ? { name: SESSION_CLIENT_NAME, isOwner: false, session: resolution.record }
             : null;
@@ -386,6 +387,24 @@ export function sessionRouteDenial(record: AiProxySessionRecord, account: AiProx
     return null;
 }
 
+/**
+ * A request's session key, resolved once: the gate (`sessionKeyRejection`) and `resolveClient` both need it, and each
+ * resolution reads the record file synchronously.
+ */
+const sessionResolutions = new WeakMap<Request, SessionKeyResolution>();
+
+function sessionKeyResolution(req: Request, token: string): SessionKeyResolution {
+    const known = sessionResolutions.get(req);
+
+    if (known) {
+        return known;
+    }
+
+    const resolution = resolveSessionKey(token);
+    sessionResolutions.set(req, resolution);
+    return resolution;
+}
+
 /** Why a `gts_` bearer gets no access, or null when the request does not carry one or it is open. */
 export function sessionKeyRejection(req: Request): string | null {
     const token = extractBearerToken(req);
@@ -394,7 +413,7 @@ export function sessionKeyRejection(req: Request): string | null {
         return null;
     }
 
-    const resolution = resolveSessionKey(token);
+    const resolution = sessionKeyResolution(req, token);
 
     if (resolution.state === "open") {
         return null;

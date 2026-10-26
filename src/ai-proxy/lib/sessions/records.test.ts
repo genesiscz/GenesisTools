@@ -232,6 +232,19 @@ describe("session records", () => {
     });
 });
 
+describe("session keys at the door, resolved once per request", () => {
+    it("the gate and resolveClient share one resolution of a request's key", async () => {
+        const { key } = newSession();
+        const req = bearer(key);
+
+        expect(sessionKeyRejection(req)).toBeNull();
+        // The record closes between the gate and the route: the request keeps the resolution the gate made.
+        closeSessionRecord(SESSION);
+        expect((await resolveClient(req, config()))?.session?.id).toBe(SESSION);
+        expect(sessionKeyRejection(bearer(key))).toContain("closed");
+    });
+});
+
 describe("session keys at the door", () => {
     it("an open key is a session client; an unknown or closed key gets a reason, never another identity", async () => {
         const { key } = newSession();
