@@ -58,9 +58,14 @@ export interface TypeInput {
     states: { name: string; category?: string }[];
 }
 
-export const MANIFEST_EXPORT = "ADO_FIELDS";
-const TS_PREFIX = `export const ${MANIFEST_EXPORT} = `;
+export const DEFAULT_MANIFEST_EXPORT = "AdoFields";
+const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+const TS_EXPORT = /export const [A-Za-z_$][\w$]* = /;
 const TS_SUFFIX = " as const;";
+
+export function isIdentifier(name: string): boolean {
+    return IDENTIFIER.test(name);
+}
 
 function byKey<T>(entries: [string, T][]): Record<string, T> {
     const sorted = [...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
@@ -106,11 +111,15 @@ export function renderManifestJson(manifest: AdoFieldManifest): string {
     return `${SafeJSON.stringify(manifest, null, 4)}\n`;
 }
 
-export function renderManifestTs(manifest: AdoFieldManifest): string {
+export function renderManifestTs(manifest: AdoFieldManifest, exportName = DEFAULT_MANIFEST_EXPORT): string {
+    if (!isIdentifier(exportName)) {
+        throw new Error(`"${exportName}" is not a TypeScript identifier`);
+    }
+
     return [
         "// Generated, do not edit. Regenerate with:",
         `//   ${manifest.meta.regenerate}`,
-        `${TS_PREFIX}${SafeJSON.stringify(manifest, null, 4)}${TS_SUFFIX}`,
+        `export const ${exportName} = ${SafeJSON.stringify(manifest, null, 4)}${TS_SUFFIX}`,
         "",
     ].join("\n");
 }
@@ -145,14 +154,14 @@ export function parseManifestFile(text: string, path: string): AdoFieldManifest 
     let json = text;
 
     if (path.endsWith(".ts")) {
-        const start = text.indexOf(TS_PREFIX);
+        const start = TS_EXPORT.exec(text);
         const end = text.lastIndexOf(TS_SUFFIX);
 
-        if (start === -1 || end <= start) {
-            throw new Error(`${path} has no "${TS_PREFIX}… ${TS_SUFFIX}" block`);
+        if (!start || end <= start.index) {
+            throw new Error(`${path} has no "export const <Name> = … ${TS_SUFFIX}" block`);
         }
 
-        json = text.slice(start + TS_PREFIX.length, end);
+        json = text.slice(start.index + start[0].length, end);
     }
 
     const parsed: unknown = SafeJSON.parse(json, { strict: true });

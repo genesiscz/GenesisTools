@@ -71,6 +71,9 @@ describe("field manifest", () => {
         const ts = renderManifestTs(manifest);
 
         expect(ts).toContain("Generated, do not edit");
+        expect(ts).toContain("export const AdoFields = {");
+        expect(parseManifestFile(renderManifestTs(manifest, "SampleAdoFields"), "named.ts")).toEqual(manifest);
+        expect(() => renderManifestTs(manifest, "not-an-identifier")).toThrow("not a TypeScript identifier");
         expect(parseManifestFile(ts, "fields.ts")).toEqual(manifest);
         expect(parseManifestFile(renderManifestJson(manifest), "fields.json")).toEqual(manifest);
         expect(() => parseManifestFile("export const OTHER = 1;", "other.ts")).toThrow("no");

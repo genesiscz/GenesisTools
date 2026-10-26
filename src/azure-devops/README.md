@@ -321,8 +321,8 @@ A field manifest lists, per work item type, every field with its label, data typ
 # Print the manifest of every enabled type (md, json or ts)
 tools azure-devops maintenance get-fields -f md
 
-# Write it as `export const ADO_FIELDS = {...} as const` (or plain JSON for a .json path)
-tools azure-devops maintenance get-fields --types "Bug,Task" --into src/ado-fields.generated.ts
+# Write it as `export const AdoFields = {...} as const` (--name picks another identifier; a .json path writes plain JSON)
+tools azure-devops maintenance get-fields --types "Bug,Task" --into src/ado-fields.generated.ts --name SampleAdoFields
 
 # Compare a written manifest with ADO: prints each drift and exits 1
 tools azure-devops maintenance get-fields --check src/ado-fields.generated.ts
