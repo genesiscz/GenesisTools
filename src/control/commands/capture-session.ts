@@ -142,7 +142,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
             'What to record: {"kind":"window","windowIds":[n]}, {"kind":"app","app":"Finder"} or {"kind":"display","screenIndex":0}; default the front window'
         )
         .option("--exclude-window-ids <ids>", "CG window ids the movie never shows (the host's own controls)")
-        .option("--fps <n>", "Frame rate while something moves, 0.5–30", "15")
+        .option("--fps <n>", "Frame rate while something moves, 0.5–120", "60")
         .option("--no-indicator", "Hide the red border around what is recorded (never in the movie either way)")
         .option("--max-seconds <n>", `Longest recording, 1–${RECORDING_SESSION_MAX_SECONDS} s`)
         .option("--output <path>", "Where the joined movie goes (default ~/.genesis-tools/control/recordings/)")
@@ -191,7 +191,7 @@ export function registerCaptureSessionCommands(capture: Command): void {
                     output: flags.output ?? recordingsDir(`recording-${stamp()}-${randomUUID().slice(0, 8)}.mp4`),
                     recorder: nativeSegmentRecorder({
                         excludeWindowIds: parseIds(flags.excludeWindowIds),
-                        fps: boundedNumber(flags.fps, "--fps", 0.5, 30),
+                        fps: boundedNumber(flags.fps, "--fps", 0.5, 120),
                         indicator: flags.indicator,
                     }),
                     join: ffmpegSegmentJoiner,

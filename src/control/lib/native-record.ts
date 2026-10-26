@@ -117,7 +117,7 @@ export function validateCaptureOptions(cap: CaptureSpec): void {
 
     const numbers: [string, number | undefined, number, number][] = [
         ["duration", cap.duration, 0.1, 180],
-        ["activeFps", cap.activeFps, 0.5, 30],
+        ["activeFps", cap.activeFps, 0.5, 120],
         ["idleFps", cap.idleFps, 0.1, 5],
         ["threshold", cap.threshold, 0, 100],
         ["maxFrames", cap.maxFrames, 1, 5000],
@@ -282,8 +282,8 @@ export function addCaptureFlags(command: Command): Command {
         .option("--codec [h264|prores4444]", "H.264 MP4 or ProRes 4444 MOV", "h264")
         .option("--no-indicator", "Disable the visible recording border; otherwise shown and excluded from capture")
         .option("--video-out <path>", "Optional movie path")
-        .option("--active-fps <n>", "Maximum active frame rate (0.5–30)", "8")
-        .option("--idle-fps <n>", "Idle frame rate (0.1–5)", "2")
+        .option("--active-fps <n>", "Frame rate while something moves (0.5–120); default 60 with --video-out, else 8")
+        .option("--idle-fps <n>", "Idle frame rate (0.1–5); default 2, or the active rate with --video-out")
         .option("--threshold <percent>", "PNG change threshold (0–100)", "2.5");
 }
 

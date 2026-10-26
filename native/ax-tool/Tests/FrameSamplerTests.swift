@@ -204,4 +204,9 @@ final class CaptureCanvasGeometryTests: XCTestCase {
         XCTAssertTrue(policy.consider(before).keep)
         XCTAssertTrue(policy.consider(after).keep)
     }
+    func testAScreenMovieGetsABitRateForItsSizeAndRateWithinBounds() {
+        XCTAssertEqual(screenMovieBitRate(width: 2056, height: 1228, fps: 60), 22_722_912)
+        XCTAssertEqual(screenMovieBitRate(width: 320, height: 200, fps: 8), 6_000_000)
+        XCTAssertEqual(screenMovieBitRate(width: 6016, height: 3384, fps: 120), 160_000_000)
+    }
 }
