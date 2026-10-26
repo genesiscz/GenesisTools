@@ -106,6 +106,12 @@ enum ClickyRanges {
             : ClickyPerformanceGrouping.allCases.filter { $0.rawValue >= 3600 }
     }
 
+    static func validGrouping(_ preferred: ClickyPerformanceGrouping, for interval: DateInterval,
+        now: Date) -> ClickyPerformanceGrouping {
+        let allowed = groupings(for: interval, now: now)
+        return allowed.contains(preferred) ? preferred : (allowed.first ?? .hour)
+    }
+
     /// The Stats activity chart's opening resolution for a range.
     static func resolution(for range: String) -> ClickyTimeResolution {
         switch range {
@@ -123,6 +129,25 @@ enum ClickyRanges {
 
 /// What Clicky keeps, said once for every page.
 enum ClickyRetention {
+    /// Daily history expires by calendar day; a partially expired first day has already lost its daily bucket.
+    static func historyStart(_ statistics: ClickyStatistics, now: Date, calendar: Calendar = .current) -> Date? {
+        let cutoff = calendar.date(byAdding: .day, value: -730, to: now) ?? now
+        let day = calendar.startOfDay(for: cutoff)
+        let boundary = cutoff > day ? (calendar.date(byAdding: .day, value: 1, to: day) ?? cutoff) : day
+        let firstBucket = statistics.days.keys.min().map { Date(timeIntervalSince1970: Double($0)) }
+        guard let recorded = statistics.historyStartedAt ?? firstBucket else { return nil }
+        return max(recorded, boundary)
+    }
+
+    static func performanceStart(_ statistics: ClickyStatistics, now: Date) -> Date? {
+        let boundary = Date(timeIntervalSince1970: floor(now.timeIntervalSince1970 / 3600) * 3600
+            - Double(ClickyStatistics.performanceHourDays) * 86400)
+        let hour = statistics.performanceHours.keys.min().map { Date(timeIntervalSince1970: Double($0) * 3600) }
+        let minute = statistics.performanceMinutes.keys.min().map { Date(timeIntervalSince1970: Double($0) * 60) }
+        guard let recorded = statistics.performanceStartedAt ?? [hour, minute].compactMap({ $0 }).min() else { return nil }
+        return max(recorded, boundary)
+    }
+
     static let text = "Clicky keeps minute detail for 30 days, hourly key counts for 1 year, hourly typing performance for 2 years and daily key counts for 2 years. Older detail is removed; lifetime totals stay."
 }
 
@@ -216,6 +241,15 @@ struct ClickyRecords: Equatable, Sendable {
 /// Whether Clicky records statistics right now, and if not, why.
 public enum ClickyRecordingStatus: Equatable, Sendable {
     case recording, clickyOff, inputMonitoringMissing, statisticsOff
+    case takingBreak, quietHours, excludedApplication, macSleeping
+
+    static func pause(systemSleeping: Bool, takingBreak: Bool, quiet: Bool, excluded: Bool) -> Self? {
+        if systemSleeping { return .macSleeping }
+        if takingBreak { return .takingBreak }
+        if quiet { return .quietHours }
+        if excluded { return .excludedApplication }
+        return nil
+    }
 
     var message: String? {
         switch self {
@@ -223,6 +257,10 @@ public enum ClickyRecordingStatus: Equatable, Sendable {
         case .clickyOff: return "Not recording: Clicky is off, so no key presses are counted."
         case .inputMonitoringMissing: return "Not recording: Input Monitoring is not allowed for Clicky."
         case .statisticsOff: return "Not recording: Keep local statistics is off."
+        case .takingBreak: return "Not recording: Clicky is taking a break."
+        case .quietHours: return "Not recording: Quiet hours are active."
+        case .excludedApplication: return "Not recording: This application is muted. Switch to another application to resume."
+        case .macSleeping: return "Not recording: Your Mac or display is asleep."
         }
     }
 
@@ -232,6 +270,9 @@ public enum ClickyRecordingStatus: Equatable, Sendable {
         case .clickyOff: return "Turn On Clicky"
         case .inputMonitoringMissing: return "Allow Input Monitoring"
         case .statisticsOff: return "Turn On Statistics"
+        case .takingBreak: return "Resume Clicky"
+        case .quietHours: return "Turn Off Quiet Hours"
+        case .excludedApplication, .macSleeping: return ""
         }
     }
 }

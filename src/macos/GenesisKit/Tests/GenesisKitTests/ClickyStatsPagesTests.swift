@@ -210,6 +210,76 @@ final class ClickyStatsPagesTests: XCTestCase {
         XCTAssertEqual(available(730), [.day], "a two-year hourly chart would silently omit its first year")
     }
 
+    func testCustomGroupingClampsRestoredAndChangedChoicesToRetention() {
+        let now = date("2026-10-25T14:30:00Z")
+        let oldStart = now.addingTimeInterval(-180 * 86400)
+        let oldDay = DateInterval(start: oldStart, end: oldStart.addingTimeInterval(86400))
+        let suggested = ClickyRanges.grouping(for: ClickyRanges.custom, span: oldDay.duration)
+        XCTAssertEqual(suggested, .fifteenMinutes)
+        XCTAssertEqual(ClickyRanges.validGrouping(suggested, for: oldDay, now: now), .hour)
+        XCTAssertEqual(ClickyRanges.validGrouping(.week, for: oldDay, now: now), .week)
+        let recentDay = DateInterval(start: now.addingTimeInterval(-86400), end: now)
+        XCTAssertEqual(ClickyRanges.validGrouping(suggested, for: recentDay, now: now), .fifteenMinutes)
+        for preferred in ClickyPerformanceGrouping.allCases {
+            XCTAssertTrue(ClickyRanges.groupings(for: oldDay, now: now)
+                .contains(ClickyRanges.validGrouping(preferred, for: oldDay, now: now)))
+        }
+    }
+
+    func testRetainedCoverageDoesNotCountExpiredYearsOrCustomDates() {
+        let calendar = calendar()
+        let now = date("2026-10-25T14:30:00Z")
+        let original = calendar.date(byAdding: .year, value: -3, to: now)!
+        var stats = ClickyStatistics()
+        stats.record(keyCode: 0, release: false, at: original, calendar: calendar)
+        stats.record(keyCode: 0, release: false, at: now.addingTimeInterval(-60), calendar: calendar)
+        let history = ClickyRetention.historyStart(stats, now: now, calendar: calendar)!
+        let performance = ClickyRetention.performanceStart(stats, now: now)!
+        XCTAssertEqual(history, calendar.date(byAdding: .day, value: -729, to: calendar.startOfDay(for: now)))
+        XCTAssertEqual(performance.timeIntervalSince1970, floor(now.timeIntervalSince1970 / 3600) * 3600 - 730 * 86400)
+        XCTAssertEqual(stats.historyStartedAt, original, "the history-since label keeps the original date")
+        XCTAssertEqual(stats.performanceStartedAt, original)
+        let all = ClickyRanges.interval(ClickyRanges.all, now: now, earliest: history, calendar: calendar)
+        let report = ClickyStatsReport(statistics: stats, interval: all, previous: nil,
+            resolution: .day, releases: false, now: now, calendar: calendar)
+        XCTAssertEqual(report.coveredDays, 730)
+        XCTAssertEqual(report.total, 1)
+        XCTAssertEqual(report.dailyAverage, 1.0 / 730, accuracy: 0.000001)
+        let expired = DateInterval(start: original, end: original.addingTimeInterval(86400))
+        XCTAssertEqual(ClickyRanges.coveredDays(expired, earliest: history, calendar: calendar), 0)
+        XCTAssertEqual(ClickyRanges.coveredDays(expired, earliest: performance, calendar: calendar), 0)
+        XCTAssertEqual(ClickyRanges.coverageText(expired, earliest: performance, calendar: calendar),
+            "Nothing was recorded in this range yet.")
+    }
+
+    func testRetainedCoverageFallsBackToBucketsWithoutLegacyTimestamps() {
+        let calendar = calendar()
+        let now = date("2026-10-25T14:30:00Z")
+        var stats = ClickyStatistics()
+        XCTAssertNil(ClickyRetention.historyStart(stats, now: now, calendar: calendar))
+        XCTAssertNil(ClickyRetention.performanceStart(stats, now: now))
+        let day = calendar.startOfDay(for: now.addingTimeInterval(-86400))
+        stats.days[Int(day.timeIntervalSince1970)] = ClickyActivityBucket(presses: 1)
+        stats.performanceMinutes[Int(day.timeIntervalSince1970 / 60)] = ClickyPerformanceBucket()
+        XCTAssertEqual(ClickyRetention.historyStart(stats, now: now, calendar: calendar), day)
+        XCTAssertEqual(ClickyRetention.performanceStart(stats, now: now), day)
+    }
+
+    func testRecordingPauseReasonsFollowTheCollectionPolicy() {
+        XCTAssertEqual(ClickyRecordingStatus.pause(systemSleeping: true, takingBreak: true, quiet: true, excluded: true), .macSleeping)
+        XCTAssertEqual(ClickyRecordingStatus.pause(systemSleeping: false, takingBreak: true, quiet: true, excluded: true), .takingBreak)
+        XCTAssertEqual(ClickyRecordingStatus.pause(systemSleeping: false, takingBreak: false, quiet: true, excluded: true), .quietHours)
+        XCTAssertEqual(ClickyRecordingStatus.pause(systemSleeping: false, takingBreak: false, quiet: false, excluded: true), .excludedApplication)
+        XCTAssertNil(ClickyRecordingStatus.pause(systemSleeping: false, takingBreak: false, quiet: false, excluded: false))
+        for status in [ClickyRecordingStatus.takingBreak, .quietHours, .excludedApplication, .macSleeping] {
+            XCTAssertNotNil(status.message)
+        }
+        XCTAssertEqual(ClickyRecordingStatus.takingBreak.actionTitle, "Resume Clicky")
+        XCTAssertEqual(ClickyRecordingStatus.quietHours.actionTitle, "Turn Off Quiet Hours")
+        XCTAssertTrue(ClickyRecordingStatus.excludedApplication.actionTitle.isEmpty)
+        XCTAssertTrue(ClickyRecordingStatus.macSleeping.actionTitle.isEmpty)
+    }
+
     func testRecordingStatusNamesTheReasonAndTheFix() {
         XCTAssertNil(ClickyRecordingStatus.recording.message)
         XCTAssertEqual(ClickyRecordingStatus.statisticsOff.actionTitle, "Turn On Statistics")

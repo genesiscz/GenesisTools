@@ -201,8 +201,7 @@ struct ClickyStatsReport: Sendable {
         resolution: ClickyTimeResolution, releases: Bool, now: Date, calendar: Calendar = .current) {
         self.interval = interval
         loaded = true
-        let earliest = statistics.historyStartedAt
-            ?? statistics.days.keys.min().map { Date(timeIntervalSince1970: Double($0)) }
+        let earliest = ClickyRetention.historyStart(statistics, now: now, calendar: calendar)
         totalDays = ClickyRanges.dayCount(interval, calendar: calendar)
         coveredDays = ClickyRanges.coveredDays(interval, earliest: earliest, calendar: calendar)
         let minuteRetention = floor(now.timeIntervalSince1970 / 3600) * 3600 - 30 * 86400

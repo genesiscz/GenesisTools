@@ -168,8 +168,10 @@ public final class ClickyModel: ObservableObject {
     /// Whether key counts are recorded now, and if not, the first reason to fix.
     public var recordingStatus: ClickyRecordingStatus {
         if !preferences.collectStats { return .statisticsOff }
-        if enabled { return .recording }
-        return inputMonitor.hasPermission ? .clickyOff : .inputMonitoringMissing
+        guard enabled else { return inputMonitor.hasPermission ? .clickyOff : .inputMonitoringMissing }
+        return ClickyRecordingStatus.pause(systemSleeping: systemSleeping,
+            takingBreak: sleepingUntil.map { $0 > Date() } ?? false,
+            quiet: preferences.isQuiet(at: Date()), excluded: excluded) ?? .recording
     }
 
     /// The fix the statistics pages offer for `recordingStatus`: turn statistics on, or turn Clicky on (which asks
@@ -179,6 +181,9 @@ public final class ClickyModel: ObservableObject {
         case .recording: break
         case .statisticsOff: preferences.collectStats = true
         case .clickyOff, .inputMonitoringMissing: activate()
+        case .takingBreak: resume()
+        case .quietHours: preferences.quietHours = false
+        case .excludedApplication, .macSleeping: break
         }
     }
     public var isPaused: Bool {

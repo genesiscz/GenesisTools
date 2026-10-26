@@ -38,7 +38,7 @@ public struct ClickyAnalyticsView: View {
     private var now: Date { exampleTime ?? Date() }
     private var range: String { ClickyRanges.known(storedRange, allowed: ClickyRanges.presets) }
     private var earliest: Date? {
-        data.historyStartedAt ?? data.days.keys.min().map { Date(timeIntervalSince1970: Double($0)) }
+        ClickyRetention.historyStart(data, now: now)
     }
     private var interval: DateInterval { ClickyRanges.interval(range, now: now, earliest: earliest) }
     private var keyRanking: [(key: Int, value: Int)] {

@@ -9,7 +9,10 @@ public struct ClickyPerformanceView: View {
     @AppStorage private var storedRange: String
     @State private var start = Calendar.current.startOfDay(for: Date())
     @State private var end = Date()
-    @State private var grouping: ClickyPerformanceGrouping
+    @State private var requestedGrouping: ClickyPerformanceGrouping
+    private var grouping: ClickyPerformanceGrouping {
+        ClickyRanges.validGrouping(requestedGrouping, for: interval, now: now)
+    }
     @State private var weekdays = Set(0..<7)
     @State private var fromHour = 0
     @State private var untilHour = 24
@@ -42,7 +45,7 @@ public struct ClickyPerformanceView: View {
         let range = ClickyRanges.known(defaults.string(forKey: "clicky.performance.range") ?? ClickyRanges.week,
             allowed: Self.ranges)
         _storedRange = AppStorage(wrappedValue: ClickyRanges.week, "clicky.performance.range", store: defaults)
-        _grouping = State(initialValue: Self.grouping(for: range))
+        _requestedGrouping = State(initialValue: Self.grouping(for: range))
         _storedMetric = AppStorage(wrappedValue: Metric.presses.rawValue, "clicky.performance.metric", store: defaults)
         _comparison = AppStorage(wrappedValue: "Time of day", "clicky.performance.comparison", store: defaults)
         _chartStyle = AppStorage(wrappedValue: .area, "clicky.performance.chartStyle", store: defaults)
@@ -79,12 +82,7 @@ public struct ClickyPerformanceView: View {
     private var previousName: String { ClickyRanges.previousName(interval, range: range) }
     private var filtered: Bool { weekdays.count < 7 || fromHour != 0 || untilHour != 24 }
 
-    /// The oldest timed activity: the first hourly roll-up, else the first kept minute.
-    private var earliest: Date {
-        let hour = data.performanceHours.keys.min().map { Date(timeIntervalSince1970: Double($0) * 3600) }
-        let minute = data.performanceMinutes.keys.min().map { Date(timeIntervalSince1970: Double($0) * 60) }
-        return [hour, minute, data.performanceStartedAt].compactMap { $0 }.min() ?? now
-    }
+    private var earliest: Date { ClickyRetention.performanceStart(data, now: now) ?? now }
 
     nonisolated static let ranges = ClickyRanges.presets + [ClickyRanges.custom]
 
@@ -207,7 +205,7 @@ public struct ClickyPerformanceView: View {
     }
 
     private func regroupCustom() {
-        grouping = ClickyRanges.grouping(for: ClickyRanges.custom, span: interval.duration)
+        requestedGrouping = ClickyRanges.grouping(for: ClickyRanges.custom, span: interval.duration)
     }
 
     private var header: some View {
@@ -237,7 +235,7 @@ public struct ClickyPerformanceView: View {
                 }.labelsHidden().frame(width: 150, alignment: .trailing)
                     .accessibilityIdentifier("clicky.performance.range")
                     .onChange(of: storedRange) { _, next in
-                        grouping = next == ClickyRanges.custom
+                        requestedGrouping = next == ClickyRanges.custom
                             ? ClickyRanges.grouping(for: next, span: interval.duration) : Self.grouping(for: next)
                     }
             }
@@ -254,7 +252,7 @@ public struct ClickyPerformanceView: View {
             NativeSettingsRow("Group timeline by",
                 detail: groupings.count < ClickyPerformanceGrouping.allCases.count
                     ? "Minute detail is kept for 30 days, so this range groups by hour or wider." : nil) {
-                Picker("Grouping", selection: $grouping) {
+                Picker("Grouping", selection: Binding(get: { grouping }, set: { requestedGrouping = $0 })) {
                     ForEach(groupings) { Text($0.label).tag($0) }
                 }.labelsHidden().frame(width: 150, alignment: .trailing)
                     .accessibilityIdentifier("clicky.performance.grouping")
@@ -598,7 +596,7 @@ struct ClickyRecordingBanner: View {
         HStack(spacing: 12) {
             Label(message, systemImage: "pause.circle.fill").font(.system(size: 12)).foregroundStyle(.orange)
             Spacer(minLength: 0)
-            if let action { Button(actionTitle, action: action).buttonStyle(.bordered) }
+            if let action, !actionTitle.isEmpty { Button(actionTitle, action: action).buttonStyle(.bordered) }
         }
         .padding(12).nativeGlassSurface()
         .accessibilityElement(children: .contain)

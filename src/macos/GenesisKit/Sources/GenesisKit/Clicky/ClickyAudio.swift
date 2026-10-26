@@ -28,6 +28,23 @@ public enum ClickySynthesis {
     }
 }
 
+/// A new click may cancel an idle stop, but cannot cancel a restart required by an output change.
+struct ClickyAudioStartState {
+    enum Completion: Equatable { case play, restart, stop }
+    private var stopRequested = false
+    private var restartRequired = false
+
+    mutating func requestClick() { stopRequested = false }
+    mutating func requestStop() { stopRequested = true }
+    mutating func outputChanged() { restartRequired = true }
+
+    mutating func complete() -> Completion {
+        let result: Completion = stopRequested ? .stop : restartRequired ? .restart : .play
+        restartRequired = false
+        return result
+    }
+}
+
 @MainActor
 final class ClickyAudio {
     private let engine: AVAudioEngine
@@ -47,7 +64,7 @@ final class ClickyAudio {
     private var running = false
     /// The click that arrived while the engine starts; it plays once the engine runs (a newer one replaces it).
     private var pendingClick: (() -> Void)?
-    private var stopAfterStart = false
+    private var startState = ClickyAudioStartState()
     /// A hardware change stopped the engine while it was starting; the start then finished on a stopped engine.
     private var configChangedWhileStarting = false
     /// The engine and its voices, used only on the start queue (or, rendering offline, on the caller's thread).
@@ -90,6 +107,7 @@ final class ClickyAudio {
     func setOutput(_ device: AudioDeviceID?) {
         guard device != outputDevice else { return }
         outputDevice = device
+        if starting { startState.outputChanged() }
         let box = box
         startQueue.async { box.device = device }
         stopVoices()
@@ -219,7 +237,7 @@ final class ClickyAudio {
 
     private func startEngine() {
         // A click after a stop request cancels the stop, also while a start is already in flight.
-        stopAfterStart = false
+        startState.requestClick()
         guard !starting else { return }
         starting = true
         let box = box
@@ -233,18 +251,24 @@ final class ClickyAudio {
                     guard let self else { return }
                     self.starting = false
                     self.running = failure == nil
+                    let completion = self.startState.complete()
                     PerfLog.mark(String(format: "clicky.audio.start %.1fms off-main", ms)
                         + (failure.map { " failed: \($0.localizedDescription)" } ?? ""))
                     if self.configChangedWhileStarting {
                         // The engine stopped during the start: start it again before the waiting click plays.
                         self.configChangedWhileStarting = false
-                        if !self.stopAfterStart {
+                        if completion != .stop {
                             self.running = false
                             self.startEngine()
                             return
                         }
                     }
-                    if self.stopAfterStart {
+                    if completion == .restart {
+                        self.stopVoices()
+                        self.startEngine()
+                        return
+                    }
+                    if completion == .stop {
                         self.pendingClick = nil
                         self.stopVoices()
                         return
@@ -283,7 +307,7 @@ final class ClickyAudio {
         idleStop = nil
         // A start in flight finishes first; the engine stops right after it.
         if starting {
-            stopAfterStart = true
+            startState.requestStop()
             return
         }
         // Never started: the voices are not wired yet, and a player outside an engine raises on stop.

@@ -1074,6 +1074,51 @@ final class ClickyTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(ClickyPreferences.self, from: encoded), preferences)
     }
 
+    func testOutputChangeRestartSurvivesAnotherClickDuringStart() {
+        var state = ClickyAudioStartState()
+        state.requestClick()
+        state.outputChanged()
+        state.requestStop()
+        state.requestClick()
+        state.requestClick()
+        XCTAssertEqual(state.complete(), .restart, "clicks cannot cancel a mandatory output restart")
+        state.requestClick()
+        XCTAssertEqual(state.complete(), .play, "the next start applies the new output once")
+
+        state.requestStop()
+        state.requestClick()
+        XCTAssertEqual(state.complete(), .play, "a click still cancels an ordinary idle stop")
+        state.outputChanged()
+        state.requestStop()
+        XCTAssertEqual(state.complete(), .stop, "an explicit stop with no later click stays stopped")
+        state.requestClick()
+        XCTAssertEqual(state.complete(), .play, "a later fresh start can play on the already-updated output")
+    }
+
+    @MainActor
+    func testRecordingBannerResumesBreakAndCanDisableQuietHours() {
+        let monitor = InputMonitorStub()
+        monitor.granted = true
+        let (model, defaults, suite) = monitorFixture(monitor)
+        defer { model.shutdown(); disposeIntegrationDefaults(defaults, suite: suite) }
+        model.activate()
+        XCTAssertEqual(model.recordingStatus, .recording)
+        model.snooze(minutes: 15)
+        XCTAssertEqual(model.recordingStatus, .takingBreak)
+        model.fixRecording()
+        XCTAssertEqual(model.recordingStatus, .recording)
+        XCTAssertNil(model.sleepingUntil)
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        let minute = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
+        model.preferences.quietStart = (minute + 1080) % 1440
+        model.preferences.quietEnd = (minute + 360) % 1440
+        model.preferences.quietHours = true
+        XCTAssertEqual(model.recordingStatus, .quietHours)
+        model.fixRecording()
+        XCTAssertFalse(model.preferences.quietHours)
+        XCTAssertEqual(model.recordingStatus, .recording)
+    }
+
     @MainActor
     func testPreviewCannotActivateInputAndStartsOff() {
         let suite = "dev.genesis.clicky.test.\(UUID().uuidString)"
