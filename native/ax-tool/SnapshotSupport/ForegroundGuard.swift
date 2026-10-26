@@ -32,6 +32,41 @@ public func foregroundAllowedByEnvironment(_ environment: [String: String]) -> B
     return ["1", "true", "yes", "on"].contains(raw)
 }
 
+/// `--allow-foreground` lifts the guard only as a flag its command parsed, never as the value of another option:
+/// `act --text --allow-foreground` types those words and keeps the guard. `arguments` is the whole command line
+/// (program, command, options). `act` answers from its own parser; `launch-app` reads its two value options; every
+/// other command never gets the flag from the runner and never honours it.
+public func foregroundAllowedByArguments(_ arguments: [String]) -> Bool {
+    guard arguments.count > 2 else {
+        return false
+    }
+
+    let command = arguments[1]
+    let options = Array(arguments.dropFirst(2))
+    switch command {
+    case "act":
+        return (try? WorkflowArguments(options, command: command))?.flags.contains("--allow-foreground") == true
+    case "launch-app":
+        var index = 0
+        while index < options.count {
+            if options[index] == "--bundle-id" || options[index] == "--path" {
+                index += 2
+                continue
+            }
+
+            if options[index] == "--allow-foreground" {
+                return true
+            }
+
+            index += 1
+        }
+
+        return false
+    default:
+        return false
+    }
+}
+
 /// Any recent input keeps the guard closed. The window server's idle counter includes synthetic
 /// posts, so subtracting our last post could hide a human event immediately before or after it.
 /// Conservatively, synthetic input can extend the quiet time but can never shorten it.

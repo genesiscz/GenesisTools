@@ -1139,6 +1139,8 @@ func cmdAct(appName _: String) {
         guard (axAttribute(element,"AXEnabled") as? NSNumber)?.boolValue != false else {
             workflowFailure("selected target is disabled")
         }
+        // Preparation raises the window and moves keyboard focus, also inside an app that is already in front.
+        gatedOrExit { try checkForegroundAllowed() }
         let before = tree.rows[elementIndex]
         if !secondaryClick {
             workflowFocus(window, pid:pid, element:window.ax)

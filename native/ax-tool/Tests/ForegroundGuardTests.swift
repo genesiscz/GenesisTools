@@ -24,6 +24,21 @@ final class ForegroundGuardTests: XCTestCase {
         XCTAssertFalse(userIsActive(idleSeconds: 5, threshold: 5), "a full quiet period still permits foreground work")
     }
 
+    func testTheOverrideIsAFlagTheCommandParsedNeverAValue() {
+        let act = ["ax-tool", "act", "--app", "Notes", "--snapshot", "s1", "--element", "3", "--action", "type"]
+        XCTAssertTrue(foregroundAllowedByArguments(act + ["--text", "hi", "--allow-foreground"]))
+        XCTAssertFalse(foregroundAllowedByArguments(act + ["--text", "--allow-foreground"]),
+                       "text that reads --allow-foreground is typed, not obeyed")
+        XCTAssertFalse(foregroundAllowedByArguments(act + ["--value", "--allow-foreground"]))
+        XCTAssertFalse(foregroundAllowedByArguments(["ax-tool", "see", "--app", "Notes", "--allow-foreground"]),
+                       "see takes no such flag, so its parser refuses the line")
+        XCTAssertTrue(foregroundAllowedByArguments(["ax-tool", "launch-app", "--bundle-id", "example.fixture", "--allow-foreground"]))
+        XCTAssertFalse(foregroundAllowedByArguments(["ax-tool", "launch-app", "--path", "--allow-foreground"]))
+        XCTAssertFalse(foregroundAllowedByArguments(["ax-tool", "type", "--text", "--allow-foreground"]),
+                       "a command the runner never gives the flag does not honour it")
+        XCTAssertFalse(foregroundAllowedByArguments(act + ["--text", "hi"]))
+    }
+
     func testGlobalDispatchRefusesEvenWhenTheTargetIsAlreadyFrontmost() throws {
         var sent = 0
         var checked = 0

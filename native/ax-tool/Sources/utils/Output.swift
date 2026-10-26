@@ -41,9 +41,10 @@ func frontmostPid() -> pid_t? {
 /// re-request each poll (up to ~3s), pumping the runloop so NSWorkspace
 /// state can update too.
 ///
-/// `restoring`: putting the user's own app back in front, which the foreground guard never refuses.
+/// `restoring`: putting the user's own app back in front, which the foreground guard never refuses. An app that is
+/// already in front is checked too: its callers go on to raise a window and move keyboard focus inside it.
 func bringFrontmost(_ pid: pid_t, restoring: Bool = false) -> Bool {
-    if !restoring && frontmostPid() != pid {
+    if !restoring {
         do {
             try checkForegroundAllowed()
         } catch let refusal as UserActiveError {

@@ -38,7 +38,7 @@ private let foregroundEnvironment = ProcessInfo.processInfo.environment
 /// Read once per process: the agent's run cannot change these under a running command.
 private let foregroundCheckEnabled = foregroundGuardEnabled(foregroundEnvironment)
 private let foregroundThreshold = foregroundIdleThreshold(foregroundEnvironment)
-private let foregroundAllowed = CommandLine.arguments.contains("--allow-foreground")
+private let foregroundAllowed = foregroundAllowedByArguments(CommandLine.arguments)
     || foregroundAllowedByEnvironment(foregroundEnvironment)
 
 /// Seconds since the last key, click, pointer move or scroll the window server saw.
