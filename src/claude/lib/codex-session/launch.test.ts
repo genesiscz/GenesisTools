@@ -11,6 +11,7 @@ import {
     sessionArgs,
     sessionEnv,
 } from "@app/claude/lib/codex-session/launch";
+import { sessionKeyProblem } from "@app/claude/lib/codex-session/proxy-check";
 import { guardSharedModel, isSessionOnlyModel, restoreSharedModel } from "@app/claude/lib/codex-session/settings-guard";
 import { ensureOnboardingSkippedForOAuthToken } from "@app/claude/lib/launch-env";
 import { type CodexModelInfo, mergeCodexModelRecords } from "@genesiscz/utils/ai/openai/codex-models";
@@ -306,5 +307,58 @@ describe("the shared settings model guard (a /model pick must not become every s
         await ensureOnboardingSkippedForOAuthToken(isolated);
 
         expect(read(join(isolated, ".claude.json"))).toEqual({ hasCompletedOnboarding: true });
+    });
+});
+
+describe("the session key check before Claude Code starts", () => {
+    const KEY = "gts_fixture-key";
+
+    async function check(answer: (req: Request) => Response): Promise<string | undefined> {
+        const server = Bun.serve({ port: 0, fetch: answer });
+
+        try {
+            return await sessionKeyProblem({
+                baseUrl: `http://127.0.0.1:${server.port}`,
+                key: KEY,
+                model: "codex/gpt-6.1-sol",
+            });
+        } finally {
+            server.stop(true);
+        }
+    }
+
+    const refusal = (status: number, message: string) =>
+        new Response(SafeJSON.stringify({ error: { message, type: "auth_error" } }), { status });
+
+    it("passes a proxy that takes the key as a bearer on count_tokens", async () => {
+        const problem = await check((req) =>
+            new URL(req.url).pathname === "/v1/messages/count_tokens" &&
+            req.headers.get("Authorization") === `Bearer ${KEY}`
+                ? Response.json({ input_tokens: 1 })
+                : refusal(401, "Invalid proxy API key")
+        );
+
+        expect(problem).toBeUndefined();
+    });
+
+    it("names the restart when the proxy is older than session keys (401)", async () => {
+        const problem = await check(() => refusal(401, "Invalid proxy API key"));
+
+        expect(problem).toContain("401 (Invalid proxy API key)");
+        expect(problem).toContain("tools ai-proxy down && tools ai-proxy up");
+    });
+
+    it("names the other home when the proxy does not know the record (403)", async () => {
+        const problem = await check(() => refusal(403, "unknown or closed session"));
+
+        expect(problem).toContain("403 (unknown or closed session)");
+        expect(problem).toContain("GENESIS_TOOLS_HOME");
+    });
+
+    it("does not block the launch on another failure or no answer", async () => {
+        expect(await check(() => new Response("boom", { status: 500 }))).toBeUndefined();
+        expect(
+            await sessionKeyProblem({ baseUrl: "http://127.0.0.1:9", key: KEY, model: "codex/x", timeoutMs: 500 })
+        ).toBeUndefined();
     });
 });
