@@ -40,6 +40,7 @@ import {
     sessionArgs,
     sessionEnv,
 } from "@app/claude/lib/codex-session/launch";
+import { sessionKeyProblem } from "@app/claude/lib/codex-session/proxy-check";
 import { guardSharedModel } from "@app/claude/lib/codex-session/settings-guard";
 import { ensureOnboardingSkippedForOAuthToken } from "@app/claude/lib/launch-env";
 import { scoreAccounts, sortGrouped } from "@app/claude/lib/usage/account-picker";
@@ -342,6 +343,13 @@ export async function runCodexSession(
             meteredConfirmed: metered,
         })
     );
+    const keyProblem = await sessionKeyProblem({ baseUrl: proxyBaseUrl(config), key, model: `codex/${model.slug}` });
+
+    if (keyProblem) {
+        await whenSessionRecordFree(() => closeSessionRecord(sessionId, "exited"));
+        return fail(keyProblem);
+    }
+
     const claudeIds = claude
         ? {
               haiku: claudeModelByAlias("haiku"),
