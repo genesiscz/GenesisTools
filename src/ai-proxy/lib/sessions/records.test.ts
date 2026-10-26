@@ -12,10 +12,12 @@ import {
 } from "@app/ai-proxy/lib/clients";
 import {
     _resetSessionKeyIndexForTest,
+    _sessionKeyIndexScansForTest,
     type AiProxySessionRecord,
     closeSessionRecord,
     createSessionRecord,
     hashSessionKey,
+    isSessionRecordBusy,
     newSessionKey,
     noteSessionRequest,
     openSessionRecord,
@@ -24,6 +26,7 @@ import {
     sessionsDir,
     sweepSessionRecords,
     updateSessionRecord,
+    whenSessionRecordFree,
     writeSessionRecord,
 } from "@app/ai-proxy/lib/sessions/records";
 import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
@@ -34,6 +37,7 @@ import type { UsageRequestRecord } from "@app/ai-proxy/lib/usage/types";
 import { compressBytes } from "@genesiscz/utils/compress/zstd";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 
 const SESSION = "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b";
 const originalHome = env.get("GENESIS_TOOLS_HOME");
@@ -143,6 +147,88 @@ describe("session records", () => {
             meteredConfirmed: [{ account: "billed", how: "flag" }],
         });
         expect(second.record.closedAt).toBeUndefined();
+    });
+
+    it("rebuilds a reopened record from the new launch, so an account the launch left out is gone", () => {
+        openSessionRecord({ id: SESSION, codexProxyAccount: "codex", claudeProxyAccount: "personal", model: "a" });
+        updateSessionRecord(SESSION, (record) => {
+            record.moves.push({ agent: "codex", from: "codex", to: "side", at: "2026-10-26T01:00:00.000Z" });
+        });
+
+        // --resume with a managed login instead of the configured account, and --claude none.
+        const { record } = openSessionRecord({ id: SESSION, codexAccount: "side", model: "b" });
+
+        expect(record.codexAccount).toBe("side");
+        expect(record.codexProxyAccount).toBeUndefined();
+        expect(record.claudeProxyAccount).toBeUndefined();
+        expect(record.model).toBe("b");
+        expect(record.moves).toHaveLength(1);
+    });
+
+    it("rescans the folder for an unknown key only after the folder changed", () => {
+        newSession();
+        expect(resolveSessionKey(newSessionKey()).state).toBe("unknown");
+        const scans = _sessionKeyIndexScansForTest();
+
+        // Made-up keys cost no scan while no record was written.
+        for (let i = 0; i < 5; i++) {
+            expect(resolveSessionKey(newSessionKey()).state).toBe("unknown");
+        }
+
+        expect(_sessionKeyIndexScansForTest()).toBe(scans);
+
+        // A record another process writes moves the folder's mtime, so its key is found.
+        const otherKey = newSessionKey();
+        writeSessionRecord({
+            version: 1,
+            id: "6a7b8c9d-0e1f-4a2b-9c3d-4e5f6a7b8c9d",
+            keyHash: hashSessionKey(otherKey),
+            createdAt: new Date().toISOString(),
+            moves: [],
+            meteredConfirmed: [],
+        });
+        expect(resolveSessionKey(otherKey).state).toBe("open");
+        expect(_sessionKeyIndexScansForTest()).toBe(scans + 1);
+    });
+
+    it("writes a record under its lock: a held lock refuses the write, the proxy skips it, a CLI retries", async () => {
+        const { record } = newSession();
+        const path = join(sessionsDir(), `${SESSION}.json`);
+        let refused: unknown;
+
+        withPathArbitrationSync(path, () => {
+            try {
+                updateSessionRecord(SESSION, (draft) => {
+                    draft.model = "lost";
+                });
+            } catch (error) {
+                refused = error;
+            }
+
+            // The proxy's per-request write is skipped, never waited for.
+            expect(noteSessionRequest(record, SESSION, Date.now() + 3_600_000)).toBe(record);
+        });
+
+        expect(isSessionRecordBusy(refused)).toBe(true);
+        expect(readSessionRecord(SESSION)?.model).toBeUndefined();
+        expect(readSessionRecord(SESSION)?.lastSeenAt).toBeUndefined();
+
+        let attempts = 0;
+        const busy = Object.assign(new Error("locked"), { code: "ELOCKED" });
+        const result = await whenSessionRecordFree(() => {
+            attempts++;
+
+            if (attempts < 3) {
+                throw busy;
+            }
+
+            return updateSessionRecord(SESSION, (draft) => {
+                draft.model = "kept";
+            });
+        });
+
+        expect(attempts).toBe(3);
+        expect(result?.model).toBe("kept");
     });
 });
 

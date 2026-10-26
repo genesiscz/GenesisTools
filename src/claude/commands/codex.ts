@@ -21,6 +21,7 @@ import {
     SESSION_LOGIN_FIELD,
     type SessionAgent,
     updateSessionRecord,
+    whenSessionRecordFree,
 } from "@app/ai-proxy/lib/sessions/records";
 import type { AiProxyConfig } from "@app/ai-proxy/lib/types";
 import {
@@ -322,21 +323,23 @@ export async function runCodexSession(
 
     const agentArgs = configDir ? [] : agentsArgs(passthrough, agents);
     const ownAgents = configDir || agentArgs.length > 0 ? Object.keys(agents) : undefined;
-    const { key, reopened } = openSessionRecord({
-        id: sessionId,
-        ...recordFields("codex", codex, store),
-        ...recordFields("claude", claude, store),
-        ...recordFields("grok", grok, store),
-        cwd: process.cwd(),
-        launcherPid: process.pid,
-        model: model.slug,
-        effort: effort.effort,
-        window: model.info.window,
-        compactPercent: compact.percent,
-        cacheKeyPolicy: "claude-session",
-        ...(ownAgents ? { agents: ownAgents } : {}),
-        meteredConfirmed: metered,
-    });
+    const { key, reopened } = await whenSessionRecordFree(() =>
+        openSessionRecord({
+            id: sessionId,
+            ...recordFields("codex", codex, store),
+            ...recordFields("claude", claude, store),
+            ...recordFields("grok", grok, store),
+            cwd: process.cwd(),
+            launcherPid: process.pid,
+            model: model.slug,
+            effort: effort.effort,
+            window: model.info.window,
+            compactPercent: compact.percent,
+            cacheKeyPolicy: "claude-session",
+            ...(ownAgents ? { agents: ownAgents } : {}),
+            meteredConfirmed: metered,
+        })
+    );
     const claudeIds = claude
         ? {
               haiku: claudeModelByAlias("haiku"),
@@ -405,14 +408,16 @@ export async function runCodexSession(
     // A /model pick in this session would become every other session's default through the shared settings.
     const modelGuard = configDir ? undefined : guardSharedModel();
     const code = await spawnClaude(args, launchEnv, (pid) => {
-        updateSessionRecord(sessionId, (record) => {
-            record.claudePid = pid;
-            record.claudePidStartMs = processStartMs(pid) ?? undefined;
-        });
+        whenSessionRecordFree(() =>
+            updateSessionRecord(sessionId, (record) => {
+                record.claudePid = pid;
+                record.claudePidStartMs = processStartMs(pid) ?? undefined;
+            })
+        ).catch((err) => logger.warn({ err, session: sessionId }, "[codex] could not record the Claude Code pid"));
     });
 
     modelGuard?.stop();
-    closeSessionRecord(sessionId, "exited");
+    await whenSessionRecordFree(() => closeSessionRecord(sessionId, "exited"));
     process.exit(code);
 }
 

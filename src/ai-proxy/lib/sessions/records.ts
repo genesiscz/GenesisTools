@@ -7,12 +7,13 @@
  * one id Claude Code writes its own transcript under. The record stores only a SHA-256 of the session key.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getAiProxyStorage } from "@app/ai-proxy/lib/storage";
 import type { PromptCacheKeyPolicy } from "@genesiscz/utils/ai/prompt-cache-key";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { isArbitrationBusy, withPathArbitrationSync } from "@genesiscz/utils/process/path-arbitration";
 import { isProcessAlive } from "@genesiscz/utils/process-alive";
 import { processStartMs, START_MS_TOLERANCE } from "@genesiscz/utils/process-identity";
 import { atomicWriteFileSync, isJsonObject } from "@genesiscz/utils/storage/atomic-file";
@@ -257,55 +258,94 @@ export function createSessionRecord(input: NewSessionRecord): { record: AiProxyS
 
 /**
  * A launch's record: a new one, or, on `--resume` (Claude Code keeps the session id), the same record reopened with a
- * fresh key and this launch's accounts and settings. The old key stops working. `createdAt`, `moves` and earlier
- * metered confirmations stay.
+ * fresh key and this launch's accounts and settings. The old key stops working. The record is rebuilt from this
+ * launch: a field the launch leaves out (a proxy account replaced by a login, a Claude account turned off with
+ * `--claude none`) is gone, never carried over. Only the history stays: `createdAt`, `lastSeenAt`, `moves` and earlier
+ * metered confirmations.
  */
 export function openSessionRecord(input: NewSessionRecord): {
     record: AiProxySessionRecord;
     key: string;
     reopened: boolean;
 } {
-    const existing = readSessionRecord(input.id);
+    return withRecordLock(input.id, () => {
+        const existing = readSessionRecord(input.id);
 
-    if (!existing) {
-        return { ...createSessionRecord(input), reopened: false };
-    }
+        if (!existing) {
+            return { ...createSessionRecord(input), reopened: false };
+        }
 
-    const key = newSessionKey();
-    const confirmed = [...existing.meteredConfirmed, ...(input.meteredConfirmed ?? [])];
-    const record: AiProxySessionRecord = {
-        ...existing,
-        ...input,
-        version: 1,
-        keyHash: hashSessionKey(key),
-        createdAt: existing.createdAt,
-        closedAt: undefined,
-        closeReason: undefined,
-        moves: existing.moves,
-        meteredConfirmed: confirmed.filter(
-            (entry, index) => confirmed.findIndex((other) => other.account === entry.account) === index
-        ),
-    };
+        const key = newSessionKey();
+        const confirmed = [...existing.meteredConfirmed, ...(input.meteredConfirmed ?? [])];
+        const record: AiProxySessionRecord = {
+            ...input,
+            version: 1,
+            keyHash: hashSessionKey(key),
+            createdAt: existing.createdAt,
+            ...(existing.lastSeenAt ? { lastSeenAt: existing.lastSeenAt } : {}),
+            moves: existing.moves,
+            meteredConfirmed: confirmed.filter(
+                (entry, index) => confirmed.findIndex((other) => other.account === entry.account) === index
+            ),
+        };
 
-    writeSessionRecord(record);
-    sessionKeyIndex.remember(record);
-    return { record, key, reopened: true };
+        writeSessionRecord(record);
+        sessionKeyIndex.remember(record);
+        return { record, key, reopened: true };
+    });
 }
 
-/** Read, change and write one record; undefined when it does not exist. */
+/**
+ * Runs one read-change-write of a record under that record's lock. The proxy (lastSeenAt), `session use` (routes,
+ * moves) and the launcher (pid, close) write the same file from three processes; without the lock a stale read
+ * written back undid the other's change. One attempt: a held lock throws (`isSessionRecordBusy`), because a sync wait
+ * would freeze the proxy's event loop. A CLI caller retries with `whenSessionRecordFree`.
+ */
+function withRecordLock<T>(id: string, fn: () => T): T {
+    ensureSessionsDir();
+    return withPathArbitrationSync(recordPath(id), fn);
+}
+
+/** True for the error a record lock held by another writer throws. */
+export function isSessionRecordBusy(error: unknown): boolean {
+    return isArbitrationBusy(error);
+}
+
+/** Retries a record write while another process holds the record's lock, up to `waitMs`. */
+export async function whenSessionRecordFree<T>(write: () => T, waitMs = 2_000): Promise<T> {
+    const deadline = Date.now() + waitMs;
+
+    for (;;) {
+        try {
+            return write();
+        } catch (error) {
+            const remaining = deadline - Date.now();
+
+            if (!isSessionRecordBusy(error) || remaining <= 0) {
+                throw error;
+            }
+
+            await Bun.sleep(Math.min(25, remaining));
+        }
+    }
+}
+
+/** Read, change and write one record under its lock; undefined when it does not exist. */
 export function updateSessionRecord(
     id: string,
     change: (record: AiProxySessionRecord) => void
 ): AiProxySessionRecord | undefined {
-    const record = readSessionRecord(id);
+    return withRecordLock(id, () => {
+        const record = readSessionRecord(id);
 
-    if (!record) {
-        return undefined;
-    }
+        if (!record) {
+            return undefined;
+        }
 
-    change(record);
-    writeSessionRecord(record);
-    return record;
+        change(record);
+        writeSessionRecord(record);
+        return record;
+    });
 }
 
 export function closeSessionRecord(
@@ -322,20 +362,35 @@ export function closeSessionRecord(
 
 /**
  * Key hash → record id, so a request costs one map lookup and one small file read (the file, not the map, says
- * whether the session is still open). A key the map does not know triggers one rescan of the folder, because the
- * launcher writes a new record from another process.
+ * whether the session is still open). A key the map does not know triggers a rescan of the folder, because the
+ * launcher writes a new record from another process, but only when the folder changed since the last scan: every
+ * record write is an atomic rename into it, so its mtime moves. Without that gate any request with a made-up `gts_`
+ * key parsed every record, synchronously, before authentication.
  */
 class SessionKeyIndex {
     private byHash = new Map<string, string>();
     private scannedDir: string | undefined;
+    private scannedMtimeMs: number | undefined;
+    scans = 0;
 
     remember(record: AiProxySessionRecord): void {
         this.byHash.set(record.keyHash, record.id);
     }
 
+    private dirMtimeMs(): number | undefined {
+        try {
+            return statSync(sessionsDir()).mtimeMs;
+        } catch {
+            return undefined;
+        }
+    }
+
     private rescan(): void {
+        this.scans++;
         this.byHash.clear();
         this.scannedDir = sessionsDir();
+        // Read before listing, so a record written during the scan moves the mtime past this value.
+        this.scannedMtimeMs = this.dirMtimeMs();
 
         for (const record of listSessionRecords()) {
             this.byHash.set(record.keyHash, record.id);
@@ -351,7 +406,7 @@ class SessionKeyIndex {
 
         let id = this.byHash.get(hash);
 
-        if (!id) {
+        if (!id && this.dirMtimeMs() !== this.scannedMtimeMs) {
             this.rescan();
             id = this.byHash.get(hash);
         }
@@ -363,6 +418,8 @@ class SessionKeyIndex {
     reset(): void {
         this.byHash.clear();
         this.scannedDir = undefined;
+        this.scannedMtimeMs = undefined;
+        this.scans = 0;
     }
 }
 
@@ -385,6 +442,10 @@ export function resolveSessionKey(key: string): SessionKeyResolution {
 
 export function _resetSessionKeyIndexForTest(): void {
     sessionKeyIndex.reset();
+}
+
+export function _sessionKeyIndexScansForTest(): number {
+    return sessionKeyIndex.scans;
 }
 
 export interface ProcessProbe {
@@ -440,8 +501,16 @@ export function sweepSessionRecords(
         }
 
         if (reason) {
-            closeSessionRecord(record.id, reason);
-            result.closed.push({ id: record.id, reason });
+            try {
+                closeSessionRecord(record.id, reason);
+                result.closed.push({ id: record.id, reason });
+            } catch (error) {
+                if (!isSessionRecordBusy(error)) {
+                    throw error;
+                }
+
+                logger.debug({ session: record.id }, "ai-proxy: session record busy, the next sweep closes it");
+            }
         }
     }
 
@@ -471,7 +540,7 @@ export function noteSessionRequest(
 ): AiProxySessionRecord {
     if (record.forkPending && !record.claudeSessionId && claudeSessionId) {
         return (
-            updateSessionRecord(record.id, (current) => {
+            updateUnlessBusy(record.id, (current) => {
                 current.claudeSessionId = claudeSessionId;
                 current.forkPending = false;
                 current.lastSeenAt = new Date(now).toISOString();
@@ -495,11 +564,31 @@ export function noteSessionRequest(
 
     if (now - lastSeen >= LAST_SEEN_WRITE_MS) {
         return (
-            updateSessionRecord(record.id, (current) => {
+            updateUnlessBusy(record.id, (current) => {
                 current.lastSeenAt = new Date(now).toISOString();
             }) ?? record
         );
     }
 
     return record;
+}
+
+/**
+ * A request's write to its record: skipped while another process holds the record's lock. Both writes it makes
+ * (lastSeenAt, the fork's id) are retried by the session's next request, so waiting in the proxy buys nothing.
+ */
+function updateUnlessBusy(
+    id: string,
+    change: (record: AiProxySessionRecord) => void
+): AiProxySessionRecord | undefined {
+    try {
+        return updateSessionRecord(id, change);
+    } catch (error) {
+        if (!isSessionRecordBusy(error)) {
+            throw error;
+        }
+
+        logger.debug({ session: id }, "ai-proxy: session record busy, this request's write is skipped");
+        return undefined;
+    }
 }
