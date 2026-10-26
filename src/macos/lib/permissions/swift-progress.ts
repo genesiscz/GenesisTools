@@ -13,6 +13,11 @@ export interface SwiftBuildProgress {
 
 const PROGRESS_LINE = /^\[(\d+)\s*\/\s*(\d+)](?:\s+(\S+)(?:\s+(.+))?)?$/;
 
+/**
+ * Reads compact SwiftPM or spaced Swift Build counters, returning null for other build output. Unlabeled steps
+ * have an empty action and subject; labeled steps use the first word as the action and the remaining label's
+ * last word as the subject, or an empty subject when only one word is present.
+ */
 export function parseSwiftBuildProgress(line: string): SwiftBuildProgress | null {
     const match = PROGRESS_LINE.exec(line.trim());
 
