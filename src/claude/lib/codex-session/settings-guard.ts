@@ -21,6 +21,7 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 
 /** A model id only a proxy session can run: `codex/…` and `grok/…` mean nothing to Anthropic's API. */
 export function isSessionOnlyModel(model: unknown): model is string {
@@ -29,7 +30,7 @@ export function isSessionOnlyModel(model: unknown): model is string {
 
 /** The settings file every Claude Code on this machine shares (the config folder without CLAUDE_CONFIG_DIR). */
 export function sharedClaudeSettingsPath(): string {
-    return join(env.paths.getClaudeConfigDir() ?? join(env.paths.getHome(), ".claude"), "settings.json");
+    return join(nativeHome("claude", env.paths.getHome()), "settings.json");
 }
 
 function readSettings(path: string): Record<string, unknown> | undefined {

@@ -1,11 +1,10 @@
 import { readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
-import { primaryCodexHome } from "@genesiscz/utils/providers/session-paths";
+import { nativeHome } from "@genesiscz/utils/providers/session-paths";
 import {
     OPENAI_SUB_STATIC_CATALOG,
     type WhamApiModel,
@@ -74,10 +73,7 @@ export interface CodexModelInfo {
 
 /** Where `models_cache.json` lives: the test override, else the primary `CODEX_HOME`, else `~/.codex`. */
 export function codexModelsCachePath(): string {
-    return (
-        env.codex.getModelsCachePathOverride() ??
-        join(primaryCodexHome() ?? join(homedir(), ".codex"), "models_cache.json")
-    );
+    return env.codex.getModelsCachePathOverride() ?? join(nativeHome("codex"), "models_cache.json");
 }
 
 let cacheMemo: { path: string; mtimeMs: number; records: WhamModelRecord[] } | null = null;

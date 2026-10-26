@@ -292,6 +292,14 @@ const WHAT: Record<UpstreamFailureKind, string> = {
     overloaded: "answered that the model is overloaded",
 };
 
+/** How to log an agent's account in again after an auth refusal: only Codex has a login command for it. */
+const RELOGIN_HINT: Partial<Record<SessionAgent, (login: string | undefined) => string>> = {
+    codex: (login) =>
+        login
+            ? `Log in again: ${toolCommand("codex login", login)}.`
+            : "Log in again with `codex login`: this account reads the Codex CLI's own auth.json.",
+};
+
 /** The readable text: agent, account, model, upstream status and code, reset time, and what to do. */
 export function failureText(failure: UpstreamFailure, context: FailureContext, now = Date.now()): string {
     const upstream = `upstream ${failure.status === 200 ? "stream" : failure.status}${failure.code ? ` ${failure.code}` : ""}`;
@@ -320,12 +328,10 @@ export function failureText(failure: UpstreamFailure, context: FailureContext, n
         return parts.join(" ");
     }
 
-    if (failure.kind === "auth" && context.agent === "codex") {
-        parts.push(
-            context.login
-                ? `Log in again: ${toolCommand("codex login", context.login)}.`
-                : "Log in again with `codex login`: this account reads the Codex CLI's own auth.json."
-        );
+    const relogin = RELOGIN_HINT[context.agent];
+
+    if (failure.kind === "auth" && relogin) {
+        parts.push(relogin(context.login));
     }
 
     if (context.sessionId) {
