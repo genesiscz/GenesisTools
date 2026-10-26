@@ -551,6 +551,7 @@ struct WidgetPeekView: View {
         .buttonStyle(RowButtonStyle(cornerRadius: Self.cornerRadius))
         .attentionPulse(trigger: model.attentionTrigger(item.key), style: popupAttention, since: model.attentionStart(item.key))
         .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + title)
+        .accessibilityValue(WidgetPeekOptions.accessibilityValue(item))
         .accessibilityAction(.escape) { model.dismissPeek() }
         .accessibilityAction(named: "Close") { model.dismissPeek() }
         .overlay(alignment: .topTrailing) {
@@ -639,6 +640,16 @@ struct WidgetPeekOptions: View {
                 Text("\(options.count - 4) more").font(.system(size: 10.5)).foregroundStyle(.secondary).padding(.leading, 16)
             }
         }
+    }
+
+    /// The single alert button speaks the same four options and recommendation its label draws.
+    static func accessibilityValue(_ item: WidgetInboxItem) -> String {
+        guard item.needsAnswer, let options = item.options else { return "" }
+        var labels = options.prefix(4).enumerated().map { index, option in
+            option + (isRecommended(option, at: index, item.recommended) ? ", recommended" : "")
+        }
+        if options.count > 4 { labels.append("\(options.count - 4) more") }
+        return labels.joined(separator: "; ")
     }
 
     /// The hub names the recommended option by its letter ("b") or its whole text.

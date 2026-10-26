@@ -276,9 +276,7 @@ public final class WidgetModel: ObservableObject {
             return NativeSettingsTheme.glass.effective(reduceTransparency: appearance.reduceTransparency,
                                                        systemReduceTransparency: false)
         case "theme":
-            return snapshot?.state.preferences.glassEffect == false
-                ? appearance.theme.effective(reduceTransparency: true, systemReduceTransparency: false)
-                : appearance.theme
+            return appearance.theme
         default:
             return .graphite
         }
@@ -2522,7 +2520,8 @@ public final class WidgetModel: ObservableObject {
             // A pointer over the panel, or a decision waiting in it, is someone reading: the quiet timer folded a
             // session with open decisions under the reader's pointer (Martin, 2026-10-25). It tries again later.
             // `pointerInside` and not `hoveredSurface`: opening a module clears the hover, not the pointer.
-            if !self.pointerInside.isEmpty || self.cards.contains(where: \.needsAnswer) {
+            let waiting = self.inboxOverview ? self.inbox.needsAnswer > 0 : self.cards.contains(where: \.needsAnswer)
+            if !self.pointerInside.isEmpty || waiting {
                 PerfLog.mark("widget.quiet-collapse skipped: "
                     + (!self.pointerInside.isEmpty ? "pointer over the panel" : "a decision waits"))
                 self.quietSignature = ""

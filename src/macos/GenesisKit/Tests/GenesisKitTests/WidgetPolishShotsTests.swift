@@ -160,6 +160,58 @@ final class WidgetPolishShotsTests: XCTestCase {
         XCTAssertNil(model.expanded, "pointer exit rearms quiet collapse without a new snapshot")
     }
 
+    func testQuietCollapseKeepsOverviewDecisionsFromOtherSessionsVisible() async throws {
+        let model = try model(panelBackground: nil)
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        var wire = try XCTUnwrap(model.snapshot)
+        wire.sessions = wire.sessions.map { session in
+            var idle = session
+            idle.status = "idle"
+            return idle
+        }
+        wire.state.preferences.quietSeconds = 5
+        var summary = try XCTUnwrap(wire.notifications)
+        var entry = try XCTUnwrap(summary.sessions.first)
+        let otherKey = wire.sessions[1].key
+        var decision = try XCTUnwrap(entry.pendingItem)
+        decision.key = otherKey
+        entry.key = otherKey
+        entry.pendingItem = decision
+        entry.items = [decision]
+        summary.sessions = [entry]
+        wire.notifications = summary
+        model.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
+        XCTAssertTrue(model.cards.isEmpty, "the selected session has no waiting card")
+        XCTAssertEqual(model.inboxOverviewItems.first?.key, otherKey)
+        model.inboxOverview = true
+        model.open(.right)
+        try await Task.sleep(for: .milliseconds(5300))
+        XCTAssertEqual(model.expanded, .right, "a waiting overview decision protects keyboard readers too")
+    }
+
+    func testTheAlertAccessibilityValueIncludesDisplayedOptionsAndRecommendation() throws {
+        let model = try model(panelBackground: nil)
+        defer { model.stop() }
+        var item = try XCTUnwrap(model.inboxFor(key + "0")?.pendingItem)
+        item.options = ["Keep", "Drop", "Review", "Pause", "Later"]
+        item.recommended = "b"
+        XCTAssertEqual(WidgetPeekOptions.accessibilityValue(item),
+                       "Keep; Drop, recommended; Review; Pause; 1 more")
+        item.options = ["Keep", "Drop"]
+        item.recommended = "Keep"
+        XCTAssertEqual(WidgetPeekOptions.accessibilityValue(item), "Keep, recommended; Drop")
+        item.recommended = nil
+        XCTAssertEqual(WidgetPeekOptions.accessibilityValue(item), "Keep; Drop")
+        item.needsAnswer = false
+        XCTAssertEqual(WidgetPeekOptions.accessibilityValue(item), "", "read-only messages show no options")
+        item.needsAnswer = true
+        item.options = nil
+        XCTAssertEqual(WidgetPeekOptions.accessibilityValue(item), "")
+        item.options = []
+        XCTAssertEqual(WidgetPeekOptions.accessibilityValue(item), "")
+    }
+
     func testTheRecommendedOptionIsFoundByLetterOrText() {
         XCTAssertTrue(WidgetPeekOptions.isRecommended("b) every remote call", at: 1, "b"))
         XCTAssertTrue(WidgetPeekOptions.isRecommended("keep", at: 0, "keep"))
@@ -179,6 +231,14 @@ final class WidgetPolishShotsTests: XCTestCase {
         XCTAssertEqual(try model(panelBackground: "glass").panelTheme, .glass)
         let themed = try model(panelBackground: "theme")
         XCTAssertEqual(themed.panelTheme, themed.appearance.theme)
+        defer { themed.stop() }
+        themed.appearance.theme = .glass
+        var wire = try XCTUnwrap(themed.snapshot)
+        wire.state.preferences.glassEffect = false
+        themed.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
+        XCTAssertEqual(themed.panelTheme, .glass, "the removed legacy glass toggle cannot override Same as the app")
+        themed.appearance.theme = .midnight
+        XCTAssertEqual(themed.panelTheme, .midnight, "Same as the app follows later theme changes too")
     }
 
     func testTheSortButtonNamesTheOrderInOneWord() {
