@@ -1162,10 +1162,14 @@ describe("an install is stale only when the code it links changed", () => {
         const app = join(root, "GenesisTools");
         const files = [
             "GenesisTools/Package.swift",
+            "GenesisTools/Info.plist",
+            "GenesisTools/scripts/AppIcon.icns",
+            "GenesisTools/ClickyLibrary.json",
             "GenesisTools/Sources/Host/Host.swift",
             "GenesisTools/Sources/GenesisTools/main.swift",
             "GenesisTools/Sources/Parts/Hub/Hub.swift",
             "GenesisTools/web/diff-viewer/index.ts",
+            "GenesisKit/Package.swift",
             "GenesisKit/Sources/GenesisKitBase/Base.swift",
             "GenesisKit/Sources/GenesisKit/Kit.swift",
         ];
@@ -1197,11 +1201,33 @@ describe("an install is stale only when the code it links changed", () => {
         }
     });
 
-    it("a full build keeps the inputs it always had, so existing installs are not rebuilt", () => {
-        const all = sourceRootsFor(["clicky", "features", "hub", "markdown", "widget"]);
+    it("only installs bundling the diff viewer become stale after a web edit", () => {
+        const app = sourceTree();
+        const selections = [[], ["features"], ["markdown"], ["features", "clicky"], ["features", "hub"]];
 
-        expect(all).toContain("../GenesisKit/Sources");
-        expect(all).toContain("ClickyLibrary.json");
-        expect(sourceRootsFor([])).not.toContain("web");
+        try {
+            const before = selections.map((parts) => sourceHash(app, parts));
+            writeFileSync(join(app, "web/diff-viewer/index.ts"), "// changed\n");
+
+            for (const [index, parts] of selections.entries()) {
+                expect(sourceRootsFor(parts).includes("web")).toBe(parts.includes("hub"));
+                expect(sourceHash(app, parts) === before[index]).toBe(!parts.includes("hub"));
+            }
+        } finally {
+            rmSync(dirname(app), { recursive: true, force: true });
+        }
+    });
+
+    it("a full build keeps the inputs it always had, so existing installs are not rebuilt", () => {
+        const app = sourceTree();
+
+        try {
+            // Frozen legacy digest: root order, sorted recursive paths, then each path and its file bytes.
+            const legacyHash = "c4cdaea45ba34a58";
+            expect(sourceHash(app)).toBe(legacyHash);
+            expect(sourceHash(app, ["clicky", "features", "hub", "markdown", "widget"])).toBe(legacyHash);
+        } finally {
+            rmSync(dirname(app), { recursive: true, force: true });
+        }
     });
 });

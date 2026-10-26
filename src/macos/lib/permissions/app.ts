@@ -112,12 +112,14 @@ export function sourceRootsFor(parts: readonly string[]): readonly string[] {
     const partFolders = APP_PARTS.filter((part) => parts.includes(part.id)).map(
         (part) => `Sources/Parts/${part.id.charAt(0).toUpperCase()}${part.id.slice(1)}`
     );
-    const clicky = bundleStepsFor(parts).has("clicky-library") ? ["ClickyLibrary.json"] : [];
+    const bundleSteps = bundleStepsFor(parts);
+    const web = bundleSteps.has("diff-viewer") ? ["web"] : [];
+    const clicky = bundleSteps.has("clicky-library") ? ["ClickyLibrary.json"] : [];
 
     return [
         ...HOST_SOURCE_ROOTS.filter((root) => root !== "../GenesisKit/Sources/GenesisKitBase"),
         ...partFolders,
-        "web",
+        ...web,
         ...clicky,
         "../GenesisKit/Sources",
     ];
