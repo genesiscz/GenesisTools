@@ -320,6 +320,10 @@ public final class WidgetModel: ObservableObject {
     private var draftTasks: [String: Task<Void, Never>] = [:]
     private var dirtyDrafts: Set<String> = []
     private var draftRevisions: [String: Int] = [:]
+    /// The text each session's last Send took from the composer, and when. A write of that same text into the emptied
+    /// draft right after is the closing field handing back what it showed, not typing: it put a sent answer back into
+    /// the reply field until the hub's next snapshot cleared it again (Martin, 2026-10-26).
+    private var lastSent: [String: (text: String, at: Date)] = [:]
     var actionRunner: ((WidgetJSON) async throws -> WidgetJSON)?
     private var submittedAssets: Set<String> = []
     private var submittedCards: Set<String> = []
@@ -1512,6 +1516,13 @@ public final class WidgetModel: ObservableObject {
     public func setText(_ text: String) {
         let key = selectedKey
         guard !key.isEmpty else { return }
+        if let sent = lastSent[key] {
+            if !text.isEmpty, text == sent.text, (drafts[key]?.text ?? "").isEmpty, Date().timeIntervalSince(sent.at) < 2 {
+                PerfLog.mark("widget.draft dropped the sent text a closing field wrote back key=\(key)")
+                return
+            }
+            lastSent[key] = nil
+        }
         var value = drafts[key] ?? WidgetDraft()
         value.text = String(text.prefix(Self.draftTextLimit))
         drafts[key] = value
@@ -1904,6 +1915,10 @@ public final class WidgetModel: ObservableObject {
             draftTasks[selectedKey]?.cancel()
             dirtyDrafts.insert(selectedKey)
             drafts[selectedKey] = WidgetDraft()
+            // A save of the typed text still on its way would land after the clear below and put the sent text back
+            // on the hub; a new revision makes it skip itself.
+            draftRevisions[selectedKey, default: 0] += 1
+            if !submitted.text.isEmpty { lastSent[selectedKey] = (submitted.text, Date()) }
             submittedAssets.formUnion(submitted.assetIds)
             if let card, answering || choice != nil { submittedCards.insert(card.id) }
             action(["action": "draft-text", "key": .string(selectedKey), "text": ""])

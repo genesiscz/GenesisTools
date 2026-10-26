@@ -10,9 +10,13 @@ import XCTest
 final class WidgetPolishShotsTests: XCTestCase {
     private let key = "local:claude:fixture-polish:"
 
-    private func model(panelBackground: String?) throws -> WidgetModel {
+    private func model(panelBackground: String?, cards: [[String: Any]] = []) throws -> WidgetModel {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget.polish." + UUID().uuidString))
-        let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
+        // Its own state folder with the submission journal in place: a queued answer is written there first.
+        let state = FileManager.default.temporaryDirectory.appendingPathComponent("widget-polish-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: state.appendingPathComponent("native-submissions"),
+                                                withIntermediateDirectories: true)
+        let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: state.path,
             defaults: defaults, appearance: NativeSettingsAppearance(defaults: defaults,
                 notificationNamespace: "polish." + UUID().uuidString, observeExternalChanges: false))
         var preferences: [String: Any] = ["excludedKeys": [], "projects": [], "sessions": [], "showChanges": false,
@@ -27,7 +31,7 @@ final class WidgetPolishShotsTests: XCTestCase {
         }
         let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": ["version": 1, "revision": 0,
             "selectedKey": key + "0", "preferences": preferences, "assets": [:], "drafts": [:], "outgoing": []],
-            "sessions": sessions, "cards": [], "manifests": [:], "errors": [], "selectedKey": key + "0",
+            "sessions": sessions, "cards": cards, "manifests": [:], "errors": [], "selectedKey": key + "0",
             "notifications": ["unread": 0, "needsAnswer": 1, "complete": true, "truncated": false,
                 "sessions": [["key": key + "0", "unread": 0, "needsAnswer": 1, "pendingItem": Self.pending(key + "0"),
                               "items": [Self.pending(key + "0")]]]]])
@@ -40,6 +44,31 @@ final class WidgetPolishShotsTests: XCTestCase {
          "needsAnswer": true, "number": 10, "title": "P8 scope: where \"no automatic failover, show the error\" applies",
          "options": ["a) only the fleet publisher", "b) every remote call", "c) the installer as well"], "recommended": "b",
          "revision": 1]
+    }
+
+    /// Martin, 2026-10-26: an own answer sent from its card left the card's field, came back in the top reply field
+    /// for a few seconds, and disappeared only when the hub's next snapshot cleared it. The perf log showed a draft
+    /// save half a second after the send: the closing field wrote the sent text back into the emptied draft.
+    func testASentOwnAnswerDoesNotComeBackInTheReplyField() throws {
+        let card: [String: Any] = ["id": "decision:d10", "kind": "decision", "sessionKey": key + "0", "sourceId": "d10",
+            "at": Date().timeIntervalSince1970 * 1000, "title": "Merge it in this run?", "body": "", "status": "open",
+            "revision": 1, "number": 10, "choices": [["id": "a", "title": "Yes", "recommended": true]],
+            "attachments": [], "refs": [], "read": false]
+        let model = try model(panelBackground: nil, cards: [card])
+        defer { model.stop() }
+        let decision = try XCTUnwrap(model.cards.first)
+        model.openCard(decision)
+        model.openOwnAnswer(decision)
+        model.setText("merge it after its round")
+
+        model.send()
+        XCTAssertNil(model.ownAnswerCard, "the card's field closes once the answer is queued")
+        XCTAssertEqual(model.draft.text, "")
+        model.setText("merge it after its round")
+        XCTAssertEqual(model.draft.text, "", "the closing field's copy of the sent answer stays out of the reply field")
+
+        model.setText("and one more thing")
+        XCTAssertEqual(model.draft.text, "and one more thing", "new typing after the send is kept")
     }
 
     func testTheRecommendedOptionIsFoundByLetterOrText() {
