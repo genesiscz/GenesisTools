@@ -80,6 +80,23 @@ describe("swift-no-entry-macro", () => {
         expect(swiftRules("// lint-rules-ignore: fixture\n@Entry var flag = false")).toEqual([]);
     });
 
+    test("ignores hash-delimited regex contents, including quotes and escaped delimiters", () => {
+        for (const pattern of ["#/@Entry/#", '#/"/#', '##/@Entry /# " /##', String.raw`#/\/# @Entry/#`]) {
+            expect(swiftRules(`let pattern = ${pattern}`)).toEqual([]);
+        }
+
+        expect(swiftRules('let pattern = #/\n@Entry " // /*\n/#')).toEqual([]);
+    });
+
+    test("a quote inside a regex cannot hide a later real attribute or move its diagnostic", () => {
+        for (const pattern of ['#/"/#', '##/" /# @Entry /##', String.raw`#/\/# " @Entry/#`]) {
+            const source = `let pattern = ${pattern}\n@Entry var flag = false`;
+            expect(checkSwiftSource("Sources/Example.swift", source)).toMatchObject([
+                { rule: "swift-no-entry-macro", line: 2, column: 1, text: "@Entry var flag = false" },
+            ]);
+        }
+    });
+
     test("leaves a hand-written EnvironmentKey and a mention in a comment alone", () => {
         const source = [
             "private struct FlagKey: EnvironmentKey { static let defaultValue = false }",

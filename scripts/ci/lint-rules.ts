@@ -1097,11 +1097,12 @@ interface SwiftLintString {
     interpolationDepth: number;
 }
 
-/** Blank Swift comments and strings without moving the code's line or column offsets. */
+/** Blank Swift comments, strings and hash-delimited regexes without moving code's line or column offsets. */
 function maskSwiftNonCode(source: string): string {
     const masked = source.split("");
     let index = 0;
     let blockDepth = 0;
+    let regexEnd = "";
     const strings: SwiftLintString[] = [];
 
     const blank = (end: number) => {
@@ -1127,6 +1128,15 @@ function maskSwiftNonCode(source: string): string {
             } else {
                 blank(index + 1);
             }
+        } else if (regexEnd) {
+            if (source[index] === "\\") {
+                blank(Math.min(index + 2, source.length));
+            } else if (source.startsWith(regexEnd, index)) {
+                blank(index + regexEnd.length);
+                regexEnd = "";
+            } else {
+                blank(index + 1);
+            }
         } else if (string?.interpolationDepth === 0) {
             if (source.startsWith(string.end, index)) {
                 blank(index + string.end.length);
@@ -1146,9 +1156,13 @@ function maskSwiftNonCode(source: string): string {
             blockDepth = 1;
             blank(index + 2);
         } else if (source[index] === '"' || source[index] === "#") {
+            const regexOpening = /^(#+)\//.exec(source.slice(index));
             const opening = /^(#*)("{3}|")/.exec(source.slice(index));
 
-            if (opening) {
+            if (regexOpening) {
+                regexEnd = `/${regexOpening[1]}`;
+                blank(index + regexOpening[0].length);
+            } else if (opening) {
                 strings.push({ end: opening[2] + opening[1], hashes: opening[1], interpolationDepth: 0 });
                 blank(index + opening[0].length);
             } else {
