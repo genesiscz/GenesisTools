@@ -198,6 +198,30 @@ async function resolve(
 
 const pullRequests = new Map<string, { title: string; url: string } | null>();
 
+/** The PR numbers the mod linked since the last note to the model, keyed `<repo>#<n>`. */
+const linkedPullRequests = new Map<string, { token: string; repo: string; title: string; url: string }>();
+
+/**
+ * A note for the model about the PR numbers the mod linked in its reply, or undefined when it linked none; taking it
+ * clears the list. The mod picks the repository of the session's folder, so a number the reply meant in another
+ * repository gets a wrong link and a wrong title, and only the model can see that.
+ */
+export function takeLinkedPullRequestNote(): string | undefined {
+    if (linkedPullRequests.size === 0) {
+        return undefined;
+    }
+
+    const rows = [...linkedPullRequests.values()].map((pr) => `- ${pr.token} -> ${pr.url} (${pr.title})`);
+    const repos = [...new Set([...linkedPullRequests.values()].map((pr) => pr.repo))].join(", ");
+    linkedPullRequests.clear();
+
+    return [
+        `The genesis-tools-mods links mod changed your last reply: it linked these bare PR numbers to ${repos}, the GitHub repository of the session's folder, and added the title GitHub gives there:`,
+        ...rows,
+        "The mod cannot see which repository you meant. If a number belongs to another repository, or the title is not the PR you meant, tell the user in your next reply that the link was added automatically and is wrong, and give the correct link. A PR you write as a full markdown link is never changed.",
+    ].join("\n");
+}
+
 /** The PR's title and URL from `gh`, kept for the session; null for a number that is no PR of this repository. */
 async function pullRequest(ctx: LinkContext, n: string): Promise<{ title: string; url: string } | null> {
     if (!ctx.root || !ctx.repo) {
@@ -303,6 +327,12 @@ async function linkPlain(ctx: LinkContext, text: string): Promise<string> {
                 const titled = text.slice(end, end + 2) === " (";
                 const title = pr.title.replace(/[\\[\]]/g, "\\$&");
                 replacement = `[${titled ? hit.token : `${hit.token} (${title})`}](${pr.url})`;
+                linkedPullRequests.set(`${ctx.repo}${hit.token}`, {
+                    token: hit.token,
+                    repo: ctx.repo ?? "",
+                    title: pr.title,
+                    url: pr.url,
+                });
             }
         } else if (hit.kind === "decision") {
             const n = Number(/\d+/.exec(hit.token)?.[0]);
