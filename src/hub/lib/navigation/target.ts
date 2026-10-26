@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { isHubCommitSha, isHubPrRef } from "../pr-ref";
 import { type NavTarget, normalizeTarget } from "./types";
 
@@ -61,7 +61,7 @@ export function parseNavInput(input: string, isFolder: (path: string) => boolean
     }
 
     if (isFolder(text)) {
-        return { target: { worktree: text } };
+        return { target: { worktree: resolve(text) } };
     }
 
     return {

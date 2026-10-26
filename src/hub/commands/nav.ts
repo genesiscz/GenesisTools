@@ -12,7 +12,7 @@ import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/uti
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import { hubDbPath, openHubDb } from "../lib/data-db";
-import { listNav, navKeep, recordNav } from "../lib/navigation/store";
+import { listNav, navKeep, recordNav, setNavKeep } from "../lib/navigation/store";
 import { navTargetProblem, navTitle, parseNavInput } from "../lib/navigation/target";
 import {
     isNavActor,
@@ -221,6 +221,7 @@ interface NavRecordFlags {
     note?: string;
     from?: string;
     keep?: number;
+    replacing?: string[];
     json?: boolean;
 }
 
@@ -253,7 +254,7 @@ function navRecord(flags: NavRecordFlags): void {
     const db = openHubDb();
 
     try {
-        const result = recordNav(db, entry, flags.keep);
+        const result = recordNav(db, entry, { keep: flags.keep, replacing: flags.replacing });
         logNavigation(entry, "hub");
 
         if (flags.json) {
@@ -333,9 +334,22 @@ export function registerNavCommands(program: Command): void {
         .option("--no-build", "never build; fail when GenesisTools.app is missing or stale")
         .action(async (input: string | undefined, flags: NavOpenFlags) => navOpen(input, flags));
 
+    nav.command("configure")
+        .description("Persist the History limit and prune the log immediately")
+        .requiredOption("--keep <n>", "keep the newest n entries", positiveInt)
+        .action((flags: { keep: number }) => {
+            const db = openHubDb();
+            try {
+                setNavKeep(db, flags.keep);
+            } finally {
+                db.close();
+            }
+        });
+
     nav.command("record")
         .description("Store one entry (GenesisTools.app's door: every place the hub shows)")
         .requiredOption("--id <id>", "the entry id; an existing one is replaced")
+        .option("--replacing <ids...>", "remove these superseded entries in the same transaction")
         .requiredOption("--actor <actor>", NAV_ACTORS.join("|"))
         .requiredOption("--title <text>", "what the place is")
         .requiredOption("--target <json>", 'the place as the hub\'s link query, JSON: {"pr":"…","commit":"…"}')

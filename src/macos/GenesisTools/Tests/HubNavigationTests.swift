@@ -205,6 +205,11 @@ final class HubNavigationTests: XCTestCase {
         XCTAssertTrue(args.contains("--at=2000"))
         XCTAssertTrue(args.contains("--keep=20"))
         XCTAssertTrue(args.contains("--from=s"))
+        var annotated = NavigationEntry(target: place(.prs, "p"), title: "p")
+        annotated.replacedIDs = ["old-id", "cli-1"]
+        let replacement = try HubNavStore.recordArguments(annotated, keep: 20)
+        XCTAssertEqual(Array(replacement.suffix(3)), ["--replacing", "old-id", "cli-1"])
+        XCTAssertEqual(HubNavStore.limitArguments(20), ["hub", "nav", "configure", "--keep=20"])
     }
 
     func testARequestCarriesWhoAndWhyAndALinkWithoutAnActorIsALink() throws {
@@ -309,6 +314,80 @@ final class HubNavigationTests: XCTestCase {
         // A person's own request still navigates.
         XCTAssertTrue(model.apply(HubRequest(["--mode", "prs", "--actor", "user"])))
         XCTAssertEqual(model.mode, .prs)
+    }
+
+    @MainActor
+    func testListOnlyKeepsRevealAndTabThroughAHop() async throws {
+        let preferences = HubDefaults.preferences
+        preferences.agentNavigation = .listOnly
+        defer { preferences.agentNavigation = .navigate }
+        let model = isolatedModel()
+        let request = HubRequest(["--pr", "acme/app#9", "--reveal", "Sources/File.swift", "--tab", "changes",
+                                  "--actor", "agent", "--nav", "cli-reveal"])
+        XCTAssertFalse(model.apply(request))
+        let entry = try XCTUnwrap(model.history.entry("cli-reveal"))
+        XCTAssertEqual(entry.target["reveal"], "Sources/File.swift")
+        XCTAssertEqual(entry.target["tab"], "changes")
+        model.hop(to: entry.id)
+        XCTAssertEqual(model.tab, .changes)
+        XCTAssertEqual(model.prs.pendingReveal?.path, "Sources/File.swift")
+        await drain()
+        let session = try XCTUnwrap(HubNavRequest(HubRequest(["--session", "fixture", "--tab", "changes"])))
+        XCTAssertEqual(HubRequest(session.target.arguments).tab, .changes)
+    }
+
+    @MainActor
+    func testAnUnresolvedAgentRequestDoesNotMatchThePreviouslySelectedAgent() throws {
+        let model = isolatedModel()
+        model.mode = .agents
+        model.agents.select(parent: "old-parent", child: "old-agent")
+        let asked = try XCTUnwrap(HubNavRequest(HubRequest(["--session", "new-parent", "--agent", "new-agent"])))
+        XCTAssertFalse(model.navRequestMatches(asked))
+        let main = try XCTUnwrap(HubNavRequest(HubRequest(["--mode", "agents", "--session", "new-parent"])))
+        XCTAssertFalse(model.navRequestMatches(main))
+    }
+
+    @MainActor
+    func testBackToTheWholePRClearsTheLinkedCommitAndResetsTheScope() async throws {
+        let json = #"{"prs":[{"repo":"app","number":9,"title":"fixture","state":"OPEN","draft":false,"headBranch":"feature","baseBranch":"main","url":"https://github.com/acme/app/pull/9","labels":[],"reviewers":[]}],"repos":[]}"#
+        let list = try JSONDecoder().decode(HubPRList.self, from: Data(json.utf8))
+        let pr = try XCTUnwrap(list.prs.first)
+        let model = isolatedModel()
+        model.mode = .prs
+        model.prs.apply(list, key: "fixture", flash: false)
+        model.pendingNav = HubNavRequest(HubRequest(["--pr", pr.url, "--commit", "abcdef0"]))
+        model.prs.selectedID = pr.id
+        await drain()
+        let review = ReviewModel(repo: URL(fileURLWithPath: "/fixture/navigation"), options: DiffViewOptions())
+        review.scope = .commit(sha: "abcdef0", title: "linked")
+        model.prs.review = review
+        var history = HubNavHistory()
+        history.visit(place(.prs, pr.id), title: "whole PR")
+        history.visit(HubNavTarget(place: HubNavEntry(mode: .prs, selection: pr.id), commit: "abcdef0"), title: "commit")
+        model.replaceHistory(history)
+        model.goBack()
+        XCTAssertNil(model.navTarget(model.navEntry)["commit"])
+        XCTAssertEqual(review.scope, PRsModel.scope(pr, detail: nil))
+        XCTAssertNil(model.prs.pendingCommit)
+        await drain()
+    }
+
+    @MainActor
+    func testBackCancelsAnUnfulfilledRequestAndRestoresTheAgentsListWithoutAChild() async throws {
+        let model = isolatedModel()
+        model.mode = .agents
+        model.agents.select(parent: "parent", child: "child")
+        await drain()
+        var history = HubNavHistory()
+        history.visit(place(.agents, HubModel.wholeList), title: "Agents")
+        history.visit(place(.agents, AgentTree.key(parent: "parent", child: "child")), title: "child")
+        model.replaceHistory(history)
+        model.pendingNav = HubNavRequest(HubRequest(["--session", "missing", "--agent", "missing"]))
+        model.goBack()
+        XCTAssertNil(model.pendingNav, "Back supersedes an older external request")
+        XCTAssertNil(model.agents.selectedID, "the list entry has no child selected")
+        await drain()
+        XCTAssertEqual(model.history.current?.target, place(.agents, HubModel.wholeList))
     }
 
     func testAHopShowsAnyPlaceAndBackReturns() throws {

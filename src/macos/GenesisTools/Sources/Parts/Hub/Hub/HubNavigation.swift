@@ -87,6 +87,8 @@ struct HubNavRequest {
     var agent: String?
     var worktree: String?
     var mode: HubMode?
+    var reveal: String?
+    var tab: HubTab?
     /// A history entry being shown again: its own entry takes the shown place's form instead of a new entry.
     var restoring = false
     let asked: Date
@@ -107,6 +109,8 @@ struct HubNavRequest {
         agent = request.agent
         worktree = request.worktree
         mode = request.mode
+        reveal = request.reveal
+        tab = request.tab
         asked = now
     }
 
@@ -126,6 +130,8 @@ struct HubNavRequest {
         fields["commit"] = commit
         fields["repo"] = repo
         fields["worktree"] = worktree
+        fields["reveal"] = reveal
+        fields["tab"] = tab?.rawValue
         return HubNavTarget(fields)
     }
 
@@ -187,6 +193,14 @@ final class HubNavStore: NavigationHistoryStore, Sendable {
         _ = try ToolsCLIRunner.run(try Self.recordArguments(entry, keep: keep))
     }
 
+    func setLimit(_ keep: Int) throws {
+        _ = try ToolsCLIRunner.run(Self.limitArguments(keep))
+    }
+
+    static func limitArguments(_ keep: Int) -> [String] {
+        ["hub", "nav", "configure", "--keep=\(keep)"]
+    }
+
     static func recordArguments(_ entry: NavigationEntry<HubNavTarget>, keep: Int) throws -> [String] {
         let target = String(decoding: try JSONEncoder().encode(entry.target), as: UTF8.self)
         // Free text rides as `--flag=value`, so a title or a note that starts with "-" is not read as a flag.
@@ -196,6 +210,7 @@ final class HubNavStore: NavigationHistoryStore, Sendable {
         ]
         if let note = entry.note { args.append("--note=\(note)") }
         if let from = entry.agentSession { args.append("--from=\(from)") }
+        if let replacedIDs = entry.replacedIDs, !replacedIDs.isEmpty { args += ["--replacing"] + replacedIDs }
         return args
     }
 }

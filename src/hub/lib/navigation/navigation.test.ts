@@ -1,10 +1,10 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { openHubDb } from "../data-db";
 import { hubArgs, hubUrl } from "../open";
-import { listNav, navKeep, recordNav } from "./store";
+import { listNav, navKeep, recordNav, setNavKeep } from "./store";
 import { navTargetProblem, navTitle, parseNavInput } from "./target";
 import { type NavEntry, normalizeTarget } from "./types";
 
@@ -37,7 +37,7 @@ describe("the navigation log", () => {
         const db = openHubDb(":memory:");
         expect(navKeep(db)).toBe(200);
         for (let index = 0; index < 5; index++) {
-            recordNav(db, entry(`p${index}`, index), 3);
+            recordNav(db, entry(`p${index}`, index), { keep: 3 });
         }
 
         expect(listNav(db).map((row) => row.id)).toEqual(["p4", "p3", "p2"]);
@@ -45,6 +45,31 @@ describe("the navigation log", () => {
         recordNav(db, entry("agent", 10, { actor: "agent" }));
         expect(listNav(db).map((row) => row.id)).toEqual(["agent", "p4", "p3"]);
         expect(listNav(db, 1).map((row) => row.id)).toEqual(["agent"]);
+        db.close();
+    });
+
+    it("reconciles an annotated current place with the CLI row before reloading", () => {
+        const db = openHubDb(":memory:");
+        recordNav(db, entry("older", 1));
+        recordNav(db, entry("shown", 2));
+        recordNav(db, entry("cli", 3, { target: { session: "shown" } }));
+        recordNav(db, entry("cli", 4, { target: { session: "shown" }, note: "look here" }), { replacing: ["shown"] });
+        expect(listNav(db).map((row) => row.id)).toEqual(["cli", "older"]);
+        expect(listNav(db)[0].note).toBe("look here");
+        db.close();
+    });
+
+    it("prunes on a preference change before any new visit and later writers use the cap", () => {
+        const db = openHubDb(":memory:");
+        for (let index = 0; index < 5; index++) {
+            recordNav(db, entry(`p${index}`, index));
+        }
+
+        expect(setNavKeep(db, 2)).toEqual({ kept: 2, dropped: 3 });
+        expect(navKeep(db)).toBe(2);
+        expect(listNav(db).map((row) => row.id)).toEqual(["p4", "p3"]);
+        recordNav(db, entry("next", 10));
+        expect(listNav(db).map((row) => row.id)).toEqual(["next", "p4"]);
         db.close();
     });
 
@@ -88,6 +113,9 @@ describe("what tools hub nav open names", () => {
         });
         expect(parseNavInput("0751d8a971", noFolder)).toEqual({ target: { commit: "0751d8a971" } });
         expect(parseNavInput("/src/app", (path) => path === "/src/app")).toEqual({ target: { worktree: "/src/app" } });
+        expect(parseNavInput("./checkout", (path) => path === "./checkout")).toEqual({
+            target: { worktree: resolve("./checkout") },
+        });
         expect("error" in parseNavInput("not a place", noFolder)).toBe(true);
         expect("error" in parseNavInput("https://example.org/other?pr=1", noFolder)).toBe(true);
     });

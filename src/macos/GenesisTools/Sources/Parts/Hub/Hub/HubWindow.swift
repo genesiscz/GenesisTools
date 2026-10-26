@@ -792,6 +792,15 @@ final class HubModel: ObservableObject {
         history.setLimit(preferences.navigationLimit)
         navLimitWatch = preferences.$navigationLimit.dropFirst().sink { [weak self] limit in
             self?.history.setLimit(limit)
+            self?.persistNavLimit(limit)
+        }
+    }
+
+    private func persistNavLimit(_ limit: Int) {
+        guard let store = navStore else { return }
+        HubNavStore.queue.async {
+            do { try store.setLimit(limit) }
+            catch { PerfLog.mark("hub.nav configure failed: \(error)") }
         }
     }
 
@@ -803,6 +812,7 @@ final class HubModel: ObservableObject {
         guard navStore == nil, !HubDefaults.isolated else { return }
         let store = HubNavStore(limit: HubDefaults.preferences.navigationLimit)
         navStore = store
+        persistNavLimit(history.limit)
         navUnsaved = []
         HubNavStore.queue.async { [weak self] in
             let span = HubPerf.begin("nav.load")
@@ -906,7 +916,7 @@ final class HubModel: ObservableObject {
             return mode == .worktrees && selectedWorktree == WorktreeCleanup.selection(for: worktree)
         }
         if asked.agent != nil || asked.mode == .agents, asked.session != nil || asked.agent != nil {
-            return mode == .agents && agents.selectedID != nil
+            return mode == .agents && agents.matchesRequest(parent: asked.session, child: asked.agent ?? AgentTree.mainChild)
         }
         if let session = asked.session {
             return mode == .sessions && (selectedID == session || selected?.sessionId.hasPrefix(session) == true)
@@ -991,6 +1001,7 @@ final class HubModel: ObservableObject {
     @MainActor
     private func restore(_ entry: NavigationEntry<HubNavTarget>, how: String) {
         navRestoring = true
+        pendingNav = nil
         let target = entry.target
         HubPerf.log("nav.\(how) \(entry.actor.rawValue) \(entry.title)")
         if let place = target.place {
@@ -1027,14 +1038,13 @@ final class HubModel: ObservableObject {
                 openCommitLink(commit, repo: repo)
             }
         case .prs:
-            if let commit {
-                prLinkedCommit = (id, commit)
-            }
+            prLinkedCommit = commit.map { (id, $0) }
             if let pr = prs.prs.first(where: { $0.id == id }) {
                 if let commit, let ref = HubPRRef(id) {
                     prs.request(ref, commit: commit)
                 } else {
-                    prs.select(pr)
+                    if prs.selectedID != pr.id { prs.select(pr) }
+                    prs.showWholePR()
                 }
             } else {
                 prs.showUnavailable(id)
@@ -1047,7 +1057,9 @@ final class HubModel: ObservableObject {
         case .timeline:
             break
         case .agents:
-            if id != Self.wholeList, let key = AgentTree.split(id) {
+            if id == Self.wholeList {
+                agents.selectedID = nil
+            } else if let key = AgentTree.split(id) {
                 agents.select(parent: key.parent, child: key.child)
             }
         }

@@ -39,14 +39,41 @@ export function navKeep(db: Database): number {
     return Number.isInteger(keep) && keep > 0 ? keep : NAV_DEFAULT_KEEP;
 }
 
+/** Persists a changed History setting and prunes immediately, even without a new visit. */
+export function setNavKeep(db: Database, keep: number): { kept: number; dropped: number } {
+    return db.transaction(() => {
+        db.run("INSERT OR REPLACE INTO nav_meta (key, value) VALUES ('keep', ?)", [String(keep)]);
+        return pruneNav(db, keep);
+    })();
+}
+
+function pruneNav(db: Database, keep: number): { kept: number; dropped: number } {
+    const dropped = db.run(
+        "DELETE FROM nav_entries WHERE id NOT IN (SELECT id FROM nav_entries ORDER BY at DESC, rowid DESC LIMIT ?)",
+        [keep]
+    ).changes;
+    return { kept: keep, dropped };
+}
+
 /**
  * Adds the entry, or replaces the row with its id, then keeps the newest `keep` rows. A `keep` given here is stored
  * as the cap for later writers that do not know it (an agent's `tools hub nav open`).
  */
-export function recordNav(db: Database, entry: NavEntry, keep?: number): { kept: number; dropped: number } {
+export function recordNav(
+    db: Database,
+    entry: NavEntry,
+    options: { keep?: number; replacing?: string[] } = {}
+): { kept: number; dropped: number } {
+    const { keep, replacing } = options;
     const write = db.transaction(() => {
         if (keep !== undefined) {
             db.run("INSERT OR REPLACE INTO nav_meta (key, value) VALUES ('keep', ?)", [String(keep)]);
+        }
+
+        for (const id of replacing ?? []) {
+            if (id !== entry.id) {
+                db.run("DELETE FROM nav_entries WHERE id = ?", [id]);
+            }
         }
 
         db.run(
@@ -62,12 +89,7 @@ export function recordNav(db: Database, entry: NavEntry, keep?: number): { kept:
                 entry.from ?? null,
             ]
         );
-        const cap = keep ?? navKeep(db);
-        const dropped = db.run(
-            "DELETE FROM nav_entries WHERE id NOT IN (SELECT id FROM nav_entries ORDER BY at DESC, rowid DESC LIMIT ?)",
-            [cap]
-        ).changes;
-        return { kept: cap, dropped };
+        return pruneNav(db, keep ?? navKeep(db));
     });
     return write();
 }

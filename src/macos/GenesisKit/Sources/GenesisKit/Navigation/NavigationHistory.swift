@@ -34,6 +34,8 @@ public struct NavigationEntry<Target: Codable & Hashable>: Identifiable, Codable
     public var agentSession: String?
     /// Why the agent opened it ("the commit that broke the build").
     public var note: String?
+    /// When annotations adopt external ids, the store removes these old rows in the same write.
+    public var replacedIDs: [String]?
 
     public init(
         id: String = UUID().uuidString, at: Date = Date(), target: Target, title: String,
@@ -57,7 +59,7 @@ public protocol NavigationHistoryStore<Target>: AnyObject {
     associatedtype Target: Codable & Hashable
     /// Every kept entry, in any order.
     func load() throws -> [NavigationEntry<Target>]
-    /// Adds the entry, or replaces the one with its id, and keeps at most `keep` entries (the newest).
+    /// Adds or replaces by id, removes `entry.replacedIDs` transactionally, and keeps the newest `keep` entries.
     func record(_ entry: NavigationEntry<Target>, keep: Int) throws
 }
 
@@ -143,6 +145,7 @@ public struct NavigationHistory<Target: Codable & Hashable>: Equatable {
             if !title.isEmpty { annotated.title = title }
             if let id, id != currentID {
                 // The id the agent's CLI already stored, so the store keeps one row for it.
+                annotated.replacedIDs = (annotated.replacedIDs ?? []) + [currentID]
                 annotated.id = id
                 self.currentID = id
             }

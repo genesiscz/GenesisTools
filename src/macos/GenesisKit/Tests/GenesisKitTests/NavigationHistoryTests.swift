@@ -221,7 +221,7 @@ final class NavigationHistoryTests: XCTestCase {
             var rows: [NavigationEntry<String>] = []
             func load() throws -> [NavigationEntry<String>] { rows }
             func record(_ entry: NavigationEntry<String>, keep: Int) throws {
-                rows.removeAll { $0.id == entry.id }
+                rows.removeAll { $0.id == entry.id || entry.replacedIDs?.contains($0.id) == true }
                 rows.append(entry)
                 rows = Array(rows.sorted { $0.at < $1.at }.suffix(keep))
             }
@@ -234,12 +234,17 @@ final class NavigationHistoryTests: XCTestCase {
                 try store.record(made, keep: history.limit)
             }
         }
-        if let annotated = history.visit("c", title: "c", actor: .agent, note: "n", at: start.addingTimeInterval(9)) {
+        let originalID = try XCTUnwrap(history.currentID)
+        try store.record(NavigationEntry(id: "cli-id", at: start.addingTimeInterval(8), target: "c", title: "c"), keep: 200)
+        if let annotated = history.visit("c", title: "c", actor: .agent, note: "n", id: "cli-id", at: start.addingTimeInterval(9)) {
+            XCTAssertEqual(annotated.replacedIDs, [originalID])
             try store.record(annotated, keep: history.limit)
         }
+        XCTAssertEqual(store.rows.count, 2, "the original id and the CLI id become one persisted stop")
         let reread = History(entries: try store.load(), limit: 2)
         XCTAssertEqual(reread.entries.map(\.target), ["b", "c"])
         XCTAssertEqual(reread.current?.note, "n")
+        XCTAssertEqual(reread.currentID, "cli-id")
     }
 }
 

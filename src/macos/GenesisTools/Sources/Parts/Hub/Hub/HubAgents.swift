@@ -944,6 +944,15 @@ final class HubAgentsModel: ObservableObject {
         resolvePendingRequest(final: false)
     }
 
+    func matchesRequest(parent: String?, child: String) -> Bool {
+        if child == AgentTree.mainChild {
+            guard let wanted = parents.first(where: { parent.map($0.sessionId.hasPrefix) ?? false }) else { return false }
+            return selectedID == AgentTree.mainKey(wanted.sessionId)
+        }
+        guard let wanted = Self.requested(child: child, parent: parent, in: index) else { return false }
+        return selectedID == wanted.key
+    }
+
     private func resolvePendingRequest(final: Bool) {
         guard let wanted = pendingRequest, loaded || !parents.isEmpty else { return }
         // `--session <p>` alone: the lead session's Main row.
