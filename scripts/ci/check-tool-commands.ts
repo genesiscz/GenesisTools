@@ -6,7 +6,7 @@
  * `suggestCommand("tools macos", { replaceCommand: ["permissions", "build"] })`. A plain string such
  * as "Run `tools macos permissions build`" kept pointing at a command after it was renamed, and
  * nothing noticed until a user typed it. This guard parses every source file (the TypeScript syntax
- * API, no type checker) and checks each named command against the tree:
+ * API, with an isolated binding checker that never resolves imports) and checks each named command against the tree:
  *
  * - the first word is a tool: a `src/<tool>` entry (letter case ignored, as the macOS dispatcher
  *   does), or an alias in the root `tools` dispatcher;
@@ -300,20 +300,24 @@ interface Registrations {
 const REGISTERING_CALLS = new Set(["command", "alias", "buildGroup"]);
 
 /** The `.command("<word>")` a chained call such as `.argument(…)` hangs off, if any. */
-function chainedCommandWord(expression: ts.Expression): string | undefined {
-    let current = unwrap(expression);
+function chainedCommandWords(options: {
+    expression: ts.Expression;
+    valuesOf: (node: ts.Expression | undefined) => string[];
+}): string[] {
+    let current = unwrap(options.expression);
 
     while (ts.isCallExpression(current) || ts.isPropertyAccessExpression(current)) {
         if (ts.isCallExpression(current) && calleeName(current) === "command") {
-            return stringValue(current.arguments[0])?.split(/\s+/)[0];
+            return options.valuesOf(current.arguments[0]).map((value) => value.split(/\s+/)[0]);
         }
 
         current = unwrap(current.expression);
     }
 
-    return undefined;
+    return [];
 }
 
+/** Whether a lazy registrar imports a module anywhere in its body. */
 function hasDynamicImport(node: ts.Node): boolean {
     let found = false;
 
@@ -326,36 +330,148 @@ function hasDynamicImport(node: ts.Node): boolean {
     return found;
 }
 
+/** The static identifier or string key of a command registry entry. */
 function propertyKey(name: ts.PropertyName): string | undefined {
     return ts.isIdentifier(name) || ts.isStringLiteral(name) ? name.text : undefined;
 }
 
 /** The string literals a value can be: a literal, or both arms of a `cond ? "a" : "b"` of literals. */
 function literalValues(node: ts.Expression | undefined): string[] {
-    const value = stringValue(node);
+    const inner = node ? unwrap(node) : undefined;
+    const value = stringValue(inner);
 
     if (value !== undefined) {
         return [value];
     }
 
-    const inner = node ? unwrap(node) : undefined;
-
     if (inner && ts.isConditionalExpression(inner)) {
-        const arms = [stringValue(inner.whenTrue), stringValue(inner.whenFalse)];
+        const whenTrue = stringValue(unwrap(inner.whenTrue));
+        const whenFalse = stringValue(unwrap(inner.whenFalse));
 
-        return arms.every((arm) => arm !== undefined) ? (arms as string[]) : [];
+        if (whenTrue !== undefined && whenFalse !== undefined) {
+            return [whenTrue, whenFalse];
+        }
     }
 
     return [];
+}
+
+/** Resolve local bindings without reading imports, libraries, tsconfig, or checking diagnostics. */
+function registrationValues(source: ts.SourceFile): (node: ts.Expression | undefined) => string[] {
+    const host: ts.CompilerHost = {
+        getSourceFile: (file) => (file === source.fileName ? source : undefined),
+        getDefaultLibFileName: () => "",
+        writeFile: () => {},
+        getCurrentDirectory: () => "",
+        getDirectories: () => [],
+        fileExists: (file) => file === source.fileName,
+        readFile: () => undefined,
+        getCanonicalFileName: (file) => file,
+        useCaseSensitiveFileNames: () => true,
+        getNewLine: () => "\n",
+    };
+    const program = ts.createProgram([source.fileName], { noLib: true, noResolve: true }, host);
+    const checker = program.getTypeChecker();
+    const bindings = new Map<ts.Symbol, string[]>();
+
+    walk(source, (node) => {
+        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+            const symbol = checker.getSymbolAtLocation(node.name);
+
+            if (symbol) {
+                const values = literalValues(node.initializer);
+                const previous = bindings.get(symbol);
+                bindings.set(
+                    symbol,
+                    previous ? (previous.length && values.length ? [...previous, ...values] : []) : values
+                );
+            }
+        }
+    });
+
+    // Union literal writes to a binding; any dynamic or compound write invalidates inference for that binding.
+    const recordWrite = (target: ts.Expression, values: string[]): void => {
+        const inner = unwrap(target);
+
+        if (ts.isIdentifier(inner)) {
+            const symbol = ts.isShorthandPropertyAssignment(inner.parent)
+                ? checker.getShorthandAssignmentValueSymbol(inner.parent)
+                : checker.getSymbolAtLocation(inner);
+            const previous = symbol && bindings.get(symbol);
+
+            if (symbol && previous) {
+                bindings.set(symbol, previous.length && values.length ? [...previous, ...values] : []);
+            }
+        } else if (ts.isArrayLiteralExpression(inner)) {
+            for (const element of inner.elements) {
+                recordWrite(element, []);
+            }
+        } else if (ts.isObjectLiteralExpression(inner)) {
+            for (const property of inner.properties) {
+                if (ts.isShorthandPropertyAssignment(property)) {
+                    recordWrite(property.name, []);
+                } else if (ts.isPropertyAssignment(property)) {
+                    recordWrite(property.initializer, []);
+                } else if (ts.isSpreadAssignment(property)) {
+                    recordWrite(property.expression, []);
+                }
+            }
+        } else if (ts.isSpreadElement(inner)) {
+            recordWrite(inner.expression, []);
+        } else if (ts.isBinaryExpression(inner) && inner.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+            recordWrite(inner.left, []);
+        }
+    };
+
+    walk(source, (node) => {
+        if (
+            ts.isBinaryExpression(node) &&
+            node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+            node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+        ) {
+            recordWrite(
+                node.left,
+                node.operatorToken.kind === ts.SyntaxKind.EqualsToken ? literalValues(node.right) : []
+            );
+        } else if (
+            (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+            (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+        ) {
+            recordWrite(node.operand, []);
+        } else if (
+            (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+            !ts.isVariableDeclarationList(node.initializer)
+        ) {
+            recordWrite(node.initializer, []);
+        }
+    });
+
+    return (node) => {
+        const inner = node && unwrap(node);
+
+        if (inner && ts.isIdentifier(inner)) {
+            const symbol = checker.getSymbolAtLocation(inner);
+
+            return (symbol && bindings.get(symbol)) ?? [];
+        }
+
+        return literalValues(node);
+    };
 }
 
 /** Records the command words a source file registers; returns the modules it imports, static and dynamic. */
 function scanSourceFile(path: string, into: Registrations): string[] {
     const { source } = parseSource(path, readFileSync(path, "utf8"));
     const modules: string[] = [];
-    // `const verb = on ? "enable" : "disable"; mods.command(verb)` registers both words. A name whose value is
-    // not a literal stays unknown, as before.
-    const constants = new Map<string, string[]>();
+    let resolveBinding: ReturnType<typeof registrationValues> | undefined;
+    const valuesOf = (node: ts.Expression | undefined): string[] => {
+        if (node && ts.isIdentifier(unwrap(node))) {
+            resolveBinding ??= registrationValues(source);
+            return resolveBinding(node);
+        }
+
+        return literalValues(node);
+    };
 
     const add = (declared: string | undefined): void => {
         const word = declared?.split(/\s+/)[0];
@@ -370,14 +486,6 @@ function scanSourceFile(path: string, into: Registrations): string[] {
     };
 
     walk(source, (node) => {
-        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-            const values = literalValues(node.initializer);
-
-            if (values.length > 0) {
-                constants.set(node.name.text, values);
-            }
-        }
-
         if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
             const specifier = stringValue(node.moduleSpecifier);
 
@@ -403,9 +511,7 @@ function scanSourceFile(path: string, into: Registrations): string[] {
             const [first] = node.arguments;
 
             if (name && REGISTERING_CALLS.has(name)) {
-                const named = first && ts.isIdentifier(first) ? constants.get(first.text) : undefined;
-
-                for (const value of named ?? [stringValue(first)]) {
+                for (const value of valuesOf(first)) {
                     add(value);
                 }
             } else if (name === "aliases" && first && ts.isArrayLiteralExpression(first)) {
@@ -416,10 +522,10 @@ function scanSourceFile(path: string, into: Registrations): string[] {
                 (name === "argument" || name === "arguments") &&
                 ts.isPropertyAccessExpression(node.expression)
             ) {
-                const word = chainedCommandWord(node.expression.expression);
-
-                if (word) {
-                    into.takesArguments.add(word);
+                for (const word of chainedCommandWords({ expression: node.expression.expression, valuesOf })) {
+                    if (COMMAND_WORD.test(word)) {
+                        into.takesArguments.add(word);
+                    }
                 }
             }
 

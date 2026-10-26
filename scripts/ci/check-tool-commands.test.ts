@@ -162,6 +162,101 @@ describe("checkTree", () => {
         expect(errors[0]).toContain("src/other/index.ts:3");
     });
 
+    test.each([
+        'const verb = "enable" as const; program.command(verb);',
+        'const verb = (on ? ("enable" as const) : ("disable" as const)); program.command(verb);',
+        'program.command(("enable" as const));',
+    ])("unwraps literal registrations: %s", (registration) => {
+        const root = tree({
+            tools: "const TOOL_ALIASES = new Map([]);",
+            "src/foo/index.ts": registration,
+            "src/other/index.ts": 'toolCommand("foo enable"); toolCommand("foo gone");',
+        });
+        const errors = checkTree(root, ["src/foo/index.ts", "src/other/index.ts"]);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('no command "gone"');
+    });
+
+    test.each([
+        'let verb = "enable"; verb = "disable"; program.command(verb);',
+        'let verb = "enable"; if (on) { verb = "disable"; } program.command(verb);',
+        'let verb = "enable"; function update() { verb = "disable"; } program.command(verb);',
+    ])("tracks literal writes to the same binding: %s", (registration) => {
+        const root = tree({
+            tools: "const TOOL_ALIASES = new Map([]);",
+            "src/foo/index.ts": registration,
+            "src/other/index.ts": 'toolCommand("foo enable"); toolCommand("foo disable"); toolCommand("foo gone");',
+        });
+        const errors = checkTree(root, ["src/foo/index.ts", "src/other/index.ts"]);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('no command "gone"');
+    });
+
+    test.each([
+        'let verb = "enable"; verb = dynamic; program.command(verb);',
+        'let verb = "enable"; verb += "d"; program.command(verb);',
+        'let verb = "enable"; ({verb} = dynamic); program.command(verb);',
+        'let verb = "enable"; [verb] = dynamic; program.command(verb);',
+        'let verb = "enable"; for (verb of dynamic) {} program.command(verb);',
+        'const verb = on ? "enable" : dynamic; program.command(verb);',
+    ])("does not infer a registration after a dynamic write: %s", (registration) => {
+        const root = tree({
+            tools: "const TOOL_ALIASES = new Map([]);",
+            "src/foo/index.ts": `program.command("status"); ${registration}`,
+            "src/other/index.ts": 'toolCommand("foo status"); toolCommand("foo enable");',
+        });
+        const errors = checkTree(root, ["src/foo/index.ts", "src/other/index.ts"]);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('no command "enable"');
+    });
+
+    test.each(["argument", "arguments"])("resolves literal choices for chained .%s()", (method) => {
+        const root = tree({
+            tools: "const TOOL_ALIASES = new Map([]);",
+            "src/foo/index.ts": `const verb = on ? "enable" : "disable"; program.command((verb)).description("toggle").${method}("<name>");`,
+            "src/other/index.ts":
+                'toolCommand("foo enable alice"); toolCommand("foo disable bob"); toolCommand("foo gone alice");',
+        });
+        const errors = checkTree(root, ["src/foo/index.ts", "src/other/index.ts"]);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('no command "gone"');
+    });
+
+    test.each([
+        'function a() { const verb = "removed"; } function b(verb: string) { program.command(verb); }',
+        'const verb = "removed"; { const verb = dynamic; program.command(verb); }',
+        'const verb = "removed"; function b({verb}: Options) { program.command(verb); }',
+        'const verb = "removed"; try {} catch (verb) { program.command(verb); }',
+        'const verb = "removed"; { program.command(verb); const verb = dynamic; }',
+    ])("does not leak registrations across lexical bindings: %s", (registration) => {
+        const root = tree({
+            tools: "const TOOL_ALIASES = new Map([]);",
+            "src/foo/index.ts": `program.command("status"); ${registration}`,
+            "src/other/index.ts": 'toolCommand("foo status"); toolCommand("foo removed");',
+        });
+        const errors = checkTree(root, ["src/foo/index.ts", "src/other/index.ts"]);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('no command "removed"');
+    });
+
+    test("keeps outer bindings after leaving a block and ignores writes to a shadow", () => {
+        const root = tree({
+            tools: "const TOOL_ALIASES = new Map([]);",
+            "src/foo/index.ts":
+                'const verb = "enable"; { let verb = "unused"; verb = dynamic; } function b() { program.command(verb); }',
+            "src/other/index.ts": 'toolCommand("foo enable"); toolCommand("foo unused");',
+        });
+        const errors = checkTree(root, ["src/foo/index.ts", "src/other/index.ts"]);
+
+        expect(errors).toHaveLength(1);
+        expect(errors[0]).toContain('no command "unused"');
+    });
+
     test("accepts a command registered in a @genesiscz/utils module the tool imports", () => {
         const root = tree({
             tools: "const TOOL_ALIASES = new Map([]);",
