@@ -1,10 +1,12 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { clearDatabaseReadSnapshots } from "@genesiscz/utils/database/read-snapshot";
 import { openHubDb } from "../data-db";
 import { hubArgs, hubUrl } from "../open";
-import { listNav, navKeep, recordNav, setNavKeep } from "./store";
+import { listNav, navKeep, readNav, recordNav, setNavKeep } from "./store";
 import { navTargetProblem, navTitle, parseNavInput } from "./target";
 import { type NavEntry, normalizeTarget } from "./types";
 
@@ -154,6 +156,55 @@ describe("what tools hub nav open names", () => {
 });
 
 describe("hub data.db", () => {
+    it("lists an absent store without creating directories or importing the legacy database", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-hub-read-"));
+        try {
+            const absent = join(dir, "missing", "data.db");
+            expect(readNav({ dbPath: absent })).toEqual({ entries: [], keep: 200 });
+            expect(existsSync(join(dir, "missing"))).toBe(false);
+            const legacy = join(dir, "navigation.db");
+            const old = openHubDb(legacy);
+            recordNav(old, entry("legacy", 1));
+            old.close();
+            const before = readFileSync(legacy);
+            const names = readdirSync(dir).sort();
+            expect(readNav({ dbPath: join(dir, "data.db") })).toEqual({ entries: [], keep: 200 });
+            expect(readFileSync(legacy)).toEqual(before);
+            expect(readdirSync(dir).sort()).toEqual(names);
+        } finally {
+            clearDatabaseReadSnapshots();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("reads initialized history and an unmigrated database without modifying either", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-hub-read-"));
+        try {
+            const dbPath = join(dir, "data.db");
+            const db = openHubDb(dbPath);
+            recordNav(db, entry("a", 1), { keep: 20 });
+            recordNav(db, entry("b", 2));
+            db.close();
+            const bytes = readFileSync(dbPath);
+            const names = readdirSync(dir).sort();
+            expect(readNav({ dbPath, limit: 1 })).toEqual({ entries: [entry("b", 2)], keep: 20 });
+            expect(readFileSync(dbPath)).toEqual(bytes);
+            expect(readdirSync(dir).sort()).toEqual(names);
+            const emptyPath = join(dir, "unmigrated.db");
+            const unmigrated = new Database(emptyPath);
+            unmigrated.run("CREATE TABLE unrelated (id INTEGER)");
+            unmigrated.close();
+            const emptyBytes = readFileSync(emptyPath);
+            const emptyNames = readdirSync(dir).sort();
+            expect(readNav({ dbPath: emptyPath })).toEqual({ entries: [], keep: 200 });
+            expect(readFileSync(emptyPath)).toEqual(emptyBytes);
+            expect(readdirSync(dir).sort()).toEqual(emptyNames);
+        } finally {
+            clearDatabaseReadSnapshots();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
     it("the first open copies an old navigation.db in and renames it aside", () => {
         const dir = mkdtempSync(join(tmpdir(), "gt-hub-data-"));
         try {

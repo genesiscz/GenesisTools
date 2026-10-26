@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
+import { withDatabaseReadSnapshot } from "@genesiscz/utils/database/read-snapshot";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { hubDbPath } from "../data-db";
 import { isNavActor, NAV_DEFAULT_KEEP, type NavEntry, normalizeTarget } from "./types";
 
 interface NavRow {
@@ -30,6 +32,30 @@ function fromRow(row: NavRow): NavEntry {
     }
 
     return entry;
+}
+
+/** Reads a transient snapshot without creating, migrating or importing the durable store. */
+export function readNav({ dbPath = hubDbPath(), limit }: { dbPath?: string; limit?: number } = {}): {
+    entries: NavEntry[];
+    keep: number;
+} {
+    return withDatabaseReadSnapshot({
+        path: dbPath,
+        initialize: () => undefined,
+        read: (db) => {
+            const tables = db
+                .query<{ count: number }, []>(
+                    "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name IN ('nav_entries', 'nav_meta')"
+                )
+                .get();
+
+            if (tables?.count !== 2) {
+                return { entries: [], keep: NAV_DEFAULT_KEEP };
+            }
+
+            return { entries: listNav(db, limit), keep: navKeep(db) };
+        },
+    });
 }
 
 /** The cap the hub last set (its History setting), else the default. */

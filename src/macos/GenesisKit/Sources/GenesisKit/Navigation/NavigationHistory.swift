@@ -144,12 +144,14 @@ public struct NavigationHistory<Target: Codable & Hashable>: Equatable {
             annotated.at = at
             if !title.isEmpty { annotated.title = title }
             if let id, id != currentID {
+                backIDs.removeAll { $0 == id }
+                forwardIDs.removeAll { $0 == id }
                 // The id the agent's CLI already stored, so the store keeps one row for it.
                 annotated.replacedIDs = (annotated.replacedIDs ?? []) + [currentID]
                 annotated.id = id
                 self.currentID = id
             }
-            entries.remove(at: index)
+            entries.removeAll { $0.id == currentID || $0.id == annotated.id }
             entries.append(annotated)
             return annotated
         }
@@ -172,7 +174,9 @@ public struct NavigationHistory<Target: Codable & Hashable>: Equatable {
         }
         let made = Entry(id: id ?? UUID().uuidString, at: at, target: target, title: title, actor: actor,
                          agentSession: agentSession, note: note)
-        if let currentID {
+        backIDs.removeAll { $0 == made.id }
+        forwardIDs.removeAll { $0 == made.id }
+        if let currentID, currentID != made.id {
             backIDs.append(currentID)
         }
         forwardIDs.removeAll()

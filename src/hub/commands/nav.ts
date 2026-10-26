@@ -12,7 +12,7 @@ import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/uti
 import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import { hubDbPath, openHubDb } from "../lib/data-db";
-import { listNav, navKeep, recordNav, setNavKeep } from "../lib/navigation/store";
+import { readNav, recordNav, setNavKeep } from "../lib/navigation/store";
 import { navTargetProblem, navTitle, parseNavInput } from "../lib/navigation/target";
 import {
     isNavActor,
@@ -266,34 +266,28 @@ function navRecord(flags: NavRecordFlags): void {
 }
 
 function navList(flags: { json?: boolean; limit?: number }): void {
-    const db = openHubDb();
+    const { entries, keep } = readNav({ limit: flags.limit });
 
-    try {
-        const entries = listNav(db, flags.limit);
-
-        if (flags.json) {
-            out.result({ entries, keep: navKeep(db), path: hubDbPath() });
-            return;
-        }
-
-        renderCliHeader("Hub history", `${entries.length} places, newest first · ${hubDbPath()}`);
-        const table = createBoxTable(["WHEN", "WHO", "PLACE", "NOTE"]);
-        const tint = { user: pc.dim, agent: pc.magenta, link: pc.cyan } as const;
-
-        for (const entry of entries) {
-            table.push([
-                formatRelativeTime(new Date(entry.at)),
-                tint[entry.actor](entry.actor),
-                truncateDisplay(entry.title, 60),
-                truncateDisplay(entry.note ?? "", 60),
-            ]);
-        }
-
-        out.println(table.toString());
-        out.println(pc.dim(`Open one: ${toolCommand("hub nav open")} <link> --note "<why>"`));
-    } finally {
-        db.close();
+    if (flags.json) {
+        out.result({ entries, keep, path: hubDbPath() });
+        return;
     }
+
+    renderCliHeader("Hub history", `${entries.length} places, newest first · ${hubDbPath()}`);
+    const table = createBoxTable(["WHEN", "WHO", "PLACE", "NOTE"]);
+    const tint = { user: pc.dim, agent: pc.magenta, link: pc.cyan } as const;
+
+    for (const entry of entries) {
+        table.push([
+            formatRelativeTime(new Date(entry.at)),
+            tint[entry.actor](entry.actor),
+            truncateDisplay(entry.title, 60),
+            truncateDisplay(entry.note ?? "", 60),
+        ]);
+    }
+
+    out.println(table.toString());
+    out.println(pc.dim(`Open one: ${toolCommand("hub nav open")} <link> --note "<why>"`));
 }
 
 export function registerNavCommands(program: Command): void {

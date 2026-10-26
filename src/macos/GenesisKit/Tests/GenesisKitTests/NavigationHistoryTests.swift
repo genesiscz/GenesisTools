@@ -110,6 +110,44 @@ final class NavigationHistoryTests: XCTestCase {
         XCTAssertEqual(history.backEntry?.target, "a")
     }
 
+    func testResolvingAnAdoptedCLIEntryNeverPutsItBehindItself() {
+        let start = Date(timeIntervalSince1970: 100)
+        for hasLaunchPlace in [false, true] {
+            var history = History()
+            if hasLaunchPlace { history.visit("launch", title: "launch", id: "launch", at: start.addingTimeInterval(2)) }
+            history.adoptOlder([
+                NavigationEntry(id: "previous", at: start, target: "previous", title: "previous"),
+                NavigationEntry(id: "cli", at: start.addingTimeInterval(1), target: "raw-request", title: "requested", actor: .agent),
+            ])
+            history.visit("resolved", title: "resolved", actor: .agent, note: "why", id: "cli", at: start.addingTimeInterval(3))
+            XCTAssertEqual(history.currentID, "cli")
+            XCTAssertFalse(history.backIDs.contains("cli"))
+            XCTAssertFalse(history.forwardIDs.contains("cli"))
+            XCTAssertEqual(history.entries.filter { $0.id == "cli" }.count, 1)
+            if hasLaunchPlace { XCTAssertEqual(history.goBack()?.target, "launch") }
+            XCTAssertEqual(history.goBack()?.target, "previous")
+            XCTAssertNil(history.goBack())
+            if hasLaunchPlace { XCTAssertEqual(history.goForward()?.target, "launch") }
+            XCTAssertEqual(history.goForward()?.target, "resolved")
+            XCTAssertNil(history.goForward())
+        }
+    }
+
+    func testAnnotatingWithAnAdoptedCLIIdRemovesItsOldRowAndStackReference() {
+        var history = History()
+        history.visit("shown", title: "shown", id: "shown")
+        history.adoptOlder([
+            NavigationEntry(id: "previous", at: Date(timeIntervalSince1970: 1), target: "previous", title: "previous"),
+            NavigationEntry(id: "cli", at: Date(timeIntervalSince1970: 2), target: "raw-request", title: "requested"),
+        ])
+        history.visit("shown", title: "shown", actor: .agent, id: "cli")
+        XCTAssertEqual(history.entries.filter { $0.id == "cli" }.count, 1)
+        XCTAssertFalse(history.backIDs.contains("cli"))
+        XCTAssertEqual(history.goBack()?.target, "previous")
+        XCTAssertEqual(history.goForward()?.target, "shown")
+        XCTAssertNil(history.goForward())
+    }
+
     func testAnAgentOpeningWhatIsShownAnnotatesItInsteadOfAddingACopy() {
         var history = walk(["a", "b"])
         let annotated = history.visit("b", title: "", actor: .agent, note: "look here", id: "cli-id")
