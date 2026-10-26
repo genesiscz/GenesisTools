@@ -189,7 +189,7 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
                           {
                               ul: row.options.map(
                                   (option, index) =>
-                                      `${letter(index)}) ${option}${row.recommended === letter(index) ? " (recommended)" : ""}`
+                                      `${letter(index)}) ${optionLabel(option, letter(index))}${row.recommended === letter(index) ? " (recommended)" : ""}`
                               ),
                           },
                       ]
@@ -227,10 +227,24 @@ export function optionLetters(option: string | undefined | null): string[] {
     return [...new Set((option ?? "").toLowerCase().replace(/[^a-z]/g, ""))].sort();
 }
 
+/**
+ * An option's label without the letter the agent wrote in front of it ("b) build it first" is "build it first"), so
+ * the line's own pick prefix does not repeat it: "b) b) build it first" reached a session on 2026-10-26.
+ */
+function optionLabel(label: string, letter: string): string {
+    const prefix = new RegExp(`^\\(?${letter}[).:]\\s*`, "i");
+    return label.replace(prefix, "");
+}
+
 /** Preserves the card title and ledger identity before the user's literal answer or option labels. */
 export function decisionLine(row: DecisionRecord): string {
     const letters = optionLetters(row.option);
-    const labels = letters.map((letter) => row.options[letter.charCodeAt(0) - 97]).filter(Boolean);
+    const labels = letters
+        .map((letter) => {
+            const label = row.options[letter.charCodeAt(0) - 97];
+            return label ? optionLabel(label, letter) : undefined;
+        })
+        .filter(Boolean);
     const text = row.answer?.trim() || labels.join(" / ");
     const picks = letters.map((letter) => `${letter}) `).join("");
 

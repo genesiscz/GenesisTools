@@ -700,6 +700,23 @@ describe("decision kinds, batch updates, harvest and staleness", () => {
         expect(decisionLine({ ...row, option: undefined })).toBe("DECISION 4: keep, and log it");
     });
 
+    test("an option the agent lettered itself is not lettered twice", () => {
+        const row = {
+            ...foreignRow("abc", 23),
+            title: "Build order",
+            options: ["a) run it now", "b) build the tool first, then run it for today"],
+            option: "b",
+        };
+
+        expect(decisionLine(row)).toBe(
+            "Reply to: Build order\nLedger decision 23 (d_23_abc)\nb) build the tool first, then run it for today"
+        );
+        expect(decisionLine({ ...row, options: ["(a) now", "B. later"], option: "ab" })).toContain("a) b) now / later");
+        expect(decisionsMarkdown([{ ...row, option: undefined, recommended: "b" }])).toContain(
+            "- a) run it now\n- b) build the tool first, then run it for today (recommended)"
+        );
+    });
+
     test("a titled card retains its chat label separately from its allocated ledger number", () => {
         const row = {
             ...foreignRow("original-session", 2),
