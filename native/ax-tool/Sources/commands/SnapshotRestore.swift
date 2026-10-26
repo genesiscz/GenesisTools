@@ -36,6 +36,9 @@ func cmdRestore(snapshotJson: String) {
         errorExit("invalid snapshot JSON")
     }
 
+    // Restoring a saved snapshot can take focus or move the pointer while the user works too.
+    gatedOrExit { try checkForegroundAllowed() }
+
     if let mouse = snap["mouse"] as? [String: Double],
        let mx = mouse["x"], let my = mouse["y"] {
         let point = CGPoint(x: mx, y: my)

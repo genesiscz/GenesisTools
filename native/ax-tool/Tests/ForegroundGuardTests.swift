@@ -5,22 +5,55 @@ import XCTest
 /// user's focus again and again while they typed in another app).
 final class ForegroundGuardTests: XCTestCase {
     func testRecentUserInputMeansTheUserIsActive() {
-        XCTAssertTrue(userIsActive(idleSeconds: 0.4, ownInputAgo: nil, threshold: 5))
-        XCTAssertTrue(userIsActive(idleSeconds: 4.9, ownInputAgo: 30, threshold: 5))
+        XCTAssertTrue(userIsActive(idleSeconds: 0.4, threshold: 5))
+        XCTAssertTrue(userIsActive(idleSeconds: 4.9, threshold: 5))
     }
 
     func testAQuietUserOrATurnedOffCheckIsNotActive() {
-        XCTAssertFalse(userIsActive(idleSeconds: 5, ownInputAgo: nil, threshold: 5))
-        XCTAssertFalse(userIsActive(idleSeconds: 60, ownInputAgo: nil, threshold: 5))
-        XCTAssertFalse(userIsActive(idleSeconds: 0.1, ownInputAgo: nil, threshold: 0))
-        XCTAssertFalse(userIsActive(idleSeconds: .infinity, ownInputAgo: nil, threshold: 5))
+        XCTAssertFalse(userIsActive(idleSeconds: 5, threshold: 5))
+        XCTAssertFalse(userIsActive(idleSeconds: 60, threshold: 5))
+        XCTAssertFalse(userIsActive(idleSeconds: 0.1, threshold: 0))
+        XCTAssertFalse(userIsActive(idleSeconds: .infinity, threshold: 5))
     }
 
-    /// The window server counts the agent's own synthetic click as input; it must not read as the user.
-    func testTheAgentsOwnLastPostIsNotTheUser() {
-        XCTAssertFalse(userIsActive(idleSeconds: 1.0, ownInputAgo: 1.0, threshold: 5))
-        XCTAssertFalse(userIsActive(idleSeconds: 0.9, ownInputAgo: 1.1, threshold: 5), "within the 0.3 s slack")
-        XCTAssertTrue(userIsActive(idleSeconds: 0.5, ownInputAgo: 2.0, threshold: 5), "the user typed after the agent")
+    func testSyntheticInputNeverClearsRecentHumanActivity() {
+        // Human input at t=0, then a background synthetic post at t=1. The server reports
+        // the latter's age, which must not erase the human activity still inside the quiet time.
+        XCTAssertTrue(userIsActive(idleSeconds: 0.01, threshold: 5))
+        XCTAssertTrue(userIsActive(idleSeconds: 0.1, threshold: 5), "human input just after a post is active too")
+        XCTAssertFalse(userIsActive(idleSeconds: 5, threshold: 5), "a full quiet period still permits foreground work")
+    }
+
+    func testGlobalDispatchRefusesEvenWhenTheTargetIsAlreadyFrontmost() throws {
+        var sent = 0
+        var checked = 0
+        let gate = ForegroundInputGate(check: {
+            checked += 1
+            throw UserActiveError(idleSeconds: 0.1, threshold: 5)
+        })
+        XCTAssertThrowsError(try gate.dispatch(background: false) { sent += 1 })
+        XCTAssertEqual(checked, 1)
+        XCTAssertEqual(sent, 0)
+        try gate.dispatch(background: true) { sent += 1 }
+        XCTAssertEqual(checked, 1, "contained background input is allowed while the user works")
+        XCTAssertEqual(sent, 1)
+        XCTAssertThrowsError(try gate.dispatch(background: false) { sent += 1 })
+        XCTAssertEqual(sent, 1, "a background post must not admit a later global post")
+    }
+
+    func testAnAdmittedCommandCanFinishItsDoubleClickOrKeyChord() throws {
+        var checked = 0
+        var sent = 0
+        let gate = ForegroundInputGate(check: {
+            checked += 1
+            if checked > 1 {
+                throw UserActiveError(idleSeconds: 0.01, threshold: 5)
+            }
+        })
+        try gate.dispatch(background: false) { sent += 1 }
+        try gate.dispatch(background: false) { sent += 1 }
+        XCTAssertEqual(checked, 1, "the first post resets the server's idle counter")
+        XCTAssertEqual(sent, 2)
     }
 
     func testOnlyTheRunnerTurnsTheGuardOnAndATypoKeepsTheDefault() {

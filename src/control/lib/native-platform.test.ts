@@ -45,3 +45,44 @@ test("explicit AXShowMenu checks takeover after its baseline and immediately bef
         /let baseline = workflowMenuBaseline\([^\n]+\)\s+try inputGate\.check\(\)\s+let outcome = workflowShowMenu\([^;]+baseline: baseline\)/
     );
 });
+
+test("legacy global input checks foreground permission independently of app activation", () => {
+    const source = readFileSync(
+        join(import.meta.dir, "../../../native/ax-tool/Sources/commands/Harness.swift"),
+        "utf8"
+    );
+    for (const method of ["postRouted()", "pressRouted(release up: CGEvent)"]) {
+        const start = source.indexOf(`func ${method}`);
+        expect(start).toBeGreaterThan(-1);
+        const body = source.slice(start, source.indexOf("\n    }", start));
+        expect(body).toMatch(
+            /foregroundInputGate\.dispatch\(background: argValue\("--to-pid"\) != nil\)\s*\{\s*try inputGate\.(?:post|press)\(/
+        );
+    }
+    const gate = readFileSync(join(import.meta.dir, "../../../native/ax-tool/Sources/utils/InputGate.swift"), "utf8");
+    expect(gate).toContain("ForegroundInputGate(check: checkForegroundAllowed)");
+    expect(gate).toMatch(/catch let refusal as UserActiveError\s*\{\s*userActiveExit\(refusal\)/);
+    expect(gate).not.toContain("last-synthetic-input");
+});
+
+test("snapshot restore checks foreground permission before pointer or app changes", () => {
+    const source = readFileSync(
+        join(import.meta.dir, "../../../native/ax-tool/Sources/commands/SnapshotRestore.swift"),
+        "utf8"
+    );
+    const restore = source.slice(source.indexOf("func cmdRestore("));
+    const guard = restore.indexOf("gatedOrExit { try checkForegroundAllowed() }");
+    expect(guard).toBeGreaterThan(-1);
+    expect(restore.indexOf("CGWarpMouseCursorPosition")).toBeGreaterThan(guard);
+    expect(restore.indexOf("runningApp.activate(")).toBeGreaterThan(guard);
+});
+
+test("single-window recording validates exclusions before creating a capture stream", () => {
+    const source = readFileSync(join(import.meta.dir, "../../../native/ax-tool/Sources/Record.swift"), "utf8");
+    const guard = source.indexOf(
+        "try validateRecordingWindow(target.id, excluding: options.selection.excludedWindowIDs)"
+    );
+    expect(guard).toBeGreaterThan(-1);
+    expect(source.indexOf("windowTarget = target")).toBeGreaterThan(guard);
+    expect(source.indexOf("SCContentFilter(desktopIndependentWindow: window)")).toBeGreaterThan(guard);
+});

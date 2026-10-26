@@ -7,6 +7,14 @@ import XCTest
 /// synthetic frames. A whole-recording stall from one window shows up here as `readyToRender`
 /// or `paintOrder` going wrong, without ScreenCaptureKit.
 final class IsolatedCompositionTests: XCTestCase {
+    func testSingleWindowCaptureRefusesAnExcludedTarget() {
+        XCTAssertThrowsError(try validateRecordingWindow(42, excluding: [42, 43])) { error in
+            XCTAssertTrue(error.localizedDescription.contains("window 42 is excluded by --exclude-window-ids"))
+        }
+        XCTAssertNoThrow(try validateRecordingWindow(42, excluding: [43]))
+        XCTAssertNoThrow(try validateRecordingWindow(42, excluding: []))
+    }
+
     private let left = CGRect(x: 0, y: 0, width: 10, height: 10)
     private let right = CGRect(x: 5, y: 0, width: 10, height: 10)
 

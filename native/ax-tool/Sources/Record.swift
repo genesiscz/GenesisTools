@@ -520,6 +520,11 @@ func cmdCaptureScreen() {
     switch options.mode {
     case "window":
         let target = resolveRecordWindow(options)
+        do {
+            try validateRecordingWindow(target.id, excluding: options.selection.excludedWindowIDs)
+        } catch {
+            errorExit(error.localizedDescription)
+        }
         windowTarget = target
         display = displayContaining(CGPoint(x: target.bounds.midX, y: target.bounds.midY))
     case "region":

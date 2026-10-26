@@ -31,7 +31,8 @@ private func pointerTakeover() -> Bool {
 }
 
 /// The gate every synthetic event of this process passes through.
-let inputGate = SyntheticInputGate(tookOver: pointerTakeover, onPost: recordOwnInput)
+let inputGate = SyntheticInputGate(tookOver: pointerTakeover)
+let foregroundInputGate = ForegroundInputGate(check: checkForegroundAllowed)
 
 private let foregroundEnvironment = ProcessInfo.processInfo.environment
 /// Read once per process: the agent's run cannot change these under a running command.
@@ -47,45 +48,6 @@ private func inputIdleSeconds() -> TimeInterval {
     return types.map { CGEventSource.secondsSinceLastEventType(.hidSystemState, eventType: $0) }.min() ?? .infinity
 }
 
-/// When any process of this tool last posted a synthetic event. The window server counts those as
-/// input, and an agent's own previous click must not read as the user working.
-private let ownInputFile: URL = {
-    let home = foregroundEnvironment["GENESIS_TOOLS_HOME"].map { URL(fileURLWithPath: $0) }
-        ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".genesis-tools")
-    return home.appendingPathComponent("control").appendingPathComponent("last-synthetic-input")
-}()
-private var ownInputWrittenAt: TimeInterval = 0
-
-/// At most one write per quarter second; the guard's 0.3 s slack covers the posts in between.
-private func recordOwnInput() {
-    guard foregroundCheckEnabled else {
-        return
-    }
-
-    let now = Date().timeIntervalSince1970
-    guard now - ownInputWrittenAt >= 0.25 else {
-        return
-    }
-
-    ownInputWrittenAt = now
-    do {
-        try FileManager.default.createDirectory(at: ownInputFile.deletingLastPathComponent(),
-                                                withIntermediateDirectories: true)
-        try String(now).write(to: ownInputFile, atomically: true, encoding: .utf8)
-    } catch {
-        fputs("could not record the time of this tool's own input: \(error.localizedDescription)\n", stderr)
-    }
-}
-
-private func ownInputAgo() -> TimeInterval? {
-    guard let text = try? String(contentsOf: ownInputFile, encoding: .utf8),
-          let at = Double(text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
-        return nil
-    }
-
-    return Date().timeIntervalSince1970 - at
-}
-
 /// Refuses to bring an app to the front or move the pointer while the user is at the keyboard or mouse,
 /// when an agent drives this tool. Call it before the first change, so a refusal sent nothing.
 func checkForegroundAllowed() throws {
@@ -94,7 +56,7 @@ func checkForegroundAllowed() throws {
     }
 
     let idle = inputIdleSeconds()
-    guard userIsActive(idleSeconds: idle, ownInputAgo: ownInputAgo(), threshold: foregroundThreshold) else {
+    guard userIsActive(idleSeconds: idle, threshold: foregroundThreshold) else {
         return
     }
 
@@ -122,6 +84,8 @@ func gatedOrExit<T>(_ body: () throws -> T) -> T {
         return try body()
     } catch let takeover as UserTakeoverError {
         takeoverExit(takeover)
+    } catch let refusal as UserActiveError {
+        userActiveExit(refusal)
     } catch {
         errorExit(error.localizedDescription)
     }

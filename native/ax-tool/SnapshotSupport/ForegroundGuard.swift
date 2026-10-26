@@ -32,19 +32,30 @@ public func foregroundAllowedByEnvironment(_ environment: [String: String]) -> B
     return ["1", "true", "yes", "on"].contains(raw)
 }
 
-/// True when the newest key, click, move or scroll is the user's and came within `threshold` seconds.
-/// The window server counts this tool's own synthetic events as input too, so an event no newer than its
-/// last post (`ownInputAgo`, with 0.3 s of slack for the throttled record) is the agent's, not the user's.
-public func userIsActive(idleSeconds: TimeInterval, ownInputAgo: TimeInterval?, threshold: TimeInterval) -> Bool {
-    guard threshold > 0, idleSeconds.isFinite, idleSeconds >= 0, idleSeconds < threshold else {
-        return false
+/// Any recent input keeps the guard closed. The window server's idle counter includes synthetic
+/// posts, so subtracting our last post could hide a human event immediately before or after it.
+/// Conservatively, synthetic input can extend the quiet time but can never shorten it.
+public func userIsActive(idleSeconds: TimeInterval, threshold: TimeInterval) -> Bool {
+    threshold > 0 && idleSeconds.isFinite && idleSeconds >= 0 && idleSeconds < threshold
+}
+
+/// Admit a command's first global event independently of whether its app is already frontmost.
+/// Later events in that command must not refuse on the idle counter its own first event reset.
+public final class ForegroundInputGate {
+    private let check: () throws -> Void
+    private var admitted = false
+
+    public init(check: @escaping () throws -> Void) {
+        self.check = check
     }
 
-    if let own = ownInputAgo, idleSeconds >= own - 0.3 {
-        return false
+    public func dispatch<T>(background: Bool, _ send: () throws -> T) throws -> T {
+        if !background && !admitted {
+            try check()
+            admitted = true
+        }
+        return try send()
     }
-
-    return true
 }
 
 /// The user is at the keyboard or mouse, so this call did not take focus. Never retried automatically.

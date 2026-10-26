@@ -3,6 +3,13 @@ import CoreImage
 import CoreMedia
 import Foundation
 
+/// A single-window stream cannot filter its own target out. Refuse before starting capture.
+public func validateRecordingWindow(_ id: CGWindowID, excluding excluded: Set<CGWindowID>) throws {
+    guard !excluded.contains(id) else {
+        throw WorkflowArgumentError.invalid("window \(id) is excluded by --exclude-window-ids; choose another capture target")
+    }
+}
+
 /// One selected window of an isolated recording. `Frame` is the last complete ScreenCaptureKit
 /// surface in the recorder and a synthetic image in tests: the visibility, readiness and
 /// stacking rules never look inside it.

@@ -21,13 +21,21 @@ import Vision
 extension CGEvent {
     /// One checked event (a wheel step, a move). A user takeover ends the command before it posts.
     func postRouted() {
-        gatedOrExit { try inputGate.post(deliverRouted) }
+        gatedOrExit {
+            try foregroundInputGate.dispatch(background: argValue("--to-pid") != nil) {
+                try inputGate.post(deliverRouted)
+            }
+        }
     }
 
     /// A checked down whose up is `release`. The up goes out through `inputGate.release`, or
     /// through the gate itself if the user takes over first, so nothing is left held.
     func pressRouted(release up: CGEvent) -> SyntheticInputGate.Held {
-        gatedOrExit { try inputGate.press(deliverRouted, release: up.deliverRouted) }
+        gatedOrExit {
+            try foregroundInputGate.dispatch(background: argValue("--to-pid") != nil) {
+                try inputGate.press(deliverRouted, release: up.deliverRouted)
+            }
+        }
     }
 
     /// The raw delivery, with no takeover check: only the gate calls this.
