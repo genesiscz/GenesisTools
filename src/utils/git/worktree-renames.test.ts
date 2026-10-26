@@ -89,7 +89,10 @@ describe("pairStatusRenames", () => {
             expect(Buffer.byteLength(item.working)).not.toBe(Buffer.byteLength(item.blob));
             const status = await createGit({ cwd: root }).status({ untracked: "all" });
             const entries = await pairStatusRenames(root, status.entries);
-            expect(entries.find((entry) => entry.path === "moved.md")).toMatchObject({ origPath: "old.md", worktree: "R" });
+            expect(entries.find((entry) => entry.path === "moved.md")).toMatchObject({
+                origPath: "old.md",
+                worktree: "R",
+            });
             expect(entries.some((entry) => entry.path === "old.md")).toBe(false);
         });
     }

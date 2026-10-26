@@ -219,7 +219,10 @@ export async function findWorktreeRenames(opts: {
         return [];
     }
 
-    const normalizing = await normalizingPaths(root, opts.untracked.filter((path) => !path.includes("\n")));
+    const normalizing = await normalizingPaths(
+        root,
+        opts.untracked.filter((path) => !path.includes("\n"))
+    );
     const candidates: string[] = [];
 
     for (const path of opts.untracked) {
