@@ -106,6 +106,27 @@ final class DaemonSettingsTests: XCTestCase {
         XCTAssertEqual(DaemonFormat.percent(0.07445442875481387), "7.4%")
     }
 
+    func testDelayedRetryAcknowledgementPreservesNewerTypingAndSubmissions() {
+        var draft = "11:00"
+        var submitted = draft
+        draft = "13:00"
+        draft = DaemonRetryTimeDraft.reconciled(draft, old: "10:00", stored: "11:00",
+                                               submitted: submitted, isFocused: true)
+        XCTAssertEqual(draft, "13:00", "the delayed 11:00 save must not replace newer unsaved text")
+
+        submitted = draft
+        draft = DaemonRetryTimeDraft.reconciled(draft, old: "10:00", stored: "11:00",
+                                               submitted: submitted, isFocused: true)
+        XCTAssertEqual(draft, "13:00", "an earlier response must not acknowledge the newer submitted value")
+        XCTAssertFalse(DaemonRetryTimeDraft.acknowledges("11:00", submitted: submitted))
+        XCTAssertTrue(DaemonRetryTimeDraft.acknowledges("13:00", submitted: submitted))
+        XCTAssertEqual(DaemonRetryTimeDraft.reconciled("11:00,13:00", old: "10:00", stored: "11:00, 13:00",
+                                                      submitted: "11:00,13:00", isFocused: true), "11:00, 13:00")
+        XCTAssertEqual(DaemonRetryTimeDraft.reconciled("11:00", old: "10:00", stored: "10:00",
+                                                      submitted: "11:00", isFocused: true), "11:00",
+                       "an unrelated task update keeps the pending draft")
+    }
+
     @MainActor
     func testWritesToOneTaskWaitForEachOtherWhileAnotherTaskCanSave() async throws {
         let status = try JSONDecoder().decode(DaemonStatusPayload.self, from: Data(statusJSON.utf8))
@@ -130,13 +151,17 @@ final class DaemonSettingsTests: XCTestCase {
             return .success(Data("{}".utf8))
         }
         store.set(task, ["--every", "first"])
+        XCTAssertEqual(store.savingTasks, [task.name], "controls disable synchronously when a save is submitted")
         store.set(task, ["--every", "second"])
         store.set(other, ["--every", "independent"])
         await fulfillment(of: [firstStarted, otherStarted], timeout: 1)
         XCTAssertEqual(calls.filter { $0[3] == task.name }.count, 1)
+        XCTAssertTrue(store.savingTasks.contains(task.name), "the task stays disabled while another write is queued")
         release?.resume(returning: .success(Data("{}".utf8)))
         await fulfillment(of: [secondStarted], timeout: 1)
         XCTAssertEqual(calls.filter { $0[3] == task.name }.map { $0[5] }, ["first", "second"])
+        for _ in 0 ..< 100 where !store.savingTasks.isEmpty { await Task.yield() }
+        XCTAssertTrue(store.savingTasks.isEmpty, "controls re-enable after each task's final save finishes")
     }
 
     func testOptimisticCopyChangesOneField() throws {

@@ -9,6 +9,7 @@ import { missingManifestFiles, newBuildId, writeBuildInfo } from "@genesiscz/uti
 import { type DevReloadTarget, startDevReloadServer } from "@genesiscz/utils/browser-extension/dev-reload/server";
 import { extensionByKey } from "@genesiscz/utils/browser-extension/registry";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
+import { env } from "@genesiscz/utils/env";
 import { createWatcher } from "@genesiscz/utils/fs/watcher";
 import { logger } from "@genesiscz/utils/logger";
 import { BROWSER_DEVTOOLS_PORT, EXTENSION_TEST_BROWSER_PORT } from "@genesiscz/utils/net/ports";
@@ -169,7 +170,12 @@ export async function buildExtension(opts: { devReload?: boolean; targets?: stri
             stdio: ["inherit", "inherit", "inherit"],
             // A shell with NODE_ENV=development makes Vite emit jsxDEV calls next to production React, and the
             // panel throws "jsxDEV is not a function" before it draws.
-            env: { ...process.env, NODE_ENV: "production", EXT_TARGET: target, EXT_DEV: opts.devReload ? "1" : "0" },
+            env: {
+                ...env.getProcessEnv(),
+                NODE_ENV: "production",
+                EXT_TARGET: target,
+                EXT_DEV: opts.devReload ? "1" : "0",
+            },
         });
         const exit = await proc.exited;
 

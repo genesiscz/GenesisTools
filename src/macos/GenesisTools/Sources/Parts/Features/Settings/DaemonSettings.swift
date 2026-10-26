@@ -161,6 +161,7 @@ final class DaemonSettingsStore: ObservableObject {
     @Published private(set) var stats: DaemonStatsPayload?
     @Published private(set) var loading = false
     @Published private(set) var runningNow: Set<String> = []
+    @Published private(set) var savingTasks: Set<String> = []
     @Published private(set) var outputs: [String: DaemonRunOutput] = [:]
     @Published var message: String?
     @Published var messageIsError = false
@@ -245,6 +246,7 @@ final class DaemonSettingsStore: ObservableObject {
     func set(_ task: DaemonTaskConfig, _ flags: [String], optimistic: ((inout DaemonTaskConfig) -> Void)? = nil,
              onFailure: (() -> Void)? = nil) {
         writeGeneration += 1
+        savingTasks.insert(task.name)
         let previous = pendingWrites[task.name]?.work
         let id = UUID()
         let work = Task {
@@ -254,7 +256,10 @@ final class DaemonSettingsStore: ObservableObject {
                 optimistic(&status!.tasks[index])
             }
             defer {
-                if pendingWrites[task.name]?.id == id { pendingWrites[task.name] = nil }
+                if pendingWrites[task.name]?.id == id {
+                    pendingWrites[task.name] = nil
+                    savingTasks.remove(task.name)
+                }
             }
             switch await saveTask(["daemon", "config", "set", task.name] + flags + ["--json"]) {
             case .success(let data):
@@ -426,8 +431,13 @@ private struct DaemonTaskCard: View {
                     ))
                     .labelsHidden().toggleStyle(.switch).controlSize(.small)
                     .nativeSettingsDisabledLook()
+                    .disabled(store.savingTasks.contains(task.name))
                     .accessibilityIdentifier("daemon.\(task.name).enabled")
                 }
+            }
+            if store.savingTasks.contains(task.name) {
+                Text("Saving settings. Switches and pickers are available when this finishes.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if let stats {
                 DaemonStatsStrip(stats: stats)
@@ -544,6 +554,27 @@ enum DaemonMissedRun {
     }
 }
 
+enum DaemonRetryTimeDraft {
+    /// An acknowledgement adopts stored formatting only while the field still holds the submitted text.
+    static func reconciled(_ current: String, old: String, stored: String, submitted: String?, isFocused: Bool) -> String {
+        let acknowledged = submitted.map {
+            current.trimmingCharacters(in: .whitespaces) == $0 && normalized(stored) == normalized($0)
+        } ?? false
+        if !isFocused || current == old || (acknowledged && stored != old) {
+            return stored
+        }
+        return current
+    }
+
+    static func acknowledges(_ stored: String, submitted: String?) -> Bool {
+        submitted.map { normalized(stored) == normalized($0) } ?? false
+    }
+
+    private static func normalized(_ text: String) -> String {
+        text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: ",")
+    }
+}
+
 @MainActor
 private struct DaemonTaskEditor: View {
     let task: DaemonTaskConfig
@@ -577,6 +608,7 @@ private struct DaemonTaskEditor: View {
                             set: { seconds in
                                 store.set(task, ["--timeout-ms", String(seconds * 1000)]) { $0 = $0.with(timeoutMs: seconds * 1000) }
                             }))
+                        .disabled(store.savingTasks.contains(task.name))
                     Text("s").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
@@ -591,6 +623,7 @@ private struct DaemonTaskEditor: View {
                 }
                 .pickerStyle(.segmented).labelsHidden().frame(width: 210)
                 .accessibilityIdentifier("daemon.\(task.name).priority")
+                .disabled(store.savingTasks.contains(task.name))
             }
             NativeSettingsRow("Notifications", detail: "macOS banners for this task's runs.") {
                 Picker("Notifications", selection: Binding(
@@ -603,6 +636,7 @@ private struct DaemonTaskEditor: View {
                 }
                 .pickerStyle(.segmented).labelsHidden().frame(width: 240)
                 .accessibilityIdentifier("daemon.\(task.name).notify")
+                .disabled(store.savingTasks.contains(task.name))
             }
             NativeSettingsRow("Retries", detail: "Extra attempts after a failed run, a little later each time.") {
                 HStack(spacing: 8) {
@@ -617,6 +651,7 @@ private struct DaemonTaskEditor: View {
                     )
                     .labelsHidden()
                     .accessibilityIdentifier("daemon.\(task.name).retries")
+                    .disabled(store.savingTasks.contains(task.name))
                 }
             }
             if task.isTimeOfDay {
@@ -637,6 +672,7 @@ private struct DaemonTaskEditor: View {
                     }
                     .pickerStyle(.menu).labelsHidden().frame(width: 200)
                     .accessibilityIdentifier("daemon.\(task.name).missedRun")
+                    .disabled(store.savingTasks.contains(task.name))
                 }
                 if task.missedRun.mode == "retry-at" {
                     NativeSettingsRow("Times", detail: "Comma-separated, 24-hour HH:MM. Return or leaving the field saves; Esc puts it back.") {
@@ -656,7 +692,10 @@ private struct DaemonTaskEditor: View {
         .onChange(of: task) { old, _ in
             syncFields(from: old)
             if old.every != task.every { sentEvery = nil }
-            if Self.times(old) != Self.times(task) { sentRetryTimes = nil }
+            if Self.times(old) != Self.times(task),
+               DaemonRetryTimeDraft.acknowledges(Self.times(task), submitted: sentRetryTimes) {
+                sentRetryTimes = nil
+            }
         }
         // A click on another field or Tab saves what was typed, as Return does.
         .onChange(of: editing) { old, _ in
@@ -686,10 +725,8 @@ private struct DaemonTaskEditor: View {
     /// Takes the new task's values, except in a field that has the focus and holds an edit not saved yet.
     private func syncFields(from old: DaemonTaskConfig) {
         if editing != .every || every == old.every { every = task.every }
-        // Preserve a pending edit when another setting changes; accept an actual retry-time update in stored form.
-        if editing != .retryTimes || retryTimes == Self.times(old) || Self.times(task) != Self.times(old) {
-            retryTimes = Self.times(task)
-        }
+        retryTimes = DaemonRetryTimeDraft.reconciled(retryTimes, old: Self.times(old), stored: Self.times(task),
+                                                   submitted: sentRetryTimes, isFocused: editing == .retryTimes)
     }
 
     private func commit(_ field: Field?) {
