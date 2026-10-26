@@ -67,6 +67,12 @@ public final class WidgetModel: ObservableObject {
     /// A new inbox item the widget pops up by itself (an alert). The agents preview shows it until `showPeek`'s
     /// timer ends, or until the pointer leaves the panel when the user moved onto it.
     @Published public private(set) var peekItem: WidgetInboxItem?
+    /// Alerts that arrived while the popup was open, oldest first (Alerts → Several at once: listed or one after
+    /// another). The newest-replaces mode keeps it empty.
+    @Published public private(set) var peekQueue: [WidgetInboxItem] = []
+    /// How the open popup takes another alert, and how long it stays while the pointer is not on it (0: until closed).
+    public private(set) var peekMany: WidgetAlerts.PopupMany = .newest
+    private var peekSeconds: Double = 7
     private var peekTask: Task<Void, Never>?
     /// The module a peek replaced on its surface (`previous`, nil when none was chosen) and the one it showed. The
     /// end of the peek puts `previous` back, unless the selection is no longer `shown`: the user picked a module.
@@ -813,6 +819,7 @@ public final class WidgetModel: ObservableObject {
         hoverTask?.cancel()
         peekTask?.cancel()
         peekItem = nil
+        peekQueue = []
         open(surface.edge)
     }
 
@@ -853,9 +860,22 @@ public final class WidgetModel: ObservableObject {
             && (hoveredSurface == nil || hoveredSurface == surface)
     }
 
-    /// Pops `item` up in `surface`'s preview for `seconds`, unless the user is in a panel, a window or a drag. With
-    /// `module`, the surface shows that module for the peek and gets the user's own module back when the peek ends.
-    func showPeek(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, module: String? = nil, seconds: Double = 7) {
+    /// Pops `item` up in `surface`'s preview for `seconds` (0: until it is closed), unless the user is in a panel, a
+    /// window or a drag. With `module`, the surface shows that module for the peek and gets the user's own module back
+    /// when the peek ends. While a popup is open, `many` decides: the new item is listed under it or queued after it
+    /// (even with the pointer on the popup, since nothing moves under it), or it replaces the shown one.
+    func showPeek(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, module: String? = nil, seconds: Double = 7,
+                  many: WidgetAlerts.PopupMany = .newest) {
+        if let shown = peekItem, many != .newest, let peeked = hoveredSurface {
+            if shown.id != item.id, !peekQueue.contains(where: { $0.id == item.id }) { peekQueue.append(item) }
+            peekMany = many
+            peekSeconds = seconds
+            PerfLog.mark("widget.peek added id=\(item.id) mode=\(many.rawValue) waiting=\(peekQueue.count)")
+            // A new row gives the list its full time again; a queue keeps the shown alert's own countdown.
+            if many == .list { schedulePeekEnd(on: peeked) }
+            presentationChanged?()
+            return
+        }
         guard canPeek(on: surface) else { return }
         if let module, moduleSelections[surface.key] != module {
             if let replaced = peekReplaced, replaced.surface != surface { restorePeekModule() }
@@ -865,9 +885,21 @@ public final class WidgetModel: ObservableObject {
         }
         hoverTask?.cancel()
         peekItem = item
+        peekQueue = []
+        peekMany = many
+        peekSeconds = seconds
         hoveredSurface = surface
         presentationChanged?()
+        schedulePeekEnd(on: surface)
+    }
+
+    /// Starts the popup's countdown again. It ends the popup only while the pointer is off it; with 0 seconds the
+    /// popup stays until it is closed.
+    private func schedulePeekEnd(on surface: WidgetSurfaceID) {
         peekTask?.cancel()
+        peekTask = nil
+        guard peekSeconds > 0, let item = peekItem else { return }
+        let seconds = peekSeconds
         peekTask = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(seconds)) } catch { return }
             guard let self, self.peekItem == item, !self.pointerInside.contains(surface.key) else { return }
@@ -875,24 +907,52 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    /// The popup's close button, Esc and VoiceOver's escape: the popup ends without opening anything.
-    public func dismissPeek() {
+    /// A row of the popup's list of later alerts: that alert takes the popup, and the one shown takes its row.
+    public func showWaitingPeek(_ item: WidgetInboxItem) {
+        guard let shown = peekItem, let index = peekQueue.firstIndex(where: { $0.id == item.id }) else { return }
+        peekQueue[index] = shown
+        peekItem = item
+        PerfLog.mark("widget.peek swapped id=\(item.id) for=\(shown.id)")
+        presentationChanged?()
+    }
+
+    /// The popup's close button, Esc and VoiceOver's escape: the popup ends without opening anything. In the
+    /// one-after-another mode it shows the next alert instead, unless `all`; a click elsewhere closes all of them.
+    public func dismissPeek(all: Bool = false) {
         guard let item = peekItem else { return }
-        PerfLog.mark("widget.peek dismissed id=\(item.id)")
+        PerfLog.mark("widget.peek dismissed id=\(item.id) all=\(all)")
         hoverTask?.cancel()
-        endPeek()
+        endPeek(advance: !all)
         // The pointer is on the panel (it pressed ×): without this the hover list would open in the popup's place.
-        if expanded == nil, let surface = hoveredSurface, presentation(for: surface) == .preview {
+        if peekItem == nil, expanded == nil, let surface = hoveredSurface, presentation(for: surface) == .preview {
             hoveredSurface = nil
             presentationChanged?()
         }
     }
 
-    private func endPeek() {
+    /// The next queued alert that still applies: a decision answered in the meantime is skipped.
+    private func nextQueuedPeek() -> WidgetInboxItem? {
+        while !peekQueue.isEmpty {
+            let next = peekQueue.removeFirst()
+            guard let fresh = inboxOverviewItems.first(where: { $0.id == next.id }) else { return next }
+            if fresh.needsAnswer || !next.needsAnswer { return fresh }
+        }
+        return nil
+    }
+
+    private func endPeek(advance: Bool = true) {
         peekTask?.cancel()
         peekTask = nil
         guard let item = peekItem else { return }
+        if advance, peekMany == .queue, let surface = hoveredSurface, let next = nextQueuedPeek() {
+            peekItem = next
+            PerfLog.mark("widget.peek next id=\(next.id) after=\(item.id) waiting=\(peekQueue.count)")
+            presentationChanged?()
+            schedulePeekEnd(on: surface)
+            return
+        }
         peekItem = nil
+        peekQueue = []
         if expanded == nil, let surface = hoveredSurface, !pointerInside.contains(surface.key) {
             hoveredSurface = nil
         }
@@ -916,12 +976,11 @@ public final class WidgetModel: ObservableObject {
         pointerChanged?(surface, inside)
         if !inside { scheduleQuietReduction() }
         if !inside, peekItem != nil, hoveredSurface == surface {
-            // The user moved onto the popup and away again: it closes like a hover preview.
+            // The user moved onto the popup and away again: its countdown starts again, since "Preview stays" counts
+            // the time the pointer is off it. It closed after 220 ms before, 2.5 s after it appeared (Martin,
+            // 2026-10-26: "expands the widget for a few seconds then it disappears").
             hoverTask?.cancel()
-            hoverTask = Task { [weak self] in
-                do { try await Task.sleep(for: .milliseconds(220)) } catch { return }
-                self?.endPeek()
-            }
+            schedulePeekEnd(on: surface)
             return
         }
         guard layout.hoverPreviews, !dialogOpen else { return }
@@ -1347,6 +1406,7 @@ public final class WidgetModel: ObservableObject {
         hoverTask?.cancel()
         peekTask?.cancel()
         peekItem = nil
+        peekQueue = []
         restorePeekModule()
         voice?.finishInput()
         speechTask?.cancel()

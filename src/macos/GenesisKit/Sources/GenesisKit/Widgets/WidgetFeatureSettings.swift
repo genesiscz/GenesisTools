@@ -316,22 +316,48 @@ private struct WidgetGeneralSettings: View {
                     soundPicker("alertAnswerSound", prefs?.alertAnswerSound ?? "same", same: true)
                 }
                 Divider()
+                NativeSettingsSlider(
+                    "Sound volume", detail: "Both alert sounds, as a share of the Mac's volume. Releasing the slider plays the decision sound.",
+                    identifier: "widget.alertVolume",
+                    value: Binding(
+                        get: { Double(WidgetAlerts.volume(prefs)) * 100 },
+                        set: { patch(["alertVolume": .number($0.rounded())]) }),
+                    in: 0...100, step: 5, ticks: [0, 25, 50, 75, 100],
+                    format: { $0 <= 0 ? "Off" : "\(Int($0.rounded())) %" },
+                    onCommit: { WidgetAlerts.preview(prefs?.alertSound ?? WidgetAlerts.defaultSound, volume: Float($0 / 100)) })
+                Divider()
                 NativeSettingsToggle(
                     "Open the widget", detail: "The widget opens a short preview of the new item; a click on it answers.",
                     identifier: "widget.alertPopup", isOn: boolean("alertPopup", prefs?.alertPopup ?? true))
                 Divider()
-                NativeSettingsRow("Preview stays", detail: "How long the preview stays while the pointer is not on it. × or Esc closes it sooner.") {
-                    Picker(
-                        "Preview stays",
-                        selection: Binding(
-                            get: { Int(WidgetAlerts.popupSeconds(prefs)) },
-                            set: { patch(["alertPopupSeconds": .number(Double($0))]) })
-                    ) {
-                        ForEach(Self.popupSecondsChoices(current: Int(WidgetAlerts.popupSeconds(prefs))), id: \.self) {
-                            Text("\($0) seconds").tag($0)
-                        }
-                    }.labelsHidden().frame(width: 150, alignment: .trailing)
-                        .accessibilityIdentifier("widget.alertPopupSeconds")
+                Group {
+                    NativeSettingsRow("Preview stays", detail: "How long the preview stays while the pointer is not on it. Until closed keeps it until you answer, open or close it. × or Esc closes it sooner.") {
+                        Picker(
+                            "Preview stays",
+                            selection: Binding(
+                                get: { Int(WidgetAlerts.popupSeconds(prefs)) },
+                                set: { patch(["alertPopupSeconds": .number(Double($0))]) })
+                        ) {
+                            ForEach(Self.popupSecondsChoices(current: Int(WidgetAlerts.popupSeconds(prefs))), id: \.self) {
+                                Text($0 == 0 ? "Until closed" : "\($0) seconds").tag($0)
+                            }
+                        }.labelsHidden().frame(width: 150, alignment: .trailing)
+                            .accessibilityIdentifier("widget.alertPopupSeconds")
+                    }
+                    Divider()
+                    NativeSettingsToggle(
+                        "Close on a click elsewhere", detail: "A click outside the widget closes the preview and every alert waiting in it.",
+                        identifier: "widget.alertPopupClickAway",
+                        isOn: boolean("alertPopupClickAway", prefs?.alertPopupClickAway ?? false))
+                    Divider()
+                    NativeSettingsRow("Several at once", detail: "Another alert while the preview is open. Listed shows it under the first one, Queued shows it when the first one closes, Replaced shows only the newest.") {
+                        Picker("Several at once", selection: string("alertPopupMany", WidgetAlerts.popupMany(prefs).rawValue)) {
+                            Text("Listed").tag(WidgetAlerts.PopupMany.list.rawValue)
+                            Text("Queued").tag(WidgetAlerts.PopupMany.queue.rawValue)
+                            Text("Replaced").tag(WidgetAlerts.PopupMany.newest.rawValue)
+                        }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                            .accessibilityIdentifier("widget.alertPopupMany")
+                    }
                 }
                 .disabled(!(prefs?.alertPopup ?? true))
                 Divider()
@@ -393,9 +419,10 @@ private struct WidgetGeneralSettings: View {
         }.task { model.refreshSettings() }
     }
 
-    /// The popup durations offered, plus a stored value that is none of them, so the picker never shows a blank.
+    /// The popup durations offered (0 is "Until closed"), plus a stored value that is none of them, so the picker
+    /// never shows a blank.
     static func popupSecondsChoices(current: Int) -> [Int] {
-        Array(Set([4, 7, 10, 15, 30, current])).sorted()
+        Array(Set([4, 7, 10, 15, 30, current]).subtracting([0])).sorted() + [0]
     }
 
     /// The note durations offered (0 is "Until closed"), plus a stored value that is none of them.
@@ -414,7 +441,7 @@ private struct WidgetGeneralSettings: View {
                 ForEach(WidgetAlerts.sounds, id: \.self) { Text($0).tag($0) }
             }.labelsHidden().frame(width: 160, alignment: .trailing)
             IconButton(systemName: "speaker.wave.2", tooltip: "Play this sound") {
-                WidgetAlerts.preview(played)
+                WidgetAlerts.preview(played, volume: WidgetAlerts.volume(prefs))
             }.disabled(played == "none")
         }
     }

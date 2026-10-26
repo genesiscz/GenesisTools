@@ -543,6 +543,84 @@ final class WidgetInteractionTests: XCTestCase {
         value.collapse()
         XCTAssertEqual(value.moduleSelections[side.key], "capture", "closing that panel gives the user's module back")
     }
+
+    /// Several alerts in one popup (Alerts → Several at once), a popup that stays until it is closed, and a pointer
+    /// that leaves the popup: the countdown starts again instead of closing it 220 ms later.
+    @MainActor
+    func testAnOpenPopupListsOrQueuesLaterAlertsAndKeepsItsTimeAfterThePointerLeaves() async throws {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        let side = WidgetSurfaceID(edge: .right)
+        func item(_ number: Int) -> WidgetInboxItem {
+            WidgetInboxItem(id: "decision:d_\(number)_s", sourceId: "d_\(number)_s", kind: "decision",
+                key: "local:claude:s:", at: Double(number) * 1_000, needsAnswer: true, title: "Ship \(number)?",
+                number: number)
+        }
+        let first = item(1), second = item(2), third = item(3)
+        func waitFor(_ condition: () -> Bool) async throws {
+            let deadline = ContinuousClock.now + .seconds(5)
+            while !condition() && ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+        }
+
+        value.showPeek(first, on: side, seconds: 60, many: .list)
+        value.showPeek(second, on: side, seconds: 60, many: .list)
+        value.showPeek(second, on: side, seconds: 60, many: .list)
+        XCTAssertEqual(value.peekItem, first, "a listed alert never replaces the one shown")
+        XCTAssertEqual(value.peekQueue, [second], "the same alert is listed once")
+        value.showWaitingPeek(second)
+        XCTAssertEqual(value.peekItem, second, "a click on a listed alert shows it")
+        XCTAssertEqual(value.peekQueue, [first], "the one shown takes its row")
+        value.dismissPeek()
+        XCTAssertNil(value.peekItem, "× closes the whole list")
+        XCTAssertEqual(value.peekQueue, [])
+
+        value.showPeek(first, on: side, seconds: 60, many: .queue)
+        value.showPeek(second, on: side, seconds: 60, many: .queue)
+        value.showPeek(third, on: side, seconds: 60, many: .queue)
+        value.dismissPeek()
+        XCTAssertEqual(value.peekItem, second, "× in a queue shows the next alert")
+        XCTAssertEqual(value.peekQueue, [third])
+        value.dismissPeek(all: true)
+        XCTAssertNil(value.peekItem, "a click elsewhere closes the queue")
+        XCTAssertEqual(value.peekQueue, [])
+
+        value.showPeek(first, on: side, seconds: 60, many: .newest)
+        value.showPeek(second, on: side, seconds: 60, many: .newest)
+        XCTAssertEqual(value.peekItem, second, "newest replaces")
+        XCTAssertEqual(value.peekQueue, [])
+        value.collapse()
+
+        value.showPeek(first, on: side, seconds: 0.3, many: .queue)
+        value.showPeek(second, on: side, seconds: 0.3, many: .queue)
+        try await waitFor { value.peekItem == second }
+        XCTAssertEqual(value.peekItem, second, "a queued alert shows when the one before it times out")
+        try await waitFor { value.peekItem == nil }
+        XCTAssertNil(value.peekItem, "the last one in the queue times out too")
+
+        value.showPeek(first, on: side, seconds: 0, many: .list)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(value.peekItem, first, "0 seconds keeps the popup until it is closed")
+        value.hover(side, inside: true)
+        value.showPeek(second, on: side, seconds: 0, many: .list)
+        XCTAssertEqual(value.peekQueue, [second], "a later alert is listed with the pointer on the popup")
+        value.hover(side, inside: false)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(value.peekItem, first, "until closed: leaving the popup does not close it")
+        value.collapse()
+
+        value.showPeek(first, on: side, seconds: 0.8, many: .list)
+        value.hover(side, inside: true)
+        value.hover(side, inside: false)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(value.peekItem, first, "leaving starts the countdown again; it closed after 220 ms before")
+        try await waitFor { value.peekItem == nil }
+        XCTAssertNil(value.peekItem, "the countdown still ends it")
+    }
 }
 
 /// "Show the widget": the coordinator builds and orders front edge panels only while the switch is on.
@@ -715,9 +793,13 @@ final class WidgetVisibilityTests: XCTestCase {
         defer { cleanUp(fixture) }
         let coordinator = fixture.coordinator
         var chimes: [String?] = []
+        var volumes: [Float] = []
         coordinator.settingsPresenter = { _ in }
         coordinator.orderFront = { _ in }
-        coordinator.playChime = { chimes.append($0) }
+        coordinator.playChime = { name, volume in
+            chimes.append(name)
+            volumes.append(volume)
+        }
         coordinator.start(showSettings: true)
         defer { coordinator.stop() }
         try await waitFor { coordinator.model.snapshot != nil }
@@ -768,6 +850,10 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.model.updatePreferences(["alertDecisions": .bool(false)])
         coordinator.alert([decision])
         XCTAssertEqual(chimes.count, 2, "alertDecisions off: a decision is silent")
+        XCTAssertEqual(Set(volumes), [1], "full volume by default")
+        coordinator.model.updatePreferences(["alertDecisions": .bool(true), "alertVolume": .number(40)])
+        coordinator.alert([decision])
+        XCTAssertEqual(try XCTUnwrap(volumes.last), 0.4, accuracy: 0.001, "the chime plays at the volume setting")
     }
 
     /// What the inbox shows for an open decision with the own-answer composer, and for a superseded one with the
@@ -902,6 +988,24 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.passivePanels = false
         coordinator.collapseIfOutside(try clickFarAway())
         XCTAssertNil(coordinator.model.expanded, "outside passive mode a click elsewhere still closes the panel")
+
+        let side = WidgetSurfaceID(edge: .right)
+        let decision = WidgetInboxItem(id: "decision:d_6_s", sourceId: "d_6_s", kind: "decision", key: "local:claude:s:",
+            at: 2_000, needsAnswer: true, title: "Ship it?", number: 6)
+        let later = WidgetInboxItem(id: "decision:d_7_s", sourceId: "d_7_s", kind: "decision", key: "local:claude:s:",
+            at: 3_000, needsAnswer: true, title: "And this?", number: 7)
+        coordinator.model.showPeek(decision, on: side, seconds: 60, many: .queue)
+        coordinator.model.showPeek(later, on: side, seconds: 60, many: .queue)
+        coordinator.collapseIfOutside(try clickFarAway())
+        XCTAssertEqual(coordinator.model.peekItem, decision, "a click elsewhere keeps the alert popup by default")
+        coordinator.model.updatePreferences(["alertPopupClickAway": .bool(true)])
+        coordinator.passivePanels = true
+        coordinator.collapseIfOutside(try clickFarAway())
+        XCTAssertEqual(coordinator.model.peekItem, decision, "passive mode keeps the popup too")
+        coordinator.passivePanels = false
+        coordinator.collapseIfOutside(try clickFarAway())
+        XCTAssertNil(coordinator.model.peekItem, "with Close on a click elsewhere the click closes it")
+        XCTAssertEqual(coordinator.model.peekQueue, [], "and the alerts queued after it")
     }
 
     /// The settings face starts the widget face from `preferencesSaved`, so it must fire only once the hub stored
