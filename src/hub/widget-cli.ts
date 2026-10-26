@@ -1,7 +1,8 @@
-import { runTool } from "@genesiscz/utils/cli";
+import { execToolInteractive, runTool } from "@genesiscz/utils/cli";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
-import { out } from "@genesiscz/utils/logger";
+import { logger, out } from "@genesiscz/utils/logger";
+import { readNativeInboxSignals } from "@genesiscz/utils/macos/native-inbox";
 import { Command } from "commander";
 import { prepareWidgetAsset } from "./lib/composer/assets";
 import { widgetDispatcher } from "./lib/composer/dispatch";
@@ -21,6 +22,7 @@ import {
     stageShelfMedia,
 } from "./lib/widget/shelf";
 import { discoverWidgetCatalog, widgetSnapshot } from "./lib/widget/snapshot";
+import { mutateWidgetState } from "./lib/widget/storage";
 import { StdinLines, watchWidget, widgetSelectionLine } from "./lib/widget/watch";
 import { registerWidgetTasks } from "./widget-tasks-cli";
 import { registerWidgetVoiceNotes } from "./widget-voice-notes-cli";
@@ -47,6 +49,36 @@ widget
         out.result(
             await performWidgetAction({ root, input: { action: "visibility", key: candidates[0].key, pinned: true } })
         );
+    });
+widget
+    .command("show-decision <session> <number>")
+    .description(
+        "Show a decision: its popup in the running widget, or without a running widget, its chat (claude cmux find)"
+    )
+    .option("--at <at>", "where the link was clicked, passed to the chat fallback")
+    .action(async (session: string, number: string, options: { at?: string }, command) => {
+        const id = `d_${number}_${session}`;
+        if (readNativeInboxSignals().widgetRunning) {
+            await mutateWidgetState(command.optsWithGlobals().stateRoot, (state) => {
+                state.showDecision = { id, at: Date.now() };
+            });
+            logger.info({ id }, "show-decision: asked the running widget");
+            out.result({ shown: "widget", id });
+            return;
+        }
+
+        logger.info({ id }, "show-decision: no running widget, showing it in its chat");
+        const result = await execToolInteractive([
+            "claude",
+            "cmux",
+            "find",
+            "--decision",
+            number,
+            `--at=${options.at ?? ""}`,
+            "--",
+            session,
+        ]);
+        process.exitCode = result.exitCode;
     });
 widget
     .command("discover")

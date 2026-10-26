@@ -267,5 +267,7 @@ export const widgetStateSchema = z.object({
     inboxRead: z.record(z.string(), z.number().finite().nonnegative()).default({}),
     /** "Mark all read": items at or before this time stop counting in the badges; they stay in their sessions. */
     inboxClearedAt: z.number().finite().nonnegative().optional(),
+    /** `tools hub widget show-decision`: the running widget shows this decision once per `at` (a decision link). */
+    showDecision: z.object({ id: z.string().min(1), at: z.number().finite() }).optional(),
 });
 export type WidgetState = z.infer<typeof widgetStateSchema>;
