@@ -923,7 +923,7 @@ final class ReviewModel: ObservableObject {
         let session = session
         let primary = repo
         let commitRange = remoteHead?.commitRange
-        let preferredBase = chosenBase ?? targetRef
+        let preferredBase = chosenBase ?? targetRef ?? branchTarget
         let onlyPrimary: Bool
         switch scope {
         case .commit, .range, .compare: onlyPrimary = true
@@ -1367,6 +1367,25 @@ final class ReviewModel: ObservableObject {
     /// The target branch as a ref here, for an end whose base the host did not record (GitHub).
     private var targetRef: String? {
         pr?.payload?.pr.targetBranch.map { "origin/\($0)" }
+    }
+
+    /// The branch's PR/MR target from `tools hub repo` (`RepoFacts.pr.target`) for a review with no PR attached, the
+    /// hub's Worktrees page: the Branch scope and the commit list count from it before the repository's default branch.
+    /// Without it a branch stacked on another counted that one's commits too (28 instead of 11, 2026-10-26).
+    private(set) var branchTarget: String?
+
+    /// Sets `branchTarget` from a branch name; reloads when it changes the base in use.
+    func useBranchTarget(_ branch: String?) {
+        let ref = branch.flatMap { $0.isEmpty ? nil : "origin/\($0)" }
+        guard ref != branchTarget else { return }
+        branchTarget = ref
+        guard chosenBase == nil, targetRef == nil else { return }
+        // Only the Branch scope's files depend on the base; the others keep their diff while the commit list reloads.
+        if case .branch = scope {
+            restartLoad()
+        } else {
+            reload()
+        }
     }
 
     /// The PR's own diff, its base against its head (what the PR page shows), whatever scope is on screen.

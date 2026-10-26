@@ -414,6 +414,10 @@ struct WorktreeDetailView: View {
         }
         // Without a diff under it the header floated to the middle of the window.
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // The branch's MR target is the base its commits count from, also for a review made after the facts arrived.
+        .onChange(of: [facts?.pr?.target ?? "", model.review.map { "\(ObjectIdentifier($0))" } ?? ""], initial: true) { _, _ in
+            model.review(showing: worktree)?.useBranchTarget(facts?.pr?.target)
+        }
         // `--worktree <path>` and a forwarded request set the selection without a click, so nothing made
         // the review: the page showed its header and nothing else.
         .task(id: worktree.path) {
