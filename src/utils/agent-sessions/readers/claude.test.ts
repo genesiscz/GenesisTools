@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
+import { claudeHistoryReader } from "../compact-readers";
+import { searchHistorySource } from "../search-source";
 import type { NativeSessionSource } from "../types";
 import { createClaudeHistoryOperations, readClaudeMetadata, readClaudeRecords, scanClaudeRecords } from "./claude";
 
@@ -341,6 +343,58 @@ test("Claude Code's own session name (ai-title) is the title until a /rename, wh
 
     expect(renamed.metadata?.customTitle).toBe("My own name");
     expect(renamed.metadata?.summary).toBe("Hotfix research");
+});
+
+test("ai-title is searchable as a system record when its text is absent from the prompt", async () => {
+    const { path, source } = fixture();
+    const title = { type: "ai-title", aiTitle: "Hotfix research", sessionId: MAIN_ID };
+    writeFileSync(
+        path,
+        jsonl(
+            {
+                type: "user",
+                sessionId: MAIN_ID,
+                timestamp: "2026-09-01T11:00:00.000Z",
+                message: { content: "Investigate the deployment" },
+            },
+            title
+        )
+    );
+    const { metadata } = await readClaudeMetadata(source);
+
+    if (!metadata) {
+        throw new Error("Fixture metadata missing");
+    }
+
+    const result = await searchHistorySource({
+        source,
+        reader: claudeHistoryReader,
+        metadata: {
+            ...metadata,
+            providerId: "claude",
+            sourceKey: "fixture-source",
+            parentNativeId: null,
+            projectDirectory: metadata.projectDirectory ?? null,
+            lastTimestamp: metadata.lastTimestamp ?? null,
+            archived: false,
+            resumeMode: "native",
+            identityStatus: "resolved",
+            boundedFields: metadata.boundedFields ?? [],
+        },
+        filters: { query: "Hotfix research" },
+    });
+
+    expect(result?.matchedLocators).toEqual(["jsonl:2"]);
+    expect(result?.matchedText).toBe("Hotfix research");
+    expect(result?.firstPrompt).toBe("Investigate the deployment");
+    const selected = await readClaudeRecords(source, { locators: result?.matchedLocators ?? [] });
+    expect(selected.complete).toBe(true);
+    expect(selected.records[0]).toMatchObject({
+        role: "system",
+        metadataChanges: { summary: "Hotfix research" },
+        entries: [{ role: "system", text: "Hotfix research", line: 2 }],
+        original: SafeJSON.stringify(title, { strict: true }),
+    });
 });
 
 test("compact operations factory binds metadata, scan, and selected-record reads", async () => {

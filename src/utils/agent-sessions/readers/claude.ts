@@ -233,7 +233,10 @@ function claudeRecordContext(row: JsonRecord): Pick<HistorySourceRecord, "timest
     const role =
         row.type === "user" || row.type === "assistant"
             ? row.type
-            : row.type === "queue-operation" || row.type === "summary" || row.type === "custom-title"
+            : row.type === "queue-operation" ||
+                row.type === "summary" ||
+                row.type === "ai-title" ||
+                row.type === "custom-title"
               ? "system"
               : undefined;
     const sessionId = asText(row.sessionId);
@@ -267,10 +270,15 @@ function recordEntries(row: JsonRecord, line: number, tools: ToolContext): Nativ
             tools,
         });
     }
-    if (row.type === "queue-operation" || row.type === "summary" || row.type === "custom-title") {
+    if (
+        row.type === "queue-operation" ||
+        row.type === "summary" ||
+        row.type === "ai-title" ||
+        row.type === "custom-title"
+    ) {
         const text =
-            row.type === "summary"
-                ? asText(row.summary)
+            row.type === "summary" || row.type === "ai-title"
+                ? autoTitleOf(row)
                 : row.type === "custom-title"
                   ? asText(row.customTitle)
                   : asText(row.content);
@@ -612,7 +620,7 @@ export type ClaudeHistoryOperations = Pick<NativeSessionReader<"claude">, "parse
 
 export function createClaudeHistoryOperations(): ClaudeHistoryOperations {
     return {
-        parserVersion: "6",
+        parserVersion: "7",
         readMetadata: readClaudeMetadata,
         scan: scanClaudeRecords,
         readRecords: readClaudeRecords,
