@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { resolveProxyRoute } from "@app/ai-proxy/lib/account-model-ref";
 import { sessionRouteDenial } from "@app/ai-proxy/lib/clients";
 import { parseProxyModelId, resolveModel } from "@app/ai-proxy/lib/resolve-model";
 import { type AiProxySessionRecord, sessionProxyAccounts } from "@app/ai-proxy/lib/sessions/records";
-import { resolveSessionRoute } from "@app/ai-proxy/lib/sessions/routing";
+import { resolveSessionRoute, sessionPinnedRoute } from "@app/ai-proxy/lib/sessions/routing";
 import type { AiProxyAccountConfig } from "@app/ai-proxy/lib/types";
 import { SafeJSON } from "@genesiscz/utils/json";
 
@@ -242,7 +243,7 @@ describe("resolveSessionRoute", () => {
         expect(route.effortSource).toBeUndefined();
     });
 
-    it("turns failover off on a configured account, so a session never reaches a login its record does not name", () => {
+    it("pins every session route to its account, short form or full id, so a session never reaches a failover login", async () => {
         const pooled: AiProxyAccountConfig = {
             name: "pooled-codex",
             provider: "openai-subscription",
@@ -251,19 +252,25 @@ describe("resolveSessionRoute", () => {
             failover: true,
             openaiSub: { accountName: "work", failoverAccountNames: ["side"] },
         };
-        const result = resolveSessionRoute("codex/gpt-6.1-sol", record({ codexProxyAccount: "pooled-codex" }), [
-            ...accounts,
-            pooled,
-        ]);
+        const all = [...accounts, pooled];
+        const short = resolveSessionRoute("codex/gpt-6.1-sol", record({ codexProxyAccount: "pooled-codex" }), all);
 
-        if (!result || "refusal" in result) {
-            throw new Error(`expected a route, got ${SafeJSON.stringify(result)}`);
+        if (!short || "refusal" in short) {
+            throw new Error(`expected a route, got ${SafeJSON.stringify(short)}`);
         }
 
-        expect(result.route.account.failover).toBe(false);
-        expect(result.route.providerKeySuffix).toBe("#session");
+        // The full id goes through the normal resolver, which returns the configured account as it is.
+        const full = await resolveProxyRoute("pooled-codex/codex/gpt-6.1-sol", all);
+        expect(full.account.failover).toBe(true);
+
+        for (const route of [short.route, full]) {
+            const pinned = sessionPinnedRoute(route);
+            expect(pinned.account.failover).toBe(false);
+            expect(pinned.providerKeySuffix).toBe("#session");
+        }
+
         expect(pooled.failover).toBe(true);
-        expect(routeOf("codex/gpt-6.1-sol").providerKeySuffix).toBeUndefined();
+        expect(sessionPinnedRoute(routeOf("codex/gpt-6.1-sol")).providerKeySuffix).toBeUndefined();
     });
 
     it("keeps an :effort suffix and marks it as the effort's source", () => {

@@ -45,9 +45,8 @@ export type SessionRouteResult = { route: ResolvedRoute } | { refusal: string };
  *
  * The account is the configured proxy account the record names (the legacy Codex account that reads
  * ~/.codex/auth.json among them), else an account built in memory for the record's login (❓ DECISION 1 a, Martin
- * 2026-10-25): never written to `ai-proxy/config.json`. A session route never moves: a configured account comes back
- * with `failover` off, because its failover logins are not in the record, and the session check authorizes only the
- * account it names.
+ * 2026-10-25): never written to `ai-proxy/config.json`, and with no failover list. The server turns failover off on
+ * every route a session takes, this form or a full account id (`sessionPinnedRoute`).
  */
 export function resolveSessionRoute(
     proxyModelId: string,
@@ -87,12 +86,22 @@ export function resolveSessionRoute(
             accountName: account.name,
             providerSlug: account.providerSlug,
             upstreamId: form.upstreamId,
-            ...(account.failover
-                ? { account: { ...account, failover: false }, providerKeySuffix: "#session" }
-                : { account }),
+            account,
             ...(reasoningEffort ? { reasoningEffort, effortSource: "suffix" as const } : {}),
         },
     };
+}
+
+/**
+ * A session's route, of any form, never moves to another login: a configured account with `failover` on comes back as a
+ * copy with it off, because its failover logins are not in the record and the session check authorizes only the
+ * account it names. The copy gets its own provider (`providerKeySuffix`), so it does not rebuild the account's normal
+ * provider for other clients.
+ */
+export function sessionPinnedRoute(route: ResolvedRoute): ResolvedRoute {
+    return route.account.failover
+        ? { ...route, account: { ...route.account, failover: false }, providerKeySuffix: "#session" }
+        : route;
 }
 
 /** The account the proxy builds for a login: the same shape a configured subscription account of that agent has. */

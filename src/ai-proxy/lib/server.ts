@@ -18,7 +18,7 @@ import { handleRealtimeClientSecrets, handleRealtimeUpgrade, realtimeWebsocket }
 import { applyReasoningEffortToBody, findInvalidImageDataPayload } from "@app/ai-proxy/lib/rewrite-upstream-body";
 import { messageToAnthropicSse } from "@app/ai-proxy/lib/server-tools/web-search";
 import { noteSessionRequest, sweepSessionRecords } from "@app/ai-proxy/lib/sessions/records";
-import { resolveSessionRoute } from "@app/ai-proxy/lib/sessions/routing";
+import { resolveSessionRoute, sessionPinnedRoute } from "@app/ai-proxy/lib/sessions/routing";
 import { requestTagsFor } from "@app/ai-proxy/lib/sessions/tags";
 import { resolveThinkingMode } from "@app/ai-proxy/lib/thinking-config";
 import { resolveTranslationMode } from "@app/ai-proxy/lib/translation-config";
@@ -312,7 +312,9 @@ async function authorizeModelRoute({
         };
     }
 
-    const route = sessionRoute?.route ?? (await resolveProxyRoute(model, config.accounts));
+    const resolved = sessionRoute?.route ?? (await resolveProxyRoute(model, config.accounts));
+    // A session reaches only the accounts its record names, also through a full account id: never their failover.
+    const route = client.session ? sessionPinnedRoute(resolved) : resolved;
     const denial = routeDenial(client, route.account);
 
     if (denial) {
