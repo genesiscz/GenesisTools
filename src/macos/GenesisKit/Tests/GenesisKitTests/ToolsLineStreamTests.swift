@@ -477,7 +477,8 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
         let store = make(request: { args in
             if args.first == "list" && holdNextList {
                 holdNextList = false
-                while !deletedOnDisk { try await Task.sleep(for: .milliseconds(5)) }
+                // At most 5 s, so a broken store fails the test instead of hanging it.
+                for _ in 0..<1000 where !deletedOnDisk { try await Task.sleep(for: .milliseconds(5)) }
             }
 
             if args.first == "discard" {
