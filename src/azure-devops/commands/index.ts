@@ -4,6 +4,7 @@
 export { registerCommentCommand } from "./comment";
 export { registerConfigureCommand } from "./configure";
 export { registerDashboardCommand } from "./dashboard";
+export { registerMaintenanceCommand } from "./maintenance";
 export { registerQueryCommand } from "./query";
 export { registerTimelogCommand } from "./timelog";
 export { registerWikiCommand } from "./wiki";

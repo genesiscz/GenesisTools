@@ -39,6 +39,7 @@ import { loadTeamMembersCache, saveTeamMembersCache } from "@app/azure-devops/ca
 import { AzAuthError, extractAzLoginSuggestion } from "@app/azure-devops/cli.utils";
 import { extractOrgName } from "@app/azure-devops/config";
 import { adoOrganizationOf } from "@app/azure-devops/lib/comments";
+import type { CatalogField, TypeFieldInput } from "@app/azure-devops/lib/field-manifest";
 import { findTruncatedNodes, flattenIterationNodes } from "@app/azure-devops/lib/iterations";
 import { type SavedQueryDefinition, workItemIdsFromQueryResult } from "@app/azure-devops/lib/query-tree";
 import type {
@@ -1159,6 +1160,39 @@ export class Api {
         const definitions = result.value.filter((t) => !t.isDisabled);
         logger.debug(`[api] Found ${definitions.length} work item type definitions`);
         return definitions;
+    }
+
+    /** The fields of one work item type with their allowed values (the type definition leaves those out). */
+    async getWorkItemTypeFields(type: string): Promise<TypeFieldInput[]> {
+        const url = Api.witUrl(this.config, ["workitemtypes", encodeURIComponent(type), "fields"], {
+            $expand: "allowedValues",
+        });
+        const result = await this.get<{ value: TypeFieldInput[] }>(url, `fields of ${type}`);
+        return result.value;
+    }
+
+    /** The states of one work item type in workflow order, with their category (Proposed, InProgress, …). */
+    async getWorkItemTypeStates(type: string): Promise<{ name: string; category?: string }[]> {
+        const url = Api.witUrl(this.config, ["workitemtypes", encodeURIComponent(type), "states"]);
+        const result = await this.get<{ value: { name: string; category?: string }[] }>(url, `states of ${type}`);
+        return result.value;
+    }
+
+    /** Every field of the project with its data type (string, identity, html, …). */
+    async getFieldCatalog(): Promise<CatalogField[]> {
+        const url = Api.witUrl(this.config, "fields");
+        const result = await this.get<{ value: CatalogField[] }>(url, "field catalog");
+        return result.value;
+    }
+
+    /** The process template the project uses, or null when ADO does not say. */
+    async getProjectProcessName(): Promise<string | null> {
+        const url = Api.orgUrl(this.config, ["projects", this.config.projectId], { includeCapabilities: "true" });
+        const project = await this.get<{ capabilities?: { processTemplate?: { templateName?: string } } }>(
+            url,
+            "project capabilities"
+        );
+        return project.capabilities?.processTemplate?.templateName ?? null;
     }
 
     /**
