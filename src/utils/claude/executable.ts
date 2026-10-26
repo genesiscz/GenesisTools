@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, win32 } from "node:path";
 import { env } from "@genesiscz/utils/env";
 import { logger } from "@genesiscz/utils/logger";
 
@@ -18,7 +18,7 @@ export function claudeInstallLocations(home: string = homedir()): string[] {
 
 export interface FindClaudeExecutableDeps {
     which: (name: string) => string | null;
-    exists: (path: string) => boolean;
+    isExecutable: (path: string) => boolean;
     /** `command -v claude` in the user's interactive shell, so a PATH set only in an rc file counts. */
     shellLookup: () => Promise<string | null>;
     home: string;
@@ -26,36 +26,55 @@ export interface FindClaudeExecutableDeps {
 
 const SHELL_LOOKUP_TIMEOUT_MS = 3000;
 
-async function interactiveShellLookup(): Promise<string | null> {
+/** Uses the user's rc files when Claude's PATH entry exists only in an interactive shell. */
+function spawnShellLookup(shell: string) {
+    return Bun.spawn({ cmd: [shell, "-ic", "command -v claude"], stdio: ["ignore", "pipe", "ignore"] });
+}
+
+/** Bounds shell startup, stdout and exit together; lookup failure only skips the optional CLI. */
+export async function interactiveShellLookup(
+    opts: { spawn?: typeof spawnShellLookup; timeoutMs?: number } = {}
+): Promise<string | null> {
     const shell = env.paths.getShell("/bin/sh");
-    const proc = Bun.spawn({ cmd: [shell, "-ic", "command -v claude"], stdio: ["ignore", "pipe", "ignore"] });
+    let proc: ReturnType<typeof spawnShellLookup> | undefined;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     try {
-        const stdout = await Promise.race([
-            new Response(proc.stdout).text(),
-            new Promise<string>((_, reject) => {
-                timer = setTimeout(() => reject(new Error("timeout")), SHELL_LOOKUP_TIMEOUT_MS);
+        proc = (opts.spawn ?? spawnShellLookup)(shell);
+        const [stdout] = await Promise.race([
+            Promise.all([new Response(proc.stdout).text(), proc.exited]),
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("timeout")), opts.timeoutMs ?? SHELL_LOOKUP_TIMEOUT_MS);
             }),
         ]);
-        await proc.exited;
         // An rc file may print to stdout; only a clean exit whose last line is an absolute path counts (an alias or
         // function name cannot be spawned).
         const last = stdout.trim().split("\n").pop()?.trim() ?? "";
 
-        return proc.exitCode === 0 && last.startsWith("/") && !/\s/.test(last) ? last : null;
+        return proc.exitCode === 0 && (isAbsolute(last) || win32.isAbsolute(last)) ? last : null;
     } catch (error) {
         logger.debug({ error, shell }, "[findClaudeExecutable] interactive shell lookup failed");
         return null;
     } finally {
         clearTimeout(timer);
-        proc.kill();
+        proc?.kill();
+    }
+}
+
+/** Follows installer symlinks, but rejects stale files and directories without spawning them. */
+function isExecutable(path: string): boolean {
+    try {
+        accessSync(path, constants.X_OK);
+        return statSync(path).isFile();
+    } catch (error) {
+        logger.debug({ error, path }, "[findClaudeExecutable] unusable install candidate");
+        return false;
     }
 }
 
 const defaultDeps: FindClaudeExecutableDeps = {
     which: (name) => Bun.which(name),
-    exists: existsSync,
+    isExecutable,
     shellLookup: interactiveShellLookup,
     home: homedir(),
 };
@@ -73,7 +92,7 @@ export async function findClaudeExecutable(deps: Partial<FindClaudeExecutableDep
         return onPath;
     }
 
-    const installed = claudeInstallLocations(d.home).find((path) => d.exists(path));
+    const installed = claudeInstallLocations(d.home).find((path) => d.isExecutable(path));
 
     if (installed) {
         logger.debug(
@@ -86,5 +105,5 @@ export async function findClaudeExecutable(deps: Partial<FindClaudeExecutableDep
     const fromShell = await d.shellLookup();
     logger.debug({ path: fromShell }, "[findClaudeExecutable] interactive shell lookup");
 
-    return fromShell;
+    return fromShell && d.isExecutable(fromShell) ? fromShell : null;
 }

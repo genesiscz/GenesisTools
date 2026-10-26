@@ -3,8 +3,16 @@ import { rmSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
 import { copyRepoTree } from "@genesiscz/utils/git/test-repo";
-import { pickNewestUnifiedBranch, postPullInvocation, readDevChannel, switchChannel } from "./channel";
+import {
+    createUpdateProgram,
+    devChannelPath,
+    pickNewestUnifiedBranch,
+    postPullInvocation,
+    readDevChannel,
+    switchChannel,
+} from "./channel";
 import { git, recoverFromFailedPull, upstreamRef } from "./recovery";
 
 const dirs: string[] = [];
@@ -206,12 +214,33 @@ describe("recoverFromFailedPull", () => {
 });
 
 describe("the steps after the pull run the pulled code", () => {
-    it("hands over through a variable that older code ignores, keeping --no-plugins", () => {
-        expect(postPullInvocation({ plugins: true })).toEqual({
+    it("hands over only to compatible code, keeping --no-plugins", () => {
+        const source = "if (env.tools.isUpdatePostPull()) { await updateAfterPull(); }";
+        expect(postPullInvocation({ plugins: true, source })).toEqual({
             args: ["update"],
             env: { GENESIS_TOOLS_UPDATE_POST_PULL: "1" },
         });
-        expect(postPullInvocation({ plugins: false }).args).toEqual(["update", "--no-plugins"]);
+        expect(postPullInvocation({ plugins: false, source })?.args).toEqual(["update", "--no-plugins"]);
+        expect(postPullInvocation({ plugins: false, source: "await runFullUpdate();" })).toBeNull();
+        expect(postPullInvocation({ plugins: true, source: "await runFullUpdate();" })).toBeNull();
+    });
+});
+
+describe("update option routing", () => {
+    it("honors --no-plugins before and after dev, and preserves normal defaults", async () => {
+        for (const args of [[], ["--no-plugins"], ["dev"], ["dev", "--no-plugins"], ["--no-plugins", "dev"]]) {
+            const calls: unknown[] = [];
+            const program = createUpdateProgram(async (mode, opts) => {
+                calls.push({ mode, plugins: opts.plugins });
+            });
+            await program.parseAsync(args, { from: "user" });
+            expect(calls).toEqual([
+                {
+                    mode: args.includes("dev") ? "dev" : "default",
+                    plugins: !args.includes("--no-plugins"),
+                },
+            ]);
+        }
     });
 });
 
@@ -257,6 +286,43 @@ describe("tools update dev", () => {
         // Without the dev channel a plain update stays on its branch.
         expect(await switchChannel(local, "default", statePath)).toBe("pull");
         expect((await git(["branch", "--show-current"], local)).output).toBe("master");
+    });
+
+    it("keeps the dev upstream for a legacy child's plain pull and recovery", async () => {
+        const { local, statePath } = await withUnifiedBranches();
+        expect(await switchChannel(local, "dev", statePath)).toBe("at-tip");
+        expect(await upstreamRef(local)).toBe("origin/feat/2026-10-13-enhancements-unified");
+        const head = (await git(["rev-parse", "HEAD"], local)).output;
+        expect((await git(["pull"], local)).code).toBe(0);
+        expect(await recoverFromFailedPull(local)).toBe(true);
+        expect((await git(["rev-parse", "HEAD"], local)).output).toBe(head);
+    });
+
+    it("keeps independent checkout records and refuses a record owned by another checkout", async () => {
+        const a = await withUnifiedBranches();
+        const b = await repoPair();
+        await env.testing.withOverrides({ GENESIS_TOOLS_HOME: await scratch() }, async () => {
+            expect(devChannelPath(a.local)).not.toBe(devChannelPath(b.local));
+            expect(await switchChannel(a.local, "dev")).toBe("at-tip");
+            const record = await Bun.file(devChannelPath(a.local)).text();
+            expect(await switchChannel(b.local, "default")).toBe("pull");
+            expect((await git(["branch", "--show-current"], b.local)).output).toBe("master");
+            expect(await switchChannel(b.local, "default", devChannelPath(a.local))).toBe("failed");
+            expect(await Bun.file(devChannelPath(a.local)).text()).toBe(record);
+            expect(await switchChannel(a.local, "default")).toBe("pull");
+        });
+    });
+
+    it("fails cleanly on corrupt JSON and invalid channel state without switching or deleting it", async () => {
+        const { local, statePath } = await withUnifiedBranches();
+        for (const content of ["{truncated", "{}", "null"]) {
+            await writeFile(statePath, content);
+            for (const mode of ["default", "dev"] as const) {
+                expect(await switchChannel(local, mode, statePath)).toBe("failed");
+                expect((await git(["branch", "--show-current"], local)).output).toBe("master");
+                expect(await Bun.file(statePath).text()).toBe(content);
+            }
+        }
     });
 
     it("a checkout already switched to a unified branch by hand returns to master", async () => {

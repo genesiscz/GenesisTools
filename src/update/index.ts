@@ -13,10 +13,9 @@ import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
 import { detectXcodeToolchain, genesisAppBuildHint } from "@genesiscz/utils/macos/xcode";
-import { Command } from "commander";
 import pc from "picocolors";
-import type { UpdateMode } from "./channel";
-import { postPullInvocation, switchChannel } from "./channel";
+import type { UpdateMode, UpdateOptions } from "./channel";
+import { createUpdateProgram, postPullInvocation, switchChannel } from "./channel";
 import { printUpdateCatalogue } from "./diff";
 import { genesisAppRefreshAction } from "./genesis-app-refresh";
 import {
@@ -72,6 +71,7 @@ async function claudeJson<T>(args: string[]): Promise<T | null> {
     }
 }
 
+/** Distinguishes an absent marketplace from a failed listing, which must not trigger a blind replacement. */
 async function lookupMarketplace(name: string): Promise<MarketplaceLookup> {
     const entries = await claudeJson<MarketplaceEntry[]>(["plugin", "marketplace", "list", "--json"]);
 
@@ -84,36 +84,16 @@ async function lookupMarketplace(name: string): Promise<MarketplaceLookup> {
     return entry ? { status: "found", entry } : { status: "absent" };
 }
 
+/** Requires an exact plugin id; other marketplaces' copies do not satisfy this installation. */
 async function pluginIsInstalled(id: string): Promise<boolean> {
     const entries = await claudeJson<Array<{ id?: string }>>(["plugin", "list", "--json"]);
 
     return Array.isArray(entries) && entries.some((entry) => entry.id === id);
 }
 
-interface UpdateOptions {
-    plugins: boolean;
-}
+const program = createUpdateProgram(runUpdate);
 
-const PLUGINS_FLAG_HELP = "Skip the Claude Code marketplace and plugin step";
-
-const program = new Command()
-    .name("update")
-    .description("Update GenesisTools to the latest version")
-    .option("--no-plugins", PLUGINS_FLAG_HELP)
-    .action(async (opts: UpdateOptions) => {
-        await runUpdate("default", opts);
-    });
-
-program
-    .command("dev")
-    .description(
-        `Switch to the newest feat/<date>-enhancements-unified branch; the next plain ${toolCommand("update")} switches back`
-    )
-    .option("--no-plugins", PLUGINS_FLAG_HELP)
-    .action(async (opts: UpdateOptions) => {
-        await runUpdate("dev", opts);
-    });
-
+/** Owns channel switching and dependency installation, then hands off to compatible pulled code. */
 async function runUpdate(mode: UpdateMode, opts: UpdateOptions): Promise<void> {
     const genesisPath = env.tools.getPath() || resolve(import.meta.dir, "../..");
 
@@ -181,13 +161,22 @@ async function runUpdate(mode: UpdateMode, opts: UpdateOptions): Promise<void> {
     // The steps below live in the code that was just pulled, but this process still runs the code it
     // loaded before the pull. Run them in a child instead, or every fix to them reached a user one
     // update late (arwen, 2026-10-25: an update hung on a prompt that the pulled code no longer had).
-    // A child on code from before this hand-over ignores the variable and runs a whole update; its
-    // pull and install are no-ops by then.
-    const handover = postPullInvocation(opts);
+    const handover = postPullInvocation({
+        ...opts,
+        source: readFileSync(join(genesisPath, "src/update/index.ts"), "utf-8"),
+    });
+
+    if (!handover) {
+        out.println(pc.yellow("  This version predates the update handoff; finishing with the current updater."));
+        await updateAfterPull(genesisPath, opts);
+        return;
+    }
+
     const after = await execToolInteractive(handover.args, { cwd: genesisPath, env: handover.env });
     process.exit(after.exitCode);
 }
 
+/** Finishes optional integrations and the catalogue after the source and dependencies are ready. */
 async function updateAfterPull(genesisPath: string, opts: UpdateOptions): Promise<void> {
     const srcDir = join(genesisPath, "src");
 
@@ -214,10 +203,9 @@ async function updateAfterPull(genesisPath: string, opts: UpdateOptions): Promis
     } else {
         out.println(
             pc.yellow(
-                "\n  Claude Code CLI not found (no `claude` on PATH or in its install folders); skipping the plugin steps."
+                `  Claude Code CLI not found; skipping the plugin steps. Install Claude Code, then run: ${toolCommand("update")}`
             )
         );
-        out.println(pc.dim(`  Install Claude Code, then run: ${toolCommand("update")}`));
     }
 
     const pluginStep = pluginStepDecision({
@@ -493,6 +481,7 @@ async function offerGenesisToolsMcpRegistration(): Promise<void> {
     });
 }
 
+/** Takes the first version heading and its body, excluding the following version's entry. */
 function extractLatestEntry(changelog: string): string | null {
     const lines = changelog.split("\n");
     let start = -1;
@@ -511,6 +500,7 @@ function extractLatestEntry(changelog: string): string | null {
     return lines.slice(start, end).join("\n").trim();
 }
 
+/** Only folders containing SKILL.md enter the catalogue; a missing description falls back to the folder name. */
 function discoverSkills(skillsDir: string): Array<{ name: string; description: string }> {
     if (!existsSync(skillsDir)) {
         return [];

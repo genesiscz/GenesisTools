@@ -1,13 +1,42 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { toolCommand } from "@genesiscz/utils/cli/tool-command";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { out } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
+import { Command } from "commander";
 import pc from "picocolors";
 import { git } from "./recovery";
 
 export type UpdateMode = "default" | "dev";
+
+export interface UpdateOptions {
+    plugins: boolean;
+}
+
+/** Shared command definition so option routing is exercised without running an update. */
+export function createUpdateProgram(action: (mode: UpdateMode, opts: UpdateOptions) => Promise<void>): Command {
+    const flagHelp = "Skip the Claude Code marketplace and plugin step";
+    const program = new Command()
+        .name("update")
+        .description("Update GenesisTools to the latest version")
+        .enablePositionalOptions()
+        .option("--no-plugins", flagHelp)
+        .action(async (opts: UpdateOptions) => action("default", opts));
+
+    program
+        .command("dev")
+        .description(
+            `Switch to the newest feat/<date>-enhancements-unified branch; the next plain ${toolCommand("update")} switches back`
+        )
+        .option("--no-plugins", flagHelp)
+        .action(async (opts: UpdateOptions) =>
+            action("dev", { plugins: opts.plugins && program.opts<UpdateOptions>().plugins })
+        );
+
+    return program;
+}
 
 /**
  * `tools update dev` moves the checkout onto the newest enhancements-unified branch for a while;
@@ -15,6 +44,7 @@ export type UpdateMode = "default" | "dev";
  * checkout that was on the unified branch to begin with is never moved to master by surprise.
  */
 export interface DevChannelState {
+    checkout: string;
     branch: string;
     returnTo: string;
     since: string;
@@ -22,24 +52,30 @@ export interface DevChannelState {
 
 const UNIFIED_REF = /^origin\/(feat\/(\d{4}-\d{2}-\d{2})-enhancements-unified)$/;
 
-/**
- * The child that runs the steps after the pull on the freshly pulled code. A variable, not a flag:
- * a child on code from before the hand-over (back from the dev channel onto an older master) would
- * refuse an unknown flag, while it simply ignores the variable and runs a whole update.
- */
-export function postPullInvocation(opts: { plugins: boolean }): { args: string[]; env: Record<string, string> } {
+/** Older update code cannot honor the handoff or --no-plugins, so it must not be launched. */
+export function postPullInvocation(opts: {
+    plugins: boolean;
+    source: string;
+}): { args: string[]; env: Record<string, string> } | null {
+    if (!opts.source.includes("env.tools.isUpdatePostPull()")) {
+        return null;
+    }
+
     return {
         args: ["update", ...(opts.plugins ? [] : ["--no-plugins"])],
         env: { GENESIS_TOOLS_UPDATE_POST_PULL: "1" },
     };
 }
 
+/** Hand-selected unified branches return to master when there is no earlier return record. */
 function isUnifiedBranch(branch: string): boolean {
     return UNIFIED_REF.test(`origin/${branch}`);
 }
 
-export function devChannelPath(): string {
-    return toolDataDir("update", "dev-channel.json");
+/** A linked worktree has its own return branch, even when it shares the repository's git dir. */
+export function devChannelPath(cwd: string): string {
+    const key = createHash("sha256").update(realpathSync(cwd)).digest("hex");
+    return toolDataDir("update", "dev-channels", `${key}.json`);
 }
 
 /** The newest `origin/feat/<date>-enhancements-unified`, by the date in its name, as a local branch name. */
@@ -61,37 +97,53 @@ export function pickNewestUnifiedBranch(remoteRefs: string[]): string | undefine
     return best?.branch;
 }
 
-export function readDevChannel(path = devChannelPath()): DevChannelState | undefined {
+/** Missing is normal; unreadable or malformed records must stop the switch rather than lose the return branch. */
+export function readDevChannel(path: string): DevChannelState | undefined {
     if (!existsSync(path)) {
         return undefined;
     }
 
-    const parsed: unknown = SafeJSON.parse(readFileSync(path, "utf-8"));
+    let parsed: unknown;
+
+    try {
+        parsed = SafeJSON.parse(readFileSync(path, "utf-8"), { strict: true });
+    } catch (error) {
+        throw new Error(`${path} is unreadable or invalid JSON; move it aside and switch the checkout branch by hand`, {
+            cause: error,
+        });
+    }
 
     if (
         typeof parsed === "object" &&
         parsed !== null &&
+        "checkout" in parsed &&
+        typeof parsed.checkout === "string" &&
         "branch" in parsed &&
         "returnTo" in parsed &&
         typeof parsed.branch === "string" &&
         typeof parsed.returnTo === "string"
     ) {
         return {
+            checkout: parsed.checkout,
             branch: parsed.branch,
             returnTo: parsed.returnTo,
             since: "since" in parsed && typeof parsed.since === "string" ? parsed.since : "",
         };
     }
 
-    return undefined;
+    throw new Error(`${path} has invalid channel state; move it aside and switch the checkout branch by hand`);
 }
 
-export function writeDevChannel(state: DevChannelState, path = devChannelPath()): void {
+/** Rename a complete record into place so interruption cannot truncate the previous return branch. */
+export function writeDevChannel(state: DevChannelState, path: string): void {
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${SafeJSON.stringify(state, null, 2)}\n`);
+    const temporary = join(dirname(path), `.${process.pid}-dev-channel.tmp`);
+    writeFileSync(temporary, `${SafeJSON.stringify(state, null, 2)}\n`);
+    renameSync(temporary, path);
 }
 
-export function clearDevChannel(path = devChannelPath()): void {
+/** Called only after switching back successfully, so a failed return remains retryable. */
+export function clearDevChannel(path: string): void {
     if (existsSync(path)) {
         unlinkSync(path);
     }
@@ -106,9 +158,21 @@ export function clearDevChannel(path = devChannelPath()): void {
 export async function switchChannel(
     cwd: string,
     mode: UpdateMode,
-    statePath = devChannelPath()
+    statePath = devChannelPath(cwd)
 ): Promise<"pull" | "at-tip" | "failed"> {
-    const state = readDevChannel(statePath);
+    let state: DevChannelState | undefined;
+
+    try {
+        state = readDevChannel(statePath);
+
+        if (state && state.checkout !== realpathSync(cwd)) {
+            out.error(pc.red(`  ${statePath} belongs to another checkout; leaving it untouched.`));
+            return "failed";
+        }
+    } catch (error) {
+        out.error(pc.red(`  ${error instanceof Error ? error.message : String(error)}`));
+        return "failed";
+    }
 
     if (mode === "default") {
         if (!state) {
@@ -171,7 +235,7 @@ export async function switchChannel(
     // A checkout switched to a unified branch by hand (the first switch from code that predates
     // `tools update dev`) has no record yet; returning to that same branch would never leave it.
     const returnTo = state?.returnTo ?? (current && !isUnifiedBranch(current) ? current : "master");
-    const switched = await git(["switch", "--no-track", "-C", branch, `origin/${branch}`], cwd);
+    const switched = await git(["switch", "--track", "-C", branch, `origin/${branch}`], cwd);
 
     if (switched.code !== 0) {
         out.error(pc.red(`  Could not switch to ${branch}.`));
@@ -179,7 +243,7 @@ export async function switchChannel(
         return "failed";
     }
 
-    writeDevChannel({ branch, returnTo, since: new Date().toISOString() }, statePath);
+    writeDevChannel({ checkout: realpathSync(cwd), branch, returnTo, since: new Date().toISOString() }, statePath);
     out.println(pc.yellow(`  On ${branch} (dev channel). The next ${toolCommand("update")} returns to ${returnTo}.`));
     return "at-tip";
 }
