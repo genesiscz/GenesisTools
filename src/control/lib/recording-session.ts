@@ -196,7 +196,15 @@ export class RecordingSession {
     /** Starts the first segment. A first segment that fails without a movie ends the session as `failed`. */
     start(): Promise<void> {
         return this.enqueue(async () => {
-            await mkdir(this.options.directory, { recursive: true });
+            try {
+                await mkdir(this.options.directory, { recursive: true });
+            } catch (error) {
+                log.warn({ error }, "could not create recording directory");
+                this.end("failed");
+                this.options.emit({ event: "error", message: messageOf(error), fatal: true });
+                return;
+            }
+
             this.beginSegment("user");
             const tick = this.options.tickMs ?? 1000;
             if (tick > 0) {
@@ -459,8 +467,16 @@ export class RecordingSession {
                 ({ durationMs } = await this.options.join({ segments: ordered, output: this.options.output }));
             }
         } catch (error) {
-            // The segments are still on disk: a stop tries the save again and a discard still works.
+            // The segments are still on disk: a stop tries the save again and a discard still works. A join that
+            // failed after it started writing leaves part of the movie at the output; that goes, so a discard keeps
+            // nothing on screen.
             log.warn({ error, output: this.options.output, segments: ordered.length }, "recording could not be saved");
+            if (ordered.length > 1) {
+                await unlink(this.options.output).catch((cleanupError: unknown) => {
+                    log.debug({ error: cleanupError, output: this.options.output }, "no partial movie to remove");
+                });
+            }
+
             this.setState("paused", "recorder");
             this.options.emit({
                 event: "error",

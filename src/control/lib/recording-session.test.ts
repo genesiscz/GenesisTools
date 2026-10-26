@@ -269,6 +269,45 @@ describe("RecordingSession", () => {
         expect(existsSync(join(root, "out.mp4"))).toBe(true);
     });
 
+    it("a join that fails after it began writing leaves no partial movie at the output", async () => {
+        const { recorder } = fakeRecorder();
+        const recording = session(recorder, {
+            join: async ({ output }) => {
+                await writeFile(output, "half a movie");
+                throw new Error("ffmpeg died");
+            },
+        });
+        await recording.start();
+        await recording.command({ cmd: "pause" });
+        await recording.command({ cmd: "resume" });
+        await recording.command({ cmd: "stop" });
+
+        expect(existsSync(join(root, "out.mp4"))).toBe(false);
+        await recording.command({ cmd: "discard" });
+        expect(await recording.finished).toBe("discarded");
+    });
+
+    it("a session whose folder cannot be made ends as failed instead of waiting forever", async () => {
+        const blocker = join(root, "blocker");
+        await writeFile(blocker, "a file where the folder should go");
+        const { recorder, runs } = fakeRecorder();
+        const recording = new RecordingSession({
+            target: finder,
+            directory: join(blocker, "segments"),
+            output: join(root, "out.mp4"),
+            recorder,
+            join: async () => ({ durationMs: 0 }),
+            emit: (event) => events.push(event),
+            tickMs: 0,
+            slowStartMs: 0,
+        });
+        await recording.start();
+
+        expect(await recording.finished).toBe("failed");
+        expect(runs).toHaveLength(0);
+        expect(events.some((event) => event.event === "error" && event.fatal === true)).toBe(true);
+    });
+
     it("a discard after a failed save deletes every segment", async () => {
         const { recorder, runs } = fakeRecorder();
         const recording = session(recorder, {

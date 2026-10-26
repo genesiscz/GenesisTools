@@ -624,6 +624,35 @@ describe("answerInboxDecisions", () => {
             [2, "sent", "cmux"],
         ]);
     });
+
+    test("a draft of two letters is sent, and a letter past the options is refused", async () => {
+        const { file, events } = scratch();
+        await postDecisions(file, events, {
+            sessionId: "s-gamma",
+            decisions: [{ prompt: "Ports?", options: ["3000", "4000"] }],
+        });
+        const typed: string[][] = [];
+        const deps = {
+            file,
+            events,
+            block: async () => null,
+            deliver: {
+                runTool: async (args: string[]) => {
+                    typed.push(args);
+                    return { success: true, stdout: '{"sent":true}', stderr: "" };
+                },
+                findTargets: livePaneTargets,
+            },
+        };
+
+        await expect(
+            answerInboxDecisions({ session: "s-gamma", answers: [{ number: 1, option: "az" }] }, deps)
+        ).rejects.toThrow("has options a-b");
+        await answerInboxDecisions({ session: "s-gamma", answers: [{ number: 1, option: "ba" }] }, deps);
+
+        expect(readDecisions(file)[0]).toMatchObject({ state: "sent", option: "ab" });
+        expect(typed[0]?.at(-1)).toContain("3000 / 4000");
+    });
 });
 
 describe("answerInboxForm", () => {

@@ -1,6 +1,6 @@
 import { logger } from "@genesiscz/utils/logger";
 import type { DeliverDeps, DeliveryResult } from "../decisions/deliver";
-import { decisionLine } from "../decisions/read";
+import { decisionLine, optionLetters } from "../decisions/read";
 import { sendAnsweredDecisions } from "../decisions/send";
 import {
     type DecisionRecord,
@@ -83,15 +83,16 @@ async function checkAnswer(
     rows: DecisionRecord[],
     deps: AnswerDecisionDeps
 ): Promise<CheckedAnswer> {
-    const option = answer.option?.trim().toLowerCase() || undefined;
+    // The decision log allows several letters ("ac" when two apply); each must name an option.
+    const option = optionLetters(answer.option).join("") || undefined;
     const text = answer.text?.trim() || undefined;
 
     if (!option && !text) {
         throw new Error(`DECISION ${answer.number}: pass an option letter or an answer text`);
     }
 
-    if (option && !/^[a-z]$/.test(option)) {
-        throw new Error(`the option is one letter a-z, not "${answer.option}"`);
+    if (answer.option?.trim() && !/^[a-z]+$/i.test(answer.option.trim())) {
+        throw new Error(`the option is one or more letters a-z, not "${answer.option}"`);
     }
 
     const row = findRow(rows, session, answer.number);
@@ -112,7 +113,7 @@ async function checkAnswer(
 
     const options = row?.options ?? block?.options ?? [];
 
-    if (option && options.length > 0 && option.charCodeAt(0) - 97 >= options.length) {
+    if (option && options.length > 0 && [...option].some((letter) => letter.charCodeAt(0) - 97 >= options.length)) {
         throw new Error(`DECISION ${answer.number} has options a-${String.fromCharCode(96 + options.length)}`);
     }
 
