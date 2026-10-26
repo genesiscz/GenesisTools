@@ -558,6 +558,11 @@ export const register: Register = (on) => {
     // Two stages over the model's stream: the Agent arguments get the model, the main loop's reply text its links.
     on("turn.step", async function* ($, e, next) {
         const host = hostOf($);
+
+        for (const feature of FEATURES) {
+            void feature.beforeStep?.(host, e).catch(() => undefined);
+        }
+
         const settings = await settingsOf(host);
         let stream: HookStream<TurnStepChunk, TurnStepResult | undefined> = next(e);
 

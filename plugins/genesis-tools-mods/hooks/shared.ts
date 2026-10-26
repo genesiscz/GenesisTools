@@ -156,6 +156,8 @@ export interface Feature {
     beforeTool?: (host: Host, e: ToolCallInput) => (() => void) | undefined;
     /** After a tool call answered. */
     afterTool?: (host: Host, e: ToolCallInput) => Promise<void>;
+    /** As a loop sends a model request (`e.agentId` set for a subagent's); the request does not wait for it. */
+    beforeStep?: (host: Host, e: { agentId?: string }) => Promise<void>;
     /** After a turn completed, the main loop's or a subagent's (`e.agentId`). */
     afterTurn?: (host: Host, e: TurnCompleteInput) => Promise<void>;
     /** After a loop compacted (the main loop when `agentId` is undefined). */

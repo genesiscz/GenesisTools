@@ -1,5 +1,6 @@
-// The cache countdown. Each session writes `<agents>/mods-state/cache/<session>.json` when its main loop finishes a
-// turn (the prompt cache was written then), and removes it when it ends. The band shows this session's minutes
+// The cache countdown. Each session writes `<agents>/mods-state/cache/<session>.json` when its main loop sends a model
+// request (each step of a turn reads and writes the prompt cache, so a turn that runs for an hour keeps it warm) and
+// when a turn finishes, and removes it when it ends. The band shows this session's minutes
 // left dim, yellow under `mods.cacheBand.cautionMinutes` and red under `mods.cacheBand.warnMinutes`; with `others`
 // on, it also shows every other session whose cache runs out inside the yellow window, so a reply that would rewrite
 // a cold cache is visible from any open session. A listing runs every 15 seconds; one prune every five minutes
@@ -186,6 +187,11 @@ export const cacheBand: Feature = {
             void scan(host);
         });
         await scan(host);
+    },
+    async beforeStep(host, e) {
+        if (e.agentId === undefined && (await settingsOf(host)).cacheBand.enabled) {
+            await mark(host, "turn");
+        }
     },
     async afterTurn(host, e) {
         if (e.agentId === undefined && (await settingsOf(host)).cacheBand.enabled) {
