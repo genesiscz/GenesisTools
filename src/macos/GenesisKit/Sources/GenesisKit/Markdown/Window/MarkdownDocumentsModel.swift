@@ -13,6 +13,7 @@ import UniformTypeIdentifiers
 private let markdownRendererKey = "markdownWindow.renderer"
 private let markdownModeKey = "markdownWindow.mode"
 private let markdownSplitKey = "markdownWindow.splitRatio"
+private let markdownSplitSyncKey = "markdownWindow.splitScrollSync"
 private let markdownOutlineKey = "markdownWindow.outline"
 private let markdownFilesKey = "markdownWindow.files"
 private let markdownGitKey = "markdownWindow.git"
@@ -61,6 +62,10 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// The editor's share of the width in split view.
     @Published var splitRatio: Double = MarkdownSplit.defaultRatio {
         didSet { defaults.set(splitRatio, forKey: markdownSplitKey) }
+    }
+    /// Split view scrolls the editor and the preview together, both ways. The button on the divider pauses it.
+    @Published var splitScrollSync = true {
+        didSet { defaults.set(splitScrollSync, forKey: markdownSplitSyncKey) }
     }
     // These three read and write the model's OWN defaults, not
     // `UserDefaults.standard`. A property initializer cannot see `self`, so
@@ -364,6 +369,7 @@ final class MarkdownDocumentsModel: ObservableObject {
         scrollMemory = (defaults.dictionary(forKey: markdownScrollKey) as? [String: [String: Double]]) ?? [:]
         let ratio = defaults.double(forKey: markdownSplitKey)
         splitRatio = ratio > 0 ? ratio : MarkdownSplit.defaultRatio
+        splitScrollSync = defaults.object(forKey: markdownSplitSyncKey) as? Bool ?? true
         showOutline = defaults.bool(forKey: markdownOutlineKey)
         showFiles = defaults.bool(forKey: markdownFilesKey)
         showGit = defaults.bool(forKey: markdownGitKey)

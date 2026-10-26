@@ -422,6 +422,152 @@ final class MarkdownSplitViewTests: XCTestCase {
         XCTAssertEqual(scroll ?? -1, 0, accuracy: 1)
     }
 
+    /// The whole chain in the real window: the editor scrolls, the pane turns its top line into a sync line, and the
+    /// page puts that block at its top (Martin, 2026-10-26: "the scrolling no longer scrolls both").
+    func testScrollingTheEditorInSplitViewScrollsThePreview() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("md-split-sync-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let note = folder.appendingPathComponent("long.md")
+        let body = (0 ..< 200).map { "Paragraph \($0) of a long note." }.joined(separator: "\n\n")
+        try "---\ntitle: Long\n---\n\n# Long\n\n\(body)\n".write(to: note, atomically: true, encoding: .utf8)
+        let model = model()
+        model.configuration = GenesisKitMarkdownConfiguration(
+            defaults: UserDefaults(suiteName: "md-split-sync-config-\(UUID().uuidString)")!)
+        model.modeRaw = MarkdownViewMode.split.rawValue
+        model.open([note])
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
+                              styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = MarkdownDocumentWindowController.contentView(model: model)
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.order(.below, relativeTo: 0)
+        defer {
+            window.orderOut(nil)
+            window.close()
+        }
+        func first<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+            if let hit = view as? T { return hit }
+            for child in view.subviews { if let hit = first(type, in: child) { return hit } }
+            return nil
+        }
+        var web: WKWebView?
+        var editor: NSTextView?
+        for _ in 0 ..< 60 where web == nil || editor == nil {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            web = first(WKWebView.self, in: try XCTUnwrap(window.contentView))
+            editor = first(NSTextView.self, in: try XCTUnwrap(window.contentView))
+        }
+        let page = try XCTUnwrap(web, "no page in split view")
+        let text = try XCTUnwrap(editor?.enclosingScrollView, "no editor in split view")
+        var blocks = 0
+        for _ in 0 ..< 60 where blocks < 100 {
+            try await Task.sleep(nanoseconds: 100_000_000)
+            blocks = try await page.evaluateJavaScript("document.querySelectorAll('#gn-article p').length") as? Int ?? 0
+        }
+        XCTAssertGreaterThanOrEqual(blocks, 100, "the page never rendered the note")
+
+        text.contentView.scroll(to: NSPoint(x: 0, y: 3000))
+        text.reflectScrolledClipView(text.contentView)
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let scrolled = try await page.evaluateJavaScript("(document.scrollingElement||document.documentElement).scrollTop")
+            as? Double ?? 0
+        XCTAssertGreaterThan(scrolled, 500, "the preview stayed at the top while the editor scrolled 3000 pt")
+
+        // The paragraph at the top of each pane is the same one.
+        let editorText = try XCTUnwrap(editor)
+        var probe = text.contentView.bounds
+        probe.origin.y = max(0, probe.origin.y - editorText.textContainerInset.height)
+        probe.size.height = 1
+        let layout = try XCTUnwrap(editorText.layoutManager), container = try XCTUnwrap(editorText.textContainer)
+        let offset = layout.characterIndexForGlyph(at: layout.glyphRange(forBoundingRect: probe, in: container).location)
+        let source = editorText.string as NSString
+        let editorTop = source.substring(with: source.lineRange(for: NSRange(location: offset, length: 0)))
+        let pageTop = try await page.evaluateJavaScript(
+            "(function(){var ps=document.querySelectorAll('#gn-article p');for(var i=0;i<ps.length;i++){"
+            + "if(ps[i].getBoundingClientRect().bottom>40)return ps[i].textContent;}return ''})()"
+        ) as? String ?? ""
+        let number: (String) -> Int? = { Int($0.split(separator: " ").dropFirst().first ?? "") }
+        print("split sync: editor top \(editorTop.debugDescription), page top \(pageTop.debugDescription)")
+        let gap = abs((number(editorTop) ?? -100) - (number(pageTop) ?? 100))
+        XCTAssertLessThanOrEqual(gap, 1, "editor shows \(editorTop), page shows \(pageTop)")
+
+        // The other way: the reader scrolls the page (a wheel event first, as a trackpad gives), the editor follows.
+        func editorTopNumber() -> Int? {
+            var probe = text.contentView.bounds
+            // One point in: the line put exactly at the top starts where the line above it ends.
+            probe.origin.y = max(0, probe.origin.y - editorText.textContainerInset.height + 1)
+            probe.size.height = 1
+            let at = layout.characterIndexForGlyph(at: layout.glyphRange(forBoundingRect: probe, in: container).location)
+            return source.substring(to: at).components(separatedBy: "\n").count - 1
+        }
+        let target = source.substring(to: source.range(of: "Paragraph 150 of").location).components(separatedBy: "\n").count - 1
+        _ = try await page.evaluateJavaScript(
+            "(function(){var p=document.querySelectorAll('#gn-article p')[150];"
+            + "var sc=document.scrollingElement||document.documentElement;"
+            + "sc.scrollTop=sc.scrollTop+p.getBoundingClientRect().top-12;})();"
+            + "window.dispatchEvent(new WheelEvent('wheel',{deltaY:400}));"
+            // A page in a window that is not on screen fires no scroll events by itself.
+            + "window.dispatchEvent(new Event('scroll'));true")
+        try await Task.sleep(nanoseconds: 600_000_000)
+        XCTAssertEqual(Double(editorTopNumber() ?? -100), Double(target), accuracy: 2, "the editor did not follow the page")
+
+        // Paused: the page scrolls alone, and the editor stays.
+        model.splitScrollSync = false
+        try await Task.sleep(nanoseconds: 300_000_000)
+        _ = try await page.evaluateJavaScript(
+            "window.dispatchEvent(new WheelEvent('wheel',{deltaY:400}));"
+            + "(document.scrollingElement||document.documentElement).scrollTop=0;"
+            + "window.dispatchEvent(new Event('scroll'));true")
+        try await Task.sleep(nanoseconds: 600_000_000)
+        XCTAssertEqual(Double(editorTopNumber() ?? -100), Double(target), accuracy: 2, "a paused sync still moved the editor")
+    }
+
+    /// A probe over a real note (`MARKDOWN_SYNC_NOTE=<path>`): prints the editor's and the page's top line at
+    /// several scroll offsets. Read-only; skipped without the variable.
+    func testSyncProbeOnARealNote() async throws {
+        guard let path = ProcessInfo.processInfo.environment["MARKDOWN_SYNC_NOTE"] else { throw XCTSkip("no note") }
+        let model = model()
+        model.configuration = GenesisKitMarkdownConfiguration(
+            defaults: UserDefaults(suiteName: "md-split-probe-config-\(UUID().uuidString)")!)
+        model.modeRaw = MarkdownViewMode.split.rawValue
+        model.open([URL(fileURLWithPath: path)])
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
+                              styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = MarkdownDocumentWindowController.contentView(model: model)
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.order(.below, relativeTo: 0)
+        defer { window.orderOut(nil); window.close() }
+        func first<T: NSView>(_ type: T.Type, in view: NSView) -> T? {
+            if let hit = view as? T { return hit }
+            for child in view.subviews { if let hit = first(type, in: child) { return hit } }
+            return nil
+        }
+        try await Task.sleep(nanoseconds: 3_000_000_000)
+        let page = try XCTUnwrap(first(WKWebView.self, in: try XCTUnwrap(window.contentView)))
+        let editor = try XCTUnwrap(first(NSTextView.self, in: try XCTUnwrap(window.contentView)))
+        let text = try XCTUnwrap(editor.enclosingScrollView)
+        for y in stride(from: 0.0, through: 6000.0, by: 750.0) {
+            text.contentView.scroll(to: NSPoint(x: 0, y: y))
+            text.reflectScrolledClipView(text.contentView)
+            try await Task.sleep(nanoseconds: 400_000_000)
+            var probe = text.contentView.bounds
+            probe.origin.y = max(0, probe.origin.y - editor.textContainerInset.height)
+            probe.size.height = 1
+            let layout = try XCTUnwrap(editor.layoutManager)
+            let offset = layout.characterIndexForGlyph(at: layout.glyphRange(forBoundingRect: probe, in: try XCTUnwrap(editor.textContainer)).location)
+            let source = editor.string as NSString
+            let top = source.substring(with: source.lineRange(for: NSRange(location: offset, length: 0)))
+            let page = try await page.evaluateJavaScript(
+                "(function(){var sc=document.scrollingElement;var ns=document.querySelectorAll('#gn-article [data-line]');"
+                + "for(var i=ns.length-1;i>=0;i--){if(ns[i].getBoundingClientRect().top<=60)return sc.scrollTop+' line '+ns[i].getAttribute('data-line')+': '+ns[i].textContent.slice(0,60);}return sc.scrollTop+' none'})()"
+            ) as? String ?? "?"
+            print("sync probe y=\(Int(y)) editor: \(top.prefix(60).debugDescription) | page: \(page.debugDescription)")
+        }
+    }
+
     /// Editor lines count the frontmatter, page lines do not.
     func testLineMathBehindTheSync() {
         let note = "---\ntitle: x\ntags: [a]\n---\n# Heading\n\nbody\n"
