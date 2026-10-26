@@ -410,7 +410,7 @@ final class MarkdownWebSecurityTests: XCTestCase {
             "/\(v.outside.appendingPathComponent("secret.png").path)",
             "\(v.outside.path)/../outside/secret.png",
         ]
-        let index = VaultMediaIndex(root: v.vault)
+        let index = VaultFileIndex(root: v.vault)
         let indexed = expectation(description: "vault indexed")
         index.refreshIfNeeded { indexed.fulfill() }
         await fulfillment(of: [indexed], timeout: 5)
@@ -444,7 +444,7 @@ final class MarkdownWebSecurityTests: XCTestCase {
         let v = try makeMediaVault()
         let started = expectation(description: "scan started")
         let release = DispatchSemaphore(value: 0)
-        let index = VaultMediaIndex(root: v.vault) { _ in
+        let index = VaultFileIndex(root: v.vault) { _ in
             XCTAssertFalse(Thread.isMainThread, "the filesystem walk must not block a render")
             started.fulfill()
             _ = release.wait(timeout: .now() + 5)
@@ -472,7 +472,7 @@ final class MarkdownWebSecurityTests: XCTestCase {
 
     func testMediaIndexRefreshPublishesNewFilesAndRevokedContextStaysRevoked() async throws {
         let v = try makeMediaVault()
-        let index = VaultMediaIndex(root: v.vault)
+        let index = VaultFileIndex(root: v.vault)
         let oldTime = Date().addingTimeInterval(-31)
         let first = expectation(description: "initial scan")
         index.refreshIfNeeded(now: oldTime) { first.fulfill() }

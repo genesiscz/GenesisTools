@@ -29,6 +29,32 @@ final class MarkdownDocumentWindowTests: XCTestCase {
         XCTAssertNil(MarkdownDocumentLinks.resolve("", folder: folder, vaultRoot: nil, exists: exists))
     }
 
+    /// `[[Acme-Overview#Current frames]]` in `Clients/Acme/Design/Figma.md` names `Clients/Acme/Acme-Overview.md`:
+    /// neither the note's folder nor the vault root holds it, so it was "Nothing found" and showed no hover.
+    @MainActor
+    func testANoteNamedOnlyByItsNameIsFoundAnywhereInTheVaultNearestFirst() async throws {
+        let notes = ["Clients/Acme/Acme-Overview.md", "Archive/Acme-Overview.md", "Clients/Acme/Design/Figma.md"]
+        let index = VaultFileIndex(root: URL(fileURLWithPath: "/vault")) { _ in
+            .init(paths: [], attachmentFolder: nil, notes: notes)
+        }
+        let scanned = expectation(description: "scanned")
+        index.refreshIfNeeded { scanned.fulfill() }
+        await fulfillment(of: [scanned], timeout: 3)
+        let present = Set(notes.map { "/vault/\($0)" })
+        let folder = URL(fileURLWithPath: "/vault/Clients/Acme/Design")
+
+        let found = try XCTUnwrap(MarkdownDocumentLinks.locate(
+            "Acme-Overview#Current frames", folder: folder, vaultRoot: "/vault", index: index, exists: present.contains))
+        XCTAssertEqual(found.url.path, "/vault/Clients/Acme/Acme-Overview.md", "the note nearest the linking note wins")
+        XCTAssertEqual(found.fragment, "Current frames")
+        XCTAssertEqual(MarkdownDocumentLinks.resolve("archive/acme-overview", folder: folder, vaultRoot: "/vault",
+            index: index, exists: present.contains)?.path, "/vault/Archive/Acme-Overview.md", "a path tail picks one")
+        XCTAssertNil(MarkdownDocumentLinks.resolve("Acme-Overview", folder: folder, vaultRoot: "/vault",
+            exists: present.contains), "without the index only the folder and the vault root are tried")
+        XCTAssertNil(MarkdownDocumentLinks.resolve("Missing", folder: folder, vaultRoot: "/vault",
+            index: index, exists: present.contains))
+    }
+
     func testDottedNoteNamesFallBackToMarkdownAndKeepTheirHeading() throws {
         let folder = URL(fileURLWithPath: "/vault/notes")
         let files: Set<String> = ["/vault/notes/1234.analysis.md", "/vault/5678.analysis.md",
