@@ -117,6 +117,11 @@ export function parseConcatenatedJson(text: string): unknown[] {
     let escaped = false;
     for (let index = 0; index < text.length; index++) {
         const char = text[index];
+        if (depth === 0 && char !== "[" && char !== "{" && !/[ \t\r\n]/.test(char)) {
+            // A single primitive is valid too; any text around completed documents must fail strict parsing.
+            return [SafeJSON.parse(text, { strict: true })];
+        }
+
         if (inString) {
             if (escaped) {
                 escaped = false;

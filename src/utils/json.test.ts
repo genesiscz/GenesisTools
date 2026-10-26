@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { parseJSON, SafeJSON } from "./json";
+import { parseConcatenatedJson, parseJSON, SafeJSON } from "./json";
 
 describe("SafeJSON", () => {
     it("parses standard JSON", () => {
@@ -136,5 +136,41 @@ describe("SafeJSON.stringify — control character escaping (BUG 2 regression gu
 
             expect(out.includes(String.fromCharCode(i))).toBe(false);
         }
+    });
+});
+
+describe("parseConcatenatedJson", () => {
+    it("reads nested documents and permits only JSON whitespace between pages", () => {
+        const page = [{ message: 'brackets [] {} and escaped quote " and backslash \\', nested: { values: [1] } }];
+        expect(parseConcatenatedJson(` \t${SafeJSON.stringify(page)}\r\n{} []\n`)).toEqual([page, {}, []]);
+        expect(parseConcatenatedJson("[]{}[]")).toEqual([[], {}, []]);
+    });
+
+    it("preserves single JSON values", () => {
+        for (const value of [null, true, false, 42, "hello", [], {}]) {
+            expect(parseConcatenatedJson(SafeJSON.stringify(value))).toEqual([value]);
+        }
+    });
+
+    it.each([
+        "garbage[]",
+        "[]garbage",
+        "[]BROKEN[]",
+        '[]"unterminated',
+        '"unterminated[]',
+        '[]"valid string"',
+        "true[]",
+        "[]false",
+        "[]/* comment */[]",
+        "[]\u00a0[]",
+        "[]\u000b[]",
+        "[]]",
+        "[][",
+        "[{]}",
+        '[{"a":1,}]',
+        "",
+        " \t\r\n",
+    ])("rejects malformed input %j", (input) => {
+        expect(() => parseConcatenatedJson(input)).toThrow();
     });
 });
