@@ -19,6 +19,14 @@ final class AgentBlameQueue {
     /// The least time from one run of a repository to its next. A vault that agents write to changes every few seconds,
     /// and each run is a GenesisTools launch that Launch Services checks in.
     var minInterval: Duration = .seconds(5)
+    /// Monotonic time and delayed work are replaceable so tests can advance the cooldown without sleeping.
+    var now: () -> ContinuousClock.Instant = { .now }
+    var later: (Duration, @escaping @MainActor () -> Void) -> Void = { delay, start in
+        Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            start()
+        }
+    }
     var provider: () -> GenesisKitGTProvider = { GenesisKitGT.provider }
     /// Runs one blame off the main thread; tests replace it.
     var run: @Sendable (GenesisKitGTProvider, String, [String]) -> AgentBlameResult? = { provider, repo, paths in
@@ -76,18 +84,15 @@ final class AgentBlameQueue {
     private func schedule(_ repo: String) {
         guard !running.contains(repo), scheduled.insert(repo).inserted else { return }
         var wait = delay
-        if let last = lastStart[repo] { wait = max(wait, last + minInterval - .now) }
-        Task { [weak self, wait] in
-            try? await Task.sleep(for: wait)
-            self?.start(repo)
-        }
+        if let last = lastStart[repo] { wait = max(wait, last + minInterval - now()) }
+        later(wait) { [weak self] in self?.start(repo) }
     }
 
     private func start(_ repo: String) {
         scheduled.remove(repo)
         guard let batch = waiting.removeValue(forKey: repo), !batch.isEmpty else { return }
         running.insert(repo)
-        lastStart[repo] = .now
+        lastStart[repo] = now()
         runs += 1
         let paths = batch.keys.sorted()
         let provider = provider()

@@ -51,6 +51,44 @@ final class GitQueriesTests: XCTestCase {
         XCTAssertNil(GitQueries.parseNumstat(""))
     }
 
+    func testRepositoryLogFailuresThrowButAnUnbornRepositoryHasNoLog() throws {
+        final class Provider: GenesisKitGTCLIProvider {
+            var unborn = false
+            var failLog = true
+            var logCalls = 0
+
+            override func git(_ arguments: [String], in repo: URL, input: Data?, gitDirectory: String?, environment: [String: String]?) throws -> GitRunResult {
+                if arguments == ["rev-parse", "--show-toplevel"] {
+                    return GitRunResult(status: 0, stdout: Data(repo.path.utf8), stderr: Data())
+                }
+                if arguments.contains("--porcelain=v2") {
+                    let oid = unborn ? "(initial)" : "abc1234"
+                    return GitRunResult(status: 0, stdout: Data("# branch.oid \(oid)\0# branch.head main\0".utf8), stderr: Data())
+                }
+                if arguments.first == "log" {
+                    logCalls += 1
+                    if failLog { return GitRunResult(status: 128, stdout: Data(), stderr: Data("log unavailable".utf8)) }
+                    return GitRunResult(status: 0, stdout: Data("\u{1e}abc1234\u{1f}abc1234\u{1f}Kept\u{1f}Alice\u{1f}1700000000\n".utf8), stderr: Data())
+                }
+                throw ReviewError.git("Unexpected git command")
+            }
+        }
+        let provider = Provider()
+        let root = URL(fileURLWithPath: "/tmp/history-fixture")
+        XCTAssertThrowsError(try provider.repoStatus(root, commits: 15)) { error in
+            XCTAssertTrue(String(describing: error).contains("log unavailable"))
+        }
+        XCTAssertEqual(provider.logCalls, 1, "the production repoStatus query must propagate its log failure")
+        XCTAssertNotNil(try provider.repoStatus(root, commits: 0), "a status-only read does not need the log")
+        XCTAssertEqual(provider.logCalls, 1)
+        provider.unborn = true
+        XCTAssertTrue(try XCTUnwrap(provider.repoStatus(root, commits: 15)).commits.isEmpty)
+        XCTAssertEqual(provider.logCalls, 1, "an unborn branch is explicitly empty, without asking git log")
+        provider.unborn = false
+        provider.failLog = false
+        XCTAssertEqual(try provider.repoStatus(root, commits: 15)?.commits.map(\.subject), ["Kept"])
+    }
+
     func testAScratchRepositoryAnswersEveryQuestion() throws {
         let repo = FileManager.default.temporaryDirectory.appendingPathComponent("gitqueries-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: repo.appendingPathComponent("notes"), withIntermediateDirectories: true)

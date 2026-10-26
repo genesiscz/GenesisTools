@@ -89,7 +89,12 @@ struct GitQueries {
     func repoStatus(_ folder: URL, commits: Int) throws -> GitRepoStatus? {
         guard let root = root(of: folder) else { return nil }
         let status = Self.parseStatus(try run(["--no-optional-locks", "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"], in: root))
-        let log = commits > 0 ? (try? run(["log", "-n", String(commits), "--format=\u{1e}%H\u{1f}%h\u{1f}%s\u{1f}%an\u{1f}%ct"], in: root)) ?? "" : ""
+        let log: String
+        if commits > 0, !status.unborn {
+            log = try run(["log", "-n", String(commits), "--format=\u{1e}%H\u{1f}%h\u{1f}%s\u{1f}%an\u{1f}%ct"], in: root)
+        } else {
+            log = ""
+        }
         return GitRepoStatus(root: root, branch: status.branch, upstream: status.upstream, ahead: status.ahead, behind: status.behind,
                              entries: status.entries, commits: Self.parseLog(log))
     }
@@ -97,6 +102,7 @@ struct GitQueries {
     // MARK: Parsing
 
     struct Status {
+        var unborn = false
         var branch = "(no branch)"
         var upstream: String?
         var ahead = 0
@@ -116,6 +122,7 @@ struct GitQueries {
             index += 1
             if field.hasPrefix("# branch.oid ") {
                 oid = String(field.dropFirst("# branch.oid ".count))
+                status.unborn = oid == "(initial)"
             } else if field.hasPrefix("# branch.head ") {
                 let head = String(field.dropFirst("# branch.head ".count))
                 status.branch = head == "(detached)" ? "detached \(oid.prefix(7))" : head

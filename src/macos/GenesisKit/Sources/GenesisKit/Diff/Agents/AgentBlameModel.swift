@@ -14,6 +14,8 @@ public final class AgentBlameModel: ObservableObject {
     @Published public private(set) var state = AgentBlameState()
     /// The file's repo-relative path, which is also its id in a `GitFileDiffModel` diff.
     public private(set) var path: String?
+    /// The process-wide queue normally; a test can own its scheduler and requests.
+    var queue = AgentBlameQueue.shared
     private var url: URL?
     private lazy var follower = GitRepoFollower(skipFirst: true) { [weak self] in self?.reload() }
     private var ticket = 0
@@ -35,7 +37,7 @@ public final class AgentBlameModel: ObservableObject {
     public func reload() {
         guard let url else { return }
         ticket += 1
-        AgentBlameQueue.shared.request(.init(model: self, ticket: ticket, url: url))
+        queue.request(.init(model: self, ticket: ticket, url: url))
     }
 
     /// The part of a shared blame result that is this file's, unless a newer request or another file replaced it.

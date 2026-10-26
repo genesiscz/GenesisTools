@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import GenesisKit
 
@@ -24,45 +25,92 @@ final class AgentBlameModelTests: XCTestCase {
     /// A repository change used to start one blame per open note (51 to 66 GenesisTools launches at once in Genesis
     /// Markdown, 2026-10-24); the notes of one repository now share one run, and a second wave waits for the first.
     func testTheOpenNotesOfARepositoryShareOneBlameRun() async throws {
+        @MainActor final class ManualTime {
+            var now: ContinuousClock.Instant = .now
+            var pending: [(deadline: ContinuousClock.Instant, start: @MainActor () -> Void)] = []
+
+            func advance(_ duration: Duration) {
+                now = now.advanced(by: duration)
+                let due = pending.filter { $0.deadline <= now }
+                pending.removeAll { $0.deadline <= now }
+                for action in due { action.start() }
+            }
+        }
         final class Counting: GenesisKitGTCLIProvider, @unchecked Sendable {
             let lock = NSLock()
-            var runs: [[String]] = []
-            var starts: [Date] = []
+            let gate = DispatchSemaphore(value: 0)
+            let started: XCTestExpectation
+            private var calls: [[String]] = []
+            var runs: [[String]] { lock.withLock { calls } }
+
+            init(started: XCTestExpectation) { self.started = started }
+
             override func agentBlame(repo: String, paths: [String]) throws -> AgentBlameResult {
-                lock.withLock { runs.append(paths); starts.append(Date()) }
-                Thread.sleep(forTimeInterval: 0.2)
+                let first = lock.withLock { calls.append(paths); return calls.count == 1 }
+                if first {
+                    started.fulfill()
+                    guard gate.wait(timeout: .now() + 5) == .success else {
+                        throw ReviewError.git("The test did not release the first blame run")
+                    }
+                }
                 return AgentBlameResult(
                     sources: [AgentBlameSource(provider: "claude", session: "aaaaaaaa-1111", turn: "t1",
                                                ts: "2026-10-24T10:00:00Z", prompt: "Write it")],
                     files: paths.map { AgentBlameFile(path: $0, ranges: [[1, 2, 0]]) }, elapsedMs: 1)
             }
+            override func git(_ arguments: [String], in repo: URL, input: Data?, gitDirectory: String?, environment: [String: String]?) throws -> GitRunResult {
+                GitRunResult(status: 1, stdout: Data(), stderr: Data())
+            }
             override func repoStatus(_ folder: URL, commits: Int) throws -> GitRepoStatus? { nil }
+        }
+        let started = expectation(description: "the first blame run started")
+        let scheduledAgain = expectation(description: "the first run completed and scheduled the second wave")
+        let applied = expectation(description: "the second run reached every model")
+        applied.expectedFulfillmentCount = 3
+        let time = ManualTime()
+        let queue = AgentBlameQueue()
+        let provider = Counting(started: started)
+        queue.provider = { provider }
+        queue.now = { time.now }
+        var delays: [Duration] = []
+        queue.later = { delay, start in
+            delays.append(delay)
+            time.pending.append((time.now + delay, start))
+            if delays.count == 2 { scheduledAgain.fulfill() }
         }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("blame-queue-\(UUID())")
             .resolvingSymlinksInPath()
-        let provider = Counting()
         let previous = GenesisKitGT.provider
         GenesisKitGT.provider = provider
-        defer { GenesisKitGT.provider = previous }
-        AgentBlameQueue.shared.remember(root: folder, for: folder)
-        let interval = AgentBlameQueue.shared.minInterval
-        AgentBlameQueue.shared.minInterval = .milliseconds(700)
-        defer { AgentBlameQueue.shared.minInterval = interval }
+        defer { GenesisKitGT.provider = previous; provider.gate.signal() }
+        queue.remember(root: folder, for: folder)
         let models = (0..<3).map { _ in AgentBlameModel() }
-        for (index, model) in models.enumerated() { model.follow(folder.appendingPathComponent("note\(index).md")) }
-        try await Task.sleep(for: .milliseconds(450))
-        // A second wave while the first runs: one more run for all of it, after the first.
-        for model in models { model.reload() }
-        try await Task.sleep(for: .milliseconds(1400))
-
-        let (runs, starts) = provider.lock.withLock { (provider.runs, provider.starts) }
-        XCTAssertEqual(runs, [["note0.md", "note1.md", "note2.md"], ["note0.md", "note1.md", "note2.md"]],
-                       "one run per wave for the three notes, never one per note")
-        if starts.count == 2 {
-            XCTAssertGreaterThanOrEqual(starts[1].timeIntervalSince(starts[0]), 0.65, "a repository's next run waits out minInterval")
+        for (index, model) in models.enumerated() {
+            model.queue = queue
+            model.follow(folder.appendingPathComponent("note\(index).md"))
         }
+        let subscriptions = models.map { model in model.$state.dropFirst().sink { _ in applied.fulfill() } }
+        defer { subscriptions.forEach { $0.cancel() }; models.forEach { $0.follow(nil) } }
+        XCTAssertEqual(delays, [.milliseconds(300)])
+        time.advance(.milliseconds(300))
+        await fulfillment(of: [started], timeout: 3)
+
+        // The first provider call is held behind the gate, so this wave must wait for another run.
+        for model in models { model.reload() }
+        XCTAssertEqual(delays.count, 1, "a running repository never starts overlapping work")
+        provider.gate.signal()
+        await fulfillment(of: [scheduledAgain], timeout: 3)
+        XCTAssertEqual(delays, [.milliseconds(300), .seconds(5)])
+        time.advance(.seconds(4))
+        XCTAssertEqual(provider.runs.count, 1, "the cooldown has not expired")
+        time.advance(.seconds(1))
+        await fulfillment(of: [applied], timeout: 3)
+
+        XCTAssertEqual(provider.runs, [["note0.md", "note1.md", "note2.md"], ["note0.md", "note1.md", "note2.md"]],
+                       "one run per wave for the three notes, never one per note")
         XCTAssertEqual(models.map(\.path), ["note0.md", "note1.md", "note2.md"])
         XCTAssertEqual(models[1].source(forLines: 0...1)?.session, "aaaaaaaa-1111", "each note gets its own part")
+        XCTAssertTrue(time.pending.isEmpty)
     }
 
     func testDisablingAttributionDiscardsAnInFlightReply() async throws {

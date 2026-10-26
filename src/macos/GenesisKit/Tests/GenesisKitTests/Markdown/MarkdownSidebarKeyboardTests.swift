@@ -128,6 +128,51 @@ final class MarkdownSidebarKeyboardTests: XCTestCase {
         XCTAssertFalse(FileTreeSearch.ripgrepFailed(status: 1, hits: 0), "1 is ripgrep's plain No match")
     }
 
+    func testFolderReadFailuresChooseTheApplicableGrantOrFilesystemRecovery() {
+        let home = URL(fileURLWithPath: "/v/home")
+        let denied = NSError(domain: NSPOSIXErrorDomain, code: Int(POSIXErrorCode.EPERM.rawValue))
+        for (folder, kind) in [("Desktop", PermissionKind.desktopFolder), ("Documents", .documentsFolder), ("Downloads", .downloadsFolder)] {
+            XCTAssertEqual(MarkdownTreeEmpty.failure(denied, path: "/v/home/\(folder)/notes", home: home), .permission(kind))
+        }
+        XCTAssertEqual(MarkdownTreeEmpty.failure(denied, path: "/v/home/Library/Mail", home: home), .permission(.fullDiskAccess))
+        let privacy = NSError(domain: NSCocoaErrorDomain, code: CocoaError.fileReadNoPermission.rawValue,
+                              userInfo: [NSUnderlyingErrorKey: denied])
+        XCTAssertEqual(MarkdownTreeEmpty.failure(privacy, path: "/v/home/Documents/note", home: home), .permission(.documentsFolder))
+        let withoutCause = NSError(domain: NSCocoaErrorDomain, code: CocoaError.fileReadNoPermission.rawValue)
+        XCTAssertEqual(MarkdownTreeEmpty.failure(withoutCause, path: "/v/home/Downloads", home: home), .permission(.downloadsFolder))
+        XCTAssertEqual(MarkdownTreeEmpty.failure(denied, path: "/v/home/Documents-other", home: home), .permission(.fullDiskAccess),
+                       "a sibling with the same prefix is not the Documents folder")
+        let access = NSError(domain: NSPOSIXErrorDomain, code: Int(POSIXErrorCode.EACCES.rawValue))
+        let wrapped = NSError(domain: NSCocoaErrorDomain, code: CocoaError.fileReadNoPermission.rawValue,
+                              userInfo: [NSUnderlyingErrorKey: access])
+        XCTAssertEqual(MarkdownTreeEmpty.failure(wrapped, path: "/v/home/Documents/locked", home: home), .unreadable)
+        let missing = NSError(domain: NSPOSIXErrorDomain, code: Int(POSIXErrorCode.ENOENT.rawValue))
+        XCTAssertEqual(MarkdownTreeEmpty.failure(missing, path: "/v/home/Documents/gone", home: home), .unreadable)
+    }
+
+    func testTheFolderActionUsesThePermissionCenterAndHonorsDenialSimulation() throws {
+        struct Granted: PermissionSystem {
+            func status(_ kind: PermissionKind) -> PermissionStatus { .granted }
+            func request(_ kind: PermissionKind) async -> PermissionStatus { .granted }
+            @MainActor func openSettings(_ kind: PermissionKind) -> Bool { XCTFail("the test must not open Settings"); return false }
+        }
+        let presenter = RecordingPermissionPresenter()
+        let center = PermissionCenter(access: PermissionAccess(system: Granted(), simulation: { PermissionSimulation.parse("documents") }),
+                                      presenter: presenter, pollInterval: .seconds(3600), activateForPrompt: {})
+        var retries = 0
+        MarkdownTreeEmpty.requestAccess(.documentsFolder, retry: { retries += 1 }, center: center)
+        XCTAssertEqual(presenter.presented, [.documentsFolder])
+        XCTAssertEqual(retries, 0, "a simulated denial must not run the file read")
+        let dialog = try XCTUnwrap(center.dialogs[.documentsFolder])
+        XCTAssertTrue(dialog.reason.contains("file sidebar"))
+        dialog.dismiss()
+
+        let allowed = PermissionCenter(access: PermissionAccess(system: Granted(), simulation: { PermissionSimulation.parse(nil) }),
+                                       presenter: presenter, activateForPrompt: {})
+        MarkdownTreeEmpty.requestAccess(.documentsFolder, retry: { retries += 1 }, center: allowed)
+        XCTAssertEqual(retries, 1, "an existing grant retries the folder immediately")
+    }
+
     func testAnEmptyFolderAndAnUnreadableOneAreDifferentStates() throws {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("tree-empty-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

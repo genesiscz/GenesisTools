@@ -34,6 +34,7 @@ struct MarkdownFileTreeView: View {
     @State private var hitCursor: Int?
     /// Why the tree has no rows, once a check of the folder says so (nil while it loads or has rows).
     @State private var treeEmpty: MarkdownTreeEmpty?
+    @State private var emptyAttempt = 0
     @State private var debounce: Task<Void, Never>?
     @FocusState private var searchFocused: Bool
     /// The folder "Go to Location…" revealed: highlighted until another document is selected.
@@ -199,7 +200,7 @@ struct MarkdownFileTreeView: View {
         .onChange(of: search.hits) { _, _ in hitCursor = nil }
         .onChange(of: search.failure) { _, now in if let now { GenAnnounce.post(now.message) } }
         // An empty tree is checked once its rows settle: a folder still being read has no rows either.
-        .task(id: MarkdownTreeEmptyCheck(root: root.path, empty: tree.rows.isEmpty)) {
+        .task(id: MarkdownTreeEmptyCheck(root: root.path, empty: tree.rows.isEmpty, attempt: emptyAttempt)) {
             guard tree.rows.isEmpty else {
                 treeEmpty = nil
                 return
@@ -207,7 +208,9 @@ struct MarkdownFileTreeView: View {
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled, tree.rows.isEmpty else { return }
             let path = root.path
-            treeEmpty = await Task.detached(priority: .utility) { MarkdownTreeEmpty.check(path) }.value
+            let result = await Task.detached(priority: .utility) { MarkdownTreeEmpty.check(path) }.value
+            guard !Task.isCancelled else { return }
+            treeEmpty = result
         }
     }
 
@@ -228,11 +231,17 @@ struct MarkdownFileTreeView: View {
                        actionTitle: Self.parentFolderName(model.filesRootURL).map { "Go up to \($0)" },
                        action: { model.filesRootUp() })
                 .accessibilityIdentifier("markdown-files-empty")
+        case .permission(let kind):
+            EmptyState(symbol: "lock", text: "\(name) needs permission to be read",
+                       detail: "Allow \(kind.title) for \(PermissionKind.appName), then the folder is read again.",
+                       actionTitle: "Allow \(kind.title)",
+                       action: { MarkdownTreeEmpty.requestAccess(kind, retry: reloadFolder) })
+                .accessibilityIdentifier("markdown-files-unreadable")
         case .unreadable:
-            EmptyState(symbol: "lock", text: "\(name) cannot be read",
-                       detail: "macOS privacy settings (Files and Folders, or Full Disk Access) or the folder's permissions block it.",
-                       actionTitle: "Open Privacy Settings",
-                       action: { MarkdownTreeEmpty.openPrivacySettings() })
+            EmptyState(symbol: "folder.badge.questionmark", text: "\(name) cannot be read",
+                       detail: "Check that the folder still exists and that your account can read it. Finder's Get Info, Sharing & Permissions shows its access rules.",
+                       actionTitle: "Try Again",
+                       action: reloadFolder)
                 .accessibilityIdentifier("markdown-files-unreadable")
         case .noChanges:
             EmptyState(symbol: "checkmark.circle", text: "No changed files",
@@ -241,6 +250,12 @@ struct MarkdownFileTreeView: View {
                        action: { changedOnly = false })
                 .accessibilityIdentifier("markdown-files-no-changes")
         }
+    }
+
+    private func reloadFolder() {
+        treeEmpty = nil
+        emptyAttempt += 1
+        tree.reload()
     }
 
     /// The rows on screen, in order: every row, or only the changed ones when the git filter is on.
@@ -819,7 +834,7 @@ struct MarkdownFileTreeView: View {
             .instantTooltip(keymap.hint("Find a file by name, or text in files", "markdown.find.files"))
 
             Button {
-                tree.reload()
+                reloadFolder()
             } label: {
                 Image(systemName: "arrow.triangle.2.circlepath")
                     .font(.system(size: 9, weight: .bold))
@@ -1208,7 +1223,9 @@ enum MarkdownTreeScroll {
 enum MarkdownTreeEmpty: Equatable, Sendable {
     /// The folder holds no visible file.
     case empty
-    /// The folder cannot be listed: a privacy grant or its permissions.
+    /// A privacy denial, with the grant for this folder.
+    case permission(PermissionKind)
+    /// The folder is missing or its filesystem access rules prevent listing it.
     case unreadable
     /// "Show only changed files" is on and nothing changed.
     case noChanges
@@ -1219,15 +1236,30 @@ enum MarkdownTreeEmpty: Equatable, Sendable {
             _ = try FileManager.default.contentsOfDirectory(atPath: path)
             return .empty
         } catch {
-            return .unreadable
+            return failure(error as NSError, path: path)
         }
     }
 
-    /// System Settings at Privacy & Security, Files and Folders.
+    /// TCC normally returns EPERM; EACCES and missing paths need filesystem recovery, not a privacy grant.
+    nonisolated static func failure(_ error: NSError, path: String, home: URL = FileManager.default.homeDirectoryForCurrentUser) -> MarkdownTreeEmpty {
+        let underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
+        let posix = error.domain == NSPOSIXErrorDomain ? error.code
+            : underlying?.domain == NSPOSIXErrorDomain ? underlying?.code : nil
+        let privacy = posix == Int(POSIXErrorCode.EPERM.rawValue)
+            || (posix == nil && error.domain == NSCocoaErrorDomain && error.code == CocoaError.fileReadNoPermission.rawValue)
+        guard privacy else { return .unreadable }
+        let folder = URL(fileURLWithPath: path).standardizedFileURL.path
+        for (name, kind) in [("Desktop", PermissionKind.desktopFolder), ("Documents", .documentsFolder), ("Downloads", .downloadsFolder)] {
+            let protected = home.appendingPathComponent(name).standardizedFileURL.path
+            if folder == protected || folder.hasPrefix(protected + "/") { return .permission(kind) }
+        }
+        return .permission(.fullDiskAccess)
+    }
+
     @MainActor
-    static func openPrivacySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders") {
-            NSWorkspace.shared.open(url)
+    static func requestAccess(_ kind: PermissionKind, retry: @escaping @MainActor () -> Void, center: PermissionCenter = .shared) {
+        if center.require(PermissionNeed(kind, reason: "The file sidebar needs to list this folder so you can browse and open its files.", onGranted: retry)) {
+            retry()
         }
     }
 }
@@ -1236,4 +1268,5 @@ enum MarkdownTreeEmpty: Equatable, Sendable {
 private struct MarkdownTreeEmptyCheck: Equatable {
     let root: String
     let empty: Bool
+    let attempt: Int
 }
