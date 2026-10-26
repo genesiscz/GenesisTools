@@ -637,10 +637,6 @@ public struct GitRepoPanel: View, Equatable {
                 GitFailureNotice(failure) { repo.retry() }
                     .padding(.vertical, 4)
             }
-            if let failure = log.failure {
-                GitFailureNotice(failure) { log.reload() }
-                    .padding(.vertical, 4)
-            }
             if let status = repo.status {
                 branch(status)
                 controls(lists)
