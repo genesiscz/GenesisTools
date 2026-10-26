@@ -29,7 +29,7 @@ import {
     setIdleDueAt,
 } from "./idle";
 import { inbox, inboxChip } from "./inbox";
-import { linksStep, rememberToolPaths } from "./links";
+import { linksStep, rememberToolPaths, takeLinkedPullRequestNote } from "./links";
 import { startLiveClock } from "./live";
 import {
     type CallSection,
@@ -623,6 +623,15 @@ export const register: Register = (on) => {
 
         if (e.agentId === undefined) {
             stopIdleTimer();
+
+            // The model reads which PR numbers the links mod linked for it, so it can correct a wrong repository.
+            const linked = takeLinkedPullRequestNote();
+
+            if (linked) {
+                await $.session
+                    .append({ message: { type: "user", content: [{ type: "text", text: linked }] } })
+                    .catch(() => undefined);
+            }
 
             const settings = idleCompactSettings(await readHooksFile(host, await agentsDir(host)));
 

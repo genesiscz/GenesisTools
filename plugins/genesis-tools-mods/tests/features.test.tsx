@@ -61,7 +61,7 @@ import {
 import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
 import { idleDueAt, publishIdleDue, setIdleDueAt } from "../hooks/idle";
 import { inbox } from "../hooks/inbox";
-import { targetFor } from "../hooks/links";
+import { linkLine, takeLinkedPullRequestNote, targetFor } from "../hooks/links";
 import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live";
 import { bareDescription } from "../hooks/model-label";
 import { modsSettings } from "../hooks/settings";
@@ -861,6 +861,50 @@ test("post-tool bookkeeping returns immediately, preserves order, logs rejection
     release();
     await finished;
     expect(seen).toEqual(["first", "logged", "second"]);
+});
+
+test("links: a bare PR number is linked in the folder's repository, and the model is told so", async () => {
+    const base = checkoutHost();
+    const host: Host = {
+        ...base,
+        async run(argv, init) {
+            if (argv[0] === "gh" && argv[3] === "900") {
+                return {
+                    exitCode: 0,
+                    stdout: JSON.stringify({
+                        title: "Draft: fix the slot",
+                        url: "https://github.com/acme/api/pull/900",
+                    }),
+                    stderr: "",
+                    isStdoutTruncated: false,
+                    isStderrTruncated: false,
+                };
+            }
+
+            return base.run(argv, init);
+        },
+    };
+    const ctx = {
+        host,
+        home: "/home/test",
+        cwd: "/work/api",
+        root: "/work/api",
+        repo: "acme/api",
+        sessionId: "s1",
+        askedBefore: new Set<number>(),
+        probe: ALL_LINKS,
+        log: [],
+    };
+
+    expect(takeLinkedPullRequestNote()).toBeUndefined();
+    expect(await linkLine(ctx, "see #900 and acme#901\n")).toBe(
+        "see [#900 (fix the slot)](https://github.com/acme/api/pull/900) and acme#901\n"
+    );
+    const note = takeLinkedPullRequestNote() ?? "";
+    expect(note).toContain("- #900 -> https://github.com/acme/api/pull/900 (fix the slot)");
+    expect(note).toContain("to acme/api");
+    // Taking the note clears it: the next turn says nothing unless it links a PR again.
+    expect(takeLinkedPullRequestNote()).toBeUndefined();
 });
 
 test("link targets by kind, and only links this Mac opens", async () => {
