@@ -63,6 +63,174 @@ const entry: RunEntry = {
     verify: ["bunx biome check src/a.ts"],
 };
 
+describe("trust levels", () => {
+    const command = (text: string, cwd = approvalRoot) => ({
+        method: "execCommandApproval",
+        detail: text,
+        command: `/bin/zsh -lc '${text}'`,
+        cwd,
+    });
+    const outside = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "babysit-approval-outside-")));
+
+    test("routine approves the reads, tests and worktree writes that strict leaves to the lead", () => {
+        for (const text of [
+            "./tools ts skeleton src/a.ts",
+            "ls -d graft 2>/dev/null; sed -n 1,9p src/b.ts",
+            "timeout 600 bun run lint:rules > .claude/work/babysit/x.log 2>&1; tail -n 12 .claude/work/babysit/x.log",
+            "python3 -c 1 > src/notes.txt",
+        ]) {
+            expect(decide(entry, command(text)).ok).toBe(false);
+            expect(decide(entry, command(text), "routine").ok).toBe(true);
+        }
+
+        const edit = {
+            method: "item/fileChange/requestApproval",
+            detail: "edit",
+            paths: [join(approvalRoot, "src/b.ts")],
+        };
+        expect(decide(entry, edit).ok).toBe(false);
+        expect(decide(entry, edit, "routine").ok).toBe(true);
+    });
+
+    test("no level approves a push, a delete, a commit outside the brief, a package change or another agent", () => {
+        for (const text of [
+            "git push origin HEAD",
+            "git -C . reset --hard HEAD~1",
+            "rm -rf src",
+            "git commit -m wip",
+            "bun add left-pad",
+            "tools say done",
+            "curl https://example.org",
+        ]) {
+            expect(decide(entry, command(text), "routine").ok).toBe(false);
+            expect(decide(entry, command(text), "all").ok).toBe(false);
+        }
+    });
+
+    test("routine refuses a write or a command outside the worktree and its scratch folders; all allows it", () => {
+        const write = command(`cat src/a.ts > ${outside}/copy.ts`);
+        const elsewhere = command("ls", outside);
+        const gitEdit = { method: "item/fileChange/requestApproval", detail: "edit", paths: [join(outside, "x.ts")] };
+        for (const request of [write, elsewhere, gitEdit]) {
+            expect(decide(entry, request, "routine").ok).toBe(false);
+            expect(decide(entry, request, "all").ok).toBe(true);
+        }
+
+        expect(decide({ ...entry, roots: [outside] }, write, "routine").ok).toBe(true);
+        expect(decide(entry, command("touch .git/hooks/pre-push"), "routine").ok).toBe(false);
+    });
+
+    test("edits approves reads, fable-replace and scratch writes, and refuses every other command", () => {
+        for (const text of ["ls -d graft 2>/dev/null; sed -n 1,9p src/b.ts", "git diff --stat; rg -n foo src"]) {
+            expect(decide(entry, command(text), "edits").ok).toBe(true);
+        }
+
+        for (const text of [
+            "timeout 600 bun scripts/test.ts ./src/a.test.ts",
+            "bun run lint:rules",
+            "python3 -c 1",
+            "git add -- src/a.ts",
+            `git commit -m "${entry.subject}" -- src/a.ts`,
+            `ls > ${outside}/listing.txt`,
+        ]) {
+            expect(decide(entry, command(text), "edits").ok).toBe(false);
+        }
+
+        const edit = {
+            method: "item/fileChange/requestApproval",
+            detail: "edit",
+            paths: [join(approvalRoot, "src/b.ts")],
+        };
+        expect(decide(entry, edit, "edits").ok).toBe(true);
+    });
+
+    test("noBuilds refuses a test run or typecheck even when the brief allows it", () => {
+        const verify = command("bunx biome check src/a.ts");
+        const test = command("timeout 600 bun scripts/test.ts ./src/a.test.ts");
+        expect(decide(entry, test).ok).toBe(true);
+        expect(decide(entry, test, "strict", true).ok).toBe(false);
+        expect(decide(entry, command("./node_modules/.bin/tsc --noEmit"), "routine", true).ok).toBe(false);
+        expect(decide(entry, verify, "strict", true).ok).toBe(true);
+    });
+
+    test("a ritual is refused by the driver itself, never sent to the lead", async () => {
+        const fed: string[] = [];
+        const denied: string[] = [];
+        const output = spyOn(console, "log").mockImplementation(() => {});
+        let time = 0;
+        const exec: typeof execTool = async (args) => {
+            if (args[1] === "deny") {
+                denied.push(args[args.length - 1]);
+                return { success: true, exitCode: 0, stdout: "", stderr: "" };
+            }
+
+            const pendingApprovals = denied.length > 0 ? {} : { r: command("tools say 'done' --app codex") };
+            return { success: true, exitCode: 0, stdout: SafeJSON.stringify({ pendingApprovals }), stderr: "" };
+        };
+        try {
+            await watchApprovals({
+                entry,
+                exec,
+                now: () => time,
+                sleep: async (ms) => {
+                    time += ms;
+                },
+                timeoutMs: 100,
+                pollMs: 50,
+                trust: () => "routine",
+                feed: (line) => fed.push(line),
+            });
+            expect(denied).toEqual(["r"]);
+            expect(fed).toEqual([]);
+        } finally {
+            output.mockRestore();
+        }
+    });
+
+    test("a waiting request is repeated, and a switch to a wider level releases it", async () => {
+        const messages: string[] = [];
+        const fed: string[] = [];
+        const output = spyOn(console, "log").mockImplementation((value) => messages.push(String(value)));
+        let time = 0;
+        let level: "strict" | "routine" = "strict";
+        const approved: string[] = [];
+        const exec: typeof execTool = async (args) => {
+            if (args[1] === "approve") {
+                approved.push(args[args.length - 1]);
+                return { success: true, exitCode: 0, stdout: "", stderr: "" };
+            }
+
+            const pendingApprovals = approved.length > 0 ? {} : { w: command("./tools ts skeleton src/a.ts") };
+            return { success: true, exitCode: 0, stdout: SafeJSON.stringify({ pendingApprovals }), stderr: "" };
+        };
+        try {
+            await watchApprovals({
+                entry,
+                exec,
+                now: () => time,
+                sleep: async (ms) => {
+                    time += ms;
+                    if (time === 400) {
+                        level = "routine";
+                    }
+                },
+                timeoutMs: 600,
+                pollMs: 50,
+                trust: () => level,
+                feed: (line) => fed.push(line),
+                remindAfterMs: 150,
+                remindEveryMs: 1000,
+            });
+            expect(fed[0]).toContain("NEEDS LEAD #w");
+            expect(fed.filter((line) => line.includes("STILL WAITING #w"))).toHaveLength(1);
+            expect(messages).toContain("[approver] trust is now routine");
+            expect(approved).toEqual(["w"]);
+        } finally {
+            output.mockRestore();
+        }
+    });
+});
+
 describe("read-only chains", () => {
     test("a chain of readers is approved without the lead", () => {
         for (const command of [
