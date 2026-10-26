@@ -138,6 +138,17 @@ final class SpawnStormTests: XCTestCase {
         XCTAssertTrue(lines.last?.contains("\(SpawnStorm.burstRunning) running") == true, lines.last ?? "nil")
     }
 
+    func testLabelsGroupHeadAndCommitRevisionsTogether() {
+        for revision in ["HEAD", "HEAD~2", "HEAD^{commit}", "96c986d3", "96c986d3^{commit}"] {
+            XCTAssertEqual(SpawnMeter.label(executable: URL(fileURLWithPath: "/usr/bin/git"),
+                                            arguments: ["cat-file", "-t", revision]),
+                           "git cat-file", revision)
+        }
+        XCTAssertEqual(SpawnMeter.label(executable: URL(fileURLWithPath: "/usr/bin/git"),
+                                        arguments: ["remote", "HEADquarters"]),
+                       "git remote HEADquarters", "ordinary names beginning with HEAD remain labels")
+    }
+
     func testLabelsNameTheCommandNotItsPaths() {
         XCTAssertEqual(SpawnMeter.label(executable: URL(fileURLWithPath: "/usr/bin/git"),
                                         arguments: ["-C", "/Users/x/vault", "-c", "core.quotepath=off", "status", "-z"]),

@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -53,15 +53,16 @@ describe("classifyPerfLine", () => {
         ).toBe("hang");
     });
 
-    test("a burst of child processes is an event; its ongoing and over lines collapse into one", () => {
+    test("a burst of child processes is an event; only ongoing lines share a source-specific key", () => {
         expect(
             classifyPerfLine(
                 "[19:26:02.100] mark spawn.storm 51 child processes started in 10 s, 49 running; GenesisTools agents blame ×51"
             )
         ).toMatchObject({ kind: "storm", time: "19:26:02.100", key: undefined });
-        expect(classifyPerfLine("[19:26:32.100] mark spawn.storm ongoing 30 s: 400 child processes started")?.key).toBe(
-            "storm"
-        );
+        const ongoing = "[19:26:32.100] mark spawn.storm ongoing 30 s: 400 child processes started";
+        expect(classifyPerfLine(ongoing, DEFAULT_CLASSIFY, "/tools/hangs")?.key).toBe("/tools/hangs:storm:ongoing");
+        expect(classifyPerfLine(ongoing, DEFAULT_CLASSIFY, "/genesis/hangs")?.key).toBe("/genesis/hangs:storm:ongoing");
+        expect(classifyPerfLine("[19:26:33.100] mark spawn.storm over after 30 s")?.key).toBeUndefined();
     });
 
     test("a Genesis Markdown line carries its tag, and its hang sample lives in its own folder", () => {
@@ -284,3 +285,110 @@ test("log tails read bounded chunks without losing lines or UTF-8 at chunk bound
         rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test("both perf tails retain their storm updates and endings in a batch", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "monitor-storm-"));
+    const sources = monitorFixtureSources(dir);
+    const batches: DevEvent[][] = [];
+    const controller = new AbortController();
+    writeFileSync(
+        sources.perfLog,
+        [
+            "[10:00:00] mark spawn.storm ongoing 30 s: 100 child processes started",
+            "[10:00:01] mark spawn.storm ongoing 60 s: 200 child processes started",
+            "[10:00:02] mark spawn.storm over after 60 s",
+            "[10:00:03] mark spawn.storm over after 1 s",
+            "",
+        ].join("\n")
+    );
+    writeFileSync(
+        sources.genesisPerfLog,
+        [
+            "[10:00:00] [md] mark spawn.storm ongoing 30 s: 300 child processes started",
+            "[10:00:02] [md] mark spawn.storm over after 30 s",
+            "",
+        ].join("\n")
+    );
+
+    try {
+        await runDevMonitor({
+            ...DEFAULT_CLASSIFY,
+            sources,
+            fromStart: true,
+            intervalMs: 100,
+            minDelayMs: 0,
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
+            emit: (events) => {
+                batches.push(events);
+                controller.abort();
+            },
+        });
+        expect(batches).toHaveLength(1);
+        expect(batches[0].map((event) => event.text)).toEqual([
+            "spawn.storm ongoing 60 s: 200 child processes started (×2)",
+            "spawn.storm over after 60 s",
+            "spawn.storm over after 1 s",
+            "Genesis: spawn.storm ongoing 30 s: 300 child processes started",
+            "Genesis: spawn.storm over after 30 s",
+        ]);
+        expect(batches[0][0].time).toBe("10:00:01");
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test("a logged hang in one app cannot suppress the other app's same-named unannounced hang", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "monitor-hangs-"));
+    const sources = monitorFixtureSources(dir);
+    const name = "hang-2026-01-01-100000.txt";
+    const batches: DevEvent[][] = [];
+    const controller = new AbortController();
+    writeFileSync(sources.perfLog, `[10:00:00] mark main-stall 1s so far sampling to ${name}\n`);
+
+    try {
+        await runDevMonitor({
+            ...DEFAULT_CLASSIFY,
+            sources,
+            fromStart: true,
+            intervalMs: 100,
+            minDelayMs: 0,
+            signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2000)]),
+            emit: (events) => {
+                batches.push(events);
+                if (batches.length === 1) {
+                    writeFileSync(join(sources.hangs, name), "logged sample");
+                    writeFileSync(join(sources.genesisHangs, name), "unannounced sample");
+                } else {
+                    controller.abort();
+                }
+            },
+        });
+        expect(batches).toHaveLength(2);
+        expect(batches[0]).toHaveLength(1);
+        expect(batches[0][0].file).toBe(join(sources.hangs, name));
+        expect(batches[1]).toHaveLength(1);
+        expect(batches[1][0]).toMatchObject({
+            kind: "hang",
+            file: join(sources.genesisHangs, name),
+            text: "a hang sample was written with no app-perf.log line",
+        });
+    } finally {
+        rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+function monitorFixtureSources(dir: string) {
+    const sources = {
+        perfLog: join(dir, "app-perf.log"),
+        genesisPerfLog: join(dir, "perf.log"),
+        genesisHangs: join(dir, "genesis-hangs"),
+        profileLog: () => join(dir, "profiling.log"),
+        relayLog: join(dir, "relay.log"),
+        hangs: join(dir, "hangs"),
+        crashes: join(dir, "crashes"),
+    };
+    for (const folder of [sources.hangs, sources.genesisHangs, sources.crashes]) {
+        mkdirSync(folder);
+    }
+    return sources;
+}

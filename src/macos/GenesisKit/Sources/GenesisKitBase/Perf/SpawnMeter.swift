@@ -46,7 +46,7 @@ public enum SpawnMeter {
     /// A commit id or a revision built on one (`96c986d3^{commit}`, `HEAD~2`), which would split one command's count.
     private static func isRevision(_ argument: String) -> Bool {
         let base = argument.prefix { $0 != "^" && $0 != "~" && $0 != ":" }
-        return base.count >= 7 && base.allSatisfy(\.isHexDigit) || base == "HEAD" && base.count < argument.count
+        return base.count >= 7 && base.allSatisfy(\.isHexDigit) || base == "HEAD"
     }
 }
 

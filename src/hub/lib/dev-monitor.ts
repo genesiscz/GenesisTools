@@ -166,7 +166,7 @@ export function classifyPerfLine(
             kind: "storm",
             time,
             text: short(body),
-            key: /^spawn\.storm (ongoing|over)/.test(body) ? "storm" : undefined,
+            key: /^spawn\.storm ongoing\b/.test(body) ? `${hangsDir}:storm:ongoing` : undefined,
         };
     }
 
@@ -352,6 +352,8 @@ class FolderWatch {
 }
 
 export interface DevMonitorOptions extends ClassifyOptions {
+    /** Override the watched paths, for an isolated monitor or fixture. */
+    sources?: ReturnType<typeof devMonitorSources>;
     /** Replay what the logs already hold instead of starting at their end. */
     fromStart: boolean;
     /** How often the files are read. */
@@ -394,7 +396,7 @@ export class EventBatcher {
     }
 }
 
-/** Events with one key become the first of them plus "×N, max …", in the place of the first. */
+/** Events with one key share a count and any measured maximum; storm updates retain their latest state. */
 export function collapse(events: DevEvent[]): DevEvent[] {
     const groups = new Map<string, DevEvent[]>();
     const result: DevEvent[] = [];
@@ -424,8 +426,10 @@ export function collapse(events: DevEvent[]): DevEvent[] {
             return event;
         }
 
-        const max = Math.max(...group.map((item) => item.ms ?? 0));
-        return { ...event, text: `${event.text} (×${group.length}, max ${(max / 1000).toFixed(2)}s)` };
+        const latest = event.kind === "storm" ? group[group.length - 1] : event;
+        const durations = group.flatMap((item) => (item.ms === undefined ? [] : [item.ms]));
+        const maximum = durations.length > 0 ? `, max ${(Math.max(...durations) / 1000).toFixed(2)}s` : "";
+        return { ...latest, text: `${latest.text} (×${group.length}${maximum})` };
     });
 }
 
@@ -445,7 +449,7 @@ export function devMonitorSources() {
 
 /** Runs until `signal` aborts. Reads by interval: app-perf.log is written by several processes at once. */
 export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
-    const sources = devMonitorSources();
+    const sources = options.sources ?? devMonitorSources();
     const perf = new TextTail(sources.perfLog, options.fromStart);
     const genesisPerf = new TextTail(sources.genesisPerfLog, options.fromStart);
     const relay = new TextTail(sources.relayLog, options.fromStart);
@@ -471,7 +475,7 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
                 const event = classifyPerfLine(line, options, hangsDir);
                 if (event) {
                     if (event.file) {
-                        announced.add(basename(event.file));
+                        announced.add(event.file);
                     }
 
                     batcher.add({ ...event, text: app + event.text });
@@ -491,7 +495,7 @@ export async function runDevMonitor(options: DevMonitorOptions): Promise<void> {
         }
 
         for (const path of [...hangs.fresh(), ...genesisHangs.fresh()]) {
-            if (!announced.has(basename(path))) {
+            if (!announced.has(path)) {
                 batcher.add({
                     kind: "hang",
                     time: "",
