@@ -159,7 +159,10 @@ enum MarkdownHoverTarget {
             return nil
         }
         if target.hasPrefix("#") { return nil }
-        guard let (url, fragment) = MarkdownDocumentLinks.locate(target, folder: folder, vaultRoot: vaultRoot) else {
+        let index = MarkdownDocumentLinks.vaultIndex(vaultRoot)
+        guard let (url, fragment) = MarkdownDocumentLinks.locate(target, folder: folder, vaultRoot: vaultRoot, index: index) else {
+            // A bare note name needs the vault scan; start it so the next hover over this link has an answer.
+            index?.refreshIfNeeded {}
             return nil
         }
         switch MarkdownLinkRoute.decide(url, fragment: fragment) {

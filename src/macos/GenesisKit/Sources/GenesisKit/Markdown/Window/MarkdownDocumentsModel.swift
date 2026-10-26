@@ -1132,7 +1132,7 @@ final class MarkdownDocumentsModel: ObservableObject {
     /// ends here, and a note is untrusted: a scheme URL leaves only through
     /// `MarkdownWebView.externalURL`, a `file:` URL is a local path like any
     /// other, and a local target opens only when it is a document.
-    func follow(_ ref: String, from doc: MarkdownDocument) {
+    func follow(_ ref: String, from doc: MarkdownDocument, scanned: Bool = false) {
         var target = ref.trimmingCharacters(in: .whitespacesAndNewlines)
         // `[text][label]` points at a definition further down the file.
         if !MarkdownDocumentLinks.hasScheme(target), MarkdownWebView.externalURL(target) == nil,
@@ -1159,9 +1159,16 @@ final class MarkdownDocumentsModel: ObservableObject {
             if let fragment = MarkdownDocumentLinks.fragment(of: target) { scrollTarget = fragment }
             return
         }
+        let vaultRoot = GenesisKit.host?.markdownVaultRoot
+        let index = MarkdownDocumentLinks.vaultIndex(vaultRoot)
         guard let (url, fragment) = MarkdownDocumentLinks.locate(
-            target, folder: doc.folder, vaultRoot: GenesisKit.host?.markdownVaultRoot
+            target, folder: doc.folder, vaultRoot: vaultRoot, index: index
         ) else {
+            // A note named only by its name is found by the vault scan: a miss before a fresh scan is no answer yet.
+            if !scanned, let index, index.isStale() {
+                index.refreshIfNeeded { [weak self] in self?.follow(ref, from: doc, scanned: true) }
+                return
+            }
             GenesisKit.log("markdown: link \(target) resolves to nothing")
             post(MarkdownNotice("Nothing found for \u{201C}\(target)\u{201D}.", tone: .warning))
             return

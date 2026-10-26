@@ -120,7 +120,7 @@ enum MarkdownMedia {
     /// The file a reference points at, or nil when it does not exist, is not an
     /// allowed type, or resolves (symlinks included) outside both the vault and
     /// the document's folder.
-    static func resolve(_ key: String, in context: Context, index: VaultMediaIndex? = nil) -> URL? {
+    static func resolve(_ key: String, in context: Context, index: VaultFileIndex? = nil) -> URL? {
         for candidate in candidates(key, in: context, attachmentFolder: index?.attachmentFolder) {
             if let url = admitted(candidate, in: context) { return url }
         }
@@ -189,14 +189,16 @@ enum MarkdownMedia {
     }
 }
 
-/// Vault-relative paths of every image and JSON file, for Obsidian's
-/// "just the file name" references, plus the configured attachment folder.
-/// A main-queue cache, refreshed in the background at most every 30 s while used.
-final class VaultMediaIndex {
+/// Vault-relative paths of every image and JSON file and of every note, for Obsidian's
+/// "just the file name" references (`![[shot.png]]`, `[[Plan#Heading]]`), plus the configured
+/// attachment folder. A main-queue cache, refreshed in the background at most every 30 s while used.
+final class VaultFileIndex {
     let root: URL
     struct Snapshot: Sendable {
         var paths: [String]
         var attachmentFolder: String?
+        /// Every `.md` file, vault-relative.
+        var notes: [String] = []
     }
 
     private var snapshot = Snapshot(paths: [], attachmentFolder: nil)
@@ -205,17 +207,17 @@ final class VaultMediaIndex {
     private var completions: [() -> Void] = []
     private let scan: @Sendable (URL) -> Snapshot
 
-    private static var shared: [String: VaultMediaIndex] = [:]
+    private static var shared: [String: VaultFileIndex] = [:]
 
-    static func forVault(_ root: URL) -> VaultMediaIndex {
+    static func forVault(_ root: URL) -> VaultFileIndex {
         let key = root.standardizedFileURL.path
         if let index = shared[key] { return index }
-        let index = VaultMediaIndex(root: root)
+        let index = VaultFileIndex(root: root)
         shared[key] = index
         return index
     }
 
-    init(root: URL, scan: @escaping @Sendable (URL) -> Snapshot = VaultMediaIndex.scan) {
+    init(root: URL, scan: @escaping @Sendable (URL) -> Snapshot = VaultFileIndex.scan) {
         self.root = root
         self.scan = scan
     }
@@ -225,10 +227,16 @@ final class VaultMediaIndex {
     /// False until the first scan has finished: a name-only reference that misses now may still be found.
     var isReady: Bool { builtAt != nil }
 
+    /// Whether `refreshIfNeeded` would scan again now (no scan yet, or the last one is 30 s old).
+    func isStale(now: Date = Date()) -> Bool {
+        guard let builtAt else { return true }
+        return now.timeIntervalSince(builtAt) >= 30
+    }
+
     /// Never reads the filesystem on the caller's queue. Concurrent requests share one scan;
     /// callbacks run on the main queue after the complete snapshot has been published.
     func refreshIfNeeded(now: Date = Date(), completion: @escaping () -> Void) {
-        if let builtAt, now.timeIntervalSince(builtAt) < 30 { return }
+        if !isStale(now: now) { return }
         completions.append(completion)
         guard !loading else { return }
         loading = true
@@ -255,8 +263,26 @@ final class VaultMediaIndex {
             .sorted { $0.count < $1.count }
     }
 
+    /// Vault-relative notes a link names by file name or path tail (`Plan`, `Design/Plan`, `Plan.md`), the way
+    /// Obsidian resolves `[[Plan]]` written anywhere in the vault: the note that shares the most leading folders
+    /// with `folder` (vault-relative, "" for the root) first, then the shortest path. Reads only the cache.
+    func notes(named key: String, near folder: String) -> [String] {
+        var needle = key.lowercased()
+        if !needle.hasSuffix(".md") { needle += ".md" }
+        let here = folder.split(separator: "/")
+        func shared(_ path: String) -> Int {
+            zip(path.split(separator: "/").dropLast(), here).prefix { $0 == $1 }.count
+        }
+        return snapshot.notes
+            .filter { $0.lowercased() == needle || $0.lowercased().hasSuffix("/" + needle) }
+            .map { (path: $0, shared: shared($0)) }
+            .sorted { $0.shared != $1.shared ? $0.shared > $1.shared : $0.path.count < $1.path.count }
+            .map(\.path)
+    }
+
     private static func scan(_ root: URL) -> Snapshot {
         var found: [String] = []
+        var notes: [String] = []
         let attachmentFolder = readAttachmentFolder(root)
         let fm = FileManager.default
         guard let en = fm.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey],
@@ -269,12 +295,14 @@ final class VaultMediaIndex {
                 en.skipDescendants()
                 continue
             }
-            guard MarkdownMedia.kind(ofExtension: url.pathExtension) != nil else { continue }
+            let isNote = url.pathExtension.lowercased() == "md"
+            guard isNote || MarkdownMedia.kind(ofExtension: url.pathExtension) != nil else { continue }
             let path = url.standardizedFileURL.path
             guard path.hasPrefix(base + "/") else { continue }
-            found.append(String(path.dropFirst(base.count + 1)))
+            let relative = String(path.dropFirst(base.count + 1))
+            if isNote { notes.append(relative) } else { found.append(relative) }
         }
-        return Snapshot(paths: found, attachmentFolder: attachmentFolder)
+        return Snapshot(paths: found, attachmentFolder: attachmentFolder, notes: notes)
     }
 
     /// `.obsidian/app.json` `attachmentFolderPath`: "/" (vault root, the
@@ -309,9 +337,9 @@ final class MarkdownMediaRegistry {
     private(set) var entries: [String: Entry] = [:]
     private var tokenByPath: [String: String] = [:]
     private var generation = 0
-    private let indexForVault: (URL) -> VaultMediaIndex
+    private let indexForVault: (URL) -> VaultFileIndex
 
-    init(indexForVault: @escaping (URL) -> VaultMediaIndex = VaultMediaIndex.forVault) {
+    init(indexForVault: @escaping (URL) -> VaultFileIndex = VaultFileIndex.forVault) {
         self.indexForVault = indexForVault
     }
 
@@ -329,6 +357,11 @@ final class MarkdownMediaRegistry {
         }
         let references = MarkdownMedia.references(in: markdown)
         let index = context.vaultRoot.map(indexForVault)
+        // A link written as a bare note name (`[[Plan#Heading]]`) is found through the same scan: start it now, so
+        // the first hover or click on it already has an answer.
+        if references.isEmpty, markdown.contains("[[") || markdown.contains("](") {
+            index?.refreshIfNeeded {}
+        }
         if !references.isEmpty, let onIndexReady {
             index?.refreshIfNeeded { [weak self] in
                 guard let self, self.generation == ticket else { return }
