@@ -5,6 +5,7 @@ import {
     type AdoFieldManifest,
     buildFieldManifest,
     diffManifests,
+    isIdentifier,
     parseManifestFile,
     renderManifestJson,
     renderManifestMd,
@@ -26,6 +27,7 @@ interface GetFieldsOptions {
     types?: string;
     into?: string;
     check?: string;
+    name?: string;
     format: string;
 }
 
@@ -33,9 +35,9 @@ function isFormat(value: string): value is ManifestFormat {
     return FORMATS.some((format) => format === value);
 }
 
-function render(manifest: AdoFieldManifest, format: ManifestFormat): string {
+function render(manifest: AdoFieldManifest, format: ManifestFormat, exportName?: string): string {
     if (format === "ts") {
-        return renderManifestTs(manifest);
+        return renderManifestTs(manifest, exportName);
     }
 
     return format === "json" ? renderManifestJson(manifest) : renderManifestMd(manifest);
@@ -56,7 +58,7 @@ function splitTypes(list: string): string[] {
         .filter(Boolean);
 }
 
-async function fetchManifest(options: { types?: string[]; into?: string }): Promise<AdoFieldManifest> {
+async function fetchManifest(options: { types?: string[]; into?: string; name?: string }): Promise<AdoFieldManifest> {
     const config = requireConfig();
     const api = new Api(config);
     const typeNames = options.types ?? (await api.getAvailableWorkItemTypes());
@@ -91,7 +93,8 @@ async function fetchManifest(options: { types?: string[]; into?: string }): Prom
     const regenerate = toolCommand(
         "azure-devops maintenance get-fields",
         ...(options.types ? ["--types", options.types.join(",")] : []),
-        ...(options.into ? ["--into", options.into] : [])
+        ...(options.into ? ["--into", options.into] : []),
+        ...(options.name ? ["--name", options.name] : [])
     );
 
     return buildFieldManifest({
@@ -136,11 +139,18 @@ export function registerMaintenanceCommand(program: Command): void {
         .command("get-fields")
         .description("Every field of each work item type (label, type, allowed values) and the type's states")
         .option("--types <list>", 'Comma-separated work item types (default: every enabled type), e.g. "Bug,Task"')
-        .option("--into <file>", "Write the manifest to a .ts (export const ADO_FIELDS) or .json file")
+        .option("--into <file>", "Write the manifest to a .ts (export const AdoFields) or .json file")
+        .option("--name <identifier>", "The exported constant's name in a .ts file (default: AdoFields)")
         .option("--check <file>", "Compare a written manifest with ADO and exit 1 on drift")
         .option("-f, --format <format>", "Output format on stdout: md|json|ts", "md")
         .action(async (options: GetFieldsOptions) => {
             const types = options.types ? splitTypes(options.types) : undefined;
+
+            if (options.name && !isIdentifier(options.name)) {
+                out.error(`--name needs a TypeScript identifier, got "${options.name}"`);
+                process.exitCode = 1;
+                return;
+            }
 
             if (options.check) {
                 await checkManifest(options.check, types);
@@ -156,8 +166,8 @@ export function registerMaintenanceCommand(program: Command): void {
                     return;
                 }
 
-                const manifest = await fetchManifest({ types, into: options.into });
-                writeFileSync(options.into, render(manifest, format));
+                const manifest = await fetchManifest({ types, into: options.into, name: options.name });
+                writeFileSync(options.into, render(manifest, format, options.name));
                 out.println(pc.green(`Wrote ${Object.keys(manifest.types).length} types to ${options.into}`));
                 return;
             }
@@ -168,6 +178,8 @@ export function registerMaintenanceCommand(program: Command): void {
                 return;
             }
 
-            out.print(render(await fetchManifest({ types }), options.format).trimEnd());
+            out.print(
+                render(await fetchManifest({ types, name: options.name }), options.format, options.name).trimEnd()
+            );
         });
 }
