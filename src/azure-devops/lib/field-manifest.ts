@@ -1,4 +1,13 @@
-import { SafeJSON } from "@genesiscz/utils/json";
+import {
+    type AdoManifestMeta,
+    isRecord,
+    parseManifestText,
+    renderManifestTs as renderTs,
+    sortedRecord,
+} from "@app/azure-devops/lib/ado-manifest";
+
+export { isIdentifier, renderManifestJson } from "@app/azure-devops/lib/ado-manifest";
+export type { AdoManifestMeta };
 
 /**
  * A field manifest of one Azure DevOps project: per work item type, every field with its label, data type and
@@ -8,15 +17,6 @@ import { SafeJSON } from "@genesiscz/utils/json";
 export interface AdoFieldManifest {
     meta: AdoManifestMeta;
     types: Record<string, AdoTypeEntry>;
-}
-
-export interface AdoManifestMeta {
-    org: string;
-    project: string;
-    process: string | null;
-    /** Local time, minute resolution. */
-    fetchedAt: string;
-    regenerate: string;
 }
 
 export interface AdoTypeEntry {
@@ -59,18 +59,6 @@ export interface TypeInput {
 }
 
 export const DEFAULT_MANIFEST_EXPORT = "AdoFields";
-const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
-const TS_EXPORT = /export const [A-Za-z_$][\w$]* = /;
-const TS_SUFFIX = " as const;";
-
-export function isIdentifier(name: string): boolean {
-    return IDENTIFIER.test(name);
-}
-
-function byKey<T>(entries: [string, T][]): Record<string, T> {
-    const sorted = [...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
-    return Object.fromEntries(sorted);
-}
 
 /** Types and fields are sorted by name, so a regenerated file differs only where ADO changed. */
 export function buildFieldManifest(input: {
@@ -99,29 +87,16 @@ export function buildFieldManifest(input: {
             type.name,
             {
                 states: type.states.map((state) => ({ name: state.name, category: state.category ?? "" })),
-                fields: byKey(fields),
+                fields: sortedRecord(fields),
             },
         ];
     });
 
-    return { meta: input.meta, types: byKey(types) };
-}
-
-export function renderManifestJson(manifest: AdoFieldManifest): string {
-    return `${SafeJSON.stringify(manifest, null, 4)}\n`;
+    return { meta: { kind: "fields", ...input.meta }, types: sortedRecord(types) };
 }
 
 export function renderManifestTs(manifest: AdoFieldManifest, exportName = DEFAULT_MANIFEST_EXPORT): string {
-    if (!isIdentifier(exportName)) {
-        throw new Error(`"${exportName}" is not a TypeScript identifier`);
-    }
-
-    return [
-        "// Generated, do not edit. Regenerate with:",
-        `//   ${manifest.meta.regenerate}`,
-        `export const ${exportName} = ${SafeJSON.stringify(manifest, null, 4)}${TS_SUFFIX}`,
-        "",
-    ].join("\n");
+    return renderTs(manifest, exportName);
 }
 
 export function renderManifestMd(manifest: AdoFieldManifest): string {
@@ -149,40 +124,23 @@ export function renderManifestMd(manifest: AdoFieldManifest): string {
     return `${lines.join("\n")}\n`;
 }
 
-/** Reads a manifest written by `renderManifestJson` or `renderManifestTs`. */
+/** Reads a field manifest written as .ts (any export name) or .json. */
 export function parseManifestFile(text: string, path: string): AdoFieldManifest {
-    let json = text;
+    const parsed = parseManifestText(text, path);
 
-    if (path.endsWith(".ts")) {
-        const start = TS_EXPORT.exec(text);
-        const end = text.lastIndexOf(TS_SUFFIX);
+    const types = parsed.types;
 
-        if (!start || end <= start.index) {
-            throw new Error(`${path} has no "export const <Name> = … ${TS_SUFFIX}" block`);
-        }
-
-        json = text.slice(start.index + start[0].length, end);
+    if (!isFieldTypes(types)) {
+        throw new Error(`${path} is not a field manifest (no types with fields and states)`);
     }
 
-    const parsed: unknown = SafeJSON.parse(json, { strict: true });
-
-    if (!isManifest(parsed)) {
-        throw new Error(`${path} is not a field manifest (no meta and types)`);
-    }
-
-    return parsed;
+    return { meta: parsed.meta, types };
 }
 
-function isManifest(value: unknown): value is AdoFieldManifest {
+function isFieldTypes(value: unknown): value is Record<string, AdoTypeEntry> {
     return (
-        typeof value === "object" &&
-        value !== null &&
-        "meta" in value &&
-        "types" in value &&
-        typeof value.meta === "object" &&
-        value.meta !== null &&
-        typeof value.types === "object" &&
-        value.types !== null
+        isRecord(value) &&
+        Object.values(value).every((type) => isRecord(type) && isRecord(type.fields) && Array.isArray(type.states))
     );
 }
 

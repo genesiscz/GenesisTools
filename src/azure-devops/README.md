@@ -17,7 +17,7 @@ CLI tool for fetching, tracking, and managing Azure DevOps work items, queries, 
 -   ✅ **Multiple Output Formats**: AI-optimized, Markdown, or JSON output
 -   ✅ **Sprint Backlog**: List the project's iterations and the work items of one sprint, with the effort columns the ADO Backlog tab shows
 -   ✅ **Wiki**: List wikis and page trees, read a page with its details and attachments, search, and see what an edit changed
--   ✅ **Field manifest**: Every field of each work item type with its label, type and allowed values, written as a `.ts` or `.json` file, with a drift check
+-   ✅ **Project manifests**: Fields, workflow, sprints, areas, queries, identities and tags written as `.ts` or `.json` files, with a drift check
 
 ## Sprint / iteration commands
 
@@ -313,23 +313,34 @@ the URL, else the project wiki. The name also matches without `.wiki` and with s
 - **`search`** runs on the separate `almsearch.dev.azure.com` host and returns page paths that
   `wiki get` accepts directly.
 
-## Field manifest (`maintenance get-fields`)
+## Project manifests (`maintenance`)
 
-A field manifest lists, per work item type, every field with its label, data type, identity flag, `alwaysRequired` and allowed values, plus the type's states in workflow order with their category. Code then finds a field by label or value instead of hard-coding a generated reference name such as `Custom.<guid>`.
+A manifest is a generated file that holds one part of the project's configuration, so code looks things up instead of hard-coding generated ids such as `Custom.<guid>`. Each one has a `meta` block (org, project, process, fetch time, the command that regenerates it) and one payload:
+
+- `fields`: per work item type, every field with its label, data type, identity flag, `alwaysRequired` and allowed values, plus the type's states with their category. `get-fields` is an alias.
+- `workflow`: per work item type, the states a new item may start in (`initial`) and which state may follow which (`transitions`).
+- `sprints`: every dated iteration by its iteration path, with its id, start and finish.
+- `areas`: every area path.
+- `queries`: every shared saved query by its folder path, with its id. My Queries are left out.
+- `identities`: every member of the project's teams by unique name, with display name, id and teams.
+- `tags`: every tag of the project.
 
 ```bash
-# Print the manifest of every enabled type (md, json or ts)
-tools azure-devops maintenance get-fields -f md
+# Print one manifest (md, json or ts)
+tools azure-devops maintenance workflow --types "Bug,Task" -f md
 
-# Write it as `export const AdoFields = {...} as const` (--name picks another identifier; a .json path writes plain JSON)
-tools azure-devops maintenance get-fields --types "Bug,Task" --into src/ado-fields.generated.ts --name SampleAdoFields
+# Write one as `export const AdoFields = {...} as const` (--name picks another identifier; a .json path writes JSON)
+tools azure-devops maintenance fields --types "Bug,Task" --into src/ado-fields.generated.ts --name SampleAdoFields
 
-# Compare a written manifest with ADO: prints each drift and exits 1
-tools azure-devops maintenance get-fields --check src/ado-fields.generated.ts
+# Write every manifest (or --only some) into one folder as ado-<kind>.generated.ts, exports prefixed
+tools azure-devops maintenance sync --into src/ado --prefix Sample --types "Bug,Task"
+
+# Compare written manifests (files or folders) with ADO: prints each drift and exits 1
+tools azure-devops maintenance check src/ado
 ```
 
-- Types and fields are sorted, so a regenerated file differs only where ADO changed (and in `meta.fetchedAt`).
-- `--check` reads the types from the file unless `--types` is given, and ignores the `meta` block.
+- Records are sorted by key, so a regenerated file differs only where ADO changed (and in `meta.fetchedAt`).
+- A check reads each file's kind from `meta.kind` (a file without one is a field manifest) and its work item types from the file, unless `--types` is given. It ignores `meta`.
 - `findField(manifest, { type?, label?, value? })` from `lib/field-manifest.ts` returns the one matching field (reference name, label, type, allowed values, the types that have it), `undefined` when none matches, and throws when the query matches several. A string label matches exactly ignoring case; a RegExp is tested. `findFields` returns every match.
 
 ## Comments
