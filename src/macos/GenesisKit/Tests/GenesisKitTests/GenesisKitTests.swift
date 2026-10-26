@@ -611,6 +611,23 @@ final class WidgetVoiceDraftOrderingTests: XCTestCase {
         XCTAssertFalse(try String(contentsOf: marker, encoding: .utf8).contains("--save-audio"), "dictation keeps no audio")
         XCTAssertEqual(filed.count, 1, "dictation files no voice note")
         XCTAssertEqual(model.draft.text, "Fixture words Fixture words")
+
+        // Stop while the clip path is still coming: the microphone never starts, and no note is planned.
+        try FileManager.default.removeItem(at: marker)
+        var released = false
+        model.voiceNoteClip = {
+            while !released { try await Task.sleep(for: .milliseconds(5)) }
+            return clip
+        }
+        model.startVoice(.note)
+        XCTAssertTrue(model.voiceActive)
+        model.toggleVoice()
+        XCTAssertFalse(model.voiceActive, "Stop ends the pending start at once")
+        released = true
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(model.voiceActive)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path), "the listener never started after Stop")
+        XCTAssertEqual(filed.count, 1)
         withExtendedLifetime(subscription) {}
     }
 

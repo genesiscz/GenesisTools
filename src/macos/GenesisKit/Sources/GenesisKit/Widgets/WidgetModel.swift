@@ -144,6 +144,8 @@ public final class WidgetModel: ObservableObject {
     public var openHub: ((WidgetSession?) -> Void)?
     /// A path for a voice note's audio; nil where no voice notes run (the preview studio), so a note is only dictated.
     public var voiceNoteClip: (() async throws -> String)?
+    /// Counts voice starts, so a Stop during a clip-path request keeps that start from opening the microphone later.
+    private var voiceStart = 0
     /// Keeps a finished dictation as a voice note: its audio file, its text, and where it was spoken.
     public var fileVoiceNote: ((_ clip: String, _ text: String, _ context: WidgetVoiceNoteContext) -> Void)?
     /// The mode of the dictation that runs, or nil.
@@ -1913,7 +1915,13 @@ public final class WidgetModel: ObservableObject {
     /// The microphone key and a press without a menu: stops the dictation that runs, else starts the preferred mode.
     public func toggleVoice() {
         if voiceActive {
-            voice?.finishInput()
+            if let voice {
+                voice.finishInput()
+            } else {
+                // Stop while a voice note's clip path is still coming: no microphone runs yet, and none may start.
+                voiceStart += 1
+                finishVoice(fileClip: false)
+            }
             return
         }
         startVoice(preferredVoiceMode)
@@ -1934,6 +1942,8 @@ public final class WidgetModel: ObservableObject {
         voiceLevel = 0
         voiceActive = true
         voiceMode = mode
+        voiceStart += 1
+        let start = voiceStart
         var args = [
             "listen", "--provider", prefs.voiceProvider, "--language", prefs.voiceLanguage,
             "--input", "mic", "--json", "--stop-on-stdin",
@@ -1946,6 +1956,7 @@ public final class WidgetModel: ObservableObject {
             if let clipSource {
                 do {
                     let clip = try await clipSource()
+                    guard self?.voiceStart == start else { return }
                     args += ["--save-audio", clip]
                     self?.voiceNotePlan = (clip, context)
                 } catch {
@@ -1953,7 +1964,7 @@ public final class WidgetModel: ObservableObject {
                     self?.report(error)
                 }
             }
-            guard let self, self.voiceActive, self.voice == nil else { return }
+            guard let self, self.voiceActive, self.voice == nil, self.voiceStart == start else { return }
             do {
                 self.voice = try ToolsLineStream(
                     bridge: self.bridge, subcommand: "voice", args: args,

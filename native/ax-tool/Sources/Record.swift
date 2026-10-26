@@ -349,7 +349,7 @@ final class NativeRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
         let signature = FrameSignature(bgra: UnsafeRawPointer(base), width: width, height: height,
                                        bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer), stride: 4)
         let decision = policy.consider(signature)
-        if let fps = rate.observe(kept: decision.keep) {
+        if let fps = rate.observe(kept: decision.moved) {
             applyRate(fps)
         }
 

@@ -71,11 +71,29 @@ public struct KeepPolicy {
         public let keep: Bool
         public let changePercent: Double
         public let reason: String
+        /// The frame changed past the threshold against the last kept one: what the frame rate follows. It differs
+        /// from `keep` only past the cap, where no still is written but motion is still measured.
+        public let moved: Bool
+
+        public init(keep: Bool, changePercent: Double, reason: String, moved: Bool? = nil) {
+            self.keep = keep
+            self.changePercent = changePercent
+            self.reason = reason
+            self.moved = moved ?? keep
+        }
     }
 
     public mutating func consider(_ signature: FrameSignature) -> Decision {
         guard keptCount < maxFrames else {
-            return Decision(keep: false, changePercent: 0, reason: "cap")
+            // The cap stops the stills, not the motion check: a recording past it must still return to its active
+            // frame rate when the window moves.
+            let change = lastKept.map { signature.changePercent(from: $0) } ?? 100
+            let moved = change >= thresholdPercent && change > 0
+            if moved {
+                lastKept = signature
+            }
+
+            return Decision(keep: false, changePercent: change, reason: "cap", moved: moved)
         }
         guard let previous = lastKept else {
             lastKept = signature

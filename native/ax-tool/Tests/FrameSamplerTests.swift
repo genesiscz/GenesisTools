@@ -87,6 +87,28 @@ final class FrameSamplerTests: XCTestCase {
         XCTAssertEqual(again.reason, "cap")
     }
 
+    /// A one-still cap (a session recording keeps only its first PNG) must not pin the rate at idle: motion past the
+    /// cap still brings the active rate back.
+    func testMotionPastTheCapStillRestoresTheActiveRate() {
+        var policy = KeepPolicy(thresholdPercent: 10, maxFrames: 1)
+        var rate = FrameRatePolicy(activeFps: 30, idleFps: 2, stillFramesBeforeIdle: 3)
+        let dark = signature(frame(width: 16, height: 16) { _, _ in (0, 0, 0) }, width: 16, height: 16)
+        let light = signature(frame(width: 16, height: 16) { _, _ in (240, 240, 240) }, width: 16, height: 16)
+        XCTAssertNil(rate.observe(kept: policy.consider(dark).moved))
+        for _ in 0..<3 {
+            _ = rate.observe(kept: policy.consider(dark).moved)
+        }
+        XCTAssertEqual(rate.currentFps, 2, "a still screen past the cap drops to idle")
+
+        let moved = policy.consider(light)
+        XCTAssertFalse(moved.keep, "the cap writes no second still")
+        XCTAssertEqual(moved.reason, "cap")
+        XCTAssertTrue(moved.moved)
+        XCTAssertEqual(rate.observe(kept: moved.moved), 30, "motion past the cap returns to the active rate")
+        XCTAssertFalse(policy.consider(light).moved, "the same frame again is still")
+        XCTAssertEqual(policy.keptCount, 1)
+    }
+
     func testTheRatePolicyDropsToIdleOnlyAfterARunOfStillFrames() {
         var rate = FrameRatePolicy(activeFps: 8, idleFps: 2, stillFramesBeforeIdle: 3)
         XCTAssertEqual(rate.currentFps, 8)
