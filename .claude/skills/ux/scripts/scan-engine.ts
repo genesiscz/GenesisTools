@@ -3,7 +3,7 @@
  * line checks over Swift files and prints the candidate lines grouped by pass, then facts over the whole set. A line
  * is a candidate, not a finding. It only reads files.
  */
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 export interface Check {
@@ -47,12 +47,17 @@ interface Hit {
 }
 
 export function swiftFiles(target: string, out: string[]): void {
-    const info = statSync(target);
+    const info = lstatSync(target);
     if (info.isFile()) {
         if (target.endsWith(".swift")) {
             out.push(target);
         }
 
+        return;
+    }
+
+    // Do not follow directory cycles or dangling links, or try to enumerate special files.
+    if (!info.isDirectory()) {
         return;
     }
 

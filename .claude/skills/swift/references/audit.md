@@ -146,7 +146,9 @@ learn which thread runs it and how often. Walk every pass of the output. A file 
 - **Cancellation is a normal end**: never show `CancellationError` as a failure; check `Task.isCancelled` in long
   loops. Store the running `Task` so an expensive load is single-flight, and re-check state after every `await`.
 - **No unowned `Task {}` in a loop**, and no thrown error that vanishes inside `Task { try … }`.
-- **State why each `Task.detached` detaches**; otherwise a plain `Task` keeps priority and cancellation.
+- **State why each `Task.detached` detaches**. A plain `Task {}` inherits actor isolation, priority and task-local
+  values, but is still unstructured: cancelling its creator does not cancel it. When work must end with its caller,
+  use structured child tasks (`async let` or a task group), or explicitly propagate cancellation to a stored task.
 - **Never block a cooperative thread** with a semaphore or a group wait inside async code. Resume a checked
   continuation exactly once on every path; give an `AsyncStream` an explicit buffering policy.
 - **Write the invariant beside each `@unchecked Sendable`, `nonisolated(unsafe)` or `@preconcurrency`.** In closures
