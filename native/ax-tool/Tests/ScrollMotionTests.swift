@@ -6,7 +6,11 @@ final class ScrollMotionTests: XCTestCase {
         let defaults = try ScrollNumericOptions([:])
         XCTAssertEqual(defaults.pixels, 120)
         XCTAssertEqual(defaults.amount, 3)
-        XCTAssertNil(defaults.seconds)
+        // Animated by default: 120 px over the shortest default time; `--time 0` is the old single event.
+        XCTAssertEqual(defaults.seconds, 0.25)
+        XCTAssertEqual(try ScrollNumericOptions(["--pixels": "1500"]).seconds, 0.5)
+        XCTAssertEqual(try ScrollNumericOptions(["--pixels": "20000"]).seconds, 1)
+        XCTAssertNil(try ScrollNumericOptions(["--time": "0"]).seconds)
         XCTAssertEqual(defaults.repeats, 1)
         XCTAssertEqual(defaults.pause, 0.3)
         let explicit = try ScrollNumericOptions(["--pixels": "200", "--time": "0.5", "--repeat": "2", "--pause": "0"])

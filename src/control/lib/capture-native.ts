@@ -159,6 +159,22 @@ export class NativeCaptureControls {
                 element_limit: 2000,
             });
         }
+        // An isolated recording names its windows exactly; an action on one of their apps acts on that window. Without
+        // this, a plan that recorded `windowIds: [id]` had every action refused as "requires one exact window".
+        if (this.capture.mode === "isolated" && windowTitle === undefined) {
+            for (const windowId of this.capture.windowIds ?? []) {
+                try {
+                    return await this.computer.get_app_state({
+                        app,
+                        window_id: windowId,
+                        image: options.image ?? false,
+                        element_limit: 2000,
+                    });
+                } catch (error) {
+                    logger.debug({ error, app, windowId }, "capture: a recorded window is not this app's");
+                }
+            }
+        }
         const listed = required(await this.native.run({ args: ["window", "--app", app], timeoutMs: 5000 }));
         const windows = z
             .array(z.object({ title: z.string().optional(), minimized: z.boolean().optional() }))
@@ -232,6 +248,9 @@ export class NativeCaptureControls {
                 const result = await this.focus(action);
                 return { ok: result.ok, stdout: result.ok ? "Focused through native AX" : "", stderr: result.detail };
             }
+            if (action.do === "scroll" && action.coords && !relative) {
+                return await this.scrollAt(app, action);
+            }
             const windowTitle =
                 ("windowTitle" in action ? action.windowTitle : undefined) ??
                 relative?.windowTitle ??
@@ -295,7 +314,8 @@ export class NativeCaptureControls {
                         app,
                         revision: state.revision,
                         direction: action.direction,
-                        pixels: action.amount ?? 3,
+                        pixels: action.amount ?? 120,
+                        ...(action.time === undefined ? {} : { seconds: action.time }),
                     };
                     if (action.coords) {
                         let [x, y] = coordinates(action.coords);
@@ -330,6 +350,31 @@ export class NativeCaptureControls {
             logger.debug({ error, action: action.do }, "Native capture action stopped without fallback");
             return { ok: false, stdout: "", stderr: error instanceof Error ? error.message : String(error) };
         }
+    }
+    /**
+     * A scroll at a screen point goes straight to `ax-tool scroll`: window-addressed, animated, and with no window
+     * observation first. Observing a web page of a few thousand elements took seconds, so a plan's scroll landed after
+     * the recording it was meant for had ended (2026-10-26).
+     */
+    private async scrollAt(app: string, action: Extract<Action, { do: "scroll" }>) {
+        const [x, y] = coordinates(action.coords ?? "");
+        const args = [
+            "scroll",
+            "--app",
+            app,
+            "--direction",
+            action.direction,
+            "--pixels",
+            String(action.amount ?? 120),
+        ];
+        args.push("--coords", `${Math.round(x)},${Math.round(y)}`);
+        if (action.time !== undefined) {
+            args.push("--time", String(action.time));
+        }
+
+        const result = await this.native.run({ args, timeoutMs: ((action.time ?? 1) + 5) * 1000 });
+        const compact = { ok: result.ok, action: "scroll", error: result.error };
+        return { ok: result.ok, stdout: SafeJSON.stringify(compact), stderr: result.error ?? "", data: compact };
     }
     dispose() {
         this.binding = undefined;

@@ -38,6 +38,11 @@ public enum ScrollMotion {
         return result
     }
 
+    /// How long a scroll with no `--time` takes: as a quick trackpad swipe, 3000 px per second, between 0.25 and 1 s.
+    public static func defaultSeconds(pixels: Int) -> Double {
+        min(1, max(0.25, Double(abs(pixels)) / 3000))
+    }
+
     /// The number of events for a scroll lasting `seconds`; one event when no time is given.
     public static func eventCount(seconds: Double?) -> Int {
         guard let seconds, seconds > 0 else { return 1 }
@@ -91,8 +96,13 @@ public struct ScrollNumericOptions {
         guard (1...2500).contains(amount) else { throw ScrollNumericError.outOfRange("--amount must be 1–2500") }
         pixels = explicitPixels ?? amount * 40
         guard (1...100_000).contains(pixels) else { throw ScrollNumericError.outOfRange("--pixels must be 1–100000") }
-        seconds = try decimal("--time")
-        if let seconds, !(0.05...30).contains(seconds) { throw ScrollNumericError.outOfRange("--time must be 0.05–30 seconds") }
+        // Animated unless asked otherwise (Martin, 2026-10-26: "the scrolling should always be animated"): a single
+        // wheel event jumps the page by the whole distance, which no person does. `--time 0` is that one event.
+        let asked = try decimal("--time")
+        if let asked, asked != 0, !(0.05...30).contains(asked) {
+            throw ScrollNumericError.outOfRange("--time must be 0 (one event) or 0.05–30 seconds")
+        }
+        seconds = asked == nil ? ScrollMotion.defaultSeconds(pixels: pixels) : asked == 0 ? nil : asked
         repeats = try integer("--repeat") ?? 1
         guard (1...200).contains(repeats) else { throw ScrollNumericError.outOfRange("--repeat must be 1–200") }
         pause = try decimal("--pause") ?? 0.3

@@ -32,7 +32,7 @@ public struct WorkflowArguments {
         case "act":
             valueOptions = [
                 "--app", "--snapshot", "--element", "--action", "--value", "--ax-action", "--direction", "--text",
-                "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--range", "--prefix",
+                "--keys", "--coords", "--button", "--to", "--duration", "--pages", "--pixels", "--time", "--range", "--prefix",
                 "--suffix", "--selection", "--format", "--path", "--region", "--target-key", "--dwell",
                 "--revalidate-scope", "--frame", "--by-identifier", "--window-index", "--depth", "--modifiers",
                 "--budget-ms", "--target-ordinal", "--expect-value-sha256",
@@ -225,7 +225,7 @@ public struct WorkflowArguments {
         }
         try reject(["--text"], unless: ["type", "select", "paste"])
         try reject(["--to", "--duration"], unless: ["drag"])
-        try reject(["--pages", "--pixels", "--direction"], unless: ["scroll"])
+        try reject(["--pages", "--pixels", "--time", "--direction"], unless: ["scroll"])
         try reject(["--value"], unless: ["set"])
         try reject(["--keys"], unless: ["key"])
         try reject(["--expect-value-sha256"], unless: ["key"])
