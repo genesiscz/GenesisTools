@@ -34,7 +34,7 @@ final class NavigationHistoryTests: XCTestCase {
         XCTAssertEqual(history.entries.count, 3, "walking never adds entries")
     }
 
-    func testAVisitAfterGoingBackClearsForwardButTheLogKeepsEveryPlace() {
+    func testAVisitAfterGoingBackClearsForwardButTheLogKeepsEveryPlace() throws {
         var history = walk(["a", "b", "c"])
         _ = history.goBack()
         _ = history.goBack()
@@ -43,7 +43,7 @@ final class NavigationHistoryTests: XCTestCase {
         XCTAssertEqual(titles(history, history.backIDs), ["a"])
         XCTAssertEqual(history.newestFirst.map(\.target), ["d", "c", "b", "a"], "b and c are still in the list")
         // A hop reaches a place that left the forward stack, and Back returns from it.
-        let c = try! XCTUnwrap(history.entries.first { $0.target == "c" })
+        let c = try XCTUnwrap(history.entries.first { $0.target == "c" })
         XCTAssertNil(history.offset(of: c.id), "only the log holds it")
         XCTAssertEqual(history.hop(to: c.id)?.target, "c")
         XCTAssertEqual(history.goBack()?.target, "d")

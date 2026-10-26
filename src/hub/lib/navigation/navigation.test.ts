@@ -1,13 +1,15 @@
 import { Database } from "bun:sqlite";
-import { describe, expect, it } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { describe, expect, it, spyOn } from "bun:test";
+import * as fs from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { clearDatabaseReadSnapshots } from "@genesiscz/utils/database/read-snapshot";
 import { openHubDb } from "../data-db";
 import { hubArgs, hubUrl } from "../open";
+import { importLegacyNavDb } from "./schema";
 import { listNav, navKeep, readNav, recordNav, setNavKeep } from "./store";
-import { navTargetProblem, navTitle, parseNavInput } from "./target";
+import { navTargetProblem, navTitle, parseNavInput, resolveNavWorktree } from "./target";
 import { type NavEntry, normalizeTarget } from "./types";
 
 function entry(id: string, at: number, extra: Partial<NavEntry> = {}): NavEntry {
@@ -122,6 +124,17 @@ describe("what tools hub nav open names", () => {
         expect("error" in parseNavInput("https://example.org/other?pr=1", noFolder)).toBe(true);
     });
 
+    it("keeps cleanup panel flags and resolves only checkout paths", () => {
+        expect(resolveNavWorktree("cleanup")).toBe("cleanup");
+        expect(resolveNavWorktree("cleanup-blocked")).toBe("cleanup-blocked");
+        expect(resolveNavWorktree("./checkout")).toBe(resolve("./checkout"));
+        expect(hubArgs({ worktree: resolveNavWorktree("cleanup-blocked") })).toEqual([
+            "--hub",
+            "--worktree",
+            "cleanup-blocked",
+        ]);
+    });
+
     it("refuses what the hub could not open, and names the place in a few words", () => {
         expect(navTargetProblem({})).toContain("name a place");
         expect(navTargetProblem({ commit: "0751d8a971" })).toContain("--pr");
@@ -201,6 +214,70 @@ describe("hub data.db", () => {
             expect(readdirSync(dir).sort()).toEqual(emptyNames);
         } finally {
             clearDatabaseReadSnapshots();
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("does not create a legacy database that vanished after its existence check", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-hub-import-"));
+        const db = openHubDb(join(dir, "data.db"));
+        const legacy = join(dir, "navigation.db");
+        const originalExists = fs.existsSync;
+        const exists = spyOn(fs, "existsSync").mockImplementation((path) => path === legacy || originalExists(path));
+        try {
+            importLegacyNavDb(db);
+        } finally {
+            exists.mockRestore();
+            db.close();
+        }
+
+        try {
+            expect(existsSync(legacy)).toBe(false);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("does not partially import a legacy database whose navigation schema is incomplete", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-hub-import-"));
+        try {
+            const legacy = join(dir, "navigation.db");
+            const old = openHubDb(legacy);
+            recordNav(old, entry("legacy", 1));
+            old.run("DROP TABLE nav_meta");
+            old.close();
+            const bytes = readFileSync(legacy);
+            const db = openHubDb(join(dir, "data.db"));
+            expect(listNav(db)).toEqual([]);
+            expect(db.query("SELECT 1 FROM nav_meta WHERE key = 'legacy-navigation-imported'").get()).toBeNull();
+            db.close();
+            expect(existsSync(legacy)).toBe(true);
+            expect(readFileSync(legacy)).toEqual(bytes);
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("never resurrects pruned rows when the legacy rename fails after a committed import", () => {
+        const dir = mkdtempSync(join(tmpdir(), "gt-hub-import-"));
+        try {
+            const legacy = join(dir, "navigation.db");
+            const old = openHubDb(legacy);
+            recordNav(old, entry("old", 1));
+            recordNav(old, entry("new", 2));
+            old.close();
+            mkdirSync(`${legacy}.migrated-${new Date().toISOString().slice(0, 10)}`);
+            const dbPath = join(dir, "data.db");
+            const db = openHubDb(dbPath);
+            expect(listNav(db).map((row) => row.id)).toEqual(["new", "old"]);
+            expect(existsSync(legacy)).toBe(true);
+            setNavKeep(db, 1);
+            db.close();
+            const reopened = openHubDb(dbPath);
+            expect(listNav(reopened).map((row) => row.id)).toEqual(["new"]);
+            expect(navKeep(reopened)).toBe(1);
+            reopened.close();
+        } finally {
             rmSync(dir, { recursive: true, force: true });
         }
     });

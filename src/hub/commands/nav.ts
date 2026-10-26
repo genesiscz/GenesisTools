@@ -13,7 +13,7 @@ import { type Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import { hubDbPath, openHubDb } from "../lib/data-db";
 import { readNav, recordNav, setNavKeep } from "../lib/navigation/store";
-import { navTargetProblem, navTitle, parseNavInput } from "../lib/navigation/target";
+import { navTargetProblem, navTitle, parseNavInput, resolveNavWorktree } from "../lib/navigation/target";
 import {
     isNavActor,
     NAV_ACTORS,
@@ -95,7 +95,7 @@ function flagTarget(flags: NavOpenFlags): NavTarget {
         pr: flags.pr,
         commit: flags.commit,
         repo: flags.repo ? (/^\.{1,2}(?:[/\\]|$)/.test(flags.repo) ? resolve(flags.repo) : flags.repo) : undefined,
-        worktree: flags.worktree ? resolve(flags.worktree) : undefined,
+        worktree: flags.worktree ? resolveNavWorktree(flags.worktree) : undefined,
         session: flags.session,
         agent: flags.agent,
         mode: flags.mode,

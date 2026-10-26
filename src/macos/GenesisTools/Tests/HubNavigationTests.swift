@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import GenesisToolsHost
 @testable import GenesisToolsHub
@@ -370,6 +371,28 @@ final class HubNavigationTests: XCTestCase {
         XCTAssertEqual(review.scope, PRsModel.scope(pr, detail: nil))
         XCTAssertNil(model.prs.pendingCommit)
         await drain()
+    }
+
+    @MainActor
+    func testBackFromALinkedWorktreeCommitRestoresTheOrdinaryScope() async throws {
+        for main in [false, true] {
+            let model = isolatedModel()
+            model.mode = .worktrees
+            model.loadingWorktrees = true
+            let worktree = HubWorktree(path: "/fixture/worktree-scope", repo: "app", commonDir: "/fixture/common", branch: "feature", isMain: main)
+            model.worktrees = [worktree]
+            model.selectWorktree(worktree)
+            await drain()
+            model.showCommit(repo: worktree.path, sha: "abcdef0123", title: "linked")
+            await drain()
+            XCTAssertEqual(model.review?.scope, .commit(sha: "abcdef0123", title: "linked"))
+            XCTAssertEqual(model.history.backEntry?.target, place(.worktrees, worktree.path))
+            model.goBack()
+            await drain()
+            XCTAssertEqual(model.review?.scope, main ? .uncommitted : .branch)
+            XCTAssertNil(model.shownCommit)
+            XCTAssertNil(model.history.current?.target["commit"])
+        }
     }
 
     @MainActor

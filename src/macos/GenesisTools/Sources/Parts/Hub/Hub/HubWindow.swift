@@ -1237,6 +1237,8 @@ final class HubModel: ObservableObject {
             next.scope = worktree.isMain ? .uncommitted : .branch
             next.worktreeChosen = true
             review = next
+        } else {
+            review?.setScope(worktree.isMain ? .uncommitted : .branch)
         }
     }
 

@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { constants, Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { type Migration, runMigrations } from "@genesiscz/utils/database/migrations";
@@ -27,7 +27,10 @@ export function openHubDb(dbPath: string = hubDbPath()): Database {
         mkdirSync(dirname(dbPath), { recursive: true });
     }
 
-    const db = new Database(dbPath);
+    const db = new Database(
+        dbPath,
+        constants.SQLITE_OPEN_READWRITE | constants.SQLITE_OPEN_CREATE | constants.SQLITE_OPEN_URI
+    );
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec("PRAGMA busy_timeout = 2000;");
     for (const { scope, migrations } of HUB_SCHEMAS) {

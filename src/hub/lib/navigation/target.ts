@@ -69,6 +69,11 @@ export function parseNavInput(input: string, isFolder: (path: string) => boolean
     };
 }
 
+/** Reserved cleanup destinations are panel targets; other values are checkout paths. */
+export function resolveNavWorktree(worktree: string): string {
+    return worktree === "cleanup" || worktree === "cleanup-blocked" ? worktree : resolve(worktree);
+}
+
 /** What a place is, in a few words, until the hub names it better ("PR #563 · commit 0751d8a971"). */
 export function navTitle(target: NavTarget): string {
     const commit = target.commit
