@@ -242,6 +242,30 @@ describe("resolveSessionRoute", () => {
         expect(route.effortSource).toBeUndefined();
     });
 
+    it("turns failover off on a configured account, so a session never reaches a login its record does not name", () => {
+        const pooled: AiProxyAccountConfig = {
+            name: "pooled-codex",
+            provider: "openai-subscription",
+            providerSlug: "codex",
+            enabled: true,
+            failover: true,
+            openaiSub: { accountName: "work", failoverAccountNames: ["side"] },
+        };
+        const result = resolveSessionRoute("codex/gpt-6.1-sol", record({ codexProxyAccount: "pooled-codex" }), [
+            ...accounts,
+            pooled,
+        ]);
+
+        if (!result || "refusal" in result) {
+            throw new Error(`expected a route, got ${SafeJSON.stringify(result)}`);
+        }
+
+        expect(result.route.account.failover).toBe(false);
+        expect(result.route.providerKeySuffix).toBe("#session");
+        expect(pooled.failover).toBe(true);
+        expect(routeOf("codex/gpt-6.1-sol").providerKeySuffix).toBeUndefined();
+    });
+
     it("keeps an :effort suffix and marks it as the effort's source", () => {
         const route = routeOf("codex/gpt-6-astra:xhigh");
 

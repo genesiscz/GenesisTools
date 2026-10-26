@@ -20,8 +20,13 @@ export function providerKey(account: { name: string; providerSlug: string }): st
     return `${account.name}/${account.providerSlug}`;
 }
 
-export function routeProviderKey(route: { accountName: string; providerSlug: string }): string {
-    return providerKey({ name: route.accountName, providerSlug: route.providerSlug });
+/** A route that names its own provider (`providerKeySuffix`, a session's copy of an account) keeps it apart. */
+export function routeProviderKey(route: {
+    accountName: string;
+    providerSlug: string;
+    providerKeySuffix?: string;
+}): string {
+    return `${providerKey({ name: route.accountName, providerSlug: route.providerSlug })}${route.providerKeySuffix ?? ""}`;
 }
 
 export function isProviderImplemented(provider: AiProxyAccountConfig["provider"]): boolean {
@@ -123,7 +128,7 @@ export function _resetBindingFingerprintsForTest(): void {
  */
 export async function acquireProvider(
     providers: Map<string, ProxyProvider>,
-    route: { accountName: string; providerSlug: string; account: AiProxyAccountConfig }
+    route: { accountName: string; providerSlug: string; providerKeySuffix?: string; account: AiProxyAccountConfig }
 ): Promise<ProxyProvider | null> {
     const key = routeProviderKey(route);
     const fingerprint = accountConfigFingerprint(route.account);
@@ -246,7 +251,11 @@ function publicFailureReason(reason: string | undefined): string | undefined {
  * that one account's credentials are not. The construction error is echoed so
  * the caller sees WHICH credential is missing.
  */
-export function providerUnavailableResponse(route: { accountName: string; providerSlug: string }): Response {
+export function providerUnavailableResponse(route: {
+    accountName: string;
+    providerSlug: string;
+    providerKeySuffix?: string;
+}): Response {
     const key = routeProviderKey(route);
     const reason = publicFailureReason(lastProviderFailure(key));
 

@@ -312,6 +312,11 @@ export interface ResolvedRoute {
     reasoningEffort?: ReasoningEffort;
     /** `suffix` when `reasoningEffort` came from the id. */
     effortSource?: EffortSource;
+    /**
+     * Set when `account` is a changed copy of the configured account (a session route turns its failover off), so
+     * the copy gets its own provider instead of rebuilding the account's normal one on every request.
+     */
+    providerKeySuffix?: string;
 }
 
 export interface ProxyModelMeta {

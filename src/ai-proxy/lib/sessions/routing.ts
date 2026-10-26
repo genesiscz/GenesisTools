@@ -45,7 +45,9 @@ export type SessionRouteResult = { route: ResolvedRoute } | { refusal: string };
  *
  * The account is the configured proxy account the record names (the legacy Codex account that reads
  * ~/.codex/auth.json among them), else an account built in memory for the record's login (❓ DECISION 1 a, Martin
- * 2026-10-25): never written to `ai-proxy/config.json`, and with no failover list, so a session route never moves.
+ * 2026-10-25): never written to `ai-proxy/config.json`. A session route never moves: a configured account comes back
+ * with `failover` off, because its failover logins are not in the record, and the session check authorizes only the
+ * account it names.
  */
 export function resolveSessionRoute(
     proxyModelId: string,
@@ -85,7 +87,9 @@ export function resolveSessionRoute(
             accountName: account.name,
             providerSlug: account.providerSlug,
             upstreamId: form.upstreamId,
-            account,
+            ...(account.failover
+                ? { account: { ...account, failover: false }, providerKeySuffix: "#session" }
+                : { account }),
             ...(reasoningEffort ? { reasoningEffort, effortSource: "suffix" as const } : {}),
         },
     };
