@@ -14,6 +14,8 @@
 
 import { lstatSync } from "node:fs";
 import { join } from "node:path";
+import { env } from "@genesiscz/utils/env";
+import { logger } from "@genesiscz/utils/logger";
 import type { StatusEntry } from "./porcelain";
 
 export interface WorktreeSide {
@@ -120,15 +122,25 @@ export function pairWorktreeRenames(deleted: WorktreeSide[], untracked: Worktree
     return pairs;
 }
 
-async function runGit(root: string, args: string[], input: string): Promise<string | null> {
+async function runGit({ root, args, input }: { root: string; args: string[]; input: string }): Promise<string | null> {
     const proc = Bun.spawn(["git", "-C", root, ...args], {
         stdin: new TextEncoder().encode(input),
         stdout: "pipe",
         stderr: "pipe",
-        env: { ...process.env, GIT_OPTIONAL_LOCKS: "0" },
+        env: { ...env.getProcessEnv(), GIT_OPTIONAL_LOCKS: "0" },
     });
-    const [stdout, code] = await Promise.all([new Response(proc.stdout).text(), proc.exited]);
-    return code === 0 ? stdout : null;
+    const [stdout, stderr, code] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+    ]);
+
+    if (code !== 0) {
+        logger.debug({ root, args, code, stderr }, "worktree rename query failed");
+        return null;
+    }
+
+    return stdout;
 }
 
 /**
@@ -149,11 +161,11 @@ export async function findWorktreeRenames(opts: {
         return [];
     }
 
-    const checked = await runGit(
+    const checked = await runGit({
         root,
-        ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
-        deleted.map((path) => `${revision}:${path}\n`).join("")
-    );
+        args: ["cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
+        input: deleted.map((path) => `${revision}:${path}\n`).join(""),
+    });
 
     if (checked === null) {
         return [];
@@ -186,8 +198,8 @@ export async function findWorktreeRenames(opts: {
             if (stat.isFile() && sizes.has(stat.size)) {
                 candidates.push(path);
             }
-        } catch {
-            // Gone since the status: nothing to pair.
+        } catch (error) {
+            logger.debug({ root, path, error }, "worktree rename candidate unavailable");
         }
     }
 
@@ -195,7 +207,12 @@ export async function findWorktreeRenames(opts: {
         return [];
     }
 
-    const hashed = await runGit(root, ["hash-object", "--stdin-paths"], candidates.map((path) => `${path}\n`).join(""));
+    // A leading quote makes git parse a line as a C-quoted path. A relative prefix keeps every path literal.
+    const hashed = await runGit({
+        root,
+        args: ["hash-object", "--stdin-paths"],
+        input: candidates.map((path) => `./${path}\n`).join(""),
+    });
     const oids = hashed?.split("\n").filter(Boolean) ?? [];
 
     if (oids.length !== candidates.length) {
@@ -217,8 +234,15 @@ export function applyWorktreeRenames(entries: StatusEntry[], renames: WorktreeRe
         return entries;
     }
 
-    const newByOld = new Map(renames.map((pair) => [pair.old, pair.new]));
-    const news = new Set(renames.map((pair) => pair.new));
+    // Staged changes still live at the index path, including a staged rename's existing origPath.
+    const eligible = new Set(
+        entries
+            .filter((entry) => entry.kind === "changed" && entry.index === "." && entry.worktree === "D")
+            .map((entry) => entry.path)
+    );
+    const accepted = renames.filter((pair) => eligible.has(pair.old));
+    const newByOld = new Map(accepted.map((pair) => [pair.old, pair.new]));
+    const news = new Set(accepted.map((pair) => pair.new));
     const result: StatusEntry[] = [];
 
     for (const entry of entries) {
@@ -240,7 +264,7 @@ export async function pairStatusRenames(root: string, entries: StatusEntry[]): P
     const renames = await findWorktreeRenames({
         root,
         deleted: entries
-            .filter((entry) => entry.kind === "changed" && entry.worktree === "D")
+            .filter((entry) => entry.kind === "changed" && entry.index === "." && entry.worktree === "D")
             .map((entry) => entry.path),
         untracked: entries.filter((entry) => entry.kind === "untracked").map((entry) => entry.path),
         revision: "",

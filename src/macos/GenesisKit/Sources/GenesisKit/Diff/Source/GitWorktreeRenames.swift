@@ -78,8 +78,12 @@ public enum GitWorktreeRenames {
     /// `entries` with each pair's deleted entry turned into a rename at its new path, and that untracked path dropped.
     public static func apply(_ pairs: [Pair], to entries: [GitStatusEntry]) -> [GitStatusEntry] {
         guard !pairs.isEmpty else { return entries }
-        let newByOld = Dictionary(pairs.map { ($0.old, $0.new) }, uniquingKeysWith: { first, _ in first })
-        let news = Set(pairs.map(\.new))
+        // A staged change still lives at its index path. Keep both status entries until consumers can address
+        // the index and working tree separately, including a staged rename's existing oldPath.
+        let eligible = Set(entries.filter { $0.staged == nil && $0.unstaged == .deleted }.map(\.path))
+        let accepted = pairs.filter { eligible.contains($0.old) }
+        let newByOld = Dictionary(accepted.map { ($0.old, $0.new) }, uniquingKeysWith: { first, _ in first })
+        let news = Set(accepted.map(\.new))
         return entries.compactMap { entry in
             if entry.unstaged == .untracked, news.contains(entry.path) { return nil }
             guard entry.unstaged == .deleted, let new = newByOld[entry.path] else { return entry }
@@ -94,7 +98,7 @@ public enum GitWorktreeRenames {
     /// A repository status with its working-tree moves paired: the deleted side is the index's version.
     static func paired(_ entries: [GitStatusEntry], in root: URL, provider: GenesisKitGTProvider) -> [GitStatusEntry] {
         let pairs = find(in: root,
-                         deleted: entries.filter { $0.unstaged == .deleted }.map(\.path),
+                         deleted: entries.filter { $0.staged == nil && $0.unstaged == .deleted }.map(\.path),
                          untracked: entries.filter { $0.unstaged == .untracked }.map(\.path),
                          revision: "", provider: provider)
         return apply(pairs, to: entries)
@@ -147,9 +151,10 @@ public enum GitWorktreeRenames {
                 unknown.append((path, identity))
             }
         }
+        // A leading quote makes git parse a line as a C-quoted path; ./ keeps the input literal.
         if !unknown.isEmpty {
             guard let hashed = try? provider.git(["hash-object", "--stdin-paths"], in: root,
-                                                 input: Data(unknown.map { $0.path + "\n" }.joined().utf8), gitDirectory: nil, environment: nil),
+                                                 input: Data(unknown.map { "./" + $0.path + "\n" }.joined().utf8), gitDirectory: nil, environment: nil),
                   hashed.status == 0 else { return [] }
             let oids = String(decoding: hashed.stdout, as: UTF8.self).split(separator: "\n").map(String.init)
             guard oids.count == unknown.count else { return [] }

@@ -1976,12 +1976,13 @@ HEAD had, the agent session that wrote them, Revert this hunk.
 #### `GitHistoryModel` / `GitCommitList` / `GitRepoPanel` / `GitCommitView`
 
 A commit list kept current (`.file(url)`: `git log --follow`; `.repository(folder)`: the newest commits), the list
-view (open on a click, compare from the context menu), the repository panel (branch with ahead and behind, staged
-and unstaged files, recent commits) and a commit's files with their diffs, where `rendered:` may draw a file its own
+view (open on a click, compare from the context menu), the repository panel (branch with ahead and behind, staged,
+unstaged and untracked files) and a commit's files with their diffs, where `rendered:` may draw a file its own
 way (the markdown viewer renders a note as a rendered diff).
 
 ```swift
-GitRepoPanel(repo: repo, log: log, onOpenFile: { entry, staged in … }, onOpenCommit: { commit in … })
+GitRepoPanel(repo: repo, onOpenFile: { entry, staged in … })
+GitCommitList(commits: log.commits, onOpen: { commit in … })
 GitCommitView(root: repo.root, commit: commit)
 ```
 

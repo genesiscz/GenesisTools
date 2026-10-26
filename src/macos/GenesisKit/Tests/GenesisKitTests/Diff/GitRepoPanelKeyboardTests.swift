@@ -126,6 +126,28 @@ final class GitRepoPanelKeyboardTests: XCTestCase {
         XCTAssertTrue(revealed.isEmpty)
     }
 
+    func testRevealUnfoldsTheContainingSectionInEveryLayout() throws {
+        let entries = [
+            GitStatusEntry(path: "staged.md", staged: .modified),
+            GitStatusEntry(path: "changed.md", unstaged: .modified),
+            GitStatusEntry(path: "loose.md", unstaged: .untracked),
+            GitStatusEntry(path: "data/run.json", unstaged: .untracked),
+        ]
+        for order in GitChangeOrder.allCases {
+            let lists = GitRepoPanelLists.derive(entries, dates: [:], inputs: .init(
+                root: URL(fileURLWithPath: "/fixture/reveal"), order: order, filter: "", untracked: true))
+            for entry in entries {
+                let place = try XCTUnwrap(lists.places[entry.path])
+                var folded: Set<String> = ["staged", "changes", "untracked"]
+                folded.remove(place.section(order: order))
+                let rows = GitRepoPanel.rows(lists, order: order, untracked: true, folded: folded,
+                                            isOpen: { $0 == place.folder })
+                XCTAssertTrue(rows.contains { $0.id == place.id }, "reveal must materialize \(entry.path) in \(order)")
+                XCTAssertEqual(folded.count, 2, "other sections keep their fold")
+            }
+        }
+    }
+
     func testAheadAndBehindAreWords() {
         let root = URL(fileURLWithPath: "/tmp/repo")
         XCTAssertEqual(GitRepoPanel.trackingText(GitRepoStatus(root: root, branch: "main")), "No upstream branch")

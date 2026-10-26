@@ -70,12 +70,11 @@ struct GitQueries {
         return state
     }
 
-    /// The deleted file an untracked `path` is an exact copy of, if any: only tracked entries are listed (no untracked
-    /// walk), and the pairing hashes one file at most.
+    /// Resolve against the same complete, one-use pairing as the repository panel.
     func movedFrom(_ path: String, in root: URL) -> String? {
-        guard let output = try? run(["--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=no"], in: root) else { return nil }
-        let deleted = Self.parseStatus(output).entries.filter { $0.unstaged == .deleted }.map(\.path)
-        return GitWorktreeRenames.find(in: root, deleted: deleted, untracked: [path], revision: "", provider: provider).first?.old
+        guard let output = try? run(["--no-optional-locks", "status", "--porcelain=v2", "-z", "--untracked-files=all"], in: root) else { return nil }
+        let entries = GitWorktreeRenames.paired(Self.parseStatus(output).entries, in: root, provider: provider)
+        return entries.first { $0.path == path && $0.unstaged == .renamed }?.oldPath
     }
 
     func contents(of file: URL, at revision: GitRevision) throws -> String? {

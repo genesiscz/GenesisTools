@@ -217,6 +217,86 @@ final class GitFileDiffTests: XCTestCase {
         XCTAssertEqual(Set(lists.lists.dates.keys), ["b.md"], "the old root's late dates are dropped")
     }
 
+    func testReturningToAnAppliedRootStillReadsDatesAfterClearingItsLists() async throws {
+        let first = URL(fileURLWithPath: "/fixture/return-first"), second = URL(fileURLWithPath: "/fixture/return-second")
+        let entry = GitStatusEntry(path: "note.md", unstaged: .modified)
+        let firstStatus = GitRepoStatus(root: first, branch: "main", entries: [entry])
+        let secondStatus = GitRepoStatus(root: second, branch: "main", entries: [entry])
+        let inputs = GitRepoPanelLists.Inputs(root: first, order: .lastUpdate, filter: "", untracked: true)
+        let date = Date(timeIntervalSince1970: 1_000)
+        let lists = GitRepoPanelLists()
+        lists.readDates = { _, _ in [entry.path: date] }
+        lists.update(inputs, status: firstStatus, reads: 1)
+        let initialDeadline = Date().addingTimeInterval(3)
+        while lists.settled != inputs, Date() < initialDeadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(lists.lists.dates[entry.path], date)
+        let started = expectation(description: "other root started")
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        lists.readDates = { root, _ in
+            if root == second {
+                started.fulfill()
+                _ = gate.wait(timeout: .now() + 5)
+            }
+            return [entry.path: date]
+        }
+        var other = inputs
+        other.root = second
+        lists.update(other, status: secondStatus, reads: 1)
+        await fulfillment(of: [started], timeout: 3)
+        lists.update(inputs, status: firstStatus, reads: 1)
+        let deadline = Date().addingTimeInterval(3)
+        while lists.settled != inputs, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(lists.settled, inputs)
+        XCTAssertEqual(lists.lists.dates[entry.path], date, "the root switch cleared the lists, including their dates")
+    }
+
+    func testPendingDatesSurviveAnInputChange() async throws {
+        let root = URL(fileURLWithPath: "/fixture/pending-dates")
+        let old = GitStatusEntry(path: "old.md", unstaged: .modified)
+        let added = GitStatusEntry(path: "new.md", unstaged: .untracked)
+        let oldDate = Date(timeIntervalSince1970: 1_000), newDate = Date(timeIntervalSince1970: 2_000)
+        let lists = GitRepoPanelLists()
+        lists.readDates = { _, _ in [old.path: oldDate] }
+        let initial = GitRepoPanelLists.Inputs(root: root, order: .lastUpdate, filter: "", untracked: true)
+        lists.update(initial, status: GitRepoStatus(root: root, branch: "main", entries: [old]), reads: 1)
+        let initialDeadline = Date().addingTimeInterval(3)
+        while lists.settled != initial, Date() < initialDeadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(lists.settled, initial)
+
+        let started = expectation(description: "fresh dates started")
+        let finished = expectation(description: "superseded dates finished")
+        final class Gate: @unchecked Sendable {
+            let lock = NSLock()
+            let semaphore = DispatchSemaphore(value: 0)
+            var calls = 0
+            func first() -> Bool { lock.withLock { calls += 1; return calls == 1 } }
+        }
+        let gate = Gate()
+        defer { gate.semaphore.signal() }
+        lists.readDates = { _, _ in
+            if gate.first() {
+                started.fulfill()
+                _ = gate.semaphore.wait(timeout: .now() + 5)
+                finished.fulfill()
+            }
+            return [old.path: oldDate, added.path: newDate]
+        }
+        let status = GitRepoStatus(root: root, branch: "main", entries: [old, added])
+        lists.update(initial, status: status, reads: 2)
+        await fulfillment(of: [started], timeout: 3)
+        var filtered = initial
+        filtered.filter = ".md"
+        lists.update(filtered, status: status, reads: 2)
+        let deadline = Date().addingTimeInterval(3)
+        while lists.settled != filtered, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(lists.settled, filtered)
+        XCTAssertEqual(lists.lists.dates[added.path], newDate, "a new input must not reuse the old date snapshot")
+        XCTAssertEqual(lists.lists.recent.first, .file(added), "the newest file sorts first")
+        gate.semaphore.signal()
+        await fulfillment(of: [finished], timeout: 3)
+    }
+
     /// A status read that finds the same status and the same dates changes nothing: no new lists, no publish. Before,
     /// every read re-read the dates, derived the lists twice and re-ran the panel six times (2026-10-25).
     func testAnEqualReadChangesNothing() async throws {

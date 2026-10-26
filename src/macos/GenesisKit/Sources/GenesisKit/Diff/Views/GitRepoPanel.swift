@@ -288,6 +288,12 @@ final class GitRepoPanelLists: ObservableObject {
         struct Place: Equatable, Sendable {
             var id: String
             var folder: String?
+
+            func section(order: GitChangeOrder) -> String {
+                if id.hasPrefix("staged:") { return "staged" }
+                if id.hasPrefix("changes:") || order == .lastUpdate { return "changes" }
+                return "untracked"
+            }
         }
     }
 
@@ -302,8 +308,13 @@ final class GitRepoPanelLists: ObservableObject {
     /// The inputs `lists` were derived from; an empty state waits for them, or a stale list would flash "no match".
     private(set) var settled: Inputs?
     private var inputs: Inputs?
-    private var status: GitRepoStatus?
-    private var reads = -1
+
+    private struct DateVersion: Equatable, Sendable {
+        let root: URL
+        let status: GitRepoStatus?
+        let reads: Int
+    }
+    private var appliedDateVersion: DateVersion?
     private var ticket = 0
     /// Bumped with each new `lists`, for the row cache.
     private(set) var version = 0
@@ -328,9 +339,11 @@ final class GitRepoPanelLists: ObservableObject {
 
     func update(_ inputs: Inputs, status: GitRepoStatus?, reads: Int) {
         let rootChanged = inputs.root != self.inputs?.root
-        let statusChanged = status != self.status
+        let statusChanged = status != appliedDateVersion?.status
         let inputsChanged = inputs != self.inputs
-        let reread = rootChanged || statusChanged || reads != self.reads
+        let unsettledInputs = inputs != settled
+        let dateVersion = DateVersion(root: inputs.root, status: status, reads: reads)
+        let reread = rootChanged || dateVersion != appliedDateVersion
         guard reread || inputsChanged else { return }
         if rootChanged {
             lists = Lists()
@@ -338,8 +351,7 @@ final class GitRepoPanelLists: ObservableObject {
             version += 1
         }
         self.inputs = inputs
-        self.status = status
-        self.reads = reads
+
         ticket += 1
         let ticket = ticket
         let entries = status?.entries ?? []
@@ -349,16 +361,17 @@ final class GitRepoPanelLists: ObservableObject {
             let span = PerfSpans.begin("git.panel.derive", "\(entries.count) entries \(inputs.order.rawValue)")
             let dates = reread ? readDates(inputs.root, entries.map(\.path)) : old.dates
             // A read that found the same status and the same dates, with the same inputs, changes nothing.
-            let derive = rootChanged || statusChanged || inputsChanged || dates != old.dates
+            let derive = rootChanged || statusChanged || unsettledInputs || dates != old.dates
             let next = derive ? Self.derive(entries, dates: dates, inputs: inputs) : nil
             let changed = next.map { $0 != old } ?? false
             span.end()
-            await self?.apply(changed ? next : nil, inputs: inputs, ticket: ticket)
+            await self?.apply(changed ? next : nil, inputs: inputs, dateVersion: dateVersion, ticket: ticket)
         }
     }
 
-    private func apply(_ next: Lists?, inputs: Inputs, ticket: Int) {
+    private func apply(_ next: Lists?, inputs: Inputs, dateVersion: DateVersion, ticket: Int) {
         guard ticket == self.ticket else { return }
+        appliedDateVersion = dateVersion
         let wasSettled = settled == inputs
         settled = inputs
         if let next {
@@ -760,11 +773,12 @@ public struct GitRepoPanel: View, Equatable {
         }
     }
 
-    /// Opens the open file's folder when needed, scrolls its row to the middle and lights it for a moment.
+    /// Opens the open file's section and folder, scrolls its row to the middle and lights it for a moment.
     private func reveal(_ lists: GitRepoPanelLists.Lists) {
         guard let path = revealPath, let place = lists.places[path] else { return }
+        setFolded(place.section(order: derived.settled?.order ?? order), false)
         if let folder = place.folder { openFolders.insert(folder) }
-        // On the next turn: a folder just opened has no row to scroll to yet.
+        // On the next turn: a section or folder just opened has no row to scroll to yet.
         DispatchQueue.main.async {
             box.reveal(place.id, reduceMotion: reduceMotion)
             flash = place.id

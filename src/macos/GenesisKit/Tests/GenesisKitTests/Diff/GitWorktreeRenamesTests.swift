@@ -137,6 +137,73 @@ final class GitWorktreeRenamesTests: XCTestCase {
         XCTAssertEqual(edited.summary, "new file, not in git", "an edited copy is not an exact move")
     }
 
+    func testAQuotedDestinationDoesNotBreakTheHashBatch() throws {
+        let repo = try movedFolderRepository()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        let destination = "\"quoted.ts"
+        try FileManager.default.moveItem(at: repo.appendingPathComponent("moved/run/compiler.ts"), to: repo.appendingPathComponent(destination))
+        let status = try XCTUnwrap(try provider.repoStatus(repo, commits: 0))
+        XCTAssertEqual(status.entries.first { $0.path == destination }?.oldPath, "data/run/compiler.ts")
+        XCTAssertEqual(status.entries.first { $0.path == destination }?.unstaged, .renamed)
+    }
+
+    func testFileStateUsesTheRepositorysOneUsePairing() throws {
+        let repo = try movedFolderRepository()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        for name in ["a.md", "b.md"] {
+            try "same content\n".write(to: repo.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+        try git(["add", "a.md", "b.md"], in: repo)
+        try git(["commit", "-q", "-m", "Duplicate blobs"], in: repo)
+        for name in ["a.md", "b.md"] {
+            try FileManager.default.moveItem(at: repo.appendingPathComponent(name), to: repo.appendingPathComponent("moved/" + name))
+        }
+        try "same content\n".write(to: repo.appendingPathComponent("moved/copy.md"), atomically: true, encoding: .utf8)
+        let status = try XCTUnwrap(try provider.repoStatus(repo, commits: 0))
+        for name in ["a.md", "b.md", "copy.md"] {
+            let file = repo.appendingPathComponent("moved/" + name)
+            let state = try XCTUnwrap(try provider.fileState(file))
+            XCTAssertEqual(state.entry, status.entry(for: file), "file and repository agree for \(name)")
+        }
+        XCTAssertEqual(status.entry(for: repo.appendingPathComponent("moved/a.md"))?.oldPath, "a.md")
+        XCTAssertEqual(status.entry(for: repo.appendingPathComponent("moved/b.md"))?.oldPath, "b.md")
+        XCTAssertEqual(status.entry(for: repo.appendingPathComponent("moved/copy.md"))?.unstaged, .untracked)
+    }
+
+    func testStagedChangesKeepTheirIndexPathsWhenMovedAgain() throws {
+        let repo = try movedFolderRepository()
+        defer { try? FileManager.default.removeItem(at: repo) }
+        for (name, kind) in [("modified.md", GitChangeKind.modified), ("added.md", .added), ("renamed.md", .renamed)] {
+            if kind != .added {
+                try "before\n".write(to: repo.appendingPathComponent(name), atomically: true, encoding: .utf8)
+                try git(["add", name], in: repo)
+                try git(["commit", "-q", "-m", "Tracked file"], in: repo)
+            }
+            var indexPath = name
+            if kind == .renamed {
+                indexPath = "index-" + name
+                try git(["mv", name, indexPath], in: repo)
+            } else {
+                try "staged content\n".write(to: repo.appendingPathComponent(name), atomically: true, encoding: .utf8)
+                try git(["add", name], in: repo)
+            }
+            let destination = "moved/" + name
+            try FileManager.default.moveItem(at: repo.appendingPathComponent(indexPath), to: repo.appendingPathComponent(destination))
+            let status = try XCTUnwrap(try provider.repoStatus(repo, commits: 0))
+            let entry = try XCTUnwrap(status.entries.first { $0.path == indexPath })
+            XCTAssertEqual(entry.staged, kind)
+            XCTAssertEqual(entry.unstaged, .deleted)
+            XCTAssertEqual(entry.oldPath, kind == .renamed ? name : nil)
+            XCTAssertEqual(status.entries.first { $0.path == destination }?.unstaged, .untracked)
+            XCTAssertEqual(try provider.fileState(repo.appendingPathComponent(destination))?.entry?.unstaged, .untracked)
+            let preserved = GitWorktreeRenames.apply([.init(old: indexPath, new: destination)], to: status.entries)
+            XCTAssertEqual(preserved, status.entries, "apply also rejects a staged source without dropping its destination")
+            let sides = try GitFileDiffModel.sides(repo.appendingPathComponent(indexPath), text: nil, scope: .staged, pick: nil, provider: provider)
+            XCTAssertNotNil(sides.new, "the staged content remains addressable at the index path")
+            try git(["commit", "-q", "-m", "Staged change"], in: repo)
+        }
+    }
+
     func testOpeningTheMovedFileShowsItsOldSide() throws {
         let repo = try movedFolderRepository()
         defer { try? FileManager.default.removeItem(at: repo) }

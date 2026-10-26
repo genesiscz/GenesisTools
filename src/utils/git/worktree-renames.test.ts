@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { createGit } from "./core";
-import { pairStatusRenames, pairWorktreeRenames, type WorktreeSide } from "./worktree-renames";
+import { applyWorktreeRenames, pairStatusRenames, pairWorktreeRenames, type WorktreeSide } from "./worktree-renames";
 
 interface Contract {
     cases: { name: string; deleted: WorktreeSide[]; untracked: WorktreeSide[]; pairs: [string, string][] }[];
@@ -54,6 +54,57 @@ describe("pairStatusRenames", () => {
         });
         expect(await proc.exited).toBe(0);
     }
+
+    it("hashes a destination beginning with a quote without breaking other pairs", async () => {
+        const root = mkdtempSync(join(tmpdir(), "worktree-renames-quotes-"));
+        made.push(root);
+        await run(root, ["init", "-q", "-b", "main"]);
+        writeFileSync(join(root, "a.md"), "first content\n");
+        writeFileSync(join(root, "b.md"), "second content\n");
+        await run(root, ["add", "."]);
+        await run(root, ["commit", "-q", "-m", "First"]);
+        renameSync(join(root, "a.md"), join(root, '"quoted.md'));
+        renameSync(join(root, "b.md"), join(root, "normal.md"));
+        const status = await createGit({ cwd: root }).status({ untracked: "all" });
+        const entries = await pairStatusRenames(root, status.entries);
+        expect(entries).toHaveLength(2);
+        expect(entries.find((entry) => entry.path === '"quoted.md')).toMatchObject({ origPath: "a.md", worktree: "R" });
+        expect(entries.find((entry) => entry.path === "normal.md")).toMatchObject({ origPath: "b.md", worktree: "R" });
+    });
+
+    it("preserves staged modifications, additions and rename identities after another move", async () => {
+        const root = mkdtempSync(join(tmpdir(), "worktree-renames-staged-"));
+        made.push(root);
+        await run(root, ["init", "-q", "-b", "main"]);
+        writeFileSync(join(root, "modified.md"), "before\n");
+        writeFileSync(join(root, "original.md"), "rename content\n");
+        await run(root, ["add", "."]);
+        await run(root, ["commit", "-q", "-m", "First"]);
+        writeFileSync(join(root, "modified.md"), "after\n");
+        writeFileSync(join(root, "added.md"), "added content\n");
+        await run(root, ["add", "."]);
+        await run(root, ["mv", "original.md", "renamed.md"]);
+        mkdirSync(join(root, "moved"));
+        const paths = ["modified.md", "added.md", "renamed.md"];
+
+        for (const path of paths) {
+            renameSync(join(root, path), join(root, "moved", path));
+        }
+
+        const status = await createGit({ cwd: root }).status({ untracked: "all" });
+        expect(await pairStatusRenames(root, status.entries)).toEqual(status.entries);
+        expect(
+            applyWorktreeRenames(
+                status.entries,
+                paths.map((path) => ({ old: path, new: `moved/${path}` }))
+            )
+        ).toEqual(status.entries);
+        expect(status.entries.find((entry) => entry.path === "renamed.md")).toMatchObject({
+            index: "R",
+            worktree: "D",
+            origPath: "original.md",
+        });
+    });
 
     it("turns a folder moved outside git into renames, and leaves edits, empty files and real deletions alone", async () => {
         const root = mkdtempSync(join(tmpdir(), "worktree-renames-"));
