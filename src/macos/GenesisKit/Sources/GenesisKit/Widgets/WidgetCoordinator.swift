@@ -201,6 +201,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.showMedia = { [weak self] selection in self?.showMedia(selection) }
         model.inboxArrived = { [weak self] items in self?.alert(items) }
         model.decisionsAnsweredElsewhere = { [weak self] items in self?.alertAnswered(items) }
+        model.stagedAtStart = { [weak self] items in self?.remindStaged(items) }
     }
 
     /// A main-spin with a panel open: the panel closes, so the app answers again, and says why. The spin's stack and
@@ -247,6 +248,18 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                          priority: .medium)
         for key in Set(items.map(\.key)) { model.flashAttention(key, seconds: WidgetAlerts.flashSeconds(preferences)) }
         popUp(newest, with: items, preferences: preferences, seconds: WidgetAlerts.autoDecisionSeconds(preferences))
+    }
+
+    /// The widget started with staged decisions (Settings → Staged at start): a popup lists them with Send now and
+    /// stays until it is closed, so a pick staged before a restart is not left behind.
+    func remindStaged(_ items: [WidgetInboxItem]) {
+        guard panelsEnabled, let newest = items.max(by: { $0.at < $1.at }) else { return }
+        let preferences = model.snapshot?.state.preferences
+        PerfLog.mark("widget.staged-reminder items=\(items.count) shown=\(preferences?.stagedReminder ?? true)")
+        guard preferences?.stagedReminder ?? true else { return }
+        let reminder = WidgetInboxItem(id: WidgetAlerts.stagedReminderID, sourceId: WidgetAlerts.stagedReminderID,
+                                       kind: "staged", key: newest.key, at: newest.at, needsAnswer: false)
+        popUp(reminder, with: [reminder], preferences: preferences, seconds: 0)
     }
 
     /// Pops `first` up in the agents preview, and the rest of `burst` joins it oldest first (listed or queued), unless

@@ -1693,6 +1693,15 @@ test("send-and-close timing defaults to 2.5 seconds and can keep the panel open"
     expect(widgetPreferencesSchema.safeParse({ sendCloseSeconds: 61 }).success).toBe(false);
 });
 
+test("staging keys default to Return stages, ⌘ does the other, and a reminder at start", () => {
+    const defaults = widgetPreferencesSchema.parse({});
+    expect(defaults.decisionCommandSwaps).toBe(true);
+    expect(defaults.ownAnswerReturn).toBe("stage");
+    expect(defaults.stagedReminder).toBe(true);
+    expect(widgetPreferencesSchema.parse({ ownAnswerReturn: "send" }).ownAnswerReturn).toBe("send");
+    expect(widgetPreferencesSchema.safeParse({ ownAnswerReturn: "later" }).success).toBe(false);
+});
+
 test("an open TODO does not mark its session as waiting for an answer", async () => {
     const directory = await root();
     const file = join(directory, "decisions.jsonl");

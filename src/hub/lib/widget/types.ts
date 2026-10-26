@@ -87,6 +87,12 @@ export const widgetPreferencesSchema = z.object({
     railOrder: z.enum(["list", "stable"]).default("list"),
     /** A click on a decision option: stages the pick to send later with others ("stage"), or sends it at once. */
     decisionClick: z.enum(["stage", "send"]).default("stage"),
+    /** ⌘-click on an option (and ⌘-Return in a decision's own answer) does the other: sends while a click stages. */
+    decisionCommandSwaps: z.boolean().default(true),
+    /** Return in a decision's own answer field: stages the text as its note ("stage"), or sends it as the answer. */
+    ownAnswerReturn: z.enum(["stage", "send"]).default("stage"),
+    /** When the widget starts with staged decisions, a popup lists them with Send now, until it is closed. */
+    stagedReminder: z.boolean().default(true),
     /** Leaving the inbox with staged decisions: ask what to do ("ask"), keep them staged, or send them. */
     stagedOnLeave: z.enum(["ask", "keep", "send"]).default("ask"),
     /** Seconds before a successful send-and-close folds the panel; 0 keeps it open. */

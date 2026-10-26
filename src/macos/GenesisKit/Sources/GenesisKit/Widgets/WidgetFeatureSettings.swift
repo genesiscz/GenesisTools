@@ -265,6 +265,21 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
+                NativeSettingsToggle(
+                    "⌘ does the other", detail: "⌘-click on an option, and ⌘-Return in a decision's own answer, send at once while a click stages, and stage while a click sends.",
+                    isOn: boolean("decisionCommandSwaps", prefs?.decisionCommandSwaps ?? true))
+                Divider()
+                NativeSettingsRow("Return in an own answer", detail: "Return in a decision's own answer field: stage the text as its note to send later, or send it as the answer now.") {
+                    Picker("Return in an own answer", selection: string("ownAnswerReturn", prefs?.ownAnswerReturn ?? "stage")) {
+                        Text("Stage").tag("stage")
+                        Text("Send").tag("send")
+                    }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
+                }
+                Divider()
+                NativeSettingsToggle(
+                    "Staged at start", detail: "When the widget starts with decisions staged and not sent, a popup lists them with Send now until you close it.",
+                    isOn: boolean("stagedReminder", prefs?.stagedReminder ?? true))
+                Divider()
                 NativeSettingsRow("Closing with staged decisions", detail: "What happens to staged decisions when the inbox closes.") {
                     Picker("Closing with staged decisions", selection: string("stagedOnLeave", prefs?.stagedOnLeave ?? "ask")) {
                         Text("Ask").tag("ask")

@@ -578,6 +578,31 @@ final class WidgetInteractionTests: XCTestCase {
         XCTAssertEqual(announced.count, 1, "each answer is announced once")
     }
 
+    /// The staged reminder fires once, with the first complete snapshot that holds staged decisions.
+    @MainActor
+    func testStagedDecisionsAtStartAreRemindedOnce() {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        var reminded: [[WidgetInboxItem]] = []
+        value.stagedAtStart = { reminded.append($0) }
+        let staged = WidgetInboxItem(id: "decision:d_6_s", sourceId: "d_6_s", kind: "decision", key: "local:claude:s:",
+            at: 6_000, needsAnswer: true, title: "Keep it?", number: 6, revision: 1, draftOption: "a")
+        func summary(complete: Bool) -> WidgetInboxSummary {
+            var value = WidgetInboxSummary(unread: 0, needsAnswer: 1, complete: complete, truncated: false, sessions: [])
+            value.staged = [staged]
+            return value
+        }
+        value.updateInbox(summary(complete: false))
+        XCTAssertEqual(reminded, [], "an incomplete snapshot is not the start")
+        value.updateInbox(summary(complete: true))
+        XCTAssertEqual(reminded, [[staged]])
+        value.updateInbox(summary(complete: true))
+        XCTAssertEqual(reminded.count, 1, "once per start")
+    }
+
     /// Several alerts in one popup (Alerts → Several at once), a popup that stays until it is closed, and a pointer
     /// that leaves the popup: the countdown starts again instead of closing it 220 ms later.
     @MainActor
@@ -918,6 +943,28 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.alertAnswered([answered])
         XCTAssertEqual(chimes.count, heard, "Announce them off: silent")
         XCTAssertNil(coordinator.model.peekItem, "and no popup")
+
+        // Settings → Staged at start: picks staged before a restart pop up as one reminder that stays until closed.
+        let staged = WidgetInboxItem(id: "decision:d_5_s", sourceId: "d_5_s", kind: "decision", key: "local:claude:s:",
+            at: 5_000, needsAnswer: true, title: "Keep it?", number: 5, options: ["yes", "no"], revision: 2,
+            draftOption: "b")
+        coordinator.remindStaged([staged])
+        XCTAssertEqual(coordinator.model.peekItem?.kind, "staged")
+        XCTAssertEqual(coordinator.model.peekItem?.id, WidgetAlerts.stagedReminderID)
+        XCTAssertEqual(coordinator.model.peekSeconds, 0, "it stays until it is closed")
+        XCTAssertEqual(WidgetAlerts.kicker(try XCTUnwrap(coordinator.model.peekItem)), "Staged, not sent")
+        coordinator.model.collapse()
+        coordinator.model.updatePreferences(["stagedReminder": .bool(false)])
+        coordinator.remindStaged([staged])
+        XCTAssertNil(coordinator.model.peekItem, "Staged at start off: no reminder")
+    }
+
+    /// ⌘ turns an option click or a Return in an own answer around while the setting is on.
+    func testCommandDoesTheOtherActionWhileTheSettingIsOn() {
+        XCTAssertTrue(WidgetModel.stages(true, command: false, swaps: true))
+        XCTAssertFalse(WidgetModel.stages(true, command: true, swaps: true), "⌘-click sends while clicks stage")
+        XCTAssertTrue(WidgetModel.stages(false, command: true, swaps: true), "⌘-click stages while clicks send")
+        XCTAssertTrue(WidgetModel.stages(true, command: true, swaps: false), "the setting off: ⌘ changes nothing")
     }
 
     /// What the inbox shows for an open decision with the own-answer composer, and for a superseded one with the
