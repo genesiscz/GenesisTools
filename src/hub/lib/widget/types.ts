@@ -1,14 +1,10 @@
-import { ACCOUNT_PROVIDER_ALIASES } from "@genesiscz/utils/ai/providers/alias-list";
 import { logger } from "@genesiscz/utils/logger";
 import { videoSettingsSchema } from "@genesiscz/utils/video/types";
 import { z } from "zod";
 
-/** The providers a widget row can name: every harness, plus "unknown" for a row nothing claimed. */
-const WIDGET_PROVIDERS = [...ACCOUNT_PROVIDER_ALIASES, "unknown"] as const;
-
 export const widgetTargetSchema = z.object({
     hostId: z.literal("local").default("local"),
-    provider: z.enum(WIDGET_PROVIDERS),
+    provider: z.enum(["claude", "codex", "grok", "unknown"]),
     sessionId: z.string().min(1),
     sourceHome: z.string().default(""),
     cwd: z.string().default(""),
@@ -61,7 +57,7 @@ export const widgetPreferencesSchema = z.object({
     /** The hover list's rows show their waiting question under the session. */
     previewQuestion: z.boolean().default(true),
     display: z.string().default(""),
-    providers: z.array(z.enum(WIDGET_PROVIDERS)).default([]),
+    providers: z.array(z.enum(["claude", "codex", "grok", "unknown"])).default([]),
     quietSeconds: z.number().int().min(3).max(300).default(15),
     voiceProvider: z.string().default("xai"),
     voiceAccount: z.string().nullable().optional(),
@@ -109,11 +105,6 @@ export const widgetPreferencesSchema = z.object({
      * with Send ("confirm"), or only says the field is empty ("nothing").
      */
     ownAnswerEmptyReturn: z.enum(["send", "confirm", "nothing"]).default("send"),
-    /**
-     * An answer to an agent's own question dialog (an inbox item from a dialog record, such as Claude's
-     * AskUserQuestion): press the option's key in the live dialog ("press"), or refuse and leave it to the terminal.
-     */
-    dialogAnswer: z.enum(["press", "refuse"]).default("press"),
     /** Width in points of the rail's hover list (the agents preview). */
     previewWidth: z.number().min(260).max(560).default(324),
     /** When the widget starts with staged decisions, a popup lists them with Send now, until it is closed. */
