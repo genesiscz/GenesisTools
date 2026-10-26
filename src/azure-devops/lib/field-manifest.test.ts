@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+    diffManifestData,
+    parseManifestText,
+    renderManifestTs as renderAnyTs,
+} from "@app/azure-devops/lib/ado-manifest";
+import {
     type AdoFieldManifest,
     buildFieldManifest,
     diffManifests,
@@ -9,6 +14,7 @@ import {
     renderManifestJson,
     renderManifestTs,
 } from "@app/azure-devops/lib/field-manifest";
+import { buildWorkflow, flattenAreaPaths, kindOfManifest, renderGenericMd } from "@app/azure-devops/lib/manifest-kinds";
 
 const MERGED = "Custom.0f1e2d3c-aaaa-bbbb-cccc-000000000001";
 const OWNER = "Custom.0f1e2d3c-aaaa-bbbb-cccc-000000000002";
@@ -109,5 +115,69 @@ describe("field manifest", () => {
         expect(findFields(manifest, { value: "n/a" }).map((match) => match.referenceName)).toEqual([MERGED]);
         expect(findField(manifest, { label: "Missing" })).toBeUndefined();
         expect(() => findField(manifest, { type: "Task" })).toThrow("matches 2 fields");
+    });
+});
+
+describe("other manifest kinds", () => {
+    const meta = {
+        kind: "areas",
+        org: "https://dev.azure.com/example",
+        project: "Sample",
+        process: null,
+        fetchedAt: "2026-01-02 03:04",
+        regenerate: "tools azure-devops maintenance sync --into generated",
+    };
+
+    test("area nodes flatten to sorted WIQL area paths", () => {
+        const root = {
+            id: 1,
+            identifier: "a",
+            name: "Sample",
+            path: "\\Sample\\Area",
+            children: [
+                { id: 3, identifier: "c", name: "Web", path: "\\Sample\\Area\\Web" },
+                { id: 2, identifier: "b", name: "Api", path: "\\Sample\\Area\\Api" },
+            ],
+        };
+
+        expect(flattenAreaPaths(root)).toEqual(["Sample", "Sample\\Api", "Sample\\Web"]);
+    });
+
+    test("the workflow keeps the start states apart from the transitions", () => {
+        expect(
+            buildWorkflow({
+                "": [{ to: "New" }],
+                New: [{ to: "Done" }, { to: "Active" }],
+                Done: [],
+            })
+        ).toEqual({ initial: ["New"], transitions: { Done: [], New: ["Active", "Done"] } });
+    });
+
+    test("the generic diff names added and removed list items, changed values and keys, and skips meta", () => {
+        const saved = { meta, areas: ["Sample", "Sample\\Api"], sprints: { S1: { finish: "2026-01-10" } } };
+        const live = {
+            meta: { ...meta, fetchedAt: "2026-02-03 04:05" },
+            areas: ["Sample", "Sample\\Web"],
+            sprints: { S1: { finish: "2026-01-12" }, S2: { finish: null } },
+        };
+
+        expect(diffManifestData(saved, live)).toEqual([
+            'areas: added "Sample\\Web"; removed "Sample\\Api"',
+            'sprints > S1 > finish: "2026-01-10" -> "2026-01-12"',
+            'sprints > S2: added {"finish":null}',
+        ]);
+        expect(diffManifestData({ meta, tags: ["a", "b"] }, { meta, tags: ["b", "a"] })).toEqual([
+            'tags: order ["a","b"] -> ["b","a"]',
+        ]);
+    });
+
+    test("any manifest reads back from .ts with its kind, and a file without a kind is a field manifest", () => {
+        const manifest = { meta, areas: ["Sample"] };
+        const parsed = parseManifestText(renderAnyTs(manifest, "SampleAdoAreas"), "ado-areas.generated.ts");
+
+        expect(parsed).toEqual(manifest);
+        expect(kindOfManifest(parsed)?.kind).toBe("areas");
+        expect(kindOfManifest({ meta: { ...meta, kind: undefined } })?.kind).toBe("fields");
+        expect(renderGenericMd(parsed)).toContain("## areas\n\n- Sample");
     });
 });

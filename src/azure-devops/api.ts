@@ -1533,10 +1533,28 @@ export class Api {
             return cached;
         }
 
-        const teamsUrl = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams"]);
-        const teams = await this.get<TeamsListResponse>(teamsUrl, "teams");
         const members: IdentityRef[] = [];
         const seen = new Set<string>();
+
+        for (const roster of await this.getTeamRosters()) {
+            for (const identity of roster.members) {
+                const key = identity.uniqueName || identity.displayName;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    members.push(identity);
+                }
+            }
+        }
+
+        await saveTeamMembersCache(this.config.projectId, members);
+        return members;
+    }
+
+    /** Every team of the project with its members, read live (no cache). */
+    async getTeamRosters(): Promise<{ team: string; members: IdentityRef[] }[]> {
+        const teamsUrl = Api.orgUrl(this.config, ["projects", this.config.projectId, "teams"]);
+        const teams = await this.get<TeamsListResponse>(teamsUrl, "teams");
+        const rosters: { team: string; members: IdentityRef[] }[] = [];
 
         for (const team of teams.value) {
             const membersUrl = Api.orgUrl(this.config, [
@@ -1547,17 +1565,25 @@ export class Api {
                 "members",
             ]);
             const data = await this.get<TeamMembersResponse>(membersUrl, `members of ${team.name}`);
-            for (const m of data.value) {
-                const key = m.identity.uniqueName || m.identity.displayName;
-                if (!seen.has(key)) {
-                    seen.add(key);
-                    members.push(m.identity);
-                }
-            }
+            rosters.push({ team: team.name, members: data.value.map((member) => member.identity) });
         }
 
-        await saveTeamMembersCache(this.config.projectId, members);
-        return members;
+        return rosters;
+    }
+
+    /** The project's area tree (classification nodes), as deep as ADO allows. */
+    async getAreaNodes(): Promise<IterationClassificationNode> {
+        const url = Api.witUrl(this.config, ["classificationnodes", "areas"], {
+            $depth: String(Api.ITERATION_NODE_DEPTH),
+        });
+        return this.get<IterationClassificationNode>(url, "project area classification nodes");
+    }
+
+    /** Every tag defined in the project. */
+    async getTags(): Promise<string[]> {
+        const url = Api.witUrlPreview(this.config, "tags", undefined, "7.1-preview.1");
+        const result = await this.get<{ value: { name: string }[] }>(url, "tags");
+        return result.value.map((tag) => tag.name);
     }
 
     /**
