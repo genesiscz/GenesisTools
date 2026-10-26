@@ -7,8 +7,16 @@ public struct ClickyPerformanceView: View {
     private let status: ClickyRecordingStatus
     private let fixRecording: (() -> Void)?
     @AppStorage private var storedRange: String
-    @State private var start = Calendar.current.startOfDay(for: Date())
-    @State private var end = Date()
+    @AppStorage private var startTimestamp: Double
+    @AppStorage private var endTimestamp: Double
+    var start: Date {
+        get { Date(timeIntervalSince1970: startTimestamp) }
+        nonmutating set { startTimestamp = newValue.timeIntervalSince1970 }
+    }
+    var end: Date {
+        get { Date(timeIntervalSince1970: endTimestamp) }
+        nonmutating set { endTimestamp = newValue.timeIntervalSince1970 }
+    }
     @State private var requestedGrouping: ClickyPerformanceGrouping
     private var grouping: ClickyPerformanceGrouping {
         ClickyRanges.validGrouping(requestedGrouping, for: interval, now: now)
@@ -45,7 +53,14 @@ public struct ClickyPerformanceView: View {
         let range = ClickyRanges.known(defaults.string(forKey: "clicky.performance.range") ?? ClickyRanges.week,
             allowed: Self.ranges)
         _storedRange = AppStorage(wrappedValue: ClickyRanges.week, "clicky.performance.range", store: defaults)
-        _requestedGrouping = State(initialValue: Self.grouping(for: range))
+        let reference = Date()
+        let defaultStart = Calendar.current.startOfDay(for: reference).timeIntervalSince1970
+        _startTimestamp = AppStorage(wrappedValue: defaultStart, "clicky.performance.customStart", store: defaults)
+        _endTimestamp = AppStorage(wrappedValue: reference.timeIntervalSince1970, "clicky.performance.customEnd", store: defaults)
+        let restored = ClickyRanges.interval(range, now: reference, earliest: nil,
+            customStart: Date(timeIntervalSince1970: defaults.object(forKey: "clicky.performance.customStart") as? Double ?? defaultStart),
+            customEnd: Date(timeIntervalSince1970: defaults.object(forKey: "clicky.performance.customEnd") as? Double ?? reference.timeIntervalSince1970))
+        _requestedGrouping = State(initialValue: ClickyRanges.grouping(for: range, span: restored.duration))
         _storedMetric = AppStorage(wrappedValue: Metric.presses.rawValue, "clicky.performance.metric", store: defaults)
         _comparison = AppStorage(wrappedValue: "Time of day", "clicky.performance.comparison", store: defaults)
         _chartStyle = AppStorage(wrappedValue: .area, "clicky.performance.chartStyle", store: defaults)
@@ -244,9 +259,11 @@ public struct ClickyPerformanceView: View {
             }
             if range == ClickyRanges.custom {
                 HStack {
-                    DatePicker("From", selection: $start, displayedComponents: .date)
-                    DatePicker("Through", selection: $end, displayedComponents: .date)
+                    DatePicker("From", selection: Binding(get: { start }, set: { start = $0 }), displayedComponents: .date)
+                    DatePicker("Through", selection: Binding(get: { end }, set: { end = $0 }), displayedComponents: .date)
                 }.datePickerStyle(.field)
+                Text("Custom dates are saved. Grouping and weekday/hour filters reset when this page reopens.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             let groupings = ClickyRanges.groupings(for: interval, now: now)
             NativeSettingsRow("Group timeline by",
@@ -406,7 +423,9 @@ public struct ClickyPerformanceView: View {
                 ForEach(Metric.allCases, id: \.rawValue) { Text($0.rawValue).tag($0.rawValue) }
             }.pickerStyle(.segmented).labelsHidden().accessibilityIdentifier("clicky.performance.metric")
             NativeTimeSeriesChart(points: report.timeline.compactMap { point in
-                timelineValue(point.totals).map { NativeTimePoint(date: point.date, value: $0) }
+                timelineValue(point.totals).map { NativeTimePoint(date: point.date, value: $0,
+                    weight: metric == .pace ? point.totals.activeSeconds
+                        : metric == .corrections ? Double(point.totals.characters + point.totals.corrections) : 1) }
             }, interval: Double(grouping.rawValue), initialWindow: Double(max(grouping.rawValue * 12, 3600)),
                 end: min(now, interval.end), valueLabel: metric.rawValue, rangeStart: interval.start,
                 combine: metric == .pace || metric == .corrections ? .average : .sum, valueFormat: timelineFormat,

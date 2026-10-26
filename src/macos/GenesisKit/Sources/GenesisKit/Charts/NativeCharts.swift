@@ -4,8 +4,10 @@ import SwiftUI
 public struct NativeTimePoint: Identifiable, Equatable, Sendable {
     public var date: Date
     public var value: Double
+    /// The denominator behind a rate. Counts ignore it; averages preserve it when bins merge.
+    public var weight: Double
     public var id: Date { date }
-    public init(date: Date, value: Double) { self.date = date; self.value = value }
+    public init(date: Date, value: Double, weight: Double = 1) { self.date = date; self.value = value; self.weight = weight }
 }
 
 public enum NativeChartSampling {
@@ -82,19 +84,21 @@ public enum NativeChartSampling {
             }
             var cursor = key(max(first.date, start))
             var sums: [Date: Double] = [:]
-            var counts: [Date: Int] = [:]
+            var counts: [Date: Double] = [:]
             for point in points where point.date >= cursor && point.date < end {
                 let bin = key(point.date)
-                sums[bin, default: 0] += point.value
-                counts[bin, default: 0] += 1
+                let weight = combine == .average ? max(0, point.weight) : 1
+                sums[bin, default: 0] += point.value * weight
+                counts[bin, default: 0] += weight
             }
             var result: [NativeTimePoint] = []
             var visited = 0
             while cursor < end && visited < 1201 {
                 visited += 1
-                if let count = counts[cursor] {
+                if let count = counts[cursor], count > 0 {
                     let sum = sums[cursor, default: 0]
-                    result.append(NativeTimePoint(date: cursor, value: combine == .sum ? sum : sum / Double(count)))
+                    result.append(NativeTimePoint(date: cursor, value: combine == .sum ? sum : sum / count,
+                        weight: combine == .average ? count : 1))
                 } else if combine == .sum {
                     result.append(NativeTimePoint(date: cursor, value: 0))
                 }
@@ -110,7 +114,7 @@ public enum NativeChartSampling {
         guard lower < upper else { return [] }
         let count = min(1201, Int(ceil((upper - lower) / interval)))
         var values = Array(repeating: 0.0, count: count)
-        var counts = Array(repeating: 0, count: count)
+        var counts = Array(repeating: 0.0, count: count)
         var low = 0
         var high = points.count
         while low < high {
@@ -122,8 +126,9 @@ public enum NativeChartSampling {
             if time >= upper { break }
             let index = Int((time - lower) / interval)
             if values.indices.contains(index) {
-                values[index] += point.value
-                counts[index] += 1
+                let weight = combine == .average ? max(0, point.weight) : 1
+                values[index] += point.value * weight
+                counts[index] += weight
             }
         }
         return values.indices.compactMap { index in
@@ -131,7 +136,7 @@ public enum NativeChartSampling {
             switch combine {
             case .sum: return NativeTimePoint(date: date, value: values[index])
             case .average:
-                return counts[index] > 0 ? NativeTimePoint(date: date, value: values[index] / Double(counts[index])) : nil
+                return counts[index] > 0 ? NativeTimePoint(date: date, value: values[index] / counts[index], weight: counts[index]) : nil
             }
         }
     }

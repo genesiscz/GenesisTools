@@ -151,6 +151,54 @@ final class ClickyStatsPagesTests: XCTestCase {
         XCTAssertEqual(bins.map(\.date.timeIntervalSince1970), [0, 600])
     }
 
+    func testMergedPerformanceRatesUseTheirUnequalDenominators() {
+        let start = date("2026-10-19T10:00:00Z")
+        let end = start.addingTimeInterval(300)
+        let pace = [NativeTimePoint(date: start, value: 100, weight: 30),
+            NativeTimePoint(date: start.addingTimeInterval(60), value: 20, weight: 300)]
+        let paceBins = NativeChartSampling.bins(points: pace, start: start, end: end, step: 300, combine: .average)
+        XCTAssertEqual(paceBins.first!.value, (100 * 30 + 20 * 300) / 330.0, accuracy: 0.000001)
+        XCTAssertEqual(paceBins.first!.weight, 330)
+        let corrections = [NativeTimePoint(date: start, value: 10, weight: 20),
+            NativeTimePoint(date: start.addingTimeInterval(60), value: 50, weight: 180)]
+        let correctionBins = NativeChartSampling.bins(points: corrections, start: start, end: end, step: 300, combine: .average)
+        XCTAssertEqual(correctionBins.first!.value, 46, accuracy: 0.000001)
+        let sums = NativeChartSampling.bins(points: pace, start: start, end: end, step: 300)
+        XCTAssertEqual(sums.first!.value, 120, "event sums ignore the rate weights")
+    }
+
+    func testCalendarRateBinsKeepWeightsForFurtherMerging() {
+        let calendar = calendar()
+        let start = date("2026-10-19T10:00:00Z")
+        let end = date("2026-10-23T10:00:00Z")
+        let points = [NativeTimePoint(date: start, value: 10, weight: 2),
+            NativeTimePoint(date: start.addingTimeInterval(86400), value: 30, weight: 8)]
+        let bins = NativeChartSampling.bins(points: points, start: start, end: end,
+            step: 604800, calendar: calendar, combine: .average)
+        XCTAssertEqual(bins.first!.value, 26, accuracy: 0.000001)
+        XCTAssertEqual(bins.first!.weight, 10)
+        let merged = NativeChartSampling.bins(points: bins + [NativeTimePoint(date: start.addingTimeInterval(172800), value: 50, weight: 10)],
+            start: bins.first!.date, end: end, step: 604800, calendar: calendar, combine: .average)
+        XCTAssertEqual(merged.first!.value, 38, accuracy: 0.000001)
+        XCTAssertEqual(merged.first!.weight, 20)
+    }
+
+    func testCustomDatesSurviveRecreatingThePerformancePage() {
+        let saved = defaults(["clicky.performance.range": ClickyRanges.custom])
+        let store = ClickyAnalyticsStore()
+        let first = ClickyPerformanceView(store: store, defaults: saved)
+        let start = date("2026-04-01T10:00:00Z")
+        let end = date("2026-04-17T10:00:00Z")
+        first.start = start
+        first.end = end
+        let reopened = ClickyPerformanceView(store: store, defaults: saved)
+        XCTAssertEqual(reopened.start, start)
+        XCTAssertEqual(reopened.end, end)
+        XCTAssertEqual(saved.string(forKey: "clicky.performance.range"), ClickyRanges.custom)
+        XCTAssertEqual(saved.double(forKey: "clicky.performance.customStart"), start.timeIntervalSince1970)
+        XCTAssertEqual(saved.double(forKey: "clicky.performance.customEnd"), end.timeIntervalSince1970)
+    }
+
     func testRecordsFindTheBusiestDayAndStreaks() {
         let calendar = calendar()
         let today = calendar.startOfDay(for: date("2026-10-25T10:00:00Z"))
