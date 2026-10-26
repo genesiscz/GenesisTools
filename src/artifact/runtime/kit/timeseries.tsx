@@ -2103,17 +2103,20 @@ export function TimeSeries({
                 panel.series.map((sf) => {
                     const s = sf.s;
                     let v: number | null = null;
+                    // The time of the point a nearest-point series snapped to; null for a value read at t itself.
+                    let at: number | null = null;
 
                     if (sf.kind === "step" || (sf.stacked && sf.kind === "area")) {
                         v = valueAt(s.points, t);
                     } else {
                         const i = nearestIndex(s.points, t, msPerPx * 40);
                         v = i >= 0 ? s.points[i][1] : null;
+                        at = i >= 0 ? s.points[i][0] : null;
                     }
 
                     const fmt = units?.[s.unit ?? ""]?.format ?? formatForUnit(s.unit);
 
-                    return { s, color: sf.color, v, text: v === null ? "no data" : fmt(v) };
+                    return { s, color: sf.color, v, at, text: v === null ? "no data" : fmt(v) };
                 })
             );
 
@@ -2214,11 +2217,16 @@ export function TimeSeries({
         const pinT = pin?.kind === "time" && hover?.region === "panel" ? pin.t : null;
         const pinRows = pinT !== null ? seriesRows(pinT, scope) : null;
         const mi = nearestMarker(t);
+        // When every value is a snapped point (bars of one bucket), the header names that point's time, not the pointer's.
+        const snapped = new Set(rows.filter((r) => r.v !== null).map((r) => r.at));
+        const shownT = snapped.size === 1 && [...snapped][0] !== null ? ([...snapped][0] as number) : t;
 
         return (
             <div>
                 <div className="mb-1 flex items-baseline justify-between gap-3">
-                    <span className="font-mono text-[0.72rem] text-ink">{formatTime(t, timeZone, "full")}</span>
+                    <span className="whitespace-nowrap font-mono text-[0.72rem] text-ink">
+                        {formatTime(shownT, timeZone, "full")}
+                    </span>
                     {pinT !== null && Math.abs(pinT - t) > msPerPx ? (
                         <span className="font-mono text-[0.7rem] text-accent">
                             {formatDurationShort(t - pinT)} from pin
@@ -2240,9 +2248,9 @@ export function TimeSeries({
                                             <span className="text-dim">{r.s.label}</span>
                                         </span>
                                     </td>
-                                    <td className="py-px text-right font-mono text-ink">{r.text}</td>
+                                    <td className="whitespace-nowrap py-px text-right font-mono text-ink">{r.text}</td>
                                     {pinRows ? (
-                                        <td className="py-px pl-2 text-right font-mono text-[0.7rem] text-accent">
+                                        <td className="whitespace-nowrap py-px pl-2 text-right font-mono text-[0.7rem] text-accent">
                                             {delta === null || delta === 0
                                                 ? ""
                                                 : `${delta > 0 ? "+" : "-"}${fmt(Math.abs(delta))}`}
