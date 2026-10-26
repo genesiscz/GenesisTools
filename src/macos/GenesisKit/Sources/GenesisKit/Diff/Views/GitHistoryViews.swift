@@ -33,30 +33,33 @@ public struct GitCommitList: View {
     }
 
     public var body: some View {
-        LazyVStack(alignment: .leading, spacing: 1) {
-            ForEach(commits) { commit in
-                row(commit)
+        ScrollViewReader { proxy in
+            LazyVStack(alignment: .leading, spacing: 1) {
+                ForEach(commits) { commit in
+                    row(commit)
+                        .id(commit.sha)
+                }
             }
-        }
-        .focusable()
-        .focused($focused)
-        .focusEffectDisabled()
-        .onKeyPress(.upArrow, phases: [.down, .repeat]) { _ in move(-1) }
-        .onKeyPress(.downArrow, phases: [.down, .repeat]) { _ in move(1) }
-        .onKeyPress(.return) {
-            guard let commit = keyedCommit else { return .ignored }
-            onOpen(commit)
-            return .handled
-        }
-        .onKeyPress(characters: CharacterSet(charactersIn: "c")) { press in
-            guard press.modifiers.isEmpty, let onCompare, let commit = keyedCommit else { return .ignored }
-            onCompare(commit)
-            return .handled
-        }
-        .onKeyPress(.escape) {
-            guard keyed != nil else { return .ignored }
-            keyed = nil
-            return .handled
+            .focusable()
+            .focused($focused)
+            .focusEffectDisabled()
+            .onKeyPress(.upArrow, phases: [.down, .repeat]) { _ in move(-1, proxy) }
+            .onKeyPress(.downArrow, phases: [.down, .repeat]) { _ in move(1, proxy) }
+            .onKeyPress(.return) {
+                guard let commit = keyedCommit else { return .ignored }
+                onOpen(commit)
+                return .handled
+            }
+            .onKeyPress(characters: CharacterSet(charactersIn: "c")) { press in
+                guard press.modifiers.isEmpty, let onCompare, let commit = keyedCommit else { return .ignored }
+                onCompare(commit)
+                return .handled
+            }
+            .onKeyPress(.escape) {
+                guard keyed != nil else { return .ignored }
+                keyed = nil
+                return .handled
+            }
         }
     }
 
@@ -64,12 +67,11 @@ public struct GitCommitList: View {
         keyed.flatMap { sha in commits.first { $0.sha == sha } }
     }
 
-    private func move(_ step: Int) -> KeyPress.Result {
-        guard !commits.isEmpty else { return .ignored }
-        let start = commits.firstIndex { $0.sha == (keyed ?? selected) }
-        let index = start.map { min(max($0 + step, 0), commits.count - 1) } ?? (step > 0 ? 0 : commits.count - 1)
-        keyed = commits[index].sha
-        return .handled
+    private func move(_ step: Int, _ proxy: ScrollViewProxy) -> KeyPress.Result {
+        GitHistoryKeys.move(commits.map(\.sha), from: keyed ?? selected, by: step) { id in
+            keyed = id
+            proxy.scrollTo(id)
+        }
     }
 
     private func row(_ commit: GitCommit) -> some View {
@@ -125,6 +127,17 @@ public struct GitCommitList: View {
     }
 }
 
+/// A key step selects and reveals one identity, including rows not created by the lazy stack yet.
+enum GitHistoryKeys {
+    static func move(_ ids: [String], from current: String?, by step: Int, selectAndReveal: (String) -> Void) -> KeyPress.Result {
+        guard !ids.isEmpty else { return .ignored }
+        let start = ids.firstIndex { $0 == current }
+        let index = start.map { min(max($0 + step, 0), ids.count - 1) } ?? (step > 0 ? 0 : ids.count - 1)
+        selectAndReveal(ids[index])
+        return .handled
+    }
+}
+
 struct GitCommitRow: View {
     let commit: GitCommit
     let selected: Bool
@@ -174,37 +187,40 @@ public struct GitCommitView: View {
 
     public var body: some View {
         HStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 1) {
-                    ForEach(files) { file in
-                        Button {
-                            picked = file.id
-                            filesFocused = true
-                        } label: {
-                            HStack(spacing: 6) {
-                                GitChangeMark(Self.kind(file.status))
-                                Text(verbatim: file.name)
-                                    .font(.system(size: 11.5, weight: picked == file.id ? .semibold : .regular))
-                                    .lineLimit(1)
-                                Spacer(minLength: 4)
-                                GitLineCounts(additions: file.additions, deletions: file.deletions, size: 11)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(files) { file in
+                            Button {
+                                picked = file.id
+                                filesFocused = true
+                            } label: {
+                                HStack(spacing: 6) {
+                                    GitChangeMark(Self.kind(file.status))
+                                    Text(verbatim: file.name)
+                                        .font(.system(size: 11.5, weight: picked == file.id ? .semibold : .regular))
+                                        .lineLimit(1)
+                                    Spacer(minLength: 4)
+                                    GitLineCounts(additions: file.additions, deletions: file.deletions, size: 11)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(picked == file.id ? 0.14 : 0)))
                             }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: 5).fill(Color.accentColor.opacity(picked == file.id ? 0.14 : 0)))
+                            .buttonStyle(RowButtonStyle(cornerRadius: 5))
+                            .instantTooltip(file.path, monospaced: true)
+                            .accessibilityAddTraits(picked == file.id ? .isSelected : [])
+                            .id(file.id)
                         }
-                        .buttonStyle(RowButtonStyle(cornerRadius: 5))
-                        .instantTooltip(file.path, monospaced: true)
-                        .accessibilityAddTraits(picked == file.id ? .isSelected : [])
                     }
+                    .padding(6)
+                    // Up and Down pick the file before or after: the diff beside follows.
+                    .focusable()
+                    .focused($filesFocused)
+                    .onKeyPress(.upArrow, phases: [.down, .repeat]) { _ in step(-1, proxy) }
+                    .onKeyPress(.downArrow, phases: [.down, .repeat]) { _ in step(1, proxy) }
                 }
-                .padding(6)
-                // Up and Down pick the file before or after: the diff beside follows.
-                .focusable()
-                .focused($filesFocused)
-                .onKeyPress(.upArrow, phases: [.down, .repeat]) { _ in step(-1) }
-                .onKeyPress(.downArrow, phases: [.down, .repeat]) { _ in step(1) }
             }
             .frame(width: 240)
             Divider()
@@ -238,11 +254,11 @@ public struct GitCommitView: View {
         .task(id: "\(commit.sha) \(attempt)") { await load() }
     }
 
-    private func step(_ by: Int) -> KeyPress.Result {
-        guard !files.isEmpty else { return .ignored }
-        let index = files.firstIndex { $0.id == picked }.map { min(max($0 + by, 0), files.count - 1) } ?? 0
-        picked = files[index].id
-        return .handled
+    private func step(_ by: Int, _ proxy: ScrollViewProxy) -> KeyPress.Result {
+        GitHistoryKeys.move(files.map(\.id), from: picked, by: by) { id in
+            picked = id
+            proxy.scrollTo(id)
+        }
     }
 
     private func load() async {

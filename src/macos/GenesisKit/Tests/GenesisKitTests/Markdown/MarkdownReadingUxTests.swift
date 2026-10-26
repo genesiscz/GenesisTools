@@ -190,6 +190,40 @@ final class MarkdownReadingUxTests: XCTestCase {
         XCTAssertEqual(posted.last?.map(\.key), ["status", "tags"], "Undo posts the rows from before the removal")
     }
 
+    func testPropertyUndoSurvivesARenderButDoesNotDiscardLaterEdits() async throws {
+        var posted: [[MarkdownProperty]] = []
+        let (web, _) = try await page(view(onProperties: { posted.append($0) }))
+        let props = #"[{"key":"status","kind":"text","value":"draft","items":[],"inline":false},{"key":"tags","kind":"tags","value":"","items":["a","b"],"inline":true}]"#
+        _ = try await render(web, "Body", props: props, editable: true)
+        _ = try await web.evaluateJavaScript("document.querySelector('.gn-prop-remove').click();true")
+        try await settle()
+        let remaining = MarkdownFrontmatter.json(try XCTUnwrap(posted.last))
+        _ = try await render(web, "Body", props: remaining, editable: true)
+        _ = try await web.evaluateJavaScript("window.gnPropsUndo();true")
+        try await settle()
+        XCTAssertEqual(posted.last?.map(\.key), ["status", "tags"], "the host's render keeps Undo valid")
+
+        // Each edit changes the state after a removal, including edits from a host render.
+        for edit in ["var i=document.querySelector('.gn-chip-in');i.value='later';i.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter'}))",
+                     "var n=document.querySelector('.gn-prop-name');n.textContent='renamed';n.dispatchEvent(new Event('blur'))",
+                     "document.querySelector('.gn-props-add').click();var ns=document.querySelectorAll('.gn-prop-name');var n=ns[ns.length-1];n.textContent='new';n.blur()",
+                     "window.gnRender('Body',[{key:'external',kind:'text',value:'kept'}],true,null,{},false,1)"] {
+            _ = try await render(web, "Body", props: props, editable: true)
+            _ = try await web.evaluateJavaScript("document.querySelector('.gn-prop-remove').click();true")
+            try await settle()
+            _ = try await render(web, "Body", props: remaining, editable: true)
+            _ = try await web.evaluateJavaScript("\(edit);true")
+            try await settle()
+            let before = try await web.evaluateJavaScript("document.getElementById('gn-props').textContent") as? String
+            let count = posted.count
+            _ = try await web.evaluateJavaScript("window.gnPropsUndo();true")
+            try await settle()
+            let after = try await web.evaluateJavaScript("document.getElementById('gn-props').textContent") as? String
+            XCTAssertEqual(after, before, edit)
+            XCTAssertEqual(posted.count, count, "a stale Undo never overwrites the host's properties")
+        }
+    }
+
     // MARK: P6, P7, P17, P20: pictures and embeds
 
     func testViewablePicturesTakeTheKeyboardAndMissingOnesSayWhy() async throws {

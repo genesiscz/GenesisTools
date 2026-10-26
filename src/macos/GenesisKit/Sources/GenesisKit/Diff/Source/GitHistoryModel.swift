@@ -25,6 +25,7 @@ public final class GitHistoryModel: ObservableObject {
 
     @Published public private(set) var commits: [GitCommit] = []
     @Published public private(set) var loaded = false
+    @Published public private(set) var failure: GitFailure?
     public let limit: Int
     private var subject: Subject?
     private lazy var follower = GitRepoFollower { [weak self] in self?.reload() }
@@ -40,6 +41,7 @@ public final class GitHistoryModel: ObservableObject {
         self.subject = subject
         commits = []
         loaded = false
+        failure = nil
         switch subject {
         case .file(let url): follower.follow(url)
         case .repository(let folder): follower.follow(folder: folder)
@@ -54,16 +56,23 @@ public final class GitHistoryModel: ObservableObject {
         let provider = GenesisKitGT.provider
         let limit = self.limit
         DispatchQueue.global(qos: .utility).async {
-            let commits: [GitCommit]
-            switch subject {
-            case .file(let url):
-                commits = (try? provider.history(of: url, limit: limit)) ?? []
-            case .repository(let folder):
-                commits = ((try? provider.repoStatus(folder, commits: limit)) ?? nil)?.commits ?? []
+            let result = Result<[GitCommit], Error> {
+                switch subject {
+                case .file(let url):
+                    return try provider.history(of: url, limit: limit)
+                case .repository(let folder):
+                    return try provider.repoStatus(folder, commits: limit)?.commits ?? []
+                }
             }
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.ticket == ticket, self.subject == subject else { return }
-                self.commits = commits
+                switch result {
+                case .success(let commits):
+                    self.commits = commits
+                    self.failure = nil
+                case .failure(let error):
+                    self.failure = GitFailure(error, fallback: "Git could not read the history. Try again.")
+                }
                 self.loaded = true
             }
         }

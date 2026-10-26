@@ -63,7 +63,10 @@ struct MarkdownGitSidebar: View {
 
     @ViewBuilder
     private var fileTab: some View {
-        if fileHistory.loaded && fileHistory.commits.isEmpty {
+        if let failure = fileHistory.failure {
+            GitFailureNotice(failure) { fileHistory.reload() }
+        }
+        if fileHistory.failure == nil && fileHistory.loaded && fileHistory.commits.isEmpty {
             Text("No commits have this file yet.")
                 .font(.system(size: 11))
                 .foregroundColor(model.theme.textSecondary)

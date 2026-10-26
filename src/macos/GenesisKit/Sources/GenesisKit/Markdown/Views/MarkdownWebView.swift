@@ -1657,12 +1657,19 @@ function gnPropText(v){
   // [[Note]] inside a text value is a link, like in Obsidian.
   return gnEsc(v).replace(/\[\[([^\]\|#]+)(?:#[^\]\|]*)?(?:\|([^\]]+))?\]\]/g,function(m,t,a){return '<a href="#" class="dd-wikilink" data-wikilink="'+gnEsc(t.trim())+'">'+gnEsc(a||t.trim())+'</a>';});
 }
-// The rows before the last removal, for the Undo on Swift's "Property removed" notice.
-var gnPropsBefore=null;
-function gnPropsKeep(){gnPropsBefore=JSON.parse(JSON.stringify(gnProps));}
-window.gnPropsUndo=function(){if(!gnPropsBefore)return;gnProps=gnPropsBefore;gnPropsBefore=null;gnPropsPost();};
+// Undo is valid only while the rows still match the state just after removal.
+// Normalize like the host's render, so a round trip does not invalidate Undo.
+var gnPropsBefore=null,gnPropsAfter=null;
+function gnPropsItems(){return gnProps.map(function(p){return {key:p.key,kind:p.kind,value:p.value||'',items:p.items||[],inline:!!p.inline};});}
+function gnPropsKeep(){gnPropsBefore=JSON.parse(JSON.stringify(gnPropsItems()));gnPropsAfter=null;}
+window.gnPropsUndo=function(){
+  var before=gnPropsBefore,after=gnPropsAfter;gnPropsBefore=null;gnPropsAfter=null;
+  if(!before||JSON.stringify(gnPropsItems())!==after)return;
+  gnProps=before;gnPropsPost();
+};
 function gnPropsPost(){
-  var items=gnProps.map(function(p){return {key:p.key,kind:p.kind,value:p.value||'',items:p.items||[],inline:!!p.inline};});
+  var items=gnPropsItems();
+  if(gnPropsBefore&&gnPropsAfter===null)gnPropsAfter=JSON.stringify(items);
   gnPost({type:'properties',items:items});
 }
 function gnConvert(p,kind){

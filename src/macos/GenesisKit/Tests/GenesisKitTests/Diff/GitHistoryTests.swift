@@ -56,6 +56,62 @@ final class GitHistoryTests: XCTestCase {
         }
     }
 
+    func testHistoryFailuresKeepTheLastListAndRetryClearsTheFailure() async throws {
+        final class Provider: GenesisKitGTCLIProvider {
+            private let lock = NSLock()
+            private var failing = false
+            var fail: Bool {
+                get { lock.withLock { failing } }
+                set { lock.withLock { failing = newValue } }
+            }
+            let commit = GitCommit(sha: "abc1234", short: "abc1234", subject: "Kept", author: "Alice", date: .distantPast)
+            override func history(of file: URL, limit: Int) throws -> [GitCommit] {
+                if fail { throw ReviewError.git("history unavailable") }
+                return [commit]
+            }
+            override func repoStatus(_ folder: URL, commits: Int) throws -> GitRepoStatus? {
+                if fail { throw ReviewError.git("log unavailable") }
+                return GitRepoStatus(root: folder, branch: "main", commits: [commit])
+            }
+        }
+        let previous = GenesisKitGT.provider
+        defer { GenesisKitGT.provider = previous }
+        for repository in [false, true] {
+            let provider = Provider()
+            GenesisKitGT.provider = provider
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent("absent-history-\(UUID())")
+            let history = GitHistoryModel()
+            history.follow(repository ? .repository(root) : .file(root.appendingPathComponent("note.md")))
+            history.reload()
+            await wait("the initial history") { history.loaded }
+            XCTAssertEqual(history.commits.map(\.sha), [provider.commit.sha])
+
+            provider.fail = true
+            history.reload()
+            await wait("the history failure") { history.failure != nil }
+            XCTAssertEqual(history.commits.map(\.sha), [provider.commit.sha])
+            XCTAssertEqual(history.failure?.detail, repository ? "log unavailable" : "history unavailable")
+
+            provider.fail = false
+            history.reload()
+            await wait("the history retry") { history.failure == nil }
+            XCTAssertEqual(history.commits.map(\.sha), [provider.commit.sha])
+
+            history.follow(nil)
+            XCTAssertNil(history.failure)
+            XCTAssertFalse(history.loaded)
+            XCTAssertTrue(history.commits.isEmpty)
+
+            provider.fail = true
+            history.follow(repository ? .repository(root) : .file(root.appendingPathComponent("note.md")))
+            history.reload()
+            await wait("a failed initial history read") { history.failure != nil }
+            XCTAssertTrue(history.loaded)
+            XCTAssertTrue(history.commits.isEmpty, "an initial failure has a failure, not a successful empty answer")
+            history.follow(nil)
+        }
+    }
+
     func testLateRevisionCannotReplaceANewerRequestComparisonOrTabTransition() async throws {
         final class Delayed: GenesisKitGTCLIProvider {
             let gate = DispatchSemaphore(value: 0)

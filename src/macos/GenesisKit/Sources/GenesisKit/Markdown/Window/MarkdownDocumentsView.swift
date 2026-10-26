@@ -659,14 +659,18 @@ struct MarkdownTabGroupingMenu: View {
 
 extension MarkdownTabGroupingMenu {
     /// Every hand edit to the groups goes at once, so the reset says so and offers Undo (UX audit W22).
-    private func resetGroups() {
+    func resetGroups() {
         let before = configuration.tabGroupState
         configuration.tabGroupState = MarkdownTabGroupState()
         guard let model = notices else { return }
         model.post(MarkdownNotice("Group names, order and moves were reset.", tone: .info, actions: [
             .button("Undo", symbol: "arrow.uturn.backward") { [weak model, configuration] in
-                configuration.tabGroupState = before
                 model?.dismissNotice()
+                guard configuration.tabGroupState == MarkdownTabGroupState() else {
+                    model?.post(MarkdownNotice("The groups changed after the reset, so Undo would replace your later changes.", tone: .warning))
+                    return
+                }
+                configuration.tabGroupState = before
             },
         ]))
     }

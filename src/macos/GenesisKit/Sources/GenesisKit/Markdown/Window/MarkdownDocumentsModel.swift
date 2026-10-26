@@ -978,12 +978,17 @@ final class MarkdownDocumentsModel: ObservableObject {
         let closed = closingBatch ?? []
         closingBatch = nil
         closedBatchCount = closed.count
-        if closed.count > 1 {
+        if finished && closed.count > 1 {
             let count = closed.count
             post(MarkdownNotice("Closed \(count) tabs.", tone: .info, actions: [
                 .button("Reopen \(count) Tabs", symbol: "arrow.uturn.backward") { [weak self] in
                     guard let self else { return }
                     self.dismissNotice()
+                    guard self.closedBatchCount == closed.count,
+                          Array(self.recentlyClosed.suffix(closed.count)) == closed else {
+                        self.post(MarkdownNotice("The closed tabs changed after this action. Use File, Reopen Closed Tab instead.", tone: .warning))
+                        return
+                    }
                     self.reopenLastClosed()
                 },
             ]))

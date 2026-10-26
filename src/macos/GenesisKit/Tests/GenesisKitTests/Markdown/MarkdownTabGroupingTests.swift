@@ -56,6 +56,37 @@ final class MarkdownTabGroupingTests: XCTestCase {
         XCTAssertEqual(kinds.map(\.title), ["Notes", "Logs"])
     }
 
+    func testGroupResetUndoRestoresTheOldStateOnlyBeforeAnotherEdit() throws {
+        let suite = "md-group-reset-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let configuration = GenesisKitMarkdownConfiguration(defaults: defaults)
+        let model = MarkdownDocumentsModel(defaults: defaults)
+        model.configuration = configuration
+        var before = MarkdownTabGroupState()
+        before.names["manual:old"] = "Reading"
+        before.assigned["note"] = "manual:old"
+        configuration.tabGroupState = before
+        let menu = MarkdownTabGroupingMenu(configuration: configuration, notices: model)
+        menu.resetGroups()
+        XCTAssertEqual(configuration.tabGroupState, MarkdownTabGroupState())
+        let undo = try XCTUnwrap(model.notice?.actions.first)
+        guard case .action(_, let perform) = undo.kind else { return XCTFail("no button") }
+        perform()
+        XCTAssertEqual(configuration.tabGroupState, before)
+
+        menu.resetGroups()
+        let stale = try XCTUnwrap(model.notice?.actions.first)
+        guard case .action(_, let performStale) = stale.kind else { return XCTFail("no button") }
+        var later = MarkdownTabGroupState()
+        later.names["manual:new"] = "Later name"
+        later.assigned["note"] = "manual:new"
+        configuration.tabGroupState = later
+        performStale()
+        XCTAssertEqual(configuration.tabGroupState, later, "Undo must not discard a later rename or move")
+        XCTAssertEqual(model.notice?.tone, .warning)
+    }
+
     func testFoldedGroupsNextToEachOtherShareARow() {
         func group(_ id: String) -> MarkdownTabGroup {
             MarkdownTabGroup(id: id, title: id, detail: nil, tabIDs: [id + "1"], manual: false)

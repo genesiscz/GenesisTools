@@ -24,6 +24,35 @@ final class GitRepoPanelKeyboardTests: XCTestCase {
         XCTAssertEqual(hidden, ["staged:a.md", "changes:b.md"])
     }
 
+    func testCommitAndFileKeysSelectAndRevealTheSameRow() {
+        for ids in [(0..<60).map { "commit-\($0)" }, (0..<200).map { "file-\($0)" }] {
+            var current: String?
+            var revealed: [String] = []
+            for _ in ids {
+                let result = GitHistoryKeys.move(ids, from: current, by: 1) { id in
+                    current = id
+                    revealed.append(id)
+                }
+                if case .ignored = result { XCTFail("the key must select and reveal a row") }
+            }
+            XCTAssertEqual(revealed, ids, "every key step reveals its row, including rows past the visible page")
+            XCTAssertEqual(current, ids.last)
+            revealed = []
+            _ = GitHistoryKeys.move(ids, from: current, by: 1) { revealed.append($0) }
+            XCTAssertEqual(revealed, [ids.last!], "Down at the end keeps the last row visible")
+            revealed = []
+            _ = GitHistoryKeys.move(ids, from: current, by: -1) { revealed.append($0) }
+            XCTAssertEqual(revealed, [ids[ids.count - 2]])
+            revealed = []
+            _ = GitHistoryKeys.move(ids, from: nil, by: -1) { revealed.append($0) }
+            XCTAssertEqual(revealed, [ids.last!], "Up with no keyed row starts at the end")
+        }
+        var revealed: [String] = []
+        let empty = GitHistoryKeys.move([], from: nil, by: 1) { revealed.append($0) }
+        if case .handled = empty { XCTFail("an empty list must leave the key unhandled") }
+        XCTAssertTrue(revealed.isEmpty)
+    }
+
     func testAheadAndBehindAreWords() {
         let root = URL(fileURLWithPath: "/tmp/repo")
         XCTAssertEqual(GitRepoPanel.trackingText(GitRepoStatus(root: root, branch: "main")), "No upstream branch")

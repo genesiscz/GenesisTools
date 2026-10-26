@@ -157,6 +157,22 @@ final class MarkdownWindowUxTests: XCTestCase {
                        "⇧⌘T brings the whole batch back")
     }
 
+    func testAPartialBatchCloseKeepsTheFailedSaveAndItsRetry() throws {
+        model.open([url("a.md"), url("b.md"), url("locked/note.md")])
+        let note = try XCTUnwrap(model.docs.first { $0.url == url("locked/note.md") })
+        note.edit("changed")
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: url("locked").path)
+
+        XCTAssertFalse(model.closeTabs(model.docs) { _ in .save })
+
+        XCTAssertEqual(model.docs.map(\.id), [note.id])
+        XCTAssertEqual(model.notice?.tone, .error)
+        XCTAssertEqual(model.notice?.actions.map(\.label), ["Try Again"])
+        XCTAssertTrue(note.isDirty)
+        model.reopenLastClosed()
+        XCTAssertEqual(model.docs.count, 3, "the partial batch still reopens with the keyboard")
+    }
+
     func testCloseOtherTabsIsOneUndoAndNamesTheCount() throws {
         model.open([url("a.md"), url("b.md"), url("c.md")])
         let keep = try XCTUnwrap(model.docs.first { $0.url == url("b.md") })
@@ -203,6 +219,33 @@ final class MarkdownWindowUxTests: XCTestCase {
         XCTAssertEqual(Set(model.docs.map(\.url)), [url("a.md"), url("d.md")])
         model.reopenLastClosed()
         XCTAssertEqual(model.docs.count, 3, "the stack walks back one entry at a time once the batch is no longer last")
+    }
+
+    func testBatchCloseUndoDoesNotReopenANewerClose() throws {
+        model.open([url("a.md"), url("b.md"), url("c.md"), url("d.md")])
+        model.closeTabs(model.docs.filter { $0.url == url("b.md") || $0.url == url("c.md") }) { _ in .discard }
+        let undo = try XCTUnwrap(model.notice?.actions.first)
+        guard case .action(_, let perform) = undo.kind else { return XCTFail("no button") }
+        model.close(try XCTUnwrap(model.docs.first { $0.url == url("d.md") }))
+
+        perform()
+
+        XCTAssertEqual(model.docs.map(\.url), [url("a.md")], "the old button never reopens d in place of b and c")
+        XCTAssertEqual(model.notice?.tone, .warning)
+        model.reopenLastClosed()
+        XCTAssertEqual(Set(model.docs.map(\.url)), [url("a.md"), url("d.md")], "the latest close remains on the keyboard stack")
+    }
+
+    func testBatchCloseUndoReopensItsUnchangedBatch() throws {
+        model.open([url("a.md"), url("b.md"), url("c.md")])
+        model.closeTabs(model.docs.filter { $0.url != url("a.md") }) { _ in .discard }
+        let undo = try XCTUnwrap(model.notice?.actions.first)
+        guard case .action(_, let perform) = undo.kind else { return XCTFail("no button") }
+
+        perform()
+
+        XCTAssertEqual(Set(model.docs.map(\.url)), [url("a.md"), url("b.md"), url("c.md")])
+        XCTAssertNil(model.notice)
     }
 
     func testTheReopenStackKeepsMoreThanTwentyTabs() {

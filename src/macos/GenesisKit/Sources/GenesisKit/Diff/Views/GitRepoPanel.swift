@@ -345,6 +345,10 @@ public struct GitRepoPanel: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
             }
+            if let failure = log.failure {
+                GitFailureNotice(failure) { log.reload() }
+                    .padding(.vertical, 4)
+            }
             if !log.commits.isEmpty {
                 Text("Recent commits")
                     .kicker()
