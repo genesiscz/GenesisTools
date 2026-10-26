@@ -166,6 +166,13 @@ public func frameInterval(fps: Double) -> (value: Int64, timescale: Int32) {
     return (Int64((Double(timescale) / safe).rounded()), timescale)
 }
 
+/// The H.264 average bit rate for a screen movie: 0.15 bit per pixel per frame, so text stays sharp while it
+/// scrolls, between 6 and 160 Mbit/s. Without it the encoder picked its own rate, and a fast scroll smeared.
+public func screenMovieBitRate(width: Int, height: Int, fps: Double) -> Int {
+    let bits = Double(width * height) * max(1, fps) * 0.15
+    return Int(min(160_000_000, max(6_000_000, bits)))
+}
+
 /// Output stays fixed during a movie. The live canvas fits without stretching; global CG
 /// coordinates are translated before Core Image's bottom-left coordinate flip.
 public struct CaptureCanvasGeometry {
