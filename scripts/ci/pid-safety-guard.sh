@@ -63,14 +63,27 @@ for scan_root in "${scan_roots[@]}"; do
     fi
 done
 
+# grep exits 0 on a hit and 1 on none. Anything else (an unreadable file, a bad pattern, no grep) is a broken
+# scan, and `|| true` used to turn it into "no hits", so a rule passed without checking anything. Every scan goes
+# through this, inside `$(…)`, where `set -e` turns its exit 2 into the guard's own exit.
+scan() {
+    local status=0
+    grep -rnE "$@" || status=$?
+
+    if [ "$status" -gt 1 ]; then
+        echo "::error:: pid-safety-guard: a scan failed (grep exit $status), so its rule checked nothing." >&2
+        exit 2
+    fi
+}
+
 # 1. The signal-0 liveness probe belongs to the two helpers that own it.
 #    A hand-rolled `process.kill(x, 0)` anywhere else is either a pid-recycling
 #    bug or a re-implementation of ESRCH/EPERM handling that has been gotten
 #    wrong before (collapsing EPERM into "dead" reports live cross-uid
 #    processes as gone).
-probe_hits=$(grep -rnE "${common_excludes[@]}" \
+probe_hits=$(scan "${common_excludes[@]}" \
     --exclude=process-alive.ts --exclude=process-identity.ts \
-    'process\.kill\([^,)]*,[[:space:]]*0[[:space:]]*\)' "${scan_roots[@]}" || true)
+    'process\.kill\([^,)]*,[[:space:]]*0[[:space:]]*\)' "${scan_roots[@]}")
 
 if [ -n "$probe_hits" ]; then
     printf '%s\n' "$probe_hits"
@@ -82,9 +95,9 @@ fi
 #    identity has to be captured at WRITE time, which is what writePidFile does.
 #    Tests are exempt: constructing a legacy bare-number file by hand is how the
 #    backward-compatible read path is proved to still work.
-bare_write_hits=$(grep -rnE "${common_excludes[@]}" \
+bare_write_hits=$(scan "${common_excludes[@]}" \
     --exclude=*.test.ts --exclude=pidfile.ts \
-    'write(File)?(Sync)?\([[:space:]]*[A-Za-z0-9_$]*[Pp][Ii][Dd][A-Za-z0-9_$]*[[:space:]]*,[[:space:]]*(String\(|`)' "${scan_roots[@]}" || true)
+    'write(File)?(Sync)?\([[:space:]]*[A-Za-z0-9_$]*[Pp][Ii][Dd][A-Za-z0-9_$]*[[:space:]]*,[[:space:]]*(String\(|`)' "${scan_roots[@]}")
 
 if [ -n "$bare_write_hits" ]; then
     printf '%s\n' "$bare_write_hits"
@@ -119,6 +132,7 @@ fi
 #    `child.process.kill(...)` out — a handle you hold cannot have been recycled.
 signal_re='(^|[^.[:alnum:]_$])process\.kill\([^,)]*,[[:space:]]*['"'"'"`A-Za-z_$1-9]|(^|[^.[:alnum:]_$])process\.kill\([^,)]*\)'
 unmarked=""
+signal_hits=$(scan "${common_excludes[@]}" --exclude=*.test.ts "$signal_re" "${scan_roots[@]}")
 
 while IFS= read -r hit; do
     [ -n "$hit" ] || continue
@@ -138,8 +152,8 @@ while IFS= read -r hit; do
     fi
 # Process substitution, not a here-document: bash 5.3 writes a here-document into a pipe that only it reads,
 # so a body larger than the pipe buffer deadlocks. Under pipe-memory pressure macOS gives 512-byte pipes, and
-# the 4 KB of hits hung every pre-push for 180 s (2026-10-26). Here grep writes while the loop reads.
-done < <(grep -rnE "${common_excludes[@]}" --exclude=*.test.ts "$signal_re" "${scan_roots[@]}" || true)
+# the 4 KB of hits hung every pre-push for 180 s (2026-10-26). Here printf writes while the loop reads.
+done < <(printf '%s\n' "$signal_hits")
 
 if [ -n "${unmarked//[$'\n' ]/}" ]; then
     printf '%s' "$unmarked"
