@@ -1648,8 +1648,8 @@ final class WidgetComposerClickTests: XCTestCase {
 
         // Martin, 2026-10-26: "multilines suck also" (a two-line answer showed its first line cut off at the top).
         // Word by word, as typing grows it: a wrap scrolls the field editor before the field gets its new height.
-        let words = (" in the standard way, but there should be again like the release script asks what we are going"
-            + " to release; in this case it will be just col-web, and yes, only the patch one").split(separator: " ")
+        let words = (" in the usual way, but the release script should ask us again which parts we are going"
+            + " to release; this time it is only the web app, and yes, only the patch version").split(separator: " ")
         for word in words {
             editor.insertText(" " + word, replacementRange: NSRange(location: NSNotFound, length: 0))
             pump(0.03)
