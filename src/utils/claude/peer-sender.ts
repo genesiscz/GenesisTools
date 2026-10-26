@@ -11,6 +11,7 @@ import { env } from "@genesiscz/utils/env";
 import { readLastLines, readLinesSync } from "@genesiscz/utils/fs/read-lines";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
+import { genesisToolsDir } from "@genesiscz/utils/storage/root";
 
 /**
  * Who sends a peer message from inside a Claude Code session. A Bash tool child inherits the session's id
@@ -96,6 +97,46 @@ export function readLastPermissionMode(
     }
 
     return last;
+}
+
+/**
+ * The permission class of a running Claude session, read from its transcript's last `permission-mode` line, or null
+ * when it is not known. A receiver in bypass delivers only a sender that declares bypass, so this decides whether a
+ * message from outside any session needs a stand-in sender (`standInSender`).
+ */
+export async function sessionSenderMode(
+    sessionId: string,
+    transcriptOf: (sessionId: string) => Promise<string | null> = claudeTranscriptOf
+): Promise<PeerSenderMode | null> {
+    const transcript = await transcriptOf(sessionId);
+    if (!transcript) {
+        return null;
+    }
+
+    try {
+        return senderModeOf(readLastPermissionMode(transcript));
+    } catch (error) {
+        log.debug({ error, transcript }, "the receiving session's transcript is unreadable");
+        return null;
+    }
+}
+
+/** The stand-in's session id: fixed, so a receiver never mistakes it for one of its own sessions. */
+export const STAND_IN_SESSION_ID = "00000000-0000-4000-8000-67656e657369";
+
+/**
+ * A sender for a message the user wrote outside any Claude session (the widget, the inbox, the hub's Decisions
+ * pane), as `tools claude message` attests one from inside a session (Martin, DECISION 25 a), 2026-10-26: "just
+ * spoof it if possible"). Its socket does not exist, so the receiver's receipts go nowhere, as they already do for
+ * a Bash tool child's message. Use it only with the receiver's own class, read by `sessionSenderMode`.
+ */
+export function standInSender(mode: PeerSenderMode): PeerSender {
+    return {
+        sessionId: STAND_IN_SESSION_ID,
+        socketPath: genesisToolsDir("hub", "widget", "answers.sock"),
+        name: "GenesisTools answer",
+        mode,
+    };
 }
 
 async function claudeTranscriptOf(sessionId: string): Promise<string | null> {

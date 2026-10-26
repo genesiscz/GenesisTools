@@ -16,6 +16,7 @@ import { listSessionMessages } from "@genesiscz/utils/agent-sessions/message-que
 import type { NativeHistoryEntry } from "@genesiscz/utils/agent-sessions/types";
 import { withTimeout } from "@genesiscz/utils/async";
 import { listClaudeSessionInventory } from "@genesiscz/utils/claude/peer-message";
+import { standInSender } from "@genesiscz/utils/claude/peer-sender";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { readJsonlRows } from "@genesiscz/utils/jsonl";
@@ -1107,6 +1108,7 @@ describe("delivery routes", () => {
                 sendClaudePeer: async (input) => {
                     received.push(input);
                 },
+                receiverMode: async () => "prompting",
                 findTargets: async () => {
                     throw new Error("Native delivery must not inspect terminals");
                 },
@@ -1116,7 +1118,46 @@ describe("delivery routes", () => {
             }
         );
         expect(result).toEqual({ channel: "claude-peer", delivered: true, target: "original Claude session" });
-        expect(received).toEqual([{ session: peer, text, token: null, priority: "next", timeoutMs: 5000 }]);
+        expect(received).toEqual([
+            { session: peer, text, token: null, priority: "next", sender: null, timeoutMs: 5000 },
+        ]);
+    });
+
+    // DECISION 25 a): a bypass receiver holds a plain frame for approval, so the answer carries a stand-in sender
+    // of the receiver's class; a receiver of unknown class gets the plain frame as before.
+    test("a bypass Claude receiver gets the answer from a stand-in bypass sender", async () => {
+        const peer = {
+            pid: 43,
+            sessionId: "bypass-session",
+            name: "fixture",
+            cwd: "/fixture/project",
+            status: "idle",
+            kind: "interactive",
+            socketPath: "/fixture/receiver.sock",
+            file: "/fixture/home/sessions/43.json",
+        };
+        for (const [mode, attested] of [
+            ["bypass", true],
+            [null, false],
+        ] as const) {
+            const senders: unknown[] = [];
+            await deliverToSession(
+                { session: peer.sessionId, provider: "claude", sourceHome: "/fixture/home", text: "a)" },
+                {
+                    nativeWorkers: () => [],
+                    claudePeers: () => [peer],
+                    peerToken: () => null,
+                    receiverMode: async (sessionId) => {
+                        expect(sessionId).toBe(peer.sessionId);
+                        return mode;
+                    },
+                    sendClaudePeer: async (input) => {
+                        senders.push(input.sender);
+                    },
+                }
+            );
+            expect(senders).toEqual([attested ? standInSender("bypass") : null]);
+        }
     });
 
     test("real native peer transport preserves a long Unicode reply as one user frame", async () => {
