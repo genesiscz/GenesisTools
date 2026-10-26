@@ -183,7 +183,8 @@ export function registerCaptureSessionCommands(capture: Command): void {
                 session = new RecordingSession({
                     target,
                     directory: recordingsDir(`session-${randomUUID()}`),
-                    output: flags.output ?? recordingsDir(`recording-${stamp()}.mp4`),
+                    // The suffix keeps two sessions that start in the same second from saving over each other.
+                    output: flags.output ?? recordingsDir(`recording-${stamp()}-${randomUUID().slice(0, 8)}.mp4`),
                     recorder: nativeSegmentRecorder({
                         excludeWindowIds: parseIds(flags.excludeWindowIds),
                         fps: boundedNumber(flags.fps, "--fps", 0.5, 30),
