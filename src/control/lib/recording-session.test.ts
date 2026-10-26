@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import * as fs from "node:fs/promises";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -306,6 +307,74 @@ describe("RecordingSession", () => {
         expect(await recording.finished).toBe("failed");
         expect(runs).toHaveLength(0);
         expect(events.some((event) => event.event === "error" && event.fatal === true)).toBe(true);
+    });
+
+    it("a single segment on another volume is copied next to the output and renamed there", async () => {
+        const { recorder } = fakeRecorder();
+        const recording = session(recorder);
+        const originalRename = fs.rename;
+        const moves: string[] = [];
+        const renameSpy = spyOn(fs, "rename").mockImplementation(async (source, destination) => {
+            moves.push(String(source));
+            if (String(source).includes("segments")) {
+                throw Object.assign(new Error("cross-device move"), { code: "EXDEV" });
+            }
+
+            return originalRename(source, destination);
+        });
+        try {
+            await recording.start();
+            await recording.command({ cmd: "stop" });
+            expect(events.at(-1)).toMatchObject({ event: "done", segments: 1 });
+            expect(await recording.finished).toBe("done");
+            expect(moves).toHaveLength(2);
+            expect(moves[1]).toStartWith(join(root, ".recording-"));
+            expect(await readFile(join(root, "out.mp4"), "utf8")).toBe("movie 0 app");
+            expect(existsSync(join(root, "segments"))).toBe(false);
+        } finally {
+            renameSpy.mockRestore();
+        }
+    });
+
+    it("a folder that will not go after the save still ends the session as done", async () => {
+        const { recorder } = fakeRecorder();
+        const recording = session(recorder);
+        const cleanup = spyOn(fs, "rm").mockRejectedValue(new Error("cleanup denied"));
+        try {
+            await recording.start();
+            await recording.command({ cmd: "stop" });
+            expect(events.at(-1)).toMatchObject({ event: "done" });
+            expect(await recording.finished).toBe("done");
+            expect(await readFile(join(root, "out.mp4"), "utf8")).toBe("movie 0 app");
+        } finally {
+            cleanup.mockRestore();
+        }
+    });
+
+    it("a failed cross-volume copy keeps the segment and the old output for a retry", async () => {
+        const { recorder, runs } = fakeRecorder();
+        const recording = session(recorder);
+        await writeFile(join(root, "out.mp4"), "previous movie");
+        const move = spyOn(fs, "rename").mockRejectedValue(Object.assign(new Error("cross-device"), { code: "EXDEV" }));
+        const copy = spyOn(fs, "copyFile").mockImplementation(async (_source, destination) => {
+            await writeFile(destination, "partial movie");
+            throw new Error("disk full");
+        });
+        try {
+            await recording.start();
+            await recording.command({ cmd: "stop" });
+            expect(events.findLast((event) => event.event === "state")).toMatchObject({ state: "paused" });
+            expect(existsSync(runs[0].output)).toBe(true);
+            expect(await readFile(join(root, "out.mp4"), "utf8")).toBe("previous movie");
+            expect((await fs.readdir(root)).filter((name) => name.startsWith(".recording-"))).toEqual([]);
+        } finally {
+            move.mockRestore();
+            copy.mockRestore();
+        }
+
+        await recording.command({ cmd: "stop" });
+        expect(await recording.finished).toBe("done");
+        expect(await readFile(join(root, "out.mp4"), "utf8")).toBe("movie 0 app");
     });
 
     it("a discard after a failed save deletes every segment", async () => {

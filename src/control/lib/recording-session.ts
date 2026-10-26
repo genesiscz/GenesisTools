@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rename, rm, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { copyFile, mkdir, rename, rm, unlink } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { toolDataDir } from "@genesiscz/utils/storage/root";
@@ -461,7 +462,7 @@ export class RecordingSession {
         let durationMs: number;
         try {
             if (ordered.length === 1) {
-                await rename(ordered[0].path, this.options.output);
+                await this.moveMovie(ordered[0].path);
                 durationMs = ordered[0].durationMs;
             } else {
                 ({ durationMs } = await this.options.join({ segments: ordered, output: this.options.output }));
@@ -502,8 +503,37 @@ export class RecordingSession {
         }
     }
 
+    /**
+     * Puts a single segment at the output. A rename across volumes fails with EXDEV, so the movie is copied next to
+     * the output first and renamed there: the output is either the old file or the whole new movie, never a part.
+     */
+    private async moveMovie(source: string): Promise<void> {
+        try {
+            await rename(source, this.options.output);
+        } catch (error) {
+            if (!(error instanceof Error) || !("code" in error) || error.code !== "EXDEV") {
+                throw error;
+            }
+
+            const temporary = join(dirname(this.options.output), `.recording-${randomUUID()}.mp4`);
+            try {
+                await copyFile(source, temporary);
+                await rename(temporary, this.options.output);
+            } finally {
+                await unlink(temporary).catch((cleanupError: unknown) => {
+                    log.debug({ error: cleanupError, temporary }, "recording temporary file already gone");
+                });
+            }
+        }
+    }
+
+    /** The movie is saved by now: a folder that will not go is logged, and the session still ends. */
     private async removeDirectory(): Promise<void> {
-        await rm(this.options.directory, { recursive: true, force: true });
+        try {
+            await rm(this.options.directory, { recursive: true, force: true });
+        } catch (error) {
+            log.warn({ error, directory: this.options.directory }, "could not clean up recording directory");
+        }
     }
 
     private setState(state: RecordingState, reason: RecordingStateReason): void {
