@@ -323,9 +323,6 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var ownAnswerReturn: String?
     /// Return on a staged decision's empty own answer: "send" (default), "confirm" (a note with Send) or "nothing".
     public var ownAnswerEmptyReturn: String?
-    /// An answer to an agent's own question dialog (Claude's AskUserQuestion): "press" (default, the option's key in
-    /// the live dialog) or "refuse" (answer it in the terminal).
-    public var dialogAnswer: String?
     /// Width in points of the rail's hover list (the agents preview). Default 324, 260 to 560.
     public var previewWidth: Double?
     /// At start, a popup lists the staged decisions with Send now until it is closed. Default true.
@@ -532,9 +529,6 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     public var option: String? = nil
     public var answer: String? = nil
     public var answeredVia: String? = nil
-    /// A decision row's last write (epoch ms): `reconcileStaged` drops an optimistic pick once the row changed after
-    /// the pick was asked for, whatever the row now holds. Nil from an older hub.
-    public var updatedAt: Double? = nil
     public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }
     public var isAnsweredElsewhere: Bool { kind == "decision" && !needsAnswer && answeredVia != nil }
 }
@@ -559,8 +553,6 @@ public struct WidgetInboxSummary: Codable, Equatable, Sendable {
     public var staged: [WidgetInboxItem]? = nil
     /// Decisions answered outside the widget in the last week, newest first, at most 20; nil from an older hub.
     public var answeredElsewhere: [WidgetInboxItem]? = nil
-    /// Uncapped pending decision IDs; absent from older hubs. Only complete snapshots are authoritative.
-    public var pendingDecisionIDs: [String]? = nil
     public var profile: Profile?
     public static let empty = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: false, truncated: false, sessions: [])
 }

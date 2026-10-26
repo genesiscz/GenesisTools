@@ -851,8 +851,7 @@ struct WidgetPeekView: View {
 
     /// The decision's staged pick or note, here or in the snapshot.
     private var staged: Bool {
-        model.shownStagedOption(item.sourceId, stored: item.draftOption) != nil
-            || model.shownStagedNote(item.sourceId, item.draft) != nil
+        model.shownStaged(item.sourceId, option: item.draftOption, draft: item.draft)
     }
 
     /// Real buttons where "Click to answer" was a hint: the own answer, then Send now while a pick waits, else Open.
@@ -932,9 +931,7 @@ struct WidgetAnsweredOptionRow: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: WidgetOptionLabel.cornerRadius)
         HStack(alignment: .top, spacing: 8) {
-            Text(verbatim: letter).font(.system(size: 11, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 4).frame(minWidth: 20, minHeight: 20)
-                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+            WidgetOptionBadge(text: letter)
             Text(text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).padding(.top, 2)
             Spacer(minLength: 0)
             Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.green)
