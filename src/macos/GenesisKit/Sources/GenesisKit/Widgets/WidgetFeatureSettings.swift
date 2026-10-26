@@ -73,7 +73,7 @@ public enum WidgetFeatureSettings {
                         id: "widgets.general", title: "General", symbol: "rectangle.topthird.inset.filled",
                         tint: .blue, subtitle: "Put your tools where they belong."
                     ) {
-                        WidgetGeneralSettings(model: model)
+                        WidgetGeneralSettings(model: model, openSession: openSession)
                     },
                     NativeSettingsPage(
                         id: "widgets.sessions", title: "Projects / Sessions", symbol: "folder",
@@ -118,6 +118,7 @@ public enum WidgetFeatureSettings {
 
 private struct WidgetGeneralSettings: View {
     @ObservedObject var model: WidgetModel
+    let openSession: (WidgetSession) -> Void
     @ObservedObject private var appearance = NativeSettingsAppearance.shared
     private var prefs: WidgetPreferences? { model.snapshot?.state.preferences }
 
@@ -391,6 +392,40 @@ private struct WidgetGeneralSettings: View {
                 }
             }
             .nativeSettingsAnchor("alerts")
+            NativeSettingsCard(
+                "Automatic decisions",
+                subtitle: "Decisions answered outside the widget: an agent recorded the answer you gave in the chat, or your reply was read as one."
+            ) {
+                NativeSettingsToggle(
+                    "Announce them", detail: "A sound and a short preview that shows which option was taken.",
+                    identifier: "widget.autoDecisionPopup",
+                    isOn: boolean("autoDecisionPopup", prefs?.autoDecisionPopup ?? true))
+                Divider()
+                Group {
+                    NativeSettingsRow("Preview stays", detail: "How long the preview stays while the pointer is not on it. Several at once in Alerts applies here too.") {
+                        Picker(
+                            "Automatic decision preview stays",
+                            selection: Binding(
+                                get: { Int(WidgetAlerts.autoDecisionSeconds(prefs)) },
+                                set: { patch(["autoDecisionSeconds": .number(Double($0))]) })
+                        ) {
+                            ForEach(Self.popupSecondsChoices(current: Int(WidgetAlerts.autoDecisionSeconds(prefs))), id: \.self) {
+                                Text($0 == 0 ? "Until closed" : "\($0) seconds").tag($0)
+                            }
+                        }.labelsHidden().frame(width: 150, alignment: .trailing)
+                            .accessibilityIdentifier("widget.autoDecisionSeconds")
+                    }
+                    Divider()
+                    NativeSettingsRow("Sound", detail: "Plays at the Sound volume set in Alerts.") {
+                        soundPicker("autoDecisionSound", prefs?.autoDecisionSound ?? WidgetAlerts.defaultAutoDecisionSound,
+                                    same: true, label: "Automatic decision sound")
+                    }
+                }
+                .disabled(!(prefs?.autoDecisionPopup ?? true))
+                Divider()
+                WidgetAnsweredElsewhereLog(model: model, openSession: openSession)
+            }
+            .nativeSettingsAnchor("automatic-decisions")
             NativeSettingsCard("Shortcut", subtitle: "A global shortcut that opens the widget from any app.") {
                 NativeSettingsToggle(
                     "Open with a shortcut",
@@ -432,10 +467,10 @@ private struct WidgetGeneralSettings: View {
     }
 
     /// A system sound picker with a play button. `same` adds "Same as decisions", stored as "same".
-    private func soundPicker(_ key: String, _ value: String, same: Bool) -> some View {
+    private func soundPicker(_ key: String, _ value: String, same: Bool, label: String? = nil) -> some View {
         let played = value == "same" ? prefs?.alertSound ?? WidgetAlerts.defaultSound : value
         return HStack(spacing: 6) {
-            Picker(key == "alertSound" ? "Decision sound" : "Answer sound", selection: string(key, value)) {
+            Picker(label ?? (key == "alertSound" ? "Decision sound" : "Answer sound"), selection: string(key, value)) {
                 if same { Text("Same as decisions").tag("same") }
                 Text("None").tag("none")
                 ForEach(WidgetAlerts.sounds, id: \.self) { Text($0).tag($0) }
@@ -474,6 +509,53 @@ private struct WidgetGeneralSettings: View {
     }
     private func patch(_ values: [String: WidgetJSON]) {
         model.action(["action": "preferences", "patch": .object(values)])
+    }
+}
+
+/// Settings → Automatic decisions: the decisions answered outside the widget in the last week, newest first. A row
+/// names the decision, the option it took and who recorded it; Open shows its session in the widget.
+private struct WidgetAnsweredElsewhereLog: View {
+    @ObservedObject var model: WidgetModel
+    let openSession: (WidgetSession) -> Void
+
+    var body: some View {
+        let items = model.inbox.answeredElsewhere ?? []
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Last 7 days").font(.system(size: 13, weight: .semibold))
+            if items.isEmpty {
+                Text("No decision was answered outside the widget in the last 7 days.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach(items, id: \.id) { item in row(item) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("widget.autoDecisionLog")
+    }
+
+    private func row(_ item: WidgetInboxItem) -> some View {
+        let session = model.session(forKey: item.key)
+        let picks = WidgetAlerts.answeredOptions(item).map { $0.letter + ") " + $0.text }
+        let answer = picks.isEmpty ? item.answer ?? "" : picks.joined(separator: "; ")
+        let when = Date(timeIntervalSince1970: item.at / 1000).formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        let details = [WidgetAlerts.answeredViaText(item.answeredVia), session?.title ?? "", when].filter { !$0.isEmpty }
+        return HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "checkmark.bubble.fill").foregroundStyle(.green).padding(.top, 1)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text([WidgetAlerts.kicker(item).replacingOccurrences(of: " answered", with: ""), item.title ?? ""]
+                    .filter { !$0.isEmpty }.joined(separator: " · "))
+                    .font(.system(size: 12, weight: .semibold)).lineLimit(1).truncationMode(.tail)
+                if !answer.isEmpty { Text(answer).font(.system(size: 12)).lineLimit(2) }
+                Text(details.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 0)
+            if let session {
+                Button("Open") { openSession(session) }
+                    .help("Shows its session in the widget")
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 

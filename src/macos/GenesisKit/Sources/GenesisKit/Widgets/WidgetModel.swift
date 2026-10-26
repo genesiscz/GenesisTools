@@ -81,6 +81,12 @@ public final class WidgetModel: ObservableObject {
     private var pointerInside: Set<String> = []
     /// Called with the items that arrived in a complete inbox snapshot (never the first one).
     public var inboxArrived: (([WidgetInboxItem]) -> Void)?
+    /// Decisions answered outside the widget since the last snapshot (Automatic decisions), oldest first.
+    public var decisionsAnsweredElsewhere: (([WidgetInboxItem]) -> Void)?
+    /// The answered-elsewhere decisions already seen; the first complete snapshot is the baseline, so a restart
+    /// announces nothing that was answered before it.
+    private var answeredSeen: Set<String> = []
+    private var answeredObserved = false
     public func session(forKey key: String) -> WidgetSession? { sessionIndex[key] }
     @Published public var moduleSelections: [String: String] = [:]
     @Published public var draggedSidePosition: Double?
@@ -866,6 +872,22 @@ public final class WidgetModel: ObservableObject {
     /// (even with the pointer on the popup, since nothing moves under it), or it replaces the shown one.
     func showPeek(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, module: String? = nil, seconds: Double = 7,
                   many: WidgetAlerts.PopupMany = .newest) {
+        // The same decision again (answered elsewhere while its alert is shown or waits): it takes that place.
+        if let shown = peekItem, let peeked = hoveredSurface {
+            if shown.sourceId == item.sourceId {
+                peekItem = item
+                peekSeconds = seconds
+                PerfLog.mark("widget.peek replaced id=\(item.id) answered=\(item.isAnsweredElsewhere)")
+                schedulePeekEnd(on: peeked)
+                presentationChanged?()
+                return
+            }
+            if let index = peekQueue.firstIndex(where: { $0.sourceId == item.sourceId }) {
+                peekQueue[index] = item
+                presentationChanged?()
+                return
+            }
+        }
         if let shown = peekItem, many != .newest, let peeked = hoveredSurface {
             if shown.id != item.id, !peekQueue.contains(where: { $0.id == item.id }) { peekQueue.append(item) }
             peekMany = many
@@ -1076,6 +1098,14 @@ public final class WidgetModel: ObservableObject {
         if arrived { inboxPulse += 1 }
         if arrivals.contains(where: \.needsAnswer) { waitingPulse += 1 }
         if !arrivals.isEmpty { inboxArrived?(arrivals) }
+        if value.complete {
+            let answered = value.answeredElsewhere ?? []
+            let fresh = answeredObserved
+                ? answered.filter { !answeredSeen.contains($0.sourceId) && $0.at > inboxStartedAt } : []
+            answeredSeen.formUnion(answered.map(\.sourceId))
+            answeredObserved = true
+            if !fresh.isEmpty { decisionsAnsweredElsewhere?(fresh.sorted { $0.at < $1.at }) }
+        }
         for key in arrivedKeys { inboxSessionPulses[key, default: 0] += 1 }
         if inboxWatermarks.count > 4096 {
             let removed = inboxWatermarks.sorted { $0.value.at < $1.value.at }.prefix(inboxWatermarks.count - 3072)

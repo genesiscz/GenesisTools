@@ -2018,6 +2018,10 @@ describe("answers recorded by an agent, and superseded decisions", () => {
 
         expect(fromOpen).toMatchObject({ state: "acknowledged", option: "b", answeredVia: "agent" });
         expect(fromDrafted).toMatchObject({ state: "acknowledged", option: "a", answeredVia: "agent" });
+        // The widget shows a chat answer by the time it was recorded, which a later update must not move.
+        expect(fromOpen.answeredTs).toBe(fromOpen.updatedTs);
+        const implemented = await updateDecision(file, events, open.id, { state: "implemented", comment: "done" });
+        expect(implemented.answeredTs).toBe(fromOpen.answeredTs);
         expect(fromDrafted.draft).toBeUndefined();
         expect(fromDrafted.draftOption).toBeUndefined();
         await expect(updateDecision(file, events, bare.id, { state: "acknowledged" })).rejects.toThrow(
@@ -2031,8 +2035,10 @@ describe("answers recorded by an agent, and superseded decisions", () => {
         const { file, events, rows } = await fixture(["Inbox?"]);
         const answered = await updateDecision(file, events, rows[0].id, { state: "answered", option: "a" });
         expect(answered.answeredVia).toBe("inbox");
+        expect(answered.answeredTs).toBe(answered.updatedTs);
         const acknowledged = await updateDecision(file, events, rows[0].id, { state: "acknowledged" });
         expect(acknowledged.answeredVia).toBe("inbox");
+        expect(acknowledged.answeredTs).toBe(answered.answeredTs);
     });
 
     test("superseded needs a link or a reason, and the link must name another stored decision", async () => {

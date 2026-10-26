@@ -109,6 +109,8 @@ export interface DecisionRecord {
      * `agent` on a move from open or drafted straight to `acknowledged` (an answer the user gave in chat).
      */
     answeredVia?: AnsweredVia;
+    /** When the answer was stored: the move that set `answeredVia`. Later updates move `updatedTs`, not this. */
+    answeredTs?: string;
     /** The decision that replaced this one (`superseded`); it exists in the store, in any session. */
     supersededBy?: string;
     commitRefs?: string[];
@@ -701,8 +703,10 @@ function patched(
 
     if (patch.state === "answered") {
         next.answeredVia = "inbox";
+        next.answeredTs = ts;
     } else if (recorded) {
         next.answeredVia = "agent";
+        next.answeredTs = ts;
     }
 
     // A letter past the options would be delivered as `DECISION 1: z)`, naming nothing.
@@ -1365,6 +1369,7 @@ export async function reconcileQueuedDecision({
             delete row.answer;
             delete row.option;
             delete row.answeredVia;
+            delete row.answeredTs;
         }
         rewrite(file, rows);
         appendEvent(events, { ev: received ? "sent" : "queue_cancelled", id, ts, state: row.state });

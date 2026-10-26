@@ -330,6 +330,12 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var alertPopupMany: String?
     /// The alert sounds' volume in percent of the system volume. Default 100.
     public var alertVolume: Double?
+    /// A decision answered outside the widget pops up with a sound (Automatic decisions). Default on.
+    public var autoDecisionPopup: Bool?
+    /// Seconds that popup stays while the pointer is not on it; 0 keeps it until it is closed. Default 5.
+    public var autoDecisionSeconds: Double?
+    /// Its sound: a system sound name, "same" (`alertSound`) or "none". Default "Tink".
+    public var autoDecisionSound: String?
     /// Seconds a widget note stays before it fades; 0 keeps it until it is closed. Default 6. A note with a button
     /// stays at least 10 s.
     public var noteSeconds: Double?
@@ -463,7 +469,13 @@ public struct WidgetInboxItem: Codable, Equatable, Sendable {
     /// A staged decision's unsent pick and note; see `WidgetCard.draftOption`.
     public var draftOption: String? = nil
     public var draft: String? = nil
+    /// A decision answered outside the widget (`WidgetInboxSummary.answeredElsewhere`): the chosen letters, the
+    /// answer, and who stored it ("agent" or "automatic_heuristic").
+    public var option: String? = nil
+    public var answer: String? = nil
+    public var answeredVia: String? = nil
     public var isStaged: Bool { kind == "decision" && needsAnswer && (draftOption != nil || draft != nil) }
+    public var isAnsweredElsewhere: Bool { kind == "decision" && !needsAnswer && answeredVia != nil }
 }
 public struct WidgetInboxSession: Codable, Equatable, Sendable {
     public var key: String
@@ -484,6 +496,8 @@ public struct WidgetInboxSummary: Codable, Equatable, Sendable {
     public var sessions: [WidgetInboxSession]
     /// Every staged decision, uncapped (a session's `items` stop at eight); nil from an older hub.
     public var staged: [WidgetInboxItem]? = nil
+    /// Decisions answered outside the widget in the last week, newest first, at most 20; nil from an older hub.
+    public var answeredElsewhere: [WidgetInboxItem]? = nil
     public var profile: Profile?
     public static let empty = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: false, truncated: false, sessions: [])
 }

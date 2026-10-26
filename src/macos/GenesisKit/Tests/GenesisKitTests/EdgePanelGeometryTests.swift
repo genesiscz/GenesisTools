@@ -544,6 +544,40 @@ final class WidgetInteractionTests: XCTestCase {
         XCTAssertEqual(value.moduleSelections[side.key], "capture", "closing that panel gives the user's module back")
     }
 
+    /// Settings → Automatic decisions: a decision answered outside the widget is announced once, and the first
+    /// complete snapshot is the baseline, so a restart announces nothing answered before it.
+    @MainActor
+    func testADecisionAnsweredElsewhereIsAnnouncedOnceAfterTheBaseline() {
+        let domain = "widget-tests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: domain)!
+        defer { defaults.removePersistentDomain(forName: domain) }
+        let value = model(defaults: defaults)
+        defer { value.stop() }
+        var announced: [[WidgetInboxItem]] = []
+        value.decisionsAnsweredElsewhere = { announced.append($0) }
+        let now = Date().timeIntervalSince1970 * 1000
+        func answered(_ number: Int, at: Double) -> WidgetInboxItem {
+            WidgetInboxItem(id: "decision:d_\(number)_s", sourceId: "d_\(number)_s", kind: "decision",
+                key: "local:claude:s:", at: at, needsAnswer: false, number: number, option: "a", answeredVia: "agent")
+        }
+        func summary(_ items: [WidgetInboxItem], complete: Bool = true) -> WidgetInboxSummary {
+            var value = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: complete, truncated: false, sessions: [])
+            value.answeredElsewhere = items
+            return value
+        }
+        let old = answered(10, at: now - 60_000)
+        value.updateInbox(summary([old]))
+        XCTAssertEqual(announced, [], "the first complete snapshot is the baseline")
+        let early = answered(11, at: now + 1_000)
+        value.updateInbox(summary([early, old], complete: false))
+        XCTAssertEqual(announced, [], "an incomplete snapshot announces nothing")
+        let late = answered(12, at: now + 2_000)
+        value.updateInbox(summary([late, early, old]))
+        XCTAssertEqual(announced, [[early, late]], "the new ones, oldest first")
+        value.updateInbox(summary([late, early, old]))
+        XCTAssertEqual(announced.count, 1, "each answer is announced once")
+    }
+
     /// Several alerts in one popup (Alerts → Several at once), a popup that stays until it is closed, and a pointer
     /// that leaves the popup: the countdown starts again instead of closing it 220 ms later.
     @MainActor
@@ -611,6 +645,21 @@ final class WidgetInteractionTests: XCTestCase {
         value.hover(side, inside: false)
         try await Task.sleep(for: .milliseconds(400))
         XCTAssertEqual(value.peekItem, first, "until closed: leaving the popup does not close it")
+        value.collapse()
+
+        // A decision answered in the chat while its alert is shown or listed takes that alert's place.
+        let answeredFirst = WidgetInboxItem(id: first.id, sourceId: first.sourceId, kind: "decision", key: first.key,
+            at: 9_000, needsAnswer: false, title: first.title, number: 1, options: ["yes", "no"], option: "a",
+            answeredVia: "agent")
+        let answeredSecond = WidgetInboxItem(id: second.id, sourceId: second.sourceId, kind: "decision",
+            key: second.key, at: 9_500, needsAnswer: false, title: second.title, number: 2, option: "b",
+            answeredVia: "automatic_heuristic")
+        value.showPeek(first, on: side, seconds: 60, many: .list)
+        value.showPeek(second, on: side, seconds: 60, many: .list)
+        value.showPeek(answeredFirst, on: side, seconds: 60, many: .list)
+        XCTAssertEqual(value.peekItem, answeredFirst, "the shown alert becomes its answer")
+        value.showPeek(answeredSecond, on: side, seconds: 60, many: .newest)
+        XCTAssertEqual(value.peekQueue, [answeredSecond], "a listed alert becomes its answer in its row")
         value.collapse()
 
         value.showPeek(first, on: side, seconds: 0.8, many: .list)
@@ -854,6 +903,21 @@ final class WidgetVisibilityTests: XCTestCase {
         coordinator.model.updatePreferences(["alertDecisions": .bool(true), "alertVolume": .number(40)])
         coordinator.alert([decision])
         XCTAssertEqual(try XCTUnwrap(volumes.last), 0.4, accuracy: 0.001, "the chime plays at the volume setting")
+
+        // Settings → Automatic decisions: a decision answered in the chat pops up with its own sound.
+        coordinator.model.collapse()
+        let answered = WidgetInboxItem(id: "decision:d_4_s", sourceId: "d_4_s", kind: "decision", key: "local:claude:s:",
+            at: 4_000, needsAnswer: false, title: "Ship it?", number: 4, options: ["yes", "no"], option: "b",
+            answer: "no", answeredVia: "agent")
+        coordinator.alertAnswered([answered])
+        XCTAssertEqual(chimes.last, "Tink", "an answer from elsewhere plays its own sound")
+        XCTAssertEqual(coordinator.model.peekItem, answered, "and pops up")
+        coordinator.model.collapse()
+        coordinator.model.updatePreferences(["autoDecisionPopup": .bool(false)])
+        let heard = chimes.count
+        coordinator.alertAnswered([answered])
+        XCTAssertEqual(chimes.count, heard, "Announce them off: silent")
+        XCTAssertNil(coordinator.model.peekItem, "and no popup")
     }
 
     /// What the inbox shows for an open decision with the own-answer composer, and for a superseded one with the
