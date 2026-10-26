@@ -41,6 +41,7 @@ import { extractOrgName } from "@app/azure-devops/config";
 import { adoOrganizationOf } from "@app/azure-devops/lib/comments";
 import type { CatalogField, TypeFieldInput } from "@app/azure-devops/lib/field-manifest";
 import { findTruncatedNodes, flattenIterationNodes } from "@app/azure-devops/lib/iterations";
+import type { ProcessRule } from "@app/azure-devops/lib/manifest-kinds";
 import { type SavedQueryDefinition, workItemIdsFromQueryResult } from "@app/azure-devops/lib/query-tree";
 import type {
     AzureConfig,
@@ -1185,14 +1186,37 @@ export class Api {
         return result.value;
     }
 
-    /** The process template the project uses, or null when ADO does not say. */
-    async getProjectProcessName(): Promise<string | null> {
+    /** The process the project uses (name and id), or null when ADO does not say. */
+    async getProjectProcess(): Promise<{ name: string; id: string } | null> {
         const url = Api.orgUrl(this.config, ["projects", this.config.projectId], { includeCapabilities: "true" });
-        const project = await this.get<{ capabilities?: { processTemplate?: { templateName?: string } } }>(
-            url,
-            "project capabilities"
-        );
-        return project.capabilities?.processTemplate?.templateName ?? null;
+        const project = await this.get<{
+            capabilities?: { processTemplate?: { templateName?: string; templateTypeId?: string } };
+        }>(url, "project capabilities");
+        const template = project.capabilities?.processTemplate;
+        return template?.templateName && template.templateTypeId
+            ? { name: template.templateName, id: template.templateTypeId }
+            : null;
+    }
+
+    /** The work item types of a process, with the reference names its rules are filed under. */
+    async getProcessWorkItemTypes(processId: string): Promise<{ name: string; referenceName: string }[]> {
+        const url = Api.orgUrl(this.config, ["work", "processes", processId, "workitemtypes"]);
+        const result = await this.get<{ value: { name: string; referenceName: string }[] }>(url, "process types");
+        return result.value;
+    }
+
+    /** The rules of one work item type in a process (required fields, disallowed states, …). */
+    async getProcessRules(processId: string, typeReferenceName: string): Promise<ProcessRule[]> {
+        const url = Api.orgUrl(this.config, [
+            "work",
+            "processes",
+            processId,
+            "workitemtypes",
+            typeReferenceName,
+            "rules",
+        ]);
+        const result = await this.get<{ value: ProcessRule[] }>(url, `rules of ${typeReferenceName}`);
+        return result.value;
     }
 
     /**

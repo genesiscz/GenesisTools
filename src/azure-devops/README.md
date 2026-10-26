@@ -318,7 +318,7 @@ the URL, else the project wiki. The name also matches without `.wiki` and with s
 A manifest is a generated file that holds one part of the project's configuration, so code looks things up instead of hard-coding generated ids such as `Custom.<guid>`. Each one has a `meta` block (org, project, process, fetch time, the command that regenerates it) and one payload:
 
 - `fields`: per work item type, every field with its label, data type, identity flag, `alwaysRequired` and allowed values, plus the type's states with their category. `get-fields` is an alias.
-- `workflow`: per work item type, the states a new item may start in (`initial`) and which state may follow which (`transitions`).
+- `workflow`: per work item type, the states a new item may start in (`initial`) and which state may follow which (`transitions`). In an inherited process the type's own transition map allows every state; the board enforces the order through process rules ("when System.State was X, disallow these states"), so those rules are subtracted. Rules with other conditions (a group, another field) are not applied and are listed in `conditionalRules`.
 - `sprints`: every dated iteration by its iteration path, with its id, start and finish.
 - `areas`: every area path.
 - `queries`: every shared saved query by its folder path, with its id. My Queries are left out.
