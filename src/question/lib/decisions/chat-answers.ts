@@ -15,11 +15,14 @@ import { isWrapperUserText } from "@genesiscz/utils/agent-sessions/user-text";
 /** An open decision as the finder needs it. */
 export interface OpenDecisionRef {
     number: number;
+    /** Defaults to the original revision. Revised asks require timestamped evidence to locate their boundary. */
+    revision?: number;
     /** The option letters it offers, `a` to `c` for three options; none for a free-text decision. */
     letters: readonly string[];
     /**
      * When it was asked (its post, or its latest revision): only user entries at or after it count. Entries without
-     * a time (Grok's chat history) count from the first assistant entry that shows `❓ DECISION N` instead.
+     * a time (Grok's chat history) count from the first assistant entry that shows `❓ DECISION N` only for the original
+     * revision. Revised decisions without timestamped evidence remain open for explicit recording.
      */
     askedAt?: string;
 }
@@ -236,7 +239,11 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
             const alone = lastAsked.length === 1 && lastAsked[0] === decision.number;
             lastAsked = [];
 
-            if (!afterAsk(entry, index, askedAt, firstAsk)) {
+            // A repeated number cannot locate a revised ask in timestamp-free history. Leave it for explicit recording.
+            const knownRevision =
+                (decision.revision ?? 1) === 1 || (askedAt !== undefined && time(entry.timestamp) !== undefined);
+
+            if (!knownRevision || !afterAsk(entry, index, askedAt, firstAsk)) {
                 continue;
             }
 

@@ -223,6 +223,7 @@ async function runChatAnswers(
         kind: payload.harness,
         transcriptPath,
         maxBytes: CHAT_READ_BYTES,
+        includeBoundaryMessage: true,
         until: (entry) => {
             const at = entry.timestamp ? Date.parse(entry.timestamp) : Number.NaN;
 
@@ -245,7 +246,12 @@ async function runChatAnswers(
     const byNumber = new Map(open.map((row) => [row.number, row]));
     const found = chatAnswers(
         read.entries,
-        open.map((row) => ({ number: row.number, letters: lettersFor(row.options.length), askedAt: askedAt(row) }))
+        open.map((row) => ({
+            number: row.number,
+            letters: lettersFor(row.options.length),
+            askedAt: askedAt(row),
+            revision: row.revision ?? 1,
+        }))
     );
     const pairs = <T extends { number: number }>(items: T[]) =>
         items.flatMap((item) => {

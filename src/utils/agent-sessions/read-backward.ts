@@ -79,7 +79,7 @@ export function readJsonlBackward(
             }
 
             if (stop >= 0) {
-                rows.push(entries.slice(stop));
+                rows.push(options.includeBoundaryMessage ? entries : entries.slice(stop));
                 return { entries: rows.reverse().flat(), found: true, issues };
             }
 

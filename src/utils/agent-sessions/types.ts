@@ -247,6 +247,8 @@ export interface HistoryDiscoveryOptions {
 export interface ReadBackwardOptions {
     /** Reading backwards, the walk stops at the first entry this accepts; that entry is returned too. */
     until: (entry: NativeHistoryEntry) => boolean;
+    /** Keep all entries of the boundary message row, including earlier text blocks needed as context. */
+    includeBoundaryMessage?: boolean;
     /** At most this many bytes from the end (default `READ_BACKWARD_MAX_BYTES`). */
     maxBytes?: number;
     signal?: AbortSignal;

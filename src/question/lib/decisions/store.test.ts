@@ -2803,6 +2803,30 @@ describe("chatAnswers", () => {
         }
     });
 
+    test("revised decisions require timestamps instead of reusing the first numbered ask", () => {
+        const open = [{ number: 4, letters: two, revision: 2, askedAt: at(3) }];
+        const old = [
+            entry("assistant", "❓ DECISION 4 — Keep?"),
+            entry("user", "D4 b)"),
+            entry("assistant", "❓ DECISION 4 — Ship?"),
+        ];
+        expect(chatAnswers(old, open)).toEqual({ unambiguous: [], ambiguous: [] });
+        // Even a later answer has no trustworthy revision boundary when the transcript has no timestamps.
+        expect(chatAnswers([...old, entry("user", "D4 a)")], open)).toEqual({ unambiguous: [], ambiguous: [] });
+
+        const timed = chatAnswers(
+            [
+                entry("assistant", "❓ DECISION 4 — Keep?", 1),
+                entry("user", "D4 b)", 2),
+                entry("assistant", "❓ DECISION 4 — Ship?", 3),
+                entry("user", "D4 a)", 4),
+            ],
+            open
+        );
+        expect(timed.ambiguous).toEqual([]);
+        expect(timed.unambiguous).toMatchObject([{ number: 4, option: "a" }]);
+    });
+
     test("counts from the first ask when the entries carry no time (Grok), and takes own words", () => {
         const found = chatAnswers(
             [

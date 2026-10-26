@@ -2112,6 +2112,131 @@ describe("decision hub hooks", () => {
         expect(readDecisions(log.file)[1]?.state).toBe("open");
     });
 
+    it("keeps a split assistant ask at the cursor boundary for a bare answer on the next Stop", async () => {
+        const { log, counts } = harness();
+        const [row] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Keep?", options: ["yes", "no"] }],
+        });
+        const at = (minutes: number) => new Date(Date.parse(row.createdTs ?? "") + minutes * 60_000).toISOString();
+        const transcriptPath = join(mkdtempSync(join(tmpdir(), "gt-chat-cursor-")), "session.jsonl");
+        const rows = [
+            { type: "user", timestamp: at(1), message: { content: "go" } },
+            {
+                type: "assistant",
+                timestamp: at(2),
+                message: {
+                    content: [
+                        { type: "text", text: "❓ DECISION 1 — Keep?" },
+                        { type: "text", text: "- a) yes\n- b) no" },
+                    ],
+                },
+            },
+        ];
+        const writeTranscript = () =>
+            writeFileSync(transcriptPath, rows.map((item) => SafeJSON.stringify(item)).join("\n"));
+        const runs: ChatAnswerRun[] = [];
+        let checked: number | undefined;
+        let now = Date.parse(at(3));
+        const readSession: ReadSession = (options) =>
+            createClaudeHistoryOperations().readBackward(
+                {
+                    kind: "claude",
+                    root: "/",
+                    sourceHome: "/",
+                    filePath: transcriptPath,
+                    dataPaths: [transcriptPath],
+                    metadataPaths: [],
+                },
+                options
+            );
+        const deps = {
+            log,
+            counts,
+            readSession,
+            now: () => now,
+            appendRun: (run: ChatAnswerRun) => {
+                runs.push(run);
+            },
+            chat: {
+                checkedAt: () => checked,
+                setCheckedAt: (_session: string, value: number) => {
+                    checked = value;
+                },
+                sentBack: () => false,
+                markSentBack: () => undefined,
+            },
+        };
+        const payload = stopPayload("Done.", { transcript_path: transcriptPath });
+        writeTranscript();
+        expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps)).toBeNull();
+        expect(checked).toBe(now);
+
+        rows.push({ type: "user", timestamp: at(4), message: { content: "b)" } });
+        writeTranscript();
+        now = Date.parse(at(5));
+        expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps)).toHaveProperty(
+            "systemMessage"
+        );
+        expect(readDecisions(log.file)[0]).toMatchObject({ id: row.id, state: "acknowledged", option: "b" });
+        expect(runs[1]?.recorded).toEqual([row.id]);
+    });
+
+    it("does not record a timestamp-free answer from an earlier decision revision", async () => {
+        const { log, counts } = harness();
+        const [original] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Keep?", options: ["yes", "no"] }],
+        });
+        const [revised] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Ship?", options: ["later", "now"], supersedes: original.id }],
+        });
+        const transcriptPath = join(mkdtempSync(join(tmpdir(), "gt-chat-revised-")), "chat_history.jsonl");
+        writeFileSync(
+            transcriptPath,
+            [
+                { type: "assistant", content: [{ type: "text", text: "❓ DECISION 1 — Keep?" }] },
+                { type: "user", content: [{ type: "text", text: "<user_query>D1 b)</user_query>" }] },
+                { type: "assistant", content: [{ type: "text", text: "❓ DECISION 1 — Ship?" }] },
+            ]
+                .map((item) => SafeJSON.stringify(item))
+                .join("\n")
+        );
+        const readSession: ReadSession = (options) =>
+            createGrokHistoryOperations().readBackward(
+                {
+                    kind: "grok",
+                    root: "/",
+                    sourceHome: "/",
+                    filePath: transcriptPath,
+                    dataPaths: [transcriptPath],
+                    metadataPaths: [],
+                },
+                options
+            );
+        const payload = { ...stopPayload("Done.", { transcript_path: transcriptPath }), harness: "grok" as const };
+        const runs: ChatAnswerRun[] = [];
+        expect(
+            await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), {
+                log,
+                counts,
+                readSession,
+                appendRun: (run) => {
+                    runs.push(run);
+                },
+                chat: {
+                    checkedAt: () => undefined,
+                    setCheckedAt: () => undefined,
+                    sentBack: () => false,
+                    markSentBack: () => undefined,
+                },
+            })
+        ).toBeNull();
+        expect(readDecisions(log.file)[0]).toEqual(revised);
+        expect(runs[0]?.recorded).toEqual([]);
+    });
+
     it("retries a chat answer after a failed store write before advancing the cursor", async () => {
         const { log, counts } = harness();
         const [row] = await postDecisions(log.file, log.events, {

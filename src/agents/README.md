@@ -191,8 +191,10 @@ are combined before matching. A colon introduces own words (`D14: I prefer Atlas
 an explicit separator (`D14 b) because`, `D14 b - because` or `D14 b: because`). An option alone after a colon still
 selects that option when the decision offers choices (`DECISION 14: b`). At the end of each turn the Stop hook reads the
 transcript from its end back to the oldest open ask, or to its previous read when that is later, through the session's
-provider (`NativeSessionReader.readBackward`, so Claude, Codex and Grok each read their own format), and looks only at
-user messages written after each decision was asked. Fenced code, inline code, indented examples and block quotes
+provider (`NativeSessionReader.readBackward`, so Claude, Codex and Grok each read their own format), preserving the
+complete message at the read boundary. It looks only at user messages written after each decision was asked.
+Revised decisions need timestamped evidence to locate the current revision: timestamp-free Grok answers to a revised
+decision are left open for explicit recording with `question_update`. Fenced code, inline code, indented examples and block quotes
 are excluded. A bare option applies only to the first real user response to the immediately preceding assistant
 reply. `record` checks the matched decision revision under the store lock and stores an unambiguous answer as `acknowledged` with
 `answeredVia: "automatic_heuristic"` and the user's line as a comment, and says so; `remind` stores nothing and sends
