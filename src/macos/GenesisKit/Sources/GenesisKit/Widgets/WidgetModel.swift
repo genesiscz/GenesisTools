@@ -498,8 +498,17 @@ public final class WidgetModel: ObservableObject {
               !heldCardIDs.contains(card.id) else { return nil }
         return card
     }
-    /// The decision whose card shows the composer for the user's own answer instead of the options.
+    /// `answerCard` while a session's inbox shows it: not behind the inbox of every session, another tab or the staged
+    /// list. Only then do the number keys answer it; a key used to stage an option of a decision nobody could see.
+    public var answerCardOnScreen: WidgetCard? {
+        guard activeModuleID == "agents", !inboxOverview, section == "Inbox", stagedView == nil else { return nil }
+        return answerCard
+    }
+    /// The decision whose own answer field holds the draft (its toolbar open, the reply composer parked).
     @Published public var ownAnswerCardID: String?
+    /// A decision whose own answer field takes the keyboard as soon as its card shows it (the alert's "Write my own
+    /// answer" opens the panel first, so the field is not there yet when it is asked for).
+    @Published public var ownAnswerFocusRequest: String?
     /// `ownAnswerCardID` while that decision is still the one the composer answers.
     public var ownAnswerCard: WidgetCard? {
         guard let card = answerCard, card.id == ownAnswerCardID else { return nil }
@@ -1221,6 +1230,8 @@ public final class WidgetModel: ObservableObject {
     public var stagedItems: [WidgetInboxItem] { stagedRows.filter { !heldDecisionIDs.contains($0.sourceId) } }
     /// Picks staged or cleared here that the next snapshot has not shown yet, by decision id ("" is a cleared pick).
     @Published var pendingStage: [String: String] = [:]
+    /// Decisions whose send runs now, so their Send now says Sending… and a second press cannot send them twice.
+    @Published public var sendingDecisionIDs: Set<String> = []
     /// The question about staged decisions before the panel closes (`requestCollapse`).
     @Published public var stagedLeavePrompt = false
     /// The staged decisions view: nil closed, "session" for the selected session's, "all" for every session's.
@@ -1257,7 +1268,8 @@ public final class WidgetModel: ObservableObject {
         return true
     }
 
-    public func openInboxItem(_ item: WidgetInboxItem) {
+    /// Opens `item` in its session's inbox, unfolded; with `surface`, the panel opens there too.
+    public func openInboxItem(_ item: WidgetInboxItem, on surface: WidgetSurfaceID? = nil) {
         guard !stopping else { return }
         listOrigin = .overview
         openingInbox = item
@@ -1265,7 +1277,18 @@ public final class WidgetModel: ObservableObject {
         selectedCardID = item.id
         foldedCardIDs.remove(item.id)
         section = "Inbox"
+        if let surface { openModule("agents", on: surface) }
         acknowledgeOpenedInbox()
+    }
+
+    /// The alert card's header, Open and Write my own answer: the alert's own item opens in its session (not the
+    /// session's newest one); with `ownAnswer` its own answer field takes the keyboard, holding a staged note.
+    public func openAlert(_ item: WidgetInboxItem, on surface: WidgetSurfaceID, ownAnswer: Bool = false) {
+        openInboxItem(item, on: surface)
+        guard ownAnswer, !stopping else { return }
+        ownAnswerCardID = item.id
+        ownAnswerFocusRequest = item.id
+        if draft.text.isEmpty, let note = item.draft, !note.isEmpty { setText(note) }
     }
 
     /// The inbox button: every session's entries in one list. A second click while that list is open hides the panel.
@@ -1521,7 +1544,12 @@ public final class WidgetModel: ObservableObject {
     func composerText(ownAnswer: String? = nil) -> Binding<String> {
         let key = selectedKey
         let generation = composerGeneration
-        return Binding(get: { [weak self] in self?.drafts[key]?.text ?? "" }, set: { [weak self] text in
+        // An own answer field shows the draft only while its card holds it; closed, it is an empty field under the
+        // options, and the reply composer's text stays out of it.
+        return Binding(get: { [weak self] in
+            guard let self, ownAnswer == nil || self.ownAnswerCardID == ownAnswer else { return "" }
+            return self.drafts[key]?.text ?? ""
+        }, set: { [weak self] text in
             guard let self, self.selectedKey == key, self.composerGeneration == generation,
                   ownAnswer == nil || self.ownAnswerCardID == ownAnswer else { return }
             self.setText(text)
@@ -1856,29 +1884,33 @@ public final class WidgetModel: ObservableObject {
         }
     }
 
-    /// The composer's Send (Return): it answers the open decision, else it is a follow-up to the session.
+    /// Send (Return): in a decision's own answer field it answers that decision; in the reply composer it is a
+    /// follow-up to the session, as its "Reply to …" says. The reply composer used to answer the open decision too,
+    /// which nothing on screen said, and the decision's own field is now under its options.
     public func send() {
         if ownAnswerCard != nil {
             submitOwnAnswer()
             return
         }
-        submit(answering: answerCard != nil && !cardPending)
+        submit()
     }
 
     /// Sends the draft (text and media) as the answer to `ownAnswerCard`, with no option picked.
     public func submitOwnAnswer() {
         guard let card = ownAnswerCard else { return }
         guard !draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draft.assetIds.isEmpty else {
-            error = "Write your answer or attach media first."
+            postNote("Write your answer or attach media first.")
             return
         }
         submit(answering: true)
         if submittedCards.contains(card.id) { ownAnswerCardID = nil }
     }
 
-    public func submit(choice: String? = nil, answering: Bool = false) {
+    /// `withDraft`: the draft's text and media go with it and the draft empties. Without, an option goes alone and a
+    /// reply being typed in the composer stays where it is.
+    public func submit(choice: String? = nil, answering: Bool = false, withDraft: Bool = true) {
         guard let session = selected, importing == 0 else { return }
-        let submitted = draft
+        let submitted = withDraft ? draft : WidgetDraft()
         do {
             var payload: WidgetJSON = ["kind": "followup", "text": .string(submitted.text)]
             if let card, answering || choice != nil {
@@ -1922,6 +1954,11 @@ public final class WidgetModel: ObservableObject {
             let file = journal.appendingPathComponent(
                 String(Int64(Date().timeIntervalSince1970 * 1000)) + "-" + UUID().uuidString + ".json")
             try JSONEncoder().encode(request).write(to: file, options: .atomic)
+            guard withDraft else {
+                if let card, answering || choice != nil { submittedCards.insert(card.id) }
+                drainJournal()
+                return
+            }
             draftTasks[selectedKey]?.cancel()
             dirtyDrafts.insert(selectedKey)
             drafts[selectedKey] = WidgetDraft()

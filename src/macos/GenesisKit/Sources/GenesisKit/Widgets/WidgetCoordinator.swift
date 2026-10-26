@@ -852,15 +852,18 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         switch Self.panelKey(
             stroke: stroke,
             context: .init(previewOpen: MediaPreviewKeyboard.isOpen, agents: isAgent, editingText: editingText,
-                           answering: model.answerCard, list: model.keyboardList, controlFocused: controlFocused))
+                           answering: model.answerCardOnScreen, list: model.keyboardList, controlFocused: controlFocused))
         {
         case .pass: return event
         case .list(let key):
             // Only a list that took the key swallows it; otherwise the scroll view under it still scrolls.
             return model.moveInList(key, controlFocused: controlFocused) ? nil : event
         case .collapse:
-            // The leave question first (Esc keeps the staged decisions), then the staged view, then the list.
-            if model.stagedLeavePrompt {
+            // Esc in a decision's own answer field leaves the field, not the session (an empty one folds back); then
+            // the leave question (Esc keeps the staged decisions), then the staged view, then the list.
+            if editingText, model.ownAnswerCard != nil {
+                panel.makeFirstResponder(nil)
+            } else if model.stagedLeavePrompt {
                 model.resolveStagedLeave("keep")
             } else if model.stagedView != nil {
                 model.stagedView = nil

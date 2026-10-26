@@ -3,6 +3,23 @@
 Newest first. Each entry: date, symptom as the user saw it, cause, fix, commit. Generic lessons go to
 checklist.md or motion.md as well.
 
+- 2026-10-26 14:22 — **The decision alert and the own answer (Martin's screenshot of DECISION 15: "this is still ugly").**
+  - *The alert read as an empty card.* A fill and a border inside the panel (a card in a card), options drawn as radio
+    circles that took no click, and a faint "Click to answer" pinned under a band of nothing. Fix: no card in the
+    panel; the options are the inbox's option buttons (`WidgetItemOptionButton`, one view for the alert, a session's
+    inbox and the inbox of every session); the footer has real buttons. Lesson: a thing drawn like a choice or an
+    input must be one.
+  - *"Write my own answer" did not focus the field, and the card jumped 103 pt up under the pointer.* The row was
+    swapped for a new composer whose `.onAppear` focus ran before the field existed, and the reply composer above hid
+    in the same update. Fix: the own answer is one field in both states, so the keyboard never moves between two
+    views; the reply composer parks in its place at its height. Check: `testAClickOnTheOwnAnswerFieldTypesThereInPlace`
+    clicks for real and asserts where the first responder is, the typed text and the field's frame.
+  - *A test trap:* a key event posted to a hidden test window goes nowhere, because the window is never key. Insert
+    the text into its first responder instead.
+  - *A capture trap:* the hosted render of the whole panel drew the old code's decision card as a white block, while
+    the new code's rendered. A `cacheDisplay` limit, not the look: retake it or check the live app before calling it a
+    change.
+
 - 2026-10-25 21:55 — **The git sidebar's Repository list (Martin's report, six points).** Branch feat/2026-10-25-repo-panel.
   - *A deleted file said "This file is not in a git repository", and the list then said it too.* git ran in the deleted
     file's folder. Fix: the nearest existing ancestor; the list keeps the last repository (02b5a96462).

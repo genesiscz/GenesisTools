@@ -508,18 +508,22 @@ struct WarmPaneVisibility: ViewModifier {
     }
 }
 
-/// The alert popup: what arrived and from which session. A click opens it in the inbox; the close button, Esc while the
-/// widget has the keyboard, and VoiceOver's escape gesture close it without opening anything.
+/// The alert popup: what arrived, from which session, and for a decision its options, which answer in place (Martin,
+/// 2026-10-26: "this is still ugly"). The panel is the container, so the tile draws no card of its own (golden gate:
+/// no card in a card); its shape carries only the alert flash. The header opens the item in its session; ×, Esc
+/// while the widget has the keyboard, and VoiceOver's escape close it without opening anything.
 struct WidgetPeekView: View {
     @ObservedObject var model: WidgetModel
     let item: WidgetInboxItem
-    /// The card's natural height, before it stretches to fill the pane.
+    /// The tile's natural height, before it stretches to fill the pane.
     var measured: (CGFloat) -> Void = { _ in }
 
-    /// The gap between the card and the panel edge on every side.
+    /// The gap between the tile and the panel edge on every side.
     static let inset: CGFloat = 8
-    /// The panel's corner (EdgePanelShape's 18) minus the inset, so the card's corner runs parallel to the panel's.
+    /// The panel's corner (EdgePanelShape's 18) minus the inset, so the flash runs parallel to the panel's edge.
     static let cornerRadius: CGFloat = 18 - inset
+    /// The options the tile lists; the rest wait in the session's inbox.
+    static let shownOptions = 4
 
     /// The kicker names the decision ("Decision 4"), so the title under it does not repeat the number.
     private var title: String {
@@ -527,31 +531,34 @@ struct WidgetPeekView: View {
         return plain.isEmpty ? "Open the inbox to see it." : plain
     }
 
+    /// The options a click answers here: an open decision's.
+    private var options: [String] {
+        guard item.kind == "decision", item.needsAnswer else { return [] }
+        return item.options ?? []
+    }
+
+    /// The overview's words for the same move.
+    private var openTitle: String {
+        item.needsAnswer && options.isEmpty ? "Answer in its session" : "Open in its session"
+    }
+
     var body: some View {
-        Button {
-            guard let surface = model.hoveredSurface else { return }
-            model.openInboxNotification(on: surface, key: item.key, needsAnswer: item.needsAnswer)
-        } label: {
-            VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 8) {
                 header
-                    .fixedSize(horizontal: false, vertical: true)
-                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { headerHeight = $0; report() }
-                Spacer(minLength: Self.footerGap)
-                footer
-                    .onGeometryChange(for: CGFloat.self, of: \.size.height) { footerHeight = $0; report() }
+                if !options.isEmpty { optionList }
             }
-            .padding(Self.padding)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-                .fill(Color.primary.opacity(0.05)))
-            .overlay(RoundedRectangle(cornerRadius: Self.cornerRadius, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1))
-            .contentShape(Rectangle())
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self, of: \.size.height) { contentHeight = $0; report() }
+            Spacer(minLength: Self.footerGap)
+            footer
+                .onGeometryChange(for: CGFloat.self, of: \.size.height) { footerHeight = $0; report() }
         }
-        .buttonStyle(RowButtonStyle(cornerRadius: Self.cornerRadius))
+        .padding(Self.padding)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .attentionPulse(trigger: model.attentionTrigger(item.key), style: popupAttention, since: model.attentionStart(item.key))
-        .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + title)
-        .accessibilityValue(WidgetPeekOptions.accessibilityValue(item))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(WidgetAlerts.kicker(item))
         .accessibilityAction(.escape) { model.dismissPeek() }
         .accessibilityAction(named: "Close") { model.dismissPeek() }
         .overlay(alignment: .topTrailing) {
@@ -562,104 +569,111 @@ struct WidgetPeekView: View {
         }
     }
 
-    @State private var headerHeight: CGFloat = 0
+    @State private var contentHeight: CGFloat = 0
     @State private var footerHeight: CGFloat = 0
-    private static let padding: CGFloat = 10
+    /// The header's and the options' hover plates keep this much panel around them.
+    private static let padding: CGFloat = 6
     private static let footerGap: CGFloat = 10
 
-    /// The card's natural height: header, gap and footer, without the stretch that fills the pane.
+    /// The tile's natural height: content, gap and footer, without the stretch that fills the pane.
     private func report() {
-        guard headerHeight > 0, footerHeight > 0 else { return }
-        measured(headerHeight + Self.footerGap + footerHeight + 2 * Self.padding)
+        guard contentHeight > 0, footerHeight > 0 else { return }
+        measured(contentHeight + Self.footerGap + footerHeight + 2 * Self.padding)
     }
 
-    private var footer: some View {
-        HStack(spacing: 3) {
-            Text(item.needsAnswer ? "Click to answer" : "Click to read")
-            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
-        }
-        .font(.system(size: 11)).foregroundStyle(.secondary)
+    private func open(ownAnswer: Bool = false) {
+        guard let surface = model.hoveredSurface else { return }
+        model.openAlert(item, on: surface, ownAnswer: ownAnswer)
     }
 
+    /// The kicker, the title and the session: one button that opens the item in its session.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: item.needsAnswer ? "questionmark.bubble.fill" : "text.bubble.fill")
-                    .foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.blue)
-                Text(WidgetAlerts.kicker(item)).font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(item.needsAnswer ? Color.orange : .secondary)
-                Spacer(minLength: 0)
-                LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
-                // Room for the close button, which sits over this corner outside the row button.
-                Color.clear.frame(width: 18, height: 1)
+        Button { open() } label: {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    Image(systemName: item.needsAnswer ? "questionmark.bubble.fill" : "text.bubble.fill")
+                        .foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.blue)
+                    Text(WidgetAlerts.kicker(item)).font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(item.needsAnswer ? Color.orange : .secondary)
+                    Spacer(minLength: 0)
+                    LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    // Room for the close button, which sits over this corner outside the header button.
+                    Color.clear.frame(width: 18, height: 1)
+                }
+                Text(title).font(.system(size: 13, weight: .semibold))
+                    .lineLimit(3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
+                if let session = model.session(forKey: item.key) {
+                    Text([session.title, session.project].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .lineLimit(1).truncationMode(.middle)
+                }
             }
-            Text(title).font(.system(size: 12.5, weight: .medium))
-                .lineLimit(3).multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
-            if let session = model.session(forKey: item.key) {
-                Text([session.title, session.project].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .lineLimit(1).truncationMode(.middle)
+            .padding(.horizontal, 8).padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
+        .instantTooltip(openTitle)
+        .accessibilityLabel(WidgetAlerts.kicker(item) + ": " + title)
+        .accessibilityHint(openTitle)
+        .accessibilityIdentifier("widget.peek.open")
+    }
+
+    /// The decision's options as the inbox draws them: a click stages one (or sends it, by the Decision click
+    /// setting) without opening anything, and the row says Staged at once. A send opens the decision in its session,
+    /// so its result is read where it went.
+    private var optionList: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(Array(options.prefix(Self.shownOptions).enumerated()), id: \.offset) { index, option in
+                WidgetItemOptionButton(model: model, item: item, index: index, option: option) {
+                    if !model.decisionClickStages { open() }
+                }
             }
-            // The pane is never shorter than the rail beside it; the decision's options fill it with what the click
-            // will ask, instead of an empty card (Martin, 2026-10-25: "this is now quite ugly").
-            if item.needsAnswer, let options = item.options, !options.isEmpty {
-                WidgetPeekOptions(options: options, recommended: item.recommended).padding(.top, 4)
+            if options.count > Self.shownOptions {
+                Text("\(options.count - Self.shownOptions) more in its session").font(.system(size: 11))
+                    .foregroundStyle(.secondary).padding(.leading, 8)
             }
         }
+    }
+
+    /// The decision's staged pick or note, here or in the snapshot.
+    private var staged: Bool {
+        model.stagedOption(item.sourceId, stored: item.draftOption) != nil || item.draft != nil
+    }
+
+    /// Real buttons where "Click to answer" was a hint: the own answer, then Send now while a pick waits, else Open.
+    private var footer: some View {
+        HStack(spacing: 6) {
+            if !options.isEmpty {
+                Button { open(ownAnswer: true) } label: {
+                    ViewThatFits(in: .horizontal) {
+                        Label("Write my own answer", systemImage: "square.and.pencil")
+                        Label("Own answer", systemImage: "square.and.pencil")
+                    }
+                }
+                .instantTooltip("Opens it in its session with the answer field ready to type")
+                .accessibilityIdentifier("widget.peek.ownAnswer")
+            }
+            Spacer(minLength: 0)
+            if staged {
+                let sending = model.sendingDecisionIDs.contains(item.sourceId)
+                Button(sending ? "Sending…" : "Send now") { model.sendStaged([item.sourceId], known: [item]) }
+                    .buttonStyle(.genHover(accent: SessionPalette.blue))
+                    .disabled(sending)
+                    .instantTooltip("Sends this staged decision alone, without the others.")
+            } else {
+                Button(openTitle) { open() }
+            }
+        }
+        .buttonStyle(.genHover()).font(.system(size: 11.5)).lineLimit(1)
+        .padding(.horizontal, 2)
     }
 
     private var popupAttention: AttentionPulseStyle {
         var style = model.attentionStyle
         style.cornerRadius = Self.cornerRadius
         return style
-    }
-}
-
-/// A decision's options in the alert card, up to four, the recommended one marked; read-only, the card's click answers.
-struct WidgetPeekOptions: View {
-    let options: [String]
-    let recommended: String?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(options.prefix(4).enumerated()), id: \.offset) { index, option in
-                let picked = Self.isRecommended(option, at: index, recommended)
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: picked ? "star.fill" : "circle")
-                        .font(.system(size: picked ? 8 : 6, weight: .semibold))
-                        .foregroundStyle(picked ? Color.green : Color.secondary)
-                        .frame(width: 10)
-                    Text(option).font(.system(size: 11.5)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
-                        .foregroundStyle(picked ? .primary : .secondary)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel(option + (picked ? ", recommended" : ""))
-            }
-            if options.count > 4 {
-                Text("\(options.count - 4) more").font(.system(size: 10.5)).foregroundStyle(.secondary).padding(.leading, 16)
-            }
-        }
-    }
-
-    /// The single alert button speaks the same four options and recommendation its label draws.
-    static func accessibilityValue(_ item: WidgetInboxItem) -> String {
-        guard item.needsAnswer, let options = item.options else { return "" }
-        var labels = options.prefix(4).enumerated().map { index, option in
-            option + (isRecommended(option, at: index, item.recommended) ? ", recommended" : "")
-        }
-        if options.count > 4 { labels.append("\(options.count - 4) more") }
-        return labels.joined(separator: "; ")
-    }
-
-    /// The hub names the recommended option by its letter ("b") or its whole text.
-    static func isRecommended(_ option: String, at index: Int, _ recommended: String?) -> Bool {
-        guard let recommended = recommended?.trimmingCharacters(in: .whitespaces).lowercased(), !recommended.isEmpty
-        else { return false }
-        let lower = option.lowercased()
-        let letter = String(UnicodeScalar(97 + index)!)
-        return recommended == letter || lower == recommended
-            || lower.hasPrefix(recommended + ")") || lower.hasPrefix(recommended + ".")
     }
 }
 

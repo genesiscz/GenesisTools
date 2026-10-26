@@ -20,9 +20,10 @@ extension WidgetModel {
     /// A click on a decision option in a session's inbox. A second click on the staged option clears the pick.
     public func choose(_ card: WidgetCard, option: String) {
         guard decisionClickStages else {
-            // `submit` answers the selected card; another open row's click must answer its own decision.
+            // `submit` answers the selected card; another open row's click must answer its own decision. Only text
+            // written in this card's own answer field goes with the pick; a reply typed above stays a reply.
             selectedCardID = card.id
-            submit(choice: option)
+            submit(choice: option, withDraft: ownAnswerCardID == card.id)
             return
         }
         guard let selected, let revision = card.revision else { return }
@@ -75,10 +76,39 @@ extension WidgetModel {
               })
     }
 
-    /// The own answer composer of a decision with a saved note opens with that note.
+    /// The own answer field of a decision takes the draft (its card becomes the selected, open one); with a staged note
+    /// and an empty draft it opens with that note.
     public func openOwnAnswer(_ card: WidgetCard) {
+        selectedCardID = card.id
+        foldedCardIDs.remove(card.id)
         ownAnswerCardID = card.id
         if draft.text.isEmpty, let note = card.draft, !note.isEmpty { setText(note) }
+    }
+
+    /// The own answer holds nothing and nothing is being added to it, so losing the keyboard may fold it.
+    public var ownAnswerIdle: Bool {
+        draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && draft.assetIds.isEmpty && !voiceActive
+            && !recordingVideo && importing == 0
+    }
+
+    /// Unstage on a card: the pick and the note leave the staged list, and a staged note comes back into the card's
+    /// own answer field, so the text the user wrote is never thrown away.
+    public func unstage(_ card: WidgetCard) {
+        discardStaged([card.sourceId])
+        guard let note = card.draft?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty,
+              selectedKey == card.sessionKey else { return }
+        let typed = draft.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.contains(note) { setText(typed.isEmpty ? note : typed + "\n" + note) }
+        openOwnAnswer(card)
+        draftSavedAt[card.id] = nil
+    }
+
+    /// A card as the inbox list carries it, for the sends that take list items (Send now, Send again).
+    nonisolated static func inboxItem(_ card: WidgetCard) -> WidgetInboxItem {
+        WidgetInboxItem(id: card.id, sourceId: card.sourceId, kind: card.kind, key: card.sessionKey, at: card.at,
+                        needsAnswer: card.needsAnswer, title: card.title, number: card.number,
+                        options: card.choices.map(\.title), recommended: card.choices.first(where: \.recommended)?.id,
+                        revision: card.revision, draftOption: card.draftOption, draft: card.draft)
     }
 
     private func stage(
@@ -117,8 +147,14 @@ extension WidgetModel {
     /// Sends the staged decisions `ids`: one message per session. With `thenClose` (a send on the way out of the
     /// panel) the panel stays open until the hub answers and closes only when every answer was delivered, so a send
     /// that failed is read where it happened instead of in a closed panel (ux catalogue P1).
-    public func sendStaged(_ ids: [String], thenClose: Bool = false) {
-        let chosen = stagedItems.filter { ids.contains($0.sourceId) }
+    /// `known`: items the caller holds whose pick was staged here a moment ago, before a snapshot listed them; the
+    /// send waits for that stage (`afterMutations`), so a Send now right after the click sends it.
+    public func sendStaged(_ ids: [String], thenClose: Bool = false, known: [WidgetInboxItem] = []) {
+        var chosen = stagedItems.filter { ids.contains($0.sourceId) }
+        for item in known where ids.contains(item.sourceId) && !chosen.contains(where: { $0.sourceId == item.sourceId })
+            && (stagedOption(item.sourceId, stored: item.draftOption) != nil || item.draft != nil) {
+            chosen.append(item)
+        }
         guard !chosen.isEmpty else {
             // Nothing to send used to close the panel without a word, which read as a send that did nothing.
             PerfLog.mark("widget.send-staged nothing to send: \(ids.count) ids picked, \(stagedItems.count) staged")
@@ -126,7 +162,10 @@ extension WidgetModel {
                                  : "These decisions are no longer staged, so nothing was sent.")
             return
         }
-        deliverDecisions(chosen, action: "send-staged", thenClose: thenClose)
+        // A second press while the first send runs: that send's note answers it.
+        let fresh = chosen.filter { !sendingDecisionIDs.contains($0.sourceId) }
+        guard !fresh.isEmpty else { return }
+        deliverDecisions(fresh, action: "send-staged", thenClose: thenClose)
     }
 
     /// Sends again answered decisions that no session took (the notice's Send again), for every kind of agent.
@@ -144,9 +183,12 @@ extension WidgetModel {
         let opened = openedAt
         let closeRevision = sendCloseRevision
         let draftAtSend = draft
-        if thenClose { postNote("Sending " + Plural.count(items.count, "decision") + "…") }
+        let ids = Set(items.map(\.sourceId))
+        sendingDecisionIDs.formUnion(ids)
+        // Every staged send says it started: a Send now that changed nothing on screen read as a dead button.
+        if staged { postNote("Sending " + Plural.count(items.count, "decision") + "…") }
         // The "Sending…" note this send put up; a failure takes it down, unless another note replaced it meanwhile.
-        let sendingNote = thenClose || action == "resend-answers" ? notice : nil
+        let sendingNote = staged || action == "resend-answers" ? notice : nil
         var targets: [String: WidgetJSON] = [:]
         var titles: [String: String] = [:]
         for item in items {
@@ -162,6 +204,7 @@ extension WidgetModel {
             + titles.values.sorted().joined(separator: ", "))
         afterMutations { [weak self] in
             guard let self else { return }
+            defer { self.sendingDecisionIDs.subtract(ids) }
             do {
                 let result = try await self.call([
                     "action": .string(action), "ids": .array(items.map { .string($0.sourceId) }),

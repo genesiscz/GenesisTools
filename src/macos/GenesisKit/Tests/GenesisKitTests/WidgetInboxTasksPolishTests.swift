@@ -1583,25 +1583,94 @@ final class WidgetComposerClickTests: XCTestCase {
         FrameProbe.enabled = true
         FrameProbe.reset()
         defer { FrameProbe.enabled = false }
-        let size = NSSize(width: 520, height: 700)
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless],
-                              backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        window.contentView = FirstClickHost(rootView: AnyView(LiveWidgetView(model: model, edge: .right, embedded: true)
-            .frame(width: size.width, height: size.height)))
-        window.alphaValue = 0
-        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
-        window.order(.below, relativeTo: 0)
+        let window = hostedWidget(model)
         defer { window.orderOut(nil); window.close() }
         pump(1.0)
         let box = try XCTUnwrap(FrameProbe.frames["widget.composer"], "the reply box has a frame")
         let field = try XCTUnwrap(FrameProbe.frames["widget.composer.field"], "the reply field has a frame")
         XCTAssertFalse(window.firstResponder is NSTextView, "nothing is being typed before the click")
         // The box's left padding at the field's height: inside the box, outside the field and every button.
-        let point = NSPoint(x: box.minX + 4, y: size.height - field.midY)
+        let point = NSPoint(x: box.minX + 4, y: Self.size.height - field.midY)
         XCTAssertLessThan(box.minX + 4, field.minX, "the click lands beside the field, not on it")
         click(window, at: point)
         XCTAssertTrue(window.firstResponder is NSTextView, "a click in the box's padding focuses the reply field")
+    }
+
+    /// Martin, 2026-10-26: "when i click 'Write my own answer' it should focus the input field. Or maybe it should even
+    /// just show the input field anyway and when i click it it will animate expand the block". The own answer is a
+    /// field in the decision card: one click types there, its toolbar opens under it, and nothing above it moves.
+    func testAClickOnTheOwnAnswerFieldTypesThereInPlace() throws {
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.receive([try StagingFixture.snapshot(draftOption: nil)])
+        model.select(StagingFixture.key)
+        let card = try XCTUnwrap(model.cards.first)
+        model.openCard(card)
+        FrameProbe.enabled = true
+        FrameProbe.reset()
+        defer { FrameProbe.enabled = false }
+        let window = hostedWidget(model)
+        defer { window.orderOut(nil); window.close() }
+        pump(1.0)
+        let field = try XCTUnwrap(FrameProbe.frames["widget.ownAnswer"], "the open decision shows its own answer field")
+        XCTAssertNil(model.ownAnswerCard)
+        click(window, at: NSPoint(x: field.minX + 40, y: Self.size.height - field.midY))
+        XCTAssertEqual(model.ownAnswerCard?.id, card.id, "the click opens the own answer")
+        // The hidden window is never key, so a posted key event goes nowhere; the text goes to its first responder.
+        let editor = try XCTUnwrap(window.firstResponder as? NSTextView, "the click leaves the keyboard in a text field")
+        let clicked = NSRect(x: field.minX, y: Self.size.height - field.maxY, width: field.width, height: field.height)
+        XCTAssertTrue(clicked.intersects(editor.convert(editor.bounds, to: nil)),
+                      "the keyboard is in the own answer field, not in the reply composer")
+        editor.insertText("x", replacementRange: NSRange(location: NSNotFound, length: 0))
+        pump(0.3)
+        XCTAssertEqual(model.draft.text, "x", "the first key after the click lands in the own answer")
+        pump(0.6)
+        let open = try XCTUnwrap(FrameProbe.frames["widget.ownAnswer"])
+        XCTAssertEqual(open.minY, field.minY, accuracy: 1, "the field stays where it was clicked")
+        XCTAssertGreaterThan(open.height, field.height + 10, "the toolbar opens under the field")
+
+        // Martin, 2026-10-26: "multilines suck also" (a two-line answer showed its first line cut off at the top).
+        // Word by word, as typing grows it: a wrap scrolls the field editor before the field gets its new height.
+        let words = (" in the standard way, but there should be again like the release script asks what we are going"
+            + " to release; in this case it will be just col-web, and yes, only the patch one").split(separator: " ")
+        for word in words {
+            editor.insertText(" " + word, replacementRange: NSRange(location: NSNotFound, length: 0))
+            pump(0.03)
+        }
+        pump(0.8)
+        if let folder = ProcessInfo.processInfo.environment["WIDGET_POLISH_SHOTS"], let host = window.contentView,
+           let shot = HostedShot.bitmap(host) {
+            try shot.representation(using: .png, properties: [:])?
+                .write(to: URL(fileURLWithPath: folder).appendingPathComponent("widget-own-answer-multiline.png"))
+        }
+        let text = try XCTUnwrap(FrameProbe.frames["widget.ownAnswer.field"])
+        let box = try XCTUnwrap(FrameProbe.frames["widget.ownAnswer"])
+        XCTAssertGreaterThan(text.height, 30, "a long answer grows the field to more lines")
+        XCTAssertGreaterThanOrEqual(text.minY, box.minY + 8, "every line shows inside the box, the first one too")
+        XCTAssertLessThanOrEqual(text.maxY, box.maxY, "and the last one")
+        // The field editor's own geometry: scrolled down past its first line, or taller than the field it edits. Its
+        // visible rect starts at about -2 (the editor's inset), never below 0.
+        let editorInWindow = editor.convert(editor.bounds, to: nil)
+        let fieldInWindow = NSRect(x: text.minX, y: Self.size.height - text.maxY, width: text.width, height: text.height)
+        XCTAssertLessThanOrEqual(editor.visibleRect.minY, 1, "the editor does not scroll its first line away")
+        XCTAssertLessThanOrEqual(editorInWindow.maxY, fieldInWindow.maxY + 2, "the first line is inside the field")
+    }
+
+    private static let size = NSSize(width: 520, height: 700)
+
+    /// The widget in a hidden window that takes the first click on any control.
+    private func hostedWidget(_ model: WidgetModel) -> NSWindow {
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: Self.size), styleMask: [.borderless],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = FirstClickHost(rootView: AnyView(LiveWidgetView(model: model, edge: .right, embedded: true)
+            .frame(width: Self.size.width, height: Self.size.height)))
+        window.alphaValue = 0
+        window.level = .init(rawValue: Int(CGWindowLevelForKey(.desktopWindow)) - 1)
+        window.order(.below, relativeTo: 0)
+        return window
     }
 
     private func pump(_ seconds: TimeInterval) {
