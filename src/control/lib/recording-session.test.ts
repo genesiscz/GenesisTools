@@ -288,6 +288,33 @@ describe("RecordingSession", () => {
         expect(await recording.finished).toBe("discarded");
     });
 
+    it("keeps its segment folder private, also when the folder already exists with wider permissions", async () => {
+        for (const existing of [false, true]) {
+            const directory = join(root, existing ? "existing" : "new");
+            if (existing) {
+                await mkdir(directory, { mode: 0o755 });
+            }
+
+            const { recorder } = fakeRecorder();
+            const recording = new RecordingSession({
+                target: finder,
+                directory,
+                output: join(root, "private.mp4"),
+                recorder,
+                join: async () => ({ durationMs: 0 }),
+                emit: () => {},
+                now: () => clock,
+                tickMs: 0,
+                slowStartMs: 0,
+            });
+            await recording.start();
+
+            expect((await fs.stat(directory)).mode & 0o777).toBe(0o700);
+            await recording.command({ cmd: "discard" });
+            expect(await recording.finished).toBe("discarded");
+        }
+    });
+
     it("a failed join keeps a movie already at the output and leaves no temporary file", async () => {
         const { recorder } = fakeRecorder();
         await writeFile(join(root, "out.mp4"), "previous movie");

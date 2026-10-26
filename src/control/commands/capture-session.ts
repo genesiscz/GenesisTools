@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { chmod, mkdir } from "node:fs/promises";
 import { withInterrupt } from "@genesiscz/utils/cli/interrupt";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger, out } from "@genesiscz/utils/logger";
@@ -180,6 +181,9 @@ export function registerCaptureSessionCommands(capture: Command): void {
                     throw new Error("Nothing on screen to record.");
                 }
 
+                // The default output and every session folder live here, so the folder is owner only.
+                await mkdir(recordingsDir(), { recursive: true, mode: 0o700 });
+                await chmod(recordingsDir(), 0o700);
                 session = new RecordingSession({
                     target,
                     directory: recordingsDir(`session-${randomUUID()}`),

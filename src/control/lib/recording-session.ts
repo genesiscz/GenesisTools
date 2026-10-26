@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, rename, rm, unlink } from "node:fs/promises";
+import { chmod, copyFile, mkdir, rename, rm, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
@@ -198,7 +198,9 @@ export class RecordingSession {
     start(): Promise<void> {
         return this.enqueue(async () => {
             try {
-                await mkdir(this.options.directory, { recursive: true });
+                // Screen recordings are private: owner only. `mode` covers a new folder, chmod an existing one.
+                await mkdir(this.options.directory, { recursive: true, mode: 0o700 });
+                await chmod(this.options.directory, 0o700);
             } catch (error) {
                 log.warn({ error }, "could not create recording directory");
                 this.end("failed");
