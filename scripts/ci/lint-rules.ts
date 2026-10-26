@@ -292,9 +292,64 @@ const AGENT_SESSION_OWNERS =
     /(?:^|\/)src\/(?:utils\/process\/|utils\/claude\/peer-message\.ts$|codex\/lib\/process-scan\.ts$|grok\/lib\/process-scan\.ts$|claude\/lib\/active-sessions\.ts$)/;
 const AGENT_HARNESS_OWNERS =
     /(?:^|\/)src\/(?:utils\/agent-sessions\/|utils\/ai\/providers\/|utils\/providers\/session-paths\.ts$|agents\/lib\/hooks\/(?:payload|config)\.ts$|utils\/process\/|utils\/claude\/peer-message\.ts$|codex\/lib\/process-scan\.ts$|grok\/lib\/process-scan\.ts$|claude\/lib\/active-sessions\.ts$)/;
-const AGENT_PAYLOAD_READ_SRC =
-    "(?:\\.(?:transcript_path|hook_event_name|tool_input|tool_response|last_assistant_message|stop_hook_active)|(?:^|\\.)raw\\.(?:hookEventName|toolInput|toolResponse|transcriptPath|lastAssistantMessage|stopHookActive))$";
-const AGENT_PAYLOAD_READ = new RegExp(AGENT_PAYLOAD_READ_SRC);
+const AGENT_PAYLOAD_SNAKE_FIELDS =
+    "transcript_path|hook_event_name|tool_input|tool_response|last_assistant_message|stop_hook_active";
+const AGENT_PAYLOAD_CAMEL_FIELDS =
+    "hookEventName|toolInput|toolResponse|transcriptPath|lastAssistantMessage|stopHookActive";
+const AGENT_PAYLOAD_SNAKE_FIELD = new RegExp(`^(?:${AGENT_PAYLOAD_SNAKE_FIELDS})$`);
+const AGENT_PAYLOAD_CAMEL_FIELD = new RegExp(`^(?:${AGENT_PAYLOAD_CAMEL_FIELDS})$`);
+const AGENT_PAYLOAD_MEMBER = `\\.(?:${AGENT_PAYLOAD_SNAKE_FIELDS}|${AGENT_PAYLOAD_CAMEL_FIELDS})$`;
+
+function isRawPayload(node: SgNode | null | undefined): boolean {
+    if (node?.kind() === "identifier") {
+        return node.text() === "raw";
+    }
+
+    if (node?.kind() === "member_expression") {
+        return node.field("property")?.text() === "raw";
+    }
+
+    const index = node?.kind() === "subscript_expression" ? node.field("index") : undefined;
+    return index?.kind() === "string" && unquote(index) === "raw";
+}
+
+function readsHookPayload(node: SgNode): boolean {
+    const fieldMatches = (key: string, raw: boolean) =>
+        AGENT_PAYLOAD_SNAKE_FIELD.test(key) || (raw && AGENT_PAYLOAD_CAMEL_FIELD.test(key));
+
+    if (node.kind() === "member_expression") {
+        return fieldMatches(node.field("property")?.text() ?? "", isRawPayload(node.field("object")));
+    }
+
+    if (node.kind() === "subscript_expression") {
+        const index = node.field("index");
+        return index?.kind() === "string" && fieldMatches(unquote(index), isRawPayload(node.field("object")));
+    }
+
+    const parent = node.parent();
+    const raw =
+        isRawPayload(parent?.field("value") ?? parent?.field("right")) ||
+        (parent?.kind() === "pair_pattern" && parent.field("key")?.text() === "raw");
+
+    return node.children().some((child) => {
+        let key = child;
+
+        if (child.kind() === "pair_pattern") {
+            key = child.field("key") ?? child;
+        } else if (child.kind() === "object_assignment_pattern") {
+            key = child.field("left") ?? child;
+        } else if (child.kind() !== "shorthand_property_identifier_pattern") {
+            return false;
+        }
+
+        if (key.kind() === "computed_property_name") {
+            const literal = key.children().find((part) => part.kind() === "string");
+            return literal !== undefined && fieldMatches(unquote(literal), raw);
+        }
+
+        return fieldMatches(key.kind() === "string" ? unquote(key) : key.text(), raw);
+    });
+}
 
 const RULES: Rule[] = [
     {
@@ -465,7 +520,10 @@ const RULES: Rule[] = [
         name: "no-harness-name-branch",
         severity: "error",
         kinds: LITERAL_KINDS,
-        message: "PROBE harness branch",
+        message:
+            "A harness-name branch belongs in a ProviderPlugin or NativeSessionReader member, not in its caller. " +
+            "Use the provider interface and implement the difference in its owner. " +
+            "scripts/ci/harness-ratchet.ts lists the callers not migrated yet.",
         onlyIn: /^(?:src|scripts)\//,
         allowedIn: AGENT_HARNESS_OWNERS,
         allowedFiles: HARNESS_BRANCH_RATCHET,
@@ -495,13 +553,24 @@ const RULES: Rule[] = [
     {
         name: "no-hook-payload-read",
         severity: "error",
-        kinds: ["member_expression"],
-        matcher: { rule: { kind: "member_expression", regex: AGENT_PAYLOAD_READ_SRC } },
-        message: "PROBE payload read",
+        kinds: ["member_expression", "subscript_expression", "object_pattern"],
+        matcher: {
+            rule: {
+                any: [
+                    { kind: "member_expression", regex: AGENT_PAYLOAD_MEMBER },
+                    { kind: "subscript_expression", has: { field: "index", kind: "string" } },
+                    { kind: "object_pattern" },
+                ],
+            },
+        },
+        message:
+            "Read hook payload fields through HookPayload in src/agents/lib/hooks/payload.ts. " +
+            "Add a typed field there instead of reading or destructuring the raw payload in a caller. " +
+            "scripts/ci/harness-ratchet.ts lists the callers not migrated yet.",
         onlyIn: /^(?:src|scripts)\//,
         allowedIn: /(?:^|\/)src\/agents\/lib\/hooks\/payload\.ts$/,
         allowedFiles: HOOK_PAYLOAD_READ_RATCHET,
-        test: (text) => AGENT_PAYLOAD_READ.test(text),
+        test: (_text, node) => readsHookPayload(node),
     },
     {
         name: "no-agent-name-in-command-match",
@@ -513,7 +582,9 @@ const RULES: Rule[] = [
                 has: { field: "function", regex: "\\.(?:test|match|search|includes|startsWith|endsWith)$" },
             },
         },
-        message: "PROBE process match",
+        message:
+            "Identify agent processes through src/utils/process/classify.ts instead of matching agent names " +
+            "against command lines in a caller. scripts/ci/harness-ratchet.ts lists the callers not migrated yet.",
         onlyIn: /^(?:src|scripts)\//,
         allowedIn: AGENT_SESSION_OWNERS,
         allowedFiles: AGENT_PROCESS_MATCH_RATCHET,

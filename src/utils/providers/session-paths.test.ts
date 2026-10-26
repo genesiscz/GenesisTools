@@ -7,11 +7,41 @@ import {
     codexHomeOverrides,
     codexHomesIn,
     isNativeTranscript,
+    nativeHome,
     nativeSessionRoots,
     nativeSessionRootsForHome,
     nativeTranscriptMaxDepth,
     primaryCodexHome,
 } from "./session-paths";
+
+describe("nativeHome", () => {
+    test("all providers fall back to their default home when overrides are empty", async () => {
+        await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: "", CODEX_HOME: "", GROK_HOME: "" }, () => {
+            expect(nativeHome("claude", "/home/u")).toBe(join("/home/u", ".claude"));
+            expect(nativeHome("codex", "/home/u")).toBe(join("/home/u", ".codex"));
+            expect(nativeHome("grok", "/home/u")).toBe(join("/home/u", ".grok"));
+        });
+    });
+
+    test("each provider honours only its own override and Codex takes the first nonempty comma entry", async () => {
+        await env.testing.withOverrides(
+            { CLAUDE_CONFIG_DIR: "/custom/claude", CODEX_HOME: " , /a/codex, /b/codex ,", GROK_HOME: "/custom/grok" },
+            () => {
+                expect(nativeHome("claude", "/home/u")).toBe("/custom/claude");
+                expect(nativeHome("codex", "/home/u")).toBe("/a/codex");
+                expect(nativeHome("grok", "/home/u")).toBe("/custom/grok");
+            }
+        );
+    });
+
+    test("whitespace-only overrides and a comma-only Codex list also use the defaults", async () => {
+        await env.testing.withOverrides({ CLAUDE_CONFIG_DIR: " ", CODEX_HOME: " , , ", GROK_HOME: " " }, () => {
+            expect(nativeHome("claude", "/home/u")).toBe(join("/home/u", ".claude"));
+            expect(nativeHome("codex", "/home/u")).toBe(join("/home/u", ".codex"));
+            expect(nativeHome("grok", "/home/u")).toBe(join("/home/u", ".grok"));
+        });
+    });
+});
 
 describe("nativeSessionRoots", () => {
     test("claude lists the default projects dirs plus CLAUDE_CONFIG_DIR", async () => {

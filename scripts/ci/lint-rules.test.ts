@@ -591,6 +591,50 @@ describe("the agent and model ratchet rules (❓ DECISION 22 b)", () => {
         }
     });
 
+    test("hook payload reads include destructuring and literal indexes, but not payload construction", () => {
+        const rule = "no-hook-payload-read";
+        const file = "src/agents/lib/hooks/example.ts";
+        const owner = "src/agents/lib/hooks/payload.ts";
+
+        for (const source of [
+            "const { transcript_path } = payload.raw;",
+            "const { tool_input: input } = payload.raw;",
+            "const { tool_response = {} } = payload.raw;",
+            "({ hook_event_name: event } = payload.raw);",
+            "const { toolInput } = payload.raw;",
+            "const { raw: { toolInput } } = payload;",
+            'const { ["tool_input"]: input } = payload.raw;',
+            'const input = payload.raw["tool_input"];',
+            "const input = payload.raw['toolInput'];",
+            'const input = payload["raw"].toolInput;',
+        ]) {
+            expect(rules(source, file)).toContain(rule);
+            expect(rules(source, owner)).not.toContain(rule);
+        }
+
+        for (const source of [
+            'const payload = { transcript_path: "/fixture.jsonl", tool_input: {} };',
+            "const { unrelated: tool_input } = config;",
+            "const { toolInput } = config;",
+            'const input = config["toolInput"];',
+        ]) {
+            expect(rules(source, file)).not.toContain(rule);
+        }
+    });
+
+    test("harness, payload and process diagnostics name their migration owner", () => {
+        for (const [source, owner] of [
+            ['if (node.harness === "claude") {}', "ProviderPlugin or NativeSessionReader"],
+            ["const input = payload.raw.tool_input;", "src/agents/lib/hooks/payload.ts"],
+            ["const live = /claude/i.test(process.command);", "src/utils/process/classify.ts"],
+        ]) {
+            const findings = checkSource("src/example.ts", source);
+            expect(findings).toHaveLength(1);
+            expect(findings[0].message).toContain(owner);
+            expect(findings[0].message).not.toContain("PROBE");
+        }
+    });
+
     test("process match methods use the regex and command in their actual positions", () => {
         const rule = "no-agent-name-in-command-match";
 
