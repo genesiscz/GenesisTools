@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { parseSttProvider } from "@genesiscz/utils/ai/stt/resolve";
 import { liveTranscriptKind, parseLanguages, STT_PROVIDER_IDS } from "@genesiscz/utils/ai/stt/types";
 import { voiceConfiguration } from "@genesiscz/utils/ai/voice/configuration";
@@ -90,6 +91,11 @@ program
             await withInterrupt(
                 async (signal) => {
                     const capsule = options.capsule ? openVoiceCapsule({ signal }) : null;
+                    if (options.saveAudio) {
+                        // Recorded speech is private: the file is made 0600 before the writer fills it.
+                        await writeFile(options.saveAudio, new Uint8Array(), { mode: 0o600 });
+                    }
+
                     const audio = options.saveAudio ? Bun.file(options.saveAudio).writer() : undefined;
                     let stop: (() => void) | undefined;
                     const stopFromOwner = () => stop?.();

@@ -201,7 +201,8 @@ public final class WidgetVoiceNotesStore: ObservableObject {
             return (incomingDirectory as NSString).appendingPathComponent(UUID().uuidString.lowercased() + ".pcm")
         }
         struct Path: Decodable { let path: String }
-        let data = try await execute(["incoming-path", "--json"], nil) { _ in }
+        // A one-shot command: `execute` is the recorder's transport and answers only a recording's own events.
+        let data = try await request(["incoming-path", "--json"])
         let path = try JSONDecoder().decode(Path.self, from: data).path
         incomingDirectory = (path as NSString).deletingLastPathComponent
         return path
@@ -221,7 +222,7 @@ public final class WidgetVoiceNotesStore: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             do {
-                let data = try await self.execute(args, nil) { _ in }
+                let data = try await self.request(args)
                 self.put(try JSONDecoder().decode(WidgetVoiceNoteResult.self, from: data).note)
             } catch {
                 self.report(error)

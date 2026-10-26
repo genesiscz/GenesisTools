@@ -3342,6 +3342,9 @@ describe("private Widget voice notes", () => {
         expect(note.clip.peakRms).toBeGreaterThan(0);
         expect(await Bun.file(note.clip.path).bytes()).toEqual(audio);
         expect(await Bun.file(clip).exists()).toBe(false);
+        expect((await files.stat(join(root, "voice-notes", "incoming"))).mode & 0o777).toBe(0o700);
+        expect((await files.stat(join(root, "voice-notes", "clips"))).mode & 0o777).toBe(0o700);
+        expect((await files.stat(note.clip.path)).mode & 0o777).toBe(0o600);
         expect((await listVoiceNotes(root)).notes.map((entry) => entry.id)).toEqual([note.id]);
         // Only the incoming folder may hand a clip over: any other path stays where it is.
         const outside = join(root, "outside.pcm");

@@ -436,6 +436,31 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
             requestMicrophonePermission: prompt, activateForMicrophone: activate, presentMicrophonePermission: presentPermission)
     }
 
+    /// The reply box's live dictation names its clip and files the note through one-shot commands. They answer
+    /// `{"path"}` and `{"kind":"added","note"}`, which the recorder's transport (`execute`) would refuse.
+    func testALiveNoteGetsItsClipPathAndIsFiledThroughOneShotCommands() async throws {
+        _ = NSApplication.shared
+        var asked: [[String]] = []
+        let store = make(request: { args in
+            asked.append(args)
+            if args.first == "incoming-path" { return try self.data(["path": "/fixture/voice-notes/incoming/first.pcm"]) }
+            if args.first == "add" { return try self.data(["kind": "added", "note": self.note("Spoken words")]) }
+            return try self.data(["notes": []])
+        })
+        let first = try await store.newIncomingClipPath()
+        XCTAssertEqual(first, "/fixture/voice-notes/incoming/first.pcm")
+        let second = try await store.newIncomingClipPath()
+        XCTAssertEqual((second as NSString).deletingLastPathComponent, "/fixture/voice-notes/incoming")
+        XCTAssertNotEqual(second, first)
+        XCTAssertEqual(asked.filter { $0.first == "incoming-path" }.count, 1, "the folder is asked for once")
+
+        store.fileLiveNote(clip: first, text: "Spoken words", context: WidgetVoiceNoteContext(sessionKey: "fixture-codex"), provider: "fixture",
+                           model: nil, language: nil)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(asked.last?.first, "add")
+        XCTAssertNil(store.error, "a filed note reports no failure")
+    }
+
     func testOpeningVoiceNotesDoesNotBuildHundredsOfRecipientMenuItems() async throws {
         _ = NSApplication.shared
         let recipients = (0..<800).map { index in

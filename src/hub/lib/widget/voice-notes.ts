@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, realpathSync, unlinkSync } from "node:fs";
-import { mkdir, rename, stat, unlink } from "node:fs/promises";
+import { chmod, mkdir, rename, stat, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseSttProvider } from "@genesiscz/utils/ai/stt/resolve";
 import type { LiveTranscriptEvent } from "@genesiscz/utils/ai/stt/types";
@@ -247,9 +247,9 @@ export function voiceNotesIncomingDirectory(root?: string): string {
     return join(voiceNotesDirectory(root), "incoming");
 }
 
-/** A new file name in the incoming folder; the folder exists afterwards. */
+/** A new file name in the incoming folder; the folder exists afterwards, private like every voice-note folder. */
 export async function incomingClipPath(root?: string): Promise<string> {
-    await mkdir(voiceNotesIncomingDirectory(root), { recursive: true });
+    await mkdir(voiceNotesIncomingDirectory(root), { recursive: true, mode: 0o700 });
     return join(voiceNotesIncomingDirectory(root), `${randomUUID()}.pcm`);
 }
 
@@ -300,7 +300,7 @@ export async function addLiveVoiceNote({
 
     const id = randomUUID();
     const output = join(voiceNotesDirectory(root), "clips", `${id}.pcm`);
-    await mkdir(join(voiceNotesDirectory(root), "clips"), { recursive: true });
+    await mkdir(join(voiceNotesDirectory(root), "clips"), { recursive: true, mode: 0o700 });
     const note = voiceNoteSchema.parse({
         id,
         revision: 1,
@@ -326,6 +326,8 @@ export async function addLiveVoiceNote({
     });
     try {
         await rename(clip, output);
+        // The recorder wrote the clip with the default mode; a voice note's audio is private (recordPcmClip's 0600).
+        await chmod(output, 0o600);
         return await mutate({
             root,
             signal,
