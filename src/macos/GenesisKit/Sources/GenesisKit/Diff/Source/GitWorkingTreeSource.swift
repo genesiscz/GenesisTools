@@ -230,12 +230,22 @@ public struct GitWorkingTreeSource {
     }
 
     public static let maxBytes = 1_000_000
+    /// The limit for a file a reader asked to see anyway (`fullFiles`): past it the page would stall drawing it.
+    public static let maxShownBytes = 20_000_000
+
+    /// The note of a file skipped only for its size; a reader may ask to see it anyway (`fullFiles`).
+    public static func largeNote(_ size: Int) -> String { "large file, \(size / 1024) KB" }
+
+    /// Whether `note` (`DiffFile.skipped`) says the file was skipped only for its size, so it can be shown on request.
+    public static func isLarge(_ note: String?) -> Bool { note?.hasPrefix("large file, ") == true }
     public static let emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
     public let repo: URL
     /// The base the Branch scope compares against when it exists here: the PR's target branch
     /// (`origin/<target>`). Without it, a stacked PR's Branch diff ran against `origin/HEAD`.
     public var preferredBase: String? = nil
+    /// Repository-relative paths read up to `maxShownBytes` instead of `maxBytes`: large files the reader asked to see.
+    public var fullFiles: Set<String> = []
 
     public init(repo: URL, preferredBase: String? = nil) {
         self.repo = repo
@@ -306,7 +316,8 @@ public struct GitWorkingTreeSource {
 
     public func load(scope: DiffScope = .uncommitted, session: String? = nil) throws -> Snapshot {
         let layout = try repositoryLayout()
-        let source = GitWorkingTreeSource(repo: layout.root, preferredBase: preferredBase)
+        var source = GitWorkingTreeSource(repo: layout.root, preferredBase: preferredBase)
+        source.fullFiles = fullFiles
         var snapshot = try source.loadCanonical(scope: scope, session: session)
         snapshot.repository = layout
         switch scope {
@@ -749,11 +760,13 @@ public struct GitWorkingTreeSource {
     /// One `git cat-file --batch` for every `rev:path` (rev "" = the index): `<oid> blob <size>\n<bytes>\n`
     /// or `<name> missing\n`. Keys of the result are `rev:path`.
     private func catFile(_ specs: [(rev: String, path: String)]) -> Blobs {
-        catFileBatch(specs.map { "\($0.rev):\($0.path)" })
+        let names = specs.map { "\($0.rev):\($0.path)" }
+        let full = Set(specs.filter { fullFiles.contains($0.path) }.map { "\($0.rev):\($0.path)" })
+        return catFileBatch(names, full: full)
     }
 
     /// One `git cat-file --batch` for these object names (`rev:path` or a bare oid), keyed by name.
-    private func catFileBatch(_ names: [String], gitDir: String? = nil) -> Blobs {
+    private func catFileBatch(_ names: [String], gitDir: String? = nil, full: Set<String> = []) -> Blobs {
         guard !names.isEmpty else { return Blobs() }
         let request = names.map { "\($0)\n" }.joined()
         guard let metadata = try? gitData(["cat-file", "--batch-check"], input: Data(request.utf8), gitDir: gitDir) else { return Blobs() }
@@ -763,8 +776,8 @@ public struct GitWorkingTreeSource {
             let fields = line.split(separator: " ")
             guard fields.count == 3, fields[1] == "blob", let size = Int(fields[2]), size >= 0 else { continue }
             result.oids[name] = String(fields[0])
-            if size > Self.maxBytes {
-                result.contents[name] = .skipped("large file, \(size / 1024) KB")
+            if size > (full.contains(name) ? Self.maxShownBytes : Self.maxBytes) {
+                result.contents[name] = .skipped(Self.largeNote(size))
             } else {
                 eligible.append((name, String(fields[0])))
             }
@@ -782,7 +795,8 @@ public struct GitWorkingTreeSource {
             guard fields.count == 3, fields[1] == "blob", let size = Int(fields[2]), size >= 0,
                   size < data.distance(from: cursor, to: data.endIndex) else { break }
             let end = data.index(cursor, offsetBy: size)
-            result.contents[name] = decode(data[cursor..<end], size: size)
+            result.contents[name] = decode(data[cursor..<end], size: size,
+                                           limit: full.contains(name) ? Self.maxShownBytes : Self.maxBytes)
             cursor = data.index(after: end)
         }
 
@@ -799,14 +813,15 @@ public struct GitWorkingTreeSource {
         }
 
         let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        guard size <= Self.maxBytes else { return .skipped("large file, \(size / 1024) KB") }
+        let limit = fullFiles.contains(path) ? Self.maxShownBytes : Self.maxBytes
+        guard size <= limit else { return .skipped(Self.largeNote(size)) }
         guard let data = try? Data(contentsOf: url) else { return .skipped("unreadable") }
-        return decode(data[...], size: data.count)
+        return decode(data[...], size: data.count, limit: limit)
     }
 
-    private func decode(_ bytes: Data.SubSequence, size: Int) -> Content {
-        if size > Self.maxBytes {
-            return .skipped("large file, \(size / 1024) KB")
+    private func decode(_ bytes: Data.SubSequence, size: Int, limit: Int = Self.maxBytes) -> Content {
+        if size > limit {
+            return .skipped(Self.largeNote(size))
         }
 
         if bytes.prefix(8000).contains(0) {
