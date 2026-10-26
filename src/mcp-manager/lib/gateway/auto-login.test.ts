@@ -417,6 +417,14 @@ describe("auto-login refuses a static-client server with no stored app", () => {
         expect(reason).toContain("http://127.0.0.1:9123/cb");
     });
 
+    test("an unreadable vault produces a controlled refusal", async () => {
+        const reason = await staticClientRefusal("crm", crm, async () => {
+            throw new Error("synthetic vault read failure");
+        });
+
+        expect(reason).toBe("crm cannot check its stored OAuth client because the secrets vault is unavailable.");
+    });
+
     test("a stored app lets the login start", async () => {
         expect(await staticClientRefusal("crm", crm, async () => true)).toBeUndefined();
     });

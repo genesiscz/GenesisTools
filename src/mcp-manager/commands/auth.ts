@@ -336,7 +336,7 @@ function loopbackRedirectProblem(redirectUri: string): string | undefined {
         return `--redirect-uri is not a URL: ${redirectUri}`;
     }
 
-    if (url.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(url.hostname) || !url.port) {
+    if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port || Number(url.port) === 0) {
         return `--redirect-uri must be http://127.0.0.1:<port>/<path> (loopback, explicit port), not ${redirectUri}`;
     }
 

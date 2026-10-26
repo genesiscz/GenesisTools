@@ -84,21 +84,23 @@ export async function readServerTokenSnapshot(
     const snapshot = secretSnapshot();
     const expiresRaw = await snapshot.get(secretPath(server, "token-expires-at"));
     const expiresNumber = expiresRaw === undefined ? undefined : Number(expiresRaw);
+    const clientId = options.includeClient ? await snapshot.get(secretPath(server, "client-id")) : undefined;
+    const staticClientId = options.includeClient
+        ? await snapshot.get(secretPath(server, "static-client-id"))
+        : undefined;
 
     return {
         accessToken: await snapshot.get(secretPath(server, "access-token")),
         expiresAt: expiresNumber !== undefined && Number.isFinite(expiresNumber) ? expiresNumber : undefined,
         hasRefresh: snapshot.has(secretPath(server, "refresh-token")),
         refreshToken: options.includeRefreshToken ? await snapshot.get(secretPath(server, "refresh-token")) : undefined,
-        // A stored static client wins over the slot a login wrote: `auth client` may have
-        // rotated the secret since, and a refresh must post the current one.
-        clientId: options.includeClient
-            ? ((await snapshot.get(secretPath(server, "static-client-id"))) ??
-              (await snapshot.get(secretPath(server, "client-id"))))
-            : undefined,
+        clientId,
+        // A refresh belongs to the client that obtained the grant. Only that same
+        // static app may supply a rotated secret, including removing its secret.
         clientSecret: options.includeClient
-            ? ((await snapshot.get(secretPath(server, "static-client-secret"))) ??
-              (await snapshot.get(secretPath(server, "client-secret"))))
+            ? await snapshot.get(
+                  secretPath(server, clientId && clientId === staticClientId ? "static-client-secret" : "client-secret")
+              )
             : undefined,
     };
 }
@@ -116,6 +118,13 @@ export interface StaticClient {
  */
 export async function writeStaticClient(server: string, client: StaticClient): Promise<void> {
     await withServerCredentialsLock(server, async () => {
+        const grantClientId = await readSecret(secretPath(server, "client-id"));
+
+        if (grantClientId !== client.clientId) {
+            // A different app must log in again; its predecessor's tokens cannot be reused.
+            await deleteServerTokensUnlocked(server);
+        }
+
         await writeSecret(secretPath(server, "static-client-id"), client.clientId);
 
         if (client.clientSecret) {

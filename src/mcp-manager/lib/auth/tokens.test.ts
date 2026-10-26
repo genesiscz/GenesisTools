@@ -20,7 +20,14 @@ import {
 } from "./fetch.ts";
 import { CREDENTIALS_LOCK_WAIT_MS } from "./lock.ts";
 import { secretPath } from "./paths.ts";
-import { deleteServerTokens, readSecret, replaceServerTokens, writeServerTokens } from "./secrets.ts";
+import {
+    deleteServerTokens,
+    readSecret,
+    readStaticClient,
+    replaceServerTokens,
+    writeServerTokens,
+    writeStaticClient,
+} from "./secrets.ts";
 import { readAuthStatus } from "./status.ts";
 import { accessTokenForRequest, DiagnosticRefreshError, peekAccessToken } from "./tokens.ts";
 import { _resetLookupForTest, _setLookupForTest } from "./url-policy.ts";
@@ -533,6 +540,82 @@ describe("bounded MCP credential responses", () => {
 
         expect(capturedSignal).toBeInstanceOf(AbortSignal);
         expect(capturedSignal?.aborted).toBe(false);
+    });
+});
+
+describe("static client grant ownership", () => {
+    const refreshOptions = {
+        tokenEndpoint: "https://identity.example/token",
+        resource: "https://mcp.example/mcp",
+        trustBaseline: "https://mcp.example/mcp",
+        allowRefresh: true,
+    };
+
+    test("rotating the same app secret preserves the grant and posts the rotated secret", async () => {
+        await writeStaticClient("crm", { clientId: "app-a", clientSecret: "old-secret" });
+        await replaceServerTokens("crm", {
+            accessToken: "stale",
+            refreshToken: "grant-a",
+            expiresAt: 1,
+            clientId: "app-a",
+            clientSecret: "old-secret",
+        });
+        await writeStaticClient("crm", { clientId: "app-a", clientSecret: "new-secret" });
+
+        expect(await accessTokenForRequest("crm", refreshOptions)).toBe("refreshed-access");
+        const body = new URLSearchParams(lastTokenBody);
+        expect(body.get("client_id")).toBe("app-a");
+        expect(body.get("client_secret")).toBe("new-secret");
+        expect(body.get("refresh_token")).toBe("grant-a");
+    });
+
+    test("replacing the app clears its grant and requires login before another POST", async () => {
+        await writeStaticClient("crm", { clientId: "app-a", clientSecret: "secret-a" });
+        await replaceServerTokens("crm", {
+            accessToken: "live-a",
+            refreshToken: "grant-a",
+            expiresAt: Date.now() + 600_000,
+            clientId: "app-a",
+            clientSecret: "secret-a",
+        });
+        await writeStaticClient("crm", { clientId: "app-b", clientSecret: "secret-b" });
+
+        expect(await peekAccessToken("crm")).toMatchObject({ accessToken: undefined, hasRefresh: false });
+        await expect(accessTokenForRequest("crm", refreshOptions)).rejects.toThrow(/auth login crm/);
+        expect(tokenPosts).toBe(0);
+        expect(await readStaticClient("crm")).toEqual({ clientId: "app-b", clientSecret: "secret-b" });
+    });
+
+    test("a later DCR grant uses its own client even while static slots remain", async () => {
+        await writeStaticClient("crm", { clientId: "static-app", clientSecret: "static-secret" });
+        await replaceServerTokens("crm", {
+            accessToken: "stale",
+            refreshToken: "dcr-grant",
+            expiresAt: 1,
+            clientId: "dcr-app",
+            clientSecret: "dcr-secret",
+        });
+
+        await accessTokenForRequest("crm", refreshOptions);
+        const body = new URLSearchParams(lastTokenBody);
+        expect(body.get("client_id")).toBe("dcr-app");
+        expect(body.get("client_secret")).toBe("dcr-secret");
+        expect(body.get("refresh_token")).toBe("dcr-grant");
+    });
+
+    test("removing a matching static secret does not resurrect the old login secret", async () => {
+        await writeStaticClient("crm", { clientId: "app-a", clientSecret: "old-secret" });
+        await replaceServerTokens("crm", {
+            accessToken: "stale",
+            refreshToken: "grant-a",
+            expiresAt: 1,
+            clientId: "app-a",
+            clientSecret: "old-secret",
+        });
+        await writeStaticClient("crm", { clientId: "app-a" });
+
+        await accessTokenForRequest("crm", refreshOptions);
+        expect(new URLSearchParams(lastTokenBody).has("client_secret")).toBe(false);
     });
 });
 

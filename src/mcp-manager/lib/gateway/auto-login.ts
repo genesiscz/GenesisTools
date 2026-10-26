@@ -91,8 +91,17 @@ export async function staticClientRefusal(
     server: UnifiedMCPServerConfig,
     stored: (server: string) => Promise<boolean> = hasStaticClient
 ): Promise<string | undefined> {
-    if (policyFor(server) !== "static-client" || (await stored(name))) {
+    if (policyFor(server) !== "static-client") {
         return undefined;
+    }
+
+    try {
+        if (await stored(name)) {
+            return undefined;
+        }
+    } catch {
+        logger.warn({ server: name }, "gateway could not check the stored OAuth client: secrets vault unavailable");
+        return `${name} cannot check its stored OAuth client because the secrets vault is unavailable.`;
     }
 
     return `${name} needs a pre-registered OAuth app. Register the redirect URL ${staticRedirectUriFor(server)} with the provider, then run ${toolCommand("mcp-manager auth client", name, "--client-id", "<id>")}`;
