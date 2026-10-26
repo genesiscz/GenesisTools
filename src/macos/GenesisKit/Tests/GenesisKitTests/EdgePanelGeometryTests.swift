@@ -9,6 +9,37 @@ final class EdgePanelGeometryTests: XCTestCase {
     private let screen = CGRect(x: -1600, y: 100, width: 1600, height: 1000)
     private let visible = CGRect(x: -1600, y: 150, width: 1600, height: 920)
 
+    @MainActor
+    func testAnIgnoredExitKeepsWatchingUntilPointerMovementLeavesTheWindow() async throws {
+        let window = NSWindow(contentRect: CGRect(x: -10000, y: -10000, width: 200, height: 200),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let root = EdgePanelRootView(frame: CGRect(x: 0, y: 0, width: 200, height: 200))
+        window.contentView = root
+        defer { window.close() }
+        var point = NSPoint(x: window.frame.midX, y: window.frame.midY)
+        root.pointerLocation = { point }
+        var changes: [Bool] = []
+        root.pointerChanged = { changes.append($0) }
+        let event = try XCTUnwrap(NSEvent.enterExitEvent(with: .mouseExited, location: .zero, modifierFlags: [],
+            timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0,
+            userData: nil))
+        root.mouseExited(with: event)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(root.ignoredExitPending, "the first recheck must not stop watching a still pointer")
+        XCTAssertTrue(changes.isEmpty)
+        point = NSPoint(x: window.frame.maxX + 1, y: window.frame.midY)
+        root.checkIgnoredExit() // The same handler the movement monitors call; no second mouseExited.
+        XCTAssertEqual(changes, [false])
+        XCTAssertFalse(root.ignoredExitPending)
+        root.checkIgnoredExit()
+        XCTAssertEqual(changes, [false], "a leave is reported once")
+        point = NSPoint(x: window.frame.midX, y: window.frame.midY)
+        root.mouseExited(with: event)
+        window.contentView = nil
+        XCTAssertFalse(root.ignoredExitPending, "detaching the view removes its monitors")
+    }
+
     func testTopWidthReservesRoomForTheCutoutAndEveryVisibleControl() {
         XCTAssertEqual(WidgetClusterGeometry.topWidth(cutout: 200, moduleCount: 1), 364)
         XCTAssertEqual(WidgetClusterGeometry.topWidth(cutout: 200, moduleCount: 6), 524)

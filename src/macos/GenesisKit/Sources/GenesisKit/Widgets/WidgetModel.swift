@@ -320,10 +320,8 @@ public final class WidgetModel: ObservableObject {
     private var draftTasks: [String: Task<Void, Never>] = [:]
     private var dirtyDrafts: Set<String> = []
     private var draftRevisions: [String: Int] = [:]
-    /// The text each session's last Send took from the composer, and when. A write of that same text into the emptied
-    /// draft right after is the closing field handing back what it showed, not typing: it put a sent answer back into
-    /// the reply field until the hub's next snapshot cleared it again (Martin, 2026-10-26).
-    private var lastSent: [String: (text: String, at: Date)] = [:]
+    /// Sending replaces the composer; bindings retained by its disposed field cannot write into the new draft.
+    @Published private var composerGeneration = 0
     var actionRunner: ((WidgetJSON) async throws -> WidgetJSON)?
     private var submittedAssets: Set<String> = []
     private var submittedCards: Set<String> = []
@@ -909,6 +907,7 @@ public final class WidgetModel: ObservableObject {
     public func hover(_ surface: WidgetSurfaceID, inside: Bool) {
         if inside { pointerInside.insert(surface.key) } else { pointerInside.remove(surface.key) }
         pointerChanged?(surface, inside)
+        if !inside { scheduleQuietReduction() }
         if !inside, peekItem != nil, hoveredSurface == surface {
             // The user moved onto the popup and away again: it closes like a hover preview.
             hoverTask?.cancel()
@@ -1340,6 +1339,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func select(_ key: String, edge: EdgePanelPlacement? = nil) {
+        if selectedKey != key { composerGeneration += 1 }
         sendCloseRevision += 1
         if openingInbox?.key != key { openingInbox = nil }
         inboxOverview = false
@@ -1517,17 +1517,22 @@ public final class WidgetModel: ObservableObject {
     }
 
 
+    /// A field keeps its session and generation, while a newly rendered composer accepts any text, even a repeat.
+    func composerText(ownAnswer: String? = nil) -> Binding<String> {
+        let key = selectedKey
+        let generation = composerGeneration
+        return Binding(get: { [weak self] in self?.drafts[key]?.text ?? "" }, set: { [weak self] text in
+            guard let self, self.selectedKey == key, self.composerGeneration == generation,
+                  ownAnswer == nil || self.ownAnswerCardID == ownAnswer else { return }
+            self.setText(text)
+        })
+    }
+
     public func setText(_ text: String) {
         sendCloseRevision += 1
         let key = selectedKey
         guard !key.isEmpty else { return }
-        if let sent = lastSent[key] {
-            if !text.isEmpty, text == sent.text, (drafts[key]?.text ?? "").isEmpty, Date().timeIntervalSince(sent.at) < 2 {
-                PerfLog.mark("widget.draft dropped the sent text a closing field wrote back key=\(key)")
-                return
-            }
-            lastSent[key] = nil
-        }
+
         var value = drafts[key] ?? WidgetDraft()
         value.text = String(text.prefix(Self.draftTextLimit))
         drafts[key] = value
@@ -1923,7 +1928,7 @@ public final class WidgetModel: ObservableObject {
             // A save of the typed text still on its way would land after the clear below and put the sent text back
             // on the hub; a new revision makes it skip itself.
             draftRevisions[selectedKey, default: 0] += 1
-            if !submitted.text.isEmpty { lastSent[selectedKey] = (submitted.text, Date()) }
+            composerGeneration += 1
             submittedAssets.formUnion(submitted.assetIds)
             if let card, answering || choice != nil { submittedCards.insert(card.id) }
             action(["action": "draft-text", "key": .string(selectedKey), "text": ""])

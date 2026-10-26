@@ -106,7 +106,7 @@ public struct LiveWidgetView: View {
             expanded: model.expanded == edge,
             animationsActive: model.placement == "both" || (model.placement == "top" ? edge == .top : edge != .top),
             cutoutWidth: cutout, compactHeight: compactHeight,
-            draft: Binding(get: { model.draft.text }, set: model.setText),
+            draft: model.composerText(),
             actions: AgentWidgetActions(
                 expand: { model.open(edge) }, collapse: { model.collapse() },
                 select: { model.select($0, edge: edge) }, choose: { model.choose(option: $0) },
@@ -1224,7 +1224,7 @@ public struct LiveWidgetView: View {
                         .frame(maxWidth: .infinity, minHeight: composerFieldHeight, maxHeight: composerFieldHeight,
                                alignment: .topLeading)
                 } else {
-                    TextField(placeholder, text: Binding(get: { model.draft.text }, set: model.setText), axis: .vertical)
+                    TextField(placeholder, text: model.composerText(ownAnswer: ownAnswer?.id), axis: .vertical)
                         .textFieldStyle(.plain).font(.system(size: 12)).lineLimit(1...4).focused($editing)
                         .onSubmit { model.send() }
                         .accessibilityLabel(ownAnswer == nil ? "Reply to selected agent" : "Your own answer")

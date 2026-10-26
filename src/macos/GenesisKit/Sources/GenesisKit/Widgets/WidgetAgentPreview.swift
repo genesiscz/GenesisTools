@@ -195,8 +195,20 @@ struct AgentWidgetPreview: View {
         return "Order: \(sorts[index].title). Click for \(sorts[(index + 1) % sorts.count].title)."
     }
 
+    static func pendingQuestion(_ item: WidgetInboxItem?, enabled: Bool) -> String? {
+        guard enabled, let item, let title = item.title, !title.isEmpty else { return nil }
+        return WidgetAlerts.kicker(item) + " · " + title
+    }
+
+    static func rowAccessibilityLabel(_ session: WidgetSession, question: String?) -> String {
+        let label = "Open " + session.title + ", " + session.visualStatus.label
+        return question.map { label + ", " + $0 } ?? label
+    }
+
     private func row(_ session: WidgetSession) -> some View {
-        WidgetHoverRow { hovering in HStack(spacing: 4) {
+        let question = Self.pendingQuestion(model.inboxFor(session.key)?.pendingItem,
+            enabled: model.snapshot?.state.preferences.previewQuestion ?? true)
+        return WidgetHoverRow { hovering in HStack(spacing: 4) {
             Button {
                 model.openInboxNotification(on: surface, key: session.key)
             } label: {
@@ -213,9 +225,8 @@ struct AgentWidgetPreview: View {
                         WidgetSessionTimes(session: session, inbox: model.inboxFor(session.key))
                         // The waiting question itself, so an alert that folded can be found again here (Martin,
                         // 2026-10-25: "I can't seem to find that same stuff anywhere").
-                        if model.snapshot?.state.preferences.previewQuestion ?? true,
-                           let pending = model.inboxFor(session.key)?.pendingItem, let title = pending.title, !title.isEmpty {
-                            Text(WidgetAlerts.kicker(pending) + " · " + title)
+                        if let question {
+                            Text(question)
                                 .font(.system(size: 11)).foregroundStyle(Color.orange.opacity(0.9)).lineLimit(1)
                         }
                     }
@@ -234,7 +245,7 @@ struct AgentWidgetPreview: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(RowButtonStyle(cornerRadius: 10))
-            .accessibilityLabel("Open " + session.title + ", " + session.visualStatus.label)
+            .accessibilityLabel(Self.rowAccessibilityLabel(session, question: question))
             WidgetCmuxButton(model: model, session: session, live: hovering)
         } }
         .padding(.trailing, 4)

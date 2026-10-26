@@ -43,12 +43,16 @@ public extension EnvironmentValues {
 
 /// The panel's root: the hosting view fills it, and while a transition runs a shape layer masks it to the animated
 /// outline. The window itself changes size once per transition, so no frame of the motion re-lays out SwiftUI.
-private final class EdgePanelRootView: NSView {
+final class EdgePanelRootView: NSView {
     let maskLayer = CAShapeLayer()
     /// The pointer entered or left the window, by geometry. SwiftUI's hover is a hit test, and it said "left" with the
     /// pointer still on the panel when a scroll moved a part it does not count (the overlay scroller, an AppKit view)
     /// under it, so the hover list closed under a scrolling pointer (Martin, 2026-10-24).
     var pointerChanged: ((Bool) -> Void)?
+    var pointerLocation: () -> NSPoint = { NSEvent.mouseLocation }
+    private var localExitMonitor: Any?
+    private var globalExitMonitor: Any?
+    private(set) var ignoredExitPending = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -66,25 +70,63 @@ private final class EdgePanelRootView: NSView {
 
     override var isFlipped: Bool { false }
 
-    override func mouseEntered(with event: NSEvent) { pointerChanged?(true) }
+    override func mouseEntered(with event: NSEvent) {
+        stopExitWatch()
+        pointerChanged?(true)
+    }
     /// AppKit reports an exit when the window reshapes under a still pointer (5 of 17 such exits folded the preview,
     /// app-perf.log 2026-10-25): an exit with the pointer still inside the window waits and checks again, and only a
     /// pointer that really left reports false. Every ignored exit is logged.
     override func mouseExited(with event: NSEvent) {
-        guard let window, window.frame.contains(NSEvent.mouseLocation) else {
+        guard let window, window.frame.contains(pointerLocation()) else {
+            stopExitWatch()
             pointerChanged?(false)
             return
         }
         PerfLog.mark("edge.hover exit ignored: pointer still inside \(window.title)")
+        startExitWatch()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, let window = self.window else { return }
-                if !window.frame.contains(NSEvent.mouseLocation) {
-                    PerfLog.mark("edge.hover left after a reshape: \(window.title)")
-                    self.pointerChanged?(false)
-                }
-            }
+            MainActor.assumeIsolated { self?.checkIgnoredExit() }
         }
+    }
+
+    /// Movement remains observable after AppKit consumed the exit transition during a reshape. No polling while idle.
+    private func startExitWatch() {
+        guard !ignoredExitPending else { return }
+        ignoredExitPending = true
+        let events: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseDragged, .rightMouseDragged, .otherMouseDragged]
+        localExitMonitor = NSEvent.addLocalMonitorForEvents(matching: events) { [weak self] event in
+            self?.checkIgnoredExit()
+            return event
+        }
+        globalExitMonitor = NSEvent.addGlobalMonitorForEvents(matching: events) { [weak self] _ in
+            self?.checkIgnoredExit()
+        }
+    }
+
+    func checkIgnoredExit() {
+        guard ignoredExitPending else { return }
+        guard let window else { stopExitWatch(); return }
+        guard !window.frame.contains(pointerLocation()) else { return }
+        PerfLog.mark("edge.hover left after a reshape: \(window.title)")
+        stopExitWatch()
+        pointerChanged?(false)
+    }
+
+    private func stopExitWatch() {
+        for monitor in [localExitMonitor, globalExitMonitor].compactMap({ $0 }) { NSEvent.removeMonitor(monitor) }
+        localExitMonitor = nil
+        globalExitMonitor = nil
+        ignoredExitPending = false
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil { stopExitWatch() }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
+    deinit {
+        for monitor in [localExitMonitor, globalExitMonitor].compactMap({ $0 }) { NSEvent.removeMonitor(monitor) }
     }
 
     var clipping = false {

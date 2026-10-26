@@ -59,16 +59,105 @@ final class WidgetPolishShotsTests: XCTestCase {
         let decision = try XCTUnwrap(model.cards.first)
         model.openCard(decision)
         model.openOwnAnswer(decision)
-        model.setText("merge it after its round")
+        model.actionRunner = { _ in ["ok": true] }
+        let closingField = model.composerText(ownAnswer: decision.id)
+        let oldReplyField = model.composerText()
+        closingField.wrappedValue = "merge it after its round"
 
         model.send()
         XCTAssertNil(model.ownAnswerCard, "the card's field closes once the answer is queued")
         XCTAssertEqual(model.draft.text, "")
-        model.setText("merge it after its round")
-        XCTAssertEqual(model.draft.text, "", "the closing field's copy of the sent answer stays out of the reply field")
-
+        closingField.wrappedValue = "merge it after its round"
+        oldReplyField.wrappedValue = "merge it after its round"
+        XCTAssertEqual(model.draft.text, "", "disposed fields cannot write into the next composer")
+        model.composerText().wrappedValue = "merge it after its round"
+        XCTAssertEqual(model.draft.text, "merge it after its round", "the active composer accepts an immediate repeat")
         model.setText("and one more thing")
         XCTAssertEqual(model.draft.text, "and one more thing", "new typing after the send is kept")
+    }
+
+    func testRegularComposerAcceptsAnImmediateRepeatAfterSend() throws {
+        let model = try model(panelBackground: nil)
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        let oldField = model.composerText()
+        oldField.wrappedValue = "OK"
+        model.send()
+        oldField.wrappedValue = "OK"
+        XCTAssertEqual(model.draft.text, "", "an old binding cannot restore sent text")
+        model.composerText().wrappedValue = "OK"
+        XCTAssertEqual(model.draft.text, "OK", "the active reply field accepts the same message immediately")
+    }
+
+    func testQueuedDraftSaveIsFencedBySendAndLaterSavesStillRun() async throws {
+        let model = try model(panelBackground: nil)
+        defer { model.stop() }
+        var writes: [String] = []
+        let laterSave = expectation(description: "new draft reached the backend")
+        model.actionRunner = { value in
+            if case .object(let fields) = value, fields["action"] == .string("draft-text"),
+               case .string(let text) = fields["text"] {
+                writes.append(text)
+                if text == "next draft" { laterSave.fulfill() }
+            }
+            return ["ok": true]
+        }
+        var release: CheckedContinuation<Void, Never>?
+        model.afterMutations { await withCheckedContinuation { release = $0 } }
+        for _ in 0 ..< 200 where release == nil { try await Task.sleep(for: .milliseconds(5)) }
+        guard let barrier = release else { return XCTFail("mutation barrier did not start") }
+        defer { release?.resume() }
+        model.setText("old queued draft")
+        // Let the debounce put its save behind the blocked mutation before Send invalidates that revision.
+        try await Task.sleep(for: .milliseconds(450))
+        model.send()
+        let drained = expectation(description: "send mutations drained")
+        model.afterMutations { drained.fulfill() }
+        release = nil
+        barrier.resume()
+        await fulfillment(of: [drained], timeout: 3)
+        XCTAssertEqual(writes, [""], "the queued old save is skipped but the send's clear reaches the backend")
+        model.setText("next draft")
+        await fulfillment(of: [laterSave], timeout: 3)
+        XCTAssertEqual(writes, ["", "next draft"], "a legitimate later draft still saves")
+    }
+
+    func testWaitingQuestionIsIncludedInThePreviewAccessibilityLabel() throws {
+        let model = try model(panelBackground: nil)
+        defer { model.stop() }
+        let session = try XCTUnwrap(model.selected)
+        let item = try XCTUnwrap(model.inboxFor(session.key)?.pendingItem)
+        let question = try XCTUnwrap(AgentWidgetPreview.pendingQuestion(item, enabled: true))
+        XCTAssertTrue(AgentWidgetPreview.rowAccessibilityLabel(session, question: question).contains(question))
+        XCTAssertNil(AgentWidgetPreview.pendingQuestion(item, enabled: false))
+        XCTAssertNil(AgentWidgetPreview.pendingQuestion(nil, enabled: true))
+        XCTAssertEqual(AgentWidgetPreview.rowAccessibilityLabel(session, question: nil),
+                       "Open " + session.title + ", " + session.visualStatus.label)
+        var untitled = item
+        untitled.title = ""
+        XCTAssertNil(AgentWidgetPreview.pendingQuestion(untitled, enabled: true))
+    }
+
+    func testQuietCollapseRestartsWhenThePointerLeavesWithoutAnotherSnapshot() async throws {
+        let model = try model(panelBackground: nil)
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        var wire = try XCTUnwrap(model.snapshot)
+        wire.sessions = wire.sessions.map { session in
+            var idle = session
+            idle.status = "idle"
+            return idle
+        }
+        wire.state.preferences.quietSeconds = 5
+        model.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
+        let surface = WidgetSurfaceID(edge: .right)
+        model.hover(surface, inside: true)
+        model.open(.right)
+        try await Task.sleep(for: .milliseconds(5300))
+        XCTAssertEqual(model.expanded, .right, "quiet expiry keeps a panel under the pointer open")
+        model.hover(surface, inside: false)
+        try await Task.sleep(for: .milliseconds(5300))
+        XCTAssertNil(model.expanded, "pointer exit rearms quiet collapse without a new snapshot")
     }
 
     func testTheRecommendedOptionIsFoundByLetterOrText() {
