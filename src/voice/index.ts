@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { chmod, writeFile } from "node:fs/promises";
 import { parseSttProvider } from "@genesiscz/utils/ai/stt/resolve";
 import { liveTranscriptKind, parseLanguages, STT_PROVIDER_IDS } from "@genesiscz/utils/ai/stt/types";
 import { voiceConfiguration } from "@genesiscz/utils/ai/voice/configuration";
@@ -92,8 +92,10 @@ program
                 async (signal) => {
                     const capsule = options.capsule ? openVoiceCapsule({ signal }) : null;
                     if (options.saveAudio) {
-                        // Recorded speech is private: the file is made 0600 before the writer fills it.
+                        // Recorded speech is private: the file is 0600 before the writer fills it. The mode of
+                        // writeFile applies only to a file it creates, so an existing file gets the chmod too.
                         await writeFile(options.saveAudio, new Uint8Array(), { mode: 0o600 });
+                        await chmod(options.saveAudio, 0o600);
                     }
 
                     const audio = options.saveAudio ? Bun.file(options.saveAudio).writer() : undefined;

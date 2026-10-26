@@ -288,6 +288,26 @@ describe("RecordingSession", () => {
         expect(await recording.finished).toBe("discarded");
     });
 
+    it("a failed join keeps a movie already at the output and leaves no temporary file", async () => {
+        const { recorder } = fakeRecorder();
+        await writeFile(join(root, "out.mp4"), "previous movie");
+        const recording = session(recorder, {
+            join: async ({ output }) => {
+                await writeFile(output, "half a movie");
+                throw new Error("ffmpeg died");
+            },
+        });
+        await recording.start();
+        await recording.command({ cmd: "pause" });
+        await recording.command({ cmd: "resume" });
+        await recording.command({ cmd: "stop" });
+
+        expect(await readFile(join(root, "out.mp4"), "utf8")).toBe("previous movie");
+        expect((await fs.readdir(root)).filter((name) => name.startsWith(".recording-"))).toEqual([]);
+        await recording.command({ cmd: "discard" });
+        expect(await recording.finished).toBe("discarded");
+    });
+
     it("a session whose folder cannot be made ends as failed instead of waiting forever", async () => {
         const blocker = join(root, "blocker");
         await writeFile(blocker, "a file where the folder should go");

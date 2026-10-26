@@ -465,19 +465,11 @@ export class RecordingSession {
                 await this.moveMovie(ordered[0].path);
                 durationMs = ordered[0].durationMs;
             } else {
-                ({ durationMs } = await this.options.join({ segments: ordered, output: this.options.output }));
+                durationMs = await this.joinMovie(ordered);
             }
         } catch (error) {
-            // The segments are still on disk: a stop tries the save again and a discard still works. A join that
-            // failed after it started writing leaves part of the movie at the output; that goes, so a discard keeps
-            // nothing on screen.
+            // The segments are still on disk: a stop tries the save again and a discard still works.
             log.warn({ error, output: this.options.output, segments: ordered.length }, "recording could not be saved");
-            if (ordered.length > 1) {
-                await unlink(this.options.output).catch((cleanupError: unknown) => {
-                    log.debug({ error: cleanupError, output: this.options.output }, "no partial movie to remove");
-                });
-            }
-
             this.setState("paused", "recorder");
             this.options.emit({
                 event: "error",
@@ -515,7 +507,7 @@ export class RecordingSession {
                 throw error;
             }
 
-            const temporary = join(dirname(this.options.output), `.recording-${randomUUID()}.mp4`);
+            const temporary = this.temporaryOutput();
             try {
                 await copyFile(source, temporary);
                 await rename(temporary, this.options.output);
@@ -525,6 +517,27 @@ export class RecordingSession {
                 });
             }
         }
+    }
+
+    /**
+     * Joins the segments into a file next to the output and renames it into place, so a join that fails part way
+     * leaves no partial movie and never touches a file already at the output.
+     */
+    private async joinMovie(ordered: FinishedSegment[]): Promise<number> {
+        const temporary = this.temporaryOutput();
+        try {
+            const { durationMs } = await this.options.join({ segments: ordered, output: temporary });
+            await rename(temporary, this.options.output);
+            return durationMs;
+        } finally {
+            await unlink(temporary).catch((cleanupError: unknown) => {
+                log.debug({ error: cleanupError, temporary }, "recording temporary file already gone");
+            });
+        }
+    }
+
+    private temporaryOutput(): string {
+        return join(dirname(this.options.output), `.recording-${randomUUID()}.mp4`);
     }
 
     /** The movie is saved by now: a folder that will not go is logged, and the session still ends. */
