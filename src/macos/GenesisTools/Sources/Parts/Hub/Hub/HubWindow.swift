@@ -1227,6 +1227,13 @@ final class HubModel: ObservableObject {
         selectWorktree(busiest)
     }
 
+    /// The review the Worktrees page shows for `worktree`: the one made for it. Matched on `home`, never `repo`:
+    /// the first load moves `repo` to the diff layout's root, which spells git's `/private/tmp/…` as `/tmp/…`, so
+    /// a worktree under /tmp or /var stayed on "Loading the worktree's changes…" (2026-10-26).
+    func review(showing worktree: HubWorktree) -> ReviewModel? {
+        review.flatMap { $0.home.path == worktree.path ? $0 : nil }
+    }
+
     func selectWorktree(_ worktree: HubWorktree) {
         selectedWorktree = worktree.path
         shownCommit = nil

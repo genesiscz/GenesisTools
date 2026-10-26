@@ -408,6 +408,18 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNotNil(model.worktrees.first { $0.path == model.selectedWorktree })
         XCTAssertEqual(model.review?.scope, .commit(sha: sha, title: "linked commit"))
         XCTAssertNil(model.error)
+
+        // Still shown once the review has loaded: the load moves `repo` to the `/var/…` spelling of git's
+        // `/private/var/…`, and a page that matched on it said "Loading the worktree's changes…" for good.
+        let review = try XCTUnwrap(model.review)
+        review.reload()
+        let deadline = Date().addingTimeInterval(10)
+        while review.loading && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertFalse(review.loading)
+        let row = try XCTUnwrap(model.worktrees.first { $0.path == root })
+        XCTAssertTrue(model.review(showing: row) === review, "review \(review.repo.path) for \(row.path)")
     }
 
     /// Before the first discovery a link must leave the list empty: opening Worktrees discovers only while the

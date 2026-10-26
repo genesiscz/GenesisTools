@@ -403,7 +403,7 @@ struct WorktreeDetailView: View {
                 }
             }
 
-            if let review = model.review, review.repo.path == worktree.path {
+            if let review = model.review(showing: worktree) {
                 ReviewRootView(model: review)
             } else {
                 Text("Loading the worktree's changes…")
