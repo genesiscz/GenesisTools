@@ -1,3 +1,5 @@
+import AppKit
+import SwiftUI
 import XCTest
 @testable import GenesisKit
 
@@ -146,6 +148,40 @@ final class GitRepoPanelKeyboardTests: XCTestCase {
                 XCTAssertEqual(folded.count, 2, "other sections keep their fold")
             }
         }
+    }
+
+    func testAFoldedTableMeasuresItsHeightWhenAFileFirstAppears() async throws {
+        let heading = GitPanelRow.section(key: "changes", title: "Changes", open: false)
+        let file = GitPanelRow.file(entry: GitStatusEntry(path: "note.md", unstaged: .modified), staged: false,
+                                    id: "changes:note.md", indent: false, date: nil)
+        let box = GitRepoTableBox()
+        func panel(_ rows: [GitPanelRow]) -> GitRepoTable<Int> {
+            GitRepoTable(rows: rows, revision: 0, box: box, keys: nil) { row in
+                AnyView(Text(row.spoken).font(.system(size: row.kind == .file ? 24 : 10))
+                    .padding(.vertical, row.kind == .file ? 6 : 0))
+            }
+        }
+        func table(in view: NSView) -> NSTableView? {
+            if let table = view as? NSTableView { return table }
+            return view.subviews.lazy.compactMap { table(in: $0) }.first
+        }
+        let host = NSHostingView(rootView: panel([heading]))
+        host.frame = NSRect(x: 0, y: 0, width: 300, height: 200)
+        let window = NSWindow(contentRect: host.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        defer { window.contentView = nil }
+        host.layoutSubtreeIfNeeded()
+        let mounted = try XCTUnwrap(table(in: host))
+        let initialHeight = mounted.rowHeight
+        host.rootView = panel([.section(key: "changes", title: "Changes", open: true), file])
+        let deadline = Date().addingTimeInterval(3)
+        while mounted.numberOfRows != 2, Date() < deadline {
+            host.layoutSubtreeIfNeeded()
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertEqual(mounted.numberOfRows, 2)
+        XCTAssertGreaterThan(mounted.rowHeight, initialHeight, "a folded heading must not permanently size the file rows")
     }
 
     func testAheadAndBehindAreWords() {

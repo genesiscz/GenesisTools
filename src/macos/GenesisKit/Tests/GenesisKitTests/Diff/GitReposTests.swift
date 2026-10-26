@@ -56,13 +56,26 @@ final class GitReposTests: XCTestCase {
         file.follow(note)
         await wait("the file state") { file.state?.unstagedAdditions == 1 }
         XCTAssertEqual(file.state?.summary, "Modified · 1 line unstaged")
+        let tree = GitTreeDecorationsModel()
+        tree.follow(repo)
+        await wait("the initial line counts") { tree.decorations.count(for: note.path)?.additions == 1 }
+        let generation = model.generation
+        let previousStatus = model.status
+        // Another program edits an already-modified file. Its porcelain status remains identical.
+        try "one\ntwo\nthree\nfour\n".write(to: note, atomically: true, encoding: .utf8)
+        await wait("the second external edit", timeout: 8) {
+            file.state?.unstagedAdditions == 3 && tree.decorations.count(for: note.path)?.additions == 3
+        }
+        XCTAssertEqual(model.status, previousStatus)
+        XCTAssertEqual(model.generation, generation, "content updates do not invalidate history readers")
 
         // A stage is a change to the index: git's folder event refreshes both, nobody calls refresh.
         try git(["add", "plan.md"], in: repo)
         await wait("the staged state") { file.state?.hasStaged == true && file.state?.hasUnstaged == false }
         XCTAssertEqual(model.status?.entry(for: note)?.staged, .modified)
-        XCTAssertEqual(file.state?.summary, "Modified · 1 line staged")
+        XCTAssertEqual(file.state?.summary, "Modified · 3 lines staged")
 
+        tree.follow(nil)
         file.follow(nil)
         XCTAssertNil(file.state)
     }

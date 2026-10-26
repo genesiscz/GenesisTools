@@ -228,10 +228,14 @@ public final class GitRepoFollower {
     private var repo: AnyCancellable?
     private var repos: AnyCancellable?
     private let skipFirst: Bool
+    private let contentChanges: Bool
     private let changed: () -> Void
 
-    public init(skipFirst: Bool = false, changed: @escaping () -> Void) {
+    /// Content-derived readers also reload on working-tree reads whose porcelain status stayed equal.
+    /// History readers keep the default, following only status/index/HEAD invalidation.
+    public init(skipFirst: Bool = false, contentChanges: Bool = false, changed: @escaping () -> Void) {
         self.skipFirst = skipFirst
+        self.contentChanges = contentChanges
         self.changed = changed
     }
 
@@ -262,8 +266,9 @@ public final class GitRepoFollower {
     private func attach() -> Bool {
         if repo != nil { return true }
         guard let folder, let model = GitRepos.shared.model(for: folder) else { return false }
-        let generations = skipFirst ? model.$generation.dropFirst().eraseToAnyPublisher() : model.$generation.eraseToAnyPublisher()
-        repo = generations.sink { [weak self] _ in
+        let changes = contentChanges ? model.$reads.eraseToAnyPublisher() : model.$generation.eraseToAnyPublisher()
+        let updates = skipFirst ? changes.dropFirst().eraseToAnyPublisher() : changes
+        repo = updates.sink { [weak self] _ in
             DispatchQueue.main.async { self?.changed() }
         }
         return true
@@ -276,7 +281,7 @@ public final class GitRepoFollower {
 public final class GitFileStateModel: ObservableObject {
     @Published public private(set) var state: GitFileState?
     public private(set) var url: URL?
-    private lazy var follower = GitRepoFollower { [weak self] in self?.refresh() }
+    private lazy var follower = GitRepoFollower(contentChanges: true) { [weak self] in self?.refresh() }
     private var ticket = 0
 
     public init() {}
@@ -311,7 +316,7 @@ public final class GitTreeDecorationsModel: ObservableObject {
     @Published public private(set) var decorations = GitTreeDecorations.none
     @Published private(set) var hasRepository = false
     private var root: URL?
-    private lazy var follower = GitRepoFollower { [weak self] in self?.update() }
+    private lazy var follower = GitRepoFollower(contentChanges: true) { [weak self] in self?.update() }
 
     public init() {}
 

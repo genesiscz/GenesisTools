@@ -132,7 +132,7 @@ struct GitRepoTable<Revision: Equatable>: NSViewRepresentable {
         let old = coordinator.rows
         coordinator.rows = rows
         coordinator.revision = revision
-        if coordinator.rowHeight == nil, let first = rows.first(where: { $0.kind == .file }) ?? rows.first {
+        if coordinator.rowHeight == nil, let first = rows.first(where: { $0.kind == .file }) {
             let height = MarkdownTreeTableCell.height(of: coordinator.cell(first))
             coordinator.rowHeight = height
             table.rowHeight = height
