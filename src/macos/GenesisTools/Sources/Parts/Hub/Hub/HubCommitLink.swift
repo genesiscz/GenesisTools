@@ -115,8 +115,11 @@ struct HubLocalCommits: Equatable {
         }
         let span = Int(git(repo, ["rev-list", "--count", "--ancestry-path", first + ".." + last])?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0
-        let unpushed = Int(git(repo, ["rev-list", "--count", head + ".." + last])?
+        // Count only descendants of the first endpoint within this link, excluding the pushed head's history.
+        // The exclusive range omits the first endpoint itself, so include it when it is also unpushed.
+        let unpushedAfterFirst = Int(git(repo, ["rev-list", "--count", "--ancestry-path=" + first, first + ".." + last, "--not", head])?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? "") ?? 0
+        let unpushed = unpushedAfterFirst + (isAncestor(first, of: head, repo: repo) ? 0 : 1)
         let title = git(repo, ["log", "-1", "--format=%s", last])?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return .success(HubLocalCommits(first: first, last: full.count > 1 ? last : nil, count: span + 1,
                                         unpushed: unpushed, title: title))

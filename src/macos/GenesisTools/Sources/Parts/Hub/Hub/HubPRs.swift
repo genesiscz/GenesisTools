@@ -350,7 +350,7 @@ final class PRsModel: ObservableObject {
     /// The range a link's `commit=<from>..<to>` set, so the commits list marks its commits even when it spans
     /// the whole PR; any other scope (the whole PR, one commit) is not it.
     @Published private(set) var linkedRange: PRLinkedRange?
-    /// The parent lookup of the last range link (`showLinkedRange`): an older link's answer sets no scope.
+    /// The parent or local-commit lookup of the last link: an older link's answer sets no scope or notice.
     private var rangeLookup: UUID?
     /// What a link asked of a PR and could not get (its commit is not in the PR), in that PR's header until
     /// dismissed or another PR opens. Not in `errors`: every list load replaces those.
@@ -787,17 +787,20 @@ final class PRsModel: ObservableObject {
             return
         }
         let pushed = Set(commits.map(\.sha))
+        let lookup = beginRangeLookup()
         Task.detached(priority: .userInitiated) { [weak self] in
             let found = HubLocalCommits.resolve(ends: ends, repo: repo, head: head, pushed: pushed)
             await MainActor.run {
                 guard let self, self.reviewPRID == shown.id, self.review === review else { return }
-                switch found {
-                case .success(let local):
-                    self.showLocalCommits(local, pending: pending, in: commits, pr: shown, review: review)
-                case .failure(.unknown(let sha)):
-                    self.showMissingCommit(pending, missing: sha, in: shown, review: review)
-                case .failure(.unrelated), .failure(.offBranch):
-                    self.showMissingCommit(pending, missing: pending.to ?? pending.sha, in: shown, review: review)
+                self.finishRangeLookup(lookup) {
+                    switch found {
+                    case .success(let local):
+                        self.showLocalCommits(local, pending: pending, in: commits, pr: shown, review: review)
+                    case .failure(.unknown(let sha)):
+                        self.showMissingCommit(pending, missing: sha, in: shown, review: review)
+                    case .failure(.unrelated), .failure(.offBranch):
+                        self.showMissingCommit(pending, missing: pending.to ?? pending.sha, in: shown, review: review)
+                    }
                 }
             }
         }
@@ -830,6 +833,19 @@ final class PRsModel: ObservableObject {
         }
     }
 
+    /// Both detached lookups share request invalidation, including repeated links to the same PR and review.
+    func beginRangeLookup() -> UUID {
+        let lookup = UUID()
+        rangeLookup = lookup
+        return lookup
+    }
+
+    func finishRangeLookup(_ lookup: UUID, apply: () -> Void) {
+        guard rangeLookup == lookup else { return }
+        rangeLookup = nil
+        apply()
+    }
+
     /// A link's `commit=<from>..<to>`: those commits of the PR, both ends included, in either order.
     func showLinkedRange(_ one: HubPRDetail.Commit, _ other: HubPRDetail.Commit, in commits: [HubPRDetail.Commit], pr: HubPR, ref: HubPRRef,
                          review: ReviewModel) {
@@ -849,17 +865,17 @@ final class PRsModel: ObservableObject {
         // The first parent from git, not the commit listed before: a branched PR's list is no line of ancestry.
         let sha = commits[first].sha
         let root = review.repo.path
-        let lookup = UUID()
-        rangeLookup = lookup
+        let lookup = beginRangeLookup()
         Task {
             let parent = await Task.detached(priority: .userInitiated) { HubCommitLookup.parent(of: sha, in: root) }.value
-            guard rangeLookup == lookup, self.review === review else { return }
-            rangeLookup = nil
-            guard let parent else {
-                notice = PRNotice(ref: ref, text: HubCommitLookup.missingParent(sha, in: root))
-                return
+            guard self.review === review else { return }
+            finishRangeLookup(lookup) {
+                guard let parent else {
+                    notice = PRNotice(ref: ref, text: HubCommitLookup.missingParent(sha, in: root))
+                    return
+                }
+                show(from: parent)
             }
-            show(from: parent)
         }
     }
 

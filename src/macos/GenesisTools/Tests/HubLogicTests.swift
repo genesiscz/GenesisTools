@@ -156,7 +156,8 @@ final class HubLogicTests: XCTestCase {
         func git(_ args: String...) throws -> String {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            process.arguments = ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com"] + args
+            process.arguments = ["-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
+                                 "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false"] + args
             let out = Pipe()
             process.standardOutput = out
             try process.run()
@@ -167,7 +168,7 @@ final class HubLogicTests: XCTestCase {
         }
         _ = try git("init", "-q", "-b", "main")
         var shas: [String] = []
-        for index in 0 ..< 5 {
+        for index in 0 ..< 6 {
             _ = try git("commit", "-q", "--allow-empty", "-m", "commit \(index)")
             shas.append(try git("rev-parse", "HEAD"))
         }
@@ -179,6 +180,24 @@ final class HubLogicTests: XCTestCase {
         let reversed = try? HubLocalCommits.resolve(ends: [shas[4], shas[2]], repo: repo, head: pushedHead, pushed: pushed).get()
         XCTAssertEqual(reversed?.first, shas[2], "either order")
         XCTAssertEqual(try? HubLocalCommits.resolve(ends: [shas[3]], repo: repo, head: pushedHead).get().unpushed, 1)
+        XCTAssertEqual(try? HubLocalCommits.resolve(ends: [shas[4]], repo: repo, head: pushedHead).get().unpushed, 1,
+                       "a later single commit does not include earlier unpushed commits")
+        let localOnly = try HubLocalCommits.resolve(ends: [shas[3], shas[4]], repo: repo, head: pushedHead).get()
+        XCTAssertEqual(localOnly.count, 2)
+        XCTAssertEqual(localOnly.unpushed, 2, "both unpushed endpoints count")
+        let laterRange = try HubLocalCommits.resolve(ends: [shas[4], shas[4]], repo: repo, head: pushedHead).get()
+        XCTAssertEqual(laterRange.unpushed, 1, "equal endpoints include that commit once")
+        let pushedOnly = try HubLocalCommits.resolve(ends: [shas[2]], repo: repo, head: pushedHead, pushed: pushed).get()
+        XCTAssertEqual(pushedOnly.unpushed, 0)
+        let laterPair = try HubLocalCommits.resolve(ends: [shas[4], shas[5]], repo: repo, head: pushedHead).get()
+        XCTAssertEqual(laterPair.unpushed, 2, "earlier unpushed commits before this range do not count")
+        XCTAssertEqual(try HubLocalCommits.resolve(ends: [shas[5], shas[4]], repo: repo, head: pushedHead).get().unpushed, 2)
+        let tree = try git("rev-parse", pushedHead + "^{tree}")
+        let parallel = try git("commit-tree", tree, "-p", pushedHead, "-m", "parallel")
+        let merged = try git("commit-tree", tree, "-p", shas[5], "-p", parallel, "-m", "merged")
+        let mergedRange = try HubLocalCommits.resolve(ends: [shas[4], merged], repo: repo, head: pushedHead).get()
+        XCTAssertEqual(mergedRange.count, 3)
+        XCTAssertEqual(mergedRange.unpushed, 3, "exclude a merged side commit outside the first endpoint's ancestry path")
         guard case .failure(.offBranch) = HubLocalCommits.resolve(ends: [shas[0], shas[4]], repo: repo, head: pushedHead, pushed: pushed) else {
             return XCTFail("a first commit from before the PR would show the base's changes")
         }
@@ -529,6 +548,27 @@ final class HubLogicTests: XCTestCase {
         XCTAssertNil(model.pendingCommit)
         model.request(ref)
         XCTAssertNil(model.notice, "a whole-PR request clears the previous validation error too")
+    }
+
+    @MainActor
+    func testANewPRLinkDiscardsBothOutcomesOfAnOlderLocalLookup() throws {
+        let model = PRsModel()
+        let ref = try XCTUnwrap(HubPRRef("7"))
+        // Bare refs and no rows keep these requests off the CLI.
+        for commit in ["abcdef0", "abcdef0..1234567", "invalid", ""] {
+            let old = model.beginRangeLookup()
+            model.request(ref, commit: commit.isEmpty ? nil : commit)
+            var applied: [String] = []
+            model.finishRangeLookup(old) { applied.append("stale success") }
+            model.finishRangeLookup(old) { applied.append("stale failure") }
+            XCTAssertTrue(applied.isEmpty, "old results cannot change scope or reset it to the whole PR")
+            let current = model.beginRangeLookup()
+            model.finishRangeLookup(old) { applied.append("stale while newer lookup runs") }
+            model.finishRangeLookup(current) { applied.append("current") }
+            XCTAssertEqual(applied, ["current"], "discarding old results must preserve the newer lookup")
+            model.finishRangeLookup(current) { applied.append("duplicate") }
+            XCTAssertEqual(applied, ["current"])
+        }
     }
 
     @MainActor
