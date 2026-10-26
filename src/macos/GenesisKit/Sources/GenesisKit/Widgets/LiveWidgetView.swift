@@ -1549,7 +1549,11 @@ final class WidgetLedgerUndo: ObservableObject {
         guard !work.isEmpty else { return }
         let done = DispatchSemaphore(value: 0)
         Task.detached {
-            for item in work { await WidgetLedgerUndo.send(item.request, through: item.bridge) }
+            await withTaskGroup(of: Void.self) { group in
+                for item in work {
+                    group.addTask { await WidgetLedgerUndo.send(item.request, through: item.bridge) }
+                }
+            }
             done.signal()
         }
         if done.wait(timeout: .now() + Self.quitWait) == .timedOut {

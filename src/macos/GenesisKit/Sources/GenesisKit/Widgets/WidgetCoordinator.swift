@@ -52,6 +52,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private var openHotKey: CompanionHotKey?
     /// The chord `openHotKey` holds, or nil while none is registered.
     private var openHotKeyChord: WidgetShortcutChord?
+    private var failedOpenHotKeyChord: WidgetShortcutChord?
     /// "GNWD": Genesis widget. Its own Carbon identity, so it never shadows dictation's (`CompanionHotKey.flowSignature`).
     static let openHotKeySignature: OSType = 0x474E_5744
     /// Orders one edge panel front. Tests replace it to prove a hidden widget never shows a panel.
@@ -356,10 +357,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     private func applyOpenShortcut() {
         let wanted = registersOpenShortcut && !stopped && panelsEnabled
             ? model.snapshot?.state.preferences.openShortcutChord : nil
+        if wanted == nil { failedOpenHotKeyChord = nil }
         guard wanted != openHotKeyChord else { return }
         openHotKey?.stop()
         openHotKey = nil
-        openHotKeyChord = wanted
+        openHotKeyChord = nil
         guard let wanted else { return }
         let key = CompanionHotKey(keyCode: wanted.keyCode, modifiers: wanted.modifiers,
                                   signature: Self.openHotKeySignature, hotKeyId: 1)
@@ -369,8 +371,11 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let label = wanted.hotkey.label
         if key.start() {
             openHotKey = key
+            openHotKeyChord = wanted
+            failedOpenHotKeyChord = nil
             PerfLog.mark("widget.shortcut registered \(label)")
-        } else {
+        } else if failedOpenHotKeyChord != wanted {
+            failedOpenHotKeyChord = wanted
             PerfLog.mark("widget.shortcut refused \(label)")
             model.postNote("The shortcut \(label) to open the widget is taken. Choose another in Widget settings.")
         }
@@ -839,18 +844,20 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         }
         let editingText = panel.firstResponder is NSTextView
             || (panel.firstResponder as? NSControl)?.currentEditor() != nil
+        let controlFocused = Self.controlHasFocus(firstResponder: panel.firstResponder,
+                                                focusedElement: NSApp.accessibilityFocusedUIElement)
         if MediaPreviewKeyboard.handle(stroke, editingText: editingText) {
             return nil
         }
         switch Self.panelKey(
             stroke: stroke,
             context: .init(previewOpen: MediaPreviewKeyboard.isOpen, agents: isAgent, editingText: editingText,
-                           answering: model.answerCard, list: model.keyboardList))
+                           answering: model.answerCard, list: model.keyboardList, controlFocused: controlFocused))
         {
         case .pass: return event
         case .list(let key):
             // Only a list that took the key swallows it; otherwise the scroll view under it still scrolls.
-            return model.moveInList(key) ? nil : event
+            return model.moveInList(key, controlFocused: controlFocused) ? nil : event
         case .collapse:
             // The leave question first (Esc keeps the staged decisions), then the staged view, then the list.
             if model.stagedLeavePrompt {
@@ -867,6 +874,16 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         return nil
     }
 
+    /// Native controls are responders; SwiftUI controls can instead expose their focus through an accessibility node.
+    static func controlHasFocus(firstResponder: NSResponder?, focusedElement: Any?) -> Bool {
+        if firstResponder is NSControl { return true }
+        guard let element = focusedElement as? NSAccessibilityProtocol, let role = element.accessibilityRole() else {
+            return false
+        }
+        return [NSAccessibility.Role.button, .checkBox, .radioButton, .popUpButton, .menuButton, .disclosureTriangle, .link,
+                .comboBox, .slider, .incrementor].contains(role)
+    }
+
     enum PanelKey: Equatable { case pass, collapse, previous, next, choose(String), list(WidgetListKey.Kind) }
 
     struct PanelKeyContext {
@@ -878,6 +895,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         /// `WidgetModel.keyboardList`: a list (the inbox of every session, a session's inbox, the sessions) is on
         /// screen, so Up, Down and Return move in it.
         var list: Bool = false
+        /// Return belongs to a focused control, rather than the list behind it.
+        var controlFocused: Bool = false
     }
 
     /// What a key the media preview did not take does on the panel. While the preview is open, nothing:
@@ -908,7 +927,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         if context.list {
             if ids.contains(WidgetKeymap.listUp) { return .list(.up) }
             if ids.contains(WidgetKeymap.listDown) { return .list(.down) }
-            if ids.contains(WidgetKeymap.listOpen) { return .list(.open) }
+            if ids.contains(WidgetKeymap.listOpen) { return context.controlFocused ? .pass : .list(.open) }
         }
         if let number = WidgetKeymap.choiceNumber(in: ids),
            let card = context.answering, number <= card.choices.count

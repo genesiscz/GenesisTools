@@ -1315,6 +1315,7 @@ public final class WidgetModel: ObservableObject {
         if expanded != nil {
             PerfLog.mark("widget.collapse \(expanded?.rawValue ?? "") from \(file):\(line)")
         }
+        noticeHovered(false)
         cancelHoverPrewarm()
         agentFitFloor = nil
         openingInbox = nil
@@ -1412,8 +1413,9 @@ public final class WidgetModel: ObservableObject {
     /// Up, Down or Return in the list on screen. True when the list took the key; false lets it through (the scroll
     /// view then scrolls). The ends of a list stop the move; they do not wrap.
     @discardableResult
-    public func moveInList(_ kind: WidgetListKey.Kind) -> Bool {
+    public func moveInList(_ kind: WidgetListKey.Kind, controlFocused: Bool = false) -> Bool {
         guard keyboardList else { return false }
+        if kind == .open, controlFocused { return false }
         if inboxOverview, kind == .open, !inboxOverviewHasFocus { return false }
         listKey = WidgetListKey(kind: kind, serial: (listKey?.serial ?? 0) + 1)
         // The inbox of every session owns its filter, grouping and highlight (WidgetInboxOverview).

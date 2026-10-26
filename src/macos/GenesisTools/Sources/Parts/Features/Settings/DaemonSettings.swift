@@ -167,6 +167,8 @@ final class DaemonSettingsStore: ObservableObject {
     /// Bumped by every write; a load that started before a write does not replace the tasks the write returned.
     private var writeGeneration = 0
     private var loadGeneration = 0
+    private var pendingWrites: [String: (id: UUID, work: Task<Void, Never>)] = [:]
+    var saveTask: ([String]) async -> Result<Data, Error> = { await DaemonSettingsStore.cli($0) }
 
     /// A `tools` process per call: the hub's resident server has no door for `daemon`, so this is what the hub's
     /// runner did too, without needing the hub part.
@@ -243,12 +245,18 @@ final class DaemonSettingsStore: ObservableObject {
     func set(_ task: DaemonTaskConfig, _ flags: [String], optimistic: ((inout DaemonTaskConfig) -> Void)? = nil,
              onFailure: (() -> Void)? = nil) {
         writeGeneration += 1
-        let before = status
-        if let optimistic, let index = status?.tasks.firstIndex(where: { $0.name == task.name }) {
-            optimistic(&status!.tasks[index])
-        }
-        Task {
-            switch await Self.cli(["daemon", "config", "set", task.name] + flags + ["--json"]) {
+        let previous = pendingWrites[task.name]?.work
+        let id = UUID()
+        let work = Task {
+            await previous?.value
+            let before = status?.tasks.first { $0.name == task.name }
+            if let optimistic, let index = status?.tasks.firstIndex(where: { $0.name == task.name }) {
+                optimistic(&status!.tasks[index])
+            }
+            defer {
+                if pendingWrites[task.name]?.id == id { pendingWrites[task.name] = nil }
+            }
+            switch await saveTask(["daemon", "config", "set", task.name] + flags + ["--json"]) {
             case .success(let data):
                 if let updated = try? JSONDecoder().decode(DaemonTaskConfig.self, from: data),
                     let index = status?.tasks.firstIndex(where: { $0.name == updated.name })
@@ -257,11 +265,14 @@ final class DaemonSettingsStore: ObservableObject {
                 }
                 show("Saved \(task.name). The daemon uses it from its next tick.", error: false)
             case .failure(let error):
-                status = before
+                if let before, let index = status?.tasks.firstIndex(where: { $0.name == task.name }) {
+                    status?.tasks[index] = before
+                }
                 onFailure?()
                 show("\(task.name): \(error)", error: true)
             }
         }
+        pendingWrites[task.name] = (id, work)
     }
 
     func runNow(_ task: DaemonTaskConfig) {
@@ -644,8 +655,8 @@ private struct DaemonTaskEditor: View {
         // Another setting's save brings a new task; a field the user is still typing in keeps their text.
         .onChange(of: task) { old, _ in
             syncFields(from: old)
-            sentEvery = nil
-            sentRetryTimes = nil
+            if old.every != task.every { sentEvery = nil }
+            if Self.times(old) != Self.times(task) { sentRetryTimes = nil }
         }
         // A click on another field or Tab saves what was typed, as Return does.
         .onChange(of: editing) { old, _ in
@@ -675,8 +686,8 @@ private struct DaemonTaskEditor: View {
     /// Takes the new task's values, except in a field that has the focus and holds an edit not saved yet.
     private func syncFields(from old: DaemonTaskConfig) {
         if editing != .every || every == old.every { every = task.every }
-        // The text just saved comes back in the stored form ("10:00,12:00" as "10:00, 12:00"), so it is not saved again.
-        if editing != .retryTimes || retryTimes == Self.times(old) || retryTimes == sentRetryTimes {
+        // Preserve a pending edit when another setting changes; accept an actual retry-time update in stored form.
+        if editing != .retryTimes || retryTimes == Self.times(old) || Self.times(task) != Self.times(old) {
             retryTimes = Self.times(task)
         }
     }

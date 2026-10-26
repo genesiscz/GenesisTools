@@ -9,7 +9,7 @@
 import { type Check, type CountFact, type FileFact, runCli, type ScanSet } from "../../ux/scripts/scan-engine.ts";
 
 /** A view, a view model or anything on the main actor: where blocking work stalls the UI. */
-const MAIN_ACTOR_FILE = /:\s*View\b|some View|@MainActor|ObservableObject|NSViewController|NSWindowController/;
+const MAIN_ACTOR_FILE = /:\s*View\b|some View|@MainActor|ObservableObject|NSViewController|NSWindowController|@IBAction/;
 const VIEW_FILE = /:\s*View\b|some View/;
 
 const CHECKS: Check[] = [

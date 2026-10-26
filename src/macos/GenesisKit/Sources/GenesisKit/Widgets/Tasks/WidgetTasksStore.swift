@@ -421,7 +421,7 @@ public final class WidgetTasksStore: ObservableObject {
                 self.refresh(force: true)
             } catch {
                 guard !self.stopped, !Task.isCancelled else { return }
-                self.report(error)
+                self.report(error, decodingMessage: "The task response could not be read. Refresh to confirm whether it was saved before trying again.")
             }
         }
     }
@@ -476,9 +476,9 @@ public final class WidgetTasksStore: ObservableObject {
         pendingStates = [:]
     }
 
-    private func report(_ failure: Error) {
-        // A reply the list cannot decode is one sentence on screen; the decoder's own words go to the log only.
-        error = failure is DecodingError ? "The task list could not be read. Try again in a moment." : failure.localizedDescription
+    private func report(_ failure: Error, decodingMessage: String = "The task list could not be read. Try again in a moment.") {
+        // The decoder's own words go to the log; a creation response can fail after the task was already saved.
+        error = failure is DecodingError ? decodingMessage : failure.localizedDescription
         PerfLog.mark("widget.tasks \(failure.localizedDescription)")
     }
 }

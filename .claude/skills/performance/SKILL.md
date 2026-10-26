@@ -74,7 +74,9 @@ measured. So the rule of this skill is simple: no change, and no claim, without 
 - "Did CI really pass, and why is it red?" → `references/tests-and-ci.md` (a green job can carry failing tests).
 - "Why does type-checking need gigabytes, and which code makes the checker work?" → `tools ts program cost|files|own|closure|trace`,
   `references/typecheck.md` (the shapes that cost 175k instantiations per file, and the traps of a smaller program).
-- "Is this process alive?" → the registry or pid file plus `process.kill(pid, 0)`, never a `ps` (`references/patterns.md`).
+- "Is this process alive?" → the registry or pid file plus signal 0, then validate the recorded process identity
+  (`classifyPid()` or a recorded start time) before calling the session alive. A reused PID is not the old session
+  (`references/patterns.md`).
 - "A file, journal or database grows and every read gets slower", "a tick or the scheduler freezes", "a hook hangs",
   "a command waits for a child it abandoned" → `references/patterns.md`. A growing file always has two fixes, and an
   answer names both: the reader reads from the end and stops early (after proving the file is time ordered), and the

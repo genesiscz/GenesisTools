@@ -263,6 +263,17 @@ final class WidgetTasksPolishTests: XCTestCase {
         XCTAssertTrue(store.recent.isEmpty, "a hidden module gets no rows back")
     }
 
+    func testAnUnreadableCreateResponseWarnsThatTheTaskMayAlreadyBeSaved() async {
+        let store = WidgetTasksStore(request: { _ in Data("{}".utf8) })
+        defer { store.stop() }
+        store.draft.title = "Keep this draft"
+        store.create()
+        await settled(store)
+        XCTAssertEqual(store.error, "The task response could not be read. Refresh to confirm whether it was saved before trying again.")
+        XCTAssertEqual(store.draft.title, "Keep this draft")
+        XCTAssertNil(store.receipt)
+    }
+
     func testCreateSendsTheDraftClearsItsTextAndWidensFiltersThatWouldHideTheTask() async throws {
         var created = task("t_3_fixture", title: "Review the draft")
         created.summary = "Read it twice."
@@ -1392,6 +1403,19 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertEqual(outcome.details, "First: cmux is not running\nSecond: cmux is not running")
         XCTAssertEqual(outcome.notice(items: [], staged: true), "Not delivered to 2 sessions: cmux is not running. "
             + "The answers wait for each session's next prompt.")
+    }
+
+    func testAReservedQueuedAnswerIsNotDeliveredWhenOtherAnswersReachedTheSession() {
+        let outcome = WidgetDecisionSendOutcome(["sent": 1, "queued": 1, "failed": 0, "sessions": [
+            ["session": "fixture", "result": ["delivered": true]],
+        ]], titles: ["fixture": "Fixture"])
+        XCTAssertTrue(outcome.waiting.isEmpty)
+        XCTAssertFalse(outcome.delivered, "the queue consumer still owes an acknowledgement")
+        XCTAssertTrue(outcome.notice(items: [], staged: false).contains("1 decision waiting for the session queue."))
+        let completed = WidgetDecisionSendOutcome(["sent": 1, "queued": 0, "failed": 0, "sessions": [
+            ["session": "fixture", "result": ["delivered": true]],
+        ]], titles: [:])
+        XCTAssertTrue(completed.delivered)
     }
 
     func testKeepingStagedDecisionsDoesNotAskAgainForTheSameOnes() throws {

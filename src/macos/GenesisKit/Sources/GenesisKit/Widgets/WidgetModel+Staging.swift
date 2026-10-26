@@ -308,7 +308,7 @@ struct WidgetDecisionSendOutcome {
 
     var queuedSessions: Set<String> { Set(waiting.map(\.session)) }
     /// Every answer reached a live receiver.
-    var delivered: Bool { waiting.isEmpty && failed == 0 }
+    var delivered: Bool { waiting.isEmpty && failed == 0 && queued == 0 }
     /// The hub's raw reasons, one line per session, for Details and the log; nil when it gave none.
     var details: String? {
         let lines = waiting.compactMap { entry in entry.detail.map { "\(entry.title): \($0)" } } + failures
@@ -379,6 +379,9 @@ struct WidgetDecisionSendOutcome {
                 parts.append("Not delivered to \(Plural.count(waiting.count, "session")): \(why)"
                              + "The answers wait for each session's next prompt.")
             }
+        }
+        if queued > 0, waiting.isEmpty {
+            parts.append("\(Plural.count(queued, "decision")) waiting for the session queue.")
         }
         if failed > 0 {
             parts.append("\(Plural.count(failed, "decision")) could not be sent" + (staged ? " and stay staged." : "."))

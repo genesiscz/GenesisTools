@@ -39,6 +39,23 @@ final class PermissionsModelTests: XCTestCase {
         XCTAssertFalse(try row(.screenRecording).usedBy.isEmpty)
     }
 
+    func testRefreshRechecksADenialRememberedBeforeTheWindowOpened() async throws {
+        let system = FakeSystem()
+        system.statuses[.downloadsFolder] = .unknown("asks on first use")
+        let access = PermissionAccess(system: system)
+        let first = await access.request(.downloadsFolder)
+        XCTAssertEqual(first, .denied)
+        system.answers[.downloadsFolder] = .granted
+
+        let model = PermissionsModel(access: access)
+        model.refresh()
+        for _ in 0 ..< 200 where model.rows.first(where: { $0.kind == .downloadsFolder })?.state != .granted {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(model.rows.first { $0.kind == .downloadsFolder }?.state, .granted)
+        XCTAssertEqual(system.requests, [.downloadsFolder, .downloadsFolder])
+    }
+
     func testAProbeAnswerIsRememberedBecauseMacOSHasNoStatusForIt() async throws {
         let system = FakeSystem()
         system.statuses[.downloadsFolder] = .unknown("asks on first use")

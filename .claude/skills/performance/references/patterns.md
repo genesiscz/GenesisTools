@@ -35,9 +35,11 @@ slowness is one of these shapes again.
 
 ## Ask the cheapest source
 
-- **Liveness by signal 0.** Whether a Claude session is alive: the `~/.claude/sessions` registry plus
-  `process.kill(pid, 0)` costs 0.4 ms against 213 ms with `ps` (93fcb07b9e). A `ps`, `lsof` or `pgrep` spawn is a
-  lint error anyway (`no-process-tool-spawn`).
+- **Liveness by signal 0, with identity validation.** Checking the `~/.claude/sessions` registry plus
+  `process.kill(pid, 0)` costs 0.4 ms against 213 ms with `ps` (93fcb07b9e), but proves only that the PID exists.
+  Before reporting the recorded session alive, validate that the process still matches it with `classifyPid()` or
+  the recorded process start time. A stale registry and a reused PID must not revive an old session; an unreadable
+  identity is unknown. A `ps`, `lsof` or `pgrep` spawn is a lint error anyway (`no-process-tool-spawn`).
 - **git status single-threaded in a hook.** The diff hook's `git status` costs 220 ms of CPU single-threaded against
   417 ms with its default threads, for the same output (c468a81cd3). Threads that each stat the tree can cost more
   CPU than they save in wall time.

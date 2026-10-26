@@ -33,8 +33,8 @@ const CHECKS: Check[] = [
     {
         pass: "Pointer and targets",
         name: "small-frame",
-        pattern: /\.frame\(width:\s*(1\d|\d)(\.\d+)?,\s*height:\s*\d/,
-        hint: "a target under 20 pt wide if it is (or wraps) a control; 22 pt is the floor",
+        pattern: /\.frame\([^\n)]*\b(?:width|height):\s*(?:[01]?\d|2[01])(?:\.\d+)?(?=\s*[,)])/,
+        hint: "a dimension under 22 pt if this frame is (or wraps) a control; inspect its padding and hit area",
     },
     {
         pass: "Pointer and targets",

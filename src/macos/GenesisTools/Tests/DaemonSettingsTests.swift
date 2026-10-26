@@ -106,6 +106,39 @@ final class DaemonSettingsTests: XCTestCase {
         XCTAssertEqual(DaemonFormat.percent(0.07445442875481387), "7.4%")
     }
 
+    @MainActor
+    func testWritesToOneTaskWaitForEachOtherWhileAnotherTaskCanSave() async throws {
+        let status = try JSONDecoder().decode(DaemonStatusPayload.self, from: Data(statusJSON.utf8))
+        let task = status.tasks[0]
+        let other = status.tasks[1]
+        let store = DaemonSettingsStore()
+        let firstStarted = expectation(description: "first save starts")
+        let otherStarted = expectation(description: "different task is independent")
+        let secondStarted = expectation(description: "second save starts after first")
+        var release: CheckedContinuation<Result<Data, Error>, Never>?
+        var calls: [[String]] = []
+        store.saveTask = { args in
+            calls.append(args)
+            if args.contains("first") {
+                return await withCheckedContinuation { continuation in
+                    release = continuation
+                    firstStarted.fulfill()
+                }
+            }
+            if args[3] == other.name { otherStarted.fulfill() }
+            if args.contains("second") { secondStarted.fulfill() }
+            return .success(Data("{}".utf8))
+        }
+        store.set(task, ["--every", "first"])
+        store.set(task, ["--every", "second"])
+        store.set(other, ["--every", "independent"])
+        await fulfillment(of: [firstStarted, otherStarted], timeout: 1)
+        XCTAssertEqual(calls.filter { $0[3] == task.name }.count, 1)
+        release?.resume(returning: .success(Data("{}".utf8)))
+        await fulfillment(of: [secondStarted], timeout: 1)
+        XCTAssertEqual(calls.filter { $0[3] == task.name }.map { $0[5] }, ["first", "second"])
+    }
+
     func testOptimisticCopyChangesOneField() throws {
         let status = try JSONDecoder().decode(DaemonStatusPayload.self, from: Data(statusJSON.utf8))
         let task = status.tasks[0]

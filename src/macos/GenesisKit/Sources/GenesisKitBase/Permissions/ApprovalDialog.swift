@@ -296,6 +296,7 @@ public final class ApprovalPanelPresenter: NSObject, NSWindowDelegate {
         self.model = model
         panel.orderFrontRegardless()
         let reminder = ApprovalReminder(model: model) { [weak self] in self?.bringForward() }
+        self.reminder?.stop()
         self.reminder = reminder
         reminder.start()
     }

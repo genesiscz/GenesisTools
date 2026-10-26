@@ -47,3 +47,41 @@ describe("Swift scanner file discovery", () => {
         }
     });
 });
+
+describe("Swift audit scanner candidates", () => {
+    it("includes AppKit actions without including background-only process calls", () => {
+        const root = mkdtempSync(join(tmpdir(), "swift-action-scan-"));
+        writeFileSync(join(root, "Action.swift"), "final class Action: NSObject {\n@IBAction func run() {\nprocess.waitUntilExit()\n}\n}\n");
+        writeFileSync(join(root, "Worker.swift"), "final class Worker {\nprocess.waitUntilExit()\n}\n");
+        const result = Bun.spawnSync([
+            process.execPath,
+            new URL("../../swift/scripts/swift-scan.ts", import.meta.url).pathname,
+            root,
+        ]);
+        expect(result.exitCode).toBe(0);
+        const output = result.stdout.toString();
+        expect(output).toContain("process-or-encode [1]");
+        expect(output).toContain("Action.swift:3");
+        expect(output).not.toContain("Worker.swift:");
+    });
+
+    it("flags either frame dimension below 22 without matching larger numbers", () => {
+        const root = mkdtempSync(join(tmpdir(), "swift-target-scan-"));
+        writeFileSync(join(root, "Targets.swift"), [
+            ".frame(width: 21, height: 21)",
+            ".frame(width: 40, height: 10)",
+            ".frame(width: 22, height: 22)",
+            ".frame(width: 121, height: 100)",
+            ".frame(height: 21.5)",
+        ].join("\n"));
+        const result = Bun.spawnSync([process.execPath, new URL("./ux-scan.ts", import.meta.url).pathname, root]);
+        expect(result.exitCode).toBe(0);
+        const candidates = result.stdout.toString().split("- small-frame")[1]?.split("- small-glyph-button")[0];
+        expect(candidates).toContain("[3]");
+        expect(candidates).toContain("Targets.swift:1");
+        expect(candidates).toContain("Targets.swift:2");
+        expect(candidates).toContain("Targets.swift:5");
+        expect(candidates).not.toContain("Targets.swift:3");
+        expect(candidates).not.toContain("Targets.swift:4");
+    });
+});

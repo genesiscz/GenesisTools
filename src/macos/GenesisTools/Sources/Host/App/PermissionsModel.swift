@@ -115,9 +115,13 @@ final class PermissionsModel: ObservableObject {
     }
 
     private func recheckProbes(now: Date = Date()) {
-        // Only the probes answered in this window. A grant another feature got is rechecked app-wide on activation
-        // (`PermissionCenter.recheckGrantedProbesOnActivation`), and the rows read that remembered answer.
-        let kinds = PermissionKind.allCases.filter { probeResults[$0] != nil }
+        // PermissionAccess also remembers answers obtained before this settings window opened, including denials.
+        // Its recheck guard probes only kinds that macOS has already answered.
+        let kinds = PermissionKind.allCases.filter { kind in
+            let state = access.status(kind)
+            return kind.requestStyle == .probe
+                && (probeResults[kind] != nil || state == .granted || state == .denied)
+        }
         guard !kinds.isEmpty, !rechecking, busy == nil else { return }
         rechecking = true
         lastProbeRecheck = now

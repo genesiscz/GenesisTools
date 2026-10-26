@@ -29,6 +29,16 @@ final class WidgetKeymapTests: XCTestCase {
             previewOpen: false, agents: true, editingText: editingText, answering: answering), keymap: keys())
     }
 
+    func testNativeAndAccessibilityControlsOwnReturnFocus() {
+        XCTAssertTrue(WidgetCoordinator.controlHasFocus(firstResponder: NSButton(), focusedElement: nil))
+        let element = NSAccessibilityElement()
+        element.setAccessibilityRole(.button)
+        XCTAssertTrue(WidgetCoordinator.controlHasFocus(firstResponder: nil, focusedElement: element))
+        element.setAccessibilityRole(.group)
+        XCTAssertFalse(WidgetCoordinator.controlHasFocus(firstResponder: nil, focusedElement: element))
+        XCTAssertFalse(WidgetCoordinator.controlHasFocus(firstResponder: nil, focusedElement: nil))
+    }
+
     func testTheWidgetsKeysHaveNoConflictOnACzechOrAUSKeyboard() {
         XCTAssertEqual(Keymap(library: WidgetKeymap.library, store: nil, layout: czech).conflicts(), [])
         XCTAssertEqual(Keymap(library: WidgetKeymap.library, store: nil, layout: TableKeyLayout.us).conflicts(), [])
@@ -57,9 +67,10 @@ final class WidgetKeymapTests: XCTestCase {
 
     /// Up, Down and Return move in the list on screen (ux catalogue R7), never while typing and never without a list.
     func testArrowsAndReturnMoveInTheListOnScreen() {
-        func press(_ keyCode: UInt16, list: Bool, editingText: Bool = false) -> WidgetCoordinator.PanelKey {
+        func press(_ keyCode: UInt16, list: Bool, editingText: Bool = false, controlFocused: Bool = false) -> WidgetCoordinator.PanelKey {
             WidgetCoordinator.panelKey(keyCode: keyCode, characters: "", context: .init(
-                previewOpen: false, agents: true, editingText: editingText, answering: nil, list: list), keymap: keys())
+                previewOpen: false, agents: true, editingText: editingText, answering: nil,
+                list: list, controlFocused: controlFocused), keymap: keys())
         }
         XCTAssertEqual(press(126, list: true), .list(.up))
         XCTAssertEqual(press(125, list: true), .list(.down))
@@ -67,6 +78,8 @@ final class WidgetKeymapTests: XCTestCase {
         XCTAssertEqual(press(125, list: false), .pass, "no list on screen: the scroll view keeps the arrow")
         XCTAssertEqual(press(126, list: true, editingText: true), .pass, "the caret keeps the arrows in a field")
         XCTAssertEqual(press(36, list: true, editingText: true), .pass, "Return in the composer is the composer's")
+        XCTAssertEqual(press(36, list: true, controlFocused: true), .pass, "Return activates the focused control")
+        XCTAssertEqual(press(125, list: true, controlFocused: true), .list(.down), "arrow navigation stays available")
     }
 
     /// With a decision card open, Up and Down still reach the list (which walks the card's options first), and the
