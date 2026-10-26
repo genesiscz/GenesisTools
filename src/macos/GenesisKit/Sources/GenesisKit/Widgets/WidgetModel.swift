@@ -17,7 +17,20 @@ public final class WidgetModel: ObservableObject {
                 (snapshot?.sessions ?? []).map { ($0.key, $0) }, uniquingKeysWith: { first, _ in first })
             sessionRoster.update(snapshot?.sessions ?? [])
             updateInbox(snapshot?.notifications ?? .empty)
+            takeShowDecision(snapshot?.state.showDecision)
         }
+    }
+    /// Called for each new `state.showDecision` (a decision link while the widget runs). The first snapshot only
+    /// remembers the request it finds, so an old link is not replayed at start.
+    public var decisionRequested: ((String) -> Void)?
+    private var shownDecisionAt: Double?
+    private var showDecisionSeen = false
+
+    private func takeShowDecision(_ request: WidgetShowDecision?) {
+        defer { showDecisionSeen = true }
+        guard let request, request.at != shownDecisionAt else { return }
+        shownDecisionAt = request.at
+        if showDecisionSeen { decisionRequested?(request.id) }
     }
     private var sessionRoster = WidgetSessionRoster()
     /// Every snapshot session by key. `selected` is read many times per body; a linear search over ~1000 sessions

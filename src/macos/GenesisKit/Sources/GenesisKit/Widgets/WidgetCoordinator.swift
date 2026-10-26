@@ -202,6 +202,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.inboxArrived = { [weak self] items in self?.alert(items) }
         model.decisionsAnsweredElsewhere = { [weak self] items in self?.alertAnswered(items) }
         model.stagedAtStart = { [weak self] items in self?.remindStaged(items) }
+        model.decisionRequested = { [weak self] id in self?.showDecision(id) }
     }
 
     /// A main-spin with a panel open: the panel closes, so the app answers again, and says why. The spin's stack and
@@ -248,6 +249,25 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
                          priority: .medium)
         for key in Set(items.map(\.key)) { model.flashAttention(key, seconds: WidgetAlerts.flashSeconds(preferences)) }
         popUp(newest, with: items, preferences: preferences, seconds: WidgetAlerts.autoDecisionSeconds(preferences))
+    }
+
+    /// A decision link (`tools hub widget show-decision`): its popup, as a new decision shows, staying until closed.
+    /// A decision the inbox does not list (answered, or its session is not on the roster) opens its session instead.
+    func showDecision(_ id: String) {
+        let items = (model.snapshot?.notifications?.sessions ?? []).flatMap { $0.items ?? [] }
+            + (model.snapshot?.notifications?.staged ?? [])
+        PerfLog.mark("widget.show-decision \(id) listed=\(items.contains { $0.sourceId == id })")
+        if let item = items.first(where: { $0.sourceId == id }) {
+            popUp(item, with: [item], preferences: model.snapshot?.state.preferences, seconds: 0)
+            return
+        }
+        let sessionID = id.split(separator: "_", maxSplits: 2).dropFirst(2).first.map(String.init) ?? id
+        guard let key = (model.snapshot?.sessions ?? []).first(where: { $0.key.contains(sessionID) })?.key else {
+            model.notice = "That decision's session is not in the widget."
+            return
+        }
+        openSession(key)
+        model.openDecision(id: id, sessionKey: key)
     }
 
     /// The widget started with staged decisions (Settings → Staged at start): a popup lists them with Send now and

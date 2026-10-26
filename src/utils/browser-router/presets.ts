@@ -235,11 +235,12 @@ function catalog({ linkHost, options }: CatalogContext): PresetSpec[] {
             routes: withHost((host) => [
                 {
                     preset: "claude-find",
-                    name: "Show a decision in its chat",
+                    name: "Show a decision",
                     pattern: claudeFindPatterns(host).decision,
                     action: {
                         type: "run",
-                        argv: ["tools", "claude", "cmux", "find", "--decision", "$2", "--at={at}", "--", "$1"],
+                        // The running widget shows the decision's popup; without one, its chat (claude cmux find).
+                        argv: ["tools", "hub", "widget", "show-decision", "$1", "$2", "--at={at}"],
                         approval: "allow",
                         notify: "Showing DECISION $2",
                     },

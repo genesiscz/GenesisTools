@@ -447,6 +447,12 @@ public struct WidgetState: Codable, Equatable, Sendable {
     public var assets: [String: WidgetAsset]
     public var drafts: [String: WidgetDraft]
     public var outgoing: [WidgetOutgoing]
+    /// A decision link asked the running widget to show this decision (`tools hub widget show-decision`).
+    public var showDecision: WidgetShowDecision?
+}
+public struct WidgetShowDecision: Codable, Equatable, Sendable {
+    public var id: String
+    public var at: Double
 }
 public struct WidgetActivityEvent: Codable, Equatable, Identifiable, Sendable {
     public var id: String
