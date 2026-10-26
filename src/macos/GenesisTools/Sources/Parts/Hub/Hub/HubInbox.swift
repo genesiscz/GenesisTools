@@ -360,6 +360,14 @@ enum InboxSort: String, CaseIterable {
 
 @MainActor
 final class HubInboxModel: ObservableObject {
+    /// The Inbox rows the arrow keys step through, in InboxListView's order: the waiting sessions, then the quiet ones
+    /// while their fold is open.
+    static func keyOrder(_ rows: [InboxSession], showsQuiet: Bool) -> [String] {
+        let fresh = rows.filter { !$0.isStale }.map(\.id)
+        return showsQuiet ? fresh + rows.filter(\.isStale).map(\.id) : fresh
+    }
+
+
     @Published private(set) var sessions: [InboxSession] = []
     /// A notification's target that is not waiting any more: said once, instead of the click doing nothing.
     @Published var revealMissing: String?
@@ -368,6 +376,9 @@ final class HubInboxModel: ObservableObject {
     @Published private(set) var error: String?
     /// The session the sidebar picked; the main list scrolls to it.
     @Published var selectedID: String?
+    /// The sidebar's fold of sessions quiet for three days is open. One state for the list and its arrow keys, so Down
+    /// reaches exactly the rows on screen (`keyOrder`).
+    @Published var showsQuiet = false
     /// Each answered item's delivery, by item id, until the next answer to it.
     @Published private(set) var deliveries: [String: InboxDelivery] = [:]
     @Published private(set) var sending: Set<String> = []
@@ -815,8 +826,6 @@ struct InboxListView: View {
     @ObservedObject var model: HubModel
     @ObservedObject var inbox: HubInboxModel
     @AppStorage("hub.inbox.sort") private var sortKey = InboxSort.recent.rawValue
-    /// Sessions quiet for three days fold under one row; a pick of one of them (a link) opens the fold.
-    @State private var showOlder = false
 
     private var sort: InboxSort { InboxSort(rawValue: sortKey) ?? .recent }
 
@@ -877,7 +886,7 @@ struct InboxListView: View {
                     }
                     if !older.isEmpty {
                         // The header alone is the disclosure, inset like the rows; the rows keep their own insets.
-                        GenDisclosure(isExpanded: $showOlder, accessibilityTitle: "Sessions quiet for three days or more") {
+                        GenDisclosure(isExpanded: $inbox.showsQuiet, accessibilityTitle: "Sessions quiet for three days or more") {
                             EmptyView()
                         } label: {
                             Text(verbatim: "\(Plural.count(older.count, "session")) quiet for 3+ days")
@@ -887,7 +896,7 @@ struct InboxListView: View {
                         .padding(.horizontal, 16)
                         .padding(.top, 8)
                         .instantTooltip("Nothing moved in these sessions for three days. Their questions stay answerable here; they no longer count as waiting.")
-                        if showOlder {
+                        if inbox.showsQuiet {
                             ForEach(older) { session in
                                 InboxSessionRow(session: session, selected: session.id == inbox.selectedID)
                                     .rowButton { inbox.selectedID = session.id }
@@ -897,10 +906,11 @@ struct InboxListView: View {
                 }
                 .padding(.bottom, 12)
             }
-            // Keyed on the selected row being a quiet one, not on the selection alone: a reveal can select a session
-            // before the load that lists it lands, and the fold must open when the row arrives too.
+            // Sessions quiet for three days fold under one row; a pick of one of them (a link) opens the fold. Keyed on
+            // the selected row being a quiet one, not on the selection alone: a reveal can select a session before the
+            // load that lists it lands, and the fold must open when the row arrives too.
             .onChange(of: rows.contains { $0.id == inbox.selectedID && $0.isStale } ? inbox.selectedID : nil, initial: true) { _, id in
-                if id != nil { showOlder = true }
+                if id != nil { inbox.showsQuiet = true }
             }
         }
     }

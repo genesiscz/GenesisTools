@@ -2156,13 +2156,9 @@ private struct SessionListView: View {
             .flatMap { $0.rows.map(\.id) }
     }
 
-    /// The Inbox rows the arrow keys step through, in InboxListView's order: the waiting sessions, then the quiet
-    /// ones while one of them is selected (their fold is open then).
+    /// The Inbox rows the arrow keys step through (`HubInboxModel.keyOrder`), from the fold state the list draws.
     private static func inboxKeyOrder(_ inbox: HubInboxModel, sort: String, filter: String) -> [String] {
-        let rows = inbox.sorted(InboxSort(rawValue: sort) ?? .recent, filter: filter)
-        let fresh = rows.filter { !$0.isStale }.map(\.id)
-        let quiet = rows.filter(\.isStale).map(\.id)
-        return quiet.contains(inbox.selectedID ?? "") ? fresh + quiet : fresh
+        HubInboxModel.keyOrder(inbox.sorted(InboxSort(rawValue: sort) ?? .recent, filter: filter), showsQuiet: inbox.showsQuiet)
     }
 
     private var filterPlaceholder: String {

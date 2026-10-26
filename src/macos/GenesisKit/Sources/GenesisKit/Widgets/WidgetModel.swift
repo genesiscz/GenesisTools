@@ -201,6 +201,7 @@ public final class WidgetModel: ObservableObject {
         didSet {
             guard notice != oldValue else { return }
             noticeAction = nil
+            noticeDetail = nil
             // A hover that ended with the panel (it closed under the pointer) must not keep the next note forever.
             noticeHeld = false
             if let notice { GenAnnounce.post(notice) }
@@ -211,6 +212,9 @@ public final class WidgetModel: ObservableObject {
     @Published public var noticeAction: WidgetNoticeAction? {
         didSet { scheduleNoticeFade() }
     }
+    /// The reasons behind `notice` (each session a queued send did not reach, and why), shown behind Details. A new
+    /// note drops them.
+    @Published public var noticeDetail: String?
     private var noticeFade: Task<Void, Never>?
     /// The pointer is on the note: its fade waits until the pointer leaves (ux checklist, Attention).
     private var noticeHeld = false
@@ -218,11 +222,12 @@ public final class WidgetModel: ObservableObject {
     /// Shows `text` as the widget's note, with an optional button (Undo, Send again). It is announced, and it fades
     /// after the note duration setting (`noteSeconds`, 6 s by default); a note with a button stays at least 10 s. A
     /// newer note replaces it and cancels its fade. Errors go to `error`, which never fades.
-    public func postNote(_ text: String, action: WidgetNoticeAction? = nil) {
+    public func postNote(_ text: String, action: WidgetNoticeAction? = nil, detail: String? = nil) {
         // The same text again does not change `notice`, so its didSet would neither announce nor restart the fade.
         if notice == text { GenAnnounce.post(text) }
         notice = text
         noticeAction = action
+        noticeDetail = detail
         scheduleNoticeFade()
     }
 
@@ -468,6 +473,8 @@ public final class WidgetModel: ObservableObject {
     /// Inbox rows shown as dismissed or done while their Undo runs or their change is on its way
     /// (`WidgetLedgerUndo`). Opened again, such a row is still not answered.
     @Published public var heldCardIDs: Set<String> = []
+    /// The decision ids of `heldCardIDs`: such a decision is out of every staged send until its Undo brings it back.
+    @Published public var heldDecisionIDs: Set<String> = []
     /// The decision the composer and the number keys answer: the selected one, unanswered, not folded and not held.
     public var answerCard: WidgetCard? {
         guard let card, card.kind == "decision", card.needsAnswer, !foldedCardIDs.contains(card.id),
@@ -1188,7 +1195,11 @@ public final class WidgetModel: ObservableObject {
     /// sessions × 8 entries, sorted, is too much to derive in a body that reads it several times per pass.
     public private(set) var inboxOverviewItems: [WidgetInboxItem] = []
     /// Every staged decision of every session (the decision log's unsent picks and notes), stored with the inbox.
-    @Published public internal(set) var stagedItems: [WidgetInboxItem] = []
+    @Published var stagedRows: [WidgetInboxItem] = []
+    /// The staged decisions that may be sent: `stagedRows` without a decision dismissed or completed while its Undo
+    /// runs (`heldDecisionIDs`). Every send, the leave question and the Review list read this, so a close that sends
+    /// can never deliver an answer the user just discarded.
+    public var stagedItems: [WidgetInboxItem] { stagedRows.filter { !heldDecisionIDs.contains($0.sourceId) } }
     /// Picks staged or cleared here that the next snapshot has not shown yet, by decision id ("" is a cleared pick).
     @Published var pendingStage: [String: String] = [:]
     /// The question about staged decisions before the panel closes (`requestCollapse`).

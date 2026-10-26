@@ -23,9 +23,11 @@ public struct NativeSettingsCard<Content: View>: View {
             content.environment(\.nativeSettingsSearchCard, title ?? searchCard)
         }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
             .nativeGlassSurface()
-        // A titled card is a place the settings search finds and flashes (NativeSettingsSearch.swift).
+        // A titled card is a place the settings search finds and flashes (NativeSettingsSearch.swift). A card inside
+        // another titled card names that parent, so its result and its jump marker share one key.
         if let title {
-            card.nativeSettingsSearchable(NativeSettingsSearchEntry(kind: .card, title: title, detail: subtitle), cornerRadius: 22)
+            card.nativeSettingsSearchable(
+                NativeSettingsSearchEntry(kind: .card, title: title, detail: subtitle, card: searchCard), cornerRadius: 22)
         } else {
             card
         }

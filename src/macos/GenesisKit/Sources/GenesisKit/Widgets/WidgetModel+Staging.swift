@@ -97,7 +97,7 @@ extension WidgetModel {
     /// The staged items as the snapshot shows them, and the picks staged here that it now shows.
     func reconcileStaged(_ items: [WidgetInboxItem]) {
         let staged = items.filter(\.isStaged)
-        if staged != stagedItems { stagedItems = staged }
+        if staged != stagedRows { stagedRows = staged }
         guard !pendingStage.isEmpty else { return }
         let shown = Dictionary(items.map { ($0.sourceId, $0.draftOption ?? "") }, uniquingKeysWith: { first, _ in first })
         // A decision the list no longer holds shows no pick, so a pending unstage ("") is done.
@@ -176,8 +176,10 @@ extension WidgetModel {
                     fail(text, detail: outcome.details)
                     if staged { keptStaged.subtract(items.map(\.sourceId)) }
                 } else {
+                    // The summary names one reason at most; every session's own reason stays behind Details.
                     postNote(text, action: waiting.isEmpty ? nil
-                        : WidgetNoticeAction(title: "Send again") { [weak self] in self?.resendAnswers(waiting) })
+                        : WidgetNoticeAction(title: "Send again") { [weak self] in self?.resendAnswers(waiting) },
+                        detail: outcome.details)
                 }
                 flashUnsent(waiting.isEmpty ? items : waiting)
             } catch {

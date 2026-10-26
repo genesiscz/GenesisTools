@@ -123,17 +123,22 @@ public struct LiveWidgetView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             if let notice = model.notice {
-                HStack(alignment: .top) {
-                    Text(notice).font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer()
-                    if let action = model.noticeAction {
-                        Button(action.title) { action.run() }
-                            .buttonStyle(.genHover())
-                            .controlSize(.small)
-                            .accessibilityIdentifier("widget.notice.action")
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .top) {
+                        Text(notice).font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        if let action = model.noticeAction {
+                            Button(action.title) { action.run() }
+                                .buttonStyle(.genHover())
+                                .controlSize(.small)
+                                .accessibilityIdentifier("widget.notice.action")
+                        }
+                        IconButton(systemName: "xmark", tooltip: "Dismiss this note") { model.notice = nil }
                     }
-                    IconButton(systemName: "xmark", tooltip: "Dismiss this note") { model.notice = nil }
+                    if let detail = model.noticeDetail {
+                        WidgetNoticeDetails(text: detail)
+                    }
                 }
                 // A note under the pointer waits to fade. A note closed under the pointer gets no exit event.
                 .onHover { model.noticeHovered($0) }
@@ -1394,6 +1399,8 @@ final class WidgetLedgerUndo: ObservableObject {
 
     private struct Hold {
         let move: Move
+        /// The decision's id in the log: held, it leaves every staged send (`WidgetModel.heldDecisionIDs`).
+        let sourceId: String
         let request: WidgetJSON
         let note: String
         /// Kept until the change is sent, so a panel's model that goes away still sends it.
@@ -1437,6 +1444,7 @@ final class WidgetLedgerUndo: ObservableObject {
         let note = Self.note(card, state: state)
         var hold = Hold(
             move: move,
+            sourceId: card.sourceId,
             request: .object([
                 "action": "ledger", "id": .string(card.sourceId), "sessionId": .string(session),
                 "expectedRevision": .number(Double(revision)), "state": .string(state),
@@ -1446,6 +1454,7 @@ final class WidgetLedgerUndo: ObservableObject {
         // Folded, the card is no longer the decision the number keys and the composer answer.
         GenMotion.perform(expanding: false, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.insert(id) }
         model.heldCardIDs.insert(id)
+        model.heldDecisionIDs.insert(card.sourceId)
         model.postNote(note, action: WidgetNoticeAction(title: "Undo") { [weak self] in
             self?.undo(id, reduceMotion: reduceMotion)
         })
@@ -1484,6 +1493,7 @@ final class WidgetLedgerUndo: ObservableObject {
             if self?.moves[id] == hold.move {
                 self?.moves[id] = nil
                 model.heldCardIDs.remove(id)
+                model.heldDecisionIDs.remove(hold.sourceId)
             }
         }, completed: { [weak self] in
             self?.sending[id] = nil
@@ -1493,6 +1503,7 @@ final class WidgetLedgerUndo: ObservableObject {
                 if self?.moves[id] == hold.move {
                     self?.moves[id] = nil
                     model.heldCardIDs.remove(id)
+                    model.heldDecisionIDs.remove(hold.sourceId)
                 }
             }
         })
@@ -1505,6 +1516,7 @@ final class WidgetLedgerUndo: ObservableObject {
         moves[id] = nil
         let model = hold.model
         model.heldCardIDs.remove(id)
+        model.heldDecisionIDs.remove(hold.sourceId)
         GenMotion.perform(expanding: true, reduceMotion: reduceMotion) { _ = model.foldedCardIDs.remove(id) }
         model.postNote("Undone.")
     }
@@ -1553,4 +1565,33 @@ final class WidgetContentFit {
     var viewport: CGFloat?
     var document: CGFloat?
     var scheduled = false
+}
+
+/// The full reasons behind a widget note, as `NoticePill` shows its own behind "Details".
+private struct WidgetNoticeDetails: View {
+    let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showsMore = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Button {
+                GenMotion.perform(expanding: !showsMore, reduceMotion: reduceMotion) { showsMore.toggle() }
+            } label: {
+                Label(showsMore ? "Hide details" : "Details", systemImage: showsMore ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 11))
+                    .foregroundColor(KitPalette.dim)
+            }
+            .buttonStyle(.genHoverPlain())
+            .instantTooltip(showsMore ? "Hide why each session was not reached" : "Show why each session was not reached")
+            .accessibilityValue(showsMore ? "Expanded" : "Collapsed")
+            .accessibilityIdentifier("widget.notice.details")
+            if showsMore {
+                Text(text).font(.system(size: 11, design: .monospaced)).foregroundColor(KitPalette.dim)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.genReveal)
+            }
+        }
+    }
 }

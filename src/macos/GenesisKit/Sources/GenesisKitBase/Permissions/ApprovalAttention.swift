@@ -128,7 +128,9 @@ final class ApprovalReminder {
         let content = UNMutableNotificationContent()
         content.title = model.title
         content.subtitle = "Waiting for your answer"
-        content.body = [model.purpose, model.command].compactMap { $0 }.joined(separator: " ")
+        // The command stays in the approval panel: a vault request can carry private arguments, and macOS shows a
+        // notification's body on the lock screen and in Notification Center.
+        content.body = model.purpose
         content.sound = ApprovalAttention.sound == "none" ? nil : UNNotificationSound.default
         content.threadIdentifier = "approval.\(model.identifier)"
         content.userInfo = [ApprovalNotificationRelay.tokenKey: token]

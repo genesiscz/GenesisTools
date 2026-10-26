@@ -1194,6 +1194,7 @@ final class WidgetStagingTests: XCTestCase {
             + "was picked. Close the extra one, then send again. The answers wait for its next prompt.")
         let again = try XCTUnwrap(model.noticeAction, "a send nobody took offers Send again")
         XCTAssertEqual(again.title, "Send again")
+        XCTAssertEqual(model.noticeDetail, "Staged fixture: \(reason)", "the hub's own reason stays behind Details")
 
         again.run()
         try await Task.sleep(for: .milliseconds(200))
@@ -1202,11 +1203,42 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertEqual(resend["ids"], .array(["d1"]))
         XCTAssertEqual(model.notice, "1 decision delivered.")
         XCTAssertNil(model.noticeAction, "a delivered send leaves no button")
+        XCTAssertNil(model.noticeDetail, "a new note drops the old reasons")
     }
 
     /// The decision writes and sends among `actions`, without the selection and read marks around them.
     private func decisionActions(_ actions: [WidgetJSON]) -> [String] {
         names(actions).filter { ["ledger", "send-staged"].contains($0) }
+    }
+
+    /// A decision dismissed while its Undo runs is out of every staged send: Review and send does not list it, a send
+    /// skips it, and closing neither asks about it nor sends it. Undo brings it back.
+    func testAHeldDecisionLeavesEveryStagedSend() async throws {
+        _ = NSApplication.shared
+        let model = StagingFixture.model()
+        defer { model.stop() }
+        var actions: [WidgetJSON] = []
+        model.actionRunner = { value in
+            actions.append(value)
+            return ["sent": 1, "queued": 0, "failed": 0, "sessions": [["session": "fixture-staged", "numbers": [7],
+                "result": ["delivered": true, "detail": "codex worker w1"]]]]
+        }
+        model.receive([try snapshot(draftOption: "a")])
+        model.select(key)
+        XCTAssertEqual(model.stagedItems.map(\.sourceId), ["d1"])
+
+        model.heldDecisionIDs.insert("d1")
+        XCTAssertTrue(model.stagedItems.isEmpty, "a held decision is not listed for sending")
+        model.sendStaged(["d1"])
+        model.expanded = .right
+        model.requestCollapse()
+        XCTAssertFalse(model.stagedLeavePrompt, "closing does not ask about a held decision")
+        XCTAssertNil(model.expanded)
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertFalse(names(actions).contains("send-staged"), "nothing sent the discarded answer")
+
+        model.heldDecisionIDs.remove("d1")
+        XCTAssertEqual(model.stagedItems.map(\.sourceId), ["d1"], "Undo makes it sendable again")
     }
 
     /// Send now in the leave question: a send no session took keeps the panel open with the reason and Send again

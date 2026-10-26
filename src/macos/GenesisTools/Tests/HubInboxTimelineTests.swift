@@ -172,6 +172,20 @@ final class HubDecisionsSourceTests: XCTestCase {
         XCTAssertEqual(session.draftedItems.map(\.id), ["d_1_s-alpha"])
     }
 
+    /// The arrow keys step through the rows the Inbox shows: the quiet sessions only while their fold is open, whichever
+    /// row is selected (a fold opened with the mouse, and one left open after the selection moved up).
+    func testTheInboxArrowKeysFollowTheQuietFold() {
+        func session(_ id: String, stale: Bool) -> InboxSession {
+            InboxSession(
+                sessionId: id, provider: "claude", title: id, project: nil, cwd: "/tmp/gt/app", branch: nil,
+                account: nil, lastAt: "", waiting: 1, drafted: nil, queued: nil, stale: stale, reply: nil, items: []
+            )
+        }
+        let rows = [session("fresh-a", stale: false), session("quiet-b", stale: true), session("fresh-c", stale: false)]
+        XCTAssertEqual(HubInboxModel.keyOrder(rows, showsQuiet: false), ["fresh-a", "fresh-c"])
+        XCTAssertEqual(HubInboxModel.keyOrder(rows, showsQuiet: true), ["fresh-a", "fresh-c", "quiet-b"])
+    }
+
     /// A click MARKS an option: plain click replaces the pick (and clears it on the chosen one),
     /// Cmd-click adds or removes a letter. Nothing here sends.
     func testAClickMarksAndCmdClickAdds() {
