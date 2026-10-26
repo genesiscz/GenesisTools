@@ -71,7 +71,7 @@ interface CodexSessionOptions {
     port?: string;
 }
 
-/** The AI-config provider of each agent's logins. */
+/** Prints the error and exits 1. */
 async function fail(message: string): Promise<never> {
     out.error(pc.red(message));
     await out.flush();
