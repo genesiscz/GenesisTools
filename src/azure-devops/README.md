@@ -17,6 +17,7 @@ CLI tool for fetching, tracking, and managing Azure DevOps work items, queries, 
 -   ✅ **Multiple Output Formats**: AI-optimized, Markdown, or JSON output
 -   ✅ **Sprint Backlog**: List the project's iterations and the work items of one sprint, with the effort columns the ADO Backlog tab shows
 -   ✅ **Wiki**: List wikis and page trees, read a page with its details and attachments, search, and see what an edit changed
+-   ✅ **Field manifest**: Every field of each work item type with its label, type and allowed values, written as a `.ts` or `.json` file, with a drift check
 
 ## Sprint / iteration commands
 
@@ -311,6 +312,25 @@ the URL, else the project wiki. The name also matches without `.wiki` and with s
   current file path.
 - **`search`** runs on the separate `almsearch.dev.azure.com` host and returns page paths that
   `wiki get` accepts directly.
+
+## Field manifest (`maintenance get-fields`)
+
+A field manifest lists, per work item type, every field with its label, data type, identity flag, `alwaysRequired` and allowed values, plus the type's states in workflow order with their category. Code then finds a field by label or value instead of hard-coding a generated reference name such as `Custom.<guid>`.
+
+```bash
+# Print the manifest of every enabled type (md, json or ts)
+tools azure-devops maintenance get-fields -f md
+
+# Write it as `export const ADO_FIELDS = {...} as const` (or plain JSON for a .json path)
+tools azure-devops maintenance get-fields --types "Bug,Task" --into src/ado-fields.generated.ts
+
+# Compare a written manifest with ADO: prints each drift and exits 1
+tools azure-devops maintenance get-fields --check src/ado-fields.generated.ts
+```
+
+- Types and fields are sorted, so a regenerated file differs only where ADO changed (and in `meta.fetchedAt`).
+- `--check` reads the types from the file unless `--types` is given, and ignores the `meta` block.
+- `findField(manifest, { type?, label?, value? })` from `lib/field-manifest.ts` returns the one matching field (reference name, label, type, allowed values, the types that have it), `undefined` when none matches, and throws when the query matches several. A string label matches exactly ignoring case; a RegExp is tested. `findFields` returns every match.
 
 ## Comments
 
