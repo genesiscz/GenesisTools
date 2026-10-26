@@ -1219,6 +1219,52 @@ describe("delivery routes", () => {
         ).toMatchObject({ kind: "none", reason: expect.stringContaining("pid 42, pid 41") });
     });
 
+    test("duplicate Claude receivers need a valid activity timestamp on every copy", async () => {
+        const peer = {
+            sessionId: "original-session",
+            name: null,
+            cwd: null,
+            status: "idle",
+            kind: null,
+            pid: 42,
+            socketPath: "/fixture/42.sock",
+            file: "/fixture/home/sessions/42.json",
+            updatedAt: 1_800_000_000_000,
+        };
+        const request = { session: peer.sessionId, provider: "claude", sourceHome: "/fixture/home", text: "reply" };
+        for (const updatedAt of [undefined, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+            const unknown = { ...peer, pid: 43, socketPath: "/fixture/43.sock", updatedAt };
+            for (const peers of [
+                [peer, unknown],
+                [unknown, peer],
+                [peer, { ...peer, pid: 44, updatedAt: 1 }, unknown],
+            ]) {
+                let sends = 0;
+                const result = await deliverToSession(request, {
+                    nativeWorkers: () => [],
+                    claudePeers: () => peers,
+                    peerToken: () => null,
+                    sendClaudePeer: async () => {
+                        sends++;
+                    },
+                });
+                expect(result).toMatchObject({ delivered: false, error: expect.stringContaining("none was picked") });
+                expect(sends).toBe(0);
+            }
+        }
+
+        let reads = 0;
+        const changed = await deliverToSession(request, {
+            nativeWorkers: () => [],
+            claudePeers: () => [peer, { ...peer, pid: 43, updatedAt: ++reads === 1 ? 1 : undefined }],
+            sendClaudePeer: async () => {
+                throw new Error("Unknown recency at the consuming boundary must prevent a write");
+            },
+        });
+        expect(changed).toMatchObject({ delivered: false, error: expect.stringContaining("receiver changed") });
+        expect(reads).toBe(2);
+    });
+
     test("automatic replies never type into a lone cwd or screen-text match", async () => {
         for (const source of ["cwd", "screen"] as const) {
             let sends = 0;

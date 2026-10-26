@@ -94,13 +94,16 @@ export function pickClaudePeer(
         return { reason: "No native Claude receiver claims this session." };
     }
 
-    if (!second || (first.updatedAt ?? 0) - (second.updatedAt ?? 0) >= ACTIVE_RECEIVER_LEAD_MS) {
+    const knownActivity = ranked.every(
+        (peer) => typeof peer.updatedAt === "number" && Number.isFinite(peer.updatedAt) && peer.updatedAt > 0
+    );
+    if (!second || (knownActivity && (first.updatedAt ?? 0) - (second.updatedAt ?? 0) >= ACTIVE_RECEIVER_LEAD_MS)) {
         return { peer: first, others: ranked.length - 1 };
     }
 
     const pids = ranked.map((peer) => `pid ${peer.pid}`).join(", ");
     return {
-        reason: `${ranked.length} Claude terminals run this session (${pids}), active within 10 minutes of each other; none was picked. Close the extra one, then send again.`,
+        reason: `${ranked.length} Claude terminals run this session (${pids}), ${knownActivity ? "active within 10 minutes of each other" : "with unknown activity on at least one copy"}; none was picked. Close the extra one, then send again.`,
     };
 }
 
