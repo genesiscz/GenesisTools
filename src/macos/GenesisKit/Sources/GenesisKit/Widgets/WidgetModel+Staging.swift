@@ -85,6 +85,7 @@ extension WidgetModel {
         id: String, sessionId: String, revision: Int, option: String?, note: String? = nil,
         completed: (() -> Void)? = nil
     ) {
+        sendCloseRevision += 1
         pendingStage[id] = option ?? ""
         var fields: [String: WidgetJSON] = [
             "action": "ledger", "id": .string(id), "sessionId": .string(sessionId),
@@ -141,6 +142,8 @@ extension WidgetModel {
     private func deliverDecisions(_ items: [WidgetInboxItem], action: String, thenClose: Bool = false) {
         let staged = action == "send-staged"
         let opened = openedAt
+        let closeRevision = sendCloseRevision
+        let draftAtSend = draft
         if thenClose { postNote("Sending " + Plural.count(items.count, "decision") + "…") }
         // The "Sending…" note this send put up; a failure takes it down, unless another note replaced it meanwhile.
         let sendingNote = thenClose || action == "resend-answers" ? notice : nil
@@ -176,10 +179,13 @@ extension WidgetModel {
                     // Only the panel this send left from: one the user opened again meanwhile stays open. It folds
                     // after the note was readable: closing at once hid "delivered" and read as "Send did nothing"
                     // (Martin, 2026-10-25).
-                    if thenClose, expanded != nil, openedAt == opened {
+                    let closeSeconds = snapshot?.state.preferences.sendCloseSeconds ?? 2.5
+                    if thenClose, expanded != nil, openedAt == opened, sendCloseRevision == closeRevision,
+                       closeSeconds > 0 {
                         Task { [weak self] in
-                            try? await Task.sleep(for: .milliseconds(2500))
-                            guard let self, self.expanded != nil, self.openedAt == opened else { return }
+                            do { try await Task.sleep(for: .seconds(closeSeconds)) } catch { return }
+                            guard let self, self.expanded != nil, self.openedAt == opened,
+                                  self.sendCloseRevision == closeRevision, self.draft == draftAtSend else { return }
                             self.collapse()
                         }
                     }
@@ -219,6 +225,7 @@ extension WidgetModel {
     /// Discards the picks and notes of the staged decisions `ids`; they still wait for an answer.
     public func discardStaged(_ ids: [String]) {
         guard !ids.isEmpty else { return }
+        sendCloseRevision += 1
         for id in ids { pendingStage[id] = "" }
         action(["action": "unstage", "ids": .array(ids.map { .string($0) })], failed: { [weak self] in
             for id in ids { self?.pendingStage[id] = nil }

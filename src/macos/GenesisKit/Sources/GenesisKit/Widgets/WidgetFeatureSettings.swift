@@ -272,6 +272,17 @@ private struct WidgetGeneralSettings: View {
                     }.labelsHidden().pickerStyle(.segmented).frame(width: 250, alignment: .trailing)
                 }
                 Divider()
+                NativeSettingsRow("Close after send", detail: "When closing sends staged decisions, keep the delivered note readable for this long. Any new typing, pick or session selection keeps the panel open.") {
+                    Picker("Close after send", selection: Binding(
+                        get: { prefs?.sendCloseSeconds ?? 2.5 },
+                        set: { patch(["sendCloseSeconds": .number($0)]) })) {
+                        Text("Keep open").tag(0.0)
+                        ForEach(Array(Set([2.5, 5, 10, prefs?.sendCloseSeconds ?? 2.5])).filter { $0 > 0 }.sorted(), id: \.self) { seconds in
+                            Text("\(seconds.formatted()) seconds").tag(seconds)
+                        }
+                    }.labelsHidden().accessibilityIdentifier("widget.sendCloseSeconds")
+                }
+                Divider()
                 NativeSettingsRow("Inbox of every session", detail: "The inbox button's list: grouped under each session, or one list.") {
                     Picker("Inbox of every session", selection: string("inboxGrouping", prefs?.inboxGrouping ?? "session")) {
                         Text("By session").tag("session")

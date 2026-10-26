@@ -622,8 +622,8 @@ struct WidgetPeekOptions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(options.prefix(4).enumerated()), id: \.offset) { _, option in
-                let picked = Self.isRecommended(option, recommended)
+            ForEach(Array(options.prefix(4).enumerated()), id: \.offset) { index, option in
+                let picked = Self.isRecommended(option, at: index, recommended)
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: picked ? "star.fill" : "circle")
                         .font(.system(size: picked ? 8 : 6, weight: .semibold))
@@ -642,11 +642,13 @@ struct WidgetPeekOptions: View {
     }
 
     /// The hub names the recommended option by its letter ("b") or its whole text.
-    static func isRecommended(_ option: String, _ recommended: String?) -> Bool {
+    static func isRecommended(_ option: String, at index: Int, _ recommended: String?) -> Bool {
         guard let recommended = recommended?.trimmingCharacters(in: .whitespaces).lowercased(), !recommended.isEmpty
         else { return false }
         let lower = option.lowercased()
-        return lower == recommended || lower.hasPrefix(recommended + ")") || lower.hasPrefix(recommended + ".")
+        let letter = String(UnicodeScalar(97 + index)!)
+        return recommended == letter || lower == recommended
+            || lower.hasPrefix(recommended + ")") || lower.hasPrefix(recommended + ".")
     }
 }
 

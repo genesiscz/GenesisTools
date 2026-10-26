@@ -72,10 +72,16 @@ final class WidgetPolishShotsTests: XCTestCase {
     }
 
     func testTheRecommendedOptionIsFoundByLetterOrText() {
-        XCTAssertTrue(WidgetPeekOptions.isRecommended("b) every remote call", "b"))
-        XCTAssertTrue(WidgetPeekOptions.isRecommended("keep", "keep"))
-        XCTAssertFalse(WidgetPeekOptions.isRecommended("a) only the fleet publisher", "b"))
-        XCTAssertFalse(WidgetPeekOptions.isRecommended("bigger", "b"))
+        XCTAssertTrue(WidgetPeekOptions.isRecommended("b) every remote call", at: 1, "b"))
+        XCTAssertTrue(WidgetPeekOptions.isRecommended("keep", at: 0, "keep"))
+        XCTAssertFalse(WidgetPeekOptions.isRecommended("a) only the fleet publisher", at: 0, "b"))
+        XCTAssertFalse(WidgetPeekOptions.isRecommended("bigger", at: 0, "b"))
+        let options = ["Keep", "Drop"]
+        XCTAssertEqual(options.enumerated().filter {
+            WidgetPeekOptions.isRecommended($0.element, at: $0.offset, " B ")
+        }.map(\.element), ["Drop"], "wire options have no letter prefix")
+        XCTAssertFalse(WidgetPeekOptions.isRecommended("Drop", at: 1, nil))
+        XCTAssertFalse(WidgetPeekOptions.isRecommended("Drop", at: 1, " "))
     }
 
     func testThePanelIsDarkUnlessGlassOrTheAppThemeIsPicked() throws {

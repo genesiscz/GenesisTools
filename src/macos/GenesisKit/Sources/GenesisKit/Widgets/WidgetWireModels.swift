@@ -312,6 +312,8 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var decisionClick: String?
     /// Leaving the inbox with staged decisions: "ask" (default), "keep" or "send".
     public var stagedOnLeave: String?
+    /// Seconds to show a delivered note before a send-and-close folds the panel; 0 keeps it open. Default 2.5.
+    public var sendCloseSeconds: Double?
     /// The inbox of every session: "session" (default, grouped under each session) or "list".
     public var inboxGrouping: String?
     /// The filter a session's inbox opens with: "all" (default), "inbox" or "decisions".

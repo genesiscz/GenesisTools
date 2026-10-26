@@ -1685,6 +1685,14 @@ test("legacy preferences gain independent module layouts without accepting off-s
     expect(widgetPreferencesSchema.safeParse({ topModules: ["../../invalid"] }).success).toBe(false);
 });
 
+test("send-and-close timing defaults to 2.5 seconds and can keep the panel open", () => {
+    expect(widgetPreferencesSchema.parse({}).sendCloseSeconds).toBe(2.5);
+    expect(widgetPreferencesSchema.parse({ sendCloseSeconds: 0 }).sendCloseSeconds).toBe(0);
+    expect(widgetPreferencesSchema.parse({ sendCloseSeconds: 10 }).sendCloseSeconds).toBe(10);
+    expect(widgetPreferencesSchema.safeParse({ sendCloseSeconds: -1 }).success).toBe(false);
+    expect(widgetPreferencesSchema.safeParse({ sendCloseSeconds: 61 }).success).toBe(false);
+});
+
 test("an open TODO does not mark its session as waiting for an answer", async () => {
     const directory = await root();
     const file = join(directory, "decisions.jsonl");

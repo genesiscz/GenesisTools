@@ -654,6 +654,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func stop() {
+        sendCloseRevision += 1
         peekTask?.cancel()
         preferenceTask?.cancel()
         flushPreferences()
@@ -1229,6 +1230,8 @@ public final class WidgetModel: ObservableObject {
     @Published public var stagedView: String?
     /// The staged decisions the user kept at the last leave; the prompt asks again only for a newly staged one.
     var keptStaged: Set<String> = []
+    /// User edits and selections invalidate a send's pending automatic close, even if changed back afterwards.
+    var sendCloseRevision = 0
     /// When this widget last saved a decision's draft, by card id, for the card's "Draft saved" line.
     @Published public var draftSavedAt: [String: Date] = [:]
 
@@ -1337,6 +1340,7 @@ public final class WidgetModel: ObservableObject {
     }
 
     public func select(_ key: String, edge: EdgePanelPlacement? = nil) {
+        sendCloseRevision += 1
         if openingInbox?.key != key { openingInbox = nil }
         inboxOverview = false
         selectedKey = key
@@ -1514,6 +1518,7 @@ public final class WidgetModel: ObservableObject {
 
 
     public func setText(_ text: String) {
+        sendCloseRevision += 1
         let key = selectedKey
         guard !key.isEmpty else { return }
         if let sent = lastSent[key] {

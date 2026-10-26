@@ -89,6 +89,8 @@ export const widgetPreferencesSchema = z.object({
     decisionClick: z.enum(["stage", "send"]).default("stage"),
     /** Leaving the inbox with staged decisions: ask what to do ("ask"), keep them staged, or send them. */
     stagedOnLeave: z.enum(["ask", "keep", "send"]).default("ask"),
+    /** Seconds before a successful send-and-close folds the panel; 0 keeps it open. */
+    sendCloseSeconds: z.number().min(0).max(60).default(2.5),
     /** The inbox of every session: entries grouped under their session ("session"), or one list. */
     inboxGrouping: z.enum(["session", "list"]).default("session"),
     /** The filter a session's inbox opens with: every entry ("all"), the inbox entries, or the decisions. */

@@ -1170,6 +1170,61 @@ final class WidgetStagingTests: XCTestCase {
         XCTAssertEqual(WidgetModel.stagedSummary(model.stagedItems), "1 decision will be sent to 1 session")
     }
 
+    func testNewInteractionCancelsTheDeliveredSendClose() async throws {
+        let models = (0 ..< 4).map { _ in StagingFixture.model() }
+        defer { models.forEach { $0.stop() } }
+        for model in models {
+            model.actionRunner = { _ in ["sent": 1, "failed": 0] }
+            model.receive([try snapshot(draftOption: "a")])
+            model.select(key)
+            model.expanded = .right
+            model.requestCollapse()
+            model.resolveStagedLeave("send")
+        }
+        for _ in 0 ..< 400 where models.contains(where: { $0.notice != "1 decision delivered." }) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        for model in models { XCTAssertEqual(model.notice, "1 decision delivered.") }
+        models[0].setText("A new reply")
+        var nextDecision = try XCTUnwrap(models[1].stagedItems.first)
+        nextDecision.id = "decision:d2"
+        nextDecision.sourceId = "d2"
+        nextDecision.draftOption = nil
+        models[1].choose(nextDecision, option: "b")
+        nextDecision.draftOption = "b"
+        models[1].reconcileStaged([nextDecision])
+        models[2].select("another-session")
+        models[2].select(key)
+        models[3].discardStaged(["d1"])
+        try await Task.sleep(for: .milliseconds(2600))
+        for model in models { XCTAssertEqual(model.expanded, .right, "new work must stay visible") }
+        XCTAssertEqual(models[0].draft.text, "A new reply")
+        // A newly staged decision still goes through the normal leave confirmation.
+        models[1].requestCollapse()
+        XCTAssertTrue(models[1].stagedLeavePrompt)
+    }
+
+    func testSendCloseCanKeepThePanelOpenOrUseTheConfiguredDelay() async throws {
+        let models = (0 ..< 2).map { _ in StagingFixture.model() }
+        defer { models.forEach { $0.stop() } }
+        for (index, model) in models.enumerated() {
+            model.actionRunner = { _ in ["sent": 1, "failed": 0] }
+            var wire = try JSONDecoder().decode(WidgetSnapshot.self, from: Data(snapshot(draftOption: "a").utf8))
+            wire.state.preferences.sendCloseSeconds = index == 0 ? 0 : 0.05
+            model.receive([String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)])
+            model.select(key)
+            model.expanded = .right
+            model.requestCollapse()
+            model.resolveStagedLeave("send")
+        }
+        for _ in 0 ..< 400 where models[1].expanded != nil || models[0].notice != "1 decision delivered." {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertNil(models[1].expanded, "a configured delay replaces the 2.5 second default")
+        try await Task.sleep(for: .milliseconds(2600))
+        XCTAssertEqual(models[0].expanded, .right, "Keep open disables the delayed fold")
+    }
+
     func testASendNoSessionTookSaysWhyAndSendAgainDeliversIt() async throws {
         let defaults = UserDefaults(suiteName: "widget.staging." + UUID().uuidString)!
         let model = WidgetModel(binaryPath: "/fixture/tools", stateRoot: FileManager.default.temporaryDirectory.path,
