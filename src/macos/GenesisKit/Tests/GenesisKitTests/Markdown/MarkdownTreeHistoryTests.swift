@@ -4,6 +4,19 @@ import XCTest
 
 /// The file sidebar's back and forward, and a picture opened as a tab.
 final class MarkdownTreeHistoryTests: XCTestCase {
+    /// "Show only notes" (on by default) keeps folders and notes; off, the tree lists pictures, JSON and code too.
+    func testNotesOnlyKeepsFoldersAndNotes() {
+        let rows = [
+            FileTreeRow(id: "/vault/Design", name: "Design", isFolder: true, depth: 0),
+            FileTreeRow(id: "/vault/Design/Plan.md", name: "Plan.md", isFolder: false, depth: 1),
+            FileTreeRow(id: "/vault/Design/shot.png", name: "shot.png", isFolder: false, depth: 1),
+            FileTreeRow(id: "/vault/Board.canvas", name: "Board.canvas", isFolder: false, depth: 0),
+            FileTreeRow(id: "/vault/data.json", name: "data.json", isFolder: false, depth: 0),
+            FileTreeRow(id: "/vault/Tasks.base", name: "Tasks.base", isFolder: false, depth: 0),
+        ]
+        XCTAssertEqual(MarkdownFileTreeView.noteRows(rows).map(\.name), ["Design", "Plan.md", "Board.canvas", "Tasks.base"])
+    }
+
     private func place(_ root: String, _ open: Set<String> = [], _ y: Double = 0) -> MarkdownTreePlace {
         MarkdownTreePlace(root: root, expanded: open, scrollY: y)
     }

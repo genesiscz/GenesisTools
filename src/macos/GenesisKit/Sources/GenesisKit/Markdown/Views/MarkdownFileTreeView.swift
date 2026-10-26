@@ -48,6 +48,8 @@ struct MarkdownFileTreeView: View {
     @State private var markedRowFit = MarkdownTreeFit<FileTreeRow>()
     @StateObject private var gitTree = GitTreeDecorationsModel()
     @AppStorage("markdown.config.treeChangedOnly") private var changedOnly = false
+    /// The tree lists folders and notes (markdown, canvas, base) only; off lists every file (pictures, JSON, code).
+    @AppStorage("markdown.config.treeNotesOnly") private var notesOnly = true
     @State private var hitFit = MarkdownTreeFit<FileTreeSearch.Hit>()
     @State private var rowPulse: FileTreePulse?
     /// The tree's AppKit scroll view, so a reveal can glide to a row SwiftUI has not laid out yet.
@@ -218,6 +220,7 @@ struct MarkdownFileTreeView: View {
     private var shownEmpty: MarkdownTreeEmpty? {
         if tree.rows.isEmpty { return treeEmpty }
         if changedOnly, gitMarks, displayedRows.isEmpty { return .noChanges }
+        if notesOnly, displayedRows.isEmpty { return .noNotes }
         return nil
     }
 
@@ -249,6 +252,12 @@ struct MarkdownFileTreeView: View {
                        actionTitle: "Show all files",
                        action: { changedOnly = false })
                 .accessibilityIdentifier("markdown-files-no-changes")
+        case .noNotes:
+            EmptyState(symbol: "doc.text", text: "No notes in \(name)",
+                       detail: "Only notes are listed, and this folder holds other files only.",
+                       actionTitle: "Show all files",
+                       action: { notesOnly = false })
+                .accessibilityIdentifier("markdown-files-no-notes")
         }
     }
 
@@ -261,7 +270,13 @@ struct MarkdownFileTreeView: View {
     /// The rows on screen, in order: every row, or only the changed ones when the git filter is on.
     private var displayedRows: [FileTreeRow] {
         let git: GitTreeDecorations? = gitMarks ? gitTree.decorations : nil
-        return git.map { changedOnly ? FileTreeView.changedRows(tree.rows, $0) : tree.rows } ?? tree.rows
+        let rows = notesOnly ? Self.noteRows(tree.rows) : tree.rows
+        return git.map { changedOnly ? FileTreeView.changedRows(rows, $0) : rows } ?? rows
+    }
+
+    /// Folders and notes (markdown, canvas, base): the "Notes only" filter.
+    nonisolated static func noteRows(_ rows: [FileTreeRow]) -> [FileTreeRow] {
+        rows.filter { $0.isFolder || FileTree.kind(for: URL(fileURLWithPath: $0.id), isDirectory: false) != .file }
     }
 
     /// Every file row carries the hover preview; a single click opens through `openFromTree`.
@@ -799,6 +814,24 @@ struct MarkdownFileTreeView: View {
                 ? "New file or folder in \(Self.folderName(root))"
                 : "New file or folder in \(Self.folderName(newItemFolder)) or \(Self.folderName(root))")
 
+            Button {
+                notesOnly.toggle()
+            } label: {
+                Image(systemName: "line.3.horizontal.decrease")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(notesOnly ? model.theme.accent : model.theme.textMuted)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.genHoverPlain())
+            .accessibilityLabel("Show only notes")
+            .accessibilityValue(notesOnly ? "on" : "off")
+            .accessibilityAddTraits(notesOnly ? .isSelected : [])
+            .accessibilityIdentifier("markdown-files-notes-only")
+            .instantTooltip(notesOnly
+                ? "Showing only notes: click to show every file (pictures, JSON, code)"
+                : "Showing every file: click to show only notes")
+
             if gitMarks {
                 Button {
                     changedOnly.toggle()
@@ -1229,6 +1262,8 @@ enum MarkdownTreeEmpty: Equatable, Sendable {
     case unreadable
     /// "Show only changed files" is on and nothing changed.
     case noChanges
+    /// "Show only notes" is on and the folder holds other files only.
+    case noNotes
 
     /// Reads the folder once, off the main thread: an empty listing and a refused one are different answers.
     nonisolated static func check(_ path: String) -> MarkdownTreeEmpty {
