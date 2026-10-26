@@ -378,6 +378,15 @@ final class WidgetPolishShotsTests: XCTestCase {
         guard let folder = ProcessInfo.processInfo.environment["WIDGET_POLISH_SHOTS"] else { return }
         let model = try model(panelBackground: "dark")
         defer { model.stop() }
+        // Settings → Automatic decisions lists one decision answered in the chat.
+        let answered = WidgetInboxItem(id: "decision:d_12_x", sourceId: "d_12_x", kind: "decision", key: key + "0",
+            at: Date().timeIntervalSince1970 * 1000 - 120_000, needsAnswer: false,
+            title: "Ship the alert settings in the same PR?", number: 12,
+            options: ["one PR with the widget work", "a PR of its own"], option: "a",
+            answer: "a, keep it together", answeredVia: "agent")
+        var summary = model.inbox
+        summary.answeredElsewhere = [answered]
+        model.updateInbox(summary)
         let general = try XCTUnwrap(WidgetFeatureSettings.sections(model: model, modules: WidgetModuleChoice.builtins,
             openSession: { _ in }).flatMap(\.pages).first { $0.id == "widgets.general" })
         let page = ScrollView { general.content().padding(24) }
@@ -420,5 +429,15 @@ final class WidgetPolishShotsTests: XCTestCase {
         let listedShot = try KitShots.render(listed, size: CGSize(width: 310, height: 380), name: "widget-peek-listed", settle: 0.6)
         try XCTUnwrap(listedShot.representation(using: .png, properties: [:]))
             .write(to: URL(fileURLWithPath: folder).appendingPathComponent("widget-alert-card-listed.png"))
+        model.collapse()
+        model.showPeek(answered, on: side, seconds: 0, many: .list)
+        let answeredView = WidgetPeekView(model: model, item: answered).padding(WidgetPeekView.inset)
+            .frame(width: 310, height: 300, alignment: .top)
+            .background(NativeThemePalette.graphiteBase)
+            .environment(\.nativeSettingsTheme, model.panelTheme)
+            .environment(\.colorScheme, .dark)
+        let answeredShot = try KitShots.render(answeredView, size: CGSize(width: 310, height: 300), name: "widget-peek-answered", settle: 0.6)
+        try XCTUnwrap(answeredShot.representation(using: .png, properties: [:]))
+            .write(to: URL(fileURLWithPath: folder).appendingPathComponent("widget-alert-card-answered.png"))
     }
 }

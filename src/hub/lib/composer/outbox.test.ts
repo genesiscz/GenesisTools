@@ -1798,6 +1798,19 @@ test("decision cards carry recorded answers and supersede links; only open decis
     });
     // The overview lists the session's entries, the waiting one first.
     expect(session?.items?.[0]).toMatchObject({ id: `decision:${replacement.id}`, needsAnswer: true });
+    // The chat answer an agent recorded is listed as answered elsewhere; the inbox's own answers never are.
+    expect(snapshot.notifications?.answeredElsewhere).toMatchObject([
+        {
+            id: `decision:${answered.id}`,
+            key: sessionKey,
+            needsAnswer: false,
+            option: "b",
+            answer: "drop it, said in chat",
+            answeredVia: "agent",
+        },
+    ]);
+    const weekLater = await widgetSnapshot({ root: directory, sources, now: Date.now() + 8 * 86_400_000 });
+    expect(weekLater.notifications?.answeredElsewhere).toEqual([]);
     expect(
         snapshot.notifications?.sessions.find((entry) => entry.pendingItem?.sourceId === elsewhere.id)?.pendingItem
     ).toMatchObject({ number: 1, title: "Other" });

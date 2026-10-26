@@ -241,6 +241,10 @@ export interface WidgetInboxItem {
     /** A decision's unsent pick and note (`drafted`); see `WidgetCard.draftOption`. */
     draftOption?: string;
     draft?: string;
+    /** A decision answered outside the widget (`answeredElsewhere`): the chosen letters, the answer and who stored it. */
+    option?: string;
+    answer?: string;
+    answeredVia?: AnsweredVia;
 }
 export interface WidgetInboxSession {
     key: string;
@@ -252,6 +256,10 @@ export interface WidgetInboxSession {
     /** The session's listed entries, the ones waiting for an answer first, then newest first; at most `INBOX_ITEMS_PER_SESSION`. */
     items?: WidgetInboxItem[];
 }
+
+/** How far back, and how many, decisions answered outside the widget the snapshot carries. */
+export const ANSWERED_ELSEWHERE_DAYS = 7;
+export const ANSWERED_ELSEWHERE_MAX = 20;
 
 /** The entries one session lists in the widget's inbox overview; its counts still cover every item. */
 export const INBOX_ITEMS_PER_SESSION = 8;
@@ -270,6 +278,12 @@ export interface WidgetInboxSummary {
     sessions: WidgetInboxSession[];
     /** Every staged decision, uncapped: the widget sends from this list, not from a session's capped `items`. */
     staged: WidgetInboxItem[];
+    /**
+     * Decisions answered outside the widget (an agent recorded the user's chat answer, or the Stop hook read it from
+     * the chat) in the last {@link ANSWERED_ELSEWHERE_DAYS} days, newest first, at most {@link ANSWERED_ELSEWHERE_MAX}.
+     * The widget shows each new one, and its settings list them (Automatic decisions).
+     */
+    answeredElsewhere: WidgetInboxItem[];
     profile?: { hostId: "local" };
 }
 
@@ -1165,6 +1179,42 @@ export async function widgetSnapshot({
             putInbox(session, item, 1);
         }
     }
+    const answeredSince = now - ANSWERED_ELSEWHERE_DAYS * 86_400_000;
+    const answeredElsewhere: WidgetInboxItem[] = [];
+    for (const row of decisions) {
+        const via = row.answeredVia;
+        if (
+            kindOf(row) !== "decision" ||
+            (via !== "agent" && via !== "automatic_heuristic") ||
+            !["acknowledged", "implemented"].includes(row.state)
+        ) {
+            continue;
+        }
+
+        const at = timeOf(row.answeredTs ?? row.updatedTs);
+        const session = at >= answeredSince ? findSession(row.sessionId, row.provider) : undefined;
+        if (!session) {
+            continue;
+        }
+
+        const answer = row.answer?.trim();
+        // The card's id, so a click on the entry opens this decision's card in its session.
+        answeredElsewhere.push({
+            id: `decision:${row.id}`,
+            sourceId: row.id,
+            kind: "decision",
+            key: session.key,
+            at,
+            needsAnswer: false,
+            number: row.number,
+            ...decisionTitle(row),
+            options: row.options,
+            ...(row.option ? { option: row.option } : {}),
+            ...(answer ? { answer: answer.slice(0, 300) } : {}),
+            answeredVia: via,
+        });
+    }
+    answeredElsewhere.sort((a, b) => b.at - a.at);
     let unreadResults = 0;
     const resultNodes = new Map<string, AgentNode>();
     for (const node of [
@@ -1216,6 +1266,7 @@ export async function widgetSnapshot({
             .slice(0, 512)
             .map((entry) => ({ ...entry, items: listedInboxItems(entry.items ?? []) })),
         staged,
+        answeredElsewhere: answeredElsewhere.slice(0, ANSWERED_ELSEWHERE_MAX),
         ...(prof.enabled ? { profile: { hostId: "local" as const } } : {}),
     };
     const inboxMetadata: { notifications?: WidgetInboxSummary } = { notifications };

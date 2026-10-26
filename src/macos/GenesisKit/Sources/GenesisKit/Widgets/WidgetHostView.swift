@@ -544,11 +544,18 @@ struct WidgetPeekView: View {
         item.needsAnswer && options.isEmpty ? "Answer in its session" : "Open in its session"
     }
 
+    /// The symbol and colour of an alert's kind: orange waits for you, green was answered elsewhere, blue is news.
+    static func mark(_ item: WidgetInboxItem) -> (symbol: String, tint: Color) {
+        if item.isAnsweredElsewhere { return ("checkmark.bubble.fill", .green) }
+        return item.needsAnswer ? ("questionmark.bubble.fill", .orange) : ("text.bubble.fill", SessionPalette.blue)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 8) {
                 header
                 if !options.isEmpty { optionList }
+                if item.isAnsweredElsewhere { answeredBody }
                 if model.peekMany == .list, !model.peekQueue.isEmpty { waitingList }
             }
             .fixedSize(horizontal: false, vertical: true)
@@ -601,10 +608,9 @@ struct WidgetPeekView: View {
         Button { open() } label: {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Image(systemName: item.needsAnswer ? "questionmark.bubble.fill" : "text.bubble.fill")
-                        .foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.blue)
+                    Image(systemName: Self.mark(item).symbol).foregroundStyle(Self.mark(item).tint)
                     Text(WidgetAlerts.kicker(item)).font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(item.needsAnswer ? Color.orange : .secondary)
+                        .foregroundStyle(item.needsAnswer || item.isAnsweredElsewhere ? Self.mark(item).tint : .secondary)
                     Spacer(minLength: 0)
                     if queued > 0 {
                         Text("\(queued) next").font(.system(size: 11)).foregroundStyle(.secondary)
@@ -651,6 +657,25 @@ struct WidgetPeekView: View {
         }
     }
 
+    /// A decision answered outside the widget: the option it took, marked as the answer, who recorded it, and the
+    /// answer's own words when they say more than the option.
+    private var answeredBody: some View {
+        let picks = WidgetAlerts.answeredOptions(item)
+        let answer = item.answer?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let saysMore = !answer.isEmpty && !picks.contains { $0.text.caseInsensitiveCompare(answer) == .orderedSame }
+            && answer.lowercased() != (item.option ?? "").lowercased()
+        return VStack(alignment: .leading, spacing: 5) {
+            ForEach(picks, id: \.letter) { pick in WidgetAnsweredOptionRow(letter: pick.letter, text: pick.text) }
+            if saysMore {
+                Text(answer).font(.system(size: 12)).lineLimit(4).fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 8)
+            }
+            Text(WidgetAlerts.answeredViaText(item.answeredVia)).font(.system(size: 11))
+                .foregroundStyle(.secondary).padding(.horizontal, 8)
+        }
+        .accessibilityIdentifier("widget.peek.answered")
+    }
+
     /// The alerts that came while this one was open (Alerts → Several at once: listed together), one line each. A
     /// click shows that alert here in full, and this one takes its row.
     private var waitingList: some View {
@@ -661,11 +686,10 @@ struct WidgetPeekView: View {
             ForEach(waiting.prefix(Self.shownWaiting), id: \.id) { other in
                 Button { model.showWaitingPeek(other) } label: {
                     HStack(spacing: 6) {
-                        Image(systemName: other.needsAnswer ? "questionmark.bubble.fill" : "text.bubble.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(other.needsAnswer ? Color.orange : SessionPalette.blue)
+                        Image(systemName: Self.mark(other).symbol).font(.system(size: 10))
+                            .foregroundStyle(Self.mark(other).tint)
                         Text(WidgetAlerts.kicker(other)).font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(other.needsAnswer ? Color.orange : .secondary)
+                            .foregroundStyle(other.needsAnswer || other.isAnsweredElsewhere ? Self.mark(other).tint : .secondary)
                         Text(other.title ?? "").font(.system(size: 11)).foregroundStyle(.secondary)
                             .lineLimit(1).truncationMode(.tail)
                         Spacer(minLength: 0)
@@ -725,6 +749,31 @@ struct WidgetPeekView: View {
         var style = model.attentionStyle
         style.cornerRadius = Self.cornerRadius
         return style
+    }
+}
+
+/// An option a decision took outside the widget: the option row's shape, green, with a check where the inbox puts
+/// its recommended mark.
+struct WidgetAnsweredOptionRow: View {
+    let letter: String
+    let text: String
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: WidgetOptionLabel.cornerRadius)
+        HStack(alignment: .top, spacing: 8) {
+            Text(verbatim: letter).font(.system(size: 11, weight: .semibold, design: .rounded))
+                .padding(.horizontal, 4).frame(minWidth: 20, minHeight: 20)
+                .background(.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 5))
+            Text(text).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true).padding(.top, 2)
+            Spacer(minLength: 0)
+            Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(.green)
+                .padding(.top, 3).accessibilityHidden(true)
+        }
+        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.green.opacity(0.12), in: shape)
+        .overlay(shape.strokeBorder(Color.green.opacity(0.45), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Answered " + letter + ": " + text)
     }
 }
 

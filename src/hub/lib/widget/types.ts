@@ -107,6 +107,12 @@ export const widgetPreferencesSchema = z.object({
     alertPopupMany: z.enum(["list", "queue", "newest"]).default("list"),
     /** The alert sounds' volume, in percent of the system volume. */
     alertVolume: z.number().int().min(0).max(100).default(100),
+    /** A decision answered outside the widget (an agent recorded the chat answer, or a reply was read) pops up. */
+    autoDecisionPopup: z.boolean().default(true),
+    /** Seconds that popup stays while the pointer is not on it; 0 keeps it until it is closed. */
+    autoDecisionSeconds: z.number().int().min(0).max(60).default(5),
+    /** The sound it plays: a system sound name, "same" for `alertSound`, or "none". */
+    autoDecisionSound: z.string().trim().min(1).max(40).default("Tink"),
     /** Seconds a widget note stays before it fades; 0 keeps it until it is closed. A note with a button stays 10 s or more. */
     noteSeconds: z.number().int().min(0).max(60).default(6),
     /** A global shortcut opens and closes the widget from any app. */

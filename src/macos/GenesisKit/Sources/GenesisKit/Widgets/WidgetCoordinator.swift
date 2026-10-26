@@ -200,6 +200,7 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.showSettingsPage = { [weak self] in self?.showSettings(pageID: $0) }
         model.showMedia = { [weak self] selection in self?.showMedia(selection) }
         model.inboxArrived = { [weak self] items in self?.alert(items) }
+        model.decisionsAnsweredElsewhere = { [weak self] items in self?.alertAnswered(items) }
     }
 
     /// A main-spin with a panel open: the panel closes, so the app answers again, and says why. The spin's stack and
@@ -229,18 +230,40 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         // The session that asked flashes on its rail bubble and in the lists, popup or not: it says why the widget
         // chimed or opened (Martin, 2026-10-23).
         model.flashAttention(item.key, seconds: WidgetAlerts.flashSeconds(preferences))
+        guard preferences?.alertPopup ?? true else { return }
+        popUp(item, with: wanted, preferences: preferences, seconds: WidgetAlerts.popupSeconds(preferences))
+    }
+
+    /// Decisions answered outside the widget (Settings → Automatic decisions): an agent recorded the answer the user
+    /// gave in the chat, or the Stop hook read it from a reply. One sound, the sessions flash, and the newest pops up
+    /// with the option that was taken; the rest join it by Alerts → Several at once.
+    func alertAnswered(_ items: [WidgetInboxItem]) {
+        guard panelsEnabled, let newest = items.max(by: { $0.at < $1.at }) else { return }
+        let preferences = model.snapshot?.state.preferences
+        PerfLog.mark("widget.alert answered-elsewhere items=\(items.count) id=\(newest.id) via=\(newest.answeredVia ?? "")")
+        guard preferences?.autoDecisionPopup ?? true else { return }
+        playChime(WidgetAlerts.autoDecisionSound(preferences), WidgetAlerts.volume(preferences))
+        GenAnnounce.post(WidgetAlerts.announcement(newest, session: model.session(forKey: newest.key)?.title),
+                         priority: .medium)
+        for key in Set(items.map(\.key)) { model.flashAttention(key, seconds: WidgetAlerts.flashSeconds(preferences)) }
+        popUp(newest, with: items, preferences: preferences, seconds: WidgetAlerts.autoDecisionSeconds(preferences))
+    }
+
+    /// Pops `first` up in the agents preview, and the rest of `burst` joins it oldest first (listed or queued), unless
+    /// the newest replaces. Checked before the module switch: a popup the user's interaction refuses must not swap the
+    /// pane they use. An open popup takes a new alert even with the pointer on it, since nothing moves under the
+    /// pointer, and an alert for the decision it shows takes its place.
+    private func popUp(_ first: WidgetInboxItem, with burst: [WidgetInboxItem], preferences: WidgetPreferences?,
+                       seconds: Double) {
         let many = WidgetAlerts.popupMany(preferences)
-        // Checked before the module switch: a popup the user's interaction refuses must not swap the pane they use. An
-        // open popup lists or queues the new alert even with the pointer on it, since nothing moves under the pointer.
-        guard preferences?.alertPopup ?? true, let surface = model.peekItem == nil ? peekSurface() : model.hoveredSurface,
-              (model.peekItem != nil && many != .newest) || model.canPeek(on: surface) else { return }
-        // The peek shows the agents module and gives the user's own module back when it ends. The rest of a burst
-        // joins it, oldest first, unless the newest replaces.
-        let seconds = WidgetAlerts.popupSeconds(preferences)
+        let open = model.peekItem != nil && (many != .newest || model.peekItem?.sourceId == first.sourceId)
+        guard let surface = model.peekItem == nil ? peekSurface() : model.hoveredSurface,
+              open || model.canPeek(on: surface) else { return }
+        // The peek shows the agents module and gives the user's own module back when it ends.
         let module = moduleIDs(for: surface).contains("agents") ? "agents" : nil
-        model.showPeek(item, on: surface, module: module, seconds: seconds, many: many)
+        model.showPeek(first, on: surface, module: module, seconds: seconds, many: many)
         guard many != .newest, model.peekItem != nil else { return }
-        for other in wanted.filter({ $0.id != item.id }).sorted(by: { $0.at < $1.at }) {
+        for other in burst.filter({ $0.id != first.id }).sorted(by: { $0.at < $1.at }) {
             model.showPeek(other, on: surface, module: module, seconds: seconds, many: many)
         }
     }

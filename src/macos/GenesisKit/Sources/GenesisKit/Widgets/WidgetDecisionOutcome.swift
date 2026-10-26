@@ -36,8 +36,7 @@ struct WidgetDecisionOutcome: View {
             }
             if !picked.isEmpty || !(card.answer ?? "").isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(card.answeredVia == "agent" ? "Answer recorded by the agent"
-                         : card.answeredVia == "automatic_heuristic" ? "Answer read from your chat" : "Your answer")
+                    Text(WidgetAlerts.answeredViaText(card.answeredVia))
                         .font(.system(size: 11, weight: .semibold)).foregroundStyle(SessionPalette.secondary)
                     ForEach(picked, id: \.id) { choice in
                         HStack(alignment: .top, spacing: 6) {

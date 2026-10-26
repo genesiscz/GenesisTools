@@ -28,6 +28,7 @@ public enum WidgetAlerts {
     /// The popup's first line: "Decision 4", "New question", "New answer". Sentence case, one word per thing.
     public static func kicker(_ item: WidgetInboxItem) -> String {
         switch item.kind {
+        case "decision" where item.isAnsweredElsewhere: return item.number.map { "Decision \($0) answered" } ?? "Decision answered"
         case "decision": return item.number.map { "Decision \($0)" } ?? "New decision"
         case "form": return "New question"
         case "answer": return "New answer"
@@ -48,6 +49,41 @@ public enum WidgetAlerts {
     public static func popupSeconds(_ preferences: WidgetPreferences?) -> Double {
         let seconds = preferences?.alertPopupSeconds ?? 7
         return seconds <= 0 ? 0 : max(3, min(60, seconds))
+    }
+
+    /// Seconds the popup of a decision answered elsewhere stays (`autoDecisionSeconds`, default 5); 0 keeps it.
+    public static func autoDecisionSeconds(_ preferences: WidgetPreferences?) -> Double {
+        let seconds = preferences?.autoDecisionSeconds ?? 5
+        return seconds <= 0 ? 0 : max(3, min(60, seconds))
+    }
+
+    public static let defaultAutoDecisionSound = "Tink"
+
+    /// The sound of a decision answered elsewhere: `autoDecisionSound`, where "same" means `alertSound`.
+    public static func autoDecisionSound(_ preferences: WidgetPreferences?) -> String? {
+        let sound = preferences?.autoDecisionSound ?? defaultAutoDecisionSound
+        return sound == "same" ? preferences?.alertSound : sound
+    }
+
+    /// Who stored a decision's answer, in the words every surface uses (`answeredVia`).
+    public static func answeredViaText(_ via: String?) -> String {
+        switch via {
+        case "agent": return "Answer recorded by the agent"
+        case "automatic_heuristic": return "Answer read from your chat"
+        default: return "Your answer"
+        }
+    }
+
+    /// The options a decision answered elsewhere took: each chosen letter with its option's text.
+    public static func answeredOptions(_ item: WidgetInboxItem) -> [(letter: String, text: String)] {
+        let options = item.options ?? []
+        return (item.option ?? "").compactMap { character in
+            let letter = String(character).lowercased()
+            guard let ascii = letter.unicodeScalars.first?.value, ascii >= 97, Int(ascii) - 97 < options.count else {
+                return nil
+            }
+            return (letter, WidgetOptionText.text(options[Int(ascii) - 97], letter: letter))
+        }
     }
 
     /// What the popup does with another alert while it is open (`alertPopupMany`).

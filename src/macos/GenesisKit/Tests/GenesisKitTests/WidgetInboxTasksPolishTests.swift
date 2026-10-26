@@ -669,6 +669,15 @@ final class WidgetInboxPolishTests: XCTestCase {
         XCTAssertEqual(WidgetAlerts.popupMany(nil), .list, "later alerts are listed under the first by default")
         XCTAssertEqual(WidgetAlerts.popupMany(try prefs(#"{"alertPopupMany":"queue"}"#)), .queue)
         XCTAssertEqual(WidgetAlerts.volume(nil), 1, "full volume by default")
+        let answered = WidgetInboxItem(id: "decision:d_4_s", sourceId: "d_4_s", kind: "decision", key: "k", at: 3,
+            needsAnswer: false, title: "Keep the cache?", number: 4, options: ["a) keep", "drop"], option: "ab",
+            answeredVia: "automatic_heuristic")
+        XCTAssertEqual(WidgetAlerts.kicker(answered), "Decision 4 answered")
+        XCTAssertEqual(WidgetAlerts.answeredOptions(answered).map(\.text), ["keep", "drop"], "the agent's own letter is not kept")
+        XCTAssertEqual(WidgetAlerts.answeredViaText("automatic_heuristic"), "Answer read from your chat")
+        XCTAssertEqual(WidgetAlerts.autoDecisionSeconds(nil), 5)
+        XCTAssertEqual(WidgetAlerts.autoDecisionSound(nil), "Tink")
+        XCTAssertEqual(WidgetAlerts.autoDecisionSound(try prefs(#"{"autoDecisionSound":"same","alertSound":"Ping"}"#)), "Ping")
         XCTAssertEqual(WidgetAlerts.volume(try prefs(#"{"alertVolume":40}"#)), 0.4, accuracy: 0.001)
         XCTAssertEqual(WidgetModel.noteSeconds(nil, hasAction: false), 6, "a note fades after 6 s by default")
         XCTAssertEqual(WidgetModel.noteSeconds(nil, hasAction: true), 10, "a note with Undo or Send again stays 10 s")
