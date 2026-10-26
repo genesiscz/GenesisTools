@@ -92,6 +92,7 @@ private struct HubAppearanceSettings: View {
 @MainActor
 private struct HubPaneSettings: View {
     @ObservedObject var preferences: HubPreferences
+    @AppStorage(GitCommitClickMode.defaultsKey) private var commitClick = GitCommitClickMode.chooseThenShow.rawValue
 
     var body: some View {
         VStack(spacing: 18) {
@@ -115,6 +116,22 @@ private struct HubPaneSettings: View {
                         Text("days").font(.system(size: 12)).foregroundStyle(.secondary)
                     }
                 }
+            }
+            NativeSettingsCard("Commit list") {
+                NativeSettingsSegmented(
+                    "A click on a commit",
+                    identifier: "hub.commitPicker.click",
+                    options: [
+                        NativeSettingsOption(
+                            GitCommitClickMode.chooseThenShow, "Choose",
+                            detail: "The first click chooses it and a second click shows it. A click on another commit chooses every commit between the two."),
+                        NativeSettingsOption(
+                            GitCommitClickMode.showAtOnce, "Show",
+                            detail: "A click shows the commit at once. Shift-click chooses a run of commits."),
+                    ],
+                    selection: Binding(
+                        get: { GitCommitClickMode(rawValue: commitClick) ?? .chooseThenShow },
+                        set: { commitClick = $0.rawValue }))
             }
             Text("The panes in the hub show the same controls. Changes apply to a running hub at once.")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
