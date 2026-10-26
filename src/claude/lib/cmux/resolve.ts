@@ -49,6 +49,8 @@ export interface ResolveDeps {
 
 export interface FindSessionTargetsOpts {
     includeSelf?: boolean;
+    /** Keep searching past topic aliases until a pane is proven to run this session. */
+    exact?: boolean;
     /** Skip the hook-recorded shortcut — the retry path after stale refs failed. */
     skipRecorded?: boolean;
     deps?: ResolveDeps;
@@ -318,7 +320,10 @@ export async function findSessionTargets(
             tmuxHosts = await tmuxPromise;
             const viaTmux = tmuxSessionId ? tmuxHostTargets(snapshot, tmuxHosts, tmuxSessionId) : [];
 
-            if (viaTmux.length > 0) {
+            if (
+                viaTmux.length > 0 &&
+                (!opts.exact || viaTmux.some((target) => EXACT_SESSION_KINDS.has(target.matchedOn)))
+            ) {
                 return { targets: viaTmux, source: "tmux", identity, snapshot, unavailable: false, tmuxHosts };
             }
         }
@@ -336,7 +341,11 @@ export async function findSessionTargets(
         }
 
         if (targets.length > 0) {
-            return { targets, source: stage.source, identity, snapshot, unavailable: false };
+            if (!opts.exact || targets.some((target) => EXACT_SESSION_KINDS.has(target.matchedOn))) {
+                return { targets, source: stage.source, identity, snapshot, unavailable: false };
+            }
+
+            soft = targets;
         }
     }
 

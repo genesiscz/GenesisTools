@@ -63,6 +63,8 @@ const EVERY_MS = 3 * 60_000;
 const EARLIER_PRS = 3;
 const ghCache = new Map<string, { at: number; pr: BandPr | null }>();
 let refreshing: Promise<void> | undefined;
+let requestedRefresh = 0;
+let completedRefresh = 0;
 
 async function run(host: Host, argv: string[], cwd: string): Promise<string | undefined> {
     const done = await host.run(argv, { cwd, timeoutMs: 15_000 }).catch(() => undefined);
@@ -439,13 +441,27 @@ async function refreshNow(host: Host, why: string): Promise<void> {
     });
 }
 
-/** One refresh at a time; a call while one runs waits for it instead of starting a second `gh`. */
-export function refresh(host: Host, why: string): Promise<void> {
-    refreshing ??= refreshNow(host, why).finally(() => {
-        refreshing = undefined;
-    });
+/** One reader at a time; a request made during a read also waits for a pass that includes that request. */
+export async function refresh(host: Host, why: string): Promise<void> {
+    const requested = ++requestedRefresh;
 
-    return refreshing;
+    while (completedRefresh < requested) {
+        refreshing ??= (async () => {
+            const through = requestedRefresh;
+            await refreshNow(host, why);
+            completedRefresh = through;
+        })().finally(() => {
+            refreshing = undefined;
+        });
+        await refreshing;
+    }
+}
+
+function backgroundRefresh(host: Host, why: string): void {
+    void refresh(host, why).catch(async (error: unknown) => {
+        await logMod(host, "git", { event: "refresh-failed", why, error: String(error) });
+        host.toast(`Could not refresh this session's checkouts: ${String(error)}`);
+    });
 }
 
 const USAGE =
@@ -555,11 +571,15 @@ async function command(host: Host, args: string): Promise<string> {
 export const gitBand: Feature = {
     async start(host) {
         host.every(EVERY_MS, () => {
-            void isOn(host).then((yes) => (yes ? refresh(host, "timer") : undefined));
+            void isOn(host).then((yes) => {
+                if (yes) {
+                    backgroundRefresh(host, "timer");
+                }
+            });
         });
 
         if (await isOn(host)) {
-            void refresh(host, "start");
+            backgroundRefresh(host, "start");
         }
     },
     commands: [
@@ -569,10 +589,15 @@ export const gitBand: Feature = {
                 "The git band: no argument opens its sidebar; add <folder> and remove <folder> put a checkout in this session's band; on, off, toggle, refresh, status, pr add <n>, pr rm <n>, pr list",
             argumentHint: "add <folder>|remove <folder>|on|off|refresh|pr add <n>",
             async run(host, args) {
-                const text = await command(host, args);
-                await logMod(host, "git", { event: "command", args, answer: text });
+                try {
+                    const text = await command(host, args);
+                    await logMod(host, "git", { event: "command", args, answer: text });
 
-                return text ? { text } : {};
+                    return text ? { text } : {};
+                } catch (error) {
+                    await logMod(host, "git", { event: "command-failed", args, error: String(error) });
+                    return { text: `Git command failed: ${String(error)}` };
+                }
             },
         },
     ],
@@ -605,10 +630,15 @@ export const gitBand: Feature = {
             return;
         }
 
-        const moved = await noteToolCall(host, e);
+        try {
+            const moved = await noteToolCall(host, e);
 
-        if (moved || (e.tool === "Bash" && /(^|[\s;&|(])(git|gh)\s/.test(e.command))) {
-            void refresh(host, moved ? "checkout" : "tool");
+            if (moved || (e.tool === "Bash" && /(^|[\s;&|(])(git|gh)\s/.test(e.command))) {
+                backgroundRefresh(host, moved ? "checkout" : "tool");
+            }
+        } catch (error) {
+            await logMod(host, "git", { event: "checkout-failed", error: String(error) });
+            host.toast(`Could not save or refresh this session's checkouts: ${String(error)}`);
         }
     },
 };
@@ -829,6 +859,15 @@ async function proposeFolders(host: Host, typed: string): Promise<void> {
 
 /** Adds what the field holds: the folder typed, or else the first one proposed. */
 async function addFolder(host: Host, typed: string): Promise<void> {
+    try {
+        await addFolderNow(host, typed);
+    } catch (error) {
+        await logMod(host, "git", { event: "add-failed", path: typed, error: String(error) });
+        await pressed(host, "git-add", `Not added: ${String(error)}`, "error");
+    }
+}
+
+async function addFolderNow(host: Host, typed: string): Promise<void> {
     const text = typed.trim();
 
     if (!text) {
@@ -849,7 +888,20 @@ async function addFolder(host: Host, typed: string): Promise<void> {
 
     addQuery = "";
     addFound = [];
-    await refresh(host, "sidebar add");
+
+    try {
+        await refresh(host, "sidebar add");
+    } catch (error) {
+        await logMod(host, "git", { event: "refresh-failed", root: done.root, error: String(error) });
+        await pressed(
+            host,
+            "git-add",
+            `Added ${checkoutName(done.root)}, but refresh failed: ${String(error)}`,
+            "error"
+        );
+        return;
+    }
+
     await pressed(host, "git-add", `Added ${checkoutName(done.root)} (${done.root}) to this session's band.`);
 }
 
@@ -893,18 +945,32 @@ function stateParts(band: GitBand): { text: string; color?: string }[] {
     return parts.length ? parts : [{ text: "clean" }];
 }
 
-/** Runs a sidebar toggle: says it is busy, flips the row at once, stores it, reads git again, says it is done. */
-async function toggle(
+/** A sidebar toggle changes its row only after persistence succeeds, then reads git again. */
+export async function toggle(
     host: Host,
     key: string,
     work: { busy: string; flip: () => void; store: () => Promise<unknown>; done: string }
 ): Promise<void> {
     await pressed(host, key, work.busy, "busy");
+
+    try {
+        await work.store();
+    } catch (error) {
+        await logMod(host, "git", { event: "toggle-failed", key, error: String(error) });
+        await pressed(host, key, `Not saved: ${String(error)}`, "error");
+        return;
+    }
+
     work.flip();
     host.redraw();
-    await work.store();
-    await refresh(host, "sidebar");
-    await pressed(host, key, work.done);
+
+    try {
+        await refresh(host, "sidebar");
+        await pressed(host, key, work.done);
+    } catch (error) {
+        await logMod(host, "git", { event: "refresh-failed", key, error: String(error) });
+        await pressed(host, key, `Saved, but refresh failed: ${String(error)}`, "error");
+    }
 }
 
 /** The Git sidebar's actions for one checkout: Finder while its folder is there, and remove or hide. */
@@ -1367,7 +1433,10 @@ async function gitPane(host: Host, kit: Kit): Promise<RenderElement> {
             ghCache.clear();
             void pressed(host, "git-refresh", `Reading ${plural(rows.length, "checkout")}…`, "busy")
                 .then(() => refresh(host, "sidebar"))
-                .then(() => pressed(host, "git-refresh", `Read ${plural(rows.length, "checkout")} again.`));
+                .then(() => pressed(host, "git-refresh", `Read ${plural(rows.length, "checkout")} again.`))
+                .catch((error: unknown) =>
+                    pressed(host, "git-refresh", `Could not refresh: ${String(error)}`, "error")
+                );
         },
     };
     const field: Pressable = {

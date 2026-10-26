@@ -20,7 +20,14 @@ import { decisions, decisionsChip } from "./decisions";
 import { primeGenesisProbe } from "./genesis";
 import { gitBand, gitRows } from "./git-band";
 import { hookLedger, hooksChip, hooksChipWidth, ledgerClassic } from "./hook-ledger";
-import { compactionEndsIdleWait, idleCompactSettings, idleCompactSkip, idleNotice, setIdleDueAt } from "./idle";
+import {
+    compactionEndsIdleWait,
+    idleCompactSettings,
+    idleCompactSkip,
+    idleNotice,
+    publishIdleDue,
+    setIdleDueAt,
+} from "./idle";
 import { inbox, inboxChip } from "./inbox";
 import { linksStep, rememberToolPaths } from "./links";
 import { startLiveClock } from "./live";
@@ -34,7 +41,16 @@ import {
     openByDefault,
     sectionsOfCalls,
 } from "./sections";
-import { agentsDir, type Feature, type Host, logMod, readHooksFile, settingsNow, settingsOf } from "./shared";
+import {
+    afterTools,
+    agentsDir,
+    type Feature,
+    type Host,
+    logMod,
+    readHooksFile,
+    settingsNow,
+    settingsOf,
+} from "./shared";
 import { focusOf, forgetFocus, noteFocus } from "./sidebar";
 import { progressSuffix, spinner } from "./spinner";
 import { clearStall, noteStop, stallCatcher, stallRow } from "./stall";
@@ -543,9 +559,7 @@ export const register: Register = (on) => {
         try {
             const result = await next(e);
 
-            for (const feature of FEATURES) {
-                await feature.afterTool?.(host, e);
-            }
+            afterTools({ host, event: e, features: FEATURES });
 
             return result;
         } finally {
@@ -614,13 +628,21 @@ export const register: Register = (on) => {
 
             if (settings.enabled) {
                 const ms = settings.minutes * 60_000;
-                idleTimer = $.clock.after(ms, () => {
+                const armed = $.clock.after(ms, () => {
                     void compactIfIdle($);
                 });
+                idleTimer = armed;
 
                 // The band shows the countdown only when the timer will compact: a small context is skipped at fire time.
-                const tokens = (await $.session.usage().catch(() => undefined))?.context.tokens;
-                setIdleDueAt(tokens === undefined || tokens >= settings.minTokens ? Date.now() + ms : undefined);
+                await publishIdleDue({
+                    current: () => idleTimer === armed,
+                    tokens: $.session
+                        .usage()
+                        .then((usage) => usage.context.tokens)
+                        .catch(() => undefined),
+                    minTokens: settings.minTokens,
+                    at: Date.now() + ms,
+                });
             }
         }
 

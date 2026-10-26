@@ -6,6 +6,7 @@ import { createBoxTable, renderCliHeader, truncateDisplay } from "@genesiscz/uti
 import type { Command } from "commander";
 import { resolveDeliveryTarget } from "../lib/decisions/deliver";
 import { decisionFiles } from "../lib/decisions/read";
+import type { PromptReceipt } from "../lib/decisions/store";
 import {
     type AnswerDecisionDeps,
     answerInboxDecisions,
@@ -43,7 +44,7 @@ function positiveInt(value: string | undefined, fallback: number): number {
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function promptReceipt(raw: string | undefined): { ids: string[]; text: string } | undefined {
+function promptReceipt(raw: string | undefined): PromptReceipt | undefined {
     if (raw === undefined) {
         return undefined;
     }
@@ -55,15 +56,18 @@ function promptReceipt(raw: string | undefined): { ids: string[]; text: string }
         value === null ||
         !("text" in value) ||
         typeof value.text !== "string" ||
+        !("token" in value) ||
+        typeof value.token !== "string" ||
+        value.token.length === 0 ||
         !("ids" in value) ||
         !Array.isArray(value.ids) ||
         value.ids.length === 0 ||
         !value.ids.every((id): id is string => typeof id === "string")
     ) {
-        throw new Error("--ack-prompt takes the promptReceipt returned by --in-session");
+        throw new Error("--ack-prompt and --release-prompt take the promptReceipt returned by --in-session");
     }
 
-    return { ids: value.ids, text: value.text };
+    return { ids: value.ids, text: value.text, token: value.token };
 }
 
 function formAnswers(raw: string): AskAnswer[] {
@@ -361,17 +365,23 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
             "Prepare the session's own prompt; keep answers pending until --ack-prompt acknowledges submission"
         )
         .option("--ack-prompt <receipt>", "Acknowledge the exact promptReceipt after the session accepted its prompt")
+        .option("--release-prompt <receipt>", "Release a prepared batch after the session rejected its prompt")
         .action(async (_flags: unknown, command: Command) => {
             const flags: AnswerFlags & {
                 resumeTarget?: string;
                 waitLive?: string;
                 inSession?: boolean;
                 ackPrompt?: string;
+                releasePrompt?: string;
             } = command.optsWithGlobals();
 
             try {
                 if (!flags.session) {
                     throw new Error("--session is required");
+                }
+
+                if (flags.ackPrompt && flags.releasePrompt) {
+                    throw new Error("Use either --ack-prompt or --release-prompt");
                 }
 
                 const waitSeconds = Number.parseFloat(flags.waitLive ?? "0");
@@ -386,7 +396,8 @@ export function registerInboxCommand(program: Command, deps: InboxCommandDeps = 
                                 : {}),
                             dryRun: flags.dryRun === true,
                             ...(flags.inSession ? { inSession: true } : {}),
-                            promptReceipt: promptReceipt(flags.ackPrompt),
+                            promptReceipt: promptReceipt(flags.ackPrompt ?? flags.releasePrompt),
+                            ...(flags.releasePrompt ? { releasePrompt: true } : {}),
                         },
                         storeDeps()
                     )

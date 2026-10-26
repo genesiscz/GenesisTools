@@ -3,9 +3,11 @@ import { expect, mock, test } from "claude-code/testing";
 import { agentsBand, factsOf, forgetAgentDetails, lastSaidOf, refreshAgentDetails } from "../hooks/agents-band";
 import {
     answersFrom,
+    answersOf,
     callFor,
     firstAsks,
     forgetAnswers,
+    pollAnswers,
     questionCalls,
     refreshAnswers,
     sendStaged,
@@ -30,11 +32,14 @@ import {
 } from "../hooks/checkouts";
 import {
     chatDecisions,
+    decisions,
+    editAnswer,
     openDecisions,
     sendDecisionAnswers,
     shownDecisions,
     stagedMessage,
     stagedText,
+    typedAnswer,
 } from "../hooks/decisions";
 import { finderLink, forgetGenesisProbe, type GenesisProbe, genesisProbe, mdLink, probeOf } from "../hooks/genesis";
 import {
@@ -49,14 +54,18 @@ import {
     parseNumstat,
     parseStatus,
     prChecksOf,
+    refresh as refreshGit,
+    toggle as toggleGit,
     wordingFor,
 } from "../hooks/git-band";
 import { dedupeEntry, ledgerOf, tokensText } from "../hooks/hook-ledger";
+import { idleDueAt, publishIdleDue, setIdleDueAt } from "../hooks/idle";
+import { inbox } from "../hooks/inbox";
 import { targetFor } from "../hooks/links";
 import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live";
 import { bareDescription } from "../hooks/model-label";
 import { modsSettings } from "../hooks/settings";
-import { forgetSettings, type Host } from "../hooks/shared";
+import { afterTools, forgetSettings, type Host, isRecord } from "../hooks/shared";
 import { toolLabel } from "../hooks/spinner";
 import {
     checkStall,
@@ -781,6 +790,79 @@ test("ask quote and spinner label", async () => {
     expect(toolLabel("Read", {})).toBe("Read");
 });
 
+test("late usage cannot restore the countdown of a cancelled or superseded idle timer", async () => {
+    setIdleDueAt(undefined);
+    const old = {};
+    let timer: object | undefined = old;
+    for (const replacement of [undefined, {}]) {
+        timer = old;
+        let release!: (tokens: number) => void;
+        const reading = publishIdleDue({
+            current: () => timer === old,
+            tokens: new Promise<number>((resolve) => {
+                release = resolve;
+            }),
+            minTokens: 1,
+            at: 100,
+        });
+        timer = replacement;
+        setIdleDueAt(200);
+        release(10);
+        await reading;
+        expect(idleDueAt()).toBe(200);
+    }
+
+    timer = old;
+    await publishIdleDue({ current: () => timer === old, tokens: Promise.resolve(10), minTokens: 1, at: 300 });
+    expect(idleDueAt()).toBe(300);
+    await publishIdleDue({ current: () => timer === old, tokens: Promise.resolve(0), minTokens: 1, at: 400 });
+    expect(idleDueAt()).toBeUndefined();
+    setIdleDueAt(undefined);
+});
+
+test("post-tool bookkeeping returns immediately, preserves order, logs rejection and continues", async () => {
+    const seen: string[] = [];
+    let release!: () => void;
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => {
+        finish = resolve;
+    });
+    const base = checkoutHost();
+    const host: Host = {
+        ...base,
+        async append(_path, line) {
+            seen.push(line.includes("after-tool-failed") ? "logged" : "other");
+        },
+    };
+    expect(
+        afterTools({
+            host,
+            event: { tool: "Bash", tool_use_id: "toolu_post", command: "true" },
+            features: [
+                {
+                    async afterTool() {
+                        seen.push("first");
+                        await new Promise<void>((resolve) => {
+                            release = resolve;
+                        });
+                        throw new Error("disk failed");
+                    },
+                },
+                {
+                    async afterTool() {
+                        seen.push("second");
+                        finish();
+                    },
+                },
+            ],
+        })
+    ).toBeUndefined();
+    expect(seen).toEqual(["first"]);
+    release();
+    await finished;
+    expect(seen).toEqual(["first", "logged", "second"]);
+});
+
 test("link targets by kind, and only links this Mac opens", async () => {
     expect(targetFor(ALL_LINKS, "/r/My Notes/a.md", "file", 3, 9)).toBe(
         "https://links.example.test/md/open?path=/r/My%20Notes/a.md&range=3-9"
@@ -815,7 +897,17 @@ test("the probe out of tools genesis-tools probe --json", async () => {
  * The machine beneath the plugin: a repository at /repo with three paths and one commit, and GenesisTools with
  * every link kind working (`links: "all"`) or not installed at all (`"none"`).
  */
-function machine(on: On, links: "all" | "none" = "all"): void {
+function machine({
+    on,
+    links = "all",
+    remote = "git@github.com:acme/widgets.git\n",
+    title = "feat: widgets",
+}: {
+    on: On;
+    links?: "all" | "none";
+    remote?: string;
+    title?: string;
+}): void {
     forgetGenesisProbe();
     mock.env(on, { HOME: "/home/test" });
     const files: Record<string, "file" | "dir"> = {
@@ -875,11 +967,11 @@ function machine(on: On, links: "all" | "none" = "all"): void {
         }
 
         if (argv.endsWith("remote get-url origin")) {
-            return answer("git@github.com:acme/widgets.git\n");
+            return answer(remote);
         }
 
         if (argv.endsWith("pr view 42 --json title,url")) {
-            return answer('{"title":"feat: widgets","url":"https://github.com/acme/widgets/pull/42"}');
+            return answer(JSON.stringify({ title, url: "https://github.com/acme/widgets/pull/42" }));
         }
 
         if (argv.endsWith("cat-file -t abc1234f")) {
@@ -911,7 +1003,7 @@ function machine(on: On, links: "all" | "none" = "all"): void {
 }
 
 test("the link fixer links what resolves, as the reply streams, and leaves the rest", async ($, on) => {
-    machine(on);
+    machine({ on });
 
     const stream = $.turn.step({ turnId: "t1", index: 0, model: "claude-haiku-5-5", messageCount: 1 });
     const chunks: TurnStepChunk[] = [];
@@ -936,7 +1028,7 @@ test("the link fixer links what resolves, as the reply streams, and leaves the r
 });
 
 test("without GenesisTools the link fixer writes no genesis.tools link", async ($, on) => {
-    machine(on, "none");
+    machine({ on, links: "none" });
 
     const stream = $.turn.step({ turnId: "t1", index: 0, model: "claude-haiku-5-5", messageCount: 1 });
     let text = "";
@@ -949,6 +1041,25 @@ test("without GenesisTools the link fixer writes no genesis.tools link", async (
     expect(text).toContain("[src/a.ts:12](cursor://file/repo/src/a.ts:12) and `docs/` and **abc1234f**.");
     expect(text).toContain("Repeat ❓ DECISION 3 now");
     expect(text).toContain("[notes/plan.md](/repo/notes/plan.md)");
+});
+
+test("PR titles stay inside their label and dotted GitHub repository names produce hub links", async ($, on) => {
+    machine({ on, remote: "https://github.com/acme/next.js.git\n", title: "x](https://attacker.example) [y\\z" });
+    let text = "";
+    for await (const chunk of $.turn.step({ turnId: "t1", index: 0, model: "claude-haiku-5-5", messageCount: 1 })) {
+        text += chunk.kind === "text" ? chunk.text : "";
+    }
+    expect(text).toContain("[#42 (x\\](https://attacker.example) \\[y\\\\z)](https://github.com/acme/widgets/pull/42)");
+    expect(text).toContain("hub?repo=acme%2Fnext.js&commit=abc1234f");
+});
+
+test("SSH origins retain dots in the repository name", async ($, on) => {
+    machine({ on, remote: "git@github.com:acme/next.js.git\n" });
+    let text = "";
+    for await (const chunk of $.turn.step({ turnId: "t1", index: 0, model: "claude-haiku-5-5", messageCount: 1 })) {
+        text += chunk.kind === "text" ? chunk.text : "";
+    }
+    expect(text).toContain("hub?repo=acme%2Fnext.js&commit=abc1234f");
 });
 
 test("stall catcher: the closing sentence that stops on intent, and the endings that are no stall", async () => {
@@ -1099,15 +1210,17 @@ test("sending staged answers acknowledges only after successful prompt submissio
     const effects: string[] = [];
     const message = "DECISION 1: a) keep";
     let rejects = true;
+    let legacyReceipt = true;
     const base = checkoutHost();
     const host: Host = {
         ...base,
         async run(argv) {
             const probe = argv[1] === "genesis-tools";
             const ack = argv.includes("--ack-prompt");
+            const release = argv.includes("--release-prompt");
 
             if (argv.includes("send")) {
-                effects.push(ack ? "ack" : "prepare");
+                effects.push(ack ? "ack" : release ? "release" : "prepare");
             }
 
             return {
@@ -1118,7 +1231,11 @@ test("sending staged answers acknowledges only after successful prompt submissio
                           ? { numbers: [1] }
                           : {
                                 text: message,
-                                promptReceipt: { ids: ["d_1_s"], text: message },
+                                promptReceipt: {
+                                    ids: ["d_1_s"],
+                                    text: message,
+                                    ...(legacyReceipt ? {} : { token: "prompt-one" }),
+                                },
                             }
                 ),
                 stderr: "",
@@ -1135,8 +1252,12 @@ test("sending staged answers acknowledges only after successful prompt submissio
             }
         },
     };
+    expect((await sendStaged(host)).error).toContain("update GenesisTools");
+    expect(effects).toEqual(["prepare"]);
+    legacyReceipt = false;
+    effects.length = 0;
     expect((await sendStaged(host)).error).toContain("prompt rejected");
-    expect(effects).toEqual(["prepare", `submit ${message}`]);
+    expect(effects).toEqual(["prepare", `submit ${message}`, "release"]);
     rejects = false;
     effects.length = 0;
     expect(await sendStaged(host)).toEqual({ text: message, numbers: [1] });
@@ -1254,7 +1375,10 @@ test("decision actions fill the exact preview and send an answered batch with no
                     ? { links: {}, router: {} }
                     : argv.includes("--ack-prompt")
                       ? { numbers: [1, 2] }
-                      : { text: outgoing, promptReceipt: { ids: ["d_1_s", "d_2_s"], text: outgoing } };
+                      : {
+                            text: outgoing,
+                            promptReceipt: { ids: ["d_1_s", "d_2_s"], text: outgoing, token: "prompt-two" },
+                        };
             return {
                 stdout: JSON.stringify(value),
                 stderr: "",
@@ -1626,4 +1750,318 @@ test("hiding every worked checkout stays empty across a reload instead of reseed
     forgetCheckouts();
     expect(await sessionCheckouts(host)).toEqual([]);
     forgetCheckouts();
+});
+
+test("failed checkout persistence rejects, keeps the last saved state, and lets later mutations proceed", async () => {
+    forgetCheckouts();
+    const base = checkoutHost();
+    const original = [
+        { root: "/work/wt-a", at: 1 },
+        { root: "/work/wt-b", at: 2 },
+    ];
+    await base.storeSet("git-band-checkouts", { "sess-1": original });
+    await base.storeSet("git-band-added", { "sess-1": [{ root: "/work/wt-a", at: 1 }] });
+    let failWrite = true;
+    let failRead = false;
+    const logs: string[] = [];
+    const host: Host = {
+        ...base,
+        async storeGet(key) {
+            if (failRead) {
+                throw new Error("store unavailable");
+            }
+
+            return base.storeGet(key);
+        },
+        async storeSet(key, value) {
+            if (failWrite) {
+                throw new Error("disk full");
+            }
+
+            await base.storeSet(key, value);
+        },
+        async append(_file, line) {
+            logs.push(line);
+        },
+    };
+    expect(await sessionCheckouts(host)).toEqual(original);
+    expect(await addedCheckouts(host)).toEqual(["/work/wt-a"]);
+    await expect(hideCheckout(host, "/work/wt-a")).rejects.toThrow("disk full");
+    await expect(removeAdded(host, "/work/wt-a")).rejects.toThrow("disk full");
+    await expect(addCheckout(host, "/home/test/code/playground")).rejects.toThrow("disk full");
+    await expect(noteToolCall(host, { tool: "Bash", command: "git -C /work/wt-b commit -m x" })).rejects.toThrow(
+        "disk full"
+    );
+    expect(await sessionCheckouts(host)).toEqual(original);
+    expect(await addedCheckouts(host)).toEqual(["/work/wt-a"]);
+    expect(await base.storeGet("git-band-checkouts")).toEqual({ "sess-1": original });
+
+    failWrite = false;
+    failRead = true;
+    await expect(addCheckout(host, "/home/test/code/playground")).rejects.toThrow("store unavailable");
+    expect(await addedCheckouts(host)).toEqual(["/work/wt-a"]);
+    expect(await base.storeGet("git-band-added")).toEqual({ "sess-1": [{ root: "/work/wt-a", at: 1 }] });
+    failRead = false;
+    await addCheckout(host, "/home/test/code/playground");
+    await hideCheckout(host, "/work/wt-a");
+    forgetCheckouts();
+    expect((await sessionCheckouts(host)).map((touch) => touch.root)).toEqual(["/work/wt-b"]);
+    expect(await addedCheckouts(host)).toEqual(["/home/test/code/playground", "/work/wt-a"]);
+    expect(logs.some((line) => line.includes('"event":"store-write-failed"'))).toBe(true);
+    expect(logs.some((line) => line.includes('"event":"store-read-failed"'))).toBe(true);
+    forgetCheckouts();
+});
+
+test("a failed sidebar save keeps the row and reports failure, and the command reports failure too", async () => {
+    forgetCheckouts();
+    forgetSettings();
+    const base = checkoutHost();
+    const notices: string[] = [];
+    let flips = 0;
+    const host: Host = {
+        ...base,
+        async read(file) {
+            return file.endsWith("hooks.json")
+                ? JSON.stringify({ mods: { sidebar: { feedback: "toast" } } })
+                : base.read(file);
+        },
+        async storeSet() {
+            throw new Error("disk full");
+        },
+        toast(message) {
+            notices.push(message);
+        },
+    };
+    await toggleGit(host, "remove-test", {
+        busy: "Removing…",
+        flip: () => {
+            flips++;
+        },
+        store: async () => {
+            throw new Error("disk full");
+        },
+        done: "Removed successfully",
+    });
+    expect(flips).toBe(0);
+    expect(notices.some((message) => message.includes("Not saved: Error: disk full"))).toBe(true);
+    expect(notices.some((message) => message.includes("Removed successfully"))).toBe(false);
+    const result = await gitBand.commands?.[0]?.run(host, "add /home/test/code/playground");
+    expect(result?.text).toContain("Git command failed: Error: disk full");
+    expect(await addedCheckouts(host)).toEqual([]);
+    forgetCheckouts();
+    forgetSettings();
+});
+
+test("a git refresh requested during a read waits for roots added or removed during that read", async () => {
+    forgetCheckouts();
+    forgetSettings();
+    const base = checkoutHost();
+    await base.storeSet("git-band-checkouts", { "sess-1": [{ root: "/work/wt-a", at: 1 }] });
+    const publications: string[][] = [];
+    let held: { entered: () => void; wait: Promise<void> } | undefined;
+    const host: Host = {
+        ...base,
+        async stat(file) {
+            return file === "/work/wt-b" ? { kind: "dir", size: 0, mtimeMs: 0, isLink: false } : base.stat(file);
+        },
+        async run(argv, init) {
+            if (argv[0] === "git" && argv[1] === "rev-parse") {
+                return {
+                    stdout: "/work/main\n",
+                    stderr: "",
+                    exitCode: 0,
+                    isStdoutTruncated: false,
+                    isStderrTruncated: false,
+                };
+            }
+
+            if (argv[0] === "git" && argv[1] === "status") {
+                if (held) {
+                    const pending = held;
+                    held = undefined;
+                    pending.entered();
+                    await pending.wait;
+                }
+
+                return {
+                    stdout: "## topic\n",
+                    stderr: "",
+                    exitCode: 0,
+                    isStdoutTruncated: false,
+                    isStderrTruncated: false,
+                };
+            }
+
+            return base.run(argv, init);
+        },
+        async append(file, line) {
+            if (file.endsWith("/mods-log/git.jsonl")) {
+                const record: unknown = JSON.parse(line);
+
+                if (isRecord(record) && record.event === "refresh" && Array.isArray(record.rows)) {
+                    publications.push(
+                        record.rows.flatMap((row) => (isRecord(row) && typeof row.root === "string" ? [row.root] : []))
+                    );
+                }
+            }
+        },
+    };
+    const duringRead = async (change: () => Promise<unknown>) => {
+        let enter: () => void = () => undefined;
+        let release: () => void = () => undefined;
+        const entered = new Promise<void>((resolve) => {
+            enter = resolve;
+        });
+        const wait = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        held = { entered: enter, wait };
+        const deadline = setTimeout(() => {
+            enter();
+            release();
+        }, 5_000);
+        const first = refreshGit(host, "before change");
+
+        try {
+            await entered;
+            await change();
+            const following = refreshGit(host, "after change");
+            release();
+            await Promise.all([first, following]);
+        } finally {
+            release();
+            clearTimeout(deadline);
+        }
+    };
+    await duringRead(() => addCheckout(host, "/work/wt-b"));
+    expect(publications.at(-1)?.slice().sort()).toEqual(["/work/wt-a", "/work/wt-b"]);
+    await duringRead(() => removeAdded(host, "/work/wt-b"));
+    expect(publications.at(-1)).toEqual(["/work/wt-a"]);
+    forgetCheckouts();
+    forgetSettings();
+});
+
+test("sending clears only submitted unchanged field text and preserves unstaged or in-flight edits", async () => {
+    forgetAnswers();
+    forgetGenesisProbe();
+    forgetSettings();
+    const { host: base, fixture } = answerLogHost();
+    fixture.snapshot = {
+        decisions: [
+            { number: 101, status: "drafted", draft: "staged one" },
+            { number: 102, status: "waiting" },
+            { number: 103, status: "drafted", draft: "staged three" },
+            { number: 104, status: "drafted", draft: "staged four" },
+        ],
+    };
+    const outgoing = "DECISION 101: staged one\nDECISION 103: staged three\nDECISION 104: staged four";
+    const host: Host = {
+        ...base,
+        async run(argv, init) {
+            if (argv[1] === "question" && argv.includes("send")) {
+                const result = argv.includes("--ack-prompt")
+                    ? { numbers: [101, 103, 104] }
+                    : {
+                          text: outgoing,
+                          promptReceipt: {
+                              ids: ["d_101_s", "d_103_s", "d_104_s"],
+                              text: outgoing,
+                              token: "prompt-fields",
+                          },
+                      };
+                return {
+                    stdout: JSON.stringify(result),
+                    stderr: "",
+                    exitCode: 0,
+                    isStdoutTruncated: false,
+                    isStderrTruncated: false,
+                };
+            }
+
+            return base.run(argv, init);
+        },
+        async submit() {
+            editAnswer(103, "edited while sending");
+        },
+    };
+    await refreshAnswers(host, "seed", true);
+    editAnswer(101, "staged one");
+    editAnswer(102, "unstaged other decision");
+    editAnswer(103, "staged three");
+    editAnswer(104, "unstaged edit to a submitted decision");
+    await sendDecisionAnswers(host, { outgoing, how: "send" });
+    expect(typedAnswer(101)).toBeUndefined();
+    expect(typedAnswer(102)).toBe("unstaged other decision");
+    expect(typedAnswer(103)).toBe("edited while sending");
+    expect(typedAnswer(104)).toBe("unstaged edit to a submitted decision");
+    forgetAnswers();
+    forgetGenesisProbe();
+    forgetSettings();
+});
+
+test("the inbox watcher activates after enabling it and gates reads when both consumers are off", async () => {
+    forgetAnswers();
+    forgetGenesisProbe();
+    forgetSettings();
+    const { host: base, fixture } = answerLogHost();
+    let inboxEnabled = false;
+    let decisionsEnabled = false;
+    let timers = 0;
+    let logStats = 0;
+    const host: Host = {
+        ...base,
+        async read(file) {
+            return file.endsWith("hooks.json")
+                ? JSON.stringify({
+                      mods: { inbox: { enabled: inboxEnabled }, decisions: { enabled: decisionsEnabled } },
+                  })
+                : base.read(file);
+        },
+        every(ms) {
+            if (ms === 10_000) {
+                timers++;
+            }
+        },
+        async stat(file) {
+            if (file.includes("/.genesis-tools/question/")) {
+                logStats++;
+            }
+
+            return base.stat(file);
+        },
+    };
+    await inbox.start?.(host);
+    await decisions.start?.(host);
+    expect(timers).toBe(1);
+    expect(fixture.reads).toBe(0);
+    expect(logStats).toBe(0);
+
+    inboxEnabled = true;
+    forgetSettings();
+    fixture.snapshot = {
+        decisions: [],
+        entries: [{ id: "entry-one", ts: 1, tag: "message", question: "Hello", answerMd: "Reply" }],
+    };
+    await pollAnswers(host, "tick");
+    expect(answersOf()?.entries[0]?.id).toBe("entry-one");
+    expect(fixture.reads).toBe(1);
+    inboxEnabled = false;
+    forgetSettings();
+    const before = logStats;
+    await pollAnswers(host, "off tick");
+    expect(logStats).toBe(before);
+    expect(fixture.reads).toBe(1);
+
+    decisionsEnabled = true;
+    forgetSettings();
+    const file = "/home/test/.genesis-tools/question/decisions/events.jsonl";
+    fixture.files.set(file, { text: `${JSON.stringify({ id: "d_1_sess-1", ev: "created" })}\n`, mtimeMs: 1 });
+    fixture.snapshot = { decisions: [{ number: 1, status: "waiting", title: "New decision" }] };
+    await pollAnswers(host, "decisions only");
+    expect(fixture.reads).toBe(2);
+    expect(answersOf()?.decisions[0]?.n).toBe(1);
+    expect(timers).toBe(1);
+    forgetAnswers();
+    forgetGenesisProbe();
+    forgetSettings();
 });

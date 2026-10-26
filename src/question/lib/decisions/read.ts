@@ -23,6 +23,7 @@ import {
     type HarvestedDecision,
     kindOf,
     moveDecisions,
+    promptReserved,
     readDecisions,
     restoreUndelivered,
 } from "./store";
@@ -199,9 +200,11 @@ export function decisionsMarkdown(rows: DecisionRecord[]): string {
 }
 
 /** Throws before calling `send` when nothing is answered and unsent. */
-/** The rows a send delivers: answered, with an answer, and not reserved by a queue. */
+/** The rows a send delivers: answered, with an answer, and not reserved by a queue or an in-flight sidebar prompt. */
 export function dueDecisions(rows: DecisionRecord[]): DecisionRecord[] {
-    return rows.filter((row) => row.state === "answered" && !row.delivery?.queueId && hasAnswer(row));
+    return rows.filter(
+        (row) => row.state === "answered" && !row.delivery?.queueId && !promptReserved(row) && hasAnswer(row)
+    );
 }
 
 export function deliverDecisions(

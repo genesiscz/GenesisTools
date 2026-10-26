@@ -57,6 +57,15 @@ const MARK = "\u2060";
 /** What each answer field holds before Enter stages it, so a redraw or a press elsewhere keeps the typed text. */
 const typed = new Map<number, string>();
 
+/** The answer field's local text, including edits not yet staged in the store. */
+export function typedAnswer(number: number): string | undefined {
+    return typed.get(number);
+}
+
+export function editAnswer(number: number, text: string): void {
+    typed.set(number, text);
+}
+
 const ASK = /(^|[^[])❓\s*\**\s*DECISION\s+(\d+)\**\s*[:.]?\s*(.*)$/;
 const OPTION = /^\s*(?:[-*]\s+)?\**\(?([a-z])\)\**\s*(.+)$/;
 const ANSWER_LETTER = /\bD(?:ECISION)?\s*(\d+)\s*[:-]?\s*\(?([a-z])\)/gi;
@@ -251,8 +260,9 @@ async function refresh(host: Host, why: string): Promise<void> {
 
 export const decisions: Feature = {
     async start(host) {
+        await startAnswers(host);
+
         if ((await settingsOf(host)).decisions.enabled) {
-            startAnswers(host);
             await readChat(host);
         }
     },
@@ -279,7 +289,7 @@ export const decisions: Feature = {
                     };
                 }
 
-                startAnswers(host);
+                void startAnswers(host);
                 await host.togglePane(DECISIONS_PANE, "Decisions", "command");
                 await refresh(host, "command");
                 await logMod(host, "decisions", { event: "open", shown: currentDecisions().map((d) => d.n) });
@@ -380,6 +390,12 @@ export async function sendDecisionAnswers(
         return;
     }
 
+    const fields = new Map(
+        [...typed].filter(([number, text]) => {
+            const decision = answersOf()?.decisions.find((held) => held.n === number);
+            return text === (decision?.draft ?? decision?.answer);
+        })
+    );
     await pressed(host, "decisions-send", "Sending…", "busy");
     const sent = await sendStaged(host);
 
@@ -388,7 +404,14 @@ export async function sendDecisionAnswers(
         return;
     }
 
-    typed.clear();
+    for (const number of sent.numbers ?? []) {
+        const before = fields.get(number);
+
+        if (before !== undefined && typed.get(number) === before) {
+            typed.delete(number);
+        }
+    }
+
     await pressed(
         host,
         "decisions-send",
@@ -465,7 +488,7 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
 
         const key = `d${decision.n}-own`;
         const stored = decision.draft ?? "";
-        const draft = typed.get(decision.n) ?? stored;
+        const draft = typedAnswer(decision.n) ?? stored;
         const unmarked = (value: string) => value.replaceAll(MARK, "");
         const isOwnStaged = stored !== "" && stored === draft;
         const sendsOnEnter = isOwnStaged && settings.enter === "stage-then-send";
@@ -495,11 +518,11 @@ async function decisionsPane(host: Host, kit: Kit): Promise<RenderElement> {
                 placeholder="your own answer, Enter stages it"
                 submitLabel={sendsOnEnter ? "send all" : isOwnStaged ? "staged" : "stage"}
                 onInput={(value: string) => {
-                    typed.set(decision.n, unmarked(value));
+                    editAnswer(decision.n, unmarked(value));
                 }}
                 onSubmit={(value: string) => {
                     const words = unmarked(value).trim();
-                    typed.set(decision.n, words);
+                    editAnswer(decision.n, words);
 
                     if (marked.has(decision.n)) {
                         marked.delete(decision.n);

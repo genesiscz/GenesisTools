@@ -221,6 +221,40 @@ describe("focusCommand", () => {
         expect(proven.result).toContain(`"paneId": "pane:34"`);
     });
 
+    test("--exact searches beyond aliases and selects only the proven pane, including stale-ref retry", async () => {
+        const { focusCommand } = await import("@app/claude/commands/cmux/focus");
+        for (const stale of [false, true]) {
+            events = [];
+            stdout = [];
+            setSnapshot([pane({ id: "pane:33", title: "cache work" }), pane({ id: "pane:34", title: "zsh" })]);
+            const stages: string[] = [];
+            await focusCommand(
+                SESSION_A,
+                { activate: false, json: true, exact: true },
+                {
+                    lookupRefs: () => (stale ? staleRefs() : null),
+                    lookupSession: async () => ({ aliases: ["cache work"], sessionId: SESSION_A }),
+                    fetchSnapshot: async (previews) => {
+                        stages.push(previews);
+                        return {
+                            ...snapshot,
+                            panes: snapshot.panes.map((held) =>
+                                held.id === "pane:34" && previews !== "none"
+                                    ? { ...held, preview: resumeScreen(SESSION_A) }
+                                    : held
+                            ),
+                        };
+                    },
+                }
+            );
+            expect(process.exitCode ?? 0).toBe(0);
+            expect(stages).toEqual(["none", "selected"]);
+            expect(await capturedResult()).toContain('"paneId": "pane:34"');
+            expect(events).toContain("focus-pane workspace:11 pane:34");
+            expect(events).not.toContain("focus-pane workspace:11 pane:33");
+        }
+    });
+
     test("--dry-run resolves a target but performs no cmux mutation", async () => {
         setSnapshot([pane({ id: "pane:33", preview: resumeScreen(SESSION_A) })]);
 

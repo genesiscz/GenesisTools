@@ -16,7 +16,7 @@
 // in this session's band until removed. `folderSuggestions` proposes folders for that, from zoxide when it is
 // installed (`GenesisPlayg` finds the GenesisPlayground path) and from the folder a typed `/` or `~/` path names.
 import type { FsEntry } from "claude-code";
-import type { Host } from "./shared";
+import { type Host, logMod } from "./shared";
 
 export interface Touch {
     root: string;
@@ -407,7 +407,10 @@ async function fromJournal(host: Host, session: string): Promise<Touch[]> {
 }
 
 async function readLedger(host: Host, key = STORE_KEY): Promise<Ledger> {
-    const value = await host.storeGet(key).catch(() => undefined);
+    const value = await host.storeGet(key).catch(async (error: unknown) => {
+        await logMod(host, "git", { event: "store-read-failed", key, error: String(error) });
+        throw error;
+    });
     const ledger: Ledger = {};
 
     if (isRecord(value)) {
@@ -431,7 +434,10 @@ async function save(host: Host, session: string, touches: Touch[], key = STORE_K
         .sort((a, b) => newest(b[1]) - newest(a[1]))
         .slice(0, KEEP_SESSIONS);
 
-    await host.storeSet(key, Object.fromEntries(kept)).catch(() => undefined);
+    await host.storeSet(key, Object.fromEntries(kept)).catch(async (error: unknown) => {
+        await logMod(host, "git", { event: "store-write-failed", key, session, error: String(error) });
+        throw error;
+    });
 }
 
 async function load(host: Host, session: string): Promise<Touch[]> {
@@ -556,8 +562,8 @@ export async function noteToolCall(host: Host, input: unknown): Promise<boolean>
         const touches = [...fresh, ...before.filter((touch) => !roots.includes(touch.root))].slice(0, KEEP_ROOTS);
         const session = await host.sessionId();
 
-        held = { session, touches };
         await save(host, session, touches);
+        held = { session, touches };
 
         return roots.some((root) => before[0]?.root !== root);
     });
@@ -588,8 +594,8 @@ export async function hideCheckout(host: Host, root: string): Promise<void> {
         const session = await host.sessionId();
         const touches = (await sessionCheckouts(host)).filter((touch) => touch.root !== root);
 
-        held = { session, touches };
         await save(host, session, touches);
+        held = { session, touches };
     });
 }
 
@@ -615,13 +621,13 @@ async function saveAdded(host: Host, roots: string[]): Promise<void> {
     const session = await host.sessionId();
     const now = Date.now();
 
-    added = { session, roots };
     await save(
         host,
         session,
         roots.map((root) => ({ root, at: now })),
         ADDED_KEY
     );
+    added = { session, roots };
 }
 
 /** A typed folder as an absolute path: `~/x` under the home, a bare relative one under the session's folder. */

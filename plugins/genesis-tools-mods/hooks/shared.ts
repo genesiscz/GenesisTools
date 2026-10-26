@@ -167,3 +167,26 @@ export interface Feature {
     /** Rows for the prompt's typeahead as the person types (`prompt.autocomplete`); none for most tokens. */
     autocomplete?: (host: Host, e: PromptAutocompleteInput) => Promise<PromptAutocompleteSuggestion[]>;
 }
+
+/** Post-call bookkeeping keeps its order while the tool result and its progress cleanup return immediately. */
+export function afterTools({
+    host,
+    event,
+    features,
+}: {
+    host: Host;
+    event: ToolCallInput;
+    features: readonly Feature[];
+}): void {
+    void (async () => {
+        for (const feature of features) {
+            try {
+                await feature.afterTool?.(host, event);
+            } catch (error) {
+                await logMod(host, "tools", { event: "after-tool-failed", error: String(error) }).catch(
+                    () => undefined
+                );
+            }
+        }
+    })();
+}

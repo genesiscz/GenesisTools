@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { canonicalAgent } from "@app/handoff/targeting";
@@ -118,6 +119,8 @@ export interface DecisionRecord {
     notified?: string[];
     /** The last send of this answer (`sendAnsweredDecisions`); absent on rows never sent. */
     delivery?: DecisionDelivery;
+    /** A prepared sidebar prompt owns these answers until submission is acknowledged or the lease expires. */
+    promptReservation?: { token: string; expiresAt: number };
     /** The fields as the agent wrote them, inline tokens included; only fields that had tokens. */
     source?: DecisionSource;
     /** Every inline token of the post, resolved or failed, with the field it was in. */
@@ -222,6 +225,121 @@ export function kindOf(row: Pick<DecisionRecord, "type">): DecisionKind {
 
 function canMove(row: DecisionRecord, state: DecisionState): boolean {
     return NEXT[kindOf(row)][row.state].includes(state);
+}
+
+export interface PromptReceipt {
+    ids: string[];
+    text: string;
+    token: string;
+}
+
+export function promptReserved(row: DecisionRecord): boolean {
+    return (row.promptReservation?.expiresAt ?? 0) > Date.now();
+}
+
+/** Reserve before host.submit can trigger UserPromptSubmit. A crashed submitter releases its claim after five minutes. */
+export async function reservePromptDecisions({
+    file,
+    events,
+    session,
+    ids,
+    now = Date.now(),
+}: {
+    file: string;
+    events: string;
+    session: string;
+    ids?: readonly string[];
+    now?: number;
+}): Promise<{ rows: DecisionRecord[]; token: string }> {
+    return withDecisionsLock(file, () => {
+        const rows = readDecisions(file);
+        const selected = ids ? new Set(ids) : undefined;
+        const due = rows.filter(
+            (row) =>
+                row.sessionId === session &&
+                kindOf(row) === "decision" &&
+                (!selected || selected.has(row.id)) &&
+                row.state === "answered" &&
+                !row.delivery?.queueId &&
+                (row.promptReservation?.expiresAt ?? 0) <= now &&
+                (Boolean(row.option) || Boolean(row.answer?.trim()))
+        );
+        if (due.length === 0) {
+            throw new Error("nothing to send");
+        }
+
+        const token = randomUUID();
+        const reserved = new Map(
+            due.map((row) => [row.id, { ...row, promptReservation: { token, expiresAt: now + 5 * 60_000 } }])
+        );
+        rewrite(
+            file,
+            rows.map((row) => reserved.get(row.id) ?? row)
+        );
+        appendEvent(events, { ev: "prompt_reserved", ids: [...reserved.keys()], ts: new Date(now).toISOString() });
+        return { rows: [...reserved.values()], token };
+    });
+}
+
+/** Acknowledge only this submitted batch under the lock, or release its still-owned rows after submission failed. */
+export async function finishPromptDecisions({
+    file,
+    events,
+    session,
+    receipt,
+    acknowledge,
+}: {
+    file: string;
+    events: string;
+    session: string;
+    receipt: PromptReceipt;
+    /** Validates the exact submitted text before any row is marked sent. Omitted for a failed submission. */
+    acknowledge?: (rows: DecisionRecord[]) => void;
+}): Promise<DecisionRecord[]> {
+    return withDecisionsLock(file, () => {
+        const rows = readDecisions(file);
+        const wanted = new Set(receipt.ids);
+        const owned = rows.filter(
+            (row) =>
+                row.sessionId === session &&
+                wanted.has(row.id) &&
+                kindOf(row) === "decision" &&
+                row.state === "answered" &&
+                typeof receipt.token === "string" &&
+                receipt.token.length > 0 &&
+                row.promptReservation?.token === receipt.token
+        );
+        if (acknowledge) {
+            if (wanted.size === 0 || owned.length !== wanted.size || wanted.size !== receipt.ids.length) {
+                throw new Error("The pending answers changed; the submitted batch was not marked sent");
+            }
+
+            acknowledge(owned);
+        }
+
+        const ts = new Date().toISOString();
+        const changed = new Map(
+            owned.map((row) => {
+                const next: DecisionRecord = { ...row };
+                delete next.promptReservation;
+                if (acknowledge) {
+                    next.state = "sent";
+                    next.updatedTs = ts;
+                    next.delivery = { route: "prompt", at: ts, target: "the session's own prompt" };
+                }
+
+                return [row.id, next] as const;
+            })
+        );
+        if (changed.size > 0) {
+            rewrite(
+                file,
+                rows.map((row) => changed.get(row.id) ?? row)
+            );
+            appendEvent(events, { ev: acknowledge ? "prompt_sent" : "prompt_released", ids: [...changed.keys()], ts });
+        }
+        return [...changed.values()];
+    });
 }
 
 /**
@@ -542,6 +660,10 @@ function patched(
 
     // A queued answer is matched by revision on ACK, and these fields do not bump it; the ACK must not confirm new text.
     const content = [patch.answer, patch.option, patch.draft, patch.draftOption].some((value) => value !== undefined);
+    if (promptReserved(row) && (patch.state || content)) {
+        throw new Error(`${row.id} is reserved by a submitted prompt; wait for its acknowledgement`);
+    }
+
     if (row.delivery?.queueId && content) {
         throw new Error(`${row.id} is reserved by a queued delivery; cancel that message before changing its answer`);
     }
@@ -1186,6 +1308,9 @@ export async function moveDecisions(
         }
 
         for (const row of moving) {
+            if (promptReserved(row)) {
+                throw new Error(`Decision ${row.id} is reserved by a submitted prompt; wait for its acknowledgement.`);
+            }
             if (state === "sent" && row.delivery?.queueId) {
                 throw new Error(
                     `Decision ${row.id} is reserved by a queued message; wait for its consumer acknowledgement.`
@@ -1197,7 +1322,13 @@ export async function moveDecisions(
         }
 
         const ts = now();
-        const moved = new Map(moving.map((row) => [row.id, { ...row, state, updatedTs: ts }]));
+        const moved = new Map(
+            moving.map((row) => {
+                const next = { ...row, state, updatedTs: ts };
+                delete next.promptReservation;
+                return [row.id, next] as const;
+            })
+        );
         rewrite(
             file,
             rows.map((row) => moved.get(row.id) ?? row)

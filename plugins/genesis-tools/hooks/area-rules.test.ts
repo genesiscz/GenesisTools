@@ -186,6 +186,21 @@ describe("compaction", () => {
         expect(compactedSince(undefined, at)).toBe(true);
     });
 
+    it("checks how far a truncated transcript tail reaches, including missing timestamps and newlines", () => {
+        const transcript = join(transcripts, "truncated.jsonl");
+        const filler = (offset: number) =>
+            row({ type: "user", timestamp: stamp(offset), text: "x".repeat(1_000) }).repeat(4_100);
+        for (const [contents, expected] of [
+            [filler(-60_000), false],
+            [filler(60_000), true],
+            ["x".repeat(4_100_000), true],
+            ["{}\n".repeat(1_400_000), true],
+        ] as const) {
+            writeFileSync(transcript, contents);
+            expect(compactedSince(transcript, at)).toBe(expected);
+        }
+    });
+
     it("marks every agent once and keeps the earliest compaction", () => {
         const once = markCompaction({ main: ["a.md"], a1: ["b.md"] }, 1);
         expect(markCompaction(once, 2)).toEqual({

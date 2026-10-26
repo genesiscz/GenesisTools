@@ -426,6 +426,26 @@ describe("decision store", () => {
         expect(readDecisions(file).map((row) => row.state)).toEqual(["answered", "open"]);
     });
 
+    test("only one prompt preparation owns a batch and a sender with an older read cannot claim it", async () => {
+        const dir = mkdtempSync(join(tmpdir(), "decisions-"));
+        const file = join(dir, "decisions.jsonl");
+        const events = join(dir, "events.jsonl");
+        const [row] = await postDecisions(file, events, {
+            sessionId: "s",
+            decisions: [{ prompt: "One?", options: ["yes"] }],
+        });
+        await updateDecision(file, events, row.id, { state: "answered", option: "a" });
+        const staleIds = readDecisions(file).map((entry) => entry.id);
+        const results = await Promise.allSettled([
+            sendAnsweredDecisions({ session: "s", inSession: true, files: { file, events } }),
+            sendAnsweredDecisions({ session: "s", inSession: true, files: { file, events } }),
+        ]);
+        expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+        expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+        await expect(moveDecisions(file, events, staleIds, "sent")).rejects.toThrow("reserved by a submitted prompt");
+        expect(readDecisions(file)[0]?.state).toBe("answered");
+    });
+
     test("the published MCP schemas carry the required fields and the state list", () => {
         const post = z.toJSONSchema(postDecisionsInputSchema, { io: "input" }) as { required?: string[] };
         const update = z.toJSONSchema(decisionUpdateInputSchema, { io: "input" }) as {

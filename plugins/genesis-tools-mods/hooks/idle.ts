@@ -27,6 +27,24 @@ export function setIdleDueAt(at: number | undefined): void {
     dueAt = at;
 }
 
+/** An older usage lookup must not publish a countdown after its timer was cancelled or replaced. */
+export async function publishIdleDue({
+    current,
+    tokens,
+    minTokens,
+    at,
+}: {
+    current: () => boolean;
+    tokens: Promise<number | undefined>;
+    minTokens: number;
+    at: number;
+}): Promise<void> {
+    const count = await tokens;
+    if (current()) {
+        setIdleDueAt(count === undefined || count >= minTokens ? at : undefined);
+    }
+}
+
 /** The start of the notice the mod appends. GenesisClaude's session-analyzer `idle-compact.ts scan` counts it. */
 export const IDLE_NOTICE = "Compacted while idle";
 

@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withSpawnCounter } from "@app/benchmark/lib";
+import { sendAnsweredDecisions } from "@app/question/lib/decisions/send";
 import { postDecisions, readDecisions, updateDecision } from "@app/question/lib/decisions/store";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
@@ -1976,6 +1977,31 @@ describe("decision hub hooks", () => {
         expect((await updateDecision(log.file, log.events, row.id, { state: "acknowledged" })).state).toBe(
             "acknowledged"
         );
+    });
+
+    it("does not inject a batch reserved by the sidebar's own submitted prompt", async () => {
+        const { log, counts } = harness();
+        const emitted: PromptHookOutput[] = [];
+        const deps = { log, counts, emit: (output: PromptHookOutput) => emitted.push(output) };
+        const prompt = { ...stopPayload(""), event: "UserPromptSubmit" };
+        const [row] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Keep it?", options: ["yes", "no"] }],
+        });
+        await updateDecision(log.file, log.events, row.id, { state: "answered", option: "a" });
+        const prepared = await sendAnsweredDecisions({ session: "sess-1", inSession: true, files: log });
+        expect(await runDecisionInject(prompt, decisionsOn({ injectAnswers: true }), deps)).toBeNull();
+        expect(emitted).toEqual([]);
+        const sent = await sendAnsweredDecisions({
+            session: "sess-1",
+            inSession: true,
+            promptReceipt: prepared.promptReceipt,
+            files: log,
+        });
+        expect(sent.numbers).toEqual([1]);
+        expect(readDecisions(log.file)[0]?.state).toBe("sent");
+        expect(readDecisions(log.file)[0]?.promptReservation).toBeUndefined();
+        expect(await runDecisionInject(prompt, decisionsOn({ injectAnswers: true }), deps)).toBeNull();
     });
 
     it("keeps the answers queued when the hook output cannot be written", async () => {

@@ -301,7 +301,8 @@ async function linkPlain(ctx: LinkContext, text: string): Promise<string> {
             if (pr) {
                 // The rule: a PR's label carries its title, unless the reply already writes it after the number.
                 const titled = text.slice(end, end + 2) === " (";
-                replacement = `[${titled ? hit.token : `${hit.token} (${pr.title})`}](${pr.url})`;
+                const title = pr.title.replace(/[\\[\]]/g, "\\$&");
+                replacement = `[${titled ? hit.token : `${hit.token} (${title})`}](${pr.url})`;
             }
         } else if (hit.kind === "decision") {
             const n = Number(/\d+/.exec(hit.token)?.[0]);
@@ -398,7 +399,9 @@ async function contextOf(host: Host, messageCount: number): Promise<LinkContext>
               .catch(() => undefined)
         : undefined;
     const repo =
-        origin?.exitCode === 0 ? /github\.com[:/]([^/]+\/[^/.]+?)(?:\.git)?\s*$/.exec(origin.stdout)?.[1] : undefined;
+        origin?.exitCode === 0
+            ? /github\.com[:/]([^/\s]+\/[^/\s]+?)(?:\.git)?\s*$/.exec(origin.stdout)?.[1]
+            : undefined;
     const askedBefore = new Set<number>();
 
     for (const message of (await host.messages()).slice(0, messageCount)) {

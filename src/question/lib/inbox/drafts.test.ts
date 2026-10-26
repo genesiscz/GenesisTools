@@ -5,7 +5,13 @@ import { join } from "node:path";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { answerGitWithoutSpawning } from "@genesiscz/utils/test/no-git";
 import { deliverDecisions, parseDecisionBlocks } from "../decisions/read";
-import { type DecisionRecord, postDecisions, readDecisions, updateDecisions } from "../decisions/store";
+import {
+    type DecisionRecord,
+    postDecisions,
+    readDecisions,
+    reservePromptDecisions,
+    updateDecisions,
+} from "../decisions/store";
 import { dismissDecision, draftDecision, sendDrafts, stagedSendText } from "./drafts";
 
 // A decision post reads its checkout with eight `git` starts; see no-git.ts for the CI hang they caused.
@@ -135,11 +141,10 @@ describe("sendDrafts", () => {
         expect(result.delivered).toBe(false);
         expect(result.numbers).toEqual([]);
         expect(readDecisions(file).every((row) => row.state === "answered" && !row.delivery)).toBe(true);
-        // A rejected submission or a process exit sends no acknowledgement; both send and injection can retry.
-        const retry = await sendDrafts({ session: "s", inSession: true }, deps);
-        expect(retry.text).toBe(result.text);
-        expect(deliverDecisions(readDecisions(file), () => undefined).numbers).toEqual([1, 2]);
-        expect(stagedSendText(readDecisions(file), "s")).toBe(preview);
+        // Preparing owns the batch before host.submit can trigger injection or another sender.
+        await expect(sendDrafts({ session: "s", inSession: true }, deps)).rejects.toThrow("nothing to send");
+        expect(() => deliverDecisions(readDecisions(file), () => undefined)).toThrow("nothing to send");
+        expect(stagedSendText(readDecisions(file), "s")).toBeUndefined();
         const ack = await sendDrafts({ session: "s", promptReceipt: result.promptReceipt }, deps);
         expect(ack).toMatchObject({ delivered: true, channel: "prompt", numbers: [1, 2] });
         expect(stagedSendText(readDecisions(file), "s")).toBeUndefined();
@@ -150,7 +155,7 @@ describe("sendDrafts", () => {
         ]);
     });
 
-    test("prompt acknowledgement rejects edited answers and never promotes newer drafts", async () => {
+    test("prompt acknowledgement validates its receipt, keeps its lease on failure and never promotes newer drafts", async () => {
         const deps = { ...scratch(), block: async () => null };
         await postDecisions(deps.file, deps.events, {
             sessionId: "s",
@@ -163,15 +168,47 @@ describe("sendDrafts", () => {
         const prepared = await sendDrafts({ session: "s", inSession: true }, deps);
         await draftDecision({ session: "s", number: 2, option: "b" }, deps);
         const first = readDecisions(deps.file)[0];
-        await updateDecisions(deps.file, deps.events, { updates: [{ id: first.id, answer: "changed" }] });
-        await expect(sendDrafts({ session: "s", promptReceipt: prepared.promptReceipt }, deps)).rejects.toThrow(
-            "pending answers changed"
-        );
+        await expect(
+            updateDecisions(deps.file, deps.events, { updates: [{ id: first.id, answer: "changed" }] })
+        ).rejects.toThrow("reserved");
+        if (!prepared.promptReceipt) {
+            throw new Error("missing prompt receipt");
+        }
+
+        await expect(
+            sendDrafts({ session: "s", promptReceipt: { ...prepared.promptReceipt, text: "wrong" } }, deps)
+        ).rejects.toThrow("pending answers changed");
         expect(readDecisions(deps.file).map((row) => row.state)).toEqual(["answered", "drafted"]);
+        expect(readDecisions(deps.file)[0]?.promptReservation?.token).toBe(prepared.promptReceipt.token);
+        await sendDrafts({ session: "s", promptReceipt: prepared.promptReceipt, releasePrompt: true }, deps);
+        await updateDecisions(deps.file, deps.events, { updates: [{ id: first.id, answer: "changed" }] });
         const retry = await sendDrafts({ session: "s", inSession: true }, deps);
         const dry = await sendDrafts({ session: "s", promptReceipt: retry.promptReceipt, dryRun: true }, deps);
         expect(dry.dryRun).toBe(true);
         expect(readDecisions(deps.file).every((row) => row.state === "answered")).toBe(true);
+    });
+
+    test("a failed submission releases only its lease, and abandoned preparations expire", async () => {
+        const deps = { ...scratch(), block: async () => null };
+        await postDecisions(deps.file, deps.events, {
+            sessionId: "s",
+            decisions: [{ prompt: "One?", options: ["yes"] }],
+        });
+        await draftDecision({ session: "s", number: 1, option: "a" }, deps);
+        const first = await sendDrafts({ session: "s", inSession: true }, deps);
+        await sendDrafts({ session: "s", promptReceipt: first.promptReceipt, releasePrompt: true }, deps);
+        expect(deliverDecisions(readDecisions(deps.file), () => undefined).numbers).toEqual([1]);
+        await reservePromptDecisions({ ...deps, session: "s", now: Date.now() - 6 * 60_000 });
+        expect(deliverDecisions(readDecisions(deps.file), () => undefined).numbers).toEqual([1]);
+        const newer = await sendDrafts({ session: "s", inSession: true }, deps);
+        await sendDrafts({ session: "s", promptReceipt: first.promptReceipt, releasePrompt: true }, deps);
+        await expect(sendDrafts({ session: "s", promptReceipt: first.promptReceipt }, deps)).rejects.toThrow(
+            "pending answers changed"
+        );
+        expect(readDecisions(deps.file)[0]?.promptReservation?.token).toBe(newer.promptReceipt?.token);
+        await sendDrafts({ session: "s", promptReceipt: newer.promptReceipt }, deps);
+        expect(readDecisions(deps.file)[0]?.promptReservation).toBeUndefined();
+        expect(readDecisions(deps.file)[0]?.state).toBe("sent");
     });
 
     test("promotes every drafted answer and delivers them as one message", async () => {

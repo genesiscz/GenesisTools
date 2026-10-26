@@ -9,7 +9,7 @@
 import type { ToolCallInput } from "claude-code";
 import { sessionDirOf } from "./agents-band";
 import { decisionLink, genesisProbe } from "./genesis";
-import { type Host, isRecord, logMod } from "./shared";
+import { type Host, isRecord, logMod, settingsOf } from "./shared";
 import { pressed } from "./sidebar";
 
 export type DecisionStatus =
@@ -541,18 +541,28 @@ export function refreshAnswers(host: Host, why: string, force = false): Promise<
     return reading;
 }
 
-/** Starts the checks once per module load: the first now, then each tick; a read runs only when this session changed. */
-export function startAnswers(host: Host): void {
+/** A settings-only check while both consumers are off; lifecycle events call this outside rendering. */
+export async function pollAnswers(host: Host, why: string): Promise<void> {
+    const settings = await settingsOf(host);
+
+    if (settings.decisions.enabled || settings.inbox.enabled) {
+        await refreshAnswers(host, why);
+    }
+}
+
+/** Install one settings watcher even while disabled, so a live config change can activate answer polling. */
+export function startAnswers(host: Host): Promise<void> {
     if (started) {
-        return;
+        return Promise.resolve();
     }
 
     started = true;
-    // One initial scoped snapshot, then bounded incremental event checks.
-    void refreshAnswers(host, "start");
     host.every(TICK_MS, () => {
-        void refreshAnswers(host, "tick");
+        void pollAnswers(host, "tick").catch((error: unknown) =>
+            logMod(host, "answers", { event: "poll-failed", error: String(error) })
+        );
     });
+    return pollAnswers(host, "start");
 }
 
 /** After this session called a question tool: its items changed, so read them again now. */
@@ -691,14 +701,17 @@ export async function sendStaged(host: Host): Promise<{ text?: string; numbers?:
     }
 
     const message = text(sent.text);
+    const receipt = sent.promptReceipt;
 
-    if (!message || !isRecord(sent.promptReceipt)) {
-        return { error: "The CLI did not prepare a pending prompt batch; update GenesisTools" };
+    if (!message || !isRecord(receipt) || typeof receipt.token !== "string" || !receipt.token) {
+        return { error: "The CLI did not reserve a pending prompt batch; update GenesisTools" };
     }
 
+    let submitted = false;
     try {
         await host.submit(message);
-        const ack = await questionCommand(host, ["send", "--ack-prompt", JSON.stringify(sent.promptReceipt)]);
+        submitted = true;
+        const ack = await questionCommand(host, ["send", "--ack-prompt", JSON.stringify(receipt)]);
 
         if (typeof ack.error === "string") {
             return { error: ack.error };
@@ -709,6 +722,12 @@ export async function sendStaged(host: Host): Promise<{ text?: string; numbers?:
             numbers: Array.isArray(ack.numbers) ? ack.numbers.filter((n): n is number => typeof n === "number") : [],
         };
     } catch (error) {
+        if (!submitted) {
+            const released = await questionCommand(host, ["send", "--release-prompt", JSON.stringify(receipt)]);
+            if (typeof released.error === "string") {
+                return { error: `${String(error)}; could not release the pending batch: ${released.error}` };
+            }
+        }
         return { error: String(error) };
     } finally {
         await refreshAnswers(host, "send", true);

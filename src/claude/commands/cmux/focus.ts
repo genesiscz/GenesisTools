@@ -212,7 +212,7 @@ async function pickTarget(targets: FocusTarget[]): Promise<FocusTarget | null> {
 export async function focusCommand(query: string, opts: FocusOptions, deps: FocusCommandDeps = {}): Promise<void> {
     // Commander passes the Command as the third argument. Only tests inject deps.
     const queryTrim = query.trim();
-    const result = await findSessionTargets(queryTrim, { includeSelf: opts.includeSelf, deps });
+    const result = await findSessionTargets(queryTrim, { includeSelf: opts.includeSelf, exact: opts.exact, deps });
 
     if (result.unavailable) {
         out.error(pc.red(`cmux is not reachable: ${result.unavailable}`));
@@ -285,7 +285,7 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
         return;
     }
 
-    let target = await chooseTarget(targets, query, opts);
+    let target = await chooseTarget(opts.exact ? targets.slice(0, 1) : targets, query, opts);
 
     if (!target) {
         return;
@@ -320,8 +320,13 @@ export async function focusCommand(query: string, opts: FocusOptions, deps: Focu
         }
         // Recorded refs outlived their pane (cmux restart). Fall back to the matcher.
         log.debug({ err }, "recorded cmux refs are stale; retrying with the text matcher");
-        const retry = await retryAfterStaleRefs(queryTrim, { includeSelf: opts.includeSelf, deps }, (found) =>
-            acceptsExact(found) ? chooseTarget(found.targets, query, opts) : Promise.resolve(null)
+        const retry = await retryAfterStaleRefs(
+            queryTrim,
+            { includeSelf: opts.includeSelf, exact: opts.exact, deps },
+            (found) =>
+                acceptsExact(found)
+                    ? chooseTarget(opts.exact ? found.targets.slice(0, 1) : found.targets, query, opts)
+                    : Promise.resolve(null)
         );
 
         if (retry.status === "stopped") {

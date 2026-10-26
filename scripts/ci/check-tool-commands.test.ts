@@ -257,6 +257,19 @@ describe("checkTree", () => {
         expect(errors[0]).toContain('no command "unused"');
     });
 
+    test("does not infer registration words from mutable let or var initializers", () => {
+        const root = tree({
+            tools: "const TOOL_ALIASES = new Map([]);",
+            "src/foo/index.ts":
+                'let verb = "old"; verb = next(); program.command(verb); var other = "gone"; other = next(); program.command(other); const stable = "real"; program.command(stable);',
+            "src/other/index.ts": 'toolCommand("foo old");\ntoolCommand("foo gone");\ntoolCommand("foo real");',
+        });
+        const errors = checkTree(root, ["src/foo/index.ts", "src/other/index.ts"]);
+        expect(errors).toHaveLength(2);
+        expect(errors[0]).toContain("src/other/index.ts:1");
+        expect(errors[1]).toContain("src/other/index.ts:2");
+    });
+
     test("accepts a command registered in a @genesiscz/utils module the tool imports", () => {
         const root = tree({
             tools: "const TOOL_ALIASES = new Map([]);",

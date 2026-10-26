@@ -34,9 +34,7 @@ const DONE_TODOS = new Set(["implemented", "dismissed", "superseded"]);
 
 export const inbox: Feature = {
     async start(host) {
-        if ((await settingsOf(host)).inbox.enabled) {
-            startAnswers(host);
-        }
+        await startAnswers(host);
     },
     async afterTool(host, e) {
         if ((await settingsOf(host)).inbox.enabled) {
@@ -56,7 +54,7 @@ export const inbox: Feature = {
                     };
                 }
 
-                startAnswers(host);
+                void startAnswers(host);
                 await host.togglePane(INBOX_PANE, "Inbox", "command");
                 await refreshAnswers(host, "command", true);
 

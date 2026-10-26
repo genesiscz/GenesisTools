@@ -7,8 +7,15 @@ import {
     deliverToSession,
     NotDeliveredError,
 } from "./deliver";
-import { decisionFiles, decisionLine, dueDecisions, sendSessionDecisions } from "./read";
-import { kindOf, readDecisions, recordDelivery } from "./store";
+import { decisionFiles, decisionLine, decisionLines, sendSessionDecisions } from "./read";
+import {
+    finishPromptDecisions,
+    kindOf,
+    type PromptReceipt,
+    readDecisions,
+    recordDelivery,
+    reservePromptDecisions,
+} from "./store";
 
 const { log } = logger.scoped("question-send");
 
@@ -20,7 +27,7 @@ export interface SendResult extends Partial<DeliveryResult> {
     numbers: number[];
     dryRun: boolean;
     /** Exact pending batch, acknowledged only after the session accepts its prompt. */
-    promptReceipt?: { ids: string[]; text: string };
+    promptReceipt?: PromptReceipt;
 }
 
 /** The provider name the delivery compares against (`claude`, `codex`, `grok`). */
@@ -48,6 +55,7 @@ export async function sendAnsweredDecisions({
     dryRun = false,
     inSession = false,
     promptReceipt,
+    releasePrompt,
     files = decisionFiles(),
     deps = {},
 }: {
@@ -59,10 +67,13 @@ export async function sendAnsweredDecisions({
     dryRun?: boolean;
     /**
      * The session delivers the message itself, through its own prompt (the mods Decisions sidebar): nothing is
-     * typed and the answers stay pending. After submitting `text`, pass `promptReceipt` back to acknowledge it.
+     * typed and the pending answers are reserved for five minutes. After submitting `text`, acknowledge its
+     * `promptReceipt`; if submission is rejected, pass the receipt with `releasePrompt` instead.
      */
     inSession?: boolean;
-    promptReceipt?: { ids: string[]; text: string };
+    promptReceipt?: PromptReceipt;
+    /** A submission failed before the session accepted the prompt. Release only that preparation's lease. */
+    releasePrompt?: boolean;
     files?: { file: string; events: string };
     deps?: DeliverDeps;
 }): Promise<SendResult> {
@@ -82,14 +93,35 @@ export async function sendAnsweredDecisions({
         return { session, provider, text: due.map(decisionLine).join("\n"), numbers: [], dryRun: true };
     }
 
-    if (inSession && !promptReceipt) {
-        const due = dueDecisions(rows);
+    if (inSession && promptReceipt) {
+        const moved = await finishPromptDecisions({
+            file,
+            events,
+            session,
+            receipt: promptReceipt,
+            acknowledge: releasePrompt
+                ? undefined
+                : (due) => {
+                      if (decisionLines(due) !== promptReceipt.text) {
+                          throw new Error("The pending answers changed; the submitted batch was not marked sent");
+                      }
+                  },
+        });
+        return {
+            session,
+            provider,
+            text: promptReceipt.text,
+            numbers: releasePrompt ? [] : moved.map((row) => row.number),
+            dryRun: false,
+            channel: "prompt",
+            delivered: !releasePrompt,
+            ...(releasePrompt ? {} : { target: "the session's own prompt" }),
+        };
+    }
 
-        if (due.length === 0) {
-            throw new Error("nothing to send");
-        }
-
-        const text = due.map(decisionLine).join("\n");
+    if (inSession) {
+        const reserved = await reservePromptDecisions({ file, events, session, ids });
+        const text = decisionLines(reserved.rows);
         return {
             session,
             provider,
@@ -98,7 +130,7 @@ export async function sendAnsweredDecisions({
             dryRun: false,
             channel: "prompt",
             delivered: false,
-            promptReceipt: { ids: due.map((row) => row.id), text },
+            promptReceipt: { ids: reserved.rows.map((row) => row.id), text, token: reserved.token },
         };
     }
 
@@ -118,15 +150,6 @@ export async function sendAnsweredDecisions({
             emit: async (text, numbers) => {
                 delivery.text = text;
                 delivery.numbers = numbers;
-
-                if (inSession) {
-                    if (!promptReceipt || text !== promptReceipt.text || numbers.length !== promptReceipt.ids.length) {
-                        throw new Error("The pending answers changed; the submitted batch was not marked sent");
-                    }
-
-                    delivery.route = { channel: "prompt", delivered: true, target: "the session's own prompt" };
-                    return;
-                }
 
                 const route = await deliverToSession(
                     { session, provider: provider ?? undefined, sourceHome, text, deliveryKey },

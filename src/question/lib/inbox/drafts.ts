@@ -6,6 +6,7 @@ import {
     type HarvestedDecision,
     harvestDecisions,
     kindOf,
+    type PromptReceipt,
     readDecisions,
     recordDelivery,
     updateDecisions,
@@ -164,7 +165,9 @@ export interface SendDraftsInput {
     /** The session submits the message itself; see `sendAnsweredDecisions` `inSession`. */
     inSession?: boolean;
     /** The batch the session already submitted successfully. Acknowledgement never promotes new drafts. */
-    promptReceipt?: { ids: string[]; text: string };
+    promptReceipt?: PromptReceipt;
+    /** Release this batch after the session rejected submission; never promote newer drafts. */
+    releasePrompt?: boolean;
 }
 
 /** Polled once a second while waiting for a resumed session's pane; the deadline is a count, not a clock. */
@@ -213,6 +216,7 @@ export async function sendDrafts(
             inSession: true,
             ids: input.promptReceipt.ids,
             promptReceipt: input.promptReceipt,
+            releasePrompt: input.releasePrompt,
             dryRun: input.dryRun,
             files: deps,
         });
