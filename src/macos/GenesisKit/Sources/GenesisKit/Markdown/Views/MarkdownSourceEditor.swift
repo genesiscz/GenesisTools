@@ -299,6 +299,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     /// The 0-based line at the top of the visible area, reported while the
     /// editor scrolls. Split view feeds it to the preview.
     var onTopLine: ((Int) -> Void)? = nil
+    /// Split view, preview to editor: the file line (0-based) to put at the top. Not reported back by `onTopLine`.
+    var scrollToLine: MarkdownLineSync? = nil
     /// ⌘-click on a link in the source. nil = clicks are plain text.
     var onOpenLink: ((String) -> Void)? = nil
     /// Vault names for `[[` and tags for `#`. nil = no completion.
@@ -388,6 +390,10 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         }
         if view.string != text {
             context.coordinator.replaceFromOutside(with: text, in: view)
+        }
+        if let wanted = scrollToLine, context.coordinator.lastScrollToLine != wanted {
+            context.coordinator.lastScrollToLine = wanted
+            context.coordinator.scroll(view, toLine: wanted.line)
         }
         if selection == nil { context.coordinator.lastSelection = nil }
         if let wanted = selection, context.coordinator.lastSelection != wanted {
@@ -497,7 +503,32 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             )
         }
 
+        var lastScrollToLine: MarkdownLineSync?
+        /// True while the preview moves the editor: that scroll is not the reader's, so it is not sent back.
+        private var scrollingFromPreview = false
+
+        /// Puts file line `line` (0-based) at the top of the editor.
+        func scroll(_ view: NSTextView, toLine line: Int) {
+            guard let layout = view.layoutManager, let scroll = view.enclosingScrollView, layout.numberOfGlyphs > 0 else { return }
+            let lineStarts = starts
+            let offset = min(lineStarts[min(max(0, line), lineStarts.count - 1)], (view.string as NSString).length)
+            layout.ensureLayout(forCharacterRange: NSRange(location: 0, length: offset))
+            let glyph = min(layout.glyphIndexForCharacter(at: offset), layout.numberOfGlyphs - 1)
+            let fragment = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+            let bottom = max(0, view.frame.height - scroll.contentView.bounds.height)
+            let y = min(bottom, max(0, fragment.minY + view.textContainerInset.height))
+            scrollingFromPreview = true
+            scroll.contentView.scroll(to: NSPoint(x: scroll.contentView.bounds.origin.x, y: y))
+            scroll.reflectScrolledClipView(scroll.contentView)
+            scrollingFromPreview = false
+            lastReportedLine = line
+        }
+
         @objc private func scrolled() {
+            if scrollingFromPreview {
+                parent.onScroll?(Double(view?.enclosingScrollView?.contentView.bounds.origin.y ?? 0))
+                return
+            }
             guard parent.onTopLine != nil || parent.onScroll != nil,
                   let view, let layout = view.layoutManager,
                   let container = view.textContainer, let scroll = view.enclosingScrollView else { return }
