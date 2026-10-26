@@ -1,9 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as videoProbe from "@genesiscz/utils/video/probe";
+import * as captureRunner from "./capture-runner";
+import { nativeSegmentRecorder } from "./recording-native";
 import {
     FIRST_FRAME_MESSAGE,
     type FinishedSegment,
@@ -411,6 +414,70 @@ describe("RecordingSession", () => {
         await recording.command({ cmd: "discard" });
         expect(await recording.finished).toBe("discarded");
         expect(existsSync(join(root, "out.mp4"))).toBe(false);
+    });
+});
+
+describe("nativeSegmentRecorder", () => {
+    let root: string;
+
+    beforeEach(async () => {
+        root = join(tmpdir(), `recording-native-${randomUUID()}`);
+        await mkdir(root, { recursive: true });
+    });
+
+    afterEach(async () => {
+        mock.restore();
+        await rm(root, { recursive: true, force: true });
+    });
+
+    /** One recorder run that a stop ends; `failed` is what the recorder reported when it exited. */
+    async function stoppedRun(failed: boolean) {
+        const output = join(root, "segment.mp4");
+        spyOn(captureRunner, "runCapturePlanWithSignal").mockImplementation(async ({ signal, onRecording }) => {
+            await writeFile(output, "movie");
+            onRecording?.();
+            if (!signal.aborted) {
+                await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+            }
+
+            const sessionDir = join(root, "session");
+            await mkdir(sessionDir, { recursive: true });
+            return {
+                ...({} as Awaited<ReturnType<typeof captureRunner.runCapturePlanWithSignal>>),
+                captureFailed: failed,
+                sessionDir,
+                warnings: failed ? ["video writer did not finish within 10s"] : [],
+                capture: { error: failed ? "video writer ended without completing" : undefined },
+            };
+        });
+        const probe = spyOn(videoProbe, "probeVideo").mockImplementation(async () => {
+            throw new Error("no finished container");
+        });
+        const controller = new AbortController();
+        const run = nativeSegmentRecorder().record({
+            target: display,
+            output,
+            maxSeconds: 3,
+            signal: controller.signal,
+            onRecording: () => controller.abort(),
+        });
+        return { result: await run, output, probes: probe.mock.calls.length };
+    }
+
+    it("a stop on a recorder that failed probes its movie and drops an unfinished one", async () => {
+        const { result, output, probes } = await stoppedRun(true);
+        expect(probes).toBe(1);
+        expect(result.ok).toBe(false);
+        expect(result.endedBy).toBe("stop");
+        expect(result.error).toBe("video writer ended without completing");
+        expect(existsSync(output)).toBe(false);
+    });
+
+    it("a clean stop keeps its movie without a probe", async () => {
+        const { result, output, probes } = await stoppedRun(false);
+        expect(probes).toBe(0);
+        expect(result).toEqual({ ok: true, endedBy: "stop", durationMs: undefined });
+        expect(existsSync(output)).toBe(true);
     });
 });
 

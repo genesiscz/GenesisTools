@@ -108,8 +108,10 @@ export function nativeSegmentRecorder(options: NativeRecorderOptions = {}): Segm
                 const endedBy = signal.aborted ? "stop" : result.captureFailed ? "failure" : "deadline";
                 const error =
                     typeof envelope?.error === "string" ? envelope.error : result.warnings.at(-1) || undefined;
-                const ok = existsSync(output) && (endedBy !== "failure" || (await playable(output)));
-                if (endedBy !== "failure") {
+                // A stop can land on a recorder that already failed, or kill one that did not finish its movie in
+                // time, so a failed run's movie is probed whatever ended it: an unfinished one would break every save.
+                const ok = existsSync(output) && (!result.captureFailed || (await playable(output)));
+                if (!result.captureFailed) {
                     return { ok, endedBy, durationMs };
                 }
 
