@@ -11,10 +11,20 @@
  * chaining, redirection, expansion, sandbox escalations (their request shows the reason, not the command), rituals.
  * One exception to the chaining rule: a chain (`;`, `&&`, `||`, `|`) whose every command only reads (`readOnlyChain`):
  * an independent reviewer asked the lead for 4 such chains in its first 2 minutes (2026-10-15, GenesisPlayground #93).
+ * Those are the `strict` rules. The trust level (`Trust`, default `routine`) widens them, and the lead switches it on
+ * running drivers with the `trust` subcommand.
+ *
+ * Every NEEDS LEAD line also goes to `<run dir>/needs-lead.log`, the one feed the lead watches, and a request still
+ * waiting after 3 minutes is repeated there every 10 minutes. On 2026-10-26 28 Sol workers each sat 20 to 30 minutes
+ * on one unanswered read: the lead's monitor tailed only the logs that existed when it started, and six drivers had
+ * stopped at a fixed 30-minute deadline. A driver now runs until its worker's session closes.
  *
  * Usage: bun .claude/skills/babysit/scripts/approve-codex.ts --run <run.json> --name <codex session>
+ *        bun .claude/skills/babysit/scripts/approve-codex.ts trust <strict|routine|all> --run <run.json> [--name <worker>]
+ *        bun .claude/skills/babysit/scripts/approve-codex.ts builds <allow|deny> --run <run.json>
+ *        bun .claude/skills/babysit/scripts/approve-codex.ts pending --run <run.json>
  */
-import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { appendFileSync, lstatSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { strictShellWords } from "@app/codex/lib/bus-approval";
@@ -32,7 +42,43 @@ export interface RunEntry {
     pr?: number;
     /** A second scratch folder outside the worktree: a reviewer's probe folder, which its brief names. */
     scratch?: string;
+    /** This worker's trust level; the run card's `trust` applies when unset. */
+    trust?: Trust;
+    /** More folders a trusted worker may write to (the session's scratch folder). */
+    roots?: string[];
 }
+
+interface RunCard {
+    trust?: Trust;
+    /** True refuses every test run, build and typecheck, whatever the brief allows (a full disk, a busy Mac). */
+    noBuilds?: boolean;
+    prs: RunEntry[];
+}
+
+/** What `noBuilds` refuses: test runs, Swift and Xcode builds, the app build, and TypeScript typechecks. */
+const BUILDS =
+    /(?:scripts\/test\.ts|\bbun\s+(?:run\s+)?test\b|\bswift\s+(?:build|test|run)\b|\bxcodebuild\b|\bbun\s+run\s+app\b|\btools\s+macos\s+permissions\s+build\b|\btsc\b|\btsgo\b|typescript-darwin-arm64)/;
+
+export function buildCommand(request: { command?: unknown }): boolean {
+    return typeof request.command === "string" && BUILDS.test(scannedCommand(request.command));
+}
+
+/**
+ * How much a driver approves by itself, beyond the brief's own rules:
+ * - `strict`: only those rules.
+ * - `edits`: the worker only edits. File changes inside its worktree or a scratch folder, reads, fable-replace and
+ *   writes into its scratch folder pass; the driver refuses every other command by itself (a test, a build, a commit),
+ *   because the lead runs the checks and commits at integration (Martin, 2026-10-26).
+ * - `routine` (the default): also any command run inside the worker's worktree, and any file change inside it or a
+ *   scratch folder, unless the command matches `DENIED` or writes outside those folders.
+ * - `all`: any command or file change that `DENIED` does not name, wherever it runs.
+ * The driver reads the level from the run card on every poll, so a switch reaches running drivers at once. The cost of
+ * `routine`: an interpreter (`python3 -c`, `bun -e`) runs whatever code it is given; the judge still reads every diff.
+ */
+export type Trust = "strict" | "edits" | "routine" | "all";
+export const TRUST_LEVELS: readonly Trust[] = ["strict", "edits", "routine", "all"];
+export const DEFAULT_TRUST: Trust = "routine";
+const isTrust = (value: unknown): value is Trust => TRUST_LEVELS.includes(value as Trust);
 
 const inScope = (entry: RunEntry, path: string) => {
     const root = resolve(entry.cwd);
@@ -722,8 +768,255 @@ interface ApprovalRequest {
     cwd?: unknown;
 }
 
+/**
+ * Commands no trust level approves: they publish, delete, rewrite or move a branch, change the Mac or its packages,
+ * reach the network, or start other agents. A match anywhere in the command (heredoc bodies aside) asks the lead, so a
+ * quoted mention costs one question, never a silent approval. A commit passes only through the brief's own rule.
+ */
+const DENIED: RegExp[] = [
+    /\bgit\s+(?:-C\s+\S+\s+)?(?:push|commit|reset|clean|checkout|restore|switch|rebase|merge|cherry-pick|revert|worktree|branch|tag|config(?!\s+--get\b)|stash|update-ref|filter-branch|filter-repo|gc|prune|reflog|remote|fetch|pull|am|apply|notes|replace)\b/,
+    /(?:^|[\s;&|(])(?:rm|rmdir|unlink|shred|sudo|su|kill|pkill|killall|launchctl|osascript|open|shutdown|reboot|diskutil|security|defaults|tccutil|chown|curl|wget|gh|glab|ssh|scp|rsync|nc|npm|npx|pnpm|yarn|brew|pip|pip3|xattr|codesign|spctl|lsregister|crontab|swift-format)(?=\s|$)/,
+    /\bbunx?\s+(?:add|install|i|remove|rm|update|upgrade|link|unlink|publish|pm)\b/,
+    /\b(?:\.\/)?tools\s+(?:say|claude|codex|grok|notify|question|macos|github|git|agents|ai|update|mcp-manager|cmux|hub|genesis-tools)\b/,
+    /\bbun\s+run\s+app\b/,
+];
+
+/** Heredoc bodies are data (a fable-replace spec, a file being written), not commands, so they are not scanned. */
+function withoutHeredocBodies(command: string): string {
+    return command.replace(/<<-?\s*(['"]?)([A-Za-z0-9_]+)\1([^\n]*)\n[\s\S]*?\n\2(?=\n|$)/g, "<<$1$2$1$3");
+}
+
+/** A ritual a worker must not run (the brief says so); the driver refuses it by itself instead of asking the lead. */
+export function ritualCommand(request: { command?: unknown }): boolean {
+    return typeof request.command === "string" && /\btools\s+say\b/.test(scannedCommand(request.command));
+}
+
+export function deniedCommand(command: string): boolean {
+    const scanned = withoutHeredocBodies(command);
+    return DENIED.some((pattern) => pattern.test(scanned));
+}
+
+const DEVICES = new Set(["/dev/null", "/dev/stdout", "/dev/stderr"]);
+
+/** A write target inside the worktree (never its `.git`), the reviewer's scratch folder or another configured root. */
+function insideRoots(entry: RunEntry, cwd: string, path: string, roots = writeRoots(entry)): boolean {
+    if (DEVICES.has(path)) {
+        return true;
+    }
+
+    try {
+        const canonical = canonicalWriteTarget(resolve(cwd, path));
+        const worktree = realpathSync(entry.cwd);
+        if (/^\.git(?:\/|$)/.test(relative(worktree, canonical))) {
+            return false;
+        }
+
+        return roots.some((root) => {
+            const real = realpathSync(root);
+            return canonical === real || canonical.startsWith(real + sep);
+        });
+    } catch {
+        // A missing or unreadable root, a dangling link or a file used as a folder cannot be approved.
+        return false;
+    }
+}
+
+const writeRoots = (entry: RunEntry) => [entry.cwd, ...(entry.scratch ? [entry.scratch] : []), ...(entry.roots ?? [])];
+
+const FILE_WRITERS = new Set(["touch", "mkdir", "truncate", "chmod", "tee"]);
+const COPIERS = new Set(["cp", "mv", "ln", "install"]);
+
+/** Every path a command writes through a redirection, `tee`, a copy or move, `touch`/`mkdir`, or fable-replace. */
+export function writeTargets(command: string, cwd: string): string[] | null {
+    const scanned = withoutHeredocBodies(command);
+    const targets: string[] = [];
+    for (const match of scanned.matchAll(/(?:^|[^<>&0-9-])[0-9&]?>>?\s*(?!&)(['"]?)([^\s'";|&<>()]+)\1/g)) {
+        targets.push(match[2]);
+    }
+
+    for (const segment of scanned.split(/&&|\|\||[;|\n]/)) {
+        const words = (strictShellWords(segment.trim()) ?? segment.trim().split(/\s+/)).filter(
+            (word) => !/^[A-Z_][A-Z0-9_]*=/.test(word)
+        );
+        const program = basename(words[0] === "timeout" ? (words[2] ?? "") : (words[0] ?? ""));
+        const args = (words[0] === "timeout" ? words.slice(3) : words.slice(1)).filter((word) => !word.startsWith("-"));
+        if (FILE_WRITERS.has(program)) {
+            targets.push(...args);
+        } else if (COPIERS.has(program) && args.length > 0) {
+            targets.push(args[args.length - 1]);
+        } else if (program === "dd") {
+            targets.push(...args.filter((arg) => arg.startsWith("of=")).map((arg) => arg.slice(3)));
+        }
+    }
+
+    if (/fable-replace\/scripts\/cli\.ts/.test(command)) {
+        const lines = command.split("\n").filter((line) => line.startsWith("@@"));
+        const spec = /--spec\s+(['"]?)([^\s'"]+)\1/.exec(command);
+        if (spec) {
+            try {
+                lines.push(
+                    ...readFileSync(resolve(cwd, spec[2]), "utf8")
+                        .split("\n")
+                        .filter((line) => line.startsWith("@@"))
+                );
+            } catch {
+                // A spec the driver cannot read names targets it cannot check.
+                return null;
+            }
+        }
+
+        targets.push(...lines.map((line) => line.slice(2).trim()));
+    }
+
+    return targets;
+}
+
+/**
+ * The command a trust check scans. `innerCommand` refuses to unwrap a shell call that mixes quotes or expands a variable
+ * (`FABLE_REPLACE_HOME="$PWD/…"`, a heredoc with `"` in its body); for a scan that only looks for denied commands and
+ * write targets, dropping the wrapper and its quote juggling is enough (2026-10-26: such calls were half the questions).
+ */
+export function scannedCommand(command: string): string {
+    const inner = innerCommand(command);
+    const wrapped = /^(\S+) (?:-c|-lc) (['"])([\s\S]*)\2$/.exec(inner);
+    if (!wrapped || !SHELLS.includes(wrapped[1])) {
+        return inner;
+    }
+
+    return wrapped[3].replace(/'"'"'|'"'|"'/g, "").replace(/\\(["$`\\])/g, "$1");
+}
+
+const EDIT_PROGRAMS = new Set([
+    "cat",
+    "printf",
+    "echo",
+    "tee",
+    "mkdir",
+    "ls",
+    "wc",
+    "sed",
+    "rg",
+    "grep",
+    "head",
+    "tail",
+    "nl",
+    "cut",
+    "sort",
+    "uniq",
+    "jq",
+    "test",
+    "true",
+    "pwd",
+    "diff",
+    "basename",
+    "dirname",
+    "realpath",
+    "stat",
+    "file",
+    "tr",
+    "find",
+]);
+const GIT_READS = new Set(["diff", "show", "log", "status", "rev-parse", "ls-files", "grep", "blame", "merge-base"]);
+const SHELL_WORDS = new Set(["if", "then", "else", "elif", "fi", "do", "done", "for", "while"]);
+
+/** Under `edits`: a command made only of readers, fable-replace and writes inside the allowed folders. */
+export function editOnlyCommand(entry: RunEntry, command: string, cwd: string): boolean {
+    const scanned = withoutHeredocBodies(command);
+    const programsOk = scanned
+        .split(/&&|\|\||[;|\n]/)
+        .map((segment) => segment.trim())
+        .filter((segment) => segment.length > 0)
+        .every((segment) => {
+            const words = (strictShellWords(segment) ?? segment.split(/\s+/)).filter(
+                (word) => !/^[A-Z_][A-Z0-9_]*=/.test(word)
+            );
+            const timed = words[0] === "timeout";
+            const name = basename((timed ? words[2] : words[0]) ?? "");
+            const rest = timed ? words.slice(3) : words.slice(1);
+            if (SHELL_WORDS.has(name)) {
+                return true;
+            }
+
+            if (name === "git") {
+                const verb = rest.filter((word, index) => !word.startsWith("-") && rest[index - 1] !== "-C")[0];
+                return GIT_READS.has(verb ?? "");
+            }
+
+            if (name === "bun") {
+                return rest.some((word) => /fable-replace\/scripts\/cli\.ts$/.test(word));
+            }
+
+            const executes =
+                (name === "sed" && rest.some((word) => /^-[a-zA-Z]*i/.test(word))) ||
+                (name === "find" && rest.some((word) => /^-(exec|execdir|ok|delete)$/.test(word)));
+            return EDIT_PROGRAMS.has(name) && !executes;
+        });
+    return programsOk && (writeTargets(command, cwd)?.every((target) => insideRoots(entry, cwd, target)) ?? false);
+}
+
+/** Whether the trust level approves a request the brief's own rules left to the lead. */
+export function trustedRequest(entry: RunEntry, request: ApprovalRequest, trust: Trust): boolean {
+    if (trust === "strict") {
+        return false;
+    }
+
+    const method = request.method ?? "";
+    if (method.includes("fileChange")) {
+        const paths = request.paths;
+        return (
+            Array.isArray(paths) &&
+            paths.length > 0 &&
+            paths.every((path) => typeof path === "string" && (trust === "all" || insideRoots(entry, entry.cwd, path)))
+        );
+    }
+
+    const isCommand = method === "item/commandExecution/requestApproval" || method === "execCommandApproval";
+    const cwd = request.cwd;
+    if (!isCommand || typeof request.command !== "string" || typeof cwd !== "string") {
+        return false;
+    }
+
+    if (!isAbsolute(cwd) || (trust === "routine" && !insideRoots(entry, cwd, ".", [entry.cwd]))) {
+        return false;
+    }
+
+    const command = scannedCommand(request.command);
+    if (deniedCommand(command)) {
+        return false;
+    }
+
+    if (trust === "edits") {
+        return editOnlyCommand(entry, command, cwd);
+    }
+
+    if (trust === "all") {
+        return true;
+    }
+
+    return writeTargets(command, cwd)?.every((target) => insideRoots(entry, cwd, target)) ?? false;
+}
+
 /** The decision for one pending request: approve, and the label to print. */
-export function decide(entry: RunEntry, request: ApprovalRequest): { ok: boolean; label: string } {
+export function decide(
+    entry: RunEntry,
+    request: ApprovalRequest,
+    trust: Trust = "strict",
+    noBuilds = false
+): { ok: boolean; label: string } {
+    if (noBuilds && buildCommand(request)) {
+        return { ok: false, label: `${String(request.detail ?? "")} (builds and tests are off)` };
+    }
+
+    if (trust === "edits") {
+        return { ok: trustedRequest(entry, request, trust), label: String(request.detail ?? "") };
+    }
+
+    const own = briefDecision(entry, request);
+    return own.ok || trust === "strict" ? own : { ok: trustedRequest(entry, request, trust), label: own.label };
+}
+
+/** The brief's own rules: scoped file changes and the commands `allowedCommand` names, in the worker's cwd. */
+function briefDecision(entry: RunEntry, request: ApprovalRequest): { ok: boolean; label: string } {
     const method = request.method ?? "";
     const detail = String(request.detail ?? "");
 
@@ -748,30 +1041,66 @@ export function decide(entry: RunEntry, request: ApprovalRequest): { ok: boolean
 }
 
 const STATUS_FAILURE_LIMIT = 10;
+const REMIND_AFTER_MS = 180_000;
+const REMIND_EVERY_MS = 600_000;
 
 export async function watchApprovals({
     entry,
     exec = execTool,
     now = Date.now,
     sleep = Bun.sleep,
-    timeoutMs = 1_800_000,
+    timeoutMs = Number.POSITIVE_INFINITY,
     pollMs = 1500,
+    trust = () => "strict",
+    noBuilds = () => false,
+    feed = () => {},
+    remindAfterMs = REMIND_AFTER_MS,
+    remindEveryMs = REMIND_EVERY_MS,
 }: {
     entry: RunEntry;
     exec?: typeof execTool;
     now?: () => number;
     sleep?: (ms: number) => Promise<unknown>;
+    /** The driver stops here; by default it runs until the worker's session closes. */
     timeoutMs?: number;
     pollMs?: number;
+    /** Read on every poll, so the lead can switch it on a running driver. The CLI reads it from the run card. */
+    trust?: () => Trust;
+    /** Read on every poll: true refuses test runs, builds and typechecks. */
+    noBuilds?: () => boolean;
+    /** The run's shared NEEDS LEAD feed: every question and reminder also goes here. */
+    feed?: (line: string) => void;
+    remindAfterMs?: number;
+    remindEveryMs?: number;
 }): Promise<void> {
     const seen = new Set<string>();
     const failures = new Map<string, number>();
+    /** Requests waiting on the lead: when they were asked and last repeated. */
+    const asked = new Map<string, { since: number; reminded: number; shown: string }>();
     const deadline = now() + timeoutMs;
+    const ask = (line: string) => {
+        console.log(line);
+        feed(line);
+    };
+    let level: Trust | undefined;
     // After a worker's turn ended, `codex status` failed with empty stderr on every poll until the deadline (2026-10-14
     // #516 round 4): say what failed, and hand over to the lead instead of printing it every 1.5 s for 30 minutes.
     let statusFailures = 0;
     const options = () => ({ cwd: entry.cwd, timeout: Math.max(1, Math.min(30_000, deadline - now())) });
     while (now() < deadline) {
+        const current = trust();
+        if (current !== level) {
+            if (level !== undefined) {
+                console.log(`[approver] trust is now ${current}`);
+            }
+
+            level = current;
+            // A switch decides the waiting requests again, so a wider level releases them at once.
+            for (const id of asked.keys()) {
+                seen.delete(id);
+            }
+        }
+
         const status = await exec(["codex", "status", "--name", entry.name, "--json"], options());
         let meta: { status?: string; pendingApprovals?: Record<string, ApprovalRequest> } | null = null;
         try {
@@ -790,9 +1119,9 @@ export async function watchApprovals({
         }
 
         if (statusFailures >= STATUS_FAILURE_LIMIT) {
-            console.error(
-                `[approver] NEEDS LEAD: codex status failed ${statusFailures} times in a row for ${entry.name}; stopped`
-            );
+            const line = `[approver] NEEDS LEAD: codex status failed ${statusFailures} times in a row for ${entry.name}; stopped`;
+            console.error(line);
+            feed(line);
             return;
         }
 
@@ -801,15 +1130,29 @@ export async function watchApprovals({
             return;
         }
 
-        for (const [id, request] of Object.entries(meta?.pendingApprovals ?? {})) {
+        const pending = meta?.pendingApprovals ?? {};
+        for (const [id, request] of Object.entries(pending)) {
             if (seen.has(id) || (failures.get(id) ?? 0) >= 3 || now() >= deadline) {
                 continue;
             }
-            const { ok, label } = decide(entry, request);
+            const { ok, label } = decide(entry, request, level, noBuilds());
             const shown = label.replace(/\s+/g, " ").slice(0, 200);
+            const command =
+                request.method === "item/commandExecution/requestApproval" || request.method === "execCommandApproval";
+            if (!ok && (ritualCommand(request) || (level === "edits" && command))) {
+                seen.add(id);
+                const refused = await exec(["codex", "deny", "--name", entry.name, "--request", id], options());
+                console.log(`[approver] ${refused.success ? "refused" : "could not refuse"} #${id}: ${shown}`);
+                continue;
+            }
+
             if (!ok) {
                 seen.add(id);
-                console.log("[approver] NEEDS LEAD #" + id + " " + shown);
+                if (!asked.has(id)) {
+                    asked.set(id, { since: now(), reminded: now(), shown });
+                    ask("[approver] NEEDS LEAD #" + id + " " + shown);
+                }
+
                 continue;
             }
 
@@ -828,18 +1171,132 @@ export async function watchApprovals({
 
             if (acknowledged) {
                 seen.add(id);
+                asked.delete(id);
                 console.log("[approver] approved #" + id + ": " + shown);
             } else {
                 const count = (failures.get(id) ?? 0) + 1;
                 failures.set(id, count);
                 if (count >= 3) {
-                    console.error("[approver] NEEDS LEAD #" + id + ": approval failed 3 times");
+                    const line = "[approver] NEEDS LEAD #" + id + ": approval failed 3 times";
+                    console.error(line);
+                    feed(line);
                 }
             }
         }
+
+        // A question nobody answered comes back, so a lead whose monitor was down still sees it (2026-10-26).
+        for (const [id, info] of asked) {
+            if (meta && !(id in pending)) {
+                asked.delete(id);
+                continue;
+            }
+
+            const wait = info.reminded === info.since ? remindAfterMs : remindEveryMs;
+            if (now() - info.reminded >= wait) {
+                info.reminded = now();
+                ask(`[approver] STILL WAITING #${id} ${Math.round((now() - info.since) / 60_000)}m ${info.shown}`);
+            }
+        }
+
         await sleep(Math.min(pollMs, Math.max(0, deadline - now())));
     }
     console.error("[approver] watch deadline reached for " + entry.name);
+}
+
+const readCard = (runPath: string) => SafeJSON.parse(readFileSync(runPath, "utf8"), { strict: true }) as RunCard;
+
+/** The worker's trust level and the build switch from the run card, re-read only when the card changed. */
+function policyReader(runPath: string, name: string): () => { trust: Trust; noBuilds: boolean } {
+    let stamp = -1;
+    let policy: { trust: Trust; noBuilds: boolean } = { trust: DEFAULT_TRUST, noBuilds: false };
+    return () => {
+        try {
+            const mtime = statSync(runPath).mtimeMs;
+            if (mtime !== stamp) {
+                const card = readCard(runPath);
+                const value = card.prs.find((pr) => pr.name === name)?.trust ?? card.trust;
+                policy = { trust: isTrust(value) ? value : DEFAULT_TRUST, noBuilds: card.noBuilds === true };
+                stamp = mtime;
+            }
+        } catch (error) {
+            // A card caught mid-write parses on the next poll; the last policy holds until then.
+            console.error(`[approver] could not read the run card: ${String(error)}`);
+        }
+
+        return policy;
+    };
+}
+
+function setBuilds(runPath: string, allowed: boolean): string {
+    const card = readCard(runPath);
+    card.noBuilds = !allowed;
+    const temporary = `${runPath}.builds-${process.pid}`;
+    writeFileSync(temporary, SafeJSON.stringify(card, null, 2) + "\n");
+    renameSync(temporary, runPath);
+    return allowed
+        ? "workers may run tests and builds again"
+        : "workers' tests, builds and typechecks now ask the lead";
+}
+
+/** The extra write roots and scratch folder a driver gives its worker. */
+function withRunFolders(entry: RunEntry, runPath: string): RunEntry {
+    const runDir = dirname(runPath);
+    // A reviewer writes its probes and logs to the folder review-brief names; the driver approves those writes too.
+    const scratch =
+        entry.scratch ?? (entry.role === "review" && entry.pr ? reviewScratch(runDir, entry.pr) : undefined);
+    // The run folder sits in the session's scratch folder (`/tmp/cc/<project>/<session>/babysit`).
+    return { ...entry, scratch, roots: entry.roots ?? [dirname(runDir)] };
+}
+
+function setTrust(runPath: string, level: Trust, name?: string): string {
+    const card = readCard(runPath);
+    if (name) {
+        const entry = card.prs.find((pr) => pr.name === name);
+        if (!entry) {
+            throw new Error(`no entry named ${name} in ${runPath}`);
+        }
+
+        entry.trust = level;
+    } else {
+        card.trust = level;
+        for (const entry of card.prs) {
+            delete entry.trust;
+        }
+    }
+
+    const temporary = `${runPath}.trust-${process.pid}`;
+    writeFileSync(temporary, SafeJSON.stringify(card, null, 2) + "\n");
+    renameSync(temporary, runPath);
+    return name ? `${name} now runs at ${level}` : `every worker now runs at ${level}`;
+}
+
+/** Every worker's waiting requests and what its driver decides at the current trust level. */
+async function listPending(runPath: string): Promise<void> {
+    const card = readCard(runPath);
+    let waiting = 0;
+    for (const raw of card.prs) {
+        const entry = withRunFolders(raw, runPath);
+        const status = await execTool(["codex", "status", "--name", entry.name, "--json"], { timeout: 30_000 });
+        if (!status.success) {
+            console.log(`${entry.name}: status failed (exit ${status.exitCode})`);
+            continue;
+        }
+
+        const meta = SafeJSON.parse(status.stdout, { strict: true }) as {
+            pendingApprovals?: Record<string, ApprovalRequest>;
+        };
+        const level = entry.trust ?? card.trust ?? DEFAULT_TRUST;
+        const noBuilds = card.noBuilds === true;
+        for (const [id, request] of Object.entries(meta.pendingApprovals ?? {})) {
+            waiting += 1;
+            const { ok, label } = decide(entry, request, level, noBuilds);
+            console.log(
+                `${entry.name} #${id} ${ok ? "driver approves" : "NEEDS LEAD"}: ${label.replace(/\s+/g, " ").slice(0, 160)}`
+            );
+        }
+    }
+
+    console.log(`${waiting} waiting request(s) across ${card.prs.length} worker(s)`);
 }
 
 async function main(): Promise<void> {
@@ -851,23 +1308,62 @@ async function main(): Promise<void> {
     const runPath = flag("--run");
     const name = flag("--name");
 
+    if (args[0] === "trust") {
+        const level = args[1];
+        if (!runPath || !isTrust(level)) {
+            console.error(
+                `usage: approve-codex.ts trust <${TRUST_LEVELS.join("|")}> --run <run.json> [--name <worker>]`
+            );
+            process.exit(2);
+        }
+
+        console.log(setTrust(runPath, level, name));
+        return;
+    }
+
+    if (args[0] === "builds") {
+        if (!runPath || !["allow", "deny"].includes(args[1] ?? "")) {
+            console.error("usage: approve-codex.ts builds <allow|deny> --run <run.json>");
+            process.exit(2);
+        }
+
+        console.log(setBuilds(runPath, args[1] === "allow"));
+        return;
+    }
+
+    if (args[0] === "pending") {
+        if (!runPath) {
+            console.error("usage: approve-codex.ts pending --run <run.json>");
+            process.exit(2);
+        }
+
+        await listPending(runPath);
+        return;
+    }
+
     if (!runPath || !name) {
         console.error("usage: approve-codex.ts --run <run.json> --name <codex session>");
         process.exit(2);
     }
 
-    const card = SafeJSON.parse(readFileSync(runPath, "utf8"), { strict: true }) as { prs: RunEntry[] };
-    const entry = card.prs.find((pr) => pr.name === name);
+    const entry = readCard(runPath).prs.find((pr) => pr.name === name);
 
     if (!entry) {
         console.error(`no entry named ${name} in ${runPath}`);
         process.exit(2);
     }
 
-    // A reviewer writes its probes and logs to the folder review-brief names; the driver approves those writes too.
-    const scratch =
-        entry.scratch ?? (entry.role === "review" && entry.pr ? reviewScratch(dirname(runPath), entry.pr) : undefined);
-    await watchApprovals({ entry: { ...entry, scratch } });
+    const feedPath = join(dirname(runPath), "needs-lead.log");
+    const policy = policyReader(runPath, name);
+    await watchApprovals({
+        entry: withRunFolders(entry, runPath),
+        trust: () => policy().trust,
+        noBuilds: () => policy().noBuilds,
+        feed: (line) => {
+            const time = new Date().toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+            appendFileSync(feedPath, `${time} ${name} ${line.replace(/^\[approver\] /, "")}\n`);
+        },
+    });
 }
 
 if (import.meta.main) {
