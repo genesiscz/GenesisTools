@@ -365,6 +365,8 @@ public final class WidgetVoiceNotesStore: ObservableObject {
             await previous?.value
             do {
                 _ = try await request(["discard", note.id, "--revision", String(note.revision)])
+                // A list read that started before the delete may still list the note: it is dropped.
+                self?.generation += 1
                 self?.deletingIDs.remove(note.id)
                 // The edits go only once the note is gone: a refused delete brings the note back with them.
                 self?.drafts[note.id] = nil

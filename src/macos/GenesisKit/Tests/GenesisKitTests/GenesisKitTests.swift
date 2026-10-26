@@ -474,6 +474,44 @@ final class WidgetShelfStoreTests: XCTestCase {
         XCTAssertTrue(spoken.contains("Removed from the shelf. The original file and existing drafts are kept."))
         XCTAssertTrue(spoken.contains("notes.pdf is back on the shelf."))
     }
+
+    /// A list read that saw the shelf before a removal finished does not put the removed item back, not even for a
+    /// moment.
+    func testAListReadFromBeforeARemovalFinishedNeverShowsTheItemAgain() async throws {
+        let itemJSON = String(decoding: try JSONEncoder().encode(item), as: UTF8.self)
+        let listed = Data(#"{"revision":1,"items":[\#(itemJSON)],"statePath":"/fixture/widget-shelf/state.json"}"#.utf8)
+        var removedOnDisk = false
+        var holdNextList = false
+        var shown: [[WidgetShelfItem]] = []
+        let store = WidgetShelfStore(request: { args, _ in
+            if args.first == "list" && holdNextList {
+                holdNextList = false
+                while !removedOnDisk { try await Task.sleep(for: .milliseconds(5)) }
+                return listed
+            }
+
+            if args.first == "remove" {
+                removedOnDisk = true
+                return self.empty
+            }
+
+            return removedOnDisk ? self.empty : listed
+        }, undoSeconds: { 60 })
+        defer { store.stop() }
+        store.refresh()
+        guard try await pollUntil("the list is read", { store.items.count == 1 }) else { return }
+
+        store.remove(item)
+        let watch = store.$items.sink { shown.append($0) }
+        defer { watch.cancel() }
+        holdNextList = true
+        store.refresh()
+        store.confirmRemoval()
+        await store.waitForRemoval()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertTrue(store.items.isEmpty)
+        XCTAssertFalse(shown.contains { $0.contains(self.item) }, "the read from before the removal never showed the item")
+    }
 }
 
 @MainActor

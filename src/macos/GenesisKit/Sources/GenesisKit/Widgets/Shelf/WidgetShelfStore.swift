@@ -109,6 +109,8 @@ public final class WidgetShelfStore: ObservableObject {
     private var removal: Task<Void, Never>?
     /// Items whose CLI removal started and has not finished; a list read must not show them again.
     private var removingIDs: Set<String> = []
+    /// Advanced when a CLI removal finishes, so a list read that started before it is read again instead of shown.
+    private var listGeneration = 0
 
     public init(
         binaryPath: String, stateRoot: String? = nil,
@@ -222,9 +224,16 @@ public final class WidgetShelfStore: ObservableObject {
             guard let self, !self.stopped, !Task.isCancelled else { return }
             repeat {
                 self.refreshAgain = false
+                let generation = self.listGeneration
                 do {
                     let data = try await self.request(["list", "--json"], 15)
                     guard !self.stopped, !Task.isCancelled else { return }
+                    // A removal finished while this read ran: it may still list the item, so read again.
+                    guard generation == self.listGeneration else {
+                        self.refreshAgain = true
+                        continue
+                    }
+
                     let snapshot = try JSONDecoder().decode(WidgetShelfSnapshot.self, from: data)
                     // A removed item stays on disk during its Undo; it stays off the list.
                     let shown = snapshot.items.filter { $0.id != self.removed?.id && !self.removingIDs.contains($0.id) }
@@ -517,6 +526,7 @@ public final class WidgetShelfStore: ObservableObject {
                 // Still on the shelf: say why; the list read below shows it again.
                 if let self, !self.stopped { self.report(error) }
             }
+            self?.listGeneration += 1
             self?.removingIDs.remove(item.id)
             if let self, !self.stopped { self.refresh() }
         }

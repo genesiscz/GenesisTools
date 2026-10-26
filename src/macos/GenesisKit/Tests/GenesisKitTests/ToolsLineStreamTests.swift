@@ -470,6 +470,36 @@ final class WidgetVoiceNotesStoreTests: XCTestCase {
         XCTAssertNil(store.discarded)
     }
 
+    /// A list read that started during the Undo time and answers after the delete does not bring the note back.
+    func testAListReadFromBeforeADeleteFinishedDoesNotBringTheNoteBack() async throws {
+        var deletedOnDisk = false
+        var holdNextList = false
+        let store = make(request: { args in
+            if args.first == "list" && holdNextList {
+                holdNextList = false
+                while !deletedOnDisk { try await Task.sleep(for: .milliseconds(5)) }
+            }
+
+            if args.first == "discard" {
+                deletedOnDisk = true
+            }
+
+            return try self.data(["revision": 0, "notes": [self.note()], "statePath": "/fixture/widget/voice-notes/notes.json"])
+        }, undoSeconds: 60)
+        defer { store.stop() }
+        store.refresh()
+        await store.waitForRefresh()
+
+        store.discard()
+        holdNextList = true
+        store.refresh(force: true)
+        store.confirmDiscard()
+        await store.waitForDiscard()
+        await store.waitForRefresh()
+        XCTAssertTrue(deletedOnDisk)
+        XCTAssertTrue(store.notes.isEmpty, "the read from before the delete is dropped")
+    }
+
     /// The reply box's live dictation names its clip and files the note through one-shot commands. They answer
     /// `{"path"}` and `{"kind":"added","note"}`, which the recorder's transport (`execute`) would refuse.
     func testALiveNoteGetsItsClipPathAndIsFiledThroughOneShotCommands() async throws {
