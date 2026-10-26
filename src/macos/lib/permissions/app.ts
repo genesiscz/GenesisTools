@@ -275,11 +275,11 @@ export async function runStreaming({
     return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
 }
 
-function run(
-    cmd: string[],
-    cwd?: string,
-    extraEnv?: Record<string, string>
-): { code: number; stdout: string; stderr: string } {
+function run({ cmd, cwd, extraEnv }: { cmd: string[]; cwd?: string; extraEnv?: Record<string, string> }): {
+    code: number;
+    stdout: string;
+    stderr: string;
+} {
     logger.debug({ cmd, cwd }, "permissions app: spawn");
     const proc = Bun.spawnSync(cmd, {
         cwd,
@@ -465,7 +465,7 @@ export function readSignature(bundlePath = genesisAppBundlePath()): SignatureInf
         return undefined;
     }
 
-    const result = run(["codesign", "-dvv", bundlePath]);
+    const result = run({ cmd: ["codesign", "-dvv", bundlePath] });
     // codesign prints the details on stderr
     return parseCodesignInfo(`${result.stdout}\n${result.stderr}`);
 }
@@ -751,11 +751,11 @@ async function buildAppSteps(
     // missing: without it macOS draws the blank generic page in Finder and notifications.
     if (!existsSync(iconPath)) {
         step("render app icon");
-        const icon = run(
-            ["swift", join(APP_SOURCE_DIR, ICON_GENERATOR)],
-            APP_SOURCE_DIR,
-            sdkRoot ? { SDKROOT: sdkRoot } : undefined
-        );
+        const icon = run({
+            cmd: ["swift", join(APP_SOURCE_DIR, ICON_GENERATOR)],
+            cwd: APP_SOURCE_DIR,
+            extraEnv: sdkRoot ? { SDKROOT: sdkRoot } : undefined,
+        });
 
         if (icon.code !== 0) {
             logger.warn({ stderr: icon.stderr }, "app icon generation failed; bundle will use the generic icon");
@@ -1269,7 +1269,7 @@ interface StageAndInstallOptions {
 async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildResult> {
     const { appDir, bundlePath, staging, contents, builtBinary, plist, iconPath, step, relaunch, parts } = options;
     await Bun.write(join(contents, "MacOS", GENESIS_APP_NAME), Bun.file(builtBinary));
-    run(["chmod", "755", join(contents, "MacOS", GENESIS_APP_NAME)]);
+    run({ cmd: ["chmod", "755", join(contents, "MacOS", GENESIS_APP_NAME)] });
     await Bun.write(join(contents, "PkgInfo"), "APPL????");
 
     await Bun.write(join(contents, "Info.plist"), plist);
@@ -1297,7 +1297,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
     const stagedBundle = join(staging, `${GENESIS_APP_NAME}.app`);
     const installed = readSignature(bundlePath);
     const identity = pickCodesignIdentity(
-        run(["security", "find-identity", "-v", "-p", "codesigning"]).stdout,
+        run({ cmd: ["security", "find-identity", "-v", "-p", "codesigning"] }).stdout,
         env.tools.getCodesignIdentity(),
         installed && !installed.adhoc ? installed.authority : undefined
     );
@@ -1385,7 +1385,7 @@ async function stageAndInstall(options: StageAndInstallOptions): Promise<BuildRe
         // name and says "GenesisTools.app" instead of the CFBundleDisplayName "GenesisTools".
         step("register with Launch Services");
         unregisterStaleCopies(bundlePath);
-        const lsregister = run([LSREGISTER, "-f", bundlePath]);
+        const lsregister = run({ cmd: [LSREGISTER, "-f", bundlePath] });
 
         if (lsregister.code !== 0) {
             logger.warn(
@@ -1464,7 +1464,7 @@ function retirePreviousBundle(previous: string, appDir: string): void {
         const bundle = join(retiredRoot, entry.name, `${GENESIS_APP_NAME}.app`);
 
         if (entry.isDirectory() && existsSync(bundle)) {
-            run([LSREGISTER, "-u", bundle]);
+            run({ cmd: [LSREGISTER, "-u", bundle] });
         }
     }
 }
@@ -1508,7 +1508,7 @@ function unregisterStaleCopies(bundlePath: string): void {
         logger.debug({ error, stampPath }, "no stale-copy check stamp yet; running the dump");
     }
 
-    const dump = run([LSREGISTER, "-dump"]);
+    const dump = run({ cmd: [LSREGISTER, "-dump"] });
 
     if (dump.code !== 0) {
         logger.warn(
@@ -1521,7 +1521,7 @@ function unregisterStaleCopies(bundlePath: string): void {
     const stale = staleRegistrations(dump.stdout, GENESIS_APP_BUNDLE_ID, bundlePath);
 
     for (const path of stale) {
-        run([LSREGISTER, "-u", path]);
+        run({ cmd: [LSREGISTER, "-u", path] });
     }
 
     logger.info({ stale }, "unregistered stale GenesisTools.app copies");

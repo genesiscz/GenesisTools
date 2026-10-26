@@ -135,10 +135,15 @@ export function resolveAppBuildSdk(options?: ResolveAppBuildSdkOptions): AppBuil
     if (toolchain.kind === "xcode") {
         result = { kind: "xcode" };
     } else if (toolchain.kind === "command-line-tools") {
-        const sdks = (options?.listSdks ?? listCommandLineToolsSdks)(toolchain.developerDir);
-        const probe = options?.probe ?? swiftUiStateIsPlainWrapper;
-        const sdkRoot = sdks.find((sdk) => probe(sdk));
-        result = sdkRoot ? { kind: "command-line-tools", sdkRoot } : { kind: "unsupported", toolchain };
+        try {
+            const sdks = (options?.listSdks ?? listCommandLineToolsSdks)(toolchain.developerDir);
+            const probe = options?.probe ?? swiftUiStateIsPlainWrapper;
+            const sdkRoot = sdks.find((sdk) => probe(sdk));
+            result = sdkRoot ? { kind: "command-line-tools", sdkRoot } : { kind: "unsupported", toolchain };
+        } catch (error) {
+            logger.warn({ error, toolchain }, "app build SDK discovery failed; retry on next run");
+            return { kind: "unsupported", toolchain };
+        }
     } else {
         result = { kind: "unsupported", toolchain };
     }

@@ -140,6 +140,32 @@ describe("resolveAppBuildSdk", () => {
         });
     });
 
+    it.each(["list", "probe"])("contains a %s exception so an optional update rebuild can be skipped", (stage) => {
+        const fail = () => {
+            throw new Error("SDK disappeared during a Command Line Tools update");
+        };
+
+        expect(
+            resolveAppBuildSdk({
+                toolchain: clt,
+                listSdks: stage === "list" ? fail : sdks,
+                probe: stage === "probe" ? fail : () => true,
+            })
+        ).toEqual({ kind: "unsupported", toolchain: clt });
+        expect(resolveAppBuildSdk({ toolchain: clt, listSdks: sdks, probe: () => true })).toEqual({
+            kind: "command-line-tools",
+            sdkRoot: sdks()[0],
+        });
+    });
+
+    it("contains a real SDK directory read error instead of aborting the update", () => {
+        const developerDir = mkdtempSync(join(tmpdir(), "sdk-discovery-"));
+        writeFileSync(join(developerDir, "SDKs"), "not a directory");
+        const toolchain = { kind: "command-line-tools" as const, developerDir };
+
+        expect(resolveAppBuildSdk({ toolchain })).toEqual({ kind: "unsupported", toolchain });
+    });
+
     it("is unsupported without any toolchain", () => {
         expect(resolveAppBuildSdk({ toolchain: { kind: "none" } })).toEqual({
             kind: "unsupported",
