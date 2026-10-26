@@ -222,4 +222,63 @@ describe("AnthropicSubscriptionProvider", () => {
         expect(SafeJSON.stringify(next?.system)).toBe(SafeJSON.stringify(first?.system));
         expect(SafeJSON.stringify(next?.tools)).toBe(SafeJSON.stringify(first?.tools));
     });
+
+    it("keeps a role:system message and its breakpoint in place, and hoists it only after the model rejects it", async () => {
+        const ephemeral = { type: "ephemeral" };
+        const client = {
+            messages: [
+                { role: "user", content: "first" },
+                { role: "system", content: [{ type: "text", text: "hook output", cache_control: ephemeral }] },
+            ],
+        };
+        const sent: Array<{ model: unknown; messages: Array<{ role: string }>; system: Array<{ text: string }> }> = [];
+
+        globalThis.fetch = (async (_url: RequestInfo | URL, init?: RequestInit) => {
+            const body = SafeJSON.parse(String(init?.body)) as (typeof sent)[number];
+            sent.push(body);
+
+            if (body.model === "claude-opus-4-7" && body.messages.some((message) => message.role === "system")) {
+                return new Response(
+                    SafeJSON.stringify({
+                        type: "error",
+                        error: {
+                            type: "invalid_request_error",
+                            message: "role 'system' is not supported on this model",
+                        },
+                    }),
+                    { status: 400, headers: { "content-type": "application/json" } }
+                );
+            }
+
+            return new Response(
+                SafeJSON.stringify({ id: "msg_1", type: "message", role: "assistant", content: [], usage: {} }),
+                { status: 200, headers: { "content-type": "application/json" } }
+            );
+        }) as typeof fetch;
+
+        const { AnthropicSubscriptionProvider } = await import("./anthropic-subscription");
+        const provider = await AnthropicSubscriptionProvider.create(account);
+        const send = async (model: string) => {
+            const bodyText = SafeJSON.stringify({ ...client, model });
+            const res = await provider.messages(
+                new Request("http://localhost/v1/messages", { method: "POST", body: bodyText }),
+                model,
+                bodyText
+            );
+            expect(res.status).toBe(200);
+        };
+
+        await send("claude-opus-5-5");
+        expect(sent).toHaveLength(1);
+        expect(SafeJSON.stringify(sent[0]?.messages)).toBe(SafeJSON.stringify(client.messages));
+
+        await send("claude-opus-4-7");
+        expect(sent).toHaveLength(3);
+        expect(sent[2]?.messages.map((message) => message.role)).toEqual(["user"]);
+        expect(sent[2]?.system.at(-1)?.text).toBe("hook output");
+
+        await send("claude-opus-4-7");
+        expect(sent).toHaveLength(4);
+        expect(sent[3]?.messages.map((message) => message.role)).toEqual(["user"]);
+    });
 });

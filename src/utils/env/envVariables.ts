@@ -141,6 +141,20 @@ export const env = {
          */
         getCodexMessagesRoute: (): "responses" | "chat" =>
             getTrimmed("AI_PROXY_CODEX_MESSAGES_ROUTE")?.toLowerCase() === "chat" ? "chat" : "responses",
+        /**
+         * Test switch for the reasoning recall quest: "drop" sends every turn without the reasoning carried from
+         * earlier turns (Codex and Grok reasoning items, Claude's earlier thinking blocks). Default "carry".
+         */
+        getReasoningReplay: (): "carry" | "drop" =>
+            getTrimmed("AI_PROXY_REASONING_REPLAY")?.toLowerCase() === "drop" ? "drop" : "carry",
+        /**
+         * `reasoning.context: "all_turns"` for Codex models the catalog marks as Responses Lite. On by default;
+         * AI_PROXY_CODEX_ALL_TURNS=0 turns it off, to measure what it costs.
+         */
+        getCodexAllTurns: () => {
+            const raw = getTrimmed("AI_PROXY_CODEX_ALL_TURNS")?.toLowerCase();
+            return raw !== "0" && raw !== "false" && raw !== "off";
+        },
     },
 
     github: {

@@ -30,12 +30,17 @@ import {
     SUBSCRIPTION_BETAS,
     SUBSCRIPTION_SYSTEM_PREFIX,
 } from "@genesiscz/utils/claude/subscription-billing";
+import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { logger } from "@genesiscz/utils/logger";
 import { isObject } from "@genesiscz/utils/object";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
 const ANTHROPIC_VERSION = "2023-06-01";
+const SYSTEM_ROLE_REJECTION = "role 'system' is not supported";
+
+/** Concrete models that answered SYSTEM_ROLE_REJECTION in this process. */
+const SYSTEM_ROLE_REJECTED = new Set<string>();
 
 /**
  * Bills the owner's Claude Max/Pro subscription. Speaks OpenAI to proxy
@@ -352,32 +357,64 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
             return jsonError(400, "Invalid JSON body");
         }
 
-        // Claude Code sometimes puts a role:"system" entry inside messages[];
-        // Anthropic rejects it with `role 'system' is not supported on this
-        // model` (verified live 2026-08-19), same class as grok's 400. Hoist
-        // BEFORE the prefix fix-up so the subscription prefix stays system[0].
-        // Hoisted blocks are appended after the existing system array, so
-        // cache_control breakpoints on the existing prefix are untouched.
-        const hoisted = hoistSystemMessages(parsed);
+        const forward = (body: Record<string, unknown>): Promise<Response> => {
+            const anthropicBody: Record<string, unknown> = {
+                ...body,
+                model: concreteModel,
+                system: ensureSubscriptionSystemPrefix(body.system),
+            };
 
-        const anthropicBody: Record<string, unknown> = {
-            ...hoisted,
-            model: concreteModel,
-            system: ensureSubscriptionSystemPrefix(hoisted.system),
+            // The recall quest's mode B (AI_PROXY_REASONING_REPLAY=drop): earlier turns go up without their thinking.
+            if (env.aiProxy.getReasoningReplay() === "drop" && Array.isArray(body.messages)) {
+                anthropicBody.messages = withoutEarlierThinking(body.messages);
+            }
+
+            return this.forwardAnthropic({
+                anthropicBody,
+                req,
+                concreteModel,
+                proxyModelId,
+                streaming: parsed.stream === true,
+                // Without this the passthrough 400s on the client's own fields:
+                // Claude Code sends `context_management`, and Anthropic rejects it
+                // unless context-management-2025-06-27 is advertised.
+                clientBetas: req.headers.get("anthropic-beta"),
+            });
         };
 
-        const upstream = await this.forwardAnthropic({
-            anthropicBody,
-            req,
-            concreteModel,
-            proxyModelId,
-            streaming: parsed.stream === true,
-            // Without this the passthrough 400s on the client's own fields:
-            // Claude Code sends `context_management`, and Anthropic rejects it
-            // unless context-management-2025-06-27 is advertised.
-            clientBetas: req.headers.get("anthropic-beta"),
-        });
+        // Claude Code puts hook output in a role:"system" entry inside messages[],
+        // and the turn's cache breakpoint often sits on it. Opus 4.8 and newer
+        // take it in place (probed 2026-10-26). Hoisting it into system[] took
+        // that breakpoint off the history, so every turn sent the whole
+        // conversation uncached (62.5% hit in a 4-turn session). Older models
+        // (Opus 4.7, Sonnet 4.6, Haiku 4.5) answer 400 `role 'system' is not
+        // supported on this model`: only then is it hoisted, and the model is
+        // remembered so later requests hoist at once.
+        const hoisted = hoistSystemMessages(parsed);
 
+        if (SYSTEM_ROLE_REJECTED.has(concreteModel)) {
+            return this.messagesResponse(await forward(hoisted));
+        }
+
+        let upstream = await forward(parsed);
+
+        if (upstream.status === 400 && hoisted !== parsed) {
+            const errorText = await upstream.clone().text();
+
+            if (errorText.includes(SYSTEM_ROLE_REJECTION)) {
+                SYSTEM_ROLE_REJECTED.add(concreteModel);
+                logger.info(
+                    { model: concreteModel },
+                    "ai-proxy: model rejects role:system in messages, hoisting it into system[]"
+                );
+                upstream = await forward(hoisted);
+            }
+        }
+
+        return this.messagesResponse(upstream);
+    }
+
+    private async messagesResponse(upstream: Response): Promise<Response> {
         // forwardAnthropic's OWN failures (token unavailable, client abort)
         // carry OpenAI-shaped or plain-text bodies; an Anthropic client checks
         // `type === "error"` first and rendered a blank failure. Real upstream
@@ -415,6 +452,36 @@ export class AnthropicSubscriptionProvider implements ProxyProvider {
             summary: "subscription (usage not exposed by the Anthropic OAuth API)",
         };
     }
+}
+
+/**
+ * The messages with no thinking from earlier turns. The current turn (from the last user message that is not only
+ * tool results) keeps its thinking, which Anthropic requires while a tool loop runs.
+ */
+export function withoutEarlierThinking(messages: unknown[]): unknown[] {
+    const isTurnStart = (message: unknown): boolean =>
+        isObject(message) &&
+        message.role === "user" &&
+        (typeof message.content === "string" ||
+            (Array.isArray(message.content) &&
+                message.content.some((block) => !(isObject(block) && block.type === "tool_result"))));
+    const turnStart = messages.findLastIndex(isTurnStart);
+
+    return messages.map((message, index) => {
+        if (
+            index >= turnStart ||
+            !isObject(message) ||
+            message.role !== "assistant" ||
+            !Array.isArray(message.content)
+        ) {
+            return message;
+        }
+
+        const kept = message.content.filter(
+            (block) => !(isObject(block) && (block.type === "thinking" || block.type === "redacted_thinking"))
+        );
+        return { ...message, content: kept.length > 0 ? kept : [{ type: "text", text: "(reasoning dropped)" }] };
+    });
 }
 
 function jsonError(status: number, message: string): Response {

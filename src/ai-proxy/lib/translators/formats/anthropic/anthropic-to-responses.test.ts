@@ -235,3 +235,75 @@ describe("anthropicToResponses: system messages between turns", () => {
         });
     });
 });
+
+describe("anthropicToResponses: an image in a tool result", () => {
+    const messages = [
+        { role: "user", content: "Read shot.png" },
+        {
+            role: "assistant",
+            content: [{ type: "tool_use", id: "toolu_1", name: "Read", input: { file_path: "shot.png" } }],
+        },
+        {
+            role: "user",
+            content: [
+                {
+                    type: "tool_result",
+                    tool_use_id: "toolu_1",
+                    content: [{ type: "image", source: { type: "base64", media_type: "image/jpeg", data: "AAAA" } }],
+                },
+            ],
+        },
+    ];
+    const output = (toolResultImages: boolean) =>
+        (
+            anthropicToResponses({ messages }, "gpt-6.1-sol", { reasoningItem: () => undefined, toolResultImages })
+                .input as Array<Record<string, unknown>>
+        ).find((item) => item.type === "function_call_output")?.output;
+
+    it("goes up as an input_image inside the tool output when the route takes it (Codex), else as a placeholder", () => {
+        expect(output(true)).toEqual([{ type: "input_image", image_url: "data:image/jpeg;base64,AAAA" }]);
+        expect(output(false)).toBe("[Image Omitted]");
+    });
+});
+
+describe("anthropicToResponses: tools loaded by tool search", () => {
+    const tool = (name: string, deferred = false) => ({
+        name,
+        description: name,
+        input_schema: { type: "object", properties: {} },
+        ...(deferred ? { defer_loading: true } : {}),
+    });
+    const loads = (...names: string[]) => ({
+        role: "user",
+        content: [
+            {
+                type: "tool_result",
+                tool_use_id: `search-${names.join("-")}`,
+                content: names.map((tool_name) => ({ type: "tool_reference", tool_name })),
+            },
+        ],
+    });
+    const names = (body: Record<string, unknown>) =>
+        (anthropicToGrokResponses(body, "grok-4.7").tools as Array<{ name: string }>).map((t) => t.name);
+
+    it("appends each newly loaded tool, so the earlier list stays a prefix", () => {
+        const before = names({
+            messages: [{ role: "user", content: "hi" }, loads("WebSearch")],
+            tools: [tool("Bash"), tool("Placeholder", true), tool("WebSearch", true), tool("Write")],
+        });
+        // Claude Code sorts by name: SendMessage lands between Placeholder and WebSearch.
+        const after = names({
+            messages: [{ role: "user", content: "hi" }, loads("WebSearch"), loads("SendMessage")],
+            tools: [
+                tool("Bash"),
+                tool("Placeholder", true),
+                tool("SendMessage", true),
+                tool("WebSearch", true),
+                tool("Write"),
+            ],
+        });
+
+        expect(before).toEqual(["Bash", "Write", "Placeholder", "WebSearch"]);
+        expect(after).toEqual([...before, "SendMessage"]);
+    });
+});

@@ -50,6 +50,11 @@ export interface ResponsesTranslationHooks {
      * history, a stale or foreign signature). Items are replayed whole and in their original order.
      */
     reasoningItem: (thinking: JsonRecord) => JsonRecord | undefined;
+    /**
+     * A tool result's images go up inside `function_call_output.output` as `input_image` items, the form codex-rs sends
+     * and WHAM accepts (probed 2026-10-26: the model described the image). Off: each image becomes "[Image Omitted]".
+     */
+    toolResultImages?: boolean;
 }
 
 /** Grok: the signature carries the item id and its encrypted content; the thinking text is the summary. */
@@ -126,6 +131,27 @@ function flattenToolResult(result: JsonRecord): string {
     return `${failedPrefix}${flattened}`;
 }
 
+/** A tool result as Responses content items, images included; undefined when it has no image (it stays a string). */
+function toolResultItems(result: JsonRecord): JsonRecord[] | undefined {
+    if (!Array.isArray(result.content) || !result.content.some((part) => isObject(part) && part.type === "image")) {
+        return undefined;
+    }
+
+    const items: JsonRecord[] = result.is_error === true ? [{ type: "input_text", text: "[Tool call failed]" }] : [];
+
+    for (const part of result.content) {
+        if (isObject(part)) {
+            const mapped = userContentPart(part);
+
+            if (mapped !== null) {
+                items.push(mapped);
+            }
+        }
+    }
+
+    return items;
+}
+
 function userContentPart(part: JsonRecord): JsonRecord | null {
     if (part.type === "text" && typeof part.text === "string") {
         return { type: "input_text", text: part.text };
@@ -165,7 +191,7 @@ function pushAssistantText(input: JsonRecord[], parts: string[]): void {
     }
 }
 
-function appendUserMessage(input: JsonRecord[], content: unknown): void {
+function appendUserMessage(input: JsonRecord[], content: unknown, hooks: ResponsesTranslationHooks): void {
     if (typeof content === "string") {
         if (content.length > 0) {
             input.push({ role: "user", content: [{ type: "input_text", text: content }] });
@@ -192,7 +218,7 @@ function appendUserMessage(input: JsonRecord[], content: unknown): void {
             input.push({
                 type: "function_call_output",
                 call_id: part.tool_use_id,
-                output: flattenToolResult(part),
+                output: (hooks.toolResultImages ? toolResultItems(part) : undefined) ?? flattenToolResult(part),
             });
             continue;
         }
@@ -264,14 +290,60 @@ function appendAssistantMessage(
     pushAssistantText(input, textParts);
 }
 
-function responsesTools(tools: unknown): JsonRecord[] | undefined {
+/** Tool names in the order their ToolSearch `tool_reference` blocks first appear in the conversation. */
+function referencedToolNames(value: unknown, names: string[] = []): string[] {
+    if (Array.isArray(value)) {
+        for (const item of value) {
+            referencedToolNames(item, names);
+        }
+    } else if (isObject(value)) {
+        if (value.type === "tool_reference" && typeof value.tool_name === "string") {
+            if (!names.includes(value.tool_name)) {
+                names.push(value.tool_name);
+            }
+        } else {
+            referencedToolNames(value.content, names);
+        }
+    }
+
+    return names;
+}
+
+/**
+ * Claude Code's tool search adds each tool it loads (`defer_loading: true`) to
+ * `tools` in name order, so a new one lands in the middle of the list.
+ * Anthropic keeps deferred tools out of the cached prefix. A Responses upstream
+ * caches the tools as sent, so the insertion sent the whole prompt uncached
+ * (0% on the next request, codex-content cache run 2026-10-26). Regular tools
+ * keep the client's order. Deferred tools follow, and the ones the conversation
+ * loaded come last in the order they were loaded, so the list only grows.
+ */
+function stableToolOrder(tools: unknown[], messages: unknown): unknown[] {
+    const isDeferred = (tool: unknown) => isObject(tool) && tool.defer_loading === true;
+
+    if (!tools.some(isDeferred)) {
+        return tools;
+    }
+
+    const loaded = referencedToolNames(messages);
+    const loadIndex = (tool: unknown) => (isObject(tool) ? loaded.indexOf(String(tool.name)) : -1);
+    const deferred = tools.filter(isDeferred);
+
+    return [
+        ...tools.filter((tool) => !isDeferred(tool)),
+        ...deferred.filter((tool) => loadIndex(tool) < 0),
+        ...deferred.filter((tool) => loadIndex(tool) >= 0).sort((a, b) => loadIndex(a) - loadIndex(b)),
+    ];
+}
+
+function responsesTools(tools: unknown, messages: unknown): JsonRecord[] | undefined {
     if (!Array.isArray(tools)) {
         return undefined;
     }
 
     const mapped: JsonRecord[] = [];
 
-    for (const tool of tools) {
+    for (const tool of stableToolOrder(tools, messages)) {
         if (!isObject(tool) || typeof tool.name !== "string") {
             continue;
         }
@@ -367,7 +439,7 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
             } else if (message.role === "system") {
                 appendDeveloperMessage(input, message.content);
             } else {
-                appendUserMessage(input, message.content);
+                appendUserMessage(input, message.content, hooks);
             }
         }
     }
@@ -392,7 +464,7 @@ export function anthropicToResponses(body: JsonRecord, model: string, hooks: Res
         out.instructions = instructions;
     }
 
-    const tools = responsesTools(body.tools);
+    const tools = responsesTools(body.tools, body.messages);
 
     if (tools !== undefined) {
         out.tools = tools;

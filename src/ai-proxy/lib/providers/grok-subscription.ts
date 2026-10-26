@@ -261,7 +261,11 @@ export class GrokSubscriptionProvider implements ProxyProvider {
         cacheKey: string | undefined
     ): Promise<Response> {
         const anthropicBody = hoistSystemMessages(ensureToolRequiredArrays(parsed));
-        const responsesBody = anthropicToGrokResponses(anthropicBody, model);
+        // The recall quest's mode B (AI_PROXY_REASONING_REPLAY=drop): no reasoning carried from earlier turns.
+        const responsesBody =
+            env.aiProxy.getReasoningReplay() === "drop"
+                ? stripReasoningInput(anthropicToGrokResponses(anthropicBody, model))
+                : anthropicToGrokResponses(anthropicBody, model);
 
         if (cacheKey) {
             responsesBody.prompt_cache_key = cacheKey;

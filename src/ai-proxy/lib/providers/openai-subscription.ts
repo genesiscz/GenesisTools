@@ -362,7 +362,9 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
         };
         const replay = { kept: [] as string[], dropped: {} as Partial<Record<EnvelopeRejection | "dead", number>> };
         // System messages stay in place (`appendDeveloperMessage`): hoisted, they broke the prompt cache.
-        const responsesBody = anthropicToResponses(ensureToolRequiredArrays(parsed), concreteModel, {
+        let responsesBody = anthropicToResponses(ensureToolRequiredArrays(parsed), concreteModel, {
+            // A Read of an image comes back as a tool result; WHAM takes it as input_image (codex-rs does the same).
+            toolResultImages: true,
             reasoningItem: (thinking) => {
                 const opened = openReasoningEnvelope(thinking.signature, stamp);
 
@@ -416,6 +418,15 @@ export class OpenAiSubscriptionProvider implements ProxyProvider {
             },
             "ai-proxy: codex /v1/messages reasoning replay"
         );
+
+        // The recall quest's mode B: the turn goes up without the reasoning carried from earlier turns.
+        if (env.aiProxy.getReasoningReplay() === "drop" && replay.kept.length > 0) {
+            logger.info(
+                { model: concreteModel, dropped: replay.kept.length },
+                "ai-proxy: reasoning replay off (AI_PROXY_REASONING_REPLAY=drop)"
+            );
+            responsesBody = stripReasoningInput(responsesBody);
+        }
 
         // A Claude Code client gets an account failure at the status it acts on, with this session's switch command.
         const client: FailureClient = {
@@ -1321,7 +1332,7 @@ function reasoningOptions(
         reasoning.summary = summary;
     }
 
-    if (catalog?.useResponsesLite) {
+    if (catalog?.useResponsesLite && env.aiProxy.getCodexAllTurns()) {
         reasoning.context = "all_turns";
     }
 
