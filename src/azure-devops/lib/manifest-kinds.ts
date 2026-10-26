@@ -45,17 +45,77 @@ export function flattenAreaPaths(root: IterationClassificationNode): string[] {
     return paths.sort();
 }
 
-/** `""` in ADO's transition map holds the states a new work item may start in. */
-export function buildWorkflow(transitions: Record<string, { to: string }[]>): {
+/** One rule of an inherited process (`_apis/work/processes/<id>/workItemTypes/<ref>/rules`). */
+export interface ProcessRule {
+    name: string;
+    isDisabled?: boolean;
+    conditions?: { conditionType: string; field?: string; value?: string }[];
+    actions?: { actionType: string; targetField?: string; value?: string }[];
+}
+
+export interface WorkflowEntry {
     initial: string[];
     transitions: Record<string, string[]>;
-} {
-    const targets = (from: string): string[] => (transitions[from] ?? []).map((step) => step.to).sort();
+    /** Rules that change the allowed states under other conditions (a group, another field); not applied above. */
+    conditionalRules: string[];
+}
+
+function disallowedStates(rule: ProcessRule): string[] {
+    return (rule.actions ?? [])
+        .filter((action) => action.actionType === "disallowValue" && action.targetField === "System.State")
+        .map((action) => action.value ?? "");
+}
+
+/**
+ * The states each state may move to. The type's own transition map lists every state in an inherited process; the
+ * board enforces the order through rules of the form "when System.State was X, disallow these states", so those
+ * rules are subtracted here. Staying in the same state is not listed. `""` in the transition map holds the states a new
+ * work item may start in.
+ */
+export function buildWorkflow(transitions: Record<string, { to: string }[]>, rules: ProcessRule[] = []): WorkflowEntry {
+    const disallowed = new Map<string, Set<string>>();
+    const conditionalRules: string[] = [];
+
+    for (const rule of rules) {
+        const states = disallowedStates(rule);
+
+        if (rule.isDisabled || states.length === 0) {
+            continue;
+        }
+
+        const [condition, ...others] = rule.conditions ?? [];
+
+        if (
+            !condition ||
+            others.length > 0 ||
+            condition.conditionType !== "whenWas" ||
+            condition.field !== "System.State"
+        ) {
+            conditionalRules.push(rule.name);
+            continue;
+        }
+
+        const from = condition.value ?? "";
+        const set = disallowed.get(from) ?? new Set<string>();
+
+        for (const state of states) {
+            set.add(state);
+        }
+
+        disallowed.set(from, set);
+    }
+
+    const targets = (from: string): string[] =>
+        (transitions[from] ?? [])
+            .map((step) => step.to)
+            .filter((to) => to !== from && !disallowed.get(from)?.has(to))
+            .sort();
     const states = Object.keys(transitions).filter((from) => from !== "");
 
     return {
         initial: targets(""),
         transitions: sortedRecord(states.map((from): [string, string[]] => [from, targets(from)])),
+        conditionalRules: conditionalRules.sort(),
     };
 }
 
@@ -117,14 +177,22 @@ export const MANIFEST_KINDS: ManifestKind[] = [
         usesTypes: true,
         fetch: async ({ api, types }) => {
             const wanted = types ? new Set(types.map((type) => type.toLowerCase())) : null;
-            const definitions = (await api.getWorkItemTypeDefinitions()).filter(
-                (definition) => !wanted || wanted.has(definition.name.toLowerCase())
+            const [definitions, process] = await Promise.all([
+                api.getWorkItemTypeDefinitions(),
+                api.getProjectProcess(),
+            ]);
+            const chosen = definitions.filter((definition) => !wanted || wanted.has(definition.name.toLowerCase()));
+            const processTypes = process ? await api.getProcessWorkItemTypes(process.id) : [];
+            const refByName = new Map(processTypes.map((type) => [type.name, type.referenceName]));
+            const entries = await Promise.all(
+                chosen.map(async (definition): Promise<[string, WorkflowEntry]> => {
+                    const ref = refByName.get(definition.name);
+                    const rules = process && ref ? await api.getProcessRules(process.id, ref) : [];
+                    return [definition.name, buildWorkflow(definition.transitions ?? {}, rules)];
+                })
             );
-            return {
-                types: sortedRecord(
-                    definitions.map((definition) => [definition.name, buildWorkflow(definition.transitions ?? {})])
-                ),
-            };
+
+            return { types: sortedRecord(entries) };
         },
     },
     {

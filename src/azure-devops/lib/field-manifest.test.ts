@@ -143,14 +143,35 @@ describe("other manifest kinds", () => {
         expect(flattenAreaPaths(root)).toEqual(["Sample", "Sample\\Api", "Sample\\Web"]);
     });
 
-    test("the workflow keeps the start states apart from the transitions", () => {
+    test("the workflow subtracts the process rules that disallow states after a state", () => {
+        const allToAll = (states: string[]) => states.map((to) => ({ to }));
+        const states = ["New", "Active", "Done"];
+        const rule = (name: string, from: string, disallow: string[], extra: { isDisabled?: boolean } = {}) => ({
+            name,
+            ...extra,
+            conditions: [{ conditionType: "whenWas", field: "System.State", value: from }],
+            actions: disallow.map((value) => ({ actionType: "disallowValue", targetField: "System.State", value })),
+        });
+
         expect(
-            buildWorkflow({
-                "": [{ to: "New" }],
-                New: [{ to: "Done" }, { to: "Active" }],
-                Done: [],
-            })
-        ).toEqual({ initial: ["New"], transitions: { Done: [], New: ["Active", "Done"] } });
+            buildWorkflow(
+                { "": [{ to: "New" }], New: allToAll(states), Active: allToAll(states), Done: allToAll(states) },
+                [
+                    rule("From new", "New", ["Done"]),
+                    rule("From done", "Done", ["New", "Active"]),
+                    rule("Old rule", "Active", ["New"], { isDisabled: true }),
+                    {
+                        name: "Only leads close",
+                        conditions: [{ conditionType: "whenCurrentUserIsNotMemberOfGroup", value: "leads" }],
+                        actions: [{ actionType: "disallowValue", targetField: "System.State", value: "Done" }],
+                    },
+                ]
+            )
+        ).toEqual({
+            initial: ["New"],
+            transitions: { Active: ["Done", "New"], Done: [], New: ["Active"] },
+            conditionalRules: ["Only leads close"],
+        });
     });
 
     test("the generic diff names added and removed list items, changed values and keys, and skips meta", () => {

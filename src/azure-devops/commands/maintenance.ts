@@ -92,10 +92,13 @@ function createContext(): RunContext {
     return {
         api,
         meta: async () => {
-            processName ??= api.getProjectProcessName().catch((error: unknown) => {
-                logger.debug({ error }, "maintenance: process name unavailable");
-                return null;
-            });
+            processName ??= api
+                .getProjectProcess()
+                .then((found) => found?.name ?? null)
+                .catch((error: unknown) => {
+                    logger.debug({ error }, "maintenance: process name unavailable");
+                    return null;
+                });
 
             return {
                 org: config.org,
