@@ -54,6 +54,10 @@ function usageFromResponses(raw: unknown): AnthropicUsage | null {
         usage.input_tokens = Math.max(0, inputTokens - inputDetails.cached_tokens);
     }
 
+    if (reasoningTokens > 0) {
+        usage.output_tokens_details = { reasoning_tokens: reasoningTokens };
+    }
+
     return usage;
 }
 

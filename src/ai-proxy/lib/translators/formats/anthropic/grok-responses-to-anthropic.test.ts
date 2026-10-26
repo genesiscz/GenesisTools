@@ -13,6 +13,7 @@ import {
     responsesSseToAnthropic,
     responsesToAnthropicMessage,
 } from "@app/ai-proxy/lib/translators/formats/anthropic/grok-responses-to-anthropic";
+import { extractUsageFromJsonBody } from "@app/ai-proxy/lib/usage/extract";
 import { SafeJSON } from "@genesiscz/utils/json";
 
 interface Frame {
@@ -349,6 +350,30 @@ describe("grokResponsesToAnthropicMessage", () => {
         ]);
         expect(message.stop_reason).toBe("tool_use");
         expect(message.usage).toEqual({ input_tokens: 100, output_tokens: 20 });
+    });
+
+    it("keeps the reasoning share of the output in the usage, for the ledger", () => {
+        const message = grokResponsesToAnthropicMessage(
+            {
+                id: "resp_10",
+                status: "completed",
+                output: [{ type: "message", content: [{ type: "output_text", text: "done" }] }],
+                usage: {
+                    input_tokens: 100,
+                    output_tokens: 20,
+                    output_tokens_details: { reasoning_tokens: 12 },
+                    total_tokens: 120,
+                },
+            },
+            { model: "gpt-6.1-sol" }
+        );
+
+        expect(message.usage).toEqual({
+            input_tokens: 100,
+            output_tokens: 20,
+            output_tokens_details: { reasoning_tokens: 12 },
+        });
+        expect(extractUsageFromJsonBody(SafeJSON.stringify(message))?.reasoning_tokens).toBe(12);
     });
 
     it("reports max_tokens when the response is incomplete for that reason", () => {

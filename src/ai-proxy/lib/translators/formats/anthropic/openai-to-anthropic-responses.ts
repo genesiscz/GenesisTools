@@ -22,6 +22,11 @@ export interface AnthropicUsage {
     output_tokens: number;
     cache_read_input_tokens?: number;
     cache_creation_input_tokens?: number;
+    /**
+     * Not an Anthropic field: the upstream's reasoning share of `output_tokens`, kept so the usage ledger can book it
+     * (`extractUsage` reads it). Anthropic's own usage carries extra fields too, and clients ignore unknown ones.
+     */
+    output_tokens_details?: { reasoning_tokens: number };
 }
 
 export function openAiFinishToAnthropicStop(finishReason: unknown): AnthropicStopReason {
