@@ -38,10 +38,16 @@ test("the reader stops in the old part of the journal, and a stray old line does
     const readBackward = readers.readLinesBackwardSync;
     const consumed: string[] = [];
     const reader = spyOn(readers, "readLinesBackwardSync").mockImplementation(function* (filePath, options) {
-        for (const line of readBackward(filePath, options)) {
-            consumed.push(line);
-            yield line;
+        const lines = readBackward(filePath, options);
+        let next = lines.next();
+
+        while (!next.done) {
+            consumed.push(next.value);
+            yield next.value;
+            next = lines.next();
         }
+
+        return next.value;
     });
 
     try {
