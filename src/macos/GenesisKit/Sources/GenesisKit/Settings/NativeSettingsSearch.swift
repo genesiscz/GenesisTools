@@ -105,10 +105,6 @@ final class NativeSettingsSearchIndex: ObservableObject {
         if entries[page] != list { entries[page] = list }
     }
 
-    /// A page whose cards and rows reached the index. A page drawn while it still loads reports nothing yet (the
-    /// Daemon page shows its task cards only after its status arrives): it stays unknown, so the next search draws it
-    /// again instead of caching it as a page with nothing to find.
-    func knows(_ page: String) -> Bool { !(entries[page]?.isEmpty ?? true) }
 }
 
 struct NativeSettingsSearchKey: PreferenceKey {

@@ -362,7 +362,7 @@ enum InboxSort: String, CaseIterable {
 final class HubInboxModel: ObservableObject {
     /// The Inbox rows the arrow keys step through, in InboxListView's order: the waiting sessions, then the quiet ones
     /// while their fold is open.
-    static func keyOrder(_ rows: [InboxSession], showsQuiet: Bool) -> [String] {
+    nonisolated static func keyOrder(_ rows: [InboxSession], showsQuiet: Bool) -> [String] {
         let fresh = rows.filter { !$0.isStale }.map(\.id)
         return showsQuiet ? fresh + rows.filter(\.isStale).map(\.id) : fresh
     }

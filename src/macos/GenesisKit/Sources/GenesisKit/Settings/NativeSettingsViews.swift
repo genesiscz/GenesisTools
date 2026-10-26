@@ -282,13 +282,10 @@ private struct NativeSettingsSidebar: View {
             .background(alignment: .topLeading) {
                 if indexing { NativeSettingsSearchIndexer(store: store, search: search) }
             }
-            .onChange(of: searching) { _, now in
-                if !now {
-                    indexing = false
-                } else if store.sections.flatMap(\.pages).contains(where: { !search.knows($0.id) && $0.id != store.selectedPageID }) {
-                    indexing = true
-                }
-            }
+            // Every search draws the hidden pages again. A page's rows can arrive after its own load (the Daemon page
+            // lists its tasks once its status is read), and a search cleared before that would otherwise leave them
+            // out of every later search. The index keeps what each page reported, so results show at once.
+            .onChange(of: searching) { _, now in indexing = now }
     }
 
     /// A page, or a card or row on it: the page opens, scrolls there, and flashes it.

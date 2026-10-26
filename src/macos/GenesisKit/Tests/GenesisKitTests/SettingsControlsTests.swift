@@ -486,17 +486,6 @@ final class SettingsControlsTests: XCTestCase {
 
     // MARK: - Settings search (H4)
 
-    /// A page drawn while it still loads reported nothing: the index does not count it as known, so the next search
-    /// draws it again; its rows, once reported, make it known.
-    func testASettingsPageThatReportedNothingStaysUnindexed() {
-        let index = NativeSettingsSearchIndex()
-        XCTAssertFalse(index.knows("daemon"))
-        index.set("daemon", [])
-        XCTAssertFalse(index.knows("daemon"), "a loading page is drawn again by the next search")
-        index.set("daemon", [NativeSettingsSearchEntry(kind: .card, title: "Backup")])
-        XCTAssertTrue(index.knows("daemon"))
-    }
-
     /// The search finds a page by its words, a card or row by its title, detail or card, ranks a title that starts
     /// with the query first, and points each result at its page and card or row.
     func testTheSettingsSearchFindsCardsAndRowsAcrossPagesAndRanksTitlesFirst() {
