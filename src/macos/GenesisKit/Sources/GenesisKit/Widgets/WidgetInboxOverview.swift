@@ -253,10 +253,48 @@ struct WidgetInboxOverview: View {
         let focused = focusID == item.id
         let session = model.session(forKey: item.key)
         return VStack(alignment: .leading, spacing: 0) {
-            WidgetInboxOverviewRow(
-                item: item, open: open, focused: focused, grouped: grouped,
-                sessionTitle: session?.title, stagedLine: stagedLine(item), toggle: { toggle(item) })
-                .equatable()
+            Button { toggle(item) } label: {
+                HStack(alignment: .top, spacing: 9) {
+                    Circle().fill(item.needsAnswer ? Color.orange : SessionPalette.blue)
+                        .frame(width: 7, height: 7).padding(.top, 5)
+                    Image(systemName: LiveWidgetView.kindSymbol(item.kind)).font(.system(size: 11))
+                        .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(Self.title(item)).font(.system(size: 12.5, weight: open ? .semibold : .medium))
+                            .lineLimit(open ? 6 : 2).fixedSize(horizontal: false, vertical: true)
+                        if let staged = stagedLine(item) {
+                            Text("Staged: " + staged).font(.system(size: 11)).foregroundStyle(SessionPalette.blue)
+                                .lineLimit(1)
+                        }
+                        HStack(spacing: 4) {
+                            Text(Self.kindLabel(item))
+                            Text("·")
+                            // Under its session header the row does not repeat the session.
+                            if !grouped {
+                                Text(session?.title ?? "Unknown session").lineLimit(1)
+                                Text("·")
+                            }
+                            LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
+                        }.font(.system(size: 11)).foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.secondary)
+                    }
+                    Spacer(minLength: 4)
+                    if let count = item.count, count > 1 {
+                        Text(verbatim: "×\(count)").font(.system(size: 10, weight: .semibold)).monospacedDigit()
+                            .foregroundStyle(.secondary).padding(.top, 3)
+                            .instantTooltip("\(count) items like this one in this session")
+                    }
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary).rotationEffect(.degrees(open ? 90 : 0)).padding(.top, 4)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(RowButtonStyle(cornerRadius: 11))
+            .accessibilityLabel(Self.kindLabel(item) + ": " + Self.title(item))
+            .accessibilityValue(open ? "Expanded" : "Collapsed")
+            .accessibilityAddTraits(focused ? .isSelected : [])
+            .accessibilityIdentifier("widget.overview.row." + item.id)
             if open {
                 detail(item, session: session).padding(.horizontal, 12).padding(.top, 2).padding(.bottom, 12)
                     .transition(.genReveal)
@@ -341,77 +379,5 @@ struct WidgetInboxOverview: View {
         case "form": return "Question"
         default: return LiveWidgetView.sentenceCase(item.kind)
         }
-    }
-}
-
-/// The head of one overview entry, from values: the dot, kind, title, staged line, kind, session and age, the ×count
-/// and the chevron. It is a button (open or fold the entry) and the count has its tooltip only while live (`liveRow`:
-/// hovered, open, or the keyboard's row); at rest it draws the same labels with no control, so a model publish
-/// re-renders only the entries whose values changed and an accessibility client walks no buttons of the hundreds of
-/// entries at rest (swift skill, "Dense lists and accessibility clients"). VoiceOver still presses it (`rowButton`).
-struct WidgetInboxOverviewRow: View, Equatable {
-    let item: WidgetInboxItem
-    let open: Bool
-    /// The keyboard's row.
-    let focused: Bool
-    /// Under its session header: the row does not repeat the session.
-    let grouped: Bool
-    let sessionTitle: String?
-    /// The staged pick or note of a waiting decision, read from the model by the parent.
-    let stagedLine: String?
-    let toggle: () -> Void
-
-    static func == (a: WidgetInboxOverviewRow, b: WidgetInboxOverviewRow) -> Bool {
-        a.item == b.item && a.open == b.open && a.focused == b.focused && a.grouped == b.grouped
-            && a.sessionTitle == b.sessionTitle && a.stagedLine == b.stagedLine
-    }
-
-    var body: some View {
-        let _ = RenderProbe.hit("widget.overview.row.body")
-        labels
-            .rowButton(cornerRadius: 11) { toggle() }
-            .accessibilityLabel(WidgetInboxOverview.kindLabel(item) + ": " + WidgetInboxOverview.title(item))
-            .accessibilityValue(open ? "Expanded" : "Collapsed")
-            .accessibilityAddTraits(focused ? .isSelected : [])
-            .accessibilityIdentifier("widget.overview.row." + item.id)
-            .liveRow(selected: open || focused)
-    }
-
-    private var labels: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Circle().fill(item.needsAnswer ? Color.orange : SessionPalette.blue)
-                .frame(width: 7, height: 7).padding(.top, 5)
-            Image(systemName: LiveWidgetView.kindSymbol(item.kind)).font(.system(size: 11))
-                .foregroundStyle(.secondary).frame(width: 14).padding(.top, 1)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(WidgetInboxOverview.title(item)).font(.system(size: 12.5, weight: open ? .semibold : .medium))
-                    .lineLimit(open ? 6 : 2).fixedSize(horizontal: false, vertical: true)
-                if let stagedLine {
-                    Text("Staged: " + stagedLine).font(.system(size: 11)).foregroundStyle(SessionPalette.blue)
-                        .lineLimit(1)
-                }
-                HStack(spacing: 4) {
-                    Text(WidgetInboxOverview.kindLabel(item))
-                    Text("·")
-                    // Under its session header the row does not repeat the session.
-                    if !grouped {
-                        Text(sessionTitle ?? "Unknown session").lineLimit(1)
-                        Text("·")
-                    }
-                    LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
-                }.font(.system(size: 11)).foregroundStyle(item.needsAnswer ? Color.orange : SessionPalette.secondary)
-            }
-            Spacer(minLength: 4)
-            if let count = item.count, count > 1 {
-                Text(verbatim: "×\(count)").font(.system(size: 10, weight: .semibold)).monospacedDigit()
-                    .foregroundStyle(.secondary).padding(.top, 3)
-                    .instantTooltip("\(count) items like this one in this session")
-            }
-            Image(systemName: "chevron.right").font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary).rotationEffect(.degrees(open ? 90 : 0)).padding(.top, 4)
-        }
-        .padding(.horizontal, 10).padding(.vertical, 9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
     }
 }

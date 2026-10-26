@@ -785,6 +785,36 @@ final class WidgetInteractionTests: XCTestCase {
     }
 
     @MainActor
+    func testSettledSnapshotKeepsInFlightSendAndDisplayedOutcome() {
+        for snapshotFirst in [true, false] {
+            for delivered in [true, false] {
+                let defaults = UserDefaults(suiteName: "widget-tests." + UUID().uuidString)!
+                let value = model(defaults: defaults)
+                defer { value.stop() }
+                let item = WidgetInboxItem(id: "decision:sending", sourceId: "sending", kind: "decision", key: "k",
+                                           at: 1, needsAnswer: true)
+                value.showPeek(item, on: WidgetSurfaceID(edge: .right), seconds: 0)
+                value.sendingDecisionIDs.insert(item.sourceId)
+                var summary = WidgetInboxSummary(unread: 0, needsAnswer: 0, complete: true, truncated: false, sessions: [])
+                summary.pendingDecisionIDs = []
+                if snapshotFirst {
+                    value.updateInbox(summary)
+                    XCTAssertEqual(value.peekItem?.sourceId, item.sourceId, "the in-flight send retains its popup")
+                    XCTAssertNil(value.peekOutcome)
+                }
+                value.sendingDecisionIDs.remove(item.sourceId)
+                value.showPeekOutcome(WidgetPeekOutcome(text: "Result", tone: delivered ? .success : .warning,
+                                                       sendAgain: delivered ? [] : [item]),
+                                      sent: [item.sourceId], delivered: delivered)
+                value.updateInbox(summary)
+                XCTAssertEqual(value.peekItem?.sourceId, item.sourceId, "a displayed result survives settlement")
+                XCTAssertEqual(value.peekOutcome?.tone, delivered ? .success : .warning)
+                XCTAssertEqual(value.peekOutcome?.sendAgain.map(\.sourceId), delivered ? [] : [item.sourceId])
+            }
+        }
+    }
+
+    @MainActor
     func testEachPopupKeepsItsDurationAcrossListAndQueue() async throws {
         let defaults = UserDefaults(suiteName: "widget-tests." + UUID().uuidString)!
         let value = model(defaults: defaults)
