@@ -99,8 +99,14 @@ export const widgetPreferencesSchema = z.object({
     overviewFilter: z.enum(["all", "needs", "unread"]).default("all"),
     /** The composer's microphone: records a voice note and puts its transcript in the field ("note"), or live dictation. */
     composerVoice: z.enum(["ask", "note", "live"]).default("ask"),
-    /** Seconds the alert popup stays while the pointer is not on it. */
-    alertPopupSeconds: z.number().int().min(3).max(60).default(7),
+    /** Seconds the alert popup stays while the pointer is not on it; 0 keeps it until it is closed or answered. */
+    alertPopupSeconds: z.number().int().min(0).max(60).default(7),
+    /** A click outside the widget closes the alert popup. */
+    alertPopupClickAway: z.boolean().default(false),
+    /** Another alert while the popup is open: listed under the first ("list"), shown after it ("queue"), or replacing it. */
+    alertPopupMany: z.enum(["list", "queue", "newest"]).default("list"),
+    /** The alert sounds' volume, in percent of the system volume. */
+    alertVolume: z.number().int().min(0).max(100).default(100),
     /** Seconds a widget note stays before it fades; 0 keeps it until it is closed. A note with a button stays 10 s or more. */
     noteSeconds: z.number().int().min(0).max(60).default(6),
     /** A global shortcut opens and closes the widget from any app. */

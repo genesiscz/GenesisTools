@@ -322,8 +322,14 @@ public struct WidgetPreferences: Codable, Equatable, Sendable {
     public var overviewFilter: String?
     /// The composer's microphone: "note" (default, a voice note whose transcript fills the field) or "live".
     public var composerVoice: String?
-    /// Seconds the alert popup stays when the pointer is not on it. Default 7.
+    /// Seconds the alert popup stays when the pointer is not on it; 0 keeps it until it is closed. Default 7.
     public var alertPopupSeconds: Double?
+    /// A click outside the widget closes the alert popup. Default off.
+    public var alertPopupClickAway: Bool?
+    /// Another alert while the popup is open: "list" (default, listed under it), "queue" (after it) or "newest".
+    public var alertPopupMany: String?
+    /// The alert sounds' volume in percent of the system volume. Default 100.
+    public var alertVolume: Double?
     /// Seconds a widget note stays before it fades; 0 keeps it until it is closed. Default 6. A note with a button
     /// stays at least 10 s.
     public var noteSeconds: Double?

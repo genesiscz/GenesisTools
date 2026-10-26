@@ -524,6 +524,8 @@ struct WidgetPeekView: View {
     static let cornerRadius: CGFloat = 18 - inset
     /// The options the tile lists; the rest wait in the session's inbox.
     static let shownOptions = 4
+    /// The later alerts the tile lists under the shown one; the rest wait in the inbox.
+    static let shownWaiting = 3
 
     /// The kicker names the decision ("Decision 4"), so the title under it does not repeat the number.
     private var title: String {
@@ -547,6 +549,7 @@ struct WidgetPeekView: View {
             VStack(alignment: .leading, spacing: 8) {
                 header
                 if !options.isEmpty { optionList }
+                if model.peekMany == .list, !model.peekQueue.isEmpty { waitingList }
             }
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self, of: \.size.height) { contentHeight = $0; report() }
@@ -562,7 +565,7 @@ struct WidgetPeekView: View {
         .accessibilityAction(.escape) { model.dismissPeek() }
         .accessibilityAction(named: "Close") { model.dismissPeek() }
         .overlay(alignment: .topTrailing) {
-            IconButton(systemName: "xmark", tooltip: "Close without opening it", size: 10) { model.dismissPeek() }
+            IconButton(systemName: "xmark", tooltip: closeTooltip, size: 10) { model.dismissPeek() }
                 .accessibilityLabel("Close the alert")
                 .accessibilityIdentifier("widget.peek.close")
                 .padding(.top, 5).padding(.trailing, 5)
@@ -586,6 +589,13 @@ struct WidgetPeekView: View {
         model.openAlert(item, on: surface, ownAnswer: ownAnswer)
     }
 
+    /// The alerts queued after this one (Alerts → Several at once: one after another).
+    private var queued: Int { model.peekMany == .queue ? model.peekQueue.count : 0 }
+
+    private var closeTooltip: String {
+        queued > 0 ? "Close it and show the next alert" : "Close without opening it"
+    }
+
     /// The kicker, the title and the session: one button that opens the item in its session.
     private var header: some View {
         Button { open() } label: {
@@ -596,6 +606,10 @@ struct WidgetPeekView: View {
                     Text(WidgetAlerts.kicker(item)).font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(item.needsAnswer ? Color.orange : .secondary)
                     Spacer(minLength: 0)
+                    if queued > 0 {
+                        Text("\(queued) next").font(.system(size: 11)).foregroundStyle(.secondary)
+                            .accessibilityLabel(queued == 1 ? "1 more alert after this one" : "\(queued) more alerts after this one")
+                    }
                     LiveAgo(date: Date(timeIntervalSince1970: item.at / 1000), style: .brief)
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     // Room for the close button, which sits over this corner outside the header button.
@@ -635,6 +649,43 @@ struct WidgetPeekView: View {
                     .foregroundStyle(.secondary).padding(.leading, 8)
             }
         }
+    }
+
+    /// The alerts that came while this one was open (Alerts → Several at once: listed together), one line each. A
+    /// click shows that alert here in full, and this one takes its row.
+    private var waitingList: some View {
+        let waiting = model.peekQueue
+        return VStack(alignment: .leading, spacing: 2) {
+            Text(waiting.count == 1 ? "1 more alert" : "\(waiting.count) more alerts")
+                .font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary).padding(.leading, 8)
+            ForEach(waiting.prefix(Self.shownWaiting), id: \.id) { other in
+                Button { model.showWaitingPeek(other) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: other.needsAnswer ? "questionmark.bubble.fill" : "text.bubble.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(other.needsAnswer ? Color.orange : SessionPalette.blue)
+                        Text(WidgetAlerts.kicker(other)).font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(other.needsAnswer ? Color.orange : .secondary)
+                        Text(other.title ?? "").font(.system(size: 11)).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.tail)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(RowButtonStyle(cornerRadius: WidgetOptionLabel.cornerRadius))
+                .instantTooltip("Show it here")
+                .accessibilityLabel(WidgetAlerts.kicker(other) + ": " + (other.title ?? ""))
+                .accessibilityHint("Shows it here")
+            }
+            if waiting.count > Self.shownWaiting {
+                Text("\(waiting.count - Self.shownWaiting) more in the inbox").font(.system(size: 11))
+                    .foregroundStyle(.secondary).padding(.leading, 8)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("widget.peek.waiting")
     }
 
     /// The decision's staged pick or note, here or in the snapshot.

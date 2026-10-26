@@ -212,8 +212,8 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         model.notice = "The panel closed: it redrew for \(Int(seconds)) s without a pause. The details are in app-perf.log."
     }
 
-    /// Plays the alert chime. Tests replace it.
-    var playChime: (String?) -> Void = { WidgetAlerts.chime($0) }
+    /// Plays the alert chime at a volume from 0 to 1. Tests replace it.
+    var playChime: (String?, Float) -> Void = { WidgetAlerts.chime($0, volume: $1) }
 
     /// New decisions, questions and answers: one chime, and the newest item pops up in the agents preview.
     func alert(_ items: [WidgetInboxItem]) {
@@ -222,18 +222,27 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
         let wanted = WidgetAlerts.wanted(items, preferences: preferences)
         guard let item = WidgetAlerts.popupItem(wanted) else { return }
         PerfLog.mark("widget.alert items=\(wanted.count) id=\(item.id) kind=\(item.kind)")
-        playChime(WidgetAlerts.sound(for: wanted, preferences: preferences))
+        playChime(WidgetAlerts.sound(for: wanted, preferences: preferences), WidgetAlerts.volume(preferences))
         // The chime and the flash say nothing to VoiceOver; one announcement per burst, like the chime.
         GenAnnounce.post(WidgetAlerts.announcement(item, session: model.session(forKey: item.key)?.title),
                          priority: item.needsAnswer ? .high : .medium)
         // The session that asked flashes on its rail bubble and in the lists, popup or not: it says why the widget
         // chimed or opened (Martin, 2026-10-23).
         model.flashAttention(item.key, seconds: WidgetAlerts.flashSeconds(preferences))
-        // Checked before the module switch: a popup the user's interaction refuses must not swap the pane they use.
-        guard preferences?.alertPopup ?? true, let surface = peekSurface(), model.canPeek(on: surface) else { return }
-        // The peek shows the agents module and gives the user's own module back when it ends.
-        model.showPeek(item, on: surface, module: moduleIDs(for: surface).contains("agents") ? "agents" : nil,
-                       seconds: WidgetAlerts.popupSeconds(preferences))
+        let many = WidgetAlerts.popupMany(preferences)
+        // Checked before the module switch: a popup the user's interaction refuses must not swap the pane they use. An
+        // open popup lists or queues the new alert even with the pointer on it, since nothing moves under the pointer.
+        guard preferences?.alertPopup ?? true, let surface = model.peekItem == nil ? peekSurface() : model.hoveredSurface,
+              (model.peekItem != nil && many != .newest) || model.canPeek(on: surface) else { return }
+        // The peek shows the agents module and gives the user's own module back when it ends. The rest of a burst
+        // joins it, oldest first, unless the newest replaces.
+        let seconds = WidgetAlerts.popupSeconds(preferences)
+        let module = moduleIDs(for: surface).contains("agents") ? "agents" : nil
+        model.showPeek(item, on: surface, module: module, seconds: seconds, many: many)
+        guard many != .newest, model.peekItem != nil else { return }
+        for other in wanted.filter({ $0.id != item.id }).sorted(by: { $0.at < $1.at }) {
+            model.showPeek(other, on: surface, module: module, seconds: seconds, many: many)
+        }
     }
 
     /// The visible edge whose selected module is the agents inbox, else the first visible edge that has it.
@@ -733,23 +742,34 @@ public final class WidgetCoordinator: NSObject, NSWindowDelegate {
     /// another app while a script opens and closes panels, and each of their clicks closed the panel under test
     /// within a second (2026-10-11).
     func collapseIfOutside(_ event: NSEvent) {
-        guard !passivePanels, event.timestamp > model.openedAt, model.expanded != nil, !model.dialogOpen else { return }
+        guard !passivePanels else { return }
+        // A click elsewhere closes the alert popup (and every alert listed or queued in it) when Alerts says so.
+        if model.expanded == nil, model.peekItem != nil, model.snapshot?.state.preferences.alertPopupClickAway ?? false,
+           isOutsidePanels(event) {
+            model.dismissPeek(all: true)
+            return
+        }
+        guard event.timestamp > model.openedAt, model.expanded != nil, !model.dialogOpen else { return }
         // A dictation keeps the panel, so its words stay in view; Esc or the close button still closes it.
-        guard !model.voiceActive else { return }
+        guard !model.voiceActive, isOutsidePanels(event) else { return }
+        model.requestCollapse()
+    }
+
+    /// Whether a click landed outside every panel, its sheets and children, and every other GenesisTools window.
+    private func isOutsidePanels(_ event: NSEvent) -> Bool {
         var window = event.window
         while let candidate = window {
-            if panels.values.contains(where: { $0.panel === candidate }) { return }
+            if panels.values.contains(where: { $0.panel === candidate }) { return false }
             window = candidate.sheetParent ?? candidate.parent
         }
         let point =
             event.window?.convertPoint(toScreen: event.locationInWindow) ?? event.locationInWindow
         guard !panels.values.contains(where: { $0.panel.isVisible && $0.panel.frame.contains(point) })
-        else { return }
+        else { return false }
         // A click on another GenesisTools window keeps the panel: the vault key window that a dictation or a send
         // raises took its Allow click as "outside" and closed the panel under it (Martin, 2026-10-23: "allow with touch
         // id does literally hide the widget").
-        if Self.ownWindowOwnsPoint(point) { return }
-        model.requestCollapse()
+        return !Self.ownWindowOwnsPoint(point)
     }
 
     /// The view chain AppKit's hit test picks at a CoreGraphics screen point (top-left origin) in each visible panel, for

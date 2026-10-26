@@ -1864,12 +1864,37 @@ test("alert preferences default on with the Glass sound, load from an older stat
         alertAnswers: true,
         alertSound: "Glass",
         alertPopup: true,
+        alertPopupSeconds: 7,
+        alertPopupClickAway: false,
+        alertPopupMany: "list",
+        alertVolume: 100,
     });
     await performWidgetAction({
         root: directory,
-        input: { action: "preferences", patch: { alertSound: "none", alertPopup: false } },
+        input: {
+            action: "preferences",
+            patch: {
+                alertSound: "none",
+                alertPopup: false,
+                alertPopupSeconds: 0,
+                alertPopupMany: "queue",
+                alertVolume: 40,
+            },
+        },
     });
-    expect((await readWidgetState(directory)).preferences).toMatchObject({ alertSound: "none", alertPopup: false });
+    expect((await readWidgetState(directory)).preferences).toMatchObject({
+        alertSound: "none",
+        alertPopup: false,
+        alertPopupSeconds: 0,
+        alertPopupMany: "queue",
+        alertVolume: 40,
+    });
+    for (const patch of [{ alertPopupMany: "stack" }, { alertVolume: 101 }, { alertPopupSeconds: -1 }]) {
+        await expect(
+            performWidgetAction({ root: directory, input: { action: "preferences", patch } })
+        ).rejects.toThrow();
+    }
+
     for (const alertSound of ["", "x".repeat(41)]) {
         await expect(
             performWidgetAction({ root: directory, input: { action: "preferences", patch: { alertSound } } })
