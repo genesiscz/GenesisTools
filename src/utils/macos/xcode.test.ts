@@ -1,6 +1,6 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import * as childProcess from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { env } from "@genesiscz/utils/env";
@@ -8,6 +8,7 @@ import { SafeJSON } from "@genesiscz/utils/json";
 import {
     detectXcodeToolchain,
     genesisAppBuildHint,
+    listCommandLineToolsSdks,
     resolveAppBuildSdk,
     sdkVersion,
     swiftUiStateIsPlainWrapper,
@@ -171,6 +172,23 @@ describe("resolveAppBuildSdk", () => {
             kind: "unsupported",
             toolchain: { kind: "none" },
         });
+    });
+});
+
+describe("listCommandLineToolsSdks", () => {
+    it("sorts actual SDK directories numerically and excludes aliases and versioned symlinks", () => {
+        const developerDir = mkdtempSync(join(tmpdir(), "sdk-list-"));
+        const sdkDir = join(developerDir, "SDKs");
+        const names = ["MacOSX26.9.sdk", "MacOSX27.0.sdk", "MacOSX26.10.sdk"];
+        for (const name of [...names, "MacOSX.sdk", "MacOSX27.sdk"]) {
+            mkdirSync(join(sdkDir, name), { recursive: true });
+        }
+
+        symlinkSync(join(sdkDir, names[0]), join(sdkDir, "MacOSX99.0.sdk"), "dir");
+
+        expect(listCommandLineToolsSdks(developerDir)).toEqual(
+            ["MacOSX27.0.sdk", "MacOSX26.10.sdk", "MacOSX26.9.sdk"].map((name) => join(sdkDir, name))
+        );
     });
 });
 
