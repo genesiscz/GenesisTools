@@ -186,7 +186,10 @@ tools agents hooks install --write   # only when doctor says the Stop hook is no
 
 `decisions.chatAnswers` (`off`, the default; `record`; `remind`) finds answers the user typed in the chat to an open
 `❓ DECISION N` of the session (`D14 b)`, `14 b`, `DECISION 14: b`, `D14: own words`, several on one line split by `,`
-or `;`, or a bare `b)` right after a reply that asked one decision). At the end of each turn the Stop hook reads the
+or `;`, or a bare `b)` right after a reply that asked one decision). Text blocks from the same transcript message
+are combined before matching. A colon introduces own words (`D14: I prefer Atlas`); an option's explanation needs
+an explicit separator (`D14 b) because`, `D14 b - because` or `D14 b: because`). An option alone after a colon still
+selects that option when the decision offers choices (`DECISION 14: b`). At the end of each turn the Stop hook reads the
 transcript from its end back to the oldest open ask, or to its previous read when that is later, through the session's
 provider (`NativeSessionReader.readBackward`, so Claude, Codex and Grok each read their own format), and looks only at
 user messages written after each decision was asked. Fenced code, inline code, indented examples and block quotes
@@ -195,7 +198,8 @@ reply. `record` checks the matched decision revision under the store lock and st
 `answeredVia: "automatic_heuristic"` and the user's line as a comment, and says so; `remind` stores nothing and sends
 the agent back to record it. An unclear one (two different answers, a letter the decision does not have, `D14` named
 without an option) sends the agent back once per decision, quoting the line. A read that ends before the oldest open
-ask is logged to the hooks log. It needs only the Stop entry.
+ask is logged to the hooks log. A failed answer write or incomplete read retains the previous cursor so the next
+Stop can retry the evidence. It needs only the Stop entry.
 
 Every completed chat-answer read, including an empty read, is logged to `~/.genesis-tools/agents/chat-answers.jsonl`: the open decisions, each
 user message read (its start, plus any later line that names a decision or opens with an option letter), and what came

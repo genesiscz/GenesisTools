@@ -2625,7 +2625,7 @@ test("chat answers cannot acknowledge a revision that replaced the matched quest
 describe("chatAnswers", () => {
     const at = (minute: number) => `2026-10-25T16:${String(minute).padStart(2, "0")}:00.000Z`;
     const entry = (role: NativeHistoryEntry["role"], text: string, minute?: number): NativeHistoryEntry => ({
-        line: -1,
+        line: minute ?? -1,
         role,
         text,
         paths: [],
@@ -2695,6 +2695,75 @@ describe("chatAnswers", () => {
 
         expect(one.unambiguous).toMatchObject([{ number: 7, option: "b", answer: "no, drop it" }]);
         expect(several).toEqual({ unambiguous: [], ambiguous: [] });
+    });
+
+    test("reads bare answers against every text block of one assistant message", () => {
+        const block = (text: string) => ({ ...entry("assistant", text, 1), line: -2 });
+        const open = [{ number: 7, letters: two, askedAt: at(1) }];
+        const answer = entry("user", "b)", 2);
+        const one = [block("❓ DECISION 7 — Keep?"), block("- a) yes\n- b) no")];
+
+        expect(chatAnswers([...one, answer], open).unambiguous).toMatchObject([{ number: 7, option: "b" }]);
+        expect(
+            chatAnswers([...one, block("❓ DECISION 7 is yours to decide"), answer], open).unambiguous
+        ).toMatchObject([{ number: 7, option: "b" }]);
+        expect(chatAnswers([block("❓ DECISION 8 — Ship?"), ...one, answer], open)).toEqual({
+            unambiguous: [],
+            ambiguous: [],
+        });
+        expect(
+            chatAnswers(
+                [...one, entry("assistant", "Choose a color: a) red, b) blue", 2), entry("user", "b)", 3)],
+                open
+            )
+        ).toEqual({
+            unambiguous: [],
+            ambiguous: [],
+        });
+    });
+
+    test("keeps fenced examples excluded when their fence spans text blocks of a message", () => {
+        const userBlock = (text: string) => ({ ...entry("user", text, 2), line: -1 });
+        const result = chatAnswers(
+            [
+                entry("assistant", "❓ DECISION 7", 1),
+                userBlock("Why did this example fail?\n```text"),
+                userBlock("D7 b)\n```"),
+            ],
+            [{ number: 7, letters: two, askedAt: at(1) }]
+        );
+
+        expect(result).toEqual({ unambiguous: [], ambiguous: [] });
+    });
+
+    test("keeps colon-prefixed own words distinct from an option with a delimited explanation", () => {
+        for (const letters of [[], two]) {
+            for (const prefix of ["D4", "DECISION 4"]) {
+                for (const answer of ["I prefer Atlas", "a different name", "b would be better"]) {
+                    const result = chatAnswers(
+                        [entry("user", `${prefix}: ${answer}`, 2)],
+                        [{ number: 4, letters, askedAt: at(1) }]
+                    );
+
+                    expect(result.ambiguous).toEqual([]);
+                    expect(result.unambiguous).toMatchObject([{ number: 4, answer }]);
+                    expect(result.unambiguous[0]?.option).toBeUndefined();
+                }
+            }
+        }
+
+        for (const text of ["D4: a - keep it", "DECISION 4: a - keep it", "D4 a: keep it", "D4 a) keep it"]) {
+            expect(
+                chatAnswers([entry("user", text, 2)], [{ number: 4, letters: two, askedAt: at(1) }]).unambiguous
+            ).toMatchObject([{ number: 4, option: "a", answer: "keep it" }]);
+        }
+
+        expect(
+            chatAnswers([entry("user", "DECISION 4: b", 2)], [{ number: 4, letters: two, askedAt: at(1) }]).unambiguous
+        ).toMatchObject([{ number: 4, option: "b", answer: "" }]);
+        const free = chatAnswers([entry("user", "D4: I", 2)], [{ number: 4, letters: [], askedAt: at(1) }]);
+        expect(free.unambiguous).toMatchObject([{ number: 4, answer: "I" }]);
+        expect(free.unambiguous[0]?.option).toBeUndefined();
     });
 
     test("ignores fenced, quoted, inline and indented examples while keeping actual answers", () => {

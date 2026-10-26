@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, spyOn } from "bun:test";
 import {
     chmodSync,
     existsSync,
@@ -26,6 +26,7 @@ import type { NativeHistoryEntry } from "@genesiscz/utils/agent-sessions/types";
 import { env } from "@genesiscz/utils/env";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
+import { atomicWriteIo } from "@genesiscz/utils/storage/atomic-file";
 import { type ChatAnswerRun, userMessageOutcome } from "./chat-answer-log";
 import { codexEntriesFor, codexWiring, installCodexHooks, uninstallCodexHooks } from "./codex";
 import {
@@ -2109,6 +2110,81 @@ describe("decision hub hooks", () => {
         // Said once per decision: the next Stop reads again and says nothing about DECISION 2.
         expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps)).toBeNull();
         expect(readDecisions(log.file)[1]?.state).toBe("open");
+    });
+
+    it("retries a chat answer after a failed store write before advancing the cursor", async () => {
+        const { log, counts } = harness();
+        const [row] = await postDecisions(log.file, log.events, {
+            sessionId: "sess-1",
+            decisions: [{ prompt: "Keep?", options: ["yes", "no"] }],
+        });
+        const after = (minutes: number) => new Date(Date.parse(row.createdTs ?? "") + minutes * 60_000).toISOString();
+        const entry = (role: NativeHistoryEntry["role"], text: string, minutes: number): NativeHistoryEntry => ({
+            line: -4 + minutes,
+            role,
+            text,
+            paths: [],
+            commits: [],
+            timestamp: after(minutes),
+        });
+        const entries = [
+            entry("assistant", "❓ DECISION 1 — Keep?", 1),
+            entry("user", "D1 b) drop it", 2),
+            entry("assistant", "Done.", 3),
+        ];
+        const runs: ChatAnswerRun[] = [];
+        let checked: number | undefined;
+        const deps = {
+            log,
+            counts,
+            now: () => Date.parse(after(10)),
+            appendRun: (run: ChatAnswerRun) => {
+                runs.push(run);
+            },
+            chat: {
+                checkedAt: () => checked,
+                setCheckedAt: (_session: string, at: number) => {
+                    checked = at;
+                },
+                sentBack: () => false,
+                markSentBack: () => undefined,
+            },
+            readSession: async (options: { until: (entry: NativeHistoryEntry) => boolean }) => {
+                let start = 0;
+
+                for (let index = entries.length - 1; index >= 0; index--) {
+                    const candidate = entries[index];
+
+                    if (candidate && options.until(candidate)) {
+                        start = index;
+                        break;
+                    }
+                }
+
+                return { entries: entries.slice(start), found: start > 0, issues: [] };
+            },
+        };
+        const payload = stopPayload("Done.", { transcript_path: "/fixture.jsonl" });
+        const failedWrite = spyOn(atomicWriteIo, "writeSync").mockImplementationOnce(() => {
+            throw new Error("simulated ENOSPC");
+        });
+
+        try {
+            expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps)).toBeNull();
+            expect(failedWrite).toHaveBeenCalledTimes(1);
+            expect(readDecisions(log.file)[0]?.state).toBe("open");
+            expect(checked).toBeUndefined();
+            expect(runs[0]?.recorded).toEqual([]);
+        } finally {
+            failedWrite.mockRestore();
+        }
+
+        expect(await runDecisionStop(payload, decisionsOn({ chatAnswers: "record" }), deps)).toHaveProperty(
+            "systemMessage"
+        );
+        expect(readDecisions(log.file)[0]).toMatchObject({ state: "acknowledged", option: "b", answer: "drop it" });
+        expect(runs[1]?.recorded).toEqual([row.id]);
+        expect(checked).toBe(Date.parse(after(10)));
     });
 
     it("logs every chat-answer run with each user message read, and marks the ones that matched nothing", async () => {

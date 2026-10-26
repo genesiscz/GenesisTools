@@ -229,7 +229,6 @@ async function runChatAnswers(
             return Number.isFinite(at) && at < from;
         },
     });
-    state.setCheckedAt(session, now);
 
     if (!read.found && from > 0) {
         // Not an error for Grok (its rows carry no time), but for Claude and Codex a read that never reached the
@@ -302,14 +301,25 @@ async function runChatAnswers(
         sentBack: [...toRecord, ...toCheck].map(({ row }) => row.id),
     });
 
+    if (toRecord.length > 0 || toCheck.length > 0) {
+        state.markSentBack(
+            session,
+            [...toRecord, ...toCheck].map(({ row }) => row.id)
+        );
+    }
+
+    // A failed write returns no row. Keep its evidence in the next read rather than passing it permanently.
+    const handled =
+        config.chatAnswers !== "record" || answers.every(({ row }) => recorded.some((item) => item.id === row.id));
+
+    if (handled && read.issues.length === 0) {
+        state.setCheckedAt(session, now);
+    }
+
     if (toRecord.length === 0 && toCheck.length === 0) {
         return recordedNote ? { systemMessage: recordedNote } : null;
     }
 
-    state.markSentBack(
-        session,
-        [...toRecord, ...toCheck].map(({ row }) => row.id)
-    );
     const parts = [
         recordedNote,
         toRecord.length > 0

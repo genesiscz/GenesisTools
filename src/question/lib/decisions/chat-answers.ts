@@ -68,7 +68,7 @@ const NEXT_ANSWER = /\s*[,;]\s*(?=(?:D|DECISION\s*)?#?\d+\s*[:.)\-–—]?\s*\(?
 const LEAD = /^\s*[-–—:,]\s*/;
 
 function asksIn(text: string): number[] {
-    return [...answerLines(text).join("\n").matchAll(ASK)].map((match) => Number(match[1]));
+    return [...new Set([...answerLines(text).join("\n").matchAll(ASK)].map((match) => Number(match[1])))];
 }
 
 function found(letters: string, rest: string, allowed: readonly string[]): Found {
@@ -93,10 +93,23 @@ function answerIn(segment: string, n: number, allowed: readonly string[]): Found
         return found(closed[1] ?? "", closed[2] ?? "", allowed);
     }
 
-    // `D14 b`, `DECISION 14: b - because`: a single letter after the D prefix, not the start of a word.
-    const prefixed = new RegExp(`${head}(?:D|DECISION\\s*)#?${n}\\s*[:.\\-–—]?\\s*([a-z])(?![a-z])(.*)$`, "i").exec(
-        segment
-    );
+    // A colon introduces own words, except an option alone or followed by an explicit explanation separator.
+    const own = new RegExp(`${head}D(?:ECISION)?\\s*#?${n}\\s*:\\s*(.+)$`, "i").exec(segment);
+
+    if (own?.[1]) {
+        const answer = own[1].trim();
+        const choice = /^([a-z])(?:\s*[-–—:]\s*(.*))?$/i.exec(answer);
+
+        return allowed.length > 0 && choice
+            ? found(choice[1] ?? "", choice[2] ?? "", allowed)
+            : { answer, invalid: false };
+    }
+
+    // `D14 b`, `D14 b - because`: prose after an option requires `)`, `-`, `–`, `—` or `:`.
+    const prefixed = new RegExp(
+        `${head}(?:D|DECISION\\s*)#?${n}\\s*[.\\-–—]?\\s*([a-z])(?:\\s*[-–—:]\\s*(.*)|\\s*)$`,
+        "i"
+    ).exec(segment);
 
     if (prefixed) {
         return found(prefixed[1] ?? "", prefixed[2] ?? "", allowed);
@@ -109,10 +122,7 @@ function answerIn(segment: string, n: number, allowed: readonly string[]): Found
         return found(bare[1] ?? "", "", allowed);
     }
 
-    // `D14: my own words`.
-    const own = new RegExp(`${head}D(?:ECISION)?\\s*#?${n}\\s*:\\s*(.+)$`, "i").exec(segment);
-
-    return own?.[1] ? { answer: own[1].trim(), invalid: false } : undefined;
+    return undefined;
 }
 
 function mentions(text: string, n: number): boolean {
@@ -180,12 +190,29 @@ function afterAsk(entry: NativeHistoryEntry, index: number, askedAt: number | un
 
 /** Per open decision, what the user's messages after its ask say about it. `entries` are in conversation order. */
 export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readonly OpenDecisionRef[]): ChatAnswers {
+    // A provider emits one entry per text block. Prose, fences and ask context belong to the whole message row.
+    const messages: NativeHistoryEntry[] = [];
+
+    for (const entry of entries) {
+        if (entry.role !== "assistant" && entry.role !== "user") {
+            continue;
+        }
+
+        const previous = messages.at(-1);
+
+        if (previous?.role === entry.role && previous.line === entry.line && previous.timestamp === entry.timestamp) {
+            messages[messages.length - 1] = { ...previous, text: `${previous.text}\n${entry.text}` };
+        } else {
+            messages.push(entry);
+        }
+    }
+
     const unambiguous: ChatAnswer[] = [];
     const ambiguous: AmbiguousAnswer[] = [];
 
     for (const decision of open) {
         const askedAt = time(decision.askedAt);
-        const firstAsk = entries.findIndex(
+        const firstAsk = messages.findIndex(
             (entry) => entry.role === "assistant" && asksIn(entry.text).includes(decision.number)
         );
         const hits: { found: Found; evidence: Evidence }[] = [];
@@ -193,7 +220,7 @@ export function chatAnswers(entries: readonly NativeHistoryEntry[], open: readon
         // The decisions the newest assistant entry that asked any asked: a bare `b)` answers one asked alone.
         let lastAsked: number[] = [];
 
-        for (const [index, entry] of entries.entries()) {
+        for (const [index, entry] of messages.entries()) {
             if (entry.role === "assistant") {
                 const asked = asksIn(entry.text);
                 lastAsked = asked;
