@@ -70,7 +70,16 @@ let held: { session: string; touches: Touch[] } | undefined;
 let added: { session: string; roots: string[] } | undefined;
 let zoxide: { at: number; dirs: string[] } | undefined;
 let loading: Promise<Touch[]> | undefined;
+let mutations: Promise<unknown> = Promise.resolve();
 const rootByDir = new Map<string, string | null>();
+
+/** Merge against the latest state and save in order across concurrent tool completions and sidebar actions. */
+function mutateCheckouts<T>(change: () => Promise<T>): Promise<T> {
+    const work = mutations.then(change);
+    mutations = work.catch(() => undefined);
+
+    return work;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -428,7 +437,7 @@ async function save(host: Host, session: string, touches: Touch[], key = STORE_K
 async function load(host: Host, session: string): Promise<Touch[]> {
     const stored = (await readLedger(host))[session];
 
-    if (stored && stored.length > 0) {
+    if (stored !== undefined) {
         return stored;
     }
 
@@ -453,6 +462,11 @@ export async function sessionCheckouts(host: Host): Promise<Touch[]> {
         loading = undefined;
     });
     const touches = await loading;
+
+    if (held?.session === session) {
+        return held.touches;
+    }
+
     held = { session, touches };
 
     return touches;
@@ -524,27 +538,29 @@ export async function noteToolCall(host: Host, input: unknown): Promise<boolean>
         return false;
     }
 
-    const before = await sessionCheckouts(host);
-    const fresh = await Promise.all(
-        roots.map(async (root): Promise<Touch> => {
-            const head = await headOf(host, root);
-            const held = before.find((touch) => touch.root === root);
+    const heads = await Promise.all(roots.map((root) => headOf(host, root)));
+
+    return mutateCheckouts(async () => {
+        const before = await sessionCheckouts(host);
+        const fresh = roots.map((root, index): Touch => {
+            const head = heads[index];
+            const previous = before.find((touch) => touch.root === root);
 
             return {
                 root,
                 at: now,
                 repo: head.repo,
-                branches: withBranches([head.branch, ...(named.get(root) ?? [])], held?.branches),
+                branches: withBranches([head.branch, ...(named.get(root) ?? [])], previous?.branches),
             };
-        })
-    );
-    const touches = [...fresh, ...before.filter((touch) => !roots.includes(touch.root))].slice(0, KEEP_ROOTS);
-    const session = await host.sessionId();
+        });
+        const touches = [...fresh, ...before.filter((touch) => !roots.includes(touch.root))].slice(0, KEEP_ROOTS);
+        const session = await host.sessionId();
 
-    held = { session, touches };
-    await save(host, session, touches);
+        held = { session, touches };
+        await save(host, session, touches);
 
-    return roots.some((root) => before[0]?.root !== root);
+        return roots.some((root) => before[0]?.root !== root);
+    });
 }
 
 /**
@@ -568,22 +584,30 @@ export function pickRoots(
 
 /** Drops a checkout the session worked in from its band, until the session works there again. */
 export async function hideCheckout(host: Host, root: string): Promise<void> {
-    const session = await host.sessionId();
-    const touches = (await sessionCheckouts(host)).filter((touch) => touch.root !== root);
+    return mutateCheckouts(async () => {
+        const session = await host.sessionId();
+        const touches = (await sessionCheckouts(host)).filter((touch) => touch.root !== root);
 
-    held = { session, touches };
-    await save(host, session, touches);
+        held = { session, touches };
+        await save(host, session, touches);
+    });
 }
 
 /** The folders this session added by hand, newest first, as git roots. */
 export async function addedCheckouts(host: Host): Promise<string[]> {
     const session = await host.sessionId();
 
-    if (added?.session !== session) {
-        const stored = (await readLedger(host, ADDED_KEY))[session] ?? [];
-        added = { session, roots: stored.map((touch) => touch.root) };
+    if (added?.session === session) {
+        return added.roots;
     }
 
+    const stored = (await readLedger(host, ADDED_KEY))[session] ?? [];
+
+    if (added?.session === session) {
+        return added.roots;
+    }
+
+    added = { session, roots: stored.map((touch) => touch.root) };
     return added.roots;
 }
 
@@ -623,25 +647,29 @@ export async function addCheckout(host: Host, typed: string): Promise<{ root: st
         return { error: `${path} is in no git checkout` };
     }
 
-    await saveAdded(host, [root, ...(await addedCheckouts(host)).filter((held) => held !== root)]);
+    await mutateCheckouts(async () => {
+        await saveAdded(host, [root, ...(await addedCheckouts(host)).filter((held) => held !== root)]);
+    });
 
     return { root };
 }
 
 /** Removes a folder added by hand, named by its path or its folder name; false when none matches. */
 export async function removeAdded(host: Host, typed: string): Promise<string | undefined> {
-    const roots = await addedCheckouts(host);
-    const path = await expand(host, typed);
-    const match = roots.find((root) => root === path || root.slice(root.lastIndexOf("/") + 1) === typed.trim());
+    return mutateCheckouts(async () => {
+        const roots = await addedCheckouts(host);
+        const path = await expand(host, typed);
+        const match = roots.find((root) => root === path || root.slice(root.lastIndexOf("/") + 1) === typed.trim());
 
-    if (match) {
-        await saveAdded(
-            host,
-            roots.filter((root) => root !== match)
-        );
-    }
+        if (match) {
+            await saveAdded(
+                host,
+                roots.filter((root) => root !== match)
+            );
+        }
 
-    return match;
+        return match;
+    });
 }
 
 export interface FolderSuggestion {
@@ -782,5 +810,6 @@ export function forgetCheckouts(): void {
     added = undefined;
     zoxide = undefined;
     loading = undefined;
+    mutations = Promise.resolve();
     rootByDir.clear();
 }

@@ -255,9 +255,11 @@ checked against real use.
 - `mods.agentRow` (`format` `version`, `label` or `short`; `effort` on): the agents panel under the prompt names each
   subagent's model and effort beside its type, `general-purpose · O5.5(xhigh)  Reading foo.ts  1m 5s · ↓ 58k tokens`
   (`label`: `opus-5-5 (xhigh)`, `short`: `O(xhigh)`; `mods.agentRow.effort false` drops the effort). No mod hook reaches that panel, so
-  this is Claude Code's `subagentStatusLine` setting: `mods enable agentRow --write` (and `hooks install --write`
-  while it is on) writes it into `~/.claude/settings.json`, pointing at `src/agents/bin/hook-subagent-line.ts`, and
-  `disable` takes it out again. A `subagentStatusLine` of your own is left alone. Claude Code runs the command every
+  this is Claude Code's `subagentStatusLine` setting: `mods enable agentRow --write`,
+  `config set mods.agentRow.enabled true --write` (and `hooks install --write` while it is on) write it into
+  `~/.claude/settings.json`, pointing at `src/agents/bin/hook-subagent-line.ts`. Disabling through either settings
+  command removes it or restores the command saved by `--replace-subagent-line`, which both commands accept.
+  A `subagentStatusLine` of your own is left alone without that flag. Claude Code runs the command every
   5 s, so the time on a row moves in 5 s steps.
 - `mods.decisions` (`chip` `any`, `expand` `waiting`, `history` `collapsed`, `enter` `stage-then-send`): the
   Decisions sidebar, opened by `/decisions` or the band's `decisions 1 waiting` chip. It lists every `❓ DECISION N`

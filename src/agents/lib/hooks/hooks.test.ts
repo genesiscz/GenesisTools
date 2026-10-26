@@ -1274,6 +1274,54 @@ describe("the config writers build on the file they write", () => {
         expect(written.diff.maxFiles).toBe(9);
     });
 
+    it("config set wires agentRow, honours dry runs, and disables its engine setting through either key", () => {
+        const path = stored({ shadow: false, diff: { maxFiles: 9 } });
+        const settingsPath = `${path}.settings`;
+        const subagentLine = { settingsPath, dist: "/dist" };
+        const before = readFileSync(path, "utf8");
+        const dry = setHooksConfig("mods.agentRow.enabled", "true", { write: false, path, subagentLine });
+        expect(dry.subagentLine).toBe("added");
+        expect(readFileSync(path, "utf8")).toBe(before);
+        expect(existsSync(settingsPath)).toBe(false);
+
+        const on = setHooksConfig("mods.agentRow.enabled", "true", { write: true, path, subagentLine });
+        expect(on.subagentLine).toBe("added");
+        expect(readSettings(settingsPath).subagentStatusLine).toEqual(subagentLineFor("/dist"));
+        expect(loadHooksConfig(path).mods.agentRow.enabled).toBe(true);
+        expect(loadHooksConfig(path).shadow).toBe(false);
+        expect(loadHooksConfig(path).diff.maxFiles).toBe(9);
+        const format = setHooksConfig("mods.agentRow.format", "short", { write: true, path, subagentLine });
+        expect(format.subagentLine).toBeUndefined();
+        expect(readSettings(settingsPath).subagentStatusLine).toEqual(subagentLineFor("/dist"));
+
+        const off = setHooksConfig("mods.agentRow", "false", { write: true, path, subagentLine });
+        expect(off.subagentLine).toBe("removed");
+        expect(readSettings(settingsPath).subagentStatusLine).toBeUndefined();
+    });
+
+    it("config set leaves another agent-row command unless replacement is explicit, then restores it on disable", () => {
+        const path = stored({});
+        const settingsPath = `${path}.settings`;
+        const theirs = { type: "command", command: "/home/alice/rows.sh" };
+        const subagentLine = { settingsPath, dist: "/dist" };
+        writeFileSync(settingsPath, SafeJSON.stringify({ subagentStatusLine: theirs }));
+        expect(setHooksConfig("mods.agentRow", "true", { write: true, path, subagentLine }).subagentLine).toBe(
+            "theirs"
+        );
+        expect(readSettings(settingsPath).subagentStatusLine).toEqual(theirs);
+
+        const replaced = setHooksConfig("mods.agentRow.enabled", "true", {
+            write: true,
+            path,
+            subagentLine: { ...subagentLine, replace: true },
+        });
+        expect(replaced.subagentLine).toBe("replaced");
+        expect(readSettings(settingsPath).subagentStatusLine).toEqual(subagentLineFor("/dist"));
+        const restored = setHooksConfig("mods.agentRow.enabled", "false", { write: true, path, subagentLine });
+        expect(restored.subagentLine).toBe("restored");
+        expect(readSettings(settingsPath).subagentStatusLine).toEqual(theirs);
+    });
+
     it("refuses to overwrite a hooks.json that exists but cannot be parsed", () => {
         const path = stored("{ not json");
 

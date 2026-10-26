@@ -1,7 +1,15 @@
 import type { On, TurnStepChunk } from "claude-code";
 import { expect, mock, test } from "claude-code/testing";
-import { lastSaidOf } from "../hooks/agents-band";
-import { answersFrom, callFor, firstAsks, forgetAnswers, questionCalls, sendStaged } from "../hooks/answers";
+import { agentsBand, factsOf, forgetAgentDetails, lastSaidOf, refreshAgentDetails } from "../hooks/agents-band";
+import {
+    answersFrom,
+    callFor,
+    firstAsks,
+    forgetAnswers,
+    questionCalls,
+    refreshAnswers,
+    sendStaged,
+} from "../hooks/answers";
 import { quoteOf } from "../hooks/ask-row";
 import { cacheBand, cacheRowsOf, cacheTone, markEnded } from "../hooks/cache-band";
 import {
@@ -1306,4 +1314,316 @@ test("an automatic stall check cannot continue a newer stall captured while it c
     await checkStall(host, Date.now() + 3600000);
     expect(submitted).toEqual([continueText("Next I'll check the logs.")]);
     forgetSettings();
+});
+
+interface AnswerLogFixture {
+    files: Map<string, { text: string; mtimeMs: number }>;
+    snapshot: Record<string, unknown>;
+    reads: number;
+    ranges: { file: string; offset: number; count: number }[];
+}
+
+/** ASCII histories exist only in memory; any whole-file Host.read fails the test. */
+function answerLogHost(): { host: Host; fixture: AnswerLogFixture } {
+    const base = checkoutHost();
+    const fixture: AnswerLogFixture = {
+        files: new Map(),
+        snapshot: { decisions: [], forms: [], entries: [] },
+        reads: 0,
+        ranges: [],
+    };
+    const done = (stdout: string) => ({
+        stdout,
+        stderr: "",
+        exitCode: 0,
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async stat(file) {
+            const row = fixture.files.get(file);
+
+            if (row) {
+                return {
+                    kind: "file",
+                    size: row.text.length,
+                    mtimeMs: row.mtimeMs,
+                    isLink: false,
+                };
+            }
+
+            return base.stat(file);
+        },
+        async read(file) {
+            if (file.includes("/.genesis-tools/question/")) {
+                throw new Error(`unbounded log read: ${file}`);
+            }
+
+            return base.read(file);
+        },
+        async run(argv, init) {
+            if (argv[1] === "genesis-tools") {
+                return done(JSON.stringify({ links: {}, router: {} }));
+            }
+
+            if (argv[1] === "question") {
+                fixture.reads++;
+                return done(JSON.stringify(fixture.snapshot));
+            }
+
+            if (argv[0] === "tail" && argv[1] === "-c") {
+                const file = argv[3];
+                const count = Number(argv[2]);
+                const content = fixture.files.get(file)?.text ?? "";
+                const offset = Math.max(0, content.length - count);
+                fixture.ranges.push({ file, offset, count });
+                return done(content.slice(offset, offset + count));
+            }
+
+            return base.run(argv, init);
+        },
+    };
+
+    return { host, fixture };
+}
+
+test("answer polling bounds oversized histories before reading, then reads only appended bytes", async () => {
+    forgetAnswers();
+    forgetGenesisProbe();
+    const { host, fixture } = answerLogHost();
+    const file = "/home/test/.genesis-tools/question/decisions/events.jsonl";
+    const other = `${JSON.stringify({ id: "d_1_other", note: "x".repeat(100) })}\n`;
+    const history = other.repeat(4096);
+    fixture.files.set(file, { text: history, mtimeMs: 1 });
+    fixture.snapshot = { decisions: [{ number: 7, title: "Old resumed decision", status: "waiting" }] };
+
+    // The session's old rows need an initial scoped snapshot even when absent from the bounded history window.
+    expect((await refreshAnswers(host, "start"))?.decisions[0]?.n).toBe(7);
+    expect(fixture.reads).toBe(1);
+    expect(fixture.ranges[0]).toEqual({ file, offset: history.length - 65_536, count: 65_536 });
+
+    fixture.files.set(file, { text: history + other, mtimeMs: 2 });
+    await refreshAnswers(host, "other session changed");
+    expect(fixture.reads).toBe(1);
+    expect(fixture.ranges.at(-1)).toEqual({ file, offset: history.length, count: other.length });
+
+    const own = `${JSON.stringify({ id: "d_7_sess-1", ev: "updated" })}\n`;
+    fixture.files.set(file, { text: history + other + own, mtimeMs: 3 });
+    await refreshAnswers(host, "own session changed");
+    expect(fixture.reads).toBe(2);
+
+    // More than a window arrived between polls. Recover even if the own event is outside the retained suffix.
+    fixture.files.set(file, { text: history + other + own + own + history, mtimeMs: 4 });
+    await refreshAnswers(host, "overflow");
+    expect(fixture.reads).toBe(3);
+    expect(fixture.ranges.every((range) => range.count <= 65_536)).toBe(true);
+    forgetAnswers();
+    forgetGenesisProbe();
+});
+
+test("a pending form appears and resolves after an initially empty answer snapshot", async () => {
+    forgetAnswers();
+    forgetGenesisProbe();
+    const { host, fixture } = answerLogHost();
+    const now = new Date();
+    const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const file = `/home/test/.genesis-tools/question/pending/${day}.jsonl`;
+
+    expect((await refreshAnswers(host, "empty start"))?.forms).toEqual([]);
+    expect(fixture.reads).toBe(1);
+    const other = `${JSON.stringify({ ev: "created", form: { sessionHint: "someone-else" } })}\n`;
+    fixture.files.set(file, { text: other, mtimeMs: 1 });
+    await refreshAnswers(host, "another session's form");
+    expect(fixture.reads).toBe(1);
+
+    const own = `${JSON.stringify({ ev: "created", form: { sessionHint: "sess-1", id: "ask-one" } })}\n`;
+    fixture.files.set(file, { text: other + own, mtimeMs: 2 });
+    fixture.snapshot = { decisions: [], forms: [{ id: "ask-one", at: 1, questions: [{ prompt: "Proceed?" }] }] };
+    expect((await refreshAnswers(host, "own pending form"))?.forms).toEqual([
+        { id: "ask-one", at: 1, prompts: ["Proceed?"] },
+    ]);
+    expect(fixture.reads).toBe(2);
+
+    const resolved = `${JSON.stringify({ ev: "answered", form: { sessionHint: "sess-1", id: "ask-one" } })}\n`;
+    fixture.files.set(file, { text: other + own + resolved, mtimeMs: 3 });
+    fixture.snapshot = { decisions: [], forms: [] };
+    expect((await refreshAnswers(host, "form resolved"))?.forms).toEqual([]);
+    expect(fixture.reads).toBe(3);
+    forgetAnswers();
+    forgetGenesisProbe();
+});
+
+test("an append during a bounded log read cannot hide the session's earlier unread event", async () => {
+    forgetAnswers();
+    forgetGenesisProbe();
+    const { host: base, fixture } = answerLogHost();
+    const file = "/home/test/.genesis-tools/question/decisions/events.jsonl";
+    let appendDuringRead = false;
+    const host: Host = {
+        ...base,
+        async run(argv, init) {
+            if (appendDuringRead && argv[0] === "tail" && argv[3] === file) {
+                appendDuringRead = false;
+                const before = fixture.files.get(file)?.text ?? "";
+                fixture.files.set(file, {
+                    text: before + `${JSON.stringify({ id: "d_1_other", note: "x".repeat(200) })}\n`,
+                    mtimeMs: 2,
+                });
+            }
+
+            return base.run(argv, init);
+        },
+    };
+    await refreshAnswers(host, "empty start");
+    fixture.files.set(file, { text: `${JSON.stringify({ id: "d_1_sess-1", ev: "created" })}\n`, mtimeMs: 1 });
+    fixture.snapshot = { decisions: [{ number: 1, title: "New decision", status: "waiting" }] };
+    appendDuringRead = true;
+    expect((await refreshAnswers(host, "moving log"))?.decisions[0]?.n).toBe(1);
+    expect(fixture.reads).toBe(2);
+    forgetAnswers();
+    forgetGenesisProbe();
+});
+
+test("agent details retry aborted metadata reads and rendering facts starts no discovery", async () => {
+    forgetAgentDetails();
+    forgetSettings();
+    const base = checkoutHost();
+    const agents: Awaited<ReturnType<Host["agents"]>> = [
+        { id: "resumed", description: "Resumed worker", type: "general-purpose", status: "running" },
+    ];
+    let metaReads = 0;
+    let tailReads = 0;
+    const host: Host = {
+        ...base,
+        async agents() {
+            return agents;
+        },
+        async read(file) {
+            if (file.endsWith("hooks.json")) {
+                return JSON.stringify({ mods: { agentsBand: { enabled: true } } });
+            }
+
+            if (file.endsWith(".meta.json")) {
+                metaReads++;
+
+                if (metaReads === 1) {
+                    throw new Error("render replaced: aborted");
+                }
+
+                return JSON.stringify({ model: "claude-sonnet-5-5" });
+            }
+
+            return base.read(file);
+        },
+        async stat(file) {
+            return file.endsWith(".meta.json")
+                ? { kind: "file", size: 1, mtimeMs: 123, isLink: false }
+                : base.stat(file);
+        },
+        async run(argv, init) {
+            if (argv[0] === "tail") {
+                tailReads++;
+                return { stdout: "", stderr: "", exitCode: 0, isStdoutTruncated: false, isStderrTruncated: false };
+            }
+
+            return base.run(argv, init);
+        },
+    };
+    await factsOf(host, agents);
+    expect(metaReads).toBe(0);
+    expect(tailReads).toBe(0);
+    await agentsBand.start?.(host);
+    expect((await factsOf(host, agents))[0]?.model).toBeUndefined();
+    expect(metaReads).toBe(1);
+    await refreshAgentDetails(host);
+    const facts = await factsOf(host, agents);
+    expect(metaReads).toBe(2);
+    expect(facts[0]?.model).toBeDefined();
+    expect(facts[0]?.startedAt).toBe(123);
+    await factsOf(host, [
+        ...agents,
+        { id: "not-discovered", description: "Unknown worker", type: "general-purpose", status: "running" },
+    ]);
+    expect(metaReads).toBe(2);
+    expect(tailReads).toBe(1);
+    forgetAgentDetails();
+    forgetSettings();
+});
+
+test("interleaved checkout completions keep both roots and their branch histories", async () => {
+    forgetCheckouts();
+    const base = checkoutHost();
+    let releaseFirst: () => void = () => undefined;
+    const firstHead = new Promise<void>((resolve) => {
+        releaseFirst = resolve;
+    });
+    const host: Host = {
+        ...base,
+        async read(file) {
+            if (file.endsWith("sessions/sess-1.json")) {
+                return JSON.stringify({ files: [] });
+            }
+
+            if (file === "/work/wt-a/.git/HEAD") {
+                await firstHead;
+                return "ref: refs/heads/feat/a\n";
+            }
+
+            if (file === "/work/wt-b/.git/HEAD") {
+                releaseFirst();
+                return "ref: refs/heads/feat/b\n";
+            }
+
+            return base.read(file);
+        },
+    };
+    const deadline = setTimeout(() => releaseFirst(), 5_000);
+
+    try {
+        await Promise.all([
+            noteToolCall(host, { tool: "Bash", command: "git -C /work/wt-a commit -m a" }),
+            noteToolCall(host, { tool: "Bash", command: "git -C /work/wt-b commit -m b" }),
+        ]);
+    } finally {
+        clearTimeout(deadline);
+    }
+
+    const touches = await sessionCheckouts(host);
+    expect(touches.map((touch) => touch.root).sort()).toEqual(["/work/wt-a", "/work/wt-b"]);
+    expect(touches.find((touch) => touch.root === "/work/wt-a")?.branches).toEqual(["feat/a"]);
+    expect(touches.find((touch) => touch.root === "/work/wt-b")?.branches).toEqual(["feat/b"]);
+    forgetCheckouts();
+    expect((await sessionCheckouts(host)).map((touch) => touch.root).sort()).toEqual(["/work/wt-a", "/work/wt-b"]);
+    forgetCheckouts();
+});
+
+test("parallel manual checkout changes keep additions and removals", async () => {
+    forgetCheckouts();
+    const base = checkoutHost();
+    const host: Host = {
+        ...base,
+        async stat(file) {
+            return ["/work/wt-a", "/work/wt-b", "/work/main"].includes(file)
+                ? { kind: "dir", size: 0, mtimeMs: 0, isLink: false }
+                : base.stat(file);
+        },
+    };
+    await Promise.all([addCheckout(host, "/work/wt-a"), addCheckout(host, "/work/wt-b")]);
+    expect([...(await addedCheckouts(host))].sort()).toEqual(["/work/wt-a", "/work/wt-b"]);
+    await Promise.all([removeAdded(host, "/work/wt-a"), addCheckout(host, "/work/main")]);
+    expect([...(await addedCheckouts(host))].sort()).toEqual(["/work/main", "/work/wt-b"]);
+    forgetCheckouts();
+});
+
+test("hiding every worked checkout stays empty across a reload instead of reseeding the journal", async () => {
+    forgetCheckouts();
+    const host = checkoutHost();
+    const roots = (await sessionCheckouts(host)).map((touch) => touch.root);
+    expect(roots.length).toBeGreaterThan(0);
+    await Promise.all(roots.map((root) => hideCheckout(host, root)));
+    expect(await sessionCheckouts(host)).toEqual([]);
+    forgetCheckouts();
+    expect(await sessionCheckouts(host)).toEqual([]);
+    forgetCheckouts();
 });

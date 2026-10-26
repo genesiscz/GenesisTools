@@ -11,7 +11,7 @@ import type { AgentInfo, AgentSpawnInput, AgentSpawnResult, ElementTable, Render
 import type { SpawnedAgents } from "../types";
 import { liveAgo, liveSince } from "./live";
 import { bareDescription, modelLabel } from "./model-label";
-import { type Feature, type Host, isRecord, settingsOf } from "./shared";
+import { type Feature, type Host, isRecord, logMod, settingsOf } from "./shared";
 import {
     actionRow,
     dimNote,
@@ -31,6 +31,9 @@ let spawned: SpawnedAgents = {};
 const activity = new Map<string, { lastAt: number; lastTool: string; tools: number; recent: Recent[] }>();
 /** What `agent-<id>.meta.json` said; null once read and found without a model. */
 const metas = new Map<string, { model: string; at?: number } | null>();
+const pendingMetas = new Map<string, Promise<void>>();
+const transcripts = new Map<string, string>();
+let refreshing: Promise<void> | undefined;
 /** The end of each agent's transcript: its last words, read at most every 5 s. */
 const tails = new Map<string, { at: number; said: string }>();
 const BUSY = new Set(["pending", "running", "waiting"]);
@@ -47,23 +50,48 @@ interface Recent {
     at: number;
 }
 
-async function beat(host: Host): Promise<void> {
-    if (!(await settingsOf(host)).agentsBand.enabled) {
-        return;
-    }
+/** Discover metadata and transcript tails from session start, a timer or a press, never a render. */
+export function refreshAgentDetails(host: Host): Promise<void> {
+    refreshing ??= (async () => {
+        if (!(await settingsOf(host)).agentsBand.enabled) {
+            return;
+        }
 
-    const list = await host.agents().catch(() => []);
+        const list = (await host.agents().catch(() => [])).filter((agent) => !agent.teammateId);
+        await Promise.all(
+            list.map(async (agent) => {
+                const path = await transcriptOf(host, agent.id);
 
-    if (list.some((agent) => BUSY.has(agent.status))) {
-        host.redraw();
-    }
+                if (path) {
+                    transcripts.set(agent.id, path);
+                }
+
+                if (!spawned[agent.id]?.model) {
+                    await loadMeta(host, agent.id).catch(() => undefined);
+                }
+            })
+        );
+        const chosen = list.find((agent) => agent.id === selected) ?? list[0];
+
+        if (chosen) {
+            await loadTail(host, chosen.id).catch(() => undefined);
+            host.redraw();
+        }
+    })()
+        .catch((error: unknown) => logMod(host, "agents", { event: "details-failed", error: String(error) }))
+        .finally(() => {
+            refreshing = undefined;
+        });
+
+    return refreshing;
 }
 
 export const agentsBand: Feature = {
     async start(host) {
         host.every(10_000, () => {
-            void beat(host);
+            void refreshAgentDetails(host);
         });
+        await refreshAgentDetails(host);
     },
     beforeTool(_host, e) {
         if (e.agentId !== undefined) {
@@ -86,6 +114,7 @@ export const agentsBand: Feature = {
             description: "The Agents sidebar: every subagent with its model, recent tools, last words and actions",
             async run(host) {
                 await host.togglePane(AGENTS_PANE, "Agents", "command");
+                await refreshAgentDetails(host);
 
                 return {};
             },
@@ -135,30 +164,41 @@ async function transcriptOf(host: Host, agentId: string): Promise<string | undef
     return dir ? `${dir}/subagents/agent-${agentId}.jsonl` : undefined;
 }
 
-/** Reads an agent's meta file once, in the background; the band draws again when it knows more. */
-function loadMeta(host: Host, agentId: string): void {
+/** Only completed reads are cached; an aborted or failed read can be tried by the next background refresh. */
+function loadMeta(host: Host, agentId: string): Promise<void> {
     if (metas.has(agentId)) {
-        return;
+        return Promise.resolve();
     }
 
-    metas.set(agentId, null);
-    void (async () => {
-        const transcript = await transcriptOf(host, agentId);
+    const pending = pendingMetas.get(agentId);
+
+    if (pending) {
+        return pending;
+    }
+
+    const work = (async () => {
+        const transcript = transcripts.get(agentId) ?? (await transcriptOf(host, agentId));
 
         if (!transcript) {
             return;
         }
 
         const path = transcript.replace(/\.jsonl$/, ".meta.json");
-        const text = await host.read(path).catch(() => "");
+        const text = await host.read(path);
         const parsed: unknown = text ? JSON.parse(text) : undefined;
 
         if (isRecord(parsed) && typeof parsed.model === "string") {
-            const stat = await host.stat(path).catch(() => undefined);
-            metas.set(agentId, { model: parsed.model, at: stat?.mtimeMs });
-            host.redraw();
+            const stat = await host.stat(path);
+            metas.set(agentId, { model: parsed.model, at: stat.mtimeMs });
+        } else {
+            metas.set(agentId, null);
         }
-    })().catch(() => undefined);
+    })().finally(() => {
+        pendingMetas.delete(agentId);
+    });
+    pendingMetas.set(agentId, work);
+
+    return work;
 }
 
 /** The text of the last assistant message in a transcript's end, or "" without one. */
@@ -192,7 +232,7 @@ export function lastSaidOf(tail: string): string {
     return "";
 }
 
-function loadTail(host: Host, agentId: string): void {
+async function loadTail(host: Host, agentId: string): Promise<void> {
     const held = tails.get(agentId);
 
     if (held && Date.now() - held.at < 5_000) {
@@ -200,16 +240,14 @@ function loadTail(host: Host, agentId: string): void {
     }
 
     tails.set(agentId, { at: Date.now(), said: held?.said ?? "" });
-    void (async () => {
-        const path = await transcriptOf(host, agentId);
-        const done = path ? await host.run(["tail", "-c", "131072", path], { timeoutMs: 5_000 }) : undefined;
-        const said = done?.exitCode === 0 ? lastSaidOf(done.stdout) : "";
+    const path = transcripts.get(agentId);
+    const done = path ? await host.run(["tail", "-c", "131072", path], { timeoutMs: 5_000 }) : undefined;
+    const said = done?.exitCode === 0 ? lastSaidOf(done.stdout) : "";
 
-        if (said !== held?.said) {
-            tails.set(agentId, { at: Date.now(), said });
-            host.redraw();
-        }
-    })().catch(() => undefined);
+    if (said !== held?.said) {
+        tails.set(agentId, { at: Date.now(), said });
+        host.redraw();
+    }
 }
 
 interface AgentFacts {
@@ -223,16 +261,12 @@ interface AgentFacts {
     seen: ReturnType<typeof activity.get>;
 }
 
-async function factsOf(host: Host, list: readonly AgentInfo[]): Promise<AgentFacts[]> {
+export async function factsOf(host: Host, list: readonly AgentInfo[]): Promise<AgentFacts[]> {
     const all = await settingsOf(host);
     const now = Date.now();
 
     return list.map((agent) => {
         const known = spawned[agent.id];
-
-        if (!known) {
-            loadMeta(host, agent.id);
-        }
 
         const meta = metas.get(agent.id);
         const model = known?.model ?? meta?.model;
@@ -353,7 +387,12 @@ async function agentsPane(host: Host, kit: Kit): Promise<RenderElement> {
     const now = Date.now();
     const chosen = all.find((facts) => facts.agent.id === selected) ?? all[0];
     const busy = all.filter((facts) => BUSY.has(facts.agent.status)).length;
-    const refresh = { key: "agents-refresh", label: "refresh", isDim: true, onPress: () => host.redraw() };
+    const refresh = {
+        key: "agents-refresh",
+        label: "refresh",
+        isDim: true,
+        onPress: () => void refreshAgentDetails(host),
+    };
 
     if (all.length === 0) {
         return sidebarFrame(kit, dimNote(kit, "No agents in this session yet."));
@@ -405,8 +444,7 @@ async function agentsPane(host: Host, kit: Kit): Promise<RenderElement> {
 async function detailOf(host: Host, kit: Kit, facts: AgentFacts, now: number): Promise<RenderElement> {
     const { Box, Text } = kit.ui;
     const { agent, seen } = facts;
-    const transcript = (await transcriptOf(host, agent.id)) ?? "";
-    loadTail(host, agent.id);
+    const transcript = transcripts.get(agent.id) ?? "";
     const said = tails.get(agent.id)?.said ?? "";
     const address = agent.name ?? agent.id;
     const quoted = `"${facts.description}" (${agent.id})`;
@@ -477,4 +515,18 @@ async function detailOf(host: Host, kit: Kit, facts: AgentFacts, now: number): P
             ) : null}
         </Box>
     );
+}
+
+/** A test starts a different session. */
+export function forgetAgentDetails(): void {
+    spawned = {};
+    activity.clear();
+    metas.clear();
+    pendingMetas.clear();
+    transcripts.clear();
+    tails.clear();
+    refreshing = undefined;
+    sessionDir = undefined;
+    expanded = null;
+    selected = undefined;
 }

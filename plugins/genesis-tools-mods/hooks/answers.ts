@@ -95,11 +95,12 @@ const TAGS: ReadonlySet<string> = new Set<LoggedEntry["tag"]>(["question", "acti
 /** How often the files behind the items are checked; the CLI runs only when this session's part of them changed. */
 const TICK_MS = 10_000;
 /**
- * What the logs cannot show (a read mark in the widget, a form's answer) is read again this often, and only in a
- * session that has entries or forms. Every running session shares the store, so reading on each of its changes would
- * start a `bun` in every session at once.
+ * A read mark or a lost lifecycle event is recovered by a session snapshot this often, including an empty session.
+ * Between snapshots, bounded incremental reads of the event logs detect this session's changes.
  */
 const SLOW_MS = 5 * 60_000;
+/** The maximum bytes read from one changed shared log, before any allocation or line splitting. */
+const LOG_READ_BYTES = 65_536;
 /** A tool call more than this before its entry did not record it. */
 const ENTRY_WINDOW_MS = 10 * 60_000;
 const FIRST_ASK = /(^|[^[])❓\s*\**\s*DECISION\s+(\d+)/gm;
@@ -109,7 +110,7 @@ let held: SessionAnswers | undefined;
 let heldStamp: string | undefined;
 let lastReadAt = 0;
 /** Each shared file's size and time at the last check, with the hash of this session's lines in it. */
-const seenFiles = new Map<string, { mark: string; own: string; lines: number }>();
+const seenFiles = new Map<string, { mark: string; size: number; own: string; lines: number }>();
 let reading: Promise<SessionAnswers | undefined> | undefined;
 let started = false;
 /** Decision number to the uuid of its first ask; entry id to the tool call that recorded it. Found once, kept. */
@@ -334,8 +335,8 @@ function hashOf(value: string): string {
 }
 
 /**
- * The hash and count of the lines of a shared file that name this session; the file is read only after its size or
- * time moved.
+ * An append-only log's new bytes, capped before they enter the plugin. A gap or rotation invalidates the snapshot
+ * even when the bounded window cannot name this session, so an unseen event is recovered by the scoped CLI read.
  */
 async function ownLines(host: Host, file: string, session: string): Promise<{ own: string; lines: number }> {
     const stat = await host.stat(file).catch(() => undefined);
@@ -346,15 +347,55 @@ async function ownLines(host: Host, file: string, session: string): Promise<{ ow
         return seen;
     }
 
-    const content = stat ? await host.read(file).catch(() => "") : "";
+    if (!stat || stat.size === 0) {
+        const found = { mark, size: 0, own: hashOf(""), lines: 0 };
+        seenFiles.set(file, found);
+        return found;
+    }
+
+    const delta = stat.size - (seen?.size ?? 0);
+    const reset = !seen || delta <= 0;
+    const gap = (reset ? stat.size : delta) > LOG_READ_BYTES;
+    const count = Math.min(LOG_READ_BYTES, reset ? stat.size : delta);
+    // Bound the suffix before it reaches the plugin. Accept it only while the file stayed unchanged, so an append
+    // during tail cannot shift the window past unread bytes and then be hidden behind the remembered stamp.
+    const run = await host.run(["tail", "-c", String(count), file], { timeoutMs: 5_000 }).catch(() => undefined);
+    const after = await host.stat(file).catch(() => undefined);
+
+    if (
+        !run ||
+        run.exitCode !== 0 ||
+        run.isStdoutTruncated ||
+        run.stdout === "" ||
+        !after ||
+        after.size !== stat.size ||
+        after.mtimeMs !== stat.mtimeMs
+    ) {
+        // Do not remember a failed, aborted or moving read: the next poll retries it.
+        return { own: `unread:${mark}`, lines: 1 };
+    }
+
+    const content = gap ? run.stdout.slice(run.stdout.indexOf("\n") + 1) : run.stdout;
     const mine = content.split("\n").filter((line) => line.includes(session));
-    const found = { mark, own: hashOf(mine.join("\n")), lines: mine.length };
+    const previous = reset ? "" : (seen?.own ?? "");
+    const uncertain = gap || (reset && seen !== undefined);
+    const own = uncertain
+        ? hashOf(`${mark}|${previous}|${mine.join("\n")}`)
+        : mine.length > 0
+          ? hashOf(`${previous}|${mine.join("\n")}`)
+          : previous || hashOf("");
+    const found = {
+        mark,
+        size: stat.size,
+        own,
+        lines: (reset ? 0 : (seen?.lines ?? 0)) + mine.length + (uncertain ? 1 : 0),
+    };
     seenFiles.set(file, found);
 
     return found;
 }
 
-/** Where a change of this session's items shows: its lines in the decision log and in today's Q→A log. */
+/** This session's changes in the append-only decision, Q→A and pending-form lifecycle logs. */
 async function stampOf(host: Host): Promise<{ own: string; lines: number }> {
     const home = (await host.env("GENESIS_TOOLS_HOME")) ?? (await host.env("HOME"));
 
@@ -367,8 +408,9 @@ async function stampOf(host: Host): Promise<{ own: string; lines: number }> {
     const now = new Date();
     const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
     const own = await Promise.all([
-        ownLines(host, `${question}/decisions/decisions.jsonl`, session),
+        ownLines(host, `${question}/decisions/events.jsonl`, session),
         ownLines(host, `${question}/log/${day}.jsonl`, session),
+        ownLines(host, `${question}/pending/${day}.jsonl`, session),
     ]);
 
     return { own: own.map((file) => file.own).join("|"), lines: own.reduce((sum, file) => sum + file.lines, 0) };
@@ -450,17 +492,10 @@ export function refreshAnswers(host: Host, why: string, force = false): Promise<
     const work = (async () => {
         const stamp = await stampOf(host);
         const ownMoved = stamp.own !== heldStamp;
-        const hasItems = Boolean(held && held.entries.length + held.forms.length > 0);
-        const slow = hasItems && Date.now() - lastReadAt >= SLOW_MS;
+        const slow = held !== undefined && Date.now() - lastReadAt >= SLOW_MS;
 
-        // A session the logs do not name has nothing to read: no `bun` starts for it.
-        if (!force && !held && stamp.lines === 0) {
-            held = { decisions: [], todos: [], entries: [], forms: [], at: Date.now() };
-            heldStamp = stamp.own;
-            host.redraw();
-            return held;
-        }
-
+        // A resumed session's old items can precede the bounded log window. Take one initial scoped snapshot,
+        // then refresh only on its events or a recovery interval, including when the snapshot was empty.
         if (!force && held && !ownMoved && !slow) {
             return held;
         }
@@ -513,7 +548,7 @@ export function startAnswers(host: Host): void {
     }
 
     started = true;
-    // Not forced: a session the logs do not name reads nothing, so a reload of the mods starts no `bun` there.
+    // One initial scoped snapshot, then bounded incremental event checks.
     void refreshAnswers(host, "start");
     host.every(TICK_MS, () => {
         void refreshAnswers(host, "tick");

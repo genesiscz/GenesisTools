@@ -42,7 +42,6 @@ import {
     repoRoot,
     type SubagentLinePlan,
     uninstallHooks,
-    wireSubagentLine,
     wiringStatus,
 } from "../lib/hooks/install";
 import {
@@ -727,8 +726,9 @@ export function registerHooksCommands(program: Command): void {
         .description("Change one setting, e.g. `shadow false` or `rules.find-from-root allow`")
         .argument("<key>", `One of: ${SETTABLE_KEYS.join(", ")}`)
         .argument("<value>", "The new value")
+        .option("--replace-subagent-line", "agentRow: replace another row command, keeping it for disable to restore")
         .option("--write", "Actually write; without it this is a dry run")
-        .action(async (key: string, value: string, options: { write?: boolean }) => {
+        .action(async (key: string, value: string, options: { write?: boolean; replaceSubagentLine?: boolean }) => {
             let result: SetResult;
             // A rule key may name a custom rule, so the custom modules are loaded first.
             const set = await loadRuleSet(loadHooksConfig());
@@ -737,6 +737,7 @@ export function registerHooksCommands(program: Command): void {
                 result = setHooksConfig(key, value, {
                     write: Boolean(options.write),
                     ruleIds: new Set(set.rules.map((rule) => rule.id)),
+                    subagentLine: { replace: options.replaceSubagentLine },
                 });
             } catch (err) {
                 logger.debug({ err, key, value }, "Rejected a hooks config setting");
@@ -747,6 +748,10 @@ export function registerHooksCommands(program: Command): void {
 
             ui.raw(`${pc.bold(key)} → ${value}`);
             ui.raw(pc.dim(result.path));
+
+            if (result.subagentLine) {
+                ui.raw(`${pc.bold("subagentStatusLine")} ${subagentLineSaid(result.subagentLine, result.written)}`);
+            }
 
             if (!result.written) {
                 ui.raw(pc.yellow("dry run: nothing was written. Pass --write to apply."));
@@ -1002,9 +1007,15 @@ function switchMods({
         return;
     }
 
+    let subagentLine: SubagentLinePlan | undefined;
+
     for (const key of keys) {
         try {
-            setHooksConfig(key, String(on), { write });
+            const result = setHooksConfig(key, String(on), {
+                write,
+                subagentLine: { replace: replaceSubagentLine },
+            });
+            subagentLine ??= result.subagentLine;
         } catch (err) {
             logger.debug({ err, key }, "Rejected a mods switch");
             ui.err(err instanceof Error ? err.message : String(err));
@@ -1017,11 +1028,10 @@ function switchMods({
 
     ui.raw(pc.dim(hooksConfigPath()));
 
-    if (keys.includes("mods.agentRow.enabled")) {
-        // The agents panel rows are Claude Code's `subagentStatusLine`, a setting of its own, not a hook of the plugin.
-        const plan = wireSubagentLine({ on, write, replace: replaceSubagentLine });
-
-        ui.raw(`${pc.bold("subagentStatusLine")} ${subagentLineSaid(plan, write)} ${pc.dim(claudeSettingsPath())}`);
+    if (subagentLine) {
+        ui.raw(
+            `${pc.bold("subagentStatusLine")} ${subagentLineSaid(subagentLine, write)} ${pc.dim(claudeSettingsPath())}`
+        );
     }
 
     if (!write) {

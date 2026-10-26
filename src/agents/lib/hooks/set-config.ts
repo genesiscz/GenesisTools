@@ -19,6 +19,7 @@ import {
 import { FULL_DIFF_MODES } from "./diff/full";
 import { DIFF_THEMES, type DiffThemeName } from "./diff/theme";
 import { writeHooksFile } from "./hooks-file";
+import { type SubagentLinePlan, wireSubagentLine } from "./install";
 
 const OUTCOMES: readonly HookOutcome[] = ["allow", "context", "warn", "block"];
 const HARNESSES: readonly HarnessName[] = ["claude", "codex", "grok"];
@@ -588,12 +589,17 @@ export interface SetResult {
     path: string;
     config: HooksConfig;
     written: boolean;
+    subagentLine?: SubagentLinePlan;
 }
 
 export function setHooksConfig(
     key: string,
     value: string,
-    options: { write: boolean; path?: string } & RuleIdOptions
+    options: {
+        write: boolean;
+        path?: string;
+        subagentLine?: { dist?: string; settingsPath?: string; replace?: boolean };
+    } & RuleIdOptions
 ): SetResult {
     const path = options.path ?? hooksConfigPath();
     // Read from the file this writes: loading the default path while writing `options.path`
@@ -604,7 +610,16 @@ export function setHooksConfig(
         writeHooksFile({ path, config });
     }
 
-    return { path, config, written: options.write };
+    const subagentLine =
+        key === "mods.agentRow" || key === "mods.agentRow.enabled"
+            ? wireSubagentLine({
+                  ...options.subagentLine,
+                  on: config.mods.agentRow.enabled,
+                  write: options.write,
+              })
+            : undefined;
+
+    return { path, config, written: options.write, ...(subagentLine ? { subagentLine } : {}) };
 }
 
 /**
