@@ -331,10 +331,14 @@ final class PRsModel: ObservableObject {
     // Published and saved by hand: `@AppStorage` inside an ObservableObject never publishes.
     @Published var state = HubDefaults.store.string(forKey: "hub.prs.state") ?? "open" {
         didSet {
-            HubDefaults.store.set(state, forKey: "hub.prs.state")
+            // A link's widening is for that link: the picker the person chose comes back at the next launch.
+            if !widening {
+                HubDefaults.store.set(state, forKey: "hub.prs.state")
+            }
             HubMainBusy.measure("prs.filter.state")
         }
     }
+    private var widening = false
     @Published var mineOnly = HubDefaults.store.bool(forKey: "hub.prs.mine") {
         didSet {
             HubDefaults.store.set(mineOnly, forKey: "hub.prs.mine")
@@ -1014,10 +1018,12 @@ final class PRsModel: ObservableObject {
 
     /// A merged or closed PR (a "merged" notification's click, a link) is only in the All list: the
     /// picker moves to All once and the next load selects it. False when the list already is All.
-    private func widen(to ref: HubPRRef) -> Bool {
+    func widen(to ref: HubPRRef) -> Bool {
         guard state != "all" else { return false }
         wanted = ref
+        widening = true
         state = "all"
+        widening = false
         return true
     }
 

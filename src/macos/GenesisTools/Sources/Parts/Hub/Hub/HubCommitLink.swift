@@ -238,23 +238,42 @@ enum HubCommitLookup {
 
     /// `repo` is a checkout path (any folder inside it), or a forge path such as `owner/repo` that `known` (else a
     /// fresh `tools hub pr projects`) maps to its checkout. Runs git, so off the main thread.
-    static func resolve(repo: String, sha: String, to: String? = nil, known: [HubPRProject]) -> Outcome {
+    /// `fetch` lists the projects afresh (`tools hub pr projects`): `known` is the hub's list, read once per run, so a
+    /// miss asks again before it is said (a project cloned since, or a commit fetched since into a fork).
+    static func resolve(repo: String, sha: String, to: String? = nil, known: [HubPRProject],
+                        fetch: () throws -> [HubPRProject] = { try PRsModel.fetchProjects() }) -> Outcome {
         let text = repo.trimmingCharacters(in: .whitespacesAndNewlines)
         let folder: String
         if text.hasPrefix("/") || text.hasPrefix("~") {
             folder = (text as NSString).expandingTildeInPath
         } else {
-            let projects: [HubPRProject]
+            var projects: [HubPRProject]
             do {
-                projects = known.isEmpty ? try PRsModel.fetchProjects() : known
+                projects = known.isEmpty ? try fetch() : known
             } catch {
                 return .failed("Could not list the projects to find \(text): \(error)")
             }
             let shas = [sha] + (to.map { [$0] } ?? [])
             // The checkout of the path the link names, while it holds the link's commits; else a fork that does.
-            // With neither, that checkout still answers, so the miss names where the commit was looked for.
-            let exact = PRsModel.projectRoot(text, in: projects)
-            guard let root = exact.flatMap({ holds($0, shas) ? $0 : nil }) ?? sameName(text, holding: shas, in: projects) ?? exact else {
+            let holder = { (projects: [HubPRProject]) -> String? in
+                PRsModel.projectRoot(text, in: projects).flatMap { holds($0, shas) ? $0 : nil } ?? sameName(text, holding: shas, in: projects)
+            }
+            var found = holder(projects)
+            if found == nil, !known.isEmpty {
+                do {
+                    let fresh = try fetch()
+                    found = holder(fresh)
+                    // The fresh list first; a checkout only the old list names still answers where the commit was looked for.
+                    projects = fresh + projects.filter { old in !fresh.contains { $0.root == old.root } }
+                    HubPerf.log("hub.commitLink \(text) \(sha): asked the projects again, \(found == nil ? "still none holds it" : "found it")")
+                } catch {
+                    HubPerf.log("hub.commitLink could not list the projects again: \(error)")
+                }
+            }
+            // With no holder, the checkout of that path, else a clone of the same name, still answers, so the miss
+            // names where the commit was looked for ("not in ~/…/col-tools, fetch it first"), not "no checkout".
+            let clone = sameNamed(text, in: projects).first { FileManager.default.fileExists(atPath: $0.root) }?.root
+            guard let root = found ?? PRsModel.projectRoot(text, in: projects) ?? clone else {
                 return .failed("No checkout of \(text) under the repo roots, so commit \(sha) cannot open")
             }
             folder = root
@@ -316,16 +335,19 @@ enum HubCommitLookup {
     /// (`me/app`). The projects with the same last name are the candidates, and the first that holds every commit
     /// of the link (both ends of a range) wins.
     static func sameName(_ repo: String, holding shas: [String], in projects: [HubPRProject]) -> String? {
+        sameNamed(repo, in: projects).first { holds($0.root, shas) }?.root
+    }
+
+    /// The projects whose web path ends in the same name as `repo`'s (`col-tools` for `group/col/col-tools`).
+    static func sameNamed(_ repo: String, in projects: [HubPRProject]) -> [HubPRProject] {
         let name = { (path: String) -> String in
             var last = path.lowercased().split(separator: "/").last.map(String.init) ?? ""
             if last.hasSuffix(".git") { last.removeLast(4) }
             return last
         }
         let wanted = name(repo)
-        guard !wanted.isEmpty else { return nil }
-        return projects.first { candidate in
-            name(candidate.project) == wanted && holds(candidate.root, shas)
-        }?.root
+        guard !wanted.isEmpty else { return [] }
+        return projects.filter { name($0.project) == wanted }
     }
 
     /// Git's empty tree: the base of a range that starts at a root commit (`GitWorkingTreeSource` diffs from it).

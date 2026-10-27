@@ -99,10 +99,24 @@ struct HubRequest {
     var from: String?
     var nav: String?
 
+    /// What the request named that the hub cannot open (an unknown mode or tab, a file with no PR), said in the
+    /// header instead of dropped without a word.
+    var problems: [String] = []
+
     /// The file `--reveal` names, in the PR `--pr` names.
     var prReveal: PRReveal? {
         guard let pr, let reveal, !reveal.isEmpty else { return nil }
         return PRReveal(ref: pr, path: reveal, threadID: nil)
+    }
+
+    /// The mode a first launch opens in: `--mode`, else the mode of the place the request names. A `--worktree` alone
+    /// opened the Sessions mode, while a running hub took the same request to Worktrees (`navigate`).
+    var launchMode: HubMode {
+        if let mode { return mode }
+        if agent != nil { return .agents }
+        if pr != nil { return .prs }
+        if commit != nil || worktree != nil { return .worktrees }
+        return inboxItem != nil ? .inbox : .sessions
     }
 
     /// Off screen, never active, on scratch settings.
@@ -121,8 +135,18 @@ struct HubRequest {
             case "--reveal": reveal = value; index += 1
             case "--commit": commit = value; index += 1
             case "--repo": repo = value; index += 1
-            case "--tab": tab = value.flatMap(HubTab.init(rawValue:)); index += 1
-            case "--mode": mode = value.flatMap(HubMode.init(rawValue:)); index += 1
+            case "--tab":
+                tab = value.flatMap(HubTab.init(rawValue:))
+                if tab == nil, let value {
+                    problems.append("tab=\(value) is no hub tab (\(HubTab.allCases.map(\.rawValue).joined(separator: ", ")))")
+                }
+                index += 1
+            case "--mode":
+                mode = value.flatMap(HubMode.init(rawValue:))
+                if mode == nil, let value {
+                    problems.append("mode=\(value) is no hub mode (\(HubMode.allCases.map(\.rawValue).joined(separator: ", ")))")
+                }
+                index += 1
             case "--panes":
                 let list = (value ?? "").split(separator: ",").compactMap { HubTab(rawValue: String($0)) }
                 panes = list.isEmpty ? nil : list
@@ -177,6 +201,9 @@ struct HubRequest {
             }
             index += 1
         }
+        if reveal != nil, pr == nil {
+            problems.append("reveal=\(reveal ?? "") opens a file in a PR's review: the link names no PR (pr=)")
+        }
     }
 
     /// The text of `--palette [text]` and `--find [text]`: the next argument unless it is another
@@ -207,8 +234,7 @@ package func runHub(_ args: [String]) -> Never {
     let wantedPR = request.pr
     let tab = request.tab ?? .transcript
     // `--pr` alone means the PRs mode, as it does for a request handed to a running hub (`apply`).
-    let mode = request.mode ?? (request.agent != nil ? .agents : request.pr != nil ? .prs
-        : request.commit != nil ? .worktrees : request.inboxItem != nil ? .inbox : .sessions)
+    let mode = request.launchMode
     let activate = request.activate
     if !request.isScripted, !HubSingleInstance.claim() {
         exit(HubSingleInstance.forwardToRunningHub(args) ? 0 : 1)
@@ -913,7 +939,9 @@ final class HubModel: ObservableObject {
             return mode == .worktrees && shownCommit.map { $0.commit.lowercased().hasPrefix(from) && selectedWorktree == $0.repo } == true
         }
         if let worktree = asked.worktree {
-            return mode == .worktrees && selectedWorktree == WorktreeCleanup.selection(for: worktree)
+            // A folder inside a worktree selects that worktree.
+            let wanted = WorktreeCleanup.selection(for: worktree)
+            return mode == .worktrees && selectedWorktree.map { wanted == $0 || wanted.hasPrefix($0 + "/") } == true
         }
         if asked.agent != nil || asked.mode == .agents, asked.session != nil || asked.agent != nil {
             return mode == .agents && agents.matchesRequest(parent: asked.session, child: asked.agent ?? AgentTree.mainChild)
@@ -1472,7 +1500,14 @@ final class HubModel: ObservableObject {
                     withAnimation(SWR.animation) { self.worktrees += added }
                 }
                 if !self.worktrees.contains(where: { $0.path == path }) {
-                    self.error = "\(path) is not a git worktree"
+                    // A folder inside a worktree (a link to `src/` of a checkout) selects that worktree.
+                    if let owner = WorktreeCleanup.owner(of: path, in: self.worktrees) {
+                        if self.selectedWorktree == path {
+                            self.selectedWorktree = owner.path
+                        }
+                    } else {
+                        self.error = "\(path) is not a git worktree"
+                    }
                 }
             }
         }
@@ -1760,6 +1795,10 @@ final class HubModel: ObservableObject {
 
     /// `--filter`, `--palette`, `--find`: the list filter and the two overlays, first launch or later.
     func applyOverlays(_ request: HubRequest) {
+        if !request.problems.isEmpty {
+            HubPerf.log("hub.request problems: \(request.problems.joined(separator: "; "))")
+            post(request.problems.joined(separator: "; "), .warning)
+        }
         if let mode = request.widgetDestination, ["new", "resume"].contains(mode) {
             MainActor.assumeIsolated {
                 HubWidgetDestinationStore.shared.request = HubWidgetDestinationRequest(
@@ -1834,7 +1873,8 @@ final class HubModel: ObservableObject {
             navigate(request)
             return true
         }
-        if asked.actor != .user, MainActor.assumeIsolated({ HubDefaults.preferences.agentNavigation }) == .listOnly {
+        // Only an agent's push waits in History: a link is a click of the person reading the reply.
+        if asked.actor == .agent, MainActor.assumeIsolated({ HubDefaults.preferences.agentNavigation }) == .listOnly {
             MainActor.assumeIsolated {
                 let entry = history.record(asked.target, title: asked.title, actor: asked.actor, agentSession: asked.from,
                                            note: asked.note, id: asked.id)
@@ -1886,8 +1926,9 @@ final class HubModel: ObservableObject {
         }
         if let worktree = request.worktree {
             setMode(.worktrees)
-            selectedWorktree = WorktreeCleanup.selection(for: worktree)
-            MainActor.assumeIsolated { addWorktreesIfMissing(worktree) }
+            let wanted = WorktreeCleanup.selection(for: worktree)
+            selectedWorktree = wanted
+            MainActor.assumeIsolated { addWorktreesIfMissing(wanted) }
         }
         if let ref = request.pr {
             MainActor.assumeIsolated { prs.request(ref, reveal: request.prReveal, commit: request.commit) }

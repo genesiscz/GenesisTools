@@ -35,8 +35,23 @@ enum WorktreeCleanup {
             HubDefaults.store.set(true, forKey: showBlockedKey)
             return selectionID
         default:
-            return flag
+            return normalizedPath(flag)
         }
+    }
+
+    /// A worktree path as git lists it: `~` expanded, `.` and `..` gone, no trailing slash, and symlinks resolved by
+    /// `realpath`, so `/tmp/x` is git's `/private/tmp/x` (Foundation's `resolvingSymlinksInPath` strips `/private`
+    /// again). A path that does not exist keeps its standardized form.
+    static func normalizedPath(_ flag: String) -> String {
+        let standard = URL(fileURLWithPath: (flag as NSString).expandingTildeInPath).standardizedFileURL.path
+        guard let resolved = realpath(standard, nil) else { return standard }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
+    /// The deepest worktree of `rows` that holds the folder `path`; nil when none does.
+    static func owner(of path: String, in rows: [HubWorktree]) -> HubWorktree? {
+        rows.filter { path.hasPrefix($0.path + "/") }.max { $0.path.count < $1.path.count }
     }
 }
 
