@@ -1,10 +1,10 @@
 import { readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
-import { SHELL_RULES } from "@genesiscz/utils/shell/rules";
 import type { ShellMatch, ShellRule, ShellRuleKind, ShellSeverity } from "@genesiscz/utils/shell/rules/types";
 import type { HooksConfig } from "./config";
 import { hookDiag } from "./log";
+import { BUILT_IN_RULES } from "./tool-rules";
 
 /**
  * Custom rules: shell rules that live OUTSIDE this repository (a user's own folder) and run in the
@@ -252,7 +252,7 @@ export async function loadCustomRules(entries: readonly string[], options: LoadO
     const onError = options.onDetectError ?? defaultDetectError;
     const timeoutMs = options.timeoutMs ?? CUSTOM_IMPORT_TIMEOUT_MS;
 
-    for (const id of options.builtinIds ?? new Set(SHELL_RULES.map((rule) => rule.id))) {
+    for (const id of options.builtinIds ?? new Set(BUILT_IN_RULES.map((rule) => rule.id))) {
         taken.set(id, "a built-in rule");
     }
 
@@ -325,12 +325,12 @@ export interface GuardRules {
 /** The rules the guard runs: the built-in ones, plus the custom ones when any are configured. */
 export async function guardRules(config: HooksConfig, options: LoadOptions = {}): Promise<GuardRules> {
     if (!config.guard.enabled || config.guard.customRules.length === 0) {
-        return { rules: SHELL_RULES, custom: null };
+        return { rules: BUILT_IN_RULES, custom: null };
     }
 
     const custom = await loadCustomRules(config.guard.customRules, options);
 
-    return { rules: [...SHELL_RULES, ...custom.rules], custom };
+    return { rules: [...BUILT_IN_RULES, ...custom.rules], custom };
 }
 
 /** One decision-log line per problem, so a broken module shows in `hooks log` as well as `doctor`. */
@@ -373,10 +373,10 @@ export const BUILT_IN_SOURCE = "built-in";
  * that is exactly when someone lists them to decide what to switch back on.
  */
 export async function loadRuleSet(config: HooksConfig, options: LoadOptions = {}): Promise<RuleSet> {
-    const sources = new Map<string, string>(SHELL_RULES.map((rule) => [rule.id, BUILT_IN_SOURCE]));
+    const sources = new Map<string, string>(BUILT_IN_RULES.map((rule) => [rule.id, BUILT_IN_SOURCE]));
 
     if (config.guard.customRules.length === 0) {
-        return { rules: SHELL_RULES, sources, custom: null };
+        return { rules: BUILT_IN_RULES, sources, custom: null };
     }
 
     const custom = await loadCustomRules(config.guard.customRules, options);
@@ -387,5 +387,5 @@ export async function loadRuleSet(config: HooksConfig, options: LoadOptions = {}
         }
     }
 
-    return { rules: [...SHELL_RULES, ...custom.rules], sources, custom };
+    return { rules: [...BUILT_IN_RULES, ...custom.rules], sources, custom };
 }

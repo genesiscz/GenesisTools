@@ -80,6 +80,7 @@ import type { HookPayload } from "./payload";
 import { parseHookPayload } from "./payload";
 import { checkRuleExamples, replayCorpus } from "./rules-check";
 import { applyRuleSelection, applySetting, ruleEnabled, setHooksConfig, setRuleSelection } from "./set-config";
+import { BUILT_IN_RULES } from "./tool-rules";
 import { unpushedReminders, unpushedState } from "./unpushed";
 import { writeJsonFile } from "./write-json";
 
@@ -3157,7 +3158,7 @@ describe("the guard runs custom rules beside the built-in ones", () => {
     it("imports nothing and returns the built-in registry while no custom rule is configured", async () => {
         const { rules, custom } = await guardRules(DEFAULT_HOOKS_CONFIG);
 
-        expect(rules).toBe(SHELL_RULES);
+        expect(rules).toBe(BUILT_IN_RULES);
         expect(custom).toBeNull();
     });
 
@@ -3248,7 +3249,7 @@ describe("the rule picker's selection", () => {
 
 describe("rules check", () => {
     it("every built-in rule passes its own examples", () => {
-        const failed = checkRuleExamples(SHELL_RULES, { cwd: repoRoot() }).filter((check) => !check.ok);
+        const failed = checkRuleExamples(BUILT_IN_RULES, { cwd: repoRoot() }).filter((check) => !check.ok);
 
         expect(failed).toEqual([]);
     });
