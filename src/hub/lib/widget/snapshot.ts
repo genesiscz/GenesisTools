@@ -782,9 +782,11 @@ export async function widgetSnapshot({
     now = Date.now(),
     onImagesDeferred,
     warm = 0,
+    decisionLookup,
 }: {
     root?: string;
     selectedKey?: string;
+    decisionLookup?: { id: string; token: string };
     refresh?: boolean;
     sources?: WidgetSources;
     /** The clock the inbox ages items against; tests pass a fixed one. */
@@ -1614,7 +1616,12 @@ export async function widgetSnapshot({
             const bucket = cardKeys ? card.sessionKey : "";
             const remaining = left.get(bucket) ?? (bucket === "" || bucket === selectedKey ? 100 : WARM_CARD_WINDOW);
             left.set(bucket, remaining - 1);
-            return remaining > 0 || notified.has(card.id) || cardWaits(card);
+            return (
+                remaining > 0 ||
+                notified.has(card.id) ||
+                cardWaits(card) ||
+                (card.id === `decision:${decisionLookup?.id}` && card.sessionKey === selectedKey)
+            );
         })
         .reverse();
     const activity =
@@ -1645,6 +1652,9 @@ export async function widgetSnapshot({
         changes,
         errors,
         selectedKey: selectedKey ?? null,
+        ...(decisionLookup && !errors.some((error) => error.startsWith("decisions:"))
+            ? { decisionLookup: decisionLookup.token }
+            : {}),
         ...(warmKeys.length > 0 ? { warmKeys } : {}),
     };
 }

@@ -24,6 +24,7 @@ struct FieldTextOwnership {
     private var floors: [String: Int] = [:]
     /// Keys whose write landed while its revision is still being read.
     private var awaitingFloor: Set<String> = []
+    private var writeGeneration: [String: Int] = [:]
 
     /// The user typed into the field of `key`.
     mutating func edited(_ key: String, at now: Date) {
@@ -37,19 +38,27 @@ struct FieldTextOwnership {
     func isUnsaved(_ key: String) -> Bool { unsaved.contains(key) }
 
     /// The newest write of `key` is stored; its revision follows through `stored(_:at:)`.
-    mutating func landed(_ key: String) {
+    @discardableResult
+    mutating func landed(_ key: String) -> Int {
         unsaved.remove(key)
         awaitingFloor.insert(key)
+        writeGeneration[key, default: 0] += 1
+        return writeGeneration[key]!
     }
 
     /// `state.json`'s revision read after the write of `key` landed. A floor only rises.
-    mutating func stored(_ key: String, at revision: Int) {
+    mutating func stored(_ key: String, at revision: Int, generation: Int? = nil) {
+        if let generation, writeGeneration[key] != generation { return }
         awaitingFloor.remove(key)
         floors[key] = max(floors[key] ?? revision, revision)
     }
 
     mutating func focus(field: String, key: String?) {
         focused[field] = key
+    }
+
+    mutating func blur(field: String, key: String) {
+        if focused[field] == key { focused.removeValue(forKey: field) }
     }
 
     /// Whether a snapshot read at state `revision` may write its copy of `key` into the field.

@@ -97,6 +97,48 @@ final class WidgetFieldEditingTests: XCTestCase {
         try await until(model.draft.text == "answered elsewhere", "after the hold the newest stored text shows")
     }
 
+    func testFocusedComposerRetargetsItsOwnershipWhenTheSessionChanges() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget-field-switch-\(UUID())"))
+        let model = WidgetModel(binaryPath: "/fixture/no-process", defaults: defaults,
+                                appearance: NativeSettingsAppearance(defaults: defaults,
+                                    notificationNamespace: "fixture.switch.\(UUID())", observeExternalChanges: false))
+        defer { model.stop() }
+        model.selectedKey = "first"
+        model.draftFieldFocus("reply", focused: true, key: "first")
+        model.selectedKey = "second"
+        model.draftFieldFocus("reply", focused: true, key: "second")
+        model.draftFieldFocus("reply", focused: false, key: "first")
+        XCTAssertTrue(model.draftOwnership.accepts("first", revision: 1, now: Date()))
+        XCTAssertFalse(model.draftOwnership.accepts("second", revision: 1, now: Date()), "a stale blur cannot release the new session")
+        model.draftFieldFocus("reply", focused: false, key: "second")
+        XCTAssertTrue(model.draftOwnership.accepts("second", revision: 1, now: Date()))
+    }
+
+    func testUnreadableSaveRevisionKeepsTheDraftUntilARealFloorArrives() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("widget-field-unreadable-\(UUID())")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "widget-field-unreadable-\(UUID())"))
+        let model = WidgetModel(binaryPath: "/fixture/no-process", stateRoot: root.path, defaults: defaults,
+                                appearance: NativeSettingsAppearance(defaults: defaults,
+                                    notificationNamespace: "fixture.unreadable.\(UUID())", observeExternalChanges: false))
+        defer { model.stop() }
+        model.actionRunner = { _ in ["ok": true] }
+        model.draftOwnership.quietPeriod = 0
+        model.selectedKey = "chosen"
+        model.receive([line(revision: 10, key: "chosen", text: "old")])
+        model.setText("new")
+        try await until(!model.draftOwnership.isUnsaved("chosen"), "the save returned")
+        model.receive([line(revision: 11, key: "chosen", text: "old")])
+        XCTAssertEqual(model.draft.text, "new", "a newer pre-save snapshot is still held")
+        try Data(#"{"revision":12}"#.utf8).write(to: root.appendingPathComponent("state.json"))
+        try await until(model.draftOwnership.accepts("chosen", revision: 12, now: Date()), "the actual revision is read")
+        model.receive([line(revision: 11, key: "chosen", text: "old")])
+        XCTAssertEqual(model.draft.text, "new")
+        model.receive([line(revision: 12, key: "chosen", text: "new")])
+        XCTAssertEqual(model.draft.text, "new")
+    }
+
     // MARK: - Standard editing shortcuts in a panel
 
     private func key(_ characters: String, code: UInt16, _ modifiers: NSEvent.ModifierFlags, in window: NSWindow) -> NSEvent {

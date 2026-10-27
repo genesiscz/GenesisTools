@@ -710,6 +710,9 @@ public final class WidgetModel: ObservableObject {
                 })
             // Cleared only once a watcher runs: a reconnect that cannot launch keeps Reconnect on screen.
             connectionLost = false
+            if let pending = pendingDecision {
+                pickOnWatch(pending.sessionKey, decision: pending.id, token: pending.token)
+            }
             drainJournal()
         } catch {
             connectionLost = true
@@ -1522,12 +1525,14 @@ public final class WidgetModel: ObservableObject {
         foldedCardIDs.remove("decision:" + id)
         selectedCardID = "decision:" + id
         chatDecision = nil
-        pendingDecision = (id: id, sessionKey: sessionKey)
+        let token = UUID().uuidString
+        pendingDecision = (id: id, sessionKey: sessionKey, token: token)
+        pickOnWatch(sessionKey, decision: id, token: token)
         resolveDecisionReveal()
     }
 
     /// A decision link waiting for its session's cards: its id and session.
-    private var pendingDecision: (id: String, sessionKey: String)?
+    var pendingDecision: (id: String, sessionKey: String, token: String)?
     /// A decision link whose decision the log does not list: the Conversation tab looks for where the chat asked it.
     @Published public internal(set) var chatDecision: WidgetChatDecision?
     /// The row a decision link scrolls to, with a count so the same row asked twice scrolls again.
@@ -1585,8 +1590,9 @@ public final class WidgetModel: ObservableObject {
                 reveal("card-" + cardID)
                 return
             }
-            // Only a snapshot that names this session has its whole list; a cached list can predate the decision.
-            guard snapshot?.selectedKey == pending.sessionKey, error == nil else { return }
+            // A cached card window cannot prove absence. Wait for this exact successful targeted lookup.
+            guard snapshot?.selectedKey == pending.sessionKey, snapshot?.decisionLookup == pending.token,
+                  error == nil else { return }
             pendingDecision = nil
             let number = Self.decisionNumber(pending.id)
             PerfLog.mark("widget.decision-reveal chat \(pending.id)")
@@ -1890,8 +1896,10 @@ public final class WidgetModel: ObservableObject {
     /// Tells the running watch at once, so its next snapshot names this session (about 0.1 s) instead of after the
     /// `selection` action reaches its state file (a process and a 180 ms debounce, about 0.5 s). The action still runs:
     /// it keeps the choice for the next launch.
-    private func pickOnWatch(_ key: String) {
-        guard let watcher, let data = try? JSONEncoder().encode(["select": key]),
+    private func pickOnWatch(_ key: String, decision: String? = nil, token: String? = nil) {
+        var request = ["select": key]
+        if let decision, let token { request["decision"] = decision; request["token"] = token }
+        guard let watcher, let data = try? JSONEncoder().encode(request),
               let line = String(data: data, encoding: .utf8) else { return }
         do { try watcher.sendInput(line + "\n") } catch { PerfLog.mark("widget.pick not sent: \(error.localizedDescription)") }
     }
@@ -2104,9 +2112,14 @@ public final class WidgetModel: ObservableObject {
 
     /// A field that shows the draft of `key` took or left the keyboard (`field` names it: the reply box, an own answer).
     /// Leaving it hands the text back to the stored state, so a change made elsewhere meanwhile shows now.
-    func draftFieldFocus(_ field: String, focused: Bool) {
-        draftOwnership.focus(field: field, key: focused ? selectedKey : nil)
-        if !focused { applyHeldDrafts() }
+    func draftFieldFocus(_ field: String, focused: Bool, key: String? = nil) {
+        let key = key ?? selectedKey
+        if focused {
+            draftOwnership.focus(field: field, key: key)
+        } else {
+            draftOwnership.blur(field: field, key: key)
+        }
+        applyHeldDrafts()
     }
 
     /// The newest snapshot's drafts, for the keys whose hold has ended.
@@ -2128,15 +2141,20 @@ public final class WidgetModel: ObservableObject {
     /// The newest write of `key`'s draft is stored. Until `state.json`'s revision after it is read, no snapshot writes
     /// the key; then only snapshots read at that revision or later do, so one read before the write cannot undo it.
     private func draftLanded(_ key: String) {
-        draftOwnership.landed(key)
+        let generation = draftOwnership.landed(key)
         let file = Self.widgetStateFile(stateRoot: stateRoot)
-        let fallback = (lastReceived?.state.revision ?? 0) + 1
         Task { [weak self] in
-            let revision = await Task.detached(priority: .utility) { Self.storedRevision(file) }.value
-            guard let self else { return }
-            // Unreadable: any snapshot newer than the one on screen counts as read after the write.
-            self.draftOwnership.stored(key, at: revision ?? fallback)
-            self.applyHeldDrafts()
+            for attempt in 0..<4 {
+                let revision = await Task.detached(priority: .utility) { Self.storedRevision(file) }.value
+                guard let self else { return }
+                if let revision {
+                    self.draftOwnership.stored(key, at: revision, generation: generation)
+                    self.applyHeldDrafts()
+                    return
+                }
+                if attempt < 3 { try? await Task.sleep(for: .milliseconds(250)) }
+            }
+            // Keep the hold if the revision remains unreadable. A later successful save can establish its floor.
         }
     }
 

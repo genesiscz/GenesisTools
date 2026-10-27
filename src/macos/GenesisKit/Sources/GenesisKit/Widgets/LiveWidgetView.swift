@@ -1228,6 +1228,7 @@ public struct LiveWidgetView: View {
         let open = ownAnswer.map { model.ownAnswerCard?.id == $0.id } ?? true
         let parked = ownAnswer == nil ? model.ownAnswerCard : nil
         let focused = ownAnswer == nil ? editing : ownAnswerFocused
+        let fieldKey = model.selectedKey
         let fieldHeight = ownAnswer == nil ? composerFieldHeight : ownAnswerFieldHeight
         let shownText = open && parked == nil ? model.draft.text : ""
         let placeholder = parked.map { "Answering " + WidgetWords.decision($0.number) + " in its card" }
@@ -1266,10 +1267,13 @@ public struct LiveWidgetView: View {
                         .focused(ownAnswer == nil ? $editing : $ownAnswerFocused)
                         // A field with the keyboard owns its text: no snapshot writes into it (FieldTextOwnership).
                         .onChange(of: focused, initial: true) { _, now in
-                            model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: now)
+                            model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: now, key: fieldKey)
+                        }
+                        .onChange(of: fieldKey) { _, key in
+                            if focused { model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: true, key: key) }
                         }
                         .onDisappear {
-                            model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: false)
+                            model.draftFieldFocus(ownAnswer.map { "own:" + $0.id } ?? "reply", focused: false, key: fieldKey)
                         }
                         // A decision's own answer: Return stages the text as its note and ⌘-Return sends it, or the
                         // other way round (Settings: Return in an own answer). Option-Return stays a new line.

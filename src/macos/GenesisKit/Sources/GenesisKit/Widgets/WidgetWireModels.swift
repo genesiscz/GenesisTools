@@ -574,6 +574,8 @@ public struct WidgetSnapshot: Codable, Equatable, Sendable {
     public var changes: Changes?
     public var errors: [String]
     public var selectedKey: String?
+    /// Token for a completed targeted decision lookup, absent when the decision source failed.
+    public var decisionLookup: String? = nil
     /// Other sessions whose cards this snapshot carries too (the ones that need you), so opening one waits for nothing.
     public var warmKeys: [String]? = nil
 }
