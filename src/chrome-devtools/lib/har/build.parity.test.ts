@@ -240,6 +240,47 @@ describe("redirect hops keep their raw response headers (not in upstream)", () =
         ],
     };
 
+    for (const beforeResponse of [true, false]) {
+        test(`cached 200 accepts 304 extra info ${beforeResponse ? "before" : "after"} the response`, () => {
+            const raw = extra(304, { "x-cache": "revalidated" });
+            const messages = [
+                start,
+                request("https://app.example.com/", 3000),
+                ...(beforeResponse ? [raw, final] : [final, raw]),
+                finished,
+            ];
+            const entry = harFromMessages(messages as CdpMessage[]).log.entries[0];
+            expect(entry.response?.status).toBe(200);
+            expect(entry.response?.headers).toContainEqual({ name: "x-cache", value: "revalidated" });
+        });
+    }
+
+    test("late extra info removes blocked cookies from the response", () => {
+        const setCookie = "blocked=1; Path=/\nallowed=2; Path=/";
+        const responseWithCookies = {
+            ...final,
+            params: {
+                ...final.params,
+                response: response("https://app.example.com/", 200, { "set-cookie": setCookie }),
+            },
+        };
+        const raw = {
+            ...extra(200, { "set-cookie": setCookie }),
+            params: {
+                ...extra(200, { "set-cookie": setCookie }).params,
+                blockedCookies: [{ cookieLine: "blocked=1; Path=/", blockedReasons: ["SecureOnly"] }],
+            },
+        };
+        const entry = harFromMessages([
+            start,
+            request("https://app.example.com/", 3000),
+            responseWithCookies,
+            raw,
+            finished,
+        ] as CdpMessage[]).log.entries[0];
+        expect(entry.response?.cookies.map((cookie) => cookie.name)).toEqual(["allowed"]);
+    });
+
     for (const [name, messages] of Object.entries(orders)) {
         test(`${name}: the 302 entry has Set-Cookie and the 200 entry does not`, () => {
             const har = harFromMessages(messages as CdpMessage[]);

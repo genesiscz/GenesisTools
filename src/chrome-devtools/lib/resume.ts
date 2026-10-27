@@ -291,7 +291,10 @@ export async function runResume(opts: ResumeOpts): Promise<ResumeReport> {
 }
 
 /** Read-only: the held-looking popups on one browser connection (doctor's check). */
-export async function listPossiblyHeldPopups(conn: Pick<Conn, "send">): Promise<ResumeTargetInfo[]> {
-    const reply = await conn.send("Target.getTargets", {}, undefined, { timeoutMs: 1500 });
+export async function listPossiblyHeldPopups(
+    conn: Pick<Conn, "send">,
+    signal?: AbortSignal
+): Promise<ResumeTargetInfo[]> {
+    const reply = await conn.send("Target.getTargets", {}, undefined, { timeoutMs: 1500, signal });
     return parseTargetInfos(reply).filter(isPossiblyHeldPopup);
 }

@@ -479,18 +479,28 @@ export async function claimRecorderPidfile(pidPath: string, port: number): Promi
     throw new Error(`lost the recorder claim race on ${port}; another instance is recording`);
 }
 
-export async function connectBrowser(port: number, opts?: { dropRaw?: (raw: string) => boolean }): Promise<Conn> {
-    const v = (await (await fetch(`http://127.0.0.1:${port}/json/version`)).json()) as {
-        webSocketDebuggerUrl: string;
-    };
+export async function connectBrowser(
+    port: number,
+    opts?: {
+        dropRaw?: (raw: string) => boolean;
+        signal?: AbortSignal;
+        fetcher?: (url: string, init?: RequestInit) => Promise<Response>;
+    }
+): Promise<Conn> {
+    const v = (await (
+        await (opts?.fetcher ?? fetch)(`http://127.0.0.1:${port}/json/version`, {
+            signal: opts?.signal,
+        })
+    ).json()) as { webSocketDebuggerUrl: string };
 
     const conn = new Conn(v.webSocketDebuggerUrl, opts);
-    // Prove the websocket actually OPENED before returning: without this, a
-    // ws failure surfaces at the first later send(), outside the caller's
-    // pidfile-clearing catch, and leaves a stale claim behind.
-    await conn.send("Browser.getVersion");
-
-    return conn;
+    try {
+        await conn.send("Browser.getVersion", {}, undefined, { signal: opts?.signal });
+        return conn;
+    } catch (err) {
+        conn.close();
+        throw err;
+    }
 }
 
 export interface RunRecorderOpts {
@@ -499,6 +509,115 @@ export interface RunRecorderOpts {
     allTabs?: boolean;
     seconds?: number;
     channels: CaptureChannel[];
+}
+
+type RecorderTargetInfo = { url?: string; type?: string; targetId?: string; openerId?: string; sessionId?: string };
+
+/** Tracks attached sessions separately from armed targets so a later URL change can arm a scoped tab. */
+export function createRecorderTargetController(opts: {
+    conn: Pick<Conn, "send">;
+    channels: ReadonlySet<CaptureChannel>;
+    match?: string;
+}) {
+    const enabled = new Set<string>();
+    const attachedTargets = new Map<string, string>();
+    const sessions = new Map<string, string>();
+    const scopedTargets = new Set<string>();
+
+    const enable = async (sessionId: string, info: RecorderTargetInfo) => {
+        const { url = "", type, targetId, openerId } = info;
+        if (targetId && sessionId && !sessions.has(targetId)) {
+            sessions.set(targetId, sessionId);
+        }
+
+        if (!sessionId || !isArmableTarget({ type: type ?? "page", url, openerId })) {
+            return;
+        }
+
+        const inScope = !opts.match || url.includes(opts.match) || (!url && !!openerId && scopedTargets.has(openerId));
+        if (!inScope) {
+            return;
+        }
+
+        if (targetId) {
+            scopedTargets.add(targetId);
+            const owner = attachedTargets.get(targetId);
+            if (owner && owner !== sessionId) {
+                return;
+            }
+
+            attachedTargets.set(targetId, sessionId);
+        }
+
+        if (enabled.has(sessionId)) {
+            return;
+        }
+
+        enabled.add(sessionId);
+        const domains = ["Network.enable", "Page.enable"];
+        if (opts.channels.has("console")) {
+            domains.push("Runtime.enable", "Log.enable");
+        }
+
+        const armed = await enableRecordingDomains({
+            send: (method) => opts.conn.send(method, {}, sessionId),
+            domains,
+            url,
+        });
+        if (!armed) {
+            enabled.delete(sessionId);
+        }
+    };
+
+    const onTargetEvent = (method: string, params: Record<string, unknown>, sessionId?: string): boolean => {
+        if (method === "Target.attachedToTarget") {
+            const info = (params.targetInfo ?? {}) as RecorderTargetInfo;
+            const sid = String(params.sessionId ?? sessionId ?? "");
+            if (info.targetId && sid && !sessions.has(info.targetId)) {
+                sessions.set(info.targetId, sid);
+            }
+
+            armThenRelease({
+                arm: () => enable(sid, info),
+                send: (release) => opts.conn.send(release, {}, sid, { timeoutMs: RELEASE_TIMEOUT_MS }),
+                sessionId: sid,
+            });
+            return true;
+        }
+
+        if (method === "Target.targetInfoChanged") {
+            const info = (params.targetInfo ?? params) as RecorderTargetInfo;
+            const sid = String(sessionId ?? info.sessionId ?? (info.targetId ? sessions.get(info.targetId) : "") ?? "");
+            if (sid) {
+                void enable(sid, info);
+            }
+
+            return true;
+        }
+
+        if (method === "Target.detachedFromTarget") {
+            const sid = String(params.sessionId ?? sessionId ?? "");
+            enabled.delete(sid);
+            for (const [targetId, owner] of sessions) {
+                if (owner === sid) {
+                    sessions.delete(targetId);
+                }
+            }
+
+            for (const [targetId, owner] of attachedTargets) {
+                if (owner === sid) {
+                    attachedTargets.delete(targetId);
+                    scopedTargets.delete(targetId);
+                }
+            }
+
+            return true;
+        }
+
+        return false;
+    };
+
+    return { enable, attachedTargets, onTargetEvent };
 }
 
 export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
@@ -556,12 +675,6 @@ export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
 
     const writer = new SegmentWriter(dir);
 
-    const enabled = new Set<string>();
-    // One recording session per TARGET. Chrome (151+) auto-attaches existing
-    // targets on setAutoAttach AND answers the explicit attachToTarget sweep,
-    // which yields two sessions per tab and every event twice — verified live
-    // (doubled follow lines, doubled HAR entries) before this guard existed.
-    const attachedTargets = new Map<string, string>();
     const bodyUrls = new Map<string, string>();
     const match = opts.allTabs ? undefined : opts.match;
     const ac = new AbortController();
@@ -593,91 +706,11 @@ export async function runRecorder(opts: RunRecorderOpts): Promise<void> {
         writer.write(event);
     };
 
-    const enable = async (
-        sessionId: string,
-        { url = "", type, targetId, openerId }: { url?: string; type?: string; targetId?: string; openerId?: string }
-    ) => {
-        if (!isArmableTarget({ type: type ?? "page", url, openerId })) {
-            return;
-        }
-
-        if (match && !url.includes(match)) {
-            return;
-        }
-
-        if (enabled.has(sessionId)) {
-            return;
-        }
-
-        if (targetId) {
-            const owner = attachedTargets.get(targetId);
-            if (owner && owner !== sessionId) {
-                return;
-            }
-
-            attachedTargets.set(targetId, sessionId);
-        }
-
-        enabled.add(sessionId);
-        const domains = ["Network.enable", "Page.enable"];
-        if (channels.has("console")) {
-            domains.push("Runtime.enable", "Log.enable");
-        }
-
-        const armed = await enableRecordingDomains({
-            send: (method) => conn.send(method, {}, sessionId),
-            domains,
-            url,
-        });
-
-        if (!armed) {
-            enabled.delete(sessionId);
-        }
-    };
+    const { enable, attachedTargets, onTargetEvent } = createRecorderTargetController({ conn, channels, match });
 
     // Register listeners BEFORE setAutoAttach, or we miss Target.attachedToTarget for existing tabs.
     conn.on((method, params, sessionId) => {
-        if (method === "Target.attachedToTarget") {
-            const info = (params.targetInfo ?? {}) as {
-                type?: string;
-                url?: string;
-                targetId?: string;
-                openerId?: string;
-            };
-            const sid = String(params.sessionId ?? sessionId ?? "");
-            armThenRelease({
-                arm: () => enable(sid, info),
-                send: (release) => conn.send(release, {}, sid, { timeoutMs: RELEASE_TIMEOUT_MS }),
-                sessionId: sid,
-            });
-
-            return;
-        }
-
-        if (method === "Target.targetInfoChanged") {
-            const info = (params.targetInfo ?? params) as {
-                type?: string;
-                url?: string;
-                sessionId?: string;
-                targetId?: string;
-            };
-            const sid = String(sessionId ?? info.sessionId ?? "");
-            if (sid) {
-                void enable(sid, info);
-            }
-
-            return;
-        }
-
-        if (method === "Target.detachedFromTarget") {
-            const sid = String(params.sessionId ?? sessionId ?? "");
-            enabled.delete(sid);
-            for (const [targetId, owner] of attachedTargets) {
-                if (owner === sid) {
-                    attachedTargets.delete(targetId);
-                }
-            }
-
+        if (onTargetEvent(method, params, sessionId)) {
             return;
         }
 

@@ -90,9 +90,8 @@ function applyResponseExtraInfo(entry: HarEntry, params: CdpResponseReceivedExtr
 
     entry.response.headers = parseHeaders(params.headers);
     const setCookie = getHeaderValue(params.headers, "Set-Cookie");
-    if (setCookie && entry.response.cookies.length === 0) {
-        entry.response.cookies = withoutBlockedCookies(parseResponseCookies(setCookie), params.blockedCookies ?? []);
-    }
+    const cookies = setCookie ? parseResponseCookies(setCookie) : entry.response.cookies;
+    entry.response.cookies = withoutBlockedCookies(cookies, params.blockedCookies ?? []);
 }
 
 function addFromFirstRequest(page: HarPage, params: CdpRequestWillBeSentParams): void {
@@ -123,7 +122,9 @@ export function harFromMessages(messages: CdpMessage[], options?: HarBuildOption
     const findEntry = (key: string): HarEntry | undefined => entries.find((entry) => entry.__key === key);
 
     const statusMatches = (entry: HarEntry, params: CdpResponseReceivedExtraInfoParams): boolean =>
-        params.statusCode === undefined || entry.response?.status === params.statusCode;
+        params.statusCode === undefined ||
+        entry.response?.status === params.statusCode ||
+        (entry.response?.status === 200 && params.statusCode === 304);
 
     /** Applies the oldest buffered extra info of this hop's status, and uses it up. */
     const takeBufferedExtraInfo = (entry: HarEntry, key: string): void => {
@@ -140,7 +141,11 @@ export function harFromMessages(messages: CdpMessage[], options?: HarBuildOption
 
     /** A hop that has its response but still waits for its extra info (a redirect hop has a renamed `__key`). */
     const hopAwaitingExtraInfo = (key: string, params: CdpResponseReceivedExtraInfoParams): HarEntry | undefined =>
-        [...entries, ...entriesWithoutPage].find(
+        entries.find(
+            (entry) =>
+                entry.__baseKey === key && entry.response && !entry.__extraApplied && statusMatches(entry, params)
+        ) ??
+        entriesWithoutPage.find(
             (entry) =>
                 entry.__baseKey === key && entry.response && !entry.__extraApplied && statusMatches(entry, params)
         );

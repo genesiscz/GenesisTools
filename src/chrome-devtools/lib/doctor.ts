@@ -141,9 +141,10 @@ async function findHeldPopups(report: StatusReport): Promise<HeldPopups[]> {
     return Promise.all(
         live.map(async ({ port }): Promise<HeldPopups> => {
             try {
-                const conn = await connectBrowser(port);
+                const signal = AbortSignal.timeout(1500);
+                const conn = await connectBrowser(port, { signal });
                 try {
-                    return { port, urls: (await listPossiblyHeldPopups(conn)).map((t) => t.url) };
+                    return { port, urls: (await listPossiblyHeldPopups(conn, signal)).map((t) => t.url) };
                 } finally {
                     conn.close();
                 }
