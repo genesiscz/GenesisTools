@@ -1691,9 +1691,10 @@ final class HubModel: ObservableObject {
 
     /// The folder the File menu's Cursor / cmux / New session and the palette's commands act on: the
     /// worktree or PR on screen in those modes, else the selected session's project. Only the session
-    /// was read, so in Worktrees mode they opened the wrong folder or refused.
+    /// was read, so in Worktrees mode they opened the wrong folder or refused. The File menu reads this, never
+    /// `paletteContext`, whose project list walks every session's folders (a 535 ms stall sampled in menu validation).
     @MainActor
-    private var paletteCurrentPath: String? {
+    var paletteCurrentPath: String? {
         if mode == .worktrees, let path = selectedWorktree, path != WorktreeCleanup.selectionID {
             return path
         }
@@ -1716,7 +1717,7 @@ final class HubModel: ObservableObject {
             roots.append(path)
         } else if mode == .prs, let path = prs.selected?.localWorktree ?? prs.selected?.repoRoot {
             roots.append(path)
-        } else if let current = paletteContext.currentPath {
+        } else if let current = paletteCurrentPath {
             roots.append(current)
         }
         roots += extraFolders.filter { !roots.contains($0) }
