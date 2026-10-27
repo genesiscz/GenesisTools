@@ -65,7 +65,7 @@ public final class ToolsServerClient: @unchecked Sendable {
         process.executableURL = plan.executable
         process.arguments = plan.arguments
         process.currentDirectoryURL = plan.workingDirectory
-        process.environment = ToolsBridge.scrubbedEnvironment()
+        process.environment = serverEnvironment()
         process.qualityOfService = .utility
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
@@ -81,6 +81,16 @@ public final class ToolsServerClient: @unchecked Sendable {
             unlink(claimPath)
             PerfSpans.log("hub server cannot start: \(error.localizedDescription)")
         }
+    }
+
+    /// The started server's environment: detached, as the CLI's own start is (src/utils/cli/detached.ts), so the `tools`
+    /// wrapper skips its orphan watchdog and the server outlives the face that started it. An install closes every
+    /// face; the watchdog then stopped a face's server 2 s later, and the hub's first calls after the 2026-10-27 03:46
+    /// install waited 0.9 to 6.9 s for it.
+    package static func serverEnvironment() -> [String: String] {
+        var environment = ToolsBridge.scrubbedEnvironment()
+        environment["GENESIS_TOOLS_DETACHED"] = "1"
+        return environment
     }
 
     private struct StreamHandlers {

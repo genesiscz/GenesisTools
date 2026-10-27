@@ -144,6 +144,11 @@ final class ToolsServerClientTests: XCTestCase {
                       "a claim older than the window is stale")
     }
 
+    /// The server a face starts outlives the face: the `tools` wrapper skips its orphan watchdog for a detached start.
+    func testAFaceStartsTheServerDetached() {
+        XCTAssertEqual(ToolsServerClient.serverEnvironment()["GENESIS_TOOLS_DETACHED"], "1")
+    }
+
     func testNoServerAnswersNilAndStartsOneOnce() async {
         let starts = Counter()
         let client = ToolsServerClient(socketPath: NSTemporaryDirectory() + "gk-none-\(UUID().uuidString.prefix(8)).sock") {
