@@ -6,6 +6,8 @@ export { cleanHostError, createHostCheck, dnsName, summarizeHostError, unresolve
 export type {
     CheckStatus,
     CiStatus,
+    CommitPr,
+    CommitPrsResult,
     Mergeable,
     PrCheck,
     PrCommit,
@@ -31,6 +33,7 @@ export {
     parsePrRef,
     parsePrUrl,
     projectRefFromRemote,
+    prsOfCommit,
     rollupCi,
     viewerLogin,
     viewPr,

@@ -23,6 +23,7 @@ import { registerDevCommands } from "./commands/dev";
 import { registerDigestCommand } from "./commands/digest";
 import { registerForecastCommand } from "./commands/forecast";
 import { registerInsightsCommands } from "./commands/insights";
+import { registerLinkCommand } from "./commands/link";
 import { registerNavCommands } from "./commands/nav";
 import { registerNotifyCommands } from "./commands/notify";
 import { registerProcsCommand } from "./commands/procs";
@@ -31,7 +32,7 @@ import { registerReadinessCommand } from "./commands/readiness";
 import { registerRulesCommand } from "./commands/rules";
 import { registerSearchCommand } from "./commands/search";
 import { fixThreads, realFixThreadsDeps } from "./lib/fix-threads";
-import { HUB_MODES, HUB_TABS, hubUrl, openHub } from "./lib/open";
+import { HUB_MODES, HUB_TABS, hubPrintUrl, openHub } from "./lib/open";
 import {
     backendFor,
     type DraftAddInput,
@@ -207,7 +208,7 @@ program
 
             if (opts.printUrl) {
                 out.println(
-                    hubUrl({
+                    hubPrintUrl({
                         mode,
                         session: opts.session,
                         agent: opts.agent,
@@ -1286,6 +1287,7 @@ registerDigestCommand(program);
 registerForecastCommand(program);
 registerRulesCommand(program);
 registerNavCommands(program);
+registerLinkCommand(program);
 registerInsightsCommands(program);
 registerProcsCommand(program);
 registerPromptsCommand(program);

@@ -9,6 +9,7 @@ import type { CommandRunner } from "@genesiscz/utils/git/origins";
 import type { RepoFacts } from "@genesiscz/utils/git/repo-facts";
 import { SafeJSON } from "@genesiscz/utils/json";
 import { Storage } from "@genesiscz/utils/storage";
+import { resolveCommitLink } from "../commit-link";
 import { localCheckoutOf } from "../prs";
 import { draftDatesFor, stampDraftDates } from "./draft-dates";
 import { findBranchPr, findPrByRef } from "./find";
@@ -1414,5 +1415,209 @@ describe("resolveHubPrRef", () => {
         expect(await resolveHubPrRef("https://github.com/acme/web/pull/5", { source: never })).toEqual({
             url: "https://github.com/acme/web/pull/5",
         });
+    });
+});
+
+describe("resolveCommitLink", () => {
+    const FULL = "c3e3ad8307c9a875bc8a93d90d3232184bb67f6a";
+    const LATER = "4dbdd3869b00000000000000000000000000beef";
+    const checkout = (root: string, host: string, path: string): LocalCheckout => ({
+        root,
+        commonDir: `${root}/.git`,
+        branch: "main",
+        isMain: true,
+        remoteUrl: `git@${host}:${path}.git`,
+        project: { host, path },
+    });
+    const source = async () => ({
+        roots: ["/work"],
+        checkouts: [
+            checkout("/work/shop", "github.com", "acme/shop"),
+            checkout("/work/app", "gitlab.example.com", "group/sub/app"),
+        ],
+    });
+    const ghPr = (number: number, state: "open" | "closed", head: string, extra: Record<string, unknown> = {}) => ({
+        number,
+        title: `PR ${number}`,
+        state,
+        html_url: `https://github.com/acme/shop/pull/${number}`,
+        head: { sha: head },
+        base: { sha: "base000", ref: "main" },
+        merged_at: null,
+        merge_commit_sha: null,
+        ...extra,
+    });
+
+    /**
+     * A git and gh stand-in: `heads` are the PR heads the checkout has, `ancestors` the "older newer" pairs
+     * `merge-base --is-ancestor` accepts, `missing` the shas the checkout lacks.
+     */
+    function fake({
+        origin = "git@github.com:acme/shop.git",
+        api,
+        ancestors = [],
+        missing = [],
+    }: {
+        origin?: string;
+        api: { code: number; stdout?: string; stderr?: string };
+        ancestors?: string[];
+        missing?: string[];
+    }): { runner: CommandRunner; asked: string[][] } {
+        const asked: string[][] = [];
+        const runner: CommandRunner = async (cmd) => {
+            asked.push(cmd);
+            const ok = (stdout = "") => ({ code: 0, stdout, stderr: "" });
+            const no = { code: 1, stdout: "", stderr: "" };
+
+            if (cmd[0] !== "git") {
+                return { stdout: "", stderr: "", ...api };
+            }
+
+            const [, , dir, verb, ...rest] = cmd;
+
+            if (verb === "rev-parse" && rest[0] === "--show-toplevel") {
+                return dir.startsWith("/work/") ? ok(dir.split("/").slice(0, 3).join("/")) : no;
+            }
+
+            if (verb === "remote") {
+                return ok(origin);
+            }
+
+            if (verb === "rev-parse" || verb === "cat-file") {
+                const sha = (rest.at(-1) ?? "").replace(/\^\{commit\}$/, "");
+                const known = [FULL, LATER, "base000", "origin/main", "head58", "head71"];
+                const match = known.find((candidate) => candidate.startsWith(sha) && sha.length >= 6);
+                return match && !missing.includes(match) ? ok(verb === "cat-file" ? "" : match) : no;
+            }
+
+            if (verb === "merge-base") {
+                return ancestors.includes(`${rest[1]} ${rest[2]}`) ? ok() : no;
+            }
+
+            if (verb === "rev-list") {
+                return ok(rest.at(-1)?.endsWith("head71") ? "2" : "40");
+            }
+
+            return no;
+        };
+        return { runner, asked };
+    }
+
+    test("the PR that holds the commit wins over the one it left, and the link names the PR", async () => {
+        // #71's head holds the commit; #58's head no longer does (its branch was rewritten).
+        const ancestorsOnly71 = fake({
+            api: { code: 0, stdout: SafeJSON.stringify([ghPr(58, "open", "head58"), ghPr(71, "open", "head71")]) },
+            ancestors: [`${FULL} head71`],
+        });
+        const link = await resolveCommitLink({
+            spec: "c3e3ad830",
+            cwd: "/work/shop/src",
+            runner: ancestorsOnly71.runner,
+            source,
+            cache: false,
+        });
+        expect(link.pr?.ref).toBe("acme/shop#71");
+        expect(link.candidates.map((pr) => [pr.ref, pr.holds])).toEqual([
+            ["acme/shop#71", true],
+            ["acme/shop#58", false],
+        ]);
+        expect(link.query).toEqual({ pr: "acme/shop#71", commit: "c3e3ad830" });
+        expect(link.link).toContain("hub?pr=acme%2Fshop%2371&commit=c3e3ad830");
+        expect(link.ends).toEqual([FULL]);
+
+        // Both hold it (a stack): the narrower PR, the one with fewer commits between base and head, wins.
+        const stacked = await resolveCommitLink({
+            spec: "c3e3ad830",
+            cwd: "/work/shop",
+            runner: fake({
+                api: { code: 0, stdout: SafeJSON.stringify([ghPr(58, "open", "head58"), ghPr(71, "open", "head71")]) },
+                ancestors: [`${FULL} head71`, `${FULL} head58`],
+            }).runner,
+            source,
+            cache: false,
+        });
+        expect(stacked.candidates.map((pr) => [pr.ref, pr.commits])).toEqual([
+            ["acme/shop#71", 2],
+            ["acme/shop#58", 40],
+        ]);
+    });
+
+    test("a merged PR's squash commit links that PR, and a commit nobody pushed links its project", async () => {
+        const merged = await resolveCommitLink({
+            spec: "c3e3ad830",
+            cwd: "/work/shop",
+            runner: fake({
+                api: {
+                    code: 0,
+                    stdout: SafeJSON.stringify([
+                        ghPr(9, "closed", "head58", { merged_at: "2026-10-01T00:00:00Z", merge_commit_sha: FULL }),
+                    ]),
+                },
+            }).runner,
+            source,
+            cache: false,
+        });
+        expect(merged.pr).toMatchObject({ ref: "acme/shop#9", state: "MERGED", merge: true });
+
+        const unpushed = await resolveCommitLink({
+            spec: "c3e3ad830",
+            cwd: "/work/shop",
+            runner: fake({ api: { code: 1, stderr: "gh: No commit found for SHA: c3e3ad830 (HTTP 422)" } }).runner,
+            source,
+            cache: false,
+        });
+        expect(unpushed.pushed).toBe(false);
+        expect(unpushed.pr).toBeNull();
+        // The project's checkout under the repo roots has it: the forge path, which outlives this folder.
+        expect(unpushed.query).toEqual({ repo: "acme/shop", commit: "c3e3ad830" });
+    });
+
+    test("GitLab asks the MR endpoint and writes !; a range keeps its form", async () => {
+        const { runner, asked } = fake({
+            origin: "git@gitlab.example.com:group/sub/app.git",
+            api: {
+                code: 0,
+                stdout: SafeJSON.stringify([
+                    {
+                        iid: 12,
+                        title: "MR",
+                        state: "opened",
+                        web_url: "https://gitlab.example.com/group/sub/app/-/merge_requests/12",
+                        sha: "head71",
+                        target_branch: "main",
+                    },
+                ]),
+            },
+            ancestors: [`${FULL} head71`, `${LATER} head71`],
+        });
+        const link = await resolveCommitLink({
+            spec: "c3e3ad830..4dbdd3869b",
+            repo: "group/sub/app",
+            runner,
+            source,
+            cache: false,
+        });
+        expect(asked.find((cmd) => cmd[0] === "glab")).toEqual([
+            "glab",
+            "api",
+            "--hostname",
+            "gitlab.example.com",
+            `projects/group%2Fsub%2Fapp/repository/commits/${FULL}/merge_requests`,
+        ]);
+        expect(link.checkout).toBe("/work/app");
+        expect(link.query).toEqual({ pr: "group/sub/app!12", commit: "c3e3ad830..4dbdd3869b" });
+    });
+
+    test("a checkout that lacks the commit says so, and a bad sha is refused", async () => {
+        const link = await resolveCommitLink({
+            spec: "c3e3ad830",
+            repo: "/work/shop",
+            runner: fake({ api: { code: 0, stdout: "[]" }, missing: [FULL] }).runner,
+            source,
+            cache: false,
+        });
+        expect(link.notes.join(" ")).toContain("c3e3ad830 not in /work/shop (fetch it first)");
+        expect(link.query).toEqual({ repo: "/work/shop", commit: "c3e3ad830" });
+        expect(resolveCommitLink({ spec: "nope", source, cache: false })).rejects.toThrow("is not a commit");
     });
 });

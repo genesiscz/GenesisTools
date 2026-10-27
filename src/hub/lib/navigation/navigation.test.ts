@@ -2,11 +2,11 @@ import { Database } from "bun:sqlite";
 import { describe, expect, it, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { clearDatabaseReadSnapshots } from "@genesiscz/utils/database/read-snapshot";
 import { openHubDb } from "../data-db";
-import { hubArgs, hubUrl } from "../open";
+import { hubArgs, hubUrl, worktreeTarget } from "../open";
 import { importLegacyNavDb } from "./schema";
 import { listNav, navKeep, readNav, recordNav, setNavKeep } from "./store";
 import { navTargetProblem, navTitle, parseNavInput, resolveNavWorktree } from "./target";
@@ -133,6 +133,17 @@ describe("what tools hub nav open names", () => {
             "--worktree",
             "cleanup-blocked",
         ]);
+    });
+
+    // The app resolves a relative path against its own folder (`/`): `tools hub open --worktree .` opened nothing.
+    it("passes a worktree path to the app absolute, with ~ expanded and no trailing slash", () => {
+        expect(worktreeTarget(".")).toBe(resolve("."));
+        expect(worktreeTarget("~/work/app/")).toBe(join(homedir(), "work/app"));
+        expect(worktreeTarget("cleanup")).toBe("cleanup");
+        expect(hubArgs({ worktree: "./app/" })).toEqual(["--hub", "--worktree", resolve("app")]);
+        expect(hubUrl({ worktree: "~/work/app" })).toBe(
+            `genesis-tools://hub?worktree=${encodeURIComponent(join(homedir(), "work/app"))}`
+        );
     });
 
     it("refuses what the hub could not open, and names the place in a few words", () => {
