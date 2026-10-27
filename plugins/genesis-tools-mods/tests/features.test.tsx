@@ -66,6 +66,7 @@ import { inbox } from "../hooks/inbox";
 import { linkLine, takeLinkedPullRequestNote, targetFor } from "../hooks/links";
 import { forgetLive, liveAgo, liveDue, liveLeft, liveSince } from "../hooks/live";
 import { bareDescription } from "../hooks/model-label";
+import { forgetRepoMentions, sessionRepos, urlProject } from "../hooks/pr-repos";
 import { modsSettings } from "../hooks/settings";
 import { afterTools, forgetSettings, type Host, isRecord } from "../hooks/shared";
 import { toolLabel } from "../hooks/spinner";
@@ -898,6 +899,10 @@ test("links: a bare PR number is linked in the folder's repository, and the mode
         root: "/work/api",
         repo: "acme/api",
         project: { kind: "github" as const, host: "github.com", path: "acme/api" },
+        linked: new Map(),
+        named: [],
+        above: [],
+        line: [],
         sessionId: "s1",
         askedBefore: new Set<number>(),
         probe: ALL_LINKS,
@@ -905,14 +910,165 @@ test("links: a bare PR number is linked in the folder's repository, and the mode
     };
 
     expect(takeLinkedPullRequestNote()).toBeUndefined();
+    // `acme#901` names a repository `acme` of the same owner, which has no PR 901: it stays text.
     expect(await linkLine(ctx, "see #900 and acme#901\n")).toBe(
         "see [#900 (fix the slot)](https://github.com/acme/api/pull/900) and acme#901\n"
     );
     const note = takeLinkedPullRequestNote() ?? "";
-    expect(note).toContain("- #900 -> https://github.com/acme/api/pull/900 (fix the slot)");
-    expect(note).toContain("to acme/api");
+    expect(note).toContain(
+        "- #900 -> https://github.com/acme/api/pull/900 (fix the slot), in acme/api: the session's checkout"
+    );
     // Taking the note clears it: the next turn says nothing unless it links a PR again.
     expect(takeLinkedPullRequestNote()).toBeUndefined();
+});
+
+test("links: a bare PR number takes the repository the reply means, not only the session's folder", async () => {
+    forgetRepoMentions();
+    takeLinkedPullRequestNote();
+    const base = checkoutHost();
+    const asked: string[] = [];
+    const titles: Record<string, string> = {
+        "acme/web#7": "web seven",
+        "acme/web#8": "web eight",
+        "acme/api#9": "api nine",
+        "acme/web#10": "web ten",
+        "acme/tools#11": "tools eleven",
+        "acme/web#13": "web thirteen",
+        "acme/api#14": "api fourteen",
+        "acme/shop#15": "shop fifteen",
+    };
+    const done = (stdout: string, exitCode = 0) => ({
+        exitCode,
+        stdout,
+        stderr: "",
+        isStdoutTruncated: false,
+        isStderrTruncated: false,
+    });
+    const host: Host = {
+        ...base,
+        async stat(path) {
+            if (path === "/tmp/fx/web/src") {
+                return { kind: "dir", size: 0, mtimeMs: 0, isLink: false };
+            }
+
+            throw new Error(`ENOENT ${path}`);
+        },
+        async run(argv, init) {
+            const line = argv.join(" ");
+
+            if (argv[0] === "gh") {
+                // gh pr view <n> --repo <repo> --json title,url
+                const key = `${argv[5]}#${argv[3]}`;
+                asked.push(key);
+                const title = titles[key];
+
+                return title
+                    ? done(JSON.stringify({ title, url: `https://github.com/${argv[5]}/pull/${argv[3]}` }))
+                    : done("", 1);
+            }
+
+            if (line === "git -C /tmp/fx/web/src rev-parse --show-toplevel") {
+                return done("/tmp/fx/web\n");
+            }
+
+            if (line === "git -C /tmp/fx/web remote get-url origin") {
+                return done("git@github.com:acme/web.git\n");
+            }
+
+            return base.run(argv, init);
+        },
+    };
+    const reply = () => ({
+        host,
+        home: "/home/test",
+        cwd: "/work/api",
+        root: "/work/api",
+        repo: "acme/api",
+        project: { kind: "github" as const, host: "github.com", path: "acme/api" },
+        // An earlier message of the session linked #11 in acme/tools.
+        linked: new Map([[11, { kind: "github" as const, host: "github.com", path: "acme/tools" }]]),
+        named: [],
+        above: [],
+        line: [],
+        sessionId: "s1",
+        askedBefore: new Set<number>(),
+        probe: ALL_LINKS,
+        log: [],
+    });
+    const one = reply();
+
+    // The same number linked in the line: that repository.
+    expect(await linkLine(one, "Fixed in [#7](https://github.com/acme/web/pull/7), so #7 lands first.\n")).toBe(
+        "Fixed in [#7](https://github.com/acme/web/pull/7), so [#7 (web seven)](https://github.com/acme/web/pull/7) lands first.\n"
+    );
+    // No number match: the nearest repository the reply named, in a line above.
+    expect(await linkLine(one, "#8 follows it.\n")).toBe(
+        "[#8 (web eight)](https://github.com/acme/web/pull/8) follows it.\n"
+    );
+    // Written at the number: whole, or by a name the reply already gave a project.
+    expect(await linkLine(one, "acme/api#9 and web#10 too.\n")).toBe(
+        "[acme/api#9 (api nine)](https://github.com/acme/api/pull/9) and [web#10 (web ten)](https://github.com/acme/web/pull/10) too.\n"
+    );
+    // An earlier message linked the number.
+    expect(await linkLine(one, "#11 is older.\n")).toBe(
+        "[#11 (tools eleven)](https://github.com/acme/tools/pull/11) is older.\n"
+    );
+    // A name no project of the session has is guessed under the session's owner; once gh confirms it, it is known.
+    expect(await linkLine(one, "shop#15, and #15 again.\n")).toBe(
+        "[shop#15 (shop fifteen)](https://github.com/acme/shop/pull/15), and [#15 (shop fifteen)](https://github.com/acme/shop/pull/15) again.\n"
+    );
+    // The nearest repository is a GitLab project: a #12 there is no GitHub PR, so it is not even asked.
+    expect(await linkLine(one, "See https://gitlab.example.test/group/app/-/merge_requests/3 and #12.\n")).toBe(
+        "See https://gitlab.example.test/group/app/-/merge_requests/3 and #12.\n"
+    );
+    expect(asked).not.toContain("acme/api#12");
+    expect(asked).not.toContain("acme/web#12");
+
+    // A path inside a checkout names that checkout's repository.
+    expect(await linkLine(reply(), "/tmp/fx/web/src/a.ts changes in #13.\n")).toContain(
+        "[#13 (web thirteen)](https://github.com/acme/web/pull/13)"
+    );
+    // Nothing named: the session checkout's repository.
+    expect(await linkLine(reply(), "#14 alone.\n")).toBe(
+        "[#14 (api fourteen)](https://github.com/acme/api/pull/14) alone.\n"
+    );
+
+    const note = takeLinkedPullRequestNote() ?? "";
+    expect(note).toContain("(web seven), in acme/web: the reply links #7 there");
+    expect(note).toContain("(web eight), in acme/web: the nearest repository the reply names");
+    expect(note).toContain("(api nine), in acme/api: written at the number");
+    expect(note).toContain("(tools eleven), in acme/tools: the session linked #11 there before");
+    expect(note).toContain("(web thirteen), in acme/web: the nearest repository the reply names");
+    expect(note).toContain("(api fourteen), in acme/api: the session's checkout");
+});
+
+test("links: what a session's messages and URLs name as repositories", () => {
+    const web = { kind: "github" as const, host: "github.com", path: "acme/web" };
+    const tools = { kind: "github" as const, host: "github.com", path: "acme/tools" };
+    const { linked, named } = sessionRepos([
+        "see https://github.com/acme/web/pull/7 and acme/api#9",
+        "then [x](https://links.example.test/hub?pr=acme%2Ftools%2311&amp;commit=abc1234f) and https://gitlab.example.test/g/app/-/merge_requests/3",
+        "and https://github.com/acme/web/issues/9",
+    ]);
+
+    // The latest link of a number wins: #9 was acme/api, then an acme/web issue (one numbering per repository).
+    expect([...linked]).toEqual([
+        [7, web],
+        [9, web],
+        [11, tools],
+    ]);
+    expect(named.map((project) => `${project.kind}:${project.path}`)).toEqual([
+        "github:acme/web",
+        "github:acme/api",
+        "github:acme/tools",
+        "gitlab:g/app",
+    ]);
+    expect(urlProject("https://github.com/orgs/acme/projects")).toBeUndefined();
+    expect(urlProject("https://links.example.test/hub?pr=group%2Fapp%2112")).toEqual({
+        project: { kind: "gitlab", host: "", path: "group/app" },
+        number: 12,
+    });
+    expect(urlProject("https://example.org/acme/web/pull/1")).toBeUndefined();
 });
 
 test("link targets by kind, and only links this Mac opens", async () => {
@@ -1029,7 +1185,7 @@ function machine({
             return answer(remote);
         }
 
-        if (argv.endsWith("pr view 42 --json title,url")) {
+        if (/^gh pr view 42 --repo [\w./-]+ --json title,url$/.test(argv)) {
             return answer(JSON.stringify({ title, url: "https://github.com/acme/widgets/pull/42" }));
         }
 
